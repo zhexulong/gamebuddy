@@ -1,4 +1,6 @@
 import { createCompanionRuntime, type CompanionIdentity, type CompanionModelConfig, type RuntimeSession } from "./runtime.js";
+import { CompanionLoop } from "./companion-loop.js";
+import { CompanionHostService } from "./host-service.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 
 export type LocalStardewConnection = Readonly<{
@@ -13,6 +15,8 @@ export type LocalStardewConnection = Readonly<{
 export type ConnectedCompanion = Readonly<{
   bridge: LocalStardewBridgeClient;
   runtime: RuntimeSession;
+  loop: CompanionLoop;
+  host: CompanionHostService;
 }>;
 
 /**
@@ -32,7 +36,9 @@ export async function connectLocalCompanion(connection: LocalStardewConnection):
   try {
     await bridge.observe();
     const runtime = await createCompanionRuntime(connection.identity, connection.runtimeRoot, bridge, connection.modelConfig);
-    return { bridge, runtime };
+    const loop = new CompanionLoop(runtime.session);
+    const host = new CompanionHostService(loop, bridge);
+    return { bridge, runtime, loop, host };
   } catch (error) {
     bridge.close();
     throw error;
@@ -41,6 +47,7 @@ export async function connectLocalCompanion(connection: LocalStardewConnection):
 
 /** Dispose in reverse order so no Agent can see a bridge during teardown. */
 export function disconnectLocalCompanion(connected: ConnectedCompanion): void {
+  connected.host.close();
   connected.runtime.session.dispose();
   connected.bridge.close();
 }

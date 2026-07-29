@@ -13,6 +13,8 @@ import {
 } from "./protocol.js";
 
 export type LocalStardewBridgeState = CompanionIntegrationState & Readonly<{ authenticated: boolean; actionGrants: readonly ActionGrant[] }>;
+/** Validated Mod-originated facts forwarded to the Host event pump. */
+export type LocalStardewBridgeFact = Extract<BridgeMessage, { type: "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" }>;
 const MAX_ACTION_GRANTS = 8;
 
 /**
@@ -29,6 +31,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
   #snapshot: Snapshot | null = null;
   #latestReceipt: LocalStardewBridgeState["latestReceipt"] = null;
   #latestReasonCode: string | null = null;
+  readonly #factListeners = new Set<(fact: LocalStardewBridgeFact) => void>();
 
   private constructor(readonly scope: Scope, readonly transport: NamedPipeTransport, readonly token: string) {
     transport.onMessage((json) => this.receive(json));
@@ -102,6 +105,12 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
 
   public close(): void { this.transport.close(); }
 
+  /** Subscribe only to validated, Mod-originated authoritative facts. */
+  public onFact(listener: (fact: LocalStardewBridgeFact) => void): () => void {
+    this.#factListeners.add(listener);
+    return () => this.#factListeners.delete(listener);
+  }
+
   private async hello(): Promise<void> {
     const response = await this.request("hello", { token: this.token });
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
@@ -164,6 +173,10 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     } else if (message.type === "snapshot") this.#snapshot = message.payload;
     else if (message.type === "execution_receipt") this.#latestReceipt = message.payload;
     else this.#latestReasonCode = message.payload.reasonCode;
+
+    if (message.type === "snapshot" || message.type === "execution_receipt" || message.type === "semantic_event" || message.type === "lifecycle") {
+      for (const listener of this.#factListeners) listener(message);
+    }
 
     const pending = this.#pending.get(message.correlationId);
     if (pending !== undefined) {

@@ -129,10 +129,12 @@ internal sealed class StardewBodyController
             return;
 
         Game1.player.Halt();
-        this.transition(state, reasonCode, evidence);
+        // Clear local ownership before the manager callback. A replacement
+        // directive may only start after this old route is truly inert.
         this.active = null;
         this.recoveryAttempted = false;
         this.hasEmittedRunning = false;
+        this.transition(state, reasonCode, evidence);
     }
 
     private static int DirectionToward(Vector2 from, Vector2 to, bool preferAlternateAxis)
