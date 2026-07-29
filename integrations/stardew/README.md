@@ -2,7 +2,9 @@
 
 This is a **Phase 1 client-local Embodiment spike**. It binds only the real native `Game1.player` owned by the Stardew process which loaded the Mod. It never constructs a `Farmer`, mutates `Game1.otherFarmers`, controls a remote player, exposes a network listener, teleports the actor, or claims a shadow actor is a Farmhand.
 
-The included `StardewBodyController` is a deliberately narrow local movement fixture. It accepts only a bounded target tile from `ExecutionManager`, maintains single movement ownership, records accepted/running/progress/blocked/terminal traces, is cancellable locally, and stops on menu/event/movement-lock/deadline conditions. It is not yet a bridge, Agent, pathfinding implementation, or a player-facing Game Action surface.
+The included `StardewBodyController` is a deliberately narrow local movement fixture. It accepts only a bounded target tile from `ExecutionManager`, maintains single movement ownership, records accepted/running/progress/blocked/terminal traces, is cancellable locally, and stops on menu/event/movement-lock/deadline conditions. It is not pathfinding, an Agent, or a player-facing Game Action surface.
+
+`BridgeProtocol` and `BridgeSession` define a bounded, versioned, authenticated **game-thread-only** protocol façade. They deliberately do **not** listen on any network or pipe: Phase 2's production local IPC is still a transport decision requiring a real Windows AI-Farmhand client test. Any future I/O adapter must parse/frame on a background worker and enqueue validated requests to `BridgeSession` on `UpdateTicked`; it may not access Stardew APIs from its I/O thread.
 
 ## Local compilation
 
