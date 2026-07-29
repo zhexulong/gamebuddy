@@ -13,6 +13,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { createStardewObservationTools } from "./game-tools.js";
+import { type CompanionIntegrationClient } from "./integration.js";
+
 export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
   pi: "0.82.1",
   magicContext: "0.33.0",
@@ -94,7 +97,13 @@ export function resolveRuntimePaths(identity: CompanionIdentity, root = join(hom
  * pinned Magic Context extension can load; built-ins, project/user extensions,
  * skills, templates, context files, and coding prompts are excluded.
  */
-export async function createCompanionRuntime(identity: CompanionIdentity, root?: string): Promise<RuntimeSession> {
+export async function createCompanionRuntime(identity: CompanionIdentity, root?: string, integration?: CompanionIntegrationClient): Promise<RuntimeSession> {
+  if (integration !== undefined && (
+    integration.scope.saveId !== identity.saveId || integration.scope.worldId !== identity.worldId
+    || integration.scope.playerId !== identity.playerId || integration.scope.companionId !== identity.companionId
+  )) {
+    throw new Error("Integration scope must exactly match the Companion runtime identity.");
+  }
   const paths = resolveRuntimePaths(identity, root);
   await Promise.all([
     mkdir(paths.runtimeCwd, { recursive: true }),
@@ -161,6 +170,8 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
 
   const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
 
+  const integrationTools = integration === undefined ? [] : createStardewObservationTools(integration);
+  const allowedToolNames = [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite", ...integrationTools.map((tool) => tool.name)].sort();
   const { session } = await createAgentSession({
     cwd: paths.runtimeCwd,
     agentDir: paths.agentDir,
@@ -168,13 +179,13 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     settingsManager: settings,
     sessionManager,
     noTools: "all",
-    tools: [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"],
-    customTools: [companionStatusTool],
+    tools: allowedToolNames,
+    customTools: [companionStatusTool, ...integrationTools],
     thinkingLevel: "off",
   });
 
   const activeTools = session.agent.state.tools.map((tool) => tool.name).sort();
-  const expectedTools = [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort();
+  const expectedTools = allowedToolNames;
   if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
     session.dispose();
     throw new Error(`Phase 0B tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`);

@@ -11,6 +11,9 @@ import {
   PHASE_0B_ALLOWED_TOOL_NAMES,
   resolveRuntimePaths,
 } from "./runtime.js";
+import { createDeterministicBridgePair } from "./bridge.js";
+import { CompanionIntegrationClient } from "./integration.js";
+import { type Scope } from "./protocol.js";
 
 const identity = Object.freeze({
   playerId: "player_01",
@@ -46,6 +49,29 @@ test("Phase 0B exposes only its deterministic Companion test tool", async () => 
   const firstContent = result.content[0];
   assert.equal(firstContent?.type, "text");
   assert.match(firstContent?.type === "text" ? firstContent.text : "", /no game capabilities enabled/);
+});
+
+test("runtime rejects a mounted integration whose save identity does not match", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase3-scope-"));
+  const wrongScope: Scope = { integrationId: "stardew", saveId: "other_save", worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
+  const [hostEndpoint] = createDeterministicBridgePair(wrongScope);
+  const integration = new CompanionIntegrationClient(wrongScope, hostEndpoint);
+  await assert.rejects(() => createCompanionRuntime(identity, root, integration), /exactly match/);
+  integration.dispose();
+});
+
+test("runtime adds only product observation tools when an integration is mounted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase3-tools-"));
+  const scope: Scope = { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
+  const [hostEndpoint] = createDeterministicBridgePair(scope);
+  const integration = new CompanionIntegrationClient(scope, hostEndpoint);
+  const runtime = await createCompanionRuntime(identity, root, integration);
+  try {
+    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_execution_status", "stardew_observe", "todowrite"]);
+  } finally {
+    runtime.session.dispose();
+    integration.dispose();
+  }
 });
 
 test("runtime loads only Magic Context and preserves a session partition", async () => {
