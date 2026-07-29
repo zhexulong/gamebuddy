@@ -1,0 +1,38 @@
+# Local design, research, and implementation-planning materials are not versioned here.
+/design/
+/ref/
+/docs/
+
+# Local Pi/subagent state
+/.pi-subagents/
+
+# OS/editor artifacts
+[Nn][Uu][Ll]
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# .NET / SMAPI
+[Bb]in/
+[Oo]bj/
+TestResults/
+stardewvalley.targets
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local configuration, secrets, and diagnostics
+.env
+.env.*
+!.env.example
+*.log
+
+# Scratch downloads and manual research captures
+tmp_*
+.tmp-*/

@@ -1,0 +1,95 @@
+import assert from "node:assert/strict";
+import { access, mkdtemp, readdir, readFile, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  companionStatusTool,
+  createCompanionRuntime,
+  identityKey,
+  PHASE_0B_ALLOWED_TOOL_NAMES,
+  resolveRuntimePaths,
+} from "./runtime.js";
+
+const identity = Object.freeze({
+  playerId: "player_01",
+  saveId: "save_01",
+  worldId: "world_01",
+  companionId: "companion_01",
+});
+
+test("opaque identity keys partition contexts without display names", () => {
+  const first = identityKey(identity);
+  const second = identityKey({ ...identity, saveId: "save_02" });
+
+  assert.match(first, /^[a-f0-9]{64}$/);
+  assert.notEqual(first, second);
+  assert.throws(() => identityKey({ ...identity, playerId: "Player One" }), /opaque identifier/);
+});
+
+test("runtime paths stay outside the repository workspace", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-"));
+  const paths = resolveRuntimePaths(identity, root);
+
+  assert.equal(paths.root, root);
+  assert.match(paths.runtimeCwd, /contexts/);
+  assert.match(paths.agentDir, /pi-agent/);
+  assert.match(paths.sessionDir, /sessions/);
+});
+
+test("Phase 0B exposes only its deterministic Companion test tool", async () => {
+  const tool = companionStatusTool;
+  const result = await tool.execute("test-call", {}, new AbortController().signal, () => {}, {} as never);
+
+  assert.deepEqual(PHASE_0B_ALLOWED_TOOL_NAMES, ["companion_status"]);
+  const firstContent = result.content[0];
+  assert.equal(firstContent?.type, "text");
+  assert.match(firstContent?.type === "text" ? firstContent.text : "", /no game capabilities enabled/);
+});
+
+test("runtime loads only Magic Context and preserves a session partition", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-runtime-"));
+  const runtime = await createCompanionRuntime(identity, root);
+
+  try {
+    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name), ["companion_status"]);
+    assert.equal(runtime.extensions.length, 1);
+    assert.match(runtime.extensions[0] ?? "", /pi-magic-context/);
+
+    const config = JSON.parse(await readFile(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"), "utf8"));
+    assert.equal(config.embedding.provider, "off");
+    assert.equal(config.historian.disable, true);
+    assert.equal(config.dreamer.disable, true);
+    assert.equal(config.memory.enabled, false);
+    await access(join(runtime.paths.runtimeCwd, "data", "cortexkit", "magic-context", "context.db"));
+
+    const sessionFile = runtime.session.sessionFile;
+    assert.match(sessionFile ?? "", /\.jsonl$/);
+    assert.ok(sessionFile);
+    runtime.sessionManager.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "Phase 0B persistence sentinel." }],
+      api: "openai-completions",
+      provider: "test",
+      model: "test-model",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
+    assert.equal((await stat(sessionFile)).isFile(), true);
+    const sessionFiles = await readdir(runtime.paths.sessionDir);
+    assert.equal(sessionFiles.length, 1);
+  } finally {
+    runtime.session.dispose();
+  }
+
+  const resumed = await createCompanionRuntime(identity, root);
+  try {
+    assert.equal(resumed.session.sessionFile, runtime.session.sessionFile);
+    assert.equal(resumed.session.messages.some((message) => JSON.stringify(message).includes("Phase 0B persistence sentinel.")), true);
+    assert.deepEqual(resumed.session.agent.state.tools.map((tool) => tool.name), ["companion_status"]);
+  } finally {
+    resumed.session.dispose();
+  }
+});

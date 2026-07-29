@@ -1,0 +1,10 @@
+{
+  "Name": "GameBuddy",
+  "Author": "GameBuddy contributors",
+  "Version": "0.1.0",
+  "Description": "Phase 0A lifecycle-only scaffold for the GameBuddy Stardew integration.",
+  "UniqueID": "zhexulong.GameBuddy",
+  "EntryDll": "GameBuddy.Stardew.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}

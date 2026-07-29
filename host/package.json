@@ -1,0 +1,23 @@
+{
+  "name": "@gamebuddy/companion-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.13.0 <25"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "test": "node --test dist/**/*.test.js",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cortexkit/pi-magic-context": "0.33.0",
+    "@earendil-works/pi-coding-agent": "0.82.1",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

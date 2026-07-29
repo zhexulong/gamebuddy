@@ -1,0 +1,9 @@
+<Project>
+  <!--
+    Copy this file to %USERPROFILE%\stardewvalley.targets and set GamePath.
+    This local configuration must never be committed because it is machine-specific.
+  -->
+  <PropertyGroup>
+    <GamePath>C:\path\to\Stardew Valley</GamePath>
+  </PropertyGroup>
+</Project>
