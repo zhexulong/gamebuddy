@@ -18,20 +18,25 @@ internal enum ExecutionState
     Uncertain,
 }
 
+/// <summary>Bounded, meaningful-only replay correlation record. It never logs
+/// every tick: route/body facts are recorded on receipt/state transitions.</summary>
 internal sealed record ExecutionTrace(
     long Revision,
     string TimestampUtc,
     string ExecutionId,
     string RequestId,
+    long RouteRevision,
     ExecutionState State,
     string ReasonCode,
+    string? Location,
+    Vector2? ActorTile,
     string? Evidence);
 
 internal sealed record LocalMoveSpec(
     string ExecutionId,
     string RequestId,
     Vector2 TargetTile,
-    long AcceptedRevision,
+    long RouteRevision,
     int DeadlineTick);
 
 internal static class ExecutionStateWire

@@ -50,8 +50,13 @@ internal sealed class ExecutionManager
         if (!IsFiniteTile(targetTile) || targetTile.X < 0 || targetTile.Y < 0 || targetTile.X > 1000 || targetTile.Y > 1000)
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_target_tile", null);
 
+        // A newer accepted directive supersedes the earlier local directive.
+        // The controller is still the sole body owner: it first records a
+        // terminal receipt and halts before the new route may start.
+        if (this.active is not null)
+            this.controller.Cancel("superseded_by_new_directive");
         if (this.active is not null || this.controller.HasActiveExecution)
-            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "body_owned", this.active?.ExecutionId);
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Uncertain, "body_release_unavailable", null);
 
         string executionId = Guid.NewGuid().ToString("N");
         LocalMoveSpec specification = new(executionId, requestId, targetTile, this.revision, this.tick + DefaultDeadlineTicks);
@@ -64,7 +69,7 @@ internal sealed class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, null);
         }
 
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, $"target={FormatTile(targetTile)}");
+        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, $"route_revision={specification.RouteRevision};target={FormatTile(targetTile)}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
@@ -131,7 +136,7 @@ internal sealed class ExecutionManager
     public void Update()
     {
         this.tick++;
-        this.controller.Update(this.revision, this.tick);
+        this.controller.Update(this.tick);
     }
 
     public void InvalidateForLifecycle(string reasonCode)
@@ -235,7 +240,11 @@ internal sealed class ExecutionManager
 
     private void AddTrace(LocalExecutionReceipt receipt)
     {
-        ExecutionTrace entry = new(this.revision, DateTimeOffset.UtcNow.ToString("O"), receipt.ExecutionId, receipt.RequestId, receipt.State, receipt.ReasonCode, receipt.Evidence);
+        LocalMoveSpec? activeSpec = this.active;
+        long routeRevision = activeSpec?.ExecutionId == receipt.ExecutionId ? activeSpec.RouteRevision : receipt.Revision;
+        Farmer player = Game1.player;
+        ExecutionTrace entry = new(this.revision, DateTimeOffset.UtcNow.ToString("O"), receipt.ExecutionId, receipt.RequestId, routeRevision, receipt.State, receipt.ReasonCode,
+            player.currentLocation?.NameOrUniqueName, player.Tile, receipt.Evidence);
         this.trace.Add(entry);
         if (this.trace.Count > MaximumRememberedReceipts)
             this.trace.RemoveAt(0);

@@ -2,7 +2,7 @@
 
 This is a **Phase 1/2 client-local Embodiment and bridge spike**. It binds only the real native `Game1.player` owned by the Stardew process which loaded the Mod. It never constructs a `Farmer`, mutates `Game1.otherFarmers`, controls a remote player, exposes a network listener, teleports the actor, or claims a shadow actor is a Farmhand.
 
-The included `StardewBodyController` is a deliberately narrow local movement fixture. It accepts only a bounded target tile from `ExecutionManager`, maintains single movement ownership, records accepted/running/progress/blocked/terminal traces, is cancellable locally, and stops on menu/event/movement-lock/deadline conditions. It is not pathfinding, an Agent, or a player-facing Game Action surface.
+The included `StardewBodyController` is a deliberately narrow local movement fixture. It accepts a bounded target tile from `ExecutionManager`, maintains single movement ownership, atomically invalidates a superseded directive before starting a replacement, records accepted/running/progress/blocked/terminal traces with route revision and local actor evidence, is cancellable locally, and stops on menu/event/movement-lock/deadline conditions. A stall gets exactly one alternate-axis local recovery attempt before a factual terminal failure. It is not general pathfinding, an Agent, or a player-facing Game Action surface.
 
 For Phase 1 native-mechanics evidence, the local-only `gamebuddy_equip_tool_fixture <inventory-slot> <request-id>` fixture selects a Tool already owned by this Farmhand. It does not consume an item, stamina, time, or world resource; its receipt records the selected slot and authoritative before/after `CurrentTool`. It remains a development fixture—not an Agent-facing capability—until native multiplayer and action-level policy gates have passed.
 
@@ -41,4 +41,4 @@ gamebuddy_equip_tool_fixture <tool-slot> phase1_equip_01
 gamebuddy_cancel
 ```
 
-Capture the AI-client log showing `bound only local Game1.player`, the Farmhand multiplayer ID, execution trace, and matching host-visible result. This manual evidence is required before declaring Phase 1 accepted; a single-client compile/smoke, a shadow `Farmer`, or a bridge fixture is not a substitute.
+Capture the AI-client log showing `bound only local Game1.player`, the Farmhand multiplayer ID, directive/route/body execution trace, and matching host-visible result. Exercise replacement, bounded blockage recovery, menu/warp invalidation, saving/cutover, reconnect, and the native tool fixture in the dedicated test save. This manual evidence is required before declaring Phase 1 accepted; a single-client compile/smoke, a shadow `Farmer`, or a bridge fixture is not a substitute.

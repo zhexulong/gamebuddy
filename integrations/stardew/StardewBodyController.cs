@@ -15,6 +15,7 @@ internal sealed class StardewBodyController
     private Vector2 lastTile;
     private int lastProgressTick;
     private int blockedTicks;
+    private bool recoveryAttempted;
     private bool hasEmittedRunning;
 
     public StardewBodyController(Action<ExecutionState, string, string?> transition)
@@ -44,6 +45,7 @@ internal sealed class StardewBodyController
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
         this.blockedTicks = 0;
+        this.recoveryAttempted = false;
         this.hasEmittedRunning = false;
         reasonCode = "accepted";
         return true;
@@ -53,7 +55,7 @@ internal sealed class StardewBodyController
 
     public void Invalidate(string reasonCode) => this.Stop(ExecutionState.Invalidated, reasonCode, "lifecycle_or_world_change");
 
-    public void Update(long revision, int tick)
+    public void Update(int tick)
     {
         LocalMoveSpec? specification = this.active;
         if (specification is null)
@@ -87,7 +89,10 @@ internal sealed class StardewBodyController
             return;
         }
 
-        int direction = DirectionToward(currentTile, specification.TargetTile);
+        // This controller owns no planner: it attempts only the next local
+        // cardinal segment. After one bounded stall it tries the alternate
+        // axis once, then emits a factual terminal failure rather than wander.
+        int direction = DirectionToward(currentTile, specification.TargetTile, this.recoveryAttempted);
         SetMovement(localPlayer, direction);
 
         if (currentTile != this.lastTile)
@@ -105,11 +110,12 @@ internal sealed class StardewBodyController
             this.lastProgressTick = tick;
             if (this.blockedTicks >= 2)
             {
-                this.Fail("locally_blocked", $"no tile progress toward {FormatTile(specification.TargetTile)}");
+                this.Fail("locally_blocked", $"no tile progress after bounded recovery; tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)}");
                 return;
             }
 
-            this.transition(ExecutionState.Blocked, "locally_blocked_retrying", $"tile={FormatTile(currentTile)}");
+            this.recoveryAttempted = true;
+            this.transition(ExecutionState.Blocked, "locally_blocked_recovering", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};strategy=alternate_axis_once");
         }
     }
 
@@ -125,17 +131,22 @@ internal sealed class StardewBodyController
         Game1.player.Halt();
         this.transition(state, reasonCode, evidence);
         this.active = null;
+        this.recoveryAttempted = false;
         this.hasEmittedRunning = false;
     }
 
-    private static int DirectionToward(Vector2 from, Vector2 to)
+    private static int DirectionToward(Vector2 from, Vector2 to, bool preferAlternateAxis)
     {
         float horizontal = to.X - from.X;
         float vertical = to.Y - from.Y;
-        if (Math.Abs(horizontal) >= Math.Abs(vertical))
+        bool horizontalFirst = Math.Abs(horizontal) >= Math.Abs(vertical);
+        if (preferAlternateAxis)
+            horizontalFirst = !horizontalFirst;
+        if (horizontalFirst && Math.Abs(horizontal) > 0.01f)
             return horizontal >= 0 ? Game1.right : Game1.left;
-
-        return vertical >= 0 ? Game1.down : Game1.up;
+        if (Math.Abs(vertical) > 0.01f)
+            return vertical >= 0 ? Game1.down : Game1.up;
+        return horizontal >= 0 ? Game1.right : Game1.left;
     }
 
     private static void SetMovement(Farmer player, int direction)
