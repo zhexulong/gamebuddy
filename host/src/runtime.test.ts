@@ -53,13 +53,14 @@ test("runtime loads only Magic Context and preserves a session partition", async
   const runtime = await createCompanionRuntime(identity, root);
 
   try {
-    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name), ["companion_status"]);
+    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "todowrite"]);
     assert.equal(runtime.extensions.length, 1);
     assert.match(runtime.extensions[0] ?? "", /pi-magic-context/);
 
     const config = JSON.parse(await readFile(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"), "utf8"));
     assert.equal(config.embedding.provider, "off");
-    assert.equal(config.historian.disable, true);
+    assert.deepEqual(config.historian.disallowed_tools, ["*"]);
+    assert.deepEqual(config.todowrite, { enabled: true, overlay: false });
     assert.equal(config.dreamer.disable, true);
     assert.equal(config.memory.enabled, false);
     await access(join(runtime.paths.runtimeCwd, "data", "cortexkit", "magic-context", "context.db"));
@@ -88,7 +89,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
   try {
     assert.equal(resumed.session.sessionFile, runtime.session.sessionFile);
     assert.equal(resumed.session.messages.some((message) => JSON.stringify(message).includes("Phase 0B persistence sentinel.")), true);
-    assert.deepEqual(resumed.session.agent.state.tools.map((tool) => tool.name), ["companion_status"]);
+    assert.deepEqual(resumed.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "todowrite"]);
   } finally {
     resumed.session.dispose();
   }

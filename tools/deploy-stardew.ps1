@@ -26,4 +26,4 @@ New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Get-ChildItem -LiteralPath $destination -Force | Remove-Item -Recurse -Force
 Copy-Item -Path (Join-Path $source "*") -Destination $destination -Recurse -Force
 
-Write-Host "Deployed the lifecycle-only GameBuddy scaffold to $destination"
+Write-Host "Deployed the client-local GameBuddy embodiment fixture to $destination"

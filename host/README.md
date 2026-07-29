@@ -15,8 +15,8 @@ The exact resolved tarball integrity and all transitive packages are in the comm
 
 `src/runtime.ts` creates an SDK session with all of these controls:
 
-- `noTools: "all"` plus an explicit `tools: ["companion_status"]` allowlist;
-- a single deterministic, side-effect-free `companion_status` fixture tool;
+- `noTools: "all"` plus an explicit `tools: ["companion_status", "todowrite"]` allowlist;
+- a single deterministic, side-effect-free `companion_status` fixture tool plus Magic Context's local `todowrite`;
 - `DefaultResourceLoader` with built-in/project/global extension discovery, skills, prompts, themes, context files, and coding prompts disabled;
 - exactly one pinned Magic Context extension loaded by its resolved package entry;
 - an opaque SHA-256 key made from `{playerId, saveId, worldId, companionId}`; display names are never identity inputs;

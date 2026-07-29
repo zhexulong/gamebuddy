@@ -2,7 +2,7 @@
   "Name": "GameBuddy",
   "Author": "GameBuddy contributors",
   "Version": "0.1.0",
-  "Description": "Phase 0A lifecycle-only scaffold for the GameBuddy Stardew integration.",
+  "Description": "Client-local Farmhand embodiment spike with no remote-player control.",
   "UniqueID": "zhexulong.GameBuddy",
   "EntryDll": "GameBuddy.Stardew.dll",
   "MinimumApiVersion": "4.0.0",

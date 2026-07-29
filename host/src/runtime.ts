@@ -111,11 +111,11 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     JSON.stringify({
       enabled: true,
       embedding: { provider: "off" },
-      historian: { disable: true },
+      historian: { disallowed_tools: ["*"] },
       dreamer: { disable: true, inject_docs: false },
       sidekick: { disable: true },
       memory: { enabled: false, auto_promote: false, auto_search: { enabled: false } },
-      todowrite: { enabled: false, overlay: false },
+      todowrite: { enabled: true, overlay: false },
       smart_drops: false,
       temporal_awareness: false,
     }, null, 2),
@@ -168,13 +168,13 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     settingsManager: settings,
     sessionManager,
     noTools: "all",
-    tools: [...PHASE_0B_ALLOWED_TOOL_NAMES],
+    tools: [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"],
     customTools: [companionStatusTool],
     thinkingLevel: "off",
   });
 
   const activeTools = session.agent.state.tools.map((tool) => tool.name).sort();
-  const expectedTools = [...PHASE_0B_ALLOWED_TOOL_NAMES].sort();
+  const expectedTools = [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort();
   if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
     session.dispose();
     throw new Error(`Phase 0B tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`);
