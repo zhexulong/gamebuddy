@@ -49,7 +49,9 @@ export type Snapshot = Readonly<{
   activeExecution: ActiveExecution | null;
 }>;
 
-export type ActionGrant = Readonly<{ token: string; action: "move_to_tile"; expiresAtMs: number; nonce: string }>;
+/** One-shot, locally player-approved execution capability. The target binding
+ * prevents a bridge credential from becoming general movement authority. */
+export type ActionGrant = Readonly<{ token: string; action: "move_to_tile"; expiresAtMs: number; nonce: string; targetX: number; targetY: number }>;
 
 export type ExecutionRequest = Readonly<{
   requestId: string;
@@ -80,6 +82,7 @@ export type SemanticEvent = Readonly<{
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
   | Envelope<"hello_ack", Readonly<{ sessionId: string; capabilities: readonly string[]; actionGrants: readonly ActionGrant[] }>>
+  | Envelope<"action_grant", ActionGrant>
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"snapshot", Snapshot>
   | Envelope<"execution_request", ExecutionRequest>
@@ -90,7 +93,7 @@ export type BridgeMessage =
   | Envelope<"lifecycle", Readonly<{ state: "connected" | "disconnected" | "world_unavailable"; reasonCode: string }>>;
 
 export const BRIDGE_MESSAGE_TYPES = [
-  "hello", "hello_ack", "observe_request", "snapshot", "execution_request",
+  "hello", "hello_ack", "action_grant", "observe_request", "snapshot", "execution_request",
   "cancel_request", "execution_receipt", "error", "semantic_event", "lifecycle",
 ] as const;
 
@@ -131,6 +134,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   switch (message.type) {
     case "hello": return validToken(payload.token) ? null : "invalid_hello_token";
     case "hello_ack": return isOpaqueId(payload.sessionId) && isStringArray(payload.capabilities) && validActionGrants(payload.actionGrants, payload.capabilities, nowMs) ? null : "invalid_hello_ack";
+    case "action_grant": return validActionGrants([payload], [payload.action], nowMs) ? null : "invalid_action_grant";
     case "observe_request": return Object.keys(payload).length === 0 ? null : "invalid_observe_request";
     case "snapshot": return validateSnapshot(payload);
     case "execution_request": return validateExecutionRequestEnvelope(payload);
@@ -189,7 +193,9 @@ function validActionGrants(value: unknown, capabilities: unknown, nowMs: number)
   return value.every((grant) => {
     if (!isRecord(grant) || !validToken(grant.token) || grant.action !== "move_to_tile" || !capabilities.includes(grant.action)
       || typeof grant.expiresAtMs !== "number" || !Number.isFinite(grant.expiresAtMs) || grant.expiresAtMs <= nowMs || grant.expiresAtMs > nowMs + 60_000
-      || !isOpaqueId(grant.nonce) || tokens.has(grant.token) || nonces.has(grant.nonce)) return false;
+      || !isOpaqueId(grant.nonce) || !isFiniteNumber(grant.targetX) || !isFiniteNumber(grant.targetY)
+      || grant.targetX < 0 || grant.targetY < 0 || grant.targetX > 1000 || grant.targetY > 1000
+      || tokens.has(grant.token) || nonces.has(grant.nonce)) return false;
     tokens.add(grant.token); nonces.add(grant.nonce); return true;
   });
 }

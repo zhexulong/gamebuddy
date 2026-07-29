@@ -6,11 +6,13 @@ namespace GameBuddy.Stardew;
 internal sealed class BridgeSession
 {
     private const int MaximumRememberedIdempotencyKeys = 256;
+    private const int MaximumOutstandingActionGrants = 8;
     private readonly ExecutionManager executions;
     private readonly BridgeScope scope;
     private readonly string token;
     private readonly Dictionary<string, IdempotentExecution> idempotency = new(StringComparer.Ordinal);
     private readonly Queue<string> idempotencyOrder = new();
+    private readonly Dictionary<string, BridgeActionGrant> actionGrants = new(StringComparer.Ordinal);
     private long authenticatedGeneration = -1;
 
     internal BridgeSession(ExecutionManager executions, BridgeScope scope, string token)
@@ -34,11 +36,17 @@ internal sealed class BridgeSession
             reasonCode = "already_authenticated";
             return false;
         }
+        // A new transport generation cannot inherit a prior connection's
+        // player approval, even if it possesses the bridge credential.
+        this.actionGrants.Clear();
         this.authenticatedGeneration = generation;
         // Authentication opens only this local transport. It does not mint
         // Game Action authority; approval must come from a separate local
         // player-policy boundary before an action can be exposed.
-        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(Guid.NewGuid().ToString("N"), new[] { "inspect_self" }, Array.Empty<BridgeActionGrant>()));
+        // Capability declares a mechanically verified action surface; it is not
+        // authority. No execution is accepted until a separate local policy
+        // boundary mints a one-shot, target-bound approval grant.
+        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(Guid.NewGuid().ToString("N"), new[] { "move_to_tile", "inspect_self" }, Array.Empty<BridgeActionGrant>()));
         reasonCode = "accepted";
         return true;
     }
@@ -71,10 +79,13 @@ internal sealed class BridgeSession
             return true;
         }
         if (!IsFreshExecutionRequest(request, out reasonCode)) return false;
-        // A production approval boundary has not exposed move_to_tile yet.
-        // Fail closed rather than treating a bridge credential as player consent.
-        reasonCode = "action_not_player_approved";
-        return false;
+        if (!TryConsumeActionGrant(request, out reasonCode)) return false;
+
+        LocalExecutionReceipt receipt = this.executions.RequestLocalMove(request.RequestId, new Microsoft.Xna.Framework.Vector2(request.Args.X!.Value, request.Args.Y!.Value));
+        this.RememberIdempotency(request.IdempotencyKey, fingerprint, request.RequestId);
+        response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(receipt));
+        reasonCode = "accepted";
+        return true;
     }
 
     /// <summary>Publishes a Mod-authoritative receipt only to the current authenticated pipe generation.</summary>
@@ -84,6 +95,32 @@ internal sealed class BridgeSession
         if (this.authenticatedGeneration != generation)
             return false;
         return BridgeProtocol.TrySerialize(Reply("execution_receipt", receipt.RequestId, ToBridgeReceipt(receipt)), out json, out _);
+    }
+
+    internal bool TryCreateActionGrantEvent(long generation, BridgeActionGrant grant, out string json)
+    {
+        json = string.Empty;
+        if (this.authenticatedGeneration != generation)
+            return false;
+        return BridgeProtocol.TrySerialize(Reply("action_grant", grant.Nonce, grant), out json, out _);
+    }
+
+    internal bool TryCreateSemanticEvent(long generation, string kind, string correlationId, string reasonCode, out string json)
+    {
+        json = string.Empty;
+        if (this.authenticatedGeneration != generation || !BridgeProtocol.IsOpaqueId(correlationId) || !BridgeProtocol.IsReasonCode(reasonCode))
+            return false;
+        BridgeActiveExecution? active = this.executions.CreateBridgeSnapshot().ActiveExecution;
+        return BridgeProtocol.TrySerialize(Reply("semantic_event", correlationId, new BridgeSemanticEvent(kind, this.executions.Revision, active, reasonCode)), out json, out _);
+    }
+
+    internal bool TryCreateLifecycleEvent(long generation, string state, string correlationId, string reasonCode, out string json)
+    {
+        json = string.Empty;
+        if (this.authenticatedGeneration != generation || !BridgeProtocol.IsOpaqueId(correlationId) || !BridgeProtocol.IsReasonCode(reasonCode)
+            || state is not ("connected" or "disconnected" or "world_unavailable"))
+            return false;
+        return BridgeProtocol.TrySerialize(Reply("lifecycle", correlationId, new BridgeLifecycle(state, reasonCode)), out json, out _);
     }
 
     internal bool TryCancel(long generation, BridgeEnvelope<BridgeCancelRequest>? envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
@@ -116,6 +153,46 @@ internal sealed class BridgeSession
         { reasonCode = "invalid_execution_request"; return false; }
         reasonCode = "accepted";
         return true;
+    }
+
+    /// <summary>
+    /// Called only by a local player-policy/UI boundary on the game thread.
+    /// Transport authentication never calls this method, and grants are
+    /// target-specific, short-lived, one-shot capabilities.
+    /// </summary>
+    internal bool TryApproveMoveToTile(long generation, float targetX, float targetY, out BridgeActionGrant? grant, out string reasonCode)
+    {
+        grant = null;
+        if (!IsAuthenticated(generation, out reasonCode)) return false;
+        if (!float.IsFinite(targetX) || !float.IsFinite(targetY) || targetX < 0 || targetY < 0 || targetX > 1000 || targetY > 1000)
+        { reasonCode = "invalid_target_tile"; return false; }
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        this.PruneExpiredActionGrants(nowMs);
+        if (this.actionGrants.Count >= MaximumOutstandingActionGrants)
+        { reasonCode = "too_many_outstanding_approvals"; return false; }
+        long expiresAtMs = nowMs + 30_000;
+        grant = new BridgeActionGrant(Guid.NewGuid().ToString("N"), "move_to_tile", expiresAtMs, Guid.NewGuid().ToString("N"), targetX, targetY);
+        this.actionGrants[grant.Token] = grant;
+        reasonCode = "approved";
+        return true;
+    }
+
+    private bool TryConsumeActionGrant(BridgeExecutionRequest request, out string reasonCode)
+    {
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        this.PruneExpiredActionGrants(nowMs);
+        if (!this.actionGrants.Remove(request.PermissionToken, out BridgeActionGrant? grant)
+            || grant.Action != request.Action || grant.ExpiresAtMs < nowMs
+            || !request.Args.X.HasValue || !request.Args.Y.HasValue || grant.TargetX != request.Args.X.Value || grant.TargetY != request.Args.Y.Value)
+        { reasonCode = "action_not_player_approved"; return false; }
+        reasonCode = "accepted";
+        return true;
+    }
+
+    private void PruneExpiredActionGrants(long nowMs)
+    {
+        foreach (string token in this.actionGrants.Where(entry => entry.Value.ExpiresAtMs < nowMs).Select(entry => entry.Key).ToArray())
+            this.actionGrants.Remove(token);
     }
 
     private bool IsFreshExecutionRequest(BridgeExecutionRequest request, out string reasonCode)
@@ -166,7 +243,8 @@ internal sealed class BridgeSession
 
 internal sealed record IdempotentExecution(string Fingerprint, string RequestId);
 internal sealed record BridgeHello(string Token);
-internal sealed record BridgeActionGrant(string Token, string Action, long ExpiresAtMs, string Nonce);
+internal sealed record BridgeActionGrant(string Token, string Action, long ExpiresAtMs, string Nonce, float TargetX, float TargetY);
 internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, IReadOnlyList<BridgeActionGrant> ActionGrants);
 internal sealed record BridgeObserveRequest();
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string ReasonCode);
+internal sealed record BridgeLifecycle(string State, string ReasonCode);

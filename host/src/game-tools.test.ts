@@ -35,7 +35,7 @@ test("the only mounted Game Action validates a fresh snapshot and returns the Mo
   const integration: MoveCapableIntegration = {
     scope,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["move_to_tile"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["move_to_tile"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
-    nextMoveGrant() { return "a".repeat(16); },
+    nextMoveGrant(target) { return target.x === 3 && target.y === 4 ? "a".repeat(16) : null; },
     async execute(request) { assert.equal(request.expectedRevision, 3); assert.equal(request.action, "move_to_tile"); return receipt; },
     async cancel() { return receipt; },
   };

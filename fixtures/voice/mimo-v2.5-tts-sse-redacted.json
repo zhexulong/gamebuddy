@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "capturedAt": "2026-07-29T20:53:02.498Z",
+  "capturedAt": "2026-07-29T22:14:01.343Z",
   "provider": "xiaomi-mimo",
   "endpoint": "https://api.xiaomimimo.com/v1/chat/completions",
   "request": {

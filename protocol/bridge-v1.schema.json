@@ -19,7 +19,7 @@
         "companionId": { "$ref": "#/$defs/opaqueId" }
       }
     },
-    "type": { "enum": ["hello", "hello_ack", "observe_request", "snapshot", "execution_request", "cancel_request", "execution_receipt", "error", "semantic_event", "lifecycle"] },
+    "type": { "enum": ["hello", "hello_ack", "action_grant", "observe_request", "snapshot", "execution_request", "cancel_request", "execution_receipt", "error", "semantic_event", "lifecycle"] },
     "payload": { "type": "object" }
   },
   "$defs": { "opaqueId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" } }

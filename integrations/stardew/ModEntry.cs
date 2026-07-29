@@ -31,6 +31,7 @@ public sealed class ModEntry : Mod
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the local native-player binding and authoritative snapshot.", this.StatusCommand);
         helper.ConsoleCommands.Add("gamebuddy_move_fixture", "Phase 1 local-only movement fixture: gamebuddy_move_fixture <tile-x> <tile-y> <request-id>.", this.MoveFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_equip_tool_fixture", "Phase 1 local-only native mechanic fixture: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>.", this.EquipToolFixtureCommand);
+        helper.ConsoleCommands.Add("gamebuddy_approve_move_fixture", "Local player-policy fixture: approve exactly one bridge move target: gamebuddy_approve_move_fixture <tile-x> <tile-y>.", this.ApproveMoveFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_cancel", "Cancel the active local GameBuddy execution.", this.CancelCommand);
 
         this.Monitor.Log("GameBuddy embodiment loaded; no remote Farmer construction or host-side control is available.", LogLevel.Info);
@@ -76,19 +77,31 @@ public sealed class ModEntry : Mod
         this.executions?.Update();
     }
 
-    private void OnDayStarted(object? sender, DayStartedEventArgs e) => this.executions?.InvalidateForLifecycle("day_started");
+    private void OnDayStarted(object? sender, DayStartedEventArgs e)
+    {
+        this.executions?.InvalidateForLifecycle("day_started");
+        this.PublishLifecycle("connected", "day_started");
+    }
 
     private void OnWarped(object? sender, WarpedEventArgs e)
     {
         if (Context.IsWorldReady && e.Player.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID)
+        {
             this.executions?.InvalidateForLifecycle("warped");
+            this.PublishSemantic("snapshot_changed", "warped");
+        }
     }
 
-    private void OnSaving(object? sender, SavingEventArgs e) => this.executions?.InvalidateForLifecycle("saving");
+    private void OnSaving(object? sender, SavingEventArgs e)
+    {
+        this.executions?.InvalidateForLifecycle("saving");
+        this.PublishLifecycle("world_unavailable", "saving");
+    }
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
         this.executions?.InvalidateForLifecycle("returned_to_title");
+        this.PublishLifecycle("world_unavailable", "returned_to_title");
         this.localPipeBridge?.Dispose();
         this.localPipeBridge = null;
         this.bridgeSession = null;
@@ -132,6 +145,30 @@ public sealed class ModEntry : Mod
 
         LocalExecutionReceipt receipt = this.executions!.RequestLocalEquipTool(args[1], slot);
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
+    }
+
+    private void ApproveMoveFixtureCommand(string command, string[] args)
+    {
+        if (!RequireWorld())
+            return;
+        if (args.Length != 2 || !float.TryParse(args[0], out float x) || !float.TryParse(args[1], out float y))
+        {
+            this.Monitor.Log("Usage: gamebuddy_approve_move_fixture <tile-x> <tile-y>.", LogLevel.Warn);
+            return;
+        }
+        long generation = this.localPipeBridge?.CurrentGeneration ?? 0;
+        string reasonCode = "bridge_unavailable";
+        if (generation == 0 || this.bridgeSession is null || !this.bridgeSession.TryApproveMoveToTile(generation, x, y, out BridgeActionGrant? grant, out reasonCode) || grant is null)
+        {
+            this.Monitor.Log($"GameBuddy move approval refused: {reasonCode ?? "bridge_unavailable"}.", LogLevel.Warn);
+            return;
+        }
+        if (!this.bridgeSession.TryCreateActionGrantEvent(generation, grant, out string json) || !this.localPipeBridge!.TryEnqueueOutbound(generation, json))
+        {
+            this.Monitor.Log("GameBuddy move approval was not delivered because the local bridge closed/backpressured.", LogLevel.Warn);
+            return;
+        }
+        this.Monitor.Log($"GameBuddy approved one local bridge move target={x:0.##},{y:0.##}; grant expires in 30 seconds.", LogLevel.Info);
     }
 
     private void CancelCommand(string command, string[] args)
@@ -194,6 +231,28 @@ public sealed class ModEntry : Mod
         if (generation != 0 && this.bridgeSession.TryCreateReceiptEvent(generation, receipt, out string json)
             && !this.localPipeBridge.TryEnqueueOutbound(generation, json))
             this.Monitor.Log("GameBuddy dropped receipt event due to closed/backpressured bridge.", LogLevel.Warn);
+    }
+
+    private void PublishSemantic(string kind, string reasonCode)
+    {
+        if (this.localPipeBridge is null || this.bridgeSession is null)
+            return;
+        long generation = this.localPipeBridge.CurrentGeneration;
+        string correlationId = Guid.NewGuid().ToString("N");
+        if (generation != 0 && this.bridgeSession.TryCreateSemanticEvent(generation, kind, correlationId, reasonCode, out string json)
+            && !this.localPipeBridge.TryEnqueueOutbound(generation, json))
+            this.Monitor.Log("GameBuddy dropped semantic event due to closed/backpressured bridge.", LogLevel.Warn);
+    }
+
+    private void PublishLifecycle(string state, string reasonCode)
+    {
+        if (this.localPipeBridge is null || this.bridgeSession is null)
+            return;
+        long generation = this.localPipeBridge.CurrentGeneration;
+        string correlationId = Guid.NewGuid().ToString("N");
+        if (generation != 0 && this.bridgeSession.TryCreateLifecycleEvent(generation, state, correlationId, reasonCode, out string json)
+            && !this.localPipeBridge.TryEnqueueOutbound(generation, json))
+            this.Monitor.Log("GameBuddy dropped lifecycle event due to closed/backpressured bridge.", LogLevel.Warn);
     }
 
     private string? SerializeError(string? correlationId, string reasonCode) => BridgeProtocol.TrySerialize(this.bridgeSession!.CreateError(correlationId, reasonCode), out string json, out _) ? json : null;

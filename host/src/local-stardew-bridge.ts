@@ -13,6 +13,7 @@ import {
 } from "./protocol.js";
 
 export type LocalStardewBridgeState = CompanionIntegrationState & Readonly<{ authenticated: boolean; actionGrants: readonly ActionGrant[] }>;
+const MAX_ACTION_GRANTS = 8;
 
 /**
  * Production Windows-local bridge adapter. It owns only pipe/session facts and
@@ -71,10 +72,13 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     return response.payload;
   }
 
-  /** Select one fresh Mod-issued move grant; the Agent never receives token material. */
-  public nextMoveGrant(): string | null {
+  /** Select a fresh Mod-issued grant only for its exact player-approved target.
+   * The Agent-facing Game Action never receives the raw token material. */
+  public nextMoveGrant(target: Readonly<{ x: number; y: number }>): string | null {
     const now = Date.now();
-    const grant = this.#actionGrants.find((candidate) => candidate.action === "move_to_tile" && candidate.expiresAtMs > now);
+    this.pruneActionGrants(now);
+    const grant = this.#actionGrants.find((candidate) => candidate.action === "move_to_tile" && candidate.expiresAtMs > now
+      && candidate.targetX === target.x && candidate.targetY === target.y);
     return grant?.token ?? null;
   }
 
@@ -147,6 +151,16 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       this.#capabilities = [...message.payload.capabilities];
       this.#actionGrants = [...message.payload.actionGrants];
       this.#latestReasonCode = null;
+    } else if (message.type === "action_grant") {
+      // A local player-policy boundary minted this one target-specific grant.
+      // It is not a transport credential and is consumed after one request.
+      this.pruneActionGrants(Date.now());
+      const withoutSameNonce = this.#actionGrants.filter((grant) => grant.nonce !== message.payload.nonce);
+      if (withoutSameNonce.length >= MAX_ACTION_GRANTS) {
+        this.transport.close("action_grant_limit_exceeded");
+        return;
+      }
+      this.#actionGrants = [...withoutSameNonce, message.payload];
     } else if (message.type === "snapshot") this.#snapshot = message.payload;
     else if (message.type === "execution_receipt") this.#latestReceipt = message.payload;
     else this.#latestReasonCode = message.payload.reasonCode;
@@ -156,6 +170,10 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       this.#pending.delete(message.correlationId);
       pending(message);
     }
+  }
+
+  private pruneActionGrants(now: number): void {
+    this.#actionGrants = this.#actionGrants.filter((grant) => grant.expiresAtMs > now);
   }
 
   private requireAuthenticated(): void {

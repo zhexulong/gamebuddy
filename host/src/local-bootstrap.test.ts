@@ -43,9 +43,9 @@ test("local bootstrap requires a Mod snapshot before mounting only verified tool
     const connected = await connectLocalCompanion({ identity, pipeName, bridgeToken: "bootstrap_token_1234", runtimeRoot: root });
     try {
       assert.equal(connected.bridge.state.snapshot?.revision, 1);
-      // Empty action grants mean the Mod has not granted player policy approval;
-      // observation remains available but no Game Action surface is mounted.
-      assert.deepEqual(connected.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_execution_status", "stardew_observe", "todowrite"]);
+      // Capability exposure is distinct from authority. The mounted action must
+      // still fail closed until the Mod sends a fresh, target-bound grant.
+      assert.deepEqual(connected.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_execution_status", "stardew_move_to_tile", "stardew_observe", "todowrite"]);
     } finally { disconnectLocalCompanion(connected); }
   } finally {
     peer?.destroy();

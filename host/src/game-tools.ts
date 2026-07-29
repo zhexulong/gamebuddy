@@ -7,7 +7,7 @@ import { type ExecutionReceipt, type ExecutionRequest, validateExecutionRequest 
 /** A bridge that can execute the one currently verified capability. */
 export interface MoveCapableIntegration extends CompanionIntegration {
   /** Host-owned selection prevents the Agent from minting or choosing grants. */
-  nextMoveGrant(): string | null;
+  nextMoveGrant(target: Readonly<{ x: number; y: number }>): string | null;
   execute(request: ExecutionRequest): Promise<ExecutionReceipt>;
   cancel(requestId: string, executionId: string, reasonCode: string): Promise<ExecutionReceipt>;
 }
@@ -45,7 +45,7 @@ export function createStardewObservationTools(integration: CompanionIntegration)
 export function createStardewActionTools(integration: CompanionIntegration) {
   // Capability declaration is Mod authority. A transport implementation alone
   // must never cause an unapproved Game Action to appear to the Agent.
-  if (!isMoveCapable(integration) || !integration.state.capabilities.includes("move_to_tile") || integration.nextMoveGrant() === null) return [] as const;
+  if (!isMoveCapable(integration) || !integration.state.capabilities.includes("move_to_tile")) return [] as const;
   const move = defineTool({
     name: "stardew_move_to_tile", label: "Move Farmhand to Tile",
     description: "Request the verified move_to_tile capability. Inspect its authoritative receipt before saying the movement succeeded.",
@@ -53,7 +53,7 @@ export function createStardewActionTools(integration: CompanionIntegration) {
     execute: async (_toolCallId, params) => {
       const snapshot = integration.state.snapshot;
       if (!integration.state.connected || snapshot === null) return receiptResult(null, "integration_not_ready");
-      const permissionToken = integration.nextMoveGrant();
+      const permissionToken = integration.nextMoveGrant({ x: params.x, y: params.y });
       if (permissionToken === null) return receiptResult(null, "no_fresh_permission_grant");
       const request: ExecutionRequest = { requestId: params.requestId ?? randomUUID(), idempotencyKey: params.idempotencyKey ?? randomUUID(), action: "move_to_tile", args: { x: params.x, y: params.y }, expectedRevision: snapshot.revision, deadlineMs: Date.now() + 30_000, permissionToken };
       const invalid = validateExecutionRequest(request, snapshot);
