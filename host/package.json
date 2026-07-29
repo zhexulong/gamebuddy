@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
+    "start": "node dist/main.js",
     "test": "node --test dist/**/*.test.js",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },

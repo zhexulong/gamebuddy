@@ -19,6 +19,14 @@ const snapshot: Snapshot = {
 };
 const now = 1_700_000_000_000;
 
+test("hello acknowledgement requires bounded action grants", () => {
+  const valid = newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: [{ token: "permission_token_1234", action: "move_to_tile" as const, expiresAtMs: now + 1_000, nonce: "nonce_01" }] }, "hello_01", now);
+  assert.equal(validateBridgeMessage(valid, scope, now), null);
+  assert.equal(validateBridgeMessage(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: [], actionGrants: [{ token: "short", action: "move_to_tile" as const, expiresAtMs: now, nonce: "nonce_01" }] }, "hello_02", now), scope, now), "invalid_hello_ack");
+  assert.equal(validateBridgeMessage(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: Array.from({ length: 9 }, (_, index) => ({ token: `permission_token_${index.toString().padStart(2, "0")}`, action: "move_to_tile" as const, expiresAtMs: now + 1_000, nonce: `nonce_${index}` })) }, "hello_03", now), scope, now), "invalid_hello_ack");
+  assert.equal(validateBridgeMessage(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: [{ token: "permission_token_1234", action: "move_to_tile" as const, expiresAtMs: now + 60_001, nonce: "nonce_01" }] }, "hello_04", now), scope, now), "invalid_hello_ack");
+});
+
 test("protocol envelope rejects mismatched identity, version, stale timestamps, and unknown types", () => {
   const valid = newEnvelope("observe_request", scope, {}, "correlation_01", now);
   assert.equal(validateEnvelope(valid, scope, now), null);
@@ -41,6 +49,9 @@ test("bridge message payloads fail closed", () => {
   assert.equal(validateBridgeMessage({ ...receipt, payload: { ...receipt.payload, state: "made_up" } }, scope, now), "invalid_receipt");
   const malformedSnapshot = newEnvelope("snapshot", scope, { revision: 1, location: "Farm", tile: { x: Number.NaN, y: 1 }, stamina: 1, health: 1, actionable: true, capabilities: [], activeExecution: null }, "snapshot_01", now);
   assert.equal(validateBridgeMessage(malformedSnapshot, scope, now), "invalid_snapshot");
+  const badActive = newEnvelope("snapshot", scope, { ...snapshot, activeExecution: { executionId: "execution_01", requestId: "request_01", action: "move_to_tile", state: "made_up", reasonCode: "bad", evidence: null } }, "snapshot_02", now);
+  assert.equal(validateBridgeMessage(badActive, scope, now), "invalid_snapshot");
+  assert.equal(validateBridgeMessage(newEnvelope("error", scope, { reasonCode: "authentication_failed" }, "error_01", now), scope, now), null);
 });
 
 test("execution validation fails closed for stale, unknown, malformed, and unactionable requests", () => {

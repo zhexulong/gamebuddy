@@ -7,14 +7,15 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   defineTool,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { createStardewObservationTools } from "./game-tools.js";
-import { type CompanionIntegrationClient } from "./integration.js";
+import { createStardewActionTools, createStardewObservationTools } from "./game-tools.js";
+import { type CompanionIntegration } from "./integration-types.js";
 
 export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
   pi: "0.82.1",
@@ -50,6 +51,11 @@ export type RuntimePaths = Readonly<{
   runtimeCwd: string;
   agentDir: string;
   sessionDir: string;
+}>;
+
+export type CompanionModelConfig = Readonly<{
+  provider: "xiaomi-mimo";
+  modelId: "mimo-v2.5" | "mimo-v2.5-pro";
 }>;
 
 export type RuntimeSession = Readonly<{
@@ -97,7 +103,7 @@ export function resolveRuntimePaths(identity: CompanionIdentity, root = join(hom
  * pinned Magic Context extension can load; built-ins, project/user extensions,
  * skills, templates, context files, and coding prompts are excluded.
  */
-export async function createCompanionRuntime(identity: CompanionIdentity, root?: string, integration?: CompanionIntegrationClient): Promise<RuntimeSession> {
+export async function createCompanionRuntime(identity: CompanionIdentity, root?: string, integration?: CompanionIntegration, modelConfig?: CompanionModelConfig): Promise<RuntimeSession> {
   if (integration !== undefined && (
     integration.scope.saveId !== identity.saveId || integration.scope.worldId !== identity.worldId
     || integration.scope.playerId !== identity.playerId || integration.scope.companionId !== identity.companionId
@@ -120,7 +126,9 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     JSON.stringify({
       enabled: true,
       embedding: { provider: "off" },
-      historian: { disallowed_tools: ["*"] },
+      // Historian may render the Companion's session history but must never
+      // gain tools. Tool isolation is enforced again by createAgentSession.
+      historian: { enabled: true, disallowed_tools: ["*"] },
       dreamer: { disable: true, inject_docs: false },
       sidekick: { disable: true },
       memory: { enabled: false, auto_promote: false, auto_search: { enabled: false } },
@@ -169,8 +177,11 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
   }
 
   const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
+  const modelRuntime = await createCompanionModelRuntime(paths, modelConfig);
+  const model = modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
+  if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
 
-  const integrationTools = integration === undefined ? [] : createStardewObservationTools(integration);
+  const integrationTools = integration === undefined ? [] : [...createStardewObservationTools(integration), ...createStardewActionTools(integration)];
   const allowedToolNames = [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite", ...integrationTools.map((tool) => tool.name)].sort();
   const { session } = await createAgentSession({
     cwd: paths.runtimeCwd,
@@ -178,6 +189,8 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     resourceLoader: loader,
     settingsManager: settings,
     sessionManager,
+    modelRuntime,
+    model,
     noTools: "all",
     tools: allowedToolNames,
     customTools: [companionStatusTool, ...integrationTools],
@@ -198,4 +211,28 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     identityKey: identityKey(identity),
     extensions: loader.getExtensions().extensions.map((extension) => extension.path),
   };
+}
+
+/**
+ * Creates an opaque-runtime-only OpenAI-compatible MiMo registry. The key is
+ * resolved from MIMO_API_KEY only at request time and is never written here.
+ */
+async function createCompanionModelRuntime(paths: RuntimePaths, config: CompanionModelConfig | undefined): Promise<ModelRuntime> {
+  const modelsPath = join(paths.agentDir, "models.json");
+  const providers = config === undefined ? {} : {
+    "xiaomi-mimo": {
+      name: "Xiaomi MiMo",
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      api: "openai-completions",
+      apiKey: "$MIMO_API_KEY",
+      headers: { "api-key": "$MIMO_API_KEY" },
+      compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, supportsUsageInStreaming: false, maxTokensField: "max_tokens" },
+      models: [{ id: config.modelId, name: config.modelId, reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 2048, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+    },
+  };
+  await writeFile(modelsPath, JSON.stringify({ providers }, null, 2), "utf8");
+  // Offline by default. Selecting the explicitly configured MiMo model is the
+  // operator's opt-in to provider networking; no request occurs merely while
+  // creating or resuming the session.
+  return ModelRuntime.create({ authPath: join(paths.agentDir, "auth.json"), modelsPath, modelsStorePath: join(paths.agentDir, "models-store.json"), allowModelNetwork: config !== undefined });
 }

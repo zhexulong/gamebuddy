@@ -1,10 +1,14 @@
 # GameBuddy Stardew integration
 
-This is a **Phase 1 client-local Embodiment spike**. It binds only the real native `Game1.player` owned by the Stardew process which loaded the Mod. It never constructs a `Farmer`, mutates `Game1.otherFarmers`, controls a remote player, exposes a network listener, teleports the actor, or claims a shadow actor is a Farmhand.
+This is a **Phase 1/2 client-local Embodiment and bridge spike**. It binds only the real native `Game1.player` owned by the Stardew process which loaded the Mod. It never constructs a `Farmer`, mutates `Game1.otherFarmers`, controls a remote player, exposes a network listener, teleports the actor, or claims a shadow actor is a Farmhand.
 
 The included `StardewBodyController` is a deliberately narrow local movement fixture. It accepts only a bounded target tile from `ExecutionManager`, maintains single movement ownership, records accepted/running/progress/blocked/terminal traces, is cancellable locally, and stops on menu/event/movement-lock/deadline conditions. It is not pathfinding, an Agent, or a player-facing Game Action surface.
 
-`BridgeProtocol` and `BridgeSession` define a bounded, versioned, authenticated **game-thread-only** protocol façade. They deliberately do **not** listen on any network or pipe: Phase 2's production local IPC is still a transport decision requiring a real Windows AI-Farmhand client test. Any future I/O adapter must parse/frame on a background worker and enqueue validated requests to `BridgeSession` on `UpdateTicked`; it may not access Stardew APIs from its I/O thread.
+For Phase 1 native-mechanics evidence, the local-only `gamebuddy_equip_tool_fixture <inventory-slot> <request-id>` fixture selects a Tool already owned by this Farmhand. It does not consume an item, stamina, time, or world resource; its receipt records the selected slot and authoritative before/after `CurrentTool`. It remains a development fixture—not an Agent-facing capability—until native multiplayer and action-level policy gates have passed.
+
+`BridgeProtocol` and `BridgeSession` define a bounded, versioned, authenticated **game-thread-only** protocol façade. `LocalPipeBridge` is the selected opt-in Windows local transport candidate: it is a current-user-only named pipe, frames bounded UTF-8 JSON on background tasks, attaches every queue item to a connection generation, and lets `UpdateTicked` drain at most eight requests. It never calls Stardew APIs off the game thread. Authentication, scope, deadline, permission token, idempotency, cancellation IDs, and request shape are revalidated by the Mod before an execution can reach `ExecutionManager`.
+
+Enable it only in the local untracked `config.json` installed with the AI-client Mod; `config.example.json` documents the shape. It needs opaque IDs and a 16+ character token; it never listens on LAN or the public network. A real Windows AI-Farmhand transport/reconnect test remains required before treating this candidate as accepted production IPC.
 
 ## Local compilation
 
@@ -33,6 +37,7 @@ A real Farmhand test requires two separately authenticated, legitimately license
 ```text
 gamebuddy_status
 gamebuddy_move_fixture <nearby-x> <nearby-y> phase1_move_01
+gamebuddy_equip_tool_fixture <tool-slot> phase1_equip_01
 gamebuddy_cancel
 ```
 

@@ -1,5 +1,8 @@
-# Protocol workspace
+# Game-neutral bridge contract
 
-Phase 0A intentionally defines **no** bridge message schema, transport, action name, or execution-state enum.
-
-This directory is reserved for language-neutral protocol sources and deterministic fixtures once Phase 2 freezes the first observation/bridge contract. Any future schema must be versioned, correlated, scope-bound, size-limited, and treated as untrusted by the Stardew Mod.
+`bridge-v1.schema.json` is the language-neutral envelope contract. The canonical
+wire form is camelCase JSON, UTF-8, and a maximum of 16 KiB per framed message.
+`fixtures/bridge-v1/golden-sequence.json` is the checked-in deterministic replay
+sequence used by the Host test suite. Integration-specific capabilities and action
+payload validation remain owned by each Integration; this directory deliberately
+does not define pathfinding, animation, or generic game action taxonomies.

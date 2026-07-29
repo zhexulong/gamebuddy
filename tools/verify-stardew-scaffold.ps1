@@ -14,6 +14,7 @@ $managerPath = Join-Path $modRoot "ExecutionManager.cs"
 $controllerPath = Join-Path $modRoot "StardewBodyController.cs"
 $bridgeProtocolPath = Join-Path $modRoot "BridgeProtocol.cs"
 $bridgeSessionPath = Join-Path $modRoot "BridgeSession.cs"
+$localPipeBridgePath = Join-Path $modRoot "LocalPipeBridge.cs"
 
 $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
 $required = @("Name", "Author", "Version", "Description", "UniqueID", "EntryDll", "MinimumApiVersion")
@@ -32,7 +33,7 @@ if (-not [version]::TryParse($manifest.Version, [ref]$semanticVersion) -or $sema
     throw "manifest.json must contain a valid, non-zero SMAPI version."
 }
 
-foreach ($path in @($entryPath, $managerPath, $controllerPath, $bridgeProtocolPath, $bridgeSessionPath)) {
+foreach ($path in @($entryPath, $managerPath, $controllerPath, $bridgeProtocolPath, $bridgeSessionPath, $localPipeBridgePath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Required Stardew embodiment source file is missing: $path"
     }
@@ -52,7 +53,7 @@ foreach ($forbiddenText in @("new Farmer", "Game1.otherFarmers", "new NPC", "Htt
     }
 }
 
-foreach ($requiredText in @("UniqueMultiplayerID", "TryStart", "Cancel", "RequestLocalMove", "body_owned", "locally_blocked", "target_reached", "deadline_expired", "cancellation_receipt_missing", "MaximumRememberedReceipts", "CreateBridgeSnapshot", "BridgeProtocol.Version", "MaximumMessageBytes", "PartiallySucceeded", "ToWireValue", "TryAuthenticate", "TryObserve", "TryExecute", "TryCancel", "FixedTimeEquals", "HasValidLocalBridgeConfiguration")) {
+foreach ($requiredText in @("UniqueMultiplayerID", "TryStart", "Cancel", "RequestLocalMove", "RequestLocalEquipTool", "gamebuddy_equip_tool_fixture", "tool_selected", "CurrentTool", "TryStart", "body_owned", "locally_blocked", "target_reached", "deadline_expired", "cancellation_receipt_missing", "MaximumRememberedReceipts", "CreateBridgeSnapshot", "BridgeProtocol.Version", "MaximumMessageBytes", "PartiallySucceeded", "ToWireValue", "TryAuthenticate", "TryObserve", "TryExecute", "TryCancel", "FixedTimeEquals", "HasValidLocalBridgeConfiguration", "NamedPipeServerStream", "DrainLocalPipeBridge")) {
     if (-not $allSource.Contains($requiredText)) {
         throw "Stardew embodiment is missing required fail-closed/trace contract text: $requiredText"
     }

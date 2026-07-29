@@ -1,0 +1,9 @@
+{
+  "EnableLocalBridge": false,
+  "PipeName": "gamebuddy-stardew",
+  "BridgeToken": "replace_with_an_untracked_16_char_minimum_token",
+  "SaveId": "Game1_uniqueIDForThisGame_decimal",
+  "WorldId": "Game1_MasterPlayer_UniqueMultiplayerID_decimal",
+  "PlayerId": "Game1_player_UniqueMultiplayerID_decimal",
+  "CompanionId": "opaque_companion_id"
+}

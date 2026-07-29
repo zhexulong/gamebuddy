@@ -1,5 +1,9 @@
 # Deterministic fixtures
 
-Phase 0A contains no game snapshots, bridge receipts, action requests, or replay traces. Those fixtures require the Phase 1 actor facts and the Phase 2 observation/bridge contract.
+`bridge-v1/golden-sequence.json` is the versioned, language-neutral protocol
+fixture. It provides a fixed scope, ordered authenticated handshake, snapshot,
+execution request, and authoritative receipt. Host replay validates every
+message against the same envelope/size/scope rules used by transports.
 
-The directory exists now so future fixtures remain data-only, deterministic, versioned alongside their schema, and runnable without a local Stardew installation.
+It is not a substitute for native Stardew multiplayer evidence or real SMAPI IPC
+smoke tests; those remain separate environment gates.

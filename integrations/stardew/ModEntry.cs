@@ -15,6 +15,7 @@ public sealed class ModEntry : Mod
     private ExecutionManager? executions;
     private ModConfig config = new();
     private BridgeSession? bridgeSession;
+    private LocalPipeBridge? localPipeBridge;
 
     public override void Entry(IModHelper helper)
     {
@@ -29,6 +30,7 @@ public sealed class ModEntry : Mod
 
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the local native-player binding and authoritative snapshot.", this.StatusCommand);
         helper.ConsoleCommands.Add("gamebuddy_move_fixture", "Phase 1 local-only movement fixture: gamebuddy_move_fixture <tile-x> <tile-y> <request-id>.", this.MoveFixtureCommand);
+        helper.ConsoleCommands.Add("gamebuddy_equip_tool_fixture", "Phase 1 local-only native mechanic fixture: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>.", this.EquipToolFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_cancel", "Cancel the active local GameBuddy execution.", this.CancelCommand);
 
         this.Monitor.Log("GameBuddy embodiment loaded; no remote Farmer construction or host-side control is available.", LogLevel.Info);
@@ -41,13 +43,25 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
-        this.executions = new ExecutionManager(this.Monitor);
-        this.bridgeSession = this.config.HasValidLocalBridgeConfiguration
+        this.executions = new ExecutionManager(this.Monitor, this.PublishReceipt);
+        Farmer localPlayer = Game1.player;
+        // The configured opaque player scope must bind to the identity Stardew
+        // actually assigned this client. A copied config for another Farmhand
+        // therefore fails closed instead of observing/executing as the wrong one.
+        bool playerScopeMatches = this.config.PlayerId == localPlayer.UniqueMultiplayerID.ToString();
+        bool saveScopeMatches = this.config.SaveId == Game1.uniqueIDForThisGame.ToString();
+        bool worldScopeMatches = this.config.WorldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString();
+        bool scopeMatchesWorld = playerScopeMatches && saveScopeMatches && worldScopeMatches;
+        this.bridgeSession = this.config.HasValidLocalBridgeConfiguration && scopeMatchesWorld
             ? new BridgeSession(this.executions, new BridgeScope("stardew", this.config.SaveId, this.config.WorldId, this.config.PlayerId, this.config.CompanionId), this.config.BridgeToken)
             : null;
+        this.localPipeBridge = this.bridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
         if (this.config.EnableLocalBridge && this.bridgeSession is null)
-            this.Monitor.Log("GameBuddy local bridge remains disabled: configuration must use opaque scope IDs and a 16+ character token.", LogLevel.Warn);
-        Farmer localPlayer = Game1.player;
+            this.Monitor.Log(this.config.HasValidLocalBridgeConfiguration
+                ? "GameBuddy local bridge remains disabled: configured save/world/player scope does not bind to this client-local Stardew world."
+                : "GameBuddy local bridge remains disabled: configuration must use opaque scope IDs and a 16+ character token.", LogLevel.Warn);
+        else if (this.localPipeBridge is not null)
+            this.Monitor.Log("GameBuddy local named-pipe bridge started for this client-local Farmhand.", LogLevel.Info);
         this.Monitor.Log(
             $"GameBuddy bound only local Game1.player: farmhand_id={localPlayer.UniqueMultiplayerID}, multiplayer={Context.IsMultiplayer}, main_player={Context.IsMainPlayer}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
             LogLevel.Info);
@@ -58,6 +72,7 @@ public sealed class ModEntry : Mod
         if (!Context.IsWorldReady)
             return;
 
+        this.DrainLocalPipeBridge();
         this.executions?.Update();
     }
 
@@ -74,6 +89,8 @@ public sealed class ModEntry : Mod
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
         this.executions?.InvalidateForLifecycle("returned_to_title");
+        this.localPipeBridge?.Dispose();
+        this.localPipeBridge = null;
         this.bridgeSession = null;
         this.executions = null;
         this.Monitor.Log("GameBuddy returned to title; local embodiment state cleared.", LogLevel.Trace);
@@ -102,14 +119,115 @@ public sealed class ModEntry : Mod
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
 
+    private void EquipToolFixtureCommand(string command, string[] args)
+    {
+        if (!RequireWorld())
+            return;
+
+        if (args.Length != 2 || !int.TryParse(args[0], out int slot) || !IsOpaqueRequestId(args[1]))
+        {
+            this.Monitor.Log("Usage: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>; request-id must be 1-64 letters, digits, _ or -.", LogLevel.Warn);
+            return;
+        }
+
+        LocalExecutionReceipt receipt = this.executions!.RequestLocalEquipTool(args[1], slot);
+        this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
+    }
+
     private void CancelCommand(string command, string[] args)
     {
         if (!RequireWorld())
             return;
 
-        LocalExecutionReceipt receipt = this.executions!.Cancel("local_console_cancel");
+        LocalExecutionReceipt receipt = this.executions!.CancelActiveForFixture("local_console_cancel");
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
+
+    private void DrainLocalPipeBridge()
+    {
+        if (this.localPipeBridge is null || this.bridgeSession is null)
+            return;
+
+        // Bound game-thread work; pipe I/O and framing are isolated in LocalPipeBridge.
+        for (int index = 0; index < 8 && this.localPipeBridge.TryDequeueInbound(out PipeInbound inbound); index++)
+        {
+            try
+            {
+                using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(inbound.Json);
+                if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                    || !document.RootElement.TryGetProperty("type", out System.Text.Json.JsonElement typeElement)
+                    || typeElement.ValueKind != System.Text.Json.JsonValueKind.String)
+                {
+                    this.Monitor.Log("GameBuddy rejected malformed local bridge envelope.", LogLevel.Warn);
+                    continue;
+                }
+                string? correlationId = document.RootElement.TryGetProperty("correlationId", out System.Text.Json.JsonElement correlationElement)
+                    && correlationElement.ValueKind == System.Text.Json.JsonValueKind.String ? correlationElement.GetString() : null;
+                string? response = typeElement.GetString() switch
+                {
+                    "hello" => this.HandleHello(inbound.Generation, inbound.Json),
+                    "observe_request" => this.HandleObserve(inbound.Generation, inbound.Json),
+                    "execution_request" => this.HandleExecute(inbound.Generation, inbound.Json),
+                    "cancel_request" => this.HandleCancel(inbound.Generation, inbound.Json),
+                    _ => this.SerializeError(correlationId, "unknown_message_type"),
+                };
+                if (response is not null && !this.localPipeBridge.TryEnqueueOutbound(inbound.Generation, response))
+                    this.Monitor.Log("GameBuddy discarded local bridge response after connection closed or backpressure.", LogLevel.Warn);
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                this.Monitor.Log("GameBuddy rejected malformed local bridge JSON.", LogLevel.Warn);
+            }
+            catch (Exception exception)
+            {
+                this.Monitor.Log($"GameBuddy rejected local bridge request: {exception.GetType().Name}.", LogLevel.Warn);
+            }
+        }
+    }
+
+    /** Receipt publication is game-thread-only and never performs pipe I/O. */
+    private void PublishReceipt(LocalExecutionReceipt receipt)
+    {
+        if (this.localPipeBridge is null || this.bridgeSession is null)
+            return;
+        long generation = this.localPipeBridge.CurrentGeneration;
+        if (generation != 0 && this.bridgeSession.TryCreateReceiptEvent(generation, receipt, out string json)
+            && !this.localPipeBridge.TryEnqueueOutbound(generation, json))
+            this.Monitor.Log("GameBuddy dropped receipt event due to closed/backpressured bridge.", LogLevel.Warn);
+    }
+
+    private string? SerializeError(string? correlationId, string reasonCode) => BridgeProtocol.TrySerialize(this.bridgeSession!.CreateError(correlationId, reasonCode), out string json, out _) ? json : null;
+
+    private string? HandleHello(long generation, string json) => this.SerializeBridgeResponse<BridgeHello, BridgeHelloAck>(
+        System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeHello>>(json, BridgeProtocol.JsonOptions),
+        (BridgeEnvelope<BridgeHello> request, out BridgeEnvelope<BridgeHelloAck>? response, out string reason) => this.bridgeSession!.TryAuthenticate(generation, request, out response, out reason), out _);
+
+    private string? HandleObserve(long generation, string json) => this.SerializeBridgeResponse<BridgeObserveRequest, BridgeSnapshot>(
+        System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeObserveRequest>>(json, BridgeProtocol.JsonOptions),
+        (BridgeEnvelope<BridgeObserveRequest> request, out BridgeEnvelope<BridgeSnapshot>? response, out string reason) => this.bridgeSession!.TryObserve(generation, request, out response, out reason), out _);
+
+    private string? HandleExecute(long generation, string json) => this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(
+        System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeExecutionRequest>>(json, BridgeProtocol.JsonOptions),
+        (BridgeEnvelope<BridgeExecutionRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => this.bridgeSession!.TryExecute(generation, request, out response, out reason), out _);
+
+    private string? HandleCancel(long generation, string json) => this.SerializeBridgeResponse<BridgeCancelRequest, BridgeReceipt>(
+        System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeCancelRequest>>(json, BridgeProtocol.JsonOptions),
+        (BridgeEnvelope<BridgeCancelRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => this.bridgeSession!.TryCancel(generation, request, out response, out reason), out _);
+
+    private string? SerializeBridgeResponse<TRequest, TResponse>(
+        BridgeEnvelope<TRequest>? request,
+        TryBridgeRequest<TRequest, TResponse> handler,
+        out string reasonCode)
+    {
+        reasonCode = "invalid_envelope";
+        if (request is null)
+            return this.SerializeError(null, reasonCode);
+        if (!handler(request, out BridgeEnvelope<TResponse>? response, out reasonCode) || response is null)
+            return this.SerializeError(request.CorrelationId, reasonCode);
+        return BridgeProtocol.TrySerialize(response, out string json, out _) ? json : this.SerializeError(request.CorrelationId, "response_serialization_failed");
+    }
+
+    private delegate bool TryBridgeRequest<TRequest, TResponse>(BridgeEnvelope<TRequest> request, out BridgeEnvelope<TResponse>? response, out string reasonCode);
 
     private bool RequireWorld()
     {

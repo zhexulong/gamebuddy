@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gamebuddy.local/protocol/bridge-v1.schema.json",
+  "title": "GameBuddy local bridge v1 envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "messageId", "correlationId", "timestampMs", "scope", "type", "payload"],
+  "properties": {
+    "protocolVersion": { "const": 1 },
+    "messageId": { "$ref": "#/$defs/opaqueId" },
+    "correlationId": { "$ref": "#/$defs/opaqueId" },
+    "timestampMs": { "type": "integer" },
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["integrationId", "saveId", "worldId", "playerId", "companionId"],
+      "properties": {
+        "integrationId": { "$ref": "#/$defs/opaqueId" }, "saveId": { "$ref": "#/$defs/opaqueId" },
+        "worldId": { "$ref": "#/$defs/opaqueId" }, "playerId": { "$ref": "#/$defs/opaqueId" },
+        "companionId": { "$ref": "#/$defs/opaqueId" }
+      }
+    },
+    "type": { "enum": ["hello", "hello_ack", "observe_request", "snapshot", "execution_request", "cancel_request", "execution_receipt", "error", "semantic_event", "lifecycle"] },
+    "payload": { "type": "object" }
+  },
+  "$defs": { "opaqueId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" } }
+}

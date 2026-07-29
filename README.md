@@ -6,7 +6,7 @@ AI Game Companion 的首个实现：以 **Stardew Valley + SMAPI Mod** 作为第
 
 ## 当前阶段
 
-Phase 0 Host runtime、SMAPI lifecycle 与本机真实加载 smoke 已通过；Phase 1/2 已具备 client-local Body Controller、execution ledger、版本化 protocol DTO 和 deterministic replay transport 的工程基础。正式产品路线固定为：一个独立、合法运行的 Stardew client 通过原生 multiplayer 加入人类 host，并由该 client 的 Mod 仅控制其本地真实 `Game1.player` Farmhand。绝不以 `new Farmer()`、`Game1.otherFarmers` 注入、NPC 或 shadow Farmer 替代这一身份。
+Phase 0 Host runtime、SMAPI lifecycle、独立 fake Voice Gateway 与本机真实加载 smoke 已通过；Phase 1/2 已具备 client-local Body Controller、execution ledger、版本化 protocol DTO、deterministic replay transport 与受限 Windows named-pipe bridge 的工程基础。正式产品路线固定为：一个独立、合法运行的 Stardew client 通过原生 multiplayer 加入人类 host，并由该 client 的 Mod 仅控制其本地真实 `Game1.player` Farmhand。绝不以 `new Farmer()`、`Game1.otherFarmers` 注入、NPC 或 shadow Farmer 替代这一身份。
 
 **尚未完成的硬验收门：** 当前机器没有第二个合法、独立认证的 Stardew client/账号及 host save+cabin 环境；因此真实 Farmhand join/reconnect、host-visible同步、真实 native mechanics evidence，以及需要模型 provider 的 Phase 3–4 连续自主试玩尚未被宣称为完成。
 
@@ -17,6 +17,7 @@ Phase 0 Host runtime、SMAPI lifecycle 与本机真实加载 smoke 已通过；P
 - Node.js `24.13.0` / pnpm `11.1.3`
 - .NET SDK `8.0.422`
 - Git `2.45.1.windows.1`
+- Voice Gateway：16 kHz PCM PTT、bounded queue、epoch cancellation、text fallback、token-authenticated localhost protocol；MiMo `mimo-v2.5-tts` SSE/PCM16 adapter 与经过脱敏的真实 contract fixture。真实 SenseVoiceSmall CPU ASR asset/runtime 仍未安装或验收。
 
 ## 工作区布局
 
@@ -35,7 +36,7 @@ docs/                 ADR、依赖清单、兼容性矩阵、trace 与场景说�
 - `Game Action` 是 Mod 执行的有限高层能力；`Agent Skill` 仅指受审查的 agent 知识/工作流包，二者不能混用。
 - Agent 不做 tick 级控制；Stardew 侧的常驻 Body Controller 是唯一身体控制所有者。
 - bridge 仅是本机、不可信的传输层；Mod 必须对每个请求进行 scope、schema、权限、时效、幂等与后置条件校验，并 fail closed。
-- 跨 Context 产品 Memory、第二游戏抽象、语音和多个 Companion 不在当前范围；任何资源、世界或进度影响均须先有逐项验证的 Game Action、玩家定义政策及权威 evidence。
+- 跨 Context 产品 Memory、第二游戏抽象和多个 Companion 不在当前范围；语音已具备 provider-neutral PTT/取消/文字降级 skeleton，但真实 CPU ASR 与 MiMo TTS contract/资产仍须按 Phase 3–4 审计和验证。任何资源、世界或进度影响均须先有逐项验证的 Game Action、玩家定义政策及权威 evidence。
 
 本地 `design/` 保存完整计划，且不会纳入 Git；本 README 保留其关键实施边界，供干净 clone 与 CI 遵循。
 

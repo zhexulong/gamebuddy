@@ -19,7 +19,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
   const modInbound: string[] = [];
   modEndpoint.onMessage((message) => {
     modInbound.push(message.type);
-    if (message.type === "hello") modEndpoint.send(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"] }, message.correlationId, now), now);
+    if (message.type === "hello") modEndpoint.send(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"], actionGrants: [] }, message.correlationId, now), now);
     if (message.type === "observe_request") modEndpoint.send(newEnvelope("snapshot", scope, snapshot(), message.correlationId, now), now);
     if (message.type === "execution_request") {
       const receipt: BridgeMessage = newEnvelope("execution_receipt", scope, { executionId: "execution_01", requestId: message.payload.requestId, state: "accepted" as const, reasonCode: "accepted", revision: 4, evidence: { target: "11,12" } }, message.correlationId, now);

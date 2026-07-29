@@ -60,13 +60,15 @@ test("runtime rejects a mounted integration whose save identity does not match",
   integration.dispose();
 });
 
-test("runtime adds only product observation tools when an integration is mounted", async () => {
+test("runtime mounts only the explicitly verified Stardew product tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase3-tools-"));
   const scope: Scope = { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
   const integration = new CompanionIntegrationClient(scope, hostEndpoint);
   const runtime = await createCompanionRuntime(identity, root, integration);
   try {
+    // The executable action is absent until the Mod grants a fresh, bounded token.
+    // Observations and execution status remain factual and safe before handshake.
     assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_execution_status", "stardew_observe", "todowrite"]);
   } finally {
     runtime.session.dispose();

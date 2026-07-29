@@ -1,0 +1,29 @@
+{
+  "fixtureVersion": 1,
+  "capturedAt": "2026-07-29T20:53:02.498Z",
+  "provider": "xiaomi-mimo",
+  "endpoint": "https://api.xiaomimimo.com/v1/chat/completions",
+  "request": {
+    "method": "POST",
+    "model": "mimo-v2.5-tts",
+    "stream": true,
+    "audioFormat": "pcm16",
+    "messageRoles": [
+      "assistant"
+    ],
+    "authentication": "api-key: <redacted>"
+  },
+  "response": {
+    "httpStatus": 200,
+    "contentType": "text/event-stream",
+    "terminal": "done",
+    "chunksWithAudio": 3,
+    "eventFields": [
+      "choices[].delta.audio",
+      "choices[].delta.content",
+      "choices[].delta.reasoning_content",
+      "choices[].delta.role",
+      "choices[].delta.tool_calls"
+    ]
+  }
+}

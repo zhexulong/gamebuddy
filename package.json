@@ -8,8 +8,9 @@
     "pnpm": ">=11.1.3 <12"
   },
   "scripts": {
-    "build": "pnpm --filter @gamebuddy/companion-host build",
-    "test": "pnpm --filter @gamebuddy/companion-host test",
-    "typecheck": "pnpm --filter @gamebuddy/companion-host typecheck"
+    "build": "pnpm --filter @gamebuddy/companion-host build && pnpm --filter @gamebuddy/voice-gateway build",
+    "test": "pnpm --filter @gamebuddy/companion-host test && pnpm --filter @gamebuddy/voice-gateway test",
+    "typecheck": "pnpm --filter @gamebuddy/companion-host typecheck && pnpm --filter @gamebuddy/voice-gateway typecheck",
+    "dependency-audit": "node tools/generate-sbom.mjs"
   }
 }

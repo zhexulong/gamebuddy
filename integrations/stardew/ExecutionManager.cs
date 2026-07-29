@@ -1,6 +1,7 @@
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Tools;
 
 namespace GameBuddy.Stardew;
 
@@ -18,19 +19,24 @@ internal sealed class ExecutionManager
     private readonly Queue<string> receiptOrder = new();
     private readonly List<ExecutionTrace> trace = new();
     private readonly StardewBodyController controller;
+    private readonly Action<LocalExecutionReceipt>? receiptPublished;
     private LocalMoveSpec? active;
     private long revision;
     private int tick;
 
-    public ExecutionManager(IMonitor monitor)
+    public ExecutionManager(IMonitor monitor, Action<LocalExecutionReceipt>? receiptPublished = null)
     {
         this.monitor = monitor;
+        this.receiptPublished = receiptPublished;
         this.controller = new StardewBodyController(this.RecordControllerTransition);
     }
 
     public long Revision => this.revision;
 
     public IReadOnlyList<ExecutionTrace> Trace => this.trace;
+
+    /// <summary>Returns the latest authoritative receipt for idempotent bridge replay.</summary>
+    public bool TryGetReceipt(string requestId, out LocalExecutionReceipt receipt) => this.receiptsByRequestId.TryGetValue(requestId, out receipt!);
 
     public LocalExecutionReceipt RequestLocalMove(string requestId, Vector2 targetTile)
     {
@@ -39,13 +45,13 @@ internal sealed class ExecutionManager
 
         this.revision++;
         if (!Context.IsWorldReady || Game1.player is null)
-            return this.RememberTerminal(requestId, string.Empty, ExecutionState.Rejected, "world_not_ready", null);
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "world_not_ready", null);
 
         if (!IsFiniteTile(targetTile) || targetTile.X < 0 || targetTile.Y < 0 || targetTile.X > 1000 || targetTile.Y > 1000)
-            return this.RememberTerminal(requestId, string.Empty, ExecutionState.Rejected, "invalid_target_tile", null);
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_target_tile", null);
 
         if (this.active is not null || this.controller.HasActiveExecution)
-            return this.RememberTerminal(requestId, string.Empty, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId);
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "body_owned", this.active?.ExecutionId);
 
         string executionId = Guid.NewGuid().ToString("N");
         LocalMoveSpec specification = new(executionId, requestId, targetTile, this.revision, this.tick + DefaultDeadlineTicks);
@@ -64,12 +70,48 @@ internal sealed class ExecutionManager
         return accepted;
     }
 
-    public LocalExecutionReceipt Cancel(string reasonCode)
+    /// <summary>
+    /// Development-only Phase 1 native-mechanic fixture. It changes only this
+    /// Farmhand's selected Tool slot; it consumes no item, stamina, time, or
+    /// world resource. The before/after tool state is the postcondition.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalEquipTool(string requestId, int slot)
     {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+            return existing;
+
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        if (!Context.IsWorldReady || Game1.player is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        if (this.active is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId);
+        if (slot < 0 || slot >= Game1.player.Items.Count)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_tool_slot", null);
+        Tool? selectedTool = Game1.player.Items[slot] as Tool;
+        if (selectedTool is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_owned_in_slot", $"slot={slot}");
+
+        string? expectedTool = DescribeTool(selectedTool);
+        string? previousTool = DescribeTool(Game1.player.CurrentTool);
+        Game1.player.CurrentToolIndex = slot;
+        string? currentTool = DescribeTool(Game1.player.CurrentTool);
+        if (!string.Equals(currentTool, expectedTool, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_selection_postcondition_unavailable", $"before={previousTool ?? "none"};expected={expectedTool ?? "none"};actual={currentTool ?? "none"}");
+
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_selected", $"slot={slot};before={previousTool ?? "none"};after={currentTool}");
+    }
+
+    public LocalExecutionReceipt Cancel(string requestId, string executionId, string reasonCode)
+    {
+        if (this.active is not null && (this.active.RequestId != requestId || this.active.ExecutionId != executionId))
+            return new(executionId, requestId, ExecutionState.Rejected, "execution_mismatch", this.revision, null);
+
         if (this.active is null)
         {
-            this.revision++;
-            return new(string.Empty, string.Empty, ExecutionState.Cancelled, "no_active_execution", this.revision, null);
+            if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? terminal) && terminal.ExecutionId == executionId)
+                return terminal;
+            return new(executionId, requestId, ExecutionState.Rejected, "no_matching_execution", this.revision, null);
         }
 
         LocalMoveSpec specification = this.active;
@@ -77,6 +119,13 @@ internal sealed class ExecutionManager
         return this.receiptsByRequestId.TryGetValue(specification.RequestId, out LocalExecutionReceipt? receipt)
             ? receipt
             : this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "cancellation_receipt_missing", null);
+    }
+
+    public LocalExecutionReceipt CancelActiveForFixture(string reasonCode)
+    {
+        if (this.active is null)
+            return new(string.Empty, string.Empty, ExecutionState.Cancelled, "no_active_execution", this.revision, null);
+        return this.Cancel(this.active.RequestId, this.active.ExecutionId, reasonCode);
     }
 
     public void Update()
@@ -106,6 +155,8 @@ internal sealed class ExecutionManager
             tile = new { x = player.Tile.X, y = player.Tile.Y },
             stamina = player.Stamina,
             health = player.health,
+            current_tool = DescribeTool(player.CurrentTool),
+            inventory_slots = player.Items.Count,
             can_move = player.CanMove,
             menu_open = Game1.activeClickableMenu is not null,
             event_active = Game1.eventUp,
@@ -134,10 +185,11 @@ internal sealed class ExecutionManager
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
-            player.Tile.X,
-            player.Tile.Y,
+            new BridgeTile(player.Tile.X, player.Tile.Y),
             player.Stamina,
             player.health,
+            DescribeTool(player.CurrentTool),
+            player.Items.Count,
             player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp,
             new[] { "move_to_tile", "inspect_self" },
             activeExecution);
@@ -189,7 +241,10 @@ internal sealed class ExecutionManager
             this.trace.RemoveAt(0);
 
         this.monitor.Log($"GameBuddy execution state={receipt.State} execution={receipt.ExecutionId} request={receipt.RequestId} reason={receipt.ReasonCode} evidence={receipt.Evidence ?? "none"}", LogLevel.Trace);
+        this.receiptPublished?.Invoke(receipt);
     }
+
+    private static string? DescribeTool(Tool? tool) => tool is null ? null : tool.QualifiedItemId ?? tool.Name;
 
     private static bool IsFiniteTile(Vector2 tile) => float.IsFinite(tile.X) && float.IsFinite(tile.Y);
 

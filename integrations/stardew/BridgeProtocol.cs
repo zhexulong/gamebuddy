@@ -16,6 +16,7 @@ internal static class BridgeProtocol
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
@@ -63,13 +64,16 @@ internal sealed record BridgeEnvelope<TPayload>(
     string Type,
     TPayload Payload);
 
+internal sealed record BridgeTile(float X, float Y);
+
 internal sealed record BridgeSnapshot(
     long Revision,
     string Location,
-    float TileX,
-    float TileY,
+    BridgeTile Tile,
     float Stamina,
     int Health,
+    string? CurrentTool,
+    int InventorySlots,
     bool Actionable,
     IReadOnlyList<string> Capabilities,
     BridgeActiveExecution? ActiveExecution);
@@ -89,3 +93,22 @@ internal sealed record BridgeReceipt(
     string ReasonCode,
     long Revision,
     IReadOnlyDictionary<string, string>? Evidence);
+
+internal sealed record BridgeError(string ReasonCode);
+
+internal sealed record BridgeSemanticEvent(
+    string Kind,
+    long Revision,
+    BridgeActiveExecution? ActiveExecution,
+    string ReasonCode);
+
+internal sealed record BridgeExecutionArgs(float? X, float? Y);
+
+internal sealed record BridgeExecutionRequest(
+    string RequestId,
+    string IdempotencyKey,
+    string Action,
+    BridgeExecutionArgs Args,
+    long ExpectedRevision,
+    long DeadlineMs,
+    string PermissionToken);

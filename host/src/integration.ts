@@ -1,21 +1,13 @@
 import {
   newEnvelope,
   type BridgeMessage,
-  type ExecutionReceipt,
   type ExecutionRequest,
-  type Scope,
+  type ExecutionReceipt,
   type Snapshot,
+  type Scope,
 } from "./protocol.js";
+import { type CompanionIntegrationState } from "./integration-types.js";
 import { type BridgeFault, type DeterministicBridgeEndpoint } from "./bridge.js";
-
-export type CompanionIntegrationState = Readonly<{
-  connected: boolean;
-  sessionId: string | null;
-  capabilities: readonly string[];
-  snapshot: Snapshot | null;
-  latestReceipt: ExecutionReceipt | null;
-  latestReasonCode: string | null;
-}>;
 
 /**
  * Host-side, game-neutral bridge state. It only caches Mod-originated facts;
@@ -35,9 +27,12 @@ export class CompanionIntegrationClient {
     readonly scope: Scope,
     readonly endpoint: DeterministicBridgeEndpoint,
   ) {
-    this.#unsubscribeMessage = endpoint.onMessage((message) => this.receive(message));
+    this.#unsubscribeMessage = endpoint.onMessage((message) => this.acceptIntegrationMessage(message));
     this.#unsubscribeDisconnect = endpoint.onDisconnect((reasonCode) => {
       this.#sessionId = null;
+      this.#capabilities = [];
+      this.#snapshot = null;
+      this.#latestReceipt = null;
       this.#latestReasonCode = reasonCode;
     });
   }
@@ -77,11 +72,14 @@ export class CompanionIntegrationClient {
     return this.endpoint.send(newEnvelope("cancel_request", this.scope, { requestId, executionId, reasonCode }, undefined, nowMs), nowMs);
   }
 
-  private receive(message: BridgeMessage): void {
+  /** Accept a validated Mod-to-Host fact from any transport adapter. */
+  public acceptIntegrationMessage(message: BridgeMessage): void {
     switch (message.type) {
       case "hello_ack":
         this.#sessionId = message.payload.sessionId;
         this.#capabilities = [...message.payload.capabilities];
+        this.#snapshot = null;
+        this.#latestReceipt = null;
         this.#latestReasonCode = null;
         break;
       case "snapshot":
@@ -100,4 +98,5 @@ export class CompanionIntegrationClient {
         this.#latestReasonCode = "unexpected_inbound_message";
     }
   }
+
 }

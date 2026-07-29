@@ -1,0 +1,9 @@
+{
+  "playerId": "opaque_player_id",
+  "saveId": "opaque_save_id",
+  "worldId": "opaque_world_id",
+  "companionId": "opaque_companion_id",
+  "pipeName": "gamebuddy_stardew",
+  "bridgeToken": "replace_with_a_16_character_or_longer_local_token",
+  "model": "mimo-v2.5"
+}

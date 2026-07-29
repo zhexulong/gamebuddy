@@ -2,18 +2,16 @@ using System.Security.Cryptography;
 
 namespace GameBuddy.Stardew;
 
-/// <summary>
-/// Transport-neutral, game-thread-only Phase 2 session. A future local IPC
-/// adapter may enqueue already bounded/parsed envelopes to this class; it must
-/// never execute Stardew APIs on its background I/O thread. No listener is
-/// created by this class.
-/// </summary>
+/// <summary>Transport-neutral, SMAPI-game-thread-only authenticated session.</summary>
 internal sealed class BridgeSession
 {
+    private const int MaximumRememberedIdempotencyKeys = 256;
     private readonly ExecutionManager executions;
     private readonly BridgeScope scope;
     private readonly string token;
-    private bool authenticated;
+    private readonly Dictionary<string, IdempotentExecution> idempotency = new(StringComparer.Ordinal);
+    private readonly Queue<string> idempotencyOrder = new();
+    private long authenticatedGeneration = -1;
 
     internal BridgeSession(ExecutionManager executions, BridgeScope scope, string token)
     {
@@ -22,119 +20,153 @@ internal sealed class BridgeSession
         this.token = token;
     }
 
-    internal bool TryAuthenticate(BridgeEnvelope<BridgeHello> envelope, out BridgeEnvelope<BridgeHelloAck>? acknowledgement, out string reasonCode)
+    internal bool TryAuthenticate(long generation, BridgeEnvelope<BridgeHello>? envelope, out BridgeEnvelope<BridgeHelloAck>? acknowledgement, out string reasonCode)
     {
         acknowledgement = null;
-        if (!IsValidEnvelope(envelope, "hello", out reasonCode) || !CryptographicOperations.FixedTimeEquals(
-            System.Text.Encoding.UTF8.GetBytes(envelope.Payload.Token),
-            System.Text.Encoding.UTF8.GetBytes(this.token)))
+        if (!IsValidEnvelope(envelope, "hello", out reasonCode) || envelope!.Payload is null
+            || !FixedEquals(envelope.Payload.Token, this.token))
         {
             reasonCode = "authentication_failed";
             return false;
         }
-
-        this.authenticated = true;
-        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(Guid.NewGuid().ToString("N"), new[] { "move_to_tile", "inspect_self" }));
+        if (this.authenticatedGeneration == generation)
+        {
+            reasonCode = "already_authenticated";
+            return false;
+        }
+        this.authenticatedGeneration = generation;
+        // Authentication opens only this local transport. It does not mint
+        // Game Action authority; approval must come from a separate local
+        // player-policy boundary before an action can be exposed.
+        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(Guid.NewGuid().ToString("N"), new[] { "inspect_self" }, Array.Empty<BridgeActionGrant>()));
         reasonCode = "accepted";
         return true;
     }
 
-    internal bool TryObserve(BridgeEnvelope<BridgeObserveRequest> envelope, out BridgeEnvelope<BridgeSnapshot>? response, out string reasonCode)
+    internal bool TryObserve(long generation, BridgeEnvelope<BridgeObserveRequest>? envelope, out BridgeEnvelope<BridgeSnapshot>? response, out string reasonCode)
     {
         response = null;
-        if (!this.authenticated)
-        {
-            reasonCode = "unauthenticated";
-            return false;
-        }
-        if (!IsValidEnvelope(envelope, "observe_request", out reasonCode))
-            return false;
-
-        response = Reply("snapshot", envelope.CorrelationId, this.executions.CreateBridgeSnapshot());
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "observe_request", out reasonCode)) return false;
+        response = Reply("snapshot", envelope!.CorrelationId, this.executions.CreateBridgeSnapshot());
         reasonCode = "accepted";
         return true;
     }
 
-    internal bool TryExecute(BridgeEnvelope<BridgeExecutionRequest> envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
+    internal bool TryExecute(long generation, BridgeEnvelope<BridgeExecutionRequest>? envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
     {
         response = null;
-        if (!this.authenticated)
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "execution_request", out reasonCode)) return false;
+        BridgeExecutionRequest request = envelope!.Payload;
+        // Validate enough shape to calculate the idempotency fingerprint, but
+        // replay must not be rejected merely because the original deadline or
+        // snapshot revision has since passed.
+        if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;
+        string fingerprint = $"{request.Action}:{request.Args.X}:{request.Args.Y}:{request.ExpectedRevision}";
+        if (this.idempotency.TryGetValue(request.IdempotencyKey, out IdempotentExecution? existing))
         {
-            reasonCode = "unauthenticated";
-            return false;
+            if (existing.Fingerprint != fingerprint) { reasonCode = "idempotency_key_conflict"; return false; }
+            if (!this.executions.TryGetReceipt(existing.RequestId, out LocalExecutionReceipt latest)) { reasonCode = "idempotency_receipt_unavailable"; return false; }
+            response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(latest));
+            reasonCode = "idempotent_replay";
+            return true;
         }
-        if (!IsValidEnvelope(envelope, "execution_request", out reasonCode))
-            return false;
+        if (!IsFreshExecutionRequest(request, out reasonCode)) return false;
+        // A production approval boundary has not exposed move_to_tile yet.
+        // Fail closed rather than treating a bridge credential as player consent.
+        reasonCode = "action_not_player_approved";
+        return false;
+    }
 
-        BridgeExecutionRequest request = envelope.Payload;
-        if (!BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.IdempotencyKey)
-            || request.Action != "move_to_tile" || !float.IsFinite(request.TargetX) || !float.IsFinite(request.TargetY)
-            || request.TargetX < 0 || request.TargetY < 0 || request.TargetX > 1000 || request.TargetY > 1000
-            || request.ExpectedRevision != this.executions.Revision || request.DeadlineMs < DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-            || request.DeadlineMs > DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeMilliseconds())
-        {
-            reasonCode = "invalid_execution_request";
+    /// <summary>Publishes a Mod-authoritative receipt only to the current authenticated pipe generation.</summary>
+    internal bool TryCreateReceiptEvent(long generation, LocalExecutionReceipt receipt, out string json)
+    {
+        json = string.Empty;
+        if (this.authenticatedGeneration != generation)
             return false;
-        }
+        return BridgeProtocol.TrySerialize(Reply("execution_receipt", receipt.RequestId, ToBridgeReceipt(receipt)), out json, out _);
+    }
 
-        LocalExecutionReceipt receipt = this.executions.RequestLocalMove(request.RequestId, new Microsoft.Xna.Framework.Vector2(request.TargetX, request.TargetY));
+    internal bool TryCancel(long generation, BridgeEnvelope<BridgeCancelRequest>? envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "cancel_request", out reasonCode)) return false;
+        BridgeCancelRequest request = envelope!.Payload;
+        if (!BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.ExecutionId) || !BridgeProtocol.IsReasonCode(request.ReasonCode))
+        { reasonCode = "invalid_cancel_request"; return false; }
+
+        LocalExecutionReceipt receipt = this.executions.Cancel(request.RequestId, request.ExecutionId, request.ReasonCode);
         response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(receipt));
         reasonCode = "accepted";
         return true;
     }
 
-    internal bool TryCancel(BridgeEnvelope<BridgeCancelRequest> envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
+    private bool IsAuthenticated(long generation, out string reasonCode)
     {
-        response = null;
-        if (!this.authenticated)
-        {
-            reasonCode = "unauthenticated";
-            return false;
-        }
-        if (!IsValidEnvelope(envelope, "cancel_request", out reasonCode))
-            return false;
-
-        if (!BridgeProtocol.IsOpaqueId(envelope.Payload.RequestId) || !BridgeProtocol.IsOpaqueId(envelope.Payload.ExecutionId) || !BridgeProtocol.IsReasonCode(envelope.Payload.ReasonCode))
-        {
-            reasonCode = "invalid_cancel_request";
-            return false;
-        }
-
-        LocalExecutionReceipt receipt = this.executions.Cancel(envelope.Payload.ReasonCode);
-        response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(receipt));
+        if (this.authenticatedGeneration != generation) { reasonCode = "unauthenticated"; return false; }
         reasonCode = "accepted";
         return true;
     }
 
-    private bool IsValidEnvelope<TPayload>(BridgeEnvelope<TPayload> envelope, string expectedType, out string reasonCode)
+    private static bool IsStructurallyValidExecutionRequest(BridgeExecutionRequest? request, out string reasonCode)
     {
-        if (envelope.ProtocolVersion != BridgeProtocol.Version || envelope.Type != expectedType || !BridgeProtocol.IsOpaqueId(envelope.MessageId) || !BridgeProtocol.IsOpaqueId(envelope.CorrelationId) || !envelope.Scope.Equals(this.scope))
-        {
-            reasonCode = "invalid_envelope";
-            return false;
-        }
+        if (request is null || !BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.IdempotencyKey)
+            || request.Action != "move_to_tile" || request.Args is null || !request.Args.X.HasValue || !request.Args.Y.HasValue
+            || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value)
+            || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000)
+        { reasonCode = "invalid_execution_request"; return false; }
+        reasonCode = "accepted";
+        return true;
+    }
 
+    private bool IsFreshExecutionRequest(BridgeExecutionRequest request, out string reasonCode)
+    {
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (request.ExpectedRevision != this.executions.Revision) { reasonCode = "stale_snapshot"; return false; }
+        if (request.DeadlineMs < nowMs || request.DeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+        { reasonCode = "invalid_deadline"; return false; }
+        reasonCode = "accepted";
+        return true;
+    }
+
+    private bool IsValidEnvelope<TPayload>(BridgeEnvelope<TPayload>? envelope, string expectedType, out string reasonCode)
+    {
+        if (envelope is null || envelope.Scope is null || envelope.Payload is null || envelope.ProtocolVersion != BridgeProtocol.Version
+            || envelope.Type != expectedType || !BridgeProtocol.IsOpaqueId(envelope.MessageId) || !BridgeProtocol.IsOpaqueId(envelope.CorrelationId)
+            || !envelope.Scope.Equals(this.scope))
+        { reasonCode = "invalid_envelope"; return false; }
         if (Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - envelope.TimestampMs) > TimeSpan.FromMinutes(5).TotalMilliseconds)
-        {
-            reasonCode = "stale_or_invalid_timestamp";
-            return false;
-        }
-
+        { reasonCode = "stale_or_invalid_timestamp"; return false; }
         reasonCode = "accepted";
         return true;
     }
+
+    private void RememberIdempotency(string key, string fingerprint, string requestId)
+    {
+        this.idempotency[key] = new(fingerprint, requestId);
+        this.idempotencyOrder.Enqueue(key);
+        if (this.idempotencyOrder.Count > MaximumRememberedIdempotencyKeys)
+            this.idempotency.Remove(this.idempotencyOrder.Dequeue());
+    }
+
+    internal bool IsAuthenticatedGeneration(long generation) => this.authenticatedGeneration == generation;
+
+    internal BridgeEnvelope<BridgeError> CreateError(string? correlationId, string reasonCode) => Reply(
+        "error", BridgeProtocol.IsOpaqueId(correlationId) ? correlationId! : Guid.NewGuid().ToString("N"), new BridgeError(reasonCode));
 
     private BridgeEnvelope<TPayload> Reply<TPayload>(string type, string correlationId, TPayload payload) => new(
-        BridgeProtocol.Version, Guid.NewGuid().ToString("N"), correlationId,
-        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), this.scope, type, payload);
+        BridgeProtocol.Version, Guid.NewGuid().ToString("N"), correlationId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), this.scope, type, payload);
 
-    private static BridgeReceipt ToBridgeReceipt(LocalExecutionReceipt receipt) => new(
-        receipt.ExecutionId, receipt.RequestId, receipt.State.ToWireValue(), receipt.ReasonCode, receipt.Revision,
+    private static bool FixedEquals(string? left, string right) => CryptographicOperations.FixedTimeEquals(
+        System.Text.Encoding.UTF8.GetBytes(left ?? string.Empty), System.Text.Encoding.UTF8.GetBytes(right));
+
+    private static BridgeReceipt ToBridgeReceipt(LocalExecutionReceipt receipt) => new(receipt.ExecutionId, receipt.RequestId, receipt.State.ToWireValue(), receipt.ReasonCode, receipt.Revision,
         receipt.Evidence is null ? null : new Dictionary<string, string> { ["detail"] = receipt.Evidence });
+
 }
 
+internal sealed record IdempotentExecution(string Fingerprint, string RequestId);
 internal sealed record BridgeHello(string Token);
-internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities);
+internal sealed record BridgeActionGrant(string Token, string Action, long ExpiresAtMs, string Nonce);
+internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, IReadOnlyList<BridgeActionGrant> ActionGrants);
 internal sealed record BridgeObserveRequest();
-internal sealed record BridgeExecutionRequest(string RequestId, string IdempotencyKey, string Action, float TargetX, float TargetY, long ExpectedRevision, long DeadlineMs);
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string ReasonCode);

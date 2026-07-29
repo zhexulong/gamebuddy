@@ -25,6 +25,24 @@ jobs:
       - run: pnpm build
       - run: pnpm test
       - run: node tools/verify-phase0b-host.mjs
+      - run: pnpm dependency-audit
+      - run: git diff --exit-code -- third_party/sbom-node.json
+
+  voice-gateway:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @gamebuddy/voice-gateway typecheck
+      - run: pnpm --filter @gamebuddy/voice-gateway build
+      - run: pnpm --filter @gamebuddy/voice-gateway test
 
   stardew-scaffold:
     runs-on: windows-latest

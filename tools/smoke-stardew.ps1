@@ -18,6 +18,7 @@ $smapi = Join-Path $GamePath "StardewModdingAPI.exe"
 if (-not (Test-Path -LiteralPath $smapi -PathType Leaf)) { throw "SMAPI executable not found: $smapi" }
 $logPath = Join-Path $env:APPDATA "StardewValley\ErrorLogs\SMAPI-latest.txt"
 $before = if (Test-Path -LiteralPath $logPath) { (Get-Item -LiteralPath $logPath).LastWriteTimeUtc } else { [DateTime]::MinValue }
+$runStarted = [DateTime]::UtcNow
 
 $process = Start-Process -FilePath $smapi -WorkingDirectory $GamePath -PassThru
 try {
@@ -29,7 +30,7 @@ try {
             # independently, then tolerate a transient empty/null read.
             $item = Get-Item -LiteralPath $logPath -ErrorAction SilentlyContinue
             $content = Get-Content -Raw -LiteralPath $logPath -ErrorAction SilentlyContinue
-            if ($null -ne $item -and $null -ne $content -and $item.LastWriteTimeUtc -gt $before -and $content.Contains("GameBuddy embodiment loaded")) {
+            if ($null -ne $item -and $null -ne $content -and $item.LastWriteTimeUtc -ge $runStarted.AddSeconds(-5) -and $content.Contains("GameBuddy embodiment loaded")) {
                 Write-Host "GameBuddy single-client SMAPI load smoke passed."
                 exit 0
             }

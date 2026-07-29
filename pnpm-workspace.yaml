@@ -1,5 +1,6 @@
 packages:
   - host
+  - voice-gateway
 
 # Phase 0B intentionally disables optional native/model build scripts. Magic
 # Context runs with embeddings off; no optional binary is approved implicitly.

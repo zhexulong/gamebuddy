@@ -49,6 +49,8 @@ export type Snapshot = Readonly<{
   activeExecution: ActiveExecution | null;
 }>;
 
+export type ActionGrant = Readonly<{ token: string; action: "move_to_tile"; expiresAtMs: number; nonce: string }>;
+
 export type ExecutionRequest = Readonly<{
   requestId: string;
   idempotencyKey: string;
@@ -77,18 +79,19 @@ export type SemanticEvent = Readonly<{
 
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
-  | Envelope<"hello_ack", Readonly<{ sessionId: string; capabilities: readonly string[] }>>
+  | Envelope<"hello_ack", Readonly<{ sessionId: string; capabilities: readonly string[]; actionGrants: readonly ActionGrant[] }>>
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"snapshot", Snapshot>
   | Envelope<"execution_request", ExecutionRequest>
   | Envelope<"cancel_request", Readonly<{ requestId: string; executionId: string; reasonCode: string }>>
   | Envelope<"execution_receipt", ExecutionReceipt>
+  | Envelope<"error", Readonly<{ reasonCode: string }>>
   | Envelope<"semantic_event", SemanticEvent>
   | Envelope<"lifecycle", Readonly<{ state: "connected" | "disconnected" | "world_unavailable"; reasonCode: string }>>;
 
 export const BRIDGE_MESSAGE_TYPES = [
   "hello", "hello_ack", "observe_request", "snapshot", "execution_request",
-  "cancel_request", "execution_receipt", "semantic_event", "lifecycle",
+  "cancel_request", "execution_receipt", "error", "semantic_event", "lifecycle",
 ] as const;
 
 export function newEnvelope<TType extends BridgeMessage["type"], TPayload>(
@@ -127,12 +130,13 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   const payload = message.payload as Record<string, unknown>;
   switch (message.type) {
     case "hello": return validToken(payload.token) ? null : "invalid_hello_token";
-    case "hello_ack": return isOpaqueId(payload.sessionId) && isStringArray(payload.capabilities) ? null : "invalid_hello_ack";
+    case "hello_ack": return isOpaqueId(payload.sessionId) && isStringArray(payload.capabilities) && validActionGrants(payload.actionGrants, payload.capabilities, nowMs) ? null : "invalid_hello_ack";
     case "observe_request": return Object.keys(payload).length === 0 ? null : "invalid_observe_request";
     case "snapshot": return validateSnapshot(payload);
     case "execution_request": return validateExecutionRequestEnvelope(payload);
     case "cancel_request": return isOpaqueId(payload.requestId) && isOpaqueId(payload.executionId) && isReasonCode(payload.reasonCode) ? null : "invalid_cancel_request";
     case "execution_receipt": return validateReceipt(payload);
+    case "error": return isReasonCode(payload.reasonCode) ? null : "invalid_error";
     case "semantic_event": return validateSemanticEvent(payload);
     case "lifecycle": return (payload.state === "connected" || payload.state === "disconnected" || payload.state === "world_unavailable") && isReasonCode(payload.reasonCode) ? null : "invalid_lifecycle";
   }
@@ -168,7 +172,7 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
   return Number.isSafeInteger(value.revision) && typeof value.location === "string" && isRecord(value.tile)
     && isFiniteNumber(value.tile.x) && isFiniteNumber(value.tile.y)
     && isFiniteNumber(value.stamina) && isFiniteNumber(value.health) && typeof value.actionable === "boolean"
-    && isStringArray(value.capabilities) && (value.activeExecution === null || isRecord(value.activeExecution)) ? null : "invalid_snapshot";
+    && isStringArray(value.capabilities) && (value.activeExecution === null || (isRecord(value.activeExecution) && validateActiveExecution(value.activeExecution) === null)) ? null : "invalid_snapshot";
 }
 
 function validateExecutionRequestEnvelope(value: Record<string, unknown>): string | null {
@@ -177,6 +181,17 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     && isRecord(value.args) && Number.isSafeInteger(value.expectedRevision)
     && typeof value.deadlineMs === "number" && Number.isFinite(value.deadlineMs)
     && validToken(value.permissionToken) ? null : "invalid_execution_request";
+}
+
+function validActionGrants(value: unknown, capabilities: unknown, nowMs: number): value is readonly ActionGrant[] {
+  if (!Array.isArray(value) || value.length > 8 || !isStringArray(capabilities)) return false;
+  const tokens = new Set<string>(); const nonces = new Set<string>();
+  return value.every((grant) => {
+    if (!isRecord(grant) || !validToken(grant.token) || grant.action !== "move_to_tile" || !capabilities.includes(grant.action)
+      || typeof grant.expiresAtMs !== "number" || !Number.isFinite(grant.expiresAtMs) || grant.expiresAtMs <= nowMs || grant.expiresAtMs > nowMs + 60_000
+      || !isOpaqueId(grant.nonce) || tokens.has(grant.token) || nonces.has(grant.nonce)) return false;
+    tokens.add(grant.token); nonces.add(grant.nonce); return true;
+  });
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
@@ -188,9 +203,14 @@ function validateReceipt(value: Record<string, unknown>): string | null {
 function validateSemanticEvent(value: Record<string, unknown>): string | null {
   return (value.kind === "snapshot_changed" || value.kind === "execution_state" || value.kind === "connection_state" || value.kind === "lifecycle")
     && Number.isSafeInteger(value.revision) && isReasonCode(value.reasonCode)
-    && (value.activeExecution === null || isRecord(value.activeExecution)) ? null : "invalid_semantic_event";
+    && (value.activeExecution === null || (isRecord(value.activeExecution) && validateActiveExecution(value.activeExecution) === null)) ? null : "invalid_semantic_event";
 }
 
+function validateActiveExecution(value: Record<string, unknown>): string | null {
+  return isOpaqueId(value.executionId) && isOpaqueId(value.requestId) && typeof value.action === "string" && value.action.length <= 128
+    && typeof value.state === "string" && EXECUTION_STATES.includes(value.state as ExecutionState) && isReasonCode(value.reasonCode)
+    && (value.evidence === null || isRecord(value.evidence)) ? null : "invalid_active_execution";
+}
 function isScope(value: unknown): value is Scope {
   return isRecord(value) && ["integrationId", "saveId", "worldId", "playerId", "companionId"].every((key) => typeof value[key] === "string" && isOpaqueId(value[key]));
 }

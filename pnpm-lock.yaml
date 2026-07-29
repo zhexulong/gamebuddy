@@ -27,6 +27,15 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  voice-gateway:
+    devDependencies:
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
 packages:
 
   '@anthropic-ai/sdk@0.91.1':

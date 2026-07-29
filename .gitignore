@@ -28,9 +28,11 @@ stardewvalley.targets
 *.sln.docstates
 
 # Local configuration, secrets, and diagnostics
+# Stardew bridge scope/token values are per local AI client and never committed.
+integrations/stardew/config.json
 .env
 .env.*
-!.env.example
+!/.env.example
 *.log
 
 # Scratch downloads and manual research captures
