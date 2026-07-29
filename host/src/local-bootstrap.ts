@@ -34,10 +34,17 @@ export async function connectLocalCompanion(connection: LocalStardewConnection):
   } as const;
   const bridge = await LocalStardewBridgeClient.connect(scope, connection.pipeName, connection.bridgeToken);
   try {
-    await bridge.observe();
+    const initialSnapshot = await bridge.observe();
     const runtime = await createCompanionRuntime(connection.identity, connection.runtimeRoot, bridge, connection.modelConfig);
     const loop = new CompanionLoop(runtime.session);
     const host = new CompanionHostService(loop, bridge);
+    // The public bootstrap contract always supplies its mandatory initial
+    // authoritative observation to the same normal turn path. Consumers must
+    // not need CLI-only duplicate plumbing to get Live World context.
+    host.acceptInitialSnapshot({
+      protocolVersion: 1, messageId: "bootstrap_snapshot", correlationId: "bootstrap_snapshot", timestampMs: Date.now(), scope,
+      type: "snapshot", payload: initialSnapshot,
+    });
     return { bridge, runtime, loop, host };
   } catch (error) {
     bridge.close();

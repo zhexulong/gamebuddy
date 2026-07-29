@@ -53,6 +53,10 @@ export function createStardewActionTools(integration: CompanionIntegration) {
     execute: async (_toolCallId, params) => {
       const snapshot = integration.state.snapshot;
       if (!integration.state.connected || snapshot === null) return receiptResult(null, "integration_not_ready");
+      // Capability is a live Mod fact, not a one-time Host mount decision.
+      // Reconnects, lifecycle transitions, or version changes therefore fail
+      // closed even though Pi keeps the stable tool name in its session.
+      if (!integration.state.capabilities.includes("move_to_tile") || !snapshot.capabilities.includes("move_to_tile")) return receiptResult(null, "capability_not_declared");
       const permissionToken = integration.nextMoveGrant({ x: params.x, y: params.y });
       if (permissionToken === null) return receiptResult(null, "no_fresh_permission_grant");
       const request: ExecutionRequest = { requestId: params.requestId ?? randomUUID(), idempotencyKey: params.idempotencyKey ?? randomUUID(), action: "move_to_tile", args: { x: params.x, y: params.y }, expectedRevision: snapshot.revision, deadlineMs: Date.now() + 30_000, permissionToken };

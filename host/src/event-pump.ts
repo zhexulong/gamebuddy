@@ -1,5 +1,7 @@
 /** Product-neutral Host event pump. It forwards labelled facts; it never plans or interprets receipts. */
-export type WorldFact = Readonly<{ source: "stardew_mod"; kind: "snapshot" | "execution_receipt" | "lifecycle"; correlationId: string; revision: number; payload: Readonly<Record<string, unknown>> }>;
+export type WorldFact =
+  | Readonly<{ source: "stardew_mod"; kind: "snapshot" | "execution_receipt" | "lifecycle"; correlationId: string; revision: number; payload: Readonly<Record<string, unknown>> }>
+  | Readonly<{ source: "host_local_transport"; kind: "lifecycle"; correlationId: string; revision: 0; payload: Readonly<{ state: "disconnected"; reasonCode: string }> }>;
 export type PlayerInput = Readonly<{ source: "player_text" | "voice_final"; inputId: string; text: string; locale: string; timestampMs: number }>;
 export interface CompanionTurnSink { deliver(text: string): Promise<void>; }
 
@@ -11,7 +13,7 @@ export class CompanionEventPump {
   #delivering = false;
 
   public enqueueFact(fact: WorldFact): void {
-    if (fact.source !== "stardew_mod") throw new Error("untrusted_world_fact_source");
+    if (fact.source === "host_local_transport" && (fact.kind !== "lifecycle" || fact.revision !== 0)) throw new Error("invalid_local_transport_fact");
     const frozen = Object.freeze({ ...fact });
     if (fact.kind === "snapshot") { if (this.#snapshot === undefined || fact.revision >= this.#snapshot.revision) this.#snapshot = frozen; return; }
     const destination = fact.kind === "execution_receipt" ? this.#receipts : this.#lifecycle;

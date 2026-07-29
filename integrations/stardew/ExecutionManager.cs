@@ -38,7 +38,7 @@ internal sealed class ExecutionManager
     /// <summary>Returns the latest authoritative receipt for idempotent bridge replay.</summary>
     public bool TryGetReceipt(string requestId, out LocalExecutionReceipt receipt) => this.receiptsByRequestId.TryGetValue(requestId, out receipt!);
 
-    public LocalExecutionReceipt RequestLocalMove(string requestId, Vector2 targetTile)
+    public LocalExecutionReceipt RequestLocalMove(string requestId, Vector2 targetTile, long? requestedDeadlineMs = null)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
             return existing;
@@ -47,8 +47,14 @@ internal sealed class ExecutionManager
         if (!Context.IsWorldReady || Game1.player is null)
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "world_not_ready", null);
 
-        if (!IsFiniteTile(targetTile) || targetTile.X < 0 || targetTile.Y < 0 || targetTile.X > 1000 || targetTile.Y > 1000)
+        if (!IsFiniteTile(targetTile) || targetTile.X != MathF.Floor(targetTile.X) || targetTile.Y != MathF.Floor(targetTile.Y)
+            || targetTile.X < 0 || targetTile.Y < 0 || targetTile.X > 1000 || targetTile.Y > 1000)
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_target_tile", null);
+
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long deadlineMs = requestedDeadlineMs ?? nowMs + DefaultDeadlineTicks * 1000L / 60L;
+        if (deadlineMs <= nowMs)
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "deadline_expired", null);
 
         // A newer accepted directive supersedes the earlier local directive.
         // The controller is still the sole body owner: it first records a
@@ -59,7 +65,10 @@ internal sealed class ExecutionManager
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Uncertain, "body_release_unavailable", null);
 
         string executionId = Guid.NewGuid().ToString("N");
-        LocalMoveSpec specification = new(executionId, requestId, targetTile, this.revision, this.tick + DefaultDeadlineTicks);
+        // The wall-clock deadline is authoritative: body ticks also check it,
+        // so a lagging game tick can never extend a Host/player-bound request.
+        int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));
+        LocalMoveSpec specification = new(executionId, requestId, targetTile, this.revision, this.tick + deadlineTicks, deadlineMs);
         // The controller emits its initial Running transition synchronously;
         // establish ownership first so its authoritative receipt is retained.
         this.active = specification;
@@ -180,13 +189,16 @@ internal sealed class ExecutionManager
     public BridgeSnapshot CreateBridgeSnapshot()
     {
         Farmer player = Game1.player;
+        LocalExecutionReceipt? activeReceipt = null;
+        if (this.active is not null)
+            this.receiptsByRequestId.TryGetValue(this.active.RequestId, out activeReceipt);
         BridgeActiveExecution? activeExecution = this.active is null ? null : new(
             this.active.ExecutionId,
             this.active.RequestId,
             "move_to_tile",
-            ExecutionState.Running.ToWireValue(),
-            "controller_owned",
-            new Dictionary<string, string> { ["target_tile"] = FormatTile(this.active.TargetTile) });
+            (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+            activeReceipt?.ReasonCode ?? "accepted",
+            new Dictionary<string, string> { ["target_tile"] = FormatTile(this.active.TargetTile), ["deadline_ms"] = this.active.DeadlineMs.ToString(System.Globalization.CultureInfo.InvariantCulture) });
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",

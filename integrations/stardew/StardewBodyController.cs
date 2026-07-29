@@ -68,9 +68,9 @@ internal sealed class StardewBodyController
             this.transition(ExecutionState.Running, "controller_started", $"target={FormatTile(specification.TargetTile)}");
         }
 
-        if (tick > specification.DeadlineTick)
+        if (tick > specification.DeadlineTick || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= specification.DeadlineMs)
         {
-            this.Expire("deadline_expired", "local deadline reached");
+            this.Expire("deadline_expired", "authoritative deadline reached");
             return;
         }
 

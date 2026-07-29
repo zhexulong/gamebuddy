@@ -37,7 +37,8 @@ internal sealed record LocalMoveSpec(
     string RequestId,
     Vector2 TargetTile,
     long RouteRevision,
-    int DeadlineTick);
+    int DeadlineTick,
+    long DeadlineMs);
 
 internal static class ExecutionStateWire
 {

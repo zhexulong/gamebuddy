@@ -22,10 +22,8 @@ const connected = await connectLocalCompanion({
   bridgeToken: config.bridgeToken,
   modelConfig: config.model === undefined ? undefined : { provider: "xiaomi-mimo", modelId: config.model },
 });
-// The initial snapshot came directly from the Mod before runtime creation.
-// Forward it once, then Host service forwards later validated bridge facts.
-connected.loop.pump.enqueueFact({ source: "stardew_mod", kind: "snapshot", correlationId: "bootstrap_snapshot", revision: connected.bridge.state.snapshot?.revision ?? 0, payload: connected.bridge.state.snapshot ?? {} });
-await connected.loop.flush();
+// connectLocalCompanion already admitted the mandatory initial Mod snapshot
+// through the ordinary Host turn path before returning.
 process.stdout.write("GameBuddy Host connected to an identity-bound local Stardew bridge. Press Ctrl+C to stop.\n");
 await new Promise<void>((resolveStop) => {
   const stop = () => resolveStop();

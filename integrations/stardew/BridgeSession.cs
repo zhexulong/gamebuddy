@@ -69,7 +69,9 @@ internal sealed class BridgeSession
         // replay must not be rejected merely because the original deadline or
         // snapshot revision has since passed.
         if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;
-        string fingerprint = $"{request.Action}:{request.Args.X}:{request.Args.Y}:{request.ExpectedRevision}";
+        // Bind both independently supplied retry identifiers to the immutable
+        // request shape before any one-shot approval can be consumed.
+        string fingerprint = $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.ExpectedRevision}";
         if (this.idempotency.TryGetValue(request.IdempotencyKey, out IdempotentExecution? existing))
         {
             if (existing.Fingerprint != fingerprint) { reasonCode = "idempotency_key_conflict"; return false; }
@@ -78,10 +80,22 @@ internal sealed class BridgeSession
             reasonCode = "idempotent_replay";
             return true;
         }
+        IdempotentExecution? existingRequest = this.idempotency.Values.FirstOrDefault(candidate => candidate.RequestId == request.RequestId);
+        if (existingRequest is not null)
+        {
+            if (existingRequest.Fingerprint != fingerprint) { reasonCode = "request_id_conflict"; return false; }
+            if (!this.executions.TryGetReceipt(existingRequest.RequestId, out LocalExecutionReceipt latest)) { reasonCode = "idempotency_receipt_unavailable"; return false; }
+            response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(latest));
+            reasonCode = "idempotent_replay";
+            return true;
+        }
         if (!IsFreshExecutionRequest(request, out reasonCode)) return false;
         if (!TryConsumeActionGrant(request, out reasonCode)) return false;
 
-        LocalExecutionReceipt receipt = this.executions.RequestLocalMove(request.RequestId, new Microsoft.Xna.Framework.Vector2(request.Args.X!.Value, request.Args.Y!.Value));
+        LocalExecutionReceipt receipt = this.executions.RequestLocalMove(
+            request.RequestId,
+            new Microsoft.Xna.Framework.Vector2(request.Args.X!.Value, request.Args.Y!.Value),
+            request.DeadlineMs);
         this.RememberIdempotency(request.IdempotencyKey, fingerprint, request.RequestId);
         response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(receipt));
         reasonCode = "accepted";
@@ -149,6 +163,7 @@ internal sealed class BridgeSession
         if (request is null || !BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.IdempotencyKey)
             || request.Action != "move_to_tile" || request.Args is null || !request.Args.X.HasValue || !request.Args.Y.HasValue
             || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value)
+            || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value)
             || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000)
         { reasonCode = "invalid_execution_request"; return false; }
         reasonCode = "accepted";
@@ -164,7 +179,8 @@ internal sealed class BridgeSession
     {
         grant = null;
         if (!IsAuthenticated(generation, out reasonCode)) return false;
-        if (!float.IsFinite(targetX) || !float.IsFinite(targetY) || targetX < 0 || targetY < 0 || targetX > 1000 || targetY > 1000)
+        if (!float.IsFinite(targetX) || !float.IsFinite(targetY) || targetX != MathF.Floor(targetX) || targetY != MathF.Floor(targetY)
+            || targetX < 0 || targetY < 0 || targetX > 1000 || targetY > 1000)
         { reasonCode = "invalid_target_tile"; return false; }
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         this.PruneExpiredActionGrants(nowMs);

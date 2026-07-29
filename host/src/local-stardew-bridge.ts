@@ -15,6 +15,13 @@ import {
 export type LocalStardewBridgeState = CompanionIntegrationState & Readonly<{ authenticated: boolean; actionGrants: readonly ActionGrant[] }>;
 /** Validated Mod-originated facts forwarded to the Host event pump. */
 export type LocalStardewBridgeFact = Extract<BridgeMessage, { type: "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" }>;
+/** Local transport facts never claim a Mod/world transition. */
+export type LocalStardewConnectionFact = Readonly<{ state: "disconnected"; reasonCode: string }>;
+type PendingRequest = Readonly<{
+  resolve: (message: BridgeMessage) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>;
 const MAX_ACTION_GRANTS = 8;
 
 /**
@@ -23,7 +30,7 @@ const MAX_ACTION_GRANTS = 8;
  * from the deterministic test transport because it has no mock peer.
  */
 export class LocalStardewBridgeClient implements CompanionIntegration {
-  readonly #pending = new Map<string, (message: BridgeMessage) => void>();
+  readonly #pending = new Map<string, PendingRequest>();
   #authenticated = false;
   #sessionId: string | null = null;
   #capabilities: readonly string[] = [];
@@ -32,6 +39,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
   #latestReceipt: LocalStardewBridgeState["latestReceipt"] = null;
   #latestReasonCode: string | null = null;
   readonly #factListeners = new Set<(fact: LocalStardewBridgeFact) => void>();
+  readonly #connectionListeners = new Set<(fact: LocalStardewConnectionFact) => void>();
 
   private constructor(readonly scope: Scope, readonly transport: NamedPipeTransport, readonly token: string) {
     transport.onMessage((json) => this.receive(json));
@@ -43,7 +51,12 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       this.#snapshot = null;
       this.#latestReceipt = null;
       this.#latestReasonCode = reasonCode;
+      for (const pending of this.#pending.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error(`bridge_disconnected:${reasonCode}`));
+      }
       this.#pending.clear();
+      for (const listener of this.#connectionListeners) listener({ state: "disconnected", reasonCode });
     });
   }
 
@@ -111,6 +124,12 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     return () => this.#factListeners.delete(listener);
   }
 
+  /** Subscribe to local pipe state. This is explicitly not a Mod world fact. */
+  public onConnectionFact(listener: (fact: LocalStardewConnectionFact) => void): () => void {
+    this.#connectionListeners.add(listener);
+    return () => this.#connectionListeners.delete(listener);
+  }
+
   private async hello(): Promise<void> {
     const response = await this.request("hello", { token: this.token });
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
@@ -131,10 +150,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
         this.#pending.delete(correlationId);
         reject(new Error("bridge_response_timeout"));
       }, 5_000);
-      this.#pending.set(correlationId, (response) => {
-        clearTimeout(timer);
-        resolvePromise(response);
-      });
+      this.#pending.set(correlationId, { resolve: resolvePromise, reject: reject, timer });
       try { this.transport.send(message); } catch (error) {
         clearTimeout(timer);
         this.#pending.delete(correlationId);
@@ -181,7 +197,8 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     const pending = this.#pending.get(message.correlationId);
     if (pending !== undefined) {
       this.#pending.delete(message.correlationId);
-      pending(message);
+      clearTimeout(pending.timer);
+      pending.resolve(message);
     }
   }
 

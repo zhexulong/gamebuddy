@@ -14,6 +14,12 @@ test("event pump coalesces Mod facts and forwards final player input without inv
   assert.equal(pump.pendingCount, 0);
 });
 
+test("event pump rejects Host-local data that attempts to impersonate Mod authority", () => {
+  const pump = new CompanionEventPump();
+  assert.throws(() => pump.enqueueFact({ source: "host_local_transport", kind: "snapshot", correlationId: "fake", revision: 0, payload: { state: "disconnected", reasonCode: "x" } } as never), /invalid_local_transport_fact/);
+  assert.throws(() => pump.enqueueFact({ source: "host_local_transport", kind: "execution_receipt", correlationId: "fake", revision: 0, payload: { state: "disconnected", reasonCode: "x" } } as never), /invalid_local_transport_fact/);
+});
+
 test("event pump preserves distinct receipts and restores a failed delivery", async () => {
   const pump = new CompanionEventPump();
   pump.enqueueFact({ source: "stardew_mod", kind: "execution_receipt", correlationId: "execution_a", revision: 1, payload: { state: "failed" } });
