@@ -13,9 +13,12 @@ namespace GameBuddy.Stardew;
 public sealed class ModEntry : Mod
 {
     private ExecutionManager? executions;
+    private ModConfig config = new();
+    private BridgeSession? bridgeSession;
 
     public override void Entry(IModHelper helper)
     {
+        this.config = helper.ReadConfig<ModConfig>();
         helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
         helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
         helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
@@ -39,6 +42,11 @@ public sealed class ModEntry : Mod
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
         this.executions = new ExecutionManager(this.Monitor);
+        this.bridgeSession = this.config.HasValidLocalBridgeConfiguration
+            ? new BridgeSession(this.executions, new BridgeScope("stardew", this.config.SaveId, this.config.WorldId, this.config.PlayerId, this.config.CompanionId), this.config.BridgeToken)
+            : null;
+        if (this.config.EnableLocalBridge && this.bridgeSession is null)
+            this.Monitor.Log("GameBuddy local bridge remains disabled: configuration must use opaque scope IDs and a 16+ character token.", LogLevel.Warn);
         Farmer localPlayer = Game1.player;
         this.Monitor.Log(
             $"GameBuddy bound only local Game1.player: farmhand_id={localPlayer.UniqueMultiplayerID}, multiplayer={Context.IsMultiplayer}, main_player={Context.IsMainPlayer}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
@@ -66,6 +74,7 @@ public sealed class ModEntry : Mod
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
         this.executions?.InvalidateForLifecycle("returned_to_title");
+        this.bridgeSession = null;
         this.executions = null;
         this.Monitor.Log("GameBuddy returned to title; local embodiment state cleared.", LogLevel.Trace);
     }

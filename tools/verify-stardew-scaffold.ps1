@@ -52,7 +52,7 @@ foreach ($forbiddenText in @("new Farmer", "Game1.otherFarmers", "new NPC", "Htt
     }
 }
 
-foreach ($requiredText in @("UniqueMultiplayerID", "TryStart", "Cancel", "RequestLocalMove", "body_owned", "locally_blocked", "target_reached", "deadline_expired", "cancellation_receipt_missing", "MaximumRememberedReceipts", "CreateBridgeSnapshot", "BridgeProtocol.Version", "MaximumMessageBytes", "PartiallySucceeded", "ToWireValue", "TryAuthenticate", "TryObserve", "TryCancel", "FixedTimeEquals")) {
+foreach ($requiredText in @("UniqueMultiplayerID", "TryStart", "Cancel", "RequestLocalMove", "body_owned", "locally_blocked", "target_reached", "deadline_expired", "cancellation_receipt_missing", "MaximumRememberedReceipts", "CreateBridgeSnapshot", "BridgeProtocol.Version", "MaximumMessageBytes", "PartiallySucceeded", "ToWireValue", "TryAuthenticate", "TryObserve", "TryExecute", "TryCancel", "FixedTimeEquals", "HasValidLocalBridgeConfiguration")) {
     if (-not $allSource.Contains($requiredText)) {
         throw "Stardew embodiment is missing required fail-closed/trace contract text: $requiredText"
     }
