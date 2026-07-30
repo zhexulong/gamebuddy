@@ -1,6 +1,6 @@
 # GameBuddy Stardew integration
 
-This is a **Phase 1/2 client-local Embodiment and bridge spike**. It binds only the real native `Game1.player` owned by the Stardew process which loaded the Mod. It never constructs a `Farmer`, mutates `Game1.otherFarmers`, controls a remote player, exposes a network listener, teleports the actor, or claims a shadow actor is a Farmhand.
+This is a **Phase 1/2 local split-screen Farmhand Embodiment and bridge spike**. One Stardew process runs the human host and native local-co-op Farmhand. GameBuddy binds only the configured Farmhand's real screen-local `Game1.player`; it never constructs a `Farmer`, mutates `Game1.otherFarmers`, controls a remote player, exposes a network listener, teleports the actor, or claims a shadow actor is a Farmhand.
 
 The included `StardewBodyController` is a deliberately narrow local movement fixture. It accepts a bounded target tile from `ExecutionManager`, maintains single movement ownership, atomically invalidates a superseded directive before starting a replacement, records accepted/running/progress/blocked/terminal traces with route revision and local actor evidence, is cancellable locally, and stops on menu/event/movement-lock/deadline conditions. A stall gets exactly one alternate-axis local recovery attempt before a factual terminal failure. It is not general pathfinding, an Agent, or a player-facing Game Action surface.
 
@@ -18,7 +18,15 @@ For Phase 1 native-mechanics evidence, the local-only `gamebuddy_equip_tool_fixt
 
 The Mod reports this as a live capability in `hello_ack` and snapshots. The Host only mounts the corresponding tool while that capability remains declared; it never mints a token, interprets model text as permission, or enables an action itself. Disabling the action (or any current Mod/world precondition failing) prevents new executions. Local cancellation remains available regardless of the action allowlist.
 
-Enable the bridge only in the local untracked `config.json` installed with the AI-client Mod; `config.example.json` documents the shape. It needs opaque IDs and a 16+ character token; it never listens on LAN or the public network. A real Windows AI-Farmhand transport/reconnect test remains required before treating this candidate as accepted production IPC.
+Enable the bridge only in the local untracked `config.json` installed with the split-screen Mod; `config.example.json` documents the shape. `PlayerId` is the native local-co-op Farmhand's `UniqueMultiplayerID`, not the human host's ID. It needs opaque IDs and a 16+ character token; it never listens on LAN or the public network. A real Windows AI-Farmhand transport/reconnect test remains required before treating this candidate as accepted production IPC.
+
+### Split-screen profile
+
+The supported embodiment topology is one Stardew process using the game's official local split-screen co-op. `PerScreen<T>` isolates GameBuddy execution, ledger, bridge, and trace state per local screen. The configured `PlayerId` is the sole authority for selecting the AI Farmhand; no state is initialized or controlled on the human screen.
+
+Split-screen uses a single Stardew process and global game audio mixer. GameBuddy must not change `startup_preferences`, persistent game volume, window settings, or input bindings to mute the AI screen: that would affect the human player and risks concurrent preference writes. The single Companion Host/Voice Gateway is the intentional player-audible voice output. There is no supported per-screen game-audio mute API.
+
+Use a second local input device only to let the native Farmhand join through Stardew's UI. After it joins, keep human input ownership with the human screen; GameBuddy issues only bounded in-game actions for the configured Farmhand and never injects OS input or takes window focus.
 
 ## Local compilation
 
@@ -42,7 +50,7 @@ Do not commit a game installation path, game DLLs, SMAPI binaries, generated mod
 
 ## Manual Phase 1 gate (not automated)
 
-A real Farmhand test requires two separately authenticated, legitimately licensed Stardew clients and a host save with a vacant cabin. Start the human host and join the second client through Stardew's normal multiplayer flow. Install this Mod on the **AI client**, load the shared save, then use SMAPI's console:
+A real Farmhand test requires one legitimate Stardew process, a host save with a vacant cabin, and a second local input device. Start the human save, use Stardew's official `Start Local Co-op` flow for the second local player, and configure GameBuddy with that native Farmhand's `UniqueMultiplayerID`. Load the shared save, then run the following only from the configured AI Farmhand screen's SMAPI console:
 
 ```text
 gamebuddy_status
@@ -54,4 +62,4 @@ gamebuddy_cancel
 gamebuddy_trace
 ```
 
-Capture the AI-client log showing `bound only local Game1.player`, the Farmhand multiplayer ID, and the JSON emitted by `gamebuddy_trace`. Verify that replacement records a terminal `superseded_by_new_directive` receipt before the new request's distinct route revision, then compare the trace and native tool before/after receipt to the matching host-visible result. Exercise replacement, bounded blockage recovery, menu/warp invalidation, saving/cutover, reconnect, and the native tool fixture in the dedicated test save. This manual evidence is required before declaring Phase 1 accepted; a single-client compile/smoke, a shadow `Farmer`, or a bridge fixture is not a substitute.
+Capture the log showing `bound configured AI Farmhand only`, the Farmhand multiplayer ID and `screen_id`, plus the JSON emitted by `gamebuddy_trace`. Verify that replacement records a terminal `superseded_by_new_directive` receipt before the new request's distinct route revision, then compare the trace and native tool before/after receipt to the matching human-screen-visible result. Exercise replacement, bounded blockage recovery, menu/warp invalidation, saving/cutover, local-co-op reconnect, and the native tool fixture in the dedicated test save. This manual evidence is required before declaring Phase 1 accepted; a single-screen compile/smoke, a shadow `Farmer`, or a bridge fixture is not a substitute.

@@ -1,21 +1,20 @@
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
+using StardewModdingAPI.Utilities;
 using StardewValley;
 
 namespace GameBuddy.Stardew;
 
 /// <summary>
-/// Embodiment entry point. All state belongs to the client that loaded this
-/// Mod. The only actor it ever controls is this process' real Game1.player;
-/// it never creates or inserts a Farmer into multiplayer collections.
+/// Embodiment entry point. State is isolated per local split-screen player.
+/// The configured PlayerId selects the one real local Farmhand GameBuddy may
+/// control; no state is created for the human player's screen.
 /// </summary>
 public sealed class ModEntry : Mod
 {
-    private ExecutionManager? executions;
+    private readonly PerScreen<ScreenEmbodimentState> screenStates = new(() => new ScreenEmbodimentState());
     private ModConfig config = new();
-    private BridgeSession? bridgeSession;
-    private LocalPipeBridge? localPipeBridge;
 
     public override void Entry(IModHelper helper)
     {
@@ -28,13 +27,13 @@ public sealed class ModEntry : Mod
         helper.Events.GameLoop.Saving += this.OnSaving;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
 
-        helper.ConsoleCommands.Add("gamebuddy_status", "Print the local native-player binding and authoritative snapshot.", this.StatusCommand);
-        helper.ConsoleCommands.Add("gamebuddy_trace", "Print bounded local directive/route/body execution trace evidence.", this.TraceCommand);
+        helper.ConsoleCommands.Add("gamebuddy_status", "Print the configured AI Farmhand's authoritative snapshot on its local screen.", this.StatusCommand);
+        helper.ConsoleCommands.Add("gamebuddy_trace", "Print bounded AI Farmhand directive/route/body execution trace evidence.", this.TraceCommand);
         helper.ConsoleCommands.Add("gamebuddy_move_fixture", "Phase 1 local-only movement fixture: gamebuddy_move_fixture <tile-x> <tile-y> <request-id>.", this.MoveFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_equip_tool_fixture", "Phase 1 local-only native mechanic fixture: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>.", this.EquipToolFixtureCommand);
-        helper.ConsoleCommands.Add("gamebuddy_cancel", "Cancel the active local GameBuddy execution.", this.CancelCommand);
+        helper.ConsoleCommands.Add("gamebuddy_cancel", "Cancel the active local AI Farmhand GameBuddy execution.", this.CancelCommand);
 
-        this.Monitor.Log("GameBuddy embodiment loaded; no remote Farmer construction or host-side control is available.", LogLevel.Info);
+        this.Monitor.Log("GameBuddy embodiment loaded; split-screen state is isolated and no remote Farmer construction or host-side control is available.", LogLevel.Info);
     }
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
@@ -44,141 +43,137 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
-        // Clear any prior client-local bridge and body state before a save
-        // reload creates fresh identity-bound instances.
-        this.executions?.InvalidateForLifecycle("save_loaded");
-        this.localPipeBridge?.Dispose();
-        this.localPipeBridge = null;
-        this.bridgeSession = null;
-        this.executions = new ExecutionManager(this.Monitor, this.PublishReceipt, this.config.EnabledActionSet);
-        Farmer localPlayer = Game1.player;
-        // The configured opaque player scope must bind to the identity Stardew
-        // actually assigned this client. A copied config for another Farmhand
-        // therefore fails closed instead of observing/executing as the wrong one.
-        bool playerScopeMatches = this.config.PlayerId == localPlayer.UniqueMultiplayerID.ToString();
+        ScreenEmbodimentState state = this.screenStates.Value;
+        this.ClearState(state, "save_loaded");
+        if (!this.IsConfiguredAiScreen(out Farmer? localPlayer, out string reason))
+        {
+            this.Monitor.Log($"GameBuddy ignored local screen {Context.ScreenId}: {reason}.", LogLevel.Trace);
+            return;
+        }
+
+        state.Executions = new ExecutionManager(this.Monitor, receipt => this.PublishReceipt(state, receipt), this.config.EnabledActionSet);
         bool saveScopeMatches = this.config.SaveId == Game1.uniqueIDForThisGame.ToString();
         bool worldScopeMatches = this.config.WorldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString();
-        bool scopeMatchesWorld = playerScopeMatches && saveScopeMatches && worldScopeMatches;
-        this.bridgeSession = this.config.HasValidLocalBridgeConfiguration && scopeMatchesWorld
-            ? new BridgeSession(this.executions, new BridgeScope("stardew", this.config.SaveId, this.config.WorldId, this.config.PlayerId, this.config.CompanionId), this.config.BridgeToken, this.config.EnabledActionSet)
+        bool scopeMatchesWorld = saveScopeMatches && worldScopeMatches;
+        state.BridgeSession = this.config.HasValidLocalBridgeConfiguration && scopeMatchesWorld
+            ? new BridgeSession(state.Executions, new BridgeScope("stardew", this.config.SaveId, this.config.WorldId, this.config.PlayerId, this.config.CompanionId), this.config.BridgeToken, this.config.EnabledActionSet)
             : null;
-        this.localPipeBridge = this.bridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
-        if (this.config.EnableLocalBridge && this.bridgeSession is null)
+        state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
+        if (this.config.EnableLocalBridge && state.BridgeSession is null)
             this.Monitor.Log(this.config.HasValidLocalBridgeConfiguration
-                ? "GameBuddy local bridge remains disabled: configured save/world/player scope does not bind to this client-local Stardew world."
+                ? "GameBuddy local bridge remains disabled: configured save/world scope does not bind to this AI Farmhand world."
                 : "GameBuddy local bridge remains disabled: configuration must use opaque scope IDs and a 16+ character token.", LogLevel.Warn);
-        else if (this.localPipeBridge is not null)
-            this.Monitor.Log("GameBuddy local named-pipe bridge started for this client-local Farmhand.", LogLevel.Info);
+        else if (state.LocalPipeBridge is not null)
+            this.Monitor.Log($"GameBuddy local named-pipe bridge started for AI Farmhand screen {Context.ScreenId}.", LogLevel.Info);
+
         this.Monitor.Log(
-            $"GameBuddy bound only local Game1.player: farmhand_id={localPlayer.UniqueMultiplayerID}, multiplayer={Context.IsMultiplayer}, main_player={Context.IsMainPlayer}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
+            $"GameBuddy bound configured AI Farmhand only: screen_id={Context.ScreenId}, farmhand_id={localPlayer!.UniqueMultiplayerID}, split_screen={Context.IsSplitScreen}, multiplayer={Context.IsMultiplayer}, main_player={Context.IsMainPlayer}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
             LogLevel.Info);
     }
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
-        if (!Context.IsWorldReady)
+        if (!Context.IsWorldReady || !this.IsConfiguredAiScreen(out _, out _))
             return;
 
-        this.DrainLocalPipeBridge();
-        this.executions?.Update();
+        ScreenEmbodimentState state = this.screenStates.Value;
+        this.DrainLocalPipeBridge(state);
+        state.Executions?.Update();
     }
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
-        this.executions?.InvalidateForLifecycle("day_started");
-        this.PublishLifecycle("connected", "day_started");
+        if (!this.TryGetAiState(out ScreenEmbodimentState state))
+            return;
+        ExecutionManager executions = state.Executions!;
+        executions.InvalidateForLifecycle("day_started");
+        this.PublishLifecycle(state, "connected", "day_started");
     }
 
     private void OnWarped(object? sender, WarpedEventArgs e)
     {
-        if (Context.IsWorldReady && e.Player.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID)
+        if (this.TryGetAiState(out ScreenEmbodimentState state) && e.Player.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID)
         {
-            this.executions?.InvalidateForLifecycle("warped");
-            this.PublishSemantic("snapshot_changed", "warped");
+            ExecutionManager executions = state.Executions!;
+            executions.InvalidateForLifecycle("warped");
+            this.PublishSemantic(state, "snapshot_changed", "warped");
         }
     }
 
     private void OnSaving(object? sender, SavingEventArgs e)
     {
-        this.executions?.InvalidateForLifecycle("saving");
-        this.PublishLifecycle("world_unavailable", "saving");
+        if (!this.TryGetAiState(out ScreenEmbodimentState state))
+            return;
+        ExecutionManager executions = state.Executions!;
+        executions.InvalidateForLifecycle("saving");
+        this.PublishLifecycle(state, "world_unavailable", "saving");
     }
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
-        this.executions?.InvalidateForLifecycle("returned_to_title");
-        this.PublishLifecycle("world_unavailable", "returned_to_title");
-        this.localPipeBridge?.Dispose();
-        this.localPipeBridge = null;
-        this.bridgeSession = null;
-        this.executions = null;
-        this.Monitor.Log("GameBuddy returned to title; local embodiment state cleared.", LogLevel.Trace);
+        ScreenEmbodimentState state = this.screenStates.Value;
+        if (state.Executions is not null)
+        {
+            state.Executions.InvalidateForLifecycle("returned_to_title");
+            this.PublishLifecycle(state, "world_unavailable", "returned_to_title");
+        }
+        this.ClearState(state, "returned_to_title");
+        this.Monitor.Log($"GameBuddy cleared local embodiment state for screen {Context.ScreenId}.", LogLevel.Trace);
     }
 
     private void StatusCommand(string command, string[] args)
     {
-        if (!RequireWorld())
+        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
             return;
-
-        this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(this.executions!.CreateSnapshot(), BridgeProtocol.JsonOptions), LogLevel.Info);
+        this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(state.Executions!.CreateSnapshot(), BridgeProtocol.JsonOptions), LogLevel.Info);
     }
 
     private void TraceCommand(string command, string[] args)
     {
-        if (!RequireWorld())
+        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
             return;
-
-        // Read-only evidence export for the Phase 1 two-client runbook. The
-        // ledger remains game-thread-owned; this does not replay or mutate it.
-        this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(this.executions!.Trace, BridgeProtocol.JsonOptions), LogLevel.Info);
+        this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(state.Executions!.Trace, BridgeProtocol.JsonOptions), LogLevel.Info);
     }
 
     private void MoveFixtureCommand(string command, string[] args)
     {
-        if (!RequireWorld())
+        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
             return;
-
         if (args.Length != 3 || !int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y) || !IsOpaqueRequestId(args[2]))
         {
             this.Monitor.Log("Usage: gamebuddy_move_fixture <integer-tile-x> <integer-tile-y> <request-id>; request-id must be 1-64 letters, digits, _ or -.", LogLevel.Warn);
             return;
         }
-
-        LocalExecutionReceipt receipt = this.executions!.RequestLocalMove(args[2], new Vector2(x, y));
+        LocalExecutionReceipt receipt = state.Executions!.RequestLocalMove(args[2], new Vector2(x, y));
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
 
     private void EquipToolFixtureCommand(string command, string[] args)
     {
-        if (!RequireWorld())
+        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
             return;
-
         if (args.Length != 2 || !int.TryParse(args[0], out int slot) || !IsOpaqueRequestId(args[1]))
         {
             this.Monitor.Log("Usage: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>; request-id must be 1-64 letters, digits, _ or -.", LogLevel.Warn);
             return;
         }
-
-        LocalExecutionReceipt receipt = this.executions!.RequestLocalEquipTool(args[1], slot);
+        LocalExecutionReceipt receipt = state.Executions!.RequestLocalEquipTool(args[1], slot);
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
 
     private void CancelCommand(string command, string[] args)
     {
-        if (!RequireWorld())
+        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
             return;
-
-        LocalExecutionReceipt receipt = this.executions!.CancelActiveForFixture("local_console_cancel");
+        LocalExecutionReceipt receipt = state.Executions!.CancelActiveForFixture("local_console_cancel");
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
 
-    private void DrainLocalPipeBridge()
+    private void DrainLocalPipeBridge(ScreenEmbodimentState state)
     {
-        if (this.localPipeBridge is null || this.bridgeSession is null)
+        if (state.LocalPipeBridge is null || state.BridgeSession is null)
             return;
-
-        // Bound game-thread work; pipe I/O and framing are isolated in LocalPipeBridge.
-        for (int index = 0; index < 8 && this.localPipeBridge.TryDequeueInbound(out PipeInbound inbound); index++)
+        for (int index = 0; index < 8 && state.LocalPipeBridge.TryDequeueInbound(out PipeInbound inbound); index++)
         {
             try
             {
@@ -194,13 +189,13 @@ public sealed class ModEntry : Mod
                     && correlationElement.ValueKind == System.Text.Json.JsonValueKind.String ? correlationElement.GetString() : null;
                 string? response = typeElement.GetString() switch
                 {
-                    "hello" => this.HandleHello(inbound.Generation, inbound.Json),
-                    "observe_request" => this.HandleObserve(inbound.Generation, inbound.Json),
-                    "execution_request" => this.HandleExecute(inbound.Generation, inbound.Json),
-                    "cancel_request" => this.HandleCancel(inbound.Generation, inbound.Json),
-                    _ => this.SerializeError(correlationId, "unknown_message_type"),
+                    "hello" => this.HandleHello(state, inbound.Generation, inbound.Json),
+                    "observe_request" => this.HandleObserve(state, inbound.Generation, inbound.Json),
+                    "execution_request" => this.HandleExecute(state, inbound.Generation, inbound.Json),
+                    "cancel_request" => this.HandleCancel(state, inbound.Generation, inbound.Json),
+                    _ => this.SerializeError(state, correlationId, "unknown_message_type"),
                 };
-                if (response is not null && !this.localPipeBridge.TryEnqueueOutbound(inbound.Generation, response))
+                if (response is not null && !state.LocalPipeBridge.TryEnqueueOutbound(inbound.Generation, response))
                     this.Monitor.Log("GameBuddy discarded local bridge response after connection closed or backpressure.", LogLevel.Warn);
             }
             catch (System.Text.Json.JsonException)
@@ -214,82 +209,124 @@ public sealed class ModEntry : Mod
         }
     }
 
-    /** Receipt publication is game-thread-only and never performs pipe I/O. */
-    private void PublishReceipt(LocalExecutionReceipt receipt)
+    private void PublishReceipt(ScreenEmbodimentState state, LocalExecutionReceipt receipt)
     {
-        if (this.localPipeBridge is null || this.bridgeSession is null)
+        if (state.LocalPipeBridge is null || state.BridgeSession is null)
             return;
-        long generation = this.localPipeBridge.CurrentGeneration;
-        if (generation != 0 && this.bridgeSession.TryCreateReceiptEvent(generation, receipt, out string json)
-            && !this.localPipeBridge.TryEnqueueOutbound(generation, json))
+        long generation = state.LocalPipeBridge.CurrentGeneration;
+        if (generation != 0 && state.BridgeSession.TryCreateReceiptEvent(generation, receipt, out string json)
+            && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
             this.Monitor.Log("GameBuddy dropped receipt event due to closed/backpressured bridge.", LogLevel.Warn);
     }
 
-    private void PublishSemantic(string kind, string reasonCode)
+    private void PublishSemantic(ScreenEmbodimentState state, string kind, string reasonCode)
     {
-        if (this.localPipeBridge is null || this.bridgeSession is null)
+        if (state.LocalPipeBridge is null || state.BridgeSession is null)
             return;
-        long generation = this.localPipeBridge.CurrentGeneration;
+        long generation = state.LocalPipeBridge.CurrentGeneration;
         string correlationId = Guid.NewGuid().ToString("N");
-        if (generation != 0 && this.bridgeSession.TryCreateSemanticEvent(generation, kind, correlationId, reasonCode, out string json)
-            && !this.localPipeBridge.TryEnqueueOutbound(generation, json))
+        if (generation != 0 && state.BridgeSession.TryCreateSemanticEvent(generation, kind, correlationId, reasonCode, out string json)
+            && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
             this.Monitor.Log("GameBuddy dropped semantic event due to closed/backpressured bridge.", LogLevel.Warn);
     }
 
-    private void PublishLifecycle(string state, string reasonCode)
+    private void PublishLifecycle(ScreenEmbodimentState state, string lifecycleState, string reasonCode)
     {
-        if (this.localPipeBridge is null || this.bridgeSession is null)
+        if (state.LocalPipeBridge is null || state.BridgeSession is null)
             return;
-        long generation = this.localPipeBridge.CurrentGeneration;
+        long generation = state.LocalPipeBridge.CurrentGeneration;
         string correlationId = Guid.NewGuid().ToString("N");
-        if (generation != 0 && this.bridgeSession.TryCreateLifecycleEvent(generation, state, correlationId, reasonCode, out string json)
-            && !this.localPipeBridge.TryEnqueueOutbound(generation, json))
+        if (generation != 0 && state.BridgeSession.TryCreateLifecycleEvent(generation, lifecycleState, correlationId, reasonCode, out string json)
+            && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
             this.Monitor.Log("GameBuddy dropped lifecycle event due to closed/backpressured bridge.", LogLevel.Warn);
     }
 
-    private string? SerializeError(string? correlationId, string reasonCode) => BridgeProtocol.TrySerialize(this.bridgeSession!.CreateError(correlationId, reasonCode), out string json, out _) ? json : null;
+    private string? SerializeError(ScreenEmbodimentState state, string? correlationId, string reasonCode) => state.BridgeSession is not null && BridgeProtocol.TrySerialize(state.BridgeSession.CreateError(correlationId, reasonCode), out string json, out _) ? json : null;
 
-    private string? HandleHello(long generation, string json) => this.SerializeBridgeResponse<BridgeHello, BridgeHelloAck>(
+    private string? HandleHello(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeHello, BridgeHelloAck>(state,
         System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeHello>>(json, BridgeProtocol.JsonOptions),
-        (BridgeEnvelope<BridgeHello> request, out BridgeEnvelope<BridgeHelloAck>? response, out string reason) => this.bridgeSession!.TryAuthenticate(generation, request, out response, out reason), out _);
+        (BridgeEnvelope<BridgeHello> request, out BridgeEnvelope<BridgeHelloAck>? response, out string reason) => state.BridgeSession!.TryAuthenticate(generation, request, out response, out reason), out _);
 
-    private string? HandleObserve(long generation, string json) => this.SerializeBridgeResponse<BridgeObserveRequest, BridgeSnapshot>(
+    private string? HandleObserve(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeObserveRequest, BridgeSnapshot>(state,
         System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeObserveRequest>>(json, BridgeProtocol.JsonOptions),
-        (BridgeEnvelope<BridgeObserveRequest> request, out BridgeEnvelope<BridgeSnapshot>? response, out string reason) => this.bridgeSession!.TryObserve(generation, request, out response, out reason), out _);
+        (BridgeEnvelope<BridgeObserveRequest> request, out BridgeEnvelope<BridgeSnapshot>? response, out string reason) => state.BridgeSession!.TryObserve(generation, request, out response, out reason), out _);
 
-    private string? HandleExecute(long generation, string json) => this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(
+    private string? HandleExecute(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(state,
         System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeExecutionRequest>>(json, BridgeProtocol.JsonOptions),
-        (BridgeEnvelope<BridgeExecutionRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => this.bridgeSession!.TryExecute(generation, request, out response, out reason), out _);
+        (BridgeEnvelope<BridgeExecutionRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryExecute(generation, request, out response, out reason), out _);
 
-    private string? HandleCancel(long generation, string json) => this.SerializeBridgeResponse<BridgeCancelRequest, BridgeReceipt>(
+    private string? HandleCancel(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeCancelRequest, BridgeReceipt>(state,
         System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeCancelRequest>>(json, BridgeProtocol.JsonOptions),
-        (BridgeEnvelope<BridgeCancelRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => this.bridgeSession!.TryCancel(generation, request, out response, out reason), out _);
+        (BridgeEnvelope<BridgeCancelRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryCancel(generation, request, out response, out reason), out _);
 
     private string? SerializeBridgeResponse<TRequest, TResponse>(
+        ScreenEmbodimentState state,
         BridgeEnvelope<TRequest>? request,
         TryBridgeRequest<TRequest, TResponse> handler,
         out string reasonCode)
     {
         reasonCode = "invalid_envelope";
         if (request is null)
-            return this.SerializeError(null, reasonCode);
+            return this.SerializeError(state, null, reasonCode);
         if (!handler(request, out BridgeEnvelope<TResponse>? response, out reasonCode) || response is null)
-            return this.SerializeError(request.CorrelationId, reasonCode);
-        return BridgeProtocol.TrySerialize(response, out string json, out _) ? json : this.SerializeError(request.CorrelationId, "response_serialization_failed");
+            return this.SerializeError(state, request.CorrelationId, reasonCode);
+        return BridgeProtocol.TrySerialize(response, out string json, out _) ? json : this.SerializeError(state, request.CorrelationId, "response_serialization_failed");
     }
 
-    private delegate bool TryBridgeRequest<TRequest, TResponse>(BridgeEnvelope<TRequest> request, out BridgeEnvelope<TResponse>? response, out string reasonCode);
-
-    private bool RequireWorld()
+    private bool TryGetAiState(out ScreenEmbodimentState state)
     {
-        if (!Context.IsWorldReady || this.executions is null)
-        {
-            this.Monitor.Log("Load a world before using GameBuddy embodiment diagnostics.", LogLevel.Warn);
+        state = null!;
+        if (!Context.IsWorldReady || !this.IsConfiguredAiScreen(out _, out _))
             return false;
-        }
-
+        ScreenEmbodimentState candidate = this.screenStates.Value;
+        if (candidate.Executions is null)
+            return false;
+        state = candidate;
         return true;
     }
 
+    private bool RequireAiWorld(out ScreenEmbodimentState state)
+    {
+        if (!this.TryGetAiState(out state))
+        {
+            this.Monitor.Log("GameBuddy diagnostics are available only on the configured AI Farmhand's local screen after its world is loaded.", LogLevel.Warn);
+            return false;
+        }
+        return true;
+    }
+
+    private bool IsConfiguredAiScreen(out Farmer? localPlayer, out string reasonCode)
+    {
+        localPlayer = null;
+        reasonCode = "world_not_ready";
+        if (!Context.IsWorldReady || Game1.player is null)
+            return false;
+        localPlayer = Game1.player;
+        if (this.config.PlayerId != localPlayer.UniqueMultiplayerID.ToString())
+        {
+            reasonCode = "screen_player_id_does_not_match_configured_ai_farmhand";
+            return false;
+        }
+        reasonCode = "configured_ai_farmhand";
+        return true;
+    }
+
+    private void ClearState(ScreenEmbodimentState state, string reasonCode)
+    {
+        state.Executions?.InvalidateForLifecycle(reasonCode);
+        state.LocalPipeBridge?.Dispose();
+        state.LocalPipeBridge = null;
+        state.BridgeSession = null;
+        state.Executions = null;
+    }
+
+    private delegate bool TryBridgeRequest<TRequest, TResponse>(BridgeEnvelope<TRequest> request, out BridgeEnvelope<TResponse>? response, out string reasonCode);
     private static bool IsOpaqueRequestId(string value) => value.Length is >= 1 and <= 64 && value.All(character => (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or '-');
+
+    private sealed class ScreenEmbodimentState
+    {
+        internal ExecutionManager? Executions { get; set; }
+        internal BridgeSession? BridgeSession { get; set; }
+        internal LocalPipeBridge? LocalPipeBridge { get; set; }
+    }
 }

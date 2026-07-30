@@ -13,22 +13,6 @@ function fail(name, detail) {
   checks.push({ status: "BLOCKED", name, detail });
 }
 
-function requireDirectory(envName, label) {
-  const value = process.env[envName];
-  if (!value) {
-    fail(label, `set ${envName} to a separately licensed Stardew Valley installation`);
-    return;
-  }
-
-  const path = resolve(value);
-  if (!existsSync(path)) {
-    fail(label, `${envName} does not exist: ${path}`);
-    return;
-  }
-
-  pass(label, path);
-}
-
 const gamePath = process.env.GAMEBUDDY_STARDEW_GAME_PATH;
 if (gamePath && existsSync(gamePath)) {
   const required = ["Stardew Valley.dll", "StardewModdingAPI.dll", "StardewModdingAPI.exe"];
@@ -42,7 +26,18 @@ if (gamePath && existsSync(gamePath)) {
   fail("primary Stardew + SMAPI", "set GAMEBUDDY_STARDEW_GAME_PATH to the installed SMAPI game directory");
 }
 
-requireDirectory("GAMEBUDDY_SECOND_STARDEW_GAME_PATH", "independent Farmhand client");
+const farmhandId = process.env.GAMEBUDDY_AI_FARMHAND_ID;
+if (farmhandId && /^\d+$/.test(farmhandId)) {
+  pass("configured local AI Farmhand", "opaque multiplayer ID is configured; value was not logged");
+} else {
+  fail("configured local AI Farmhand", "set GAMEBUDDY_AI_FARMHAND_ID after the native local-co-op Farmhand joins the dedicated test save");
+}
+
+if (process.env.GAMEBUDDY_LOCAL_COOP_READY === "1") {
+  pass("local split-screen readiness", "operator confirmed a second local input device and vacant cabin are ready");
+} else {
+  fail("local split-screen readiness", "set GAMEBUDDY_LOCAL_COOP_READY=1 only after a second local input device and vacant cabin are ready");
+}
 
 if (process.env.MIMO_API_KEY && process.env.MIMO_API_KEY.trim().length > 0) {
   pass("MiMo credential", "present in process environment; value was not read or logged");
@@ -71,5 +66,5 @@ if (blocked) {
   console.error("Demo environment preflight is blocked. No @game, @model, or @voice hard gate was run.");
   process.exitCode = 1;
 } else {
-  console.log("Demo environment preflight passed. Continue with the documented two-client/model/device runbooks.");
+  console.log("Demo environment preflight passed. Continue with the documented split-screen/model/device runbooks.");
 }
