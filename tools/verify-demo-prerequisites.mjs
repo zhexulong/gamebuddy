@@ -45,9 +45,9 @@ if (gamePath && existsSync(gamePath)) {
 requireDirectory("GAMEBUDDY_SECOND_STARDEW_GAME_PATH", "independent Farmhand client");
 
 if (process.env.MIMO_API_KEY && process.env.MIMO_API_KEY.trim().length > 0) {
-  pass("rotated MiMo credential", "present in process environment; value was not read or logged");
+  pass("MiMo credential", "present in process environment; value was not read or logged");
 } else {
-  fail("rotated MiMo credential", "set MIMO_API_KEY only after rotating the previously exposed credential");
+  fail("MiMo credential", "set MIMO_API_KEY in the process environment");
 }
 
 const senseVoiceManifest = process.env.GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST;
