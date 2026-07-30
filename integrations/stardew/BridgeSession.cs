@@ -46,7 +46,7 @@ internal sealed class BridgeSession
         // Capability declares a mechanically verified action surface; it is not
         // authority. No execution is accepted until a separate local policy
         // boundary mints a one-shot, target-bound approval grant.
-        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(Guid.NewGuid().ToString("N"), new[] { "move_to_tile", "inspect_self" }, Array.Empty<BridgeActionGrant>()));
+        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(Guid.NewGuid().ToString("N"), new[] { "move_to_tile", "inspect_self", "cancel_active_execution" }, Array.Empty<BridgeActionGrant>()));
         reasonCode = "accepted";
         return true;
     }

@@ -47,18 +47,21 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
   assert.equal(result.details.reasonCode, "capability_not_declared");
 });
 
-test("the only mounted Game Action validates a fresh snapshot and returns the Mod receipt verbatim", async () => {
+test("mounted Game Actions return authoritative Mod receipts without inventing completion", async () => {
   const receipt = { executionId: "execution_01", requestId: "request_01", state: "accepted" as const, reasonCode: "accepted", revision: 3, evidence: { target: "3,4" } };
   const integration: MoveCapableIntegration = {
     scope,
-    get state() { return { connected: true, sessionId: "session_01", capabilities: ["move_to_tile"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["move_to_tile"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
+    get state() { return { connected: true, sessionId: "session_01", capabilities: ["move_to_tile", "cancel_active_execution"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["move_to_tile", "cancel_active_execution"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     nextMoveGrant(target) { return target.x === 3 && target.y === 4 ? "a".repeat(16) : null; },
     async execute(request) { assert.equal(request.expectedRevision, 3); assert.equal(request.action, "move_to_tile"); return receipt; },
     async cancel() { return receipt; },
   };
-  const [move] = createStardewActionTools(integration);
+  const [move, cancel] = createStardewActionTools(integration);
   assert.ok(move);
+  assert.ok(cancel);
   const result = await move.execute("test", { x: 3, y: 4, requestId: "request_01", idempotencyKey: "idempotency_01" }, new AbortController().signal, () => {}, {} as never);
   assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /"state":"accepted"/);
   assert.doesNotMatch(result.content[0]?.type === "text" ? result.content[0].text : "", /succeeded/);
+  const cancelled = await cancel.execute("test", { requestId: "request_01", executionId: "execution_01" }, new AbortController().signal, () => {}, {} as never);
+  assert.match(cancelled.content[0]?.type === "text" ? cancelled.content[0].text : "", /"state":"accepted"/);
 });

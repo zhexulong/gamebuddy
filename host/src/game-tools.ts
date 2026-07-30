@@ -46,6 +46,16 @@ export function createStardewActionTools(integration: CompanionIntegration) {
   // Capability declaration is Mod authority. A transport implementation alone
   // must never cause an unapproved Game Action to appear to the Agent.
   if (!isMoveCapable(integration) || !integration.state.capabilities.includes("move_to_tile")) return [] as const;
+  const cancel = defineTool({
+    name: "stardew_cancel_active_execution", label: "Cancel Active Stardew Execution",
+    description: "Request cancellation of the exact active execution. The authoritative Mod receipt determines whether it stopped.",
+    parameters: Type.Object({ requestId: Type.String({ minLength: 1, maxLength: 128 }), executionId: Type.String({ minLength: 1, maxLength: 128 }), reasonCode: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+    execute: async (_toolCallId, params) => {
+      if (!integration.state.connected || !integration.state.capabilities.includes("cancel_active_execution")) return receiptResult(null, "capability_not_declared");
+      try { return receiptResult(await integration.cancel(params.requestId, params.executionId, params.reasonCode ?? "agent_requested_cancel"), null); }
+      catch (error) { return receiptResult(null, error instanceof Error ? error.message.replace(/^bridge_rejected:/, "") : "bridge_cancel_failed"); }
+    },
+  });
   const move = defineTool({
     name: "stardew_move_to_tile", label: "Move Farmhand to Tile",
     description: "Request the verified move_to_tile capability. Inspect its authoritative receipt before saying the movement succeeded.",
@@ -66,7 +76,7 @@ export function createStardewActionTools(integration: CompanionIntegration) {
       catch (error) { return receiptResult(null, error instanceof Error ? error.message.replace(/^bridge_rejected:/, "") : "bridge_execute_failed"); }
     },
   });
-  return [move] as const;
+  return integration.state.capabilities.includes("cancel_active_execution") ? [move, cancel] as const : [move] as const;
 }
 function receiptResult(receipt: ExecutionReceipt | null, reasonCode: string | null) {
   return { content: [{ type: "text" as const, text: receipt === null ? `Game action was not created: ${reasonCode}.` : JSON.stringify(receipt) }], details: { receiptJson: receipt === null ? null : JSON.stringify(receipt), reasonCode } };

@@ -176,7 +176,7 @@ internal sealed class ExecutionManager
             can_move = player.CanMove,
             menu_open = Game1.activeClickableMenu is not null,
             event_active = Game1.eventUp,
-            capabilities = new[] { "move_to_tile", "inspect_self" },
+            capabilities = new[] { "move_to_tile", "inspect_self", "cancel_active_execution" },
             active_execution = this.active is null ? null : new
             {
                 execution_id = this.active.ExecutionId,
@@ -210,7 +210,7 @@ internal sealed class ExecutionManager
             DescribeTool(player.CurrentTool),
             player.Items.Count,
             player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp,
-            new[] { "move_to_tile", "inspect_self" },
+            new[] { "move_to_tile", "inspect_self", "cancel_active_execution" },
             activeExecution);
     }
 
