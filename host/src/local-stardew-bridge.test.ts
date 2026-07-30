@@ -19,7 +19,7 @@ async function close(server: Server): Promise<void> {
   await new Promise<void>((resolvePromise, reject) => server.close((error) => error === undefined ? resolvePromise() : reject(error)));
 }
 
-test("local Stardew bridge authenticates, observes, and receives target-bound player approval grants", async () => {
+test("local Stardew bridge authenticates and observes Mod-declared capabilities", async () => {
   const pipeName = `gamebuddy_phase2_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;
   const server = createServer((socket: Socket) => {
@@ -33,13 +33,9 @@ test("local Stardew bridge authenticates, observes, and receives target-bound pl
         const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
         buffer = buffer.subarray(4 + length);
         const response = request.type === "hello"
-          ? { ...request, messageId: "mod_hello_01", type: "hello_ack", payload: { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: [] } }
+          ? { ...request, messageId: "mod_hello_01", type: "hello_ack", payload: { sessionId: "session_01", capabilities: ["move_to_tile"] } }
           : { ...request, messageId: "mod_snapshot_01", type: "snapshot", payload: { revision: 7, location: "Farm", tile: { x: 4, y: 8 }, stamina: 250, health: 100, actionable: true, capabilities: ["move_to_tile"], activeExecution: null } };
         socket.write(frame(response));
-        if (request.type === "observe_request") socket.write(frame({
-          ...request, messageId: "mod_grant_01", correlationId: "approval_01", type: "action_grant",
-          payload: { token: "player_approved_token_01", action: "move_to_tile", expiresAtMs: Date.now() + 10_000, nonce: "approval_01", confirmationId: "confirm_01", targetX: 6, targetY: 8 },
-        }));
       }
     });
   });
@@ -51,11 +47,6 @@ test("local Stardew bridge authenticates, observes, and receives target-bound pl
     const snapshot = await client.observe();
     assert.equal(snapshot.revision, 7);
     assert.deepEqual(snapshot.tile, { x: 4, y: 8 });
-    // The unsolicited policy event is intentionally independent of the
-    // observe response; allow the framed socket to deliver its next packet.
-    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
-    assert.deepEqual(client.nextMoveGrant({ x: 6, y: 8 })?.confirmationId, "confirm_01");
-    assert.equal(client.nextMoveGrant({ x: 6, y: 9 }), null);
     client.close();
   } finally {
     peer?.destroy();

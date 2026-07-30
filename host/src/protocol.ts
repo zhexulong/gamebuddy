@@ -49,19 +49,7 @@ export type Snapshot = Readonly<{
   activeExecution: ActiveExecution | null;
 }>;
 
-/** One-shot, locally player-approved execution capability. The target binding
- * prevents a bridge credential from becoming general movement authority. */
-export type ActionGrant = Readonly<{
-  token: string;
-  action: "move_to_tile";
-  expiresAtMs: number;
-  nonce: string;
-  /** Local player-policy confirmation correlation; never model-generated. */
-  confirmationId: string;
-  targetX: number;
-  targetY: number;
-}>;
-
+/** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
 export type ExecutionRequest = Readonly<{
   requestId: string;
   idempotencyKey: string;
@@ -69,9 +57,6 @@ export type ExecutionRequest = Readonly<{
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
-  permissionToken: string;
-  /** Copied only from the selected Mod-issued grant for ledger audit. */
-  confirmationId: string;
 }>;
 
 export type ExecutionReceipt = Readonly<{
@@ -92,8 +77,7 @@ export type SemanticEvent = Readonly<{
 
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
-  | Envelope<"hello_ack", Readonly<{ sessionId: string; capabilities: readonly string[]; actionGrants: readonly ActionGrant[] }>>
-  | Envelope<"action_grant", ActionGrant>
+  | Envelope<"hello_ack", Readonly<{ sessionId: string; capabilities: readonly string[] }>>
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"snapshot", Snapshot>
   | Envelope<"execution_request", ExecutionRequest>
@@ -104,7 +88,7 @@ export type BridgeMessage =
   | Envelope<"lifecycle", Readonly<{ state: "connected" | "disconnected" | "world_unavailable"; reasonCode: string }>>;
 
 export const BRIDGE_MESSAGE_TYPES = [
-  "hello", "hello_ack", "action_grant", "observe_request", "snapshot", "execution_request",
+  "hello", "hello_ack", "observe_request", "snapshot", "execution_request",
   "cancel_request", "execution_receipt", "error", "semantic_event", "lifecycle",
 ] as const;
 
@@ -144,8 +128,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   const payload = message.payload as Record<string, unknown>;
   switch (message.type) {
     case "hello": return validToken(payload.token) ? null : "invalid_hello_token";
-    case "hello_ack": return isOpaqueId(payload.sessionId) && isStringArray(payload.capabilities) && validActionGrants(payload.actionGrants, payload.capabilities, nowMs) ? null : "invalid_hello_ack";
-    case "action_grant": return validActionGrants([payload], [payload.action], nowMs) ? null : "invalid_action_grant";
+    case "hello_ack": return isOpaqueId(payload.sessionId) && isStringArray(payload.capabilities) ? null : "invalid_hello_ack";
     case "observe_request": return Object.keys(payload).length === 0 ? null : "invalid_observe_request";
     case "snapshot": return validateSnapshot(payload);
     case "execution_request": return validateExecutionRequestEnvelope(payload);
@@ -164,13 +147,10 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (!isRecord(value.args)) return "invalid_args";
   if (!Number.isSafeInteger(value.expectedRevision) || value.expectedRevision !== snapshot.revision) return "stale_snapshot";
   if (typeof value.deadlineMs !== "number" || !Number.isFinite(value.deadlineMs) || value.deadlineMs < nowMs || value.deadlineMs > nowMs + 60_000) return "invalid_deadline";
-  if (!validToken(value.permissionToken) || !isOpaqueId(value.confirmationId)) return "invalid_permission";
   if (!snapshot.actionable && value.action !== "inspect_self") return "player_not_actionable";
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
-    const x = value.args.x;
-    const y = value.args.y;
-    if (!isTileCoordinate(x) || !isTileCoordinate(y)) return "invalid_target_tile";
+    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_target_tile";
   }
   return null;
 }
@@ -194,20 +174,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
   return isOpaqueId(value.requestId) && isOpaqueId(value.idempotencyKey)
     && (value.action === "move_to_tile" || value.action === "inspect_self")
     && isRecord(value.args) && Number.isSafeInteger(value.expectedRevision)
-    && typeof value.deadlineMs === "number" && Number.isFinite(value.deadlineMs)
-    && validToken(value.permissionToken) && isOpaqueId(value.confirmationId) ? null : "invalid_execution_request";
-}
-
-function validActionGrants(value: unknown, capabilities: unknown, nowMs: number): value is readonly ActionGrant[] {
-  if (!Array.isArray(value) || value.length > 8 || !isStringArray(capabilities)) return false;
-  const tokens = new Set<string>(); const nonces = new Set<string>();
-  return value.every((grant) => {
-    if (!isRecord(grant) || !validToken(grant.token) || grant.action !== "move_to_tile" || !capabilities.includes(grant.action)
-      || typeof grant.expiresAtMs !== "number" || !Number.isFinite(grant.expiresAtMs) || grant.expiresAtMs <= nowMs || grant.expiresAtMs > nowMs + 60_000
-      || !isOpaqueId(grant.nonce) || !isOpaqueId(grant.confirmationId) || !isTileCoordinate(grant.targetX) || !isTileCoordinate(grant.targetY)
-      || tokens.has(grant.token) || nonces.has(grant.nonce)) return false;
-    tokens.add(grant.token); nonces.add(grant.nonce); return true;
-  });
+    && typeof value.deadlineMs === "number" && Number.isFinite(value.deadlineMs) ? null : "invalid_execution_request";
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {

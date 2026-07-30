@@ -82,11 +82,6 @@ export class CompanionIntegrationClient {
         this.#latestReceipt = null;
         this.#latestReasonCode = null;
         break;
-      case "action_grant":
-        // Deterministic adapters retain no execution authority; production
-        // bridge owns grants. Treat unexpected grants only as a factual event.
-        this.#latestReasonCode = "action_grant_received";
-        break;
       case "snapshot":
         this.#snapshot = message.payload;
         break;

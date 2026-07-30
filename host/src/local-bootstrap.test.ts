@@ -32,7 +32,7 @@ test("local bootstrap requires a Mod snapshot before mounting only verified tool
         const request = JSON.parse(buffer.subarray(4, length + 4).toString("utf8")) as BridgeMessage;
         buffer = buffer.subarray(length + 4);
         const payload = request.type === "hello"
-          ? { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: [] }
+          ? { sessionId: "session_01", capabilities: ["move_to_tile"] }
           : { revision: 1, location: "Farm", tile: { x: 0, y: 0 }, stamina: 250, health: 100, actionable: true, capabilities: ["move_to_tile"], activeExecution: null };
         socket.write(frame({ ...request, messageId: request.type === "hello" ? "mod_hello_01" : "mod_snapshot_01", type: request.type === "hello" ? "hello_ack" : "snapshot", payload }));
       }

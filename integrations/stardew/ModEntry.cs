@@ -32,7 +32,6 @@ public sealed class ModEntry : Mod
         helper.ConsoleCommands.Add("gamebuddy_trace", "Print bounded local directive/route/body execution trace evidence.", this.TraceCommand);
         helper.ConsoleCommands.Add("gamebuddy_move_fixture", "Phase 1 local-only movement fixture: gamebuddy_move_fixture <tile-x> <tile-y> <request-id>.", this.MoveFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_equip_tool_fixture", "Phase 1 local-only native mechanic fixture: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>.", this.EquipToolFixtureCommand);
-        helper.ConsoleCommands.Add("gamebuddy_approve_move_fixture", "Local player-policy fixture: approve exactly one bridge move target: gamebuddy_approve_move_fixture <tile-x> <tile-y>.", this.ApproveMoveFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_cancel", "Cancel the active local GameBuddy execution.", this.CancelCommand);
 
         this.Monitor.Log("GameBuddy embodiment loaded; no remote Farmer construction or host-side control is available.", LogLevel.Info);
@@ -61,7 +60,7 @@ public sealed class ModEntry : Mod
         bool worldScopeMatches = this.config.WorldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString();
         bool scopeMatchesWorld = playerScopeMatches && saveScopeMatches && worldScopeMatches;
         this.bridgeSession = this.config.HasValidLocalBridgeConfiguration && scopeMatchesWorld
-            ? new BridgeSession(this.executions, new BridgeScope("stardew", this.config.SaveId, this.config.WorldId, this.config.PlayerId, this.config.CompanionId), this.config.BridgeToken)
+            ? new BridgeSession(this.executions, new BridgeScope("stardew", this.config.SaveId, this.config.WorldId, this.config.PlayerId, this.config.CompanionId), this.config.BridgeToken, this.config.EnabledActionSet)
             : null;
         this.localPipeBridge = this.bridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
         if (this.config.EnableLocalBridge && this.bridgeSession is null)
@@ -162,30 +161,6 @@ public sealed class ModEntry : Mod
 
         LocalExecutionReceipt receipt = this.executions!.RequestLocalEquipTool(args[1], slot);
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
-    }
-
-    private void ApproveMoveFixtureCommand(string command, string[] args)
-    {
-        if (!RequireWorld())
-            return;
-        if (args.Length != 2 || !int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
-        {
-            this.Monitor.Log("Usage: gamebuddy_approve_move_fixture <integer-tile-x> <integer-tile-y>.", LogLevel.Warn);
-            return;
-        }
-        long generation = this.localPipeBridge?.CurrentGeneration ?? 0;
-        string reasonCode = "bridge_unavailable";
-        if (generation == 0 || this.bridgeSession is null || !this.bridgeSession.TryApproveMoveToTile(generation, x, y, out BridgeActionGrant? grant, out reasonCode) || grant is null)
-        {
-            this.Monitor.Log($"GameBuddy move approval refused: {reasonCode ?? "bridge_unavailable"}.", LogLevel.Warn);
-            return;
-        }
-        if (!this.bridgeSession.TryCreateActionGrantEvent(generation, grant, out string json) || !this.localPipeBridge!.TryEnqueueOutbound(generation, json))
-        {
-            this.Monitor.Log("GameBuddy move approval was not delivered because the local bridge closed/backpressured.", LogLevel.Warn);
-            return;
-        }
-        this.Monitor.Log($"GameBuddy approved one local bridge move target={x:0.##},{y:0.##}; grant expires in 30 seconds.", LogLevel.Info);
     }
 
     private void CancelCommand(string command, string[] args)

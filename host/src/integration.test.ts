@@ -19,7 +19,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
   const modInbound: string[] = [];
   modEndpoint.onMessage((message) => {
     modInbound.push(message.type);
-    if (message.type === "hello") modEndpoint.send(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"], actionGrants: [] }, message.correlationId, now), now);
+    if (message.type === "hello") modEndpoint.send(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"] }, message.correlationId, now), now);
     if (message.type === "observe_request") modEndpoint.send(newEnvelope("snapshot", scope, snapshot(), message.correlationId, now), now);
     if (message.type === "execution_request") {
       const receipt: BridgeMessage = newEnvelope("execution_receipt", scope, { executionId: "execution_01", requestId: message.payload.requestId, state: "accepted" as const, reasonCode: "accepted", revision: 4, evidence: { target: "11,12" } }, message.correlationId, now);
@@ -31,7 +31,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
   assert.equal(client.state.connected, true);
   assert.equal(client.observe(now), null);
   assert.equal(client.state.snapshot?.revision, 3);
-  const request = { requestId: "request_01", idempotencyKey: "idempotency_01", action: "move_to_tile" as const, args: { x: 11, y: 12 }, expectedRevision: 3, deadlineMs: now + 10_000, permissionToken: token, confirmationId: "confirm_01" };
+  const request = { requestId: "request_01", idempotencyKey: "idempotency_01", action: "move_to_tile" as const, args: { x: 11, y: 12 }, expectedRevision: 3, deadlineMs: now + 10_000 };
   assert.equal(client.execute(request, now), null);
   assert.equal(client.state.latestReceipt?.state, "accepted");
   assert.deepEqual(modInbound, ["hello", "observe_request", "execution_request"]);
@@ -41,7 +41,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
 test("integration client fails closed before hello/snapshot and on disconnect", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
   const client = new CompanionIntegrationClient(scope, hostEndpoint);
-  const request = { requestId: "request_01", idempotencyKey: "idempotency_01", action: "move_to_tile" as const, args: { x: 11, y: 12 }, expectedRevision: 0, deadlineMs: now + 10_000, permissionToken: token, confirmationId: "confirm_01" };
+  const request = { requestId: "request_01", idempotencyKey: "idempotency_01", action: "move_to_tile" as const, args: { x: 11, y: 12 }, expectedRevision: 0, deadlineMs: now + 10_000 };
   assert.equal(client.execute(request, now), "not_ready");
   modEndpoint.disconnect("bridge_lost");
   assert.equal(client.state.connected, false);

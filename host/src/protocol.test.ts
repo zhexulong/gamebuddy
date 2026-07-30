@@ -19,12 +19,11 @@ const snapshot: Snapshot = {
 };
 const now = 1_700_000_000_000;
 
-test("hello acknowledgement requires bounded action grants", () => {
-  const valid = newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: [{ token: "permission_token_1234", action: "move_to_tile" as const, expiresAtMs: now + 1_000, nonce: "nonce_01", confirmationId: "confirm_01", targetX: 2, targetY: 3 }] }, "hello_01", now);
+test("hello acknowledgement carries only Mod-declared player-enabled capabilities", () => {
+  const valid = newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"] }, "hello_01", now);
   assert.equal(validateBridgeMessage(valid, scope, now), null);
-  assert.equal(validateBridgeMessage(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: [], actionGrants: [{ token: "short", action: "move_to_tile" as const, expiresAtMs: now, nonce: "nonce_01", confirmationId: "confirm_01", targetX: 2, targetY: 3 }] }, "hello_02", now), scope, now), "invalid_hello_ack");
-  assert.equal(validateBridgeMessage(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: Array.from({ length: 9 }, (_, index) => ({ token: `permission_token_${index.toString().padStart(2, "0")}`, action: "move_to_tile" as const, expiresAtMs: now + 1_000, nonce: `nonce_${index}`, confirmationId: `confirm_${index}`, targetX: index, targetY: index })) }, "hello_03", now), scope, now), "invalid_hello_ack");
-  assert.equal(validateBridgeMessage(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: [{ token: "permission_token_1234", action: "move_to_tile" as const, expiresAtMs: now + 60_001, nonce: "nonce_01", confirmationId: "confirm_01", targetX: 2, targetY: 3 }] }, "hello_04", now), scope, now), "invalid_hello_ack");
+  assert.equal(validateBridgeMessage(newEnvelope("hello_ack", scope, { sessionId: "invalid session", capabilities: [] }, "hello_02", now), scope, now), "invalid_hello_ack");
+  assert.equal(validateBridgeMessage(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: [1] }, "hello_03", now), scope, now), "invalid_hello_ack");
 });
 
 test("protocol envelope rejects mismatched identity, version, stale timestamps, and unknown types", () => {
@@ -55,13 +54,12 @@ test("bridge message payloads fail closed", () => {
 });
 
 test("execution validation fails closed for stale, unknown, malformed, and unactionable requests", () => {
-  const valid = { requestId: "request_01", idempotencyKey: "idempotency_01", action: "move_to_tile", args: { x: 11, y: 12 }, expectedRevision: 4, deadlineMs: now + 10_000, permissionToken: "permission_token_01", confirmationId: "confirm_01" };
+  const valid = { requestId: "request_01", idempotencyKey: "idempotency_01", action: "move_to_tile", args: { x: 11, y: 12 }, expectedRevision: 4, deadlineMs: now + 10_000 };
   assert.equal(validateExecutionRequest(valid, snapshot, now), null);
   assert.equal(validateExecutionRequest({ ...valid, expectedRevision: 3 }, snapshot, now), "stale_snapshot");
   assert.equal(validateExecutionRequest({ ...valid, action: "sell_item" }, snapshot, now), "unknown_action");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
-  assert.equal(validateBridgeMessage(newEnvelope("action_grant", scope, { token: "permission_token_1234", action: "move_to_tile", expiresAtMs: now + 1_000, nonce: "nonce_01", confirmationId: "confirm_01", targetX: 11.5, targetY: 12 }, "grant_fractional_01", now), scope, now), "invalid_action_grant");
   assert.equal(validateExecutionRequest(valid, { ...snapshot, actionable: false }, now), "player_not_actionable");
 });
 

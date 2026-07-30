@@ -188,7 +188,7 @@ internal sealed class ExecutionManager
     }
 
     /// <summary>Explicit Phase 2 wire DTO; call only on the SMAPI game thread while a world is ready.</summary>
-    public BridgeSnapshot CreateBridgeSnapshot()
+    public BridgeSnapshot CreateBridgeSnapshot(IReadOnlyList<string>? capabilities = null)
     {
         Farmer player = Game1.player;
         LocalExecutionReceipt? activeReceipt = null;
@@ -210,7 +210,7 @@ internal sealed class ExecutionManager
             DescribeTool(player.CurrentTool),
             player.Items.Count,
             player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp,
-            new[] { "move_to_tile", "inspect_self", "cancel_active_execution" },
+            capabilities ?? new[] { "inspect_self", "cancel_active_execution" },
             activeExecution);
     }
 

@@ -1,19 +1,17 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { randomUUID } from "node:crypto";
-import { type CompanionIntegration, type MoveApprovalIntegration } from "./integration-types.js";
+import { type CompanionIntegration } from "./integration-types.js";
 import { type ExecutionReceipt, type ExecutionRequest, validateExecutionRequest } from "./protocol.js";
 
-/** A bridge that can execute the one currently verified capability. */
+/** A bridge that executes only Mod-declared player-enabled capabilities. */
 export interface MoveCapableIntegration extends CompanionIntegration {
-  /** Host-owned selection prevents the Agent from minting or choosing grants. */
-  nextMoveGrant(target: Readonly<{ x: number; y: number }>): import("./protocol.js").ActionGrant | null;
   execute(request: ExecutionRequest): Promise<ExecutionReceipt>;
   cancel(requestId: string, executionId: string, reasonCode: string): Promise<ExecutionReceipt>;
 }
-function isMoveCapable(value: CompanionIntegration): value is MoveCapableIntegration & MoveApprovalIntegration {
-  return "nextMoveGrant" in value && typeof (value as { nextMoveGrant?: unknown }).nextMoveGrant === "function"
-    && "execute" in value && typeof (value as { execute?: unknown }).execute === "function" && "cancel" in value && typeof (value as { cancel?: unknown }).cancel === "function";
+function isMoveCapable(value: CompanionIntegration): value is MoveCapableIntegration {
+  return "execute" in value && typeof (value as { execute?: unknown }).execute === "function"
+    && "cancel" in value && typeof (value as { cancel?: unknown }).cancel === "function";
 }
 
 /** Read-only tools always expose facts exactly as supplied by the Mod. */
@@ -38,13 +36,11 @@ export function createStardewObservationTools(integration: CompanionIntegration)
 }
 
 /**
- * Mount the only currently evidence-backed Game Action. It checks a fresh
- * snapshot and short-lived Mod-issued grant; its returned receipt is verbatim
- * authority, never a Host interpretation of success.
+ * Mount Game Actions only when the Mod's live snapshot declares the player-
+ * configured capability. The Host never mints per-turn permission or treats
+ * model prose as an authorization source.
  */
 export function createStardewActionTools(integration: CompanionIntegration) {
-  // Capability declaration is Mod authority. A transport implementation alone
-  // must never cause an unapproved Game Action to appear to the Agent.
   if (!isMoveCapable(integration) || !integration.state.capabilities.includes("move_to_tile")) return [] as const;
   const cancel = defineTool({
     name: "stardew_cancel_active_execution", label: "Cancel Active Stardew Execution",
@@ -58,18 +54,13 @@ export function createStardewActionTools(integration: CompanionIntegration) {
   });
   const move = defineTool({
     name: "stardew_move_to_tile", label: "Move Farmhand to Tile",
-    description: "Request the verified move_to_tile capability. Inspect its authoritative receipt before saying the movement succeeded.",
+    description: "Request the player-enabled move_to_tile capability. Inspect its authoritative receipt before saying movement succeeded.",
     parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
     execute: async (_toolCallId, params) => {
       const snapshot = integration.state.snapshot;
       if (!integration.state.connected || snapshot === null) return receiptResult(null, "integration_not_ready");
-      // Capability is a live Mod fact, not a one-time Host mount decision.
-      // Reconnects, lifecycle transitions, or version changes therefore fail
-      // closed even though Pi keeps the stable tool name in its session.
       if (!integration.state.capabilities.includes("move_to_tile") || !snapshot.capabilities.includes("move_to_tile")) return receiptResult(null, "capability_not_declared");
-      const grant = integration.nextMoveGrant({ x: params.x, y: params.y });
-      if (grant === null) return receiptResult(null, "no_fresh_player_confirmation");
-      const request: ExecutionRequest = { requestId: params.requestId ?? randomUUID(), idempotencyKey: params.idempotencyKey ?? randomUUID(), action: "move_to_tile", args: { x: params.x, y: params.y }, expectedRevision: snapshot.revision, deadlineMs: Date.now() + 30_000, permissionToken: grant.token, confirmationId: grant.confirmationId };
+      const request: ExecutionRequest = { requestId: params.requestId ?? randomUUID(), idempotencyKey: params.idempotencyKey ?? randomUUID(), action: "move_to_tile", args: { x: params.x, y: params.y }, expectedRevision: snapshot.revision, deadlineMs: Date.now() + 30_000 };
       const invalid = validateExecutionRequest(request, snapshot);
       if (invalid !== null) return receiptResult(null, invalid);
       try { return receiptResult(await integration.execute(request), null); }

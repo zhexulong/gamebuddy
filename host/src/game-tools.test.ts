@@ -18,7 +18,7 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
   assert.match(unavailable.content[0]?.type === "text" ? unavailable.content[0].text : "", /No authoritative/);
 
   mod.onMessage((message) => {
-    if (message.type === "hello") mod.send(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"], actionGrants: [] }, message.correlationId, now), now);
+    if (message.type === "hello") mod.send(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["move_to_tile"] }, message.correlationId, now), now);
     if (message.type === "observe_request") mod.send(newEnvelope("snapshot", scope, { revision: 1, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["move_to_tile"], activeExecution: null }, message.correlationId, now), now);
   });
   client.hello("a".repeat(16), now);
@@ -35,7 +35,6 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
   const integration: MoveCapableIntegration = {
     scope,
     get state() { return { connected: true, sessionId: "session_01", capabilities: enabled ? ["move_to_tile"] : [], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: enabled ? ["move_to_tile"] : [], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
-    nextMoveGrant() { return { token: "a".repeat(16), action: "move_to_tile" as const, expiresAtMs: Date.now() + 10_000, nonce: "nonce_01", confirmationId: "confirm_01", targetX: 3, targetY: 4 }; },
     async execute() { executeCalls++; throw new Error("must_not_execute"); },
     async cancel() { throw new Error("must_not_cancel"); },
   };
@@ -52,8 +51,7 @@ test("mounted Game Actions return authoritative Mod receipts without inventing c
   const integration: MoveCapableIntegration = {
     scope,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["move_to_tile", "cancel_active_execution"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["move_to_tile", "cancel_active_execution"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
-    nextMoveGrant(target) { return target.x === 3 && target.y === 4 ? { token: "a".repeat(16), action: "move_to_tile" as const, expiresAtMs: Date.now() + 10_000, nonce: "nonce_01", confirmationId: "confirm_01", targetX: 3, targetY: 4 } : null; },
-    async execute(request) { assert.equal(request.expectedRevision, 3); assert.equal(request.action, "move_to_tile"); assert.equal(request.confirmationId, "confirm_01"); return receipt; },
+    async execute(request) { assert.equal(request.expectedRevision, 3); assert.equal(request.action, "move_to_tile"); return receipt; },
     async cancel() { return receipt; },
   };
   const [move, cancel] = createStardewActionTools(integration);
