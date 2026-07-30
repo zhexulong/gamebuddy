@@ -18,11 +18,19 @@ microphone audio, or own provider credentials.
 - `MimoTtsProvider` for the locked `mimo-v2.5-tts` SSE/PCM16 contract. The
   caller owns `MIMO_API_KEY`; it is never read from a repository file or
   logged. A missing key/model/device preserves text interaction.
+- `SenseVoiceCliAsrProvider` for the external CPU-only FunASR llama.cpp runtime.
+  Before it can run, the operator supplies a JSON asset manifest containing the
+  runtime/model/VAD paths, locked runtime revision, and SHA-256 hashes. Gateway
+  startup verifies both files and hashes; PCM is converted to a transient WAV
+  and removed on success, failure, or cancellation. Model metadata tags are
+  stripped and never interpreted as player emotion, identity, or consent.
 
-The default real CPU ASR asset/runtime (SenseVoiceSmall GGUF plus FSMN-VAD) is
-not yet installed or licensed in this repository. Its adapter and target-Windows
-fixture gate remain explicit Phase 3/4 work; no fake ASR is represented as the
-real provider.
+The SenseVoice runtime, GGUF model, FSMN-VAD asset, license/model card, and
+Windows fixture are intentionally **not** bundled or silently downloaded. Set
+`GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST` only after separately auditing them. With
+no manifest, the Gateway stays in text-safe fake-ASR mode rather than claiming
+real local ASR. Set `MIMO_API_KEY` plus `GAMEBUDDY_MIMO_VOICE` only when the
+operator explicitly enables the cloud TTS provider.
 
 ## Run the protocol skeleton
 

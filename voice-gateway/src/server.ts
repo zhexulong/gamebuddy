@@ -1,7 +1,7 @@
 import { createServer, type Server, type Socket } from "node:net";
 import { type AsrProvider, type GatewayEvent, type Mixer, type PcmFormat, type SpeechJob, type TtsProvider, VoiceGatewayCore, VOICE_GATEWAY_PROTOCOL_VERSION } from "./gateway.js";
 
-export type VoiceGatewayServerOptions = Readonly<{ /** Loopback only; other bind addresses are rejected. */ host?: "127.0.0.1" | "::1"; port: number; token: string; core?: VoiceGatewayCore }>;
+export type VoiceGatewayServerOptions = Readonly<{ /** Loopback only; other bind addresses are rejected. */ host?: "127.0.0.1" | "::1"; port: number; token: string; core?: VoiceGatewayCore; asr?: AsrProvider; tts?: TtsProvider; mixer?: Mixer }>;
 export type StartedVoiceGateway = Readonly<{ port: number; close(): Promise<void> }>;
 type Request =
  | { type: "hello"; token: string; protocolVersion: number; requestId: string }
@@ -23,7 +23,8 @@ export async function startVoiceGateway(options: VoiceGatewayServerOptions): Pro
  if (!/^[A-Za-z0-9_-]{16,256}$/.test(options.token)) throw new Error("invalid_voice_gateway_token");
  const host = options.host ?? "127.0.0.1";
  if (host !== "127.0.0.1" && host !== "::1") throw new Error("voice_gateway_loopback_required");
- const core = options.core ?? new VoiceGatewayCore(fakeAsr, fakeTts, silentMixer); const server = createServer((socket) => handleSocket(socket, options.token, core));
+ if (options.core !== undefined && (options.asr !== undefined || options.tts !== undefined || options.mixer !== undefined)) throw new Error("voice_gateway_core_adapter_conflict");
+ const core = options.core ?? new VoiceGatewayCore(options.asr ?? fakeAsr, options.tts ?? fakeTts, options.mixer ?? silentMixer); const server = createServer((socket) => handleSocket(socket, options.token, core));
  await new Promise<void>((resolvePromise, reject) => server.once("error", reject).listen(options.port, host, resolvePromise));
  const address = server.address(); if (address === null || typeof address === "string") throw new Error("voice_gateway_address_unavailable");
  return Object.freeze({ port: address.port, close: () => closeServer(server) });
