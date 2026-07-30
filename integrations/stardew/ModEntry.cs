@@ -50,7 +50,7 @@ public sealed class ModEntry : Mod
         this.localPipeBridge?.Dispose();
         this.localPipeBridge = null;
         this.bridgeSession = null;
-        this.executions = new ExecutionManager(this.Monitor, this.PublishReceipt);
+        this.executions = new ExecutionManager(this.Monitor, this.PublishReceipt, this.config.EnabledActionSet);
         Farmer localPlayer = Game1.player;
         // The configured opaque player scope must bind to the identity Stardew
         // actually assigned this client. A copied config for another Farmhand

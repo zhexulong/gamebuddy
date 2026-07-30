@@ -43,8 +43,8 @@ test("local bootstrap requires a Mod snapshot before mounting only verified tool
     const connected = await connectLocalCompanion({ identity, pipeName, bridgeToken: "bootstrap_token_1234", runtimeRoot: root });
     try {
       assert.equal(connected.bridge.state.snapshot?.revision, 1);
-      // Capability exposure is distinct from authority. The mounted action must
-      // still fail closed until the Mod sends a fresh, target-bound grant.
+      // The Mod's player-controlled capability declaration is the only action
+      // enablement source; no Host- or model-issued authorization exists.
       assert.deepEqual(connected.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_execution_status", "stardew_move_to_tile", "stardew_observe", "todowrite"]);
     } finally { disconnectLocalCompanion(connected); }
   } finally {

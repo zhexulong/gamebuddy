@@ -53,7 +53,7 @@ foreach ($forbiddenText in @("new Farmer", "Game1.otherFarmers", "new NPC", "Htt
     }
 }
 
-foreach ($requiredText in @("UniqueMultiplayerID", "TryStart", "Cancel", "RequestLocalMove", "cancel_active_execution", "gamebuddy_trace", "RequestLocalEquipTool", "gamebuddy_equip_tool_fixture", "tool_selected", "CurrentTool", "TryStart", "body_owned", "locally_blocked", "target_reached", "deadline_expired", "cancellation_receipt_missing", "MaximumRememberedReceipts", "CreateBridgeSnapshot", "BridgeProtocol.Version", "MaximumMessageBytes", "PartiallySucceeded", "ToWireValue", "TryAuthenticate", "TryObserve", "TryExecute", "TryCancel", "FixedTimeEquals", "HasValidLocalBridgeConfiguration", "NamedPipeServerStream", "DrainLocalPipeBridge")) {
+foreach ($requiredText in @("UniqueMultiplayerID", "TryStart", "Cancel", "RequestLocalMove", "cancel_active_execution", "gamebuddy_trace", "RequestLocalEquipTool", "gamebuddy_equip_tool_fixture", "tool_selected", "CurrentTool", "TryStart", "body_owned", "locally_blocked", "target_reached", "deadline_expired", "cancellation_receipt_missing", "MaximumRememberedReceipts", "CreateBridgeSnapshot", "BridgeProtocol.Version", "MaximumMessageBytes", "PartiallySucceeded", "ToWireValue", "TryAuthenticate", "TryObserve", "TryExecute", "TryCancel", "FixedTimeEquals", "HasValidLocalBridgeConfiguration", "EnabledActionSet", "action_disabled_by_player_policy", "NamedPipeServerStream", "DrainLocalPipeBridge")) {
     if (-not $allSource.Contains($requiredText)) {
         throw "Stardew embodiment is missing required fail-closed/trace contract text: $requiredText"
     }

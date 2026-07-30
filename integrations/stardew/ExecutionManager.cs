@@ -20,14 +20,16 @@ internal sealed class ExecutionManager
     private readonly List<ExecutionTrace> trace = new();
     private readonly StardewBodyController controller;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
+    private readonly IReadOnlyList<string> capabilities;
     private LocalMoveSpec? active;
     private long revision;
     private int tick;
 
-    public ExecutionManager(IMonitor monitor, Action<LocalExecutionReceipt>? receiptPublished = null)
+    public ExecutionManager(IMonitor monitor, Action<LocalExecutionReceipt>? receiptPublished = null, IReadOnlySet<string>? enabledActions = null)
     {
         this.monitor = monitor;
         this.receiptPublished = receiptPublished;
+        this.capabilities = CreateCapabilities(enabledActions);
         this.controller = new StardewBodyController(this.RecordControllerTransition);
     }
 
@@ -176,7 +178,7 @@ internal sealed class ExecutionManager
             can_move = player.CanMove,
             menu_open = Game1.activeClickableMenu is not null,
             event_active = Game1.eventUp,
-            capabilities = new[] { "move_to_tile", "inspect_self", "cancel_active_execution" },
+            capabilities = this.capabilities,
             active_execution = this.active is null ? null : new
             {
                 execution_id = this.active.ExecutionId,
@@ -210,7 +212,7 @@ internal sealed class ExecutionManager
             DescribeTool(player.CurrentTool),
             player.Items.Count,
             player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp,
-            capabilities ?? new[] { "inspect_self", "cancel_active_execution" },
+            capabilities ?? this.capabilities,
             activeExecution);
     }
 
@@ -265,6 +267,14 @@ internal sealed class ExecutionManager
 
         this.monitor.Log($"GameBuddy execution state={receipt.State} execution={receipt.ExecutionId} request={receipt.RequestId} reason={receipt.ReasonCode} evidence={receipt.Evidence ?? "none"}", LogLevel.Trace);
         this.receiptPublished?.Invoke(receipt);
+    }
+
+    private static IReadOnlyList<string> CreateCapabilities(IReadOnlySet<string>? enabledActions)
+    {
+        List<string> result = new() { "inspect_self", "cancel_active_execution" };
+        if (enabledActions?.Contains("move_to_tile") == true)
+            result.Insert(0, "move_to_tile");
+        return result;
     }
 
     private static string? DescribeTool(Tool? tool) => tool is null ? null : tool.QualifiedItemId ?? tool.Name;
