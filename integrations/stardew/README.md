@@ -50,9 +50,10 @@ Do not commit a game installation path, game DLLs, SMAPI binaries, generated mod
 
 ## Manual Phase 1 gate (not automated)
 
-A real Farmhand test requires one legitimate Stardew process, a host save with a vacant cabin, and a second local input device. Start the human save, use Stardew's official `Start Local Co-op` flow for the second local player, and configure GameBuddy with that native Farmhand's `UniqueMultiplayerID`. Load the shared save, then run the following only from the configured AI Farmhand screen's SMAPI console:
+A real Farmhand test requires one legitimate Stardew process, a host save with a vacant cabin, and a second local input device. Start the human save, use Stardew's official `Start Local Co-op` flow for the second local player, then run `gamebuddy_farmhands` in the SMAPI console. Copy the intended native Farmhand's reported `player_id` into the local untracked `config.json` `PlayerId` field. Reload the shared save so GameBuddy can bind that screen, then run the following only from the configured AI Farmhand screen's SMAPI console:
 
 ```text
+gamebuddy_farmhands
 gamebuddy_status
 gamebuddy_move_fixture <nearby-x> <nearby-y> phase1_move_01
 # Before the first route reaches its target, replace it with a new directive:
