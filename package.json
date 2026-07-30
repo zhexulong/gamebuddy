@@ -11,6 +11,7 @@
     "build": "pnpm --filter @gamebuddy/companion-host build && pnpm --filter @gamebuddy/voice-gateway build",
     "test": "pnpm --filter @gamebuddy/companion-host test && pnpm --filter @gamebuddy/voice-gateway test",
     "typecheck": "pnpm --filter @gamebuddy/companion-host typecheck && pnpm --filter @gamebuddy/voice-gateway typecheck",
-    "dependency-audit": "node tools/generate-sbom.mjs"
+    "dependency-audit": "node tools/generate-sbom.mjs",
+    "verify-demo-prerequisites": "node tools/verify-demo-prerequisites.mjs"
   }
 }

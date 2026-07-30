@@ -41,3 +41,20 @@ pnpm --filter @gamebuddy/voice-gateway start
 
 Use `pnpm --filter @gamebuddy/voice-gateway test` for the fake-provider and
 local-server contract suite.
+
+## Demo Gate Preflight
+
+Before the real Phase 1-4 Farmhand, provider, and device runbooks, run:
+
+```powershell
+$env:GAMEBUDDY_STARDEW_GAME_PATH = 'D:\Steam\steamapps\common\Stardew Valley'
+$env:GAMEBUDDY_SECOND_STARDEW_GAME_PATH = 'D:\path\to\a\separately-licensed\second\Stardew\client'
+$env:MIMO_API_KEY = 'rotated_key_in_process_environment_only'
+$env:GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST = 'D:\audited-assets\sensevoice-manifest.json'
+pnpm verify-demo-prerequisites
+```
+
+The command never reads or prints the MiMo key. It fails closed when the
+independent legal Farmhand client, rotated credential, or audited local ASR
+assets are missing; it does not run a provider request, start Stardew, or
+modify a save.
