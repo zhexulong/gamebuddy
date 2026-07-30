@@ -55,6 +55,8 @@ internal sealed class ExecutionManager
         long deadlineMs = requestedDeadlineMs ?? nowMs + DefaultDeadlineTicks * 1000L / 60L;
         if (deadlineMs <= nowMs)
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "deadline_expired", null);
+        if (deadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_deadline", null);
 
         // A newer accepted directive supersedes the earlier local directive.
         // The controller is still the sole body owner: it first records a

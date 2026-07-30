@@ -127,7 +127,10 @@ export class CompanionHostService {
       // returned while scheduled; wake one follow-up turn without requiring an
       // unrelated third event.
       if (!this.#closed && this.#retryTimer === undefined && this.loop.pump.pendingCount > 0) {
-        void this.flushSoon().catch(() => undefined);
+        // Only a successful flush should immediately drain work accepted while
+        // it was running. On failure scheduleRetry owns the next attempt.
+        // Otherwise a rejected provider turn would recurse in this finally.
+        if (this.#retryDelayMs === 50) void this.flushSoon().catch(() => undefined);
       }
     }
   }

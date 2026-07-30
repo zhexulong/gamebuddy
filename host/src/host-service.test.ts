@@ -58,6 +58,20 @@ test("Host service schedules a second turn for a fact received during an in-flig
   service.close();
 });
 
+test("Host service backs off failed bridge delivery instead of recursively retrying", async () => {
+  const bridge = bridgeHarness();
+  let flushes = 0; let pending = 0;
+  const loop = {
+    pump: { get pendingCount() { return pending; }, enqueueFact() { pending++; }, enqueuePlayerInput() {} },
+    async flush() { flushes++; throw new Error("provider_down"); },
+  };
+  const service = new CompanionHostService(loop as never, bridge.bridge as never);
+  bridge.emit({ protocolVersion: 1, messageId: "snapshot_retry_01", correlationId: "snapshot_retry_01", timestampMs: Date.now(), scope, type: "snapshot", payload: { revision: 7, location: "Farm", tile: { x: 4, y: 8 }, stamina: 250, health: 100, actionable: true, capabilities: ["move_to_tile"], activeExecution: null } });
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
+  assert.equal(flushes, 1);
+  service.close();
+});
+
 test("Host service reports a local pipe disconnect without inventing a Mod world event", async () => {
   const bridge = bridgeHarness(); const harness = fakeLoop();
   const service = new CompanionHostService(harness.loop as never, bridge.bridge as never);

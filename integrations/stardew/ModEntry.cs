@@ -44,6 +44,12 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        // Clear any prior client-local bridge and body state before a save
+        // reload creates fresh identity-bound instances.
+        this.executions?.InvalidateForLifecycle("save_loaded");
+        this.localPipeBridge?.Dispose();
+        this.localPipeBridge = null;
+        this.bridgeSession = null;
         this.executions = new ExecutionManager(this.Monitor, this.PublishReceipt);
         Farmer localPlayer = Game1.player;
         // The configured opaque player scope must bind to the identity Stardew

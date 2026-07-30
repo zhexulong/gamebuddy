@@ -74,9 +74,19 @@ internal sealed class StardewBodyController
             return;
         }
 
-        if (!localPlayer.CanMove || Game1.activeClickableMenu is not null || Game1.eventUp)
+        if (Game1.activeClickableMenu is not null)
         {
-            this.Fail("player_not_actionable", "menu, event, or movement lock became active");
+            this.Invalidate("menu_opened");
+            return;
+        }
+        if (Game1.eventUp)
+        {
+            this.Invalidate("event_started");
+            return;
+        }
+        if (!localPlayer.CanMove)
+        {
+            this.Fail("player_not_actionable", "movement lock became active");
             return;
         }
 
