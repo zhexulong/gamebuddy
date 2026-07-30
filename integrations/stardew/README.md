@@ -6,9 +6,19 @@ The included `StardewBodyController` is a deliberately narrow local movement fix
 
 For Phase 1 native-mechanics evidence, the local-only `gamebuddy_equip_tool_fixture <inventory-slot> <request-id>` fixture selects a Tool already owned by this Farmhand. It does not consume an item, stamina, time, or world resource; its receipt records the selected slot and authoritative before/after `CurrentTool`. It remains a development fixture—not an Agent-facing capability—until native multiplayer and action-level policy gates have passed.
 
-`BridgeProtocol` and `BridgeSession` define a bounded, versioned, authenticated **game-thread-only** protocol façade. `LocalPipeBridge` is the selected opt-in Windows local transport candidate: it is a current-user-only named pipe, frames bounded UTF-8 JSON on background tasks, attaches every queue item to a connection generation, and lets `UpdateTicked` drain at most eight requests. It never calls Stardew APIs off the game thread. Authentication, scope, deadline, permission token, idempotency, cancellation IDs, and request shape are revalidated by the Mod before an execution can reach `ExecutionManager`.
+`BridgeProtocol` and `BridgeSession` define a bounded, versioned, authenticated **game-thread-only** protocol façade. `LocalPipeBridge` is the selected opt-in Windows local transport candidate: it is a current-user-only named pipe, frames bounded UTF-8 JSON on background tasks, attaches every queue item to a connection generation, and lets `UpdateTicked` drain at most eight requests. It never calls Stardew APIs off the game thread. Authentication opens transport only; scope, player-enabled capability, deadline, idempotency, cancellation IDs, request shape, and game-state preconditions are revalidated by the Mod before an execution can reach `ExecutionManager`.
 
-Enable it only in the local untracked `config.json` installed with the AI-client Mod; `config.example.json` documents the shape. It needs opaque IDs and a 16+ character token; it never listens on LAN or the public network. A real Windows AI-Farmhand transport/reconnect test remains required before treating this candidate as accepted production IPC.
+### Player action policy
+
+`config.json` is the local, player-controlled source of Game Action authorization. `EnabledActions` is an allowlist; the default empty list exposes no Game Actions through the bridge. To let the Companion use the currently verified, cancellable local move action autonomously, set:
+
+```json
+"EnabledActions": ["move_to_tile"]
+```
+
+The Mod reports this as a live capability in `hello_ack` and snapshots. The Host only mounts the corresponding tool while that capability remains declared; it never mints a token, interprets model text as permission, or enables an action itself. Disabling the action (or any current Mod/world precondition failing) prevents new executions. Local cancellation remains available regardless of the action allowlist.
+
+Enable the bridge only in the local untracked `config.json` installed with the AI-client Mod; `config.example.json` documents the shape. It needs opaque IDs and a 16+ character token; it never listens on LAN or the public network. A real Windows AI-Farmhand transport/reconnect test remains required before treating this candidate as accepted production IPC.
 
 ## Local compilation
 

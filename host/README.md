@@ -4,9 +4,12 @@ This workspace contains the restricted Companion runtime foundation and the
 Phase 2 Windows-local Stardew bridge adapter. `pnpm --filter
 @gamebuddy/companion-host start <local-config.json>` is an explicit,
 identity-bound local bootstrap; it refuses a missing/invalid bridge snapshot.
-It is **not yet a playable Companion Host**: the default capability surface is
-observation-only until a player-policy boundary grants an action, and the
-remaining model/voice/multiplayer BDD gates are not represented as passed.
+It is **not yet a playable Companion Host**. The Stardew Mod reports the
+player's local action allowlist as live capabilities; with its default empty
+allowlist the surface is observation-only. The Host mounts only those
+Mod-declared capabilities and cannot grant, enable, or infer authorization
+from model text. Remaining model/voice/multiplayer BDD gates are not
+represented as passed.
 
 ## Locked runtime chain
 

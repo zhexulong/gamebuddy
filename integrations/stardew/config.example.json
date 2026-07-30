@@ -5,5 +5,6 @@
   "SaveId": "Game1_uniqueIDForThisGame_decimal",
   "WorldId": "Game1_MasterPlayer_UniqueMultiplayerID_decimal",
   "PlayerId": "Game1_player_UniqueMultiplayerID_decimal",
-  "CompanionId": "opaque_companion_id"
+  "CompanionId": "opaque_companion_id",
+  "EnabledActions": []
 }
