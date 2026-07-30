@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { attachCompanionExpression } from "./agent-expression.js";
 import { connectLocalCompanion, disconnectLocalCompanion } from "./local-bootstrap.js";
 import { LocalVoiceGatewayClient } from "./voice-gateway-client.js";
 
@@ -29,6 +30,13 @@ const connected = await connectLocalCompanion({
 // separate local service and is optional for keyboard/replay Host operation.
 const voice = config.voiceGateway === undefined ? undefined : await LocalVoiceGatewayClient.connect(config.voiceGateway);
 const detachVoice = voice === undefined ? undefined : connected.host.attachFinalVoiceSource(voice);
+// The CLI is the current visible-text sink. Agent prose is presentation only:
+// it never feeds back into bridge facts, action authority, or execution state.
+const detachExpression = attachCompanionExpression(connected.runtime.session, {
+  sessionId: connected.runtime.identityKey,
+  visible: { show: async (expression) => { process.stdout.write(`Companion: ${expression.text}\n`); } },
+  speech: voice,
+});
 const voicePoll = voice === undefined ? undefined : setInterval(() => {
   void voice.pollEvents().catch(() => undefined);
 }, 200);
@@ -38,6 +46,7 @@ await new Promise<void>((resolveStop) => {
   process.once("SIGINT", stop); process.once("SIGTERM", stop);
 });
 if (voicePoll !== undefined) clearInterval(voicePoll);
+detachExpression();
 detachVoice?.();
 voice?.close();
 disconnectLocalCompanion(connected);
