@@ -159,7 +159,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (value.action === "move_to_tile") {
     const x = value.args.x;
     const y = value.args.y;
-    if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 1000 || y > 1000) return "invalid_target_tile";
+    if (!isTileCoordinate(x) || !isTileCoordinate(y)) return "invalid_target_tile";
   }
   return null;
 }
@@ -193,8 +193,7 @@ function validActionGrants(value: unknown, capabilities: unknown, nowMs: number)
   return value.every((grant) => {
     if (!isRecord(grant) || !validToken(grant.token) || grant.action !== "move_to_tile" || !capabilities.includes(grant.action)
       || typeof grant.expiresAtMs !== "number" || !Number.isFinite(grant.expiresAtMs) || grant.expiresAtMs <= nowMs || grant.expiresAtMs > nowMs + 60_000
-      || !isOpaqueId(grant.nonce) || !isFiniteNumber(grant.targetX) || !isFiniteNumber(grant.targetY)
-      || grant.targetX < 0 || grant.targetY < 0 || grant.targetX > 1000 || grant.targetY > 1000
+      || !isOpaqueId(grant.nonce) || !isTileCoordinate(grant.targetX) || !isTileCoordinate(grant.targetY)
       || tokens.has(grant.token) || nonces.has(grant.nonce)) return false;
     tokens.add(grant.token); nonces.add(grant.nonce); return true;
   });
@@ -226,3 +225,4 @@ function isReasonCode(value: unknown): value is string { return typeof value ===
 function validToken(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_-]{16,256}$/.test(value); }
 function isStringArray(value: unknown): value is readonly string[] { return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length <= 128); }
 function isFiniteNumber(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
+function isTileCoordinate(value: unknown): value is number { return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 1000; }

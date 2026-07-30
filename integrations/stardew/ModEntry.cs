@@ -122,9 +122,9 @@ public sealed class ModEntry : Mod
         if (!RequireWorld())
             return;
 
-        if (args.Length != 3 || !float.TryParse(args[0], out float x) || !float.TryParse(args[1], out float y) || !IsOpaqueRequestId(args[2]))
+        if (args.Length != 3 || !int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y) || !IsOpaqueRequestId(args[2]))
         {
-            this.Monitor.Log("Usage: gamebuddy_move_fixture <tile-x> <tile-y> <request-id>; request-id must be 1-64 letters, digits, _ or -.", LogLevel.Warn);
+            this.Monitor.Log("Usage: gamebuddy_move_fixture <integer-tile-x> <integer-tile-y> <request-id>; request-id must be 1-64 letters, digits, _ or -.", LogLevel.Warn);
             return;
         }
 
@@ -151,9 +151,9 @@ public sealed class ModEntry : Mod
     {
         if (!RequireWorld())
             return;
-        if (args.Length != 2 || !float.TryParse(args[0], out float x) || !float.TryParse(args[1], out float y))
+        if (args.Length != 2 || !int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y))
         {
-            this.Monitor.Log("Usage: gamebuddy_approve_move_fixture <tile-x> <tile-y>.", LogLevel.Warn);
+            this.Monitor.Log("Usage: gamebuddy_approve_move_fixture <integer-tile-x> <integer-tile-y>.", LogLevel.Warn);
             return;
         }
         long generation = this.localPipeBridge?.CurrentGeneration ?? 0;

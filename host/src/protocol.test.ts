@@ -60,6 +60,8 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   assert.equal(validateExecutionRequest({ ...valid, expectedRevision: 3 }, snapshot, now), "stale_snapshot");
   assert.equal(validateExecutionRequest({ ...valid, action: "sell_item" }, snapshot, now), "unknown_action");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
+  assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
+  assert.equal(validateBridgeMessage(newEnvelope("action_grant", scope, { token: "permission_token_1234", action: "move_to_tile", expiresAtMs: now + 1_000, nonce: "nonce_01", targetX: 11.5, targetY: 12 }, "grant_fractional_01", now), scope, now), "invalid_action_grant");
   assert.equal(validateExecutionRequest(valid, { ...snapshot, actionable: false }, now), "player_not_actionable");
 });
 

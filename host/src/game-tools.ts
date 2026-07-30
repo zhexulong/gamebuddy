@@ -49,7 +49,7 @@ export function createStardewActionTools(integration: CompanionIntegration) {
   const move = defineTool({
     name: "stardew_move_to_tile", label: "Move Farmhand to Tile",
     description: "Request the verified move_to_tile capability. Inspect its authoritative receipt before saying the movement succeeded.",
-    parameters: Type.Object({ x: Type.Number(), y: Type.Number(), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+    parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
     execute: async (_toolCallId, params) => {
       const snapshot = integration.state.snapshot;
       if (!integration.state.connected || snapshot === null) return receiptResult(null, "integration_not_ready");
