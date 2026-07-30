@@ -37,8 +37,11 @@ A real Farmhand test requires two separately authenticated, legitimately license
 ```text
 gamebuddy_status
 gamebuddy_move_fixture <nearby-x> <nearby-y> phase1_move_01
+# Before the first route reaches its target, replace it with a new directive:
+gamebuddy_move_fixture <other-nearby-x> <other-nearby-y> phase1_move_02
 gamebuddy_equip_tool_fixture <tool-slot> phase1_equip_01
 gamebuddy_cancel
+gamebuddy_trace
 ```
 
-Capture the AI-client log showing `bound only local Game1.player`, the Farmhand multiplayer ID, directive/route/body execution trace, and matching host-visible result. Exercise replacement, bounded blockage recovery, menu/warp invalidation, saving/cutover, reconnect, and the native tool fixture in the dedicated test save. This manual evidence is required before declaring Phase 1 accepted; a single-client compile/smoke, a shadow `Farmer`, or a bridge fixture is not a substitute.
+Capture the AI-client log showing `bound only local Game1.player`, the Farmhand multiplayer ID, and the JSON emitted by `gamebuddy_trace`. Verify that replacement records a terminal `superseded_by_new_directive` receipt before the new request's distinct route revision, then compare the trace and native tool before/after receipt to the matching host-visible result. Exercise replacement, bounded blockage recovery, menu/warp invalidation, saving/cutover, reconnect, and the native tool fixture in the dedicated test save. This manual evidence is required before declaring Phase 1 accepted; a single-client compile/smoke, a shadow `Farmer`, or a bridge fixture is not a substitute.

@@ -29,6 +29,7 @@ public sealed class ModEntry : Mod
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
 
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the local native-player binding and authoritative snapshot.", this.StatusCommand);
+        helper.ConsoleCommands.Add("gamebuddy_trace", "Print bounded local directive/route/body execution trace evidence.", this.TraceCommand);
         helper.ConsoleCommands.Add("gamebuddy_move_fixture", "Phase 1 local-only movement fixture: gamebuddy_move_fixture <tile-x> <tile-y> <request-id>.", this.MoveFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_equip_tool_fixture", "Phase 1 local-only native mechanic fixture: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>.", this.EquipToolFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_approve_move_fixture", "Local player-policy fixture: approve exactly one bridge move target: gamebuddy_approve_move_fixture <tile-x> <tile-y>.", this.ApproveMoveFixtureCommand);
@@ -121,6 +122,16 @@ public sealed class ModEntry : Mod
             return;
 
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(this.executions!.CreateSnapshot(), BridgeProtocol.JsonOptions), LogLevel.Info);
+    }
+
+    private void TraceCommand(string command, string[] args)
+    {
+        if (!RequireWorld())
+            return;
+
+        // Read-only evidence export for the Phase 1 two-client runbook. The
+        // ledger remains game-thread-owned; this does not replay or mutate it.
+        this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(this.executions!.Trace, BridgeProtocol.JsonOptions), LogLevel.Info);
     }
 
     private void MoveFixtureCommand(string command, string[] args)
