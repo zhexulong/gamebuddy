@@ -51,7 +51,16 @@ export type Snapshot = Readonly<{
 
 /** One-shot, locally player-approved execution capability. The target binding
  * prevents a bridge credential from becoming general movement authority. */
-export type ActionGrant = Readonly<{ token: string; action: "move_to_tile"; expiresAtMs: number; nonce: string; targetX: number; targetY: number }>;
+export type ActionGrant = Readonly<{
+  token: string;
+  action: "move_to_tile";
+  expiresAtMs: number;
+  nonce: string;
+  /** Local player-policy confirmation correlation; never model-generated. */
+  confirmationId: string;
+  targetX: number;
+  targetY: number;
+}>;
 
 export type ExecutionRequest = Readonly<{
   requestId: string;
@@ -61,6 +70,8 @@ export type ExecutionRequest = Readonly<{
   expectedRevision: number;
   deadlineMs: number;
   permissionToken: string;
+  /** Copied only from the selected Mod-issued grant for ledger audit. */
+  confirmationId: string;
 }>;
 
 export type ExecutionReceipt = Readonly<{
@@ -153,7 +164,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (!isRecord(value.args)) return "invalid_args";
   if (!Number.isSafeInteger(value.expectedRevision) || value.expectedRevision !== snapshot.revision) return "stale_snapshot";
   if (typeof value.deadlineMs !== "number" || !Number.isFinite(value.deadlineMs) || value.deadlineMs < nowMs || value.deadlineMs > nowMs + 60_000) return "invalid_deadline";
-  if (!validToken(value.permissionToken)) return "invalid_permission";
+  if (!validToken(value.permissionToken) || !isOpaqueId(value.confirmationId)) return "invalid_permission";
   if (!snapshot.actionable && value.action !== "inspect_self") return "player_not_actionable";
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
@@ -184,7 +195,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     && (value.action === "move_to_tile" || value.action === "inspect_self")
     && isRecord(value.args) && Number.isSafeInteger(value.expectedRevision)
     && typeof value.deadlineMs === "number" && Number.isFinite(value.deadlineMs)
-    && validToken(value.permissionToken) ? null : "invalid_execution_request";
+    && validToken(value.permissionToken) && isOpaqueId(value.confirmationId) ? null : "invalid_execution_request";
 }
 
 function validActionGrants(value: unknown, capabilities: unknown, nowMs: number): value is readonly ActionGrant[] {
@@ -193,7 +204,7 @@ function validActionGrants(value: unknown, capabilities: unknown, nowMs: number)
   return value.every((grant) => {
     if (!isRecord(grant) || !validToken(grant.token) || grant.action !== "move_to_tile" || !capabilities.includes(grant.action)
       || typeof grant.expiresAtMs !== "number" || !Number.isFinite(grant.expiresAtMs) || grant.expiresAtMs <= nowMs || grant.expiresAtMs > nowMs + 60_000
-      || !isOpaqueId(grant.nonce) || !isTileCoordinate(grant.targetX) || !isTileCoordinate(grant.targetY)
+      || !isOpaqueId(grant.nonce) || !isOpaqueId(grant.confirmationId) || !isTileCoordinate(grant.targetX) || !isTileCoordinate(grant.targetY)
       || tokens.has(grant.token) || nonces.has(grant.nonce)) return false;
     tokens.add(grant.token); nonces.add(grant.nonce); return true;
   });

@@ -1,17 +1,17 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { randomUUID } from "node:crypto";
-import { type CompanionIntegration } from "./integration-types.js";
+import { type CompanionIntegration, type MoveApprovalIntegration } from "./integration-types.js";
 import { type ExecutionReceipt, type ExecutionRequest, validateExecutionRequest } from "./protocol.js";
 
 /** A bridge that can execute the one currently verified capability. */
 export interface MoveCapableIntegration extends CompanionIntegration {
   /** Host-owned selection prevents the Agent from minting or choosing grants. */
-  nextMoveGrant(target: Readonly<{ x: number; y: number }>): string | null;
+  nextMoveGrant(target: Readonly<{ x: number; y: number }>): import("./protocol.js").ActionGrant | null;
   execute(request: ExecutionRequest): Promise<ExecutionReceipt>;
   cancel(requestId: string, executionId: string, reasonCode: string): Promise<ExecutionReceipt>;
 }
-function isMoveCapable(value: CompanionIntegration): value is MoveCapableIntegration {
+function isMoveCapable(value: CompanionIntegration): value is MoveCapableIntegration & MoveApprovalIntegration {
   return "nextMoveGrant" in value && typeof (value as { nextMoveGrant?: unknown }).nextMoveGrant === "function"
     && "execute" in value && typeof (value as { execute?: unknown }).execute === "function" && "cancel" in value && typeof (value as { cancel?: unknown }).cancel === "function";
 }
@@ -67,9 +67,9 @@ export function createStardewActionTools(integration: CompanionIntegration) {
       // Reconnects, lifecycle transitions, or version changes therefore fail
       // closed even though Pi keeps the stable tool name in its session.
       if (!integration.state.capabilities.includes("move_to_tile") || !snapshot.capabilities.includes("move_to_tile")) return receiptResult(null, "capability_not_declared");
-      const permissionToken = integration.nextMoveGrant({ x: params.x, y: params.y });
-      if (permissionToken === null) return receiptResult(null, "no_fresh_permission_grant");
-      const request: ExecutionRequest = { requestId: params.requestId ?? randomUUID(), idempotencyKey: params.idempotencyKey ?? randomUUID(), action: "move_to_tile", args: { x: params.x, y: params.y }, expectedRevision: snapshot.revision, deadlineMs: Date.now() + 30_000, permissionToken };
+      const grant = integration.nextMoveGrant({ x: params.x, y: params.y });
+      if (grant === null) return receiptResult(null, "no_fresh_player_confirmation");
+      const request: ExecutionRequest = { requestId: params.requestId ?? randomUUID(), idempotencyKey: params.idempotencyKey ?? randomUUID(), action: "move_to_tile", args: { x: params.x, y: params.y }, expectedRevision: snapshot.revision, deadlineMs: Date.now() + 30_000, permissionToken: grant.token, confirmationId: grant.confirmationId };
       const invalid = validateExecutionRequest(request, snapshot);
       if (invalid !== null) return receiptResult(null, invalid);
       try { return receiptResult(await integration.execute(request), null); }

@@ -90,17 +90,17 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
 
   /** Select a fresh Mod-issued grant only for its exact player-approved target.
    * The Agent-facing Game Action never receives the raw token material. */
-  public nextMoveGrant(target: Readonly<{ x: number; y: number }>): string | null {
+  public nextMoveGrant(target: Readonly<{ x: number; y: number }>): ActionGrant | null {
     const now = Date.now();
     this.pruneActionGrants(now);
-    const grant = this.#actionGrants.find((candidate) => candidate.action === "move_to_tile" && candidate.expiresAtMs > now
-      && candidate.targetX === target.x && candidate.targetY === target.y);
-    return grant?.token ?? null;
+    return this.#actionGrants.find((candidate) => candidate.action === "move_to_tile" && candidate.expiresAtMs > now
+      && candidate.targetX === target.x && candidate.targetY === target.y) ?? null;
   }
 
   public async execute(request: ExecutionRequest): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
     this.requireAuthenticated();
-    if (!this.#actionGrants.some((grant) => grant.token === request.permissionToken && grant.action === request.action && grant.expiresAtMs > Date.now())) throw new Error("action_grant_unavailable_or_expired");
+    if (!this.#actionGrants.some((grant) => grant.token === request.permissionToken && grant.confirmationId === request.confirmationId
+      && grant.action === request.action && grant.expiresAtMs > Date.now())) throw new Error("action_grant_unavailable_or_expired");
     const response = await this.request("execution_request", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "execution_receipt") throw new Error("unexpected_execution_response");

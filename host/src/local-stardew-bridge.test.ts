@@ -38,7 +38,7 @@ test("local Stardew bridge authenticates, observes, and receives target-bound pl
         socket.write(frame(response));
         if (request.type === "observe_request") socket.write(frame({
           ...request, messageId: "mod_grant_01", correlationId: "approval_01", type: "action_grant",
-          payload: { token: "player_approved_token_01", action: "move_to_tile", expiresAtMs: Date.now() + 10_000, nonce: "approval_01", targetX: 6, targetY: 8 },
+          payload: { token: "player_approved_token_01", action: "move_to_tile", expiresAtMs: Date.now() + 10_000, nonce: "approval_01", confirmationId: "confirm_01", targetX: 6, targetY: 8 },
         }));
       }
     });
@@ -54,7 +54,7 @@ test("local Stardew bridge authenticates, observes, and receives target-bound pl
     // The unsolicited policy event is intentionally independent of the
     // observe response; allow the framed socket to deliver its next packet.
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
-    assert.equal(client.nextMoveGrant({ x: 6, y: 8 }), "player_approved_token_01");
+    assert.deepEqual(client.nextMoveGrant({ x: 6, y: 8 })?.confirmationId, "confirm_01");
     assert.equal(client.nextMoveGrant({ x: 6, y: 9 }), null);
     client.close();
   } finally {

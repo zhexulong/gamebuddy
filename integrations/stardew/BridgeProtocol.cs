@@ -111,4 +111,5 @@ internal sealed record BridgeExecutionRequest(
     BridgeExecutionArgs Args,
     long ExpectedRevision,
     long DeadlineMs,
-    string PermissionToken);
+    string PermissionToken,
+    string ConfirmationId);

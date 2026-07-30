@@ -71,7 +71,7 @@ internal sealed class BridgeSession
         if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;
         // Bind both independently supplied retry identifiers to the immutable
         // request shape before any one-shot approval can be consumed.
-        string fingerprint = $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.ExpectedRevision}";
+        string fingerprint = $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.ExpectedRevision}:{request.ConfirmationId}";
         if (this.idempotency.TryGetValue(request.IdempotencyKey, out IdempotentExecution? existing))
         {
             if (existing.Fingerprint != fingerprint) { reasonCode = "idempotency_key_conflict"; return false; }
@@ -164,7 +164,8 @@ internal sealed class BridgeSession
             || request.Action != "move_to_tile" || request.Args is null || !request.Args.X.HasValue || !request.Args.Y.HasValue
             || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value)
             || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value)
-            || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000)
+            || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000
+            || !BridgeProtocol.IsOpaqueId(request.ConfirmationId))
         { reasonCode = "invalid_execution_request"; return false; }
         reasonCode = "accepted";
         return true;
@@ -187,7 +188,9 @@ internal sealed class BridgeSession
         if (this.actionGrants.Count >= MaximumOutstandingActionGrants)
         { reasonCode = "too_many_outstanding_approvals"; return false; }
         long expiresAtMs = nowMs + 30_000;
-        grant = new BridgeActionGrant(Guid.NewGuid().ToString("N"), "move_to_tile", expiresAtMs, Guid.NewGuid().ToString("N"), targetX, targetY);
+        // The correlation is created at the local approval boundary. It is not
+        // derived from Agent text or the bearer bridge token.
+        grant = new BridgeActionGrant(Guid.NewGuid().ToString("N"), "move_to_tile", expiresAtMs, Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"), targetX, targetY);
         this.actionGrants[grant.Token] = grant;
         reasonCode = "approved";
         return true;
@@ -198,7 +201,7 @@ internal sealed class BridgeSession
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         this.PruneExpiredActionGrants(nowMs);
         if (!this.actionGrants.Remove(request.PermissionToken, out BridgeActionGrant? grant)
-            || grant.Action != request.Action || grant.ExpiresAtMs < nowMs
+            || grant.Action != request.Action || grant.ExpiresAtMs < nowMs || grant.ConfirmationId != request.ConfirmationId
             || !request.Args.X.HasValue || !request.Args.Y.HasValue || grant.TargetX != request.Args.X.Value || grant.TargetY != request.Args.Y.Value)
         { reasonCode = "action_not_player_approved"; return false; }
         reasonCode = "accepted";
@@ -259,7 +262,7 @@ internal sealed class BridgeSession
 
 internal sealed record IdempotentExecution(string Fingerprint, string RequestId);
 internal sealed record BridgeHello(string Token);
-internal sealed record BridgeActionGrant(string Token, string Action, long ExpiresAtMs, string Nonce, float TargetX, float TargetY);
+internal sealed record BridgeActionGrant(string Token, string Action, long ExpiresAtMs, string Nonce, string ConfirmationId, float TargetX, float TargetY);
 internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, IReadOnlyList<BridgeActionGrant> ActionGrants);
 internal sealed record BridgeObserveRequest();
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string ReasonCode);
