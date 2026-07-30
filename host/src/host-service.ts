@@ -5,6 +5,8 @@ import { type WorldFact } from "./event-pump.js";
 import { type LocalStardewBridgeClient, type LocalStardewBridgeFact, type LocalStardewConnectionFact } from "./local-stardew-bridge.js";
 import { type VoiceExpression, deliverFinalVoiceInput, expressTextFirst, type FinalVoiceInput, type VisibleTextSink, type VoiceSpeechPort } from "./voice.js";
 
+export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void }>;
+
 /**
  * Host glue with deliberately limited authority: bridge facts become ordinary
  * Agent turns; it neither plans actions nor predicts execution outcomes.
@@ -12,6 +14,7 @@ import { type VoiceExpression, deliverFinalVoiceInput, expressTextFirst, type Fi
 export class CompanionHostService {
   readonly #unsubscribe: () => void;
   readonly #unsubscribeConnection: () => void;
+  #unsubscribeVoice: (() => void) | undefined;
   #flushScheduled = false;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #retryDelayMs = 50;
@@ -30,6 +33,7 @@ export class CompanionHostService {
     this.#closed = true;
     this.#unsubscribe();
     this.#unsubscribeConnection();
+    this.#unsubscribeVoice?.();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
   }
 
@@ -51,6 +55,22 @@ export class CompanionHostService {
         await this.flushSoon();
       },
     }, input);
+  }
+
+  /** Attach only a Gateway that already validates/authenticates final ASR events. */
+  public attachFinalVoiceSource(source: FinalVoiceSource): () => void {
+    this.#unsubscribeVoice?.();
+    const unsubscribe = source.onFinalTranscript((input) => {
+      // Gateway callbacks are not a game-thread boundary. A provider failure
+      // remains local to voice; the Host event pump preserves pending input.
+      void this.acceptFinalVoice(input).catch(() => undefined);
+    });
+    const wrapped = () => {
+      unsubscribe();
+      if (this.#unsubscribeVoice === wrapped) this.#unsubscribeVoice = undefined;
+    };
+    this.#unsubscribeVoice = wrapped;
+    return wrapped;
   }
 
   /** Visible text is committed first; speech is a non-authoritative side path. */

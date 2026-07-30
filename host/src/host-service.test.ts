@@ -77,3 +77,15 @@ test("Host service admits only final voice text and shows text before speech", a
   assert.deepEqual(timeline, ["text", "speech"]);
   service.close();
 });
+
+test("Host service receives only final transcripts from an attached Voice Gateway source", async () => {
+  const bridge = bridgeHarness(); const harness = fakeLoop();
+  let listener: ((input: { sessionId: string; inputId: string; text: string; locale: string; providerId: string; modelRevision: string; timestampMs: number; actualFormat: { sampleRate: number; channels: number; encoding: "pcm_s16le" } }) => void) | undefined;
+  const service = new CompanionHostService(harness.loop as never, bridge.bridge as never);
+  service.attachFinalVoiceSource({ onFinalTranscript(next) { listener = next; return () => { listener = undefined; }; } });
+  listener?.({ sessionId: "session_01", inputId: "input_gateway_01", text: "走到门口", locale: "zh-CN", providerId: "fake-asr", modelRevision: "v1", timestampMs: 2, actualFormat: { sampleRate: 16_000, channels: 1, encoding: "pcm_s16le" } });
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+  assert.deepEqual(harness.inputs, [{ source: "voice_final", inputId: "input_gateway_01", text: "走到门口", locale: "zh-CN", timestampMs: 2 }]);
+  service.close();
+  assert.equal(listener, undefined);
+});

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { connectLocalCompanion, disconnectLocalCompanion } from "./local-bootstrap.js";
+import { LocalVoiceGatewayClient } from "./voice-gateway-client.js";
 
 /**
  * Explicit local Host bootstrap. It never searches the repository for config,
@@ -11,6 +12,7 @@ type LocalHostConfig = Readonly<{
   playerId: string; saveId: string; worldId: string; companionId: string;
   pipeName: string; bridgeToken: string;
   model?: "mimo-v2.5" | "mimo-v2.5-pro";
+  voiceGateway?: Readonly<{ port: number; token: string }>;
 }>;
 
 const configPath = process.argv[2] ?? process.env.GAMEBUDDY_HOST_CONFIG;
@@ -23,12 +25,21 @@ const connected = await connectLocalCompanion({
   modelConfig: config.model === undefined ? undefined : { provider: "xiaomi-mimo", modelId: config.model },
 });
 // connectLocalCompanion already admitted the mandatory initial Mod snapshot
-// through the ordinary Host turn path before returning.
+// through the ordinary Host turn path before returning. Voice remains a
+// separate local service and is optional for keyboard/replay Host operation.
+const voice = config.voiceGateway === undefined ? undefined : await LocalVoiceGatewayClient.connect(config.voiceGateway);
+const detachVoice = voice === undefined ? undefined : connected.host.attachFinalVoiceSource(voice);
+const voicePoll = voice === undefined ? undefined : setInterval(() => {
+  void voice.pollEvents().catch(() => undefined);
+}, 200);
 process.stdout.write("GameBuddy Host connected to an identity-bound local Stardew bridge. Press Ctrl+C to stop.\n");
 await new Promise<void>((resolveStop) => {
   const stop = () => resolveStop();
   process.once("SIGINT", stop); process.once("SIGTERM", stop);
 });
+if (voicePoll !== undefined) clearInterval(voicePoll);
+detachVoice?.();
+voice?.close();
 disconnectLocalCompanion(connected);
 
 function validateConfig(value: unknown): LocalHostConfig {
@@ -38,6 +49,18 @@ function validateConfig(value: unknown): LocalHostConfig {
   const playerId = opaque("playerId"); const saveId = opaque("saveId"); const worldId = opaque("worldId"); const companionId = opaque("companionId"); const pipeName = opaque("pipeName");
   const bridgeToken = typeof candidate.bridgeToken === "string" && /^[A-Za-z0-9_-]{16,256}$/.test(candidate.bridgeToken) ? candidate.bridgeToken : undefined;
   const model = candidate.model === undefined ? undefined : candidate.model === "mimo-v2.5" || candidate.model === "mimo-v2.5-pro" ? candidate.model : undefined;
-  if (playerId === undefined || saveId === undefined || worldId === undefined || companionId === undefined || pipeName === undefined || bridgeToken === undefined || (candidate.model !== undefined && model === undefined)) throw new Error("invalid_host_config");
-  return { playerId, saveId, worldId, companionId, pipeName, bridgeToken, model };
+  const voiceCandidate = candidate.voiceGateway;
+  const voiceGateway = voiceCandidate === undefined ? undefined : parseVoiceGateway(voiceCandidate);
+  if (playerId === undefined || saveId === undefined || worldId === undefined || companionId === undefined || pipeName === undefined || bridgeToken === undefined || (candidate.model !== undefined && model === undefined) || (voiceCandidate !== undefined && voiceGateway === undefined)) throw new Error("invalid_host_config");
+  return { playerId, saveId, worldId, companionId, pipeName, bridgeToken, model, voiceGateway };
+}
+
+function parseVoiceGateway(value: unknown): LocalHostConfig["voiceGateway"] | undefined {
+  if (!isRecord(value) || typeof value.port !== "number" || typeof value.token !== "string") return undefined;
+  if (!Number.isInteger(value.port) || value.port < 1 || value.port > 65_535 || !/^[A-Za-z0-9_-]{16,256}$/.test(value.token)) return undefined;
+  return { port: value.port, token: value.token };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
