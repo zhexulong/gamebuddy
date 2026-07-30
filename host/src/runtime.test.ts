@@ -67,8 +67,8 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
   const integration = new CompanionIntegrationClient(scope, hostEndpoint);
   const runtime = await createCompanionRuntime(identity, root, integration);
   try {
-    // The executable action is absent until the Mod grants a fresh, bounded token.
-    // Observations and execution status remain factual and safe before handshake.
+    // The executable action is absent until the Mod declares it in the
+    // player-controlled capability snapshot. Observations remain factual.
     assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_execution_status", "stardew_observe", "todowrite"]);
   } finally {
     runtime.session.dispose();
@@ -97,8 +97,19 @@ test("runtime loads only Magic Context and preserves a session partition", async
     assert.match(sessionFile ?? "", /\.jsonl$/);
     assert.ok(sessionFile);
     runtime.sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "Player conversation persistence sentinel." }],
+      timestamp: Date.now(),
+    });
+    runtime.sessionManager.appendCustomMessageEntry(
+      "gamebuddy_test_event",
+      "{\"kind\":\"test_event\",\"source\":\"runtime_test\"}",
+      false,
+      { kind: "test_event", source: "runtime_test" },
+    );
+    runtime.sessionManager.appendMessage({
       role: "assistant",
-      content: [{ type: "text", text: "Phase 0B persistence sentinel." }],
+      content: [{ type: "text", text: "Phase 0B todo/session persistence sentinel." }],
       api: "openai-completions",
       provider: "test",
       model: "test-model",
@@ -116,9 +127,21 @@ test("runtime loads only Magic Context and preserves a session partition", async
   const resumed = await createCompanionRuntime(identity, root);
   try {
     assert.equal(resumed.session.sessionFile, runtime.session.sessionFile);
-    assert.equal(resumed.session.messages.some((message) => JSON.stringify(message).includes("Phase 0B persistence sentinel.")), true);
+    const resumedEntries = JSON.stringify(resumed.session.messages);
+    assert.match(resumedEntries, /Player conversation persistence sentinel\./);
+    assert.match(resumedEntries, /Phase 0B todo\/session persistence sentinel\./);
+    assert.match(resumedEntries, /gamebuddy_test_event/);
     assert.deepEqual(resumed.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "todowrite"]);
   } finally {
     resumed.session.dispose();
+  }
+
+  const otherSave = await createCompanionRuntime({ ...identity, saveId: "save_02" }, root);
+  try {
+    assert.notEqual(otherSave.session.sessionFile, runtime.session.sessionFile);
+    assert.equal(JSON.stringify(otherSave.session.messages).includes("Player conversation persistence sentinel."), false);
+    assert.notEqual(otherSave.paths.runtimeCwd, runtime.paths.runtimeCwd);
+  } finally {
+    otherSave.session.dispose();
   }
 });

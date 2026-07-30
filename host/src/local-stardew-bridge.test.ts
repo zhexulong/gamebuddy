@@ -19,6 +19,33 @@ async function close(server: Server): Promise<void> {
   await new Promise<void>((resolvePromise, reject) => server.close((error) => error === undefined ? resolvePromise() : reject(error)));
 }
 
+test("local Stardew bridge keeps the newest snapshot revision from a delayed response", async () => {
+  const pipeName = `gamebuddy_phase2_monotonic_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let snapshotsWritten: (() => void) | undefined;
+  const written = new Promise<void>((resolvePromise) => { snapshotsWritten = resolvePromise; });
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    socket.once("data", (chunk: Buffer) => {
+      const request = JSON.parse(chunk.subarray(4).toString("utf8")) as BridgeMessage;
+      socket.write(frame({ ...request, messageId: "mod_hello_01", type: "hello_ack", payload: { sessionId: "session_01", capabilities: ["inspect_self"] } }));
+      socket.write(frame({ ...request, messageId: "snapshot_new", type: "snapshot", correlationId: "snapshot_new", payload: { revision: 8, location: "Farm", tile: { x: 5, y: 8 }, stamina: 250, health: 100, actionable: true, capabilities: ["inspect_self"], activeExecution: null } }));
+      socket.write(frame({ ...request, messageId: "snapshot_old", type: "snapshot", correlationId: "snapshot_old", payload: { revision: 7, location: "Farm", tile: { x: 4, y: 8 }, stamina: 250, health: 100, actionable: true, capabilities: ["inspect_self"], activeExecution: null } }), () => snapshotsWritten?.());
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject));
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    await written;
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
+    assert.equal(client.state.snapshot?.revision, 8);
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
 test("local Stardew bridge authenticates and observes Mod-declared capabilities", async () => {
   const pipeName = `gamebuddy_phase2_${process.pid}_${Date.now()}`;
   let peer: Socket | undefined;

@@ -38,6 +38,16 @@ test("integration client exposes only Mod-originated state and receipts", () => 
   client.dispose();
 });
 
+test("integration client keeps the newest Mod snapshot when a delayed older snapshot arrives", () => {
+  const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
+  const client = new CompanionIntegrationClient(scope, hostEndpoint);
+  modEndpoint.send(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["inspect_self"] }, "hello_01", now), now);
+  modEndpoint.send(newEnvelope("snapshot", scope, snapshot(8), "snapshot_new", now), now);
+  modEndpoint.send(newEnvelope("snapshot", scope, snapshot(7), "snapshot_old", now), now);
+  assert.equal(client.state.snapshot?.revision, 8);
+  client.dispose();
+});
+
 test("integration client fails closed before hello/snapshot and on disconnect", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
   const client = new CompanionIntegrationClient(scope, hostEndpoint);

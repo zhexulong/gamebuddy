@@ -83,7 +83,8 @@ export class CompanionIntegrationClient {
         this.#latestReasonCode = null;
         break;
       case "snapshot":
-        this.#snapshot = message.payload;
+        // A delayed observation response must never replace newer Mod state.
+        if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision) this.#snapshot = message.payload;
         break;
       case "execution_receipt":
         this.#latestReceipt = message.payload;

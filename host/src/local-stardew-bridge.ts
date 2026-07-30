@@ -139,8 +139,10 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     if (message.type === "hello_ack") {
       this.#snapshot = null; this.#latestReceipt = null;
       this.#capabilities = [...message.payload.capabilities]; this.#latestReasonCode = null;
-    } else if (message.type === "snapshot") this.#snapshot = message.payload;
-    else if (message.type === "execution_receipt") this.#latestReceipt = message.payload;
+    } else if (message.type === "snapshot") {
+      // A delayed observation response must never replace newer Mod state.
+      if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision) this.#snapshot = message.payload;
+    } else if (message.type === "execution_receipt") this.#latestReceipt = message.payload;
     else this.#latestReasonCode = message.payload.reasonCode;
     if (message.type === "snapshot" || message.type === "execution_receipt" || message.type === "semantic_event" || message.type === "lifecycle") {
       for (const listener of this.#factListeners) listener(message);
