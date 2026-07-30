@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gamebuddy.local/protocol/bridge-v1.schema.json",
-  "title": "GameBuddy local bridge v1 envelope",
+  "title": "GameBuddy local bridge v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocolVersion", "messageId", "correlationId", "timestampMs", "scope", "type", "payload"],
@@ -10,17 +10,41 @@
     "messageId": { "$ref": "#/$defs/opaqueId" },
     "correlationId": { "$ref": "#/$defs/opaqueId" },
     "timestampMs": { "type": "integer" },
-    "scope": {
-      "type": "object", "additionalProperties": false,
-      "required": ["integrationId", "saveId", "worldId", "playerId", "companionId"],
-      "properties": {
-        "integrationId": { "$ref": "#/$defs/opaqueId" }, "saveId": { "$ref": "#/$defs/opaqueId" },
-        "worldId": { "$ref": "#/$defs/opaqueId" }, "playerId": { "$ref": "#/$defs/opaqueId" },
-        "companionId": { "$ref": "#/$defs/opaqueId" }
-      }
-    },
+    "scope": { "$ref": "#/$defs/scope" },
     "type": { "enum": ["hello", "hello_ack", "action_grant", "observe_request", "snapshot", "execution_request", "cancel_request", "execution_receipt", "error", "semantic_event", "lifecycle"] },
     "payload": { "type": "object" }
   },
-  "$defs": { "opaqueId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" } }
+  "allOf": [
+    { "if": { "properties": { "type": { "const": "hello" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/hello" } } } },
+    { "if": { "properties": { "type": { "const": "hello_ack" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/helloAck" } } } },
+    { "if": { "properties": { "type": { "const": "action_grant" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/actionGrant" } } } },
+    { "if": { "properties": { "type": { "const": "observe_request" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/empty" } } } },
+    { "if": { "properties": { "type": { "const": "snapshot" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/snapshot" } } } },
+    { "if": { "properties": { "type": { "const": "execution_request" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/executionRequest" } } } },
+    { "if": { "properties": { "type": { "const": "cancel_request" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/cancelRequest" } } } },
+    { "if": { "properties": { "type": { "const": "execution_receipt" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/receipt" } } } },
+    { "if": { "properties": { "type": { "const": "error" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/error" } } } },
+    { "if": { "properties": { "type": { "const": "semantic_event" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/semanticEvent" } } } },
+    { "if": { "properties": { "type": { "const": "lifecycle" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/lifecycle" } } } }
+  ],
+  "$defs": {
+    "opaqueId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" },
+    "token": { "type": "string", "pattern": "^[A-Za-z0-9_-]{16,256}$" },
+    "reasonCode": { "type": "string", "pattern": "^[a-z0-9_:-]{1,128}$" },
+    "tile": { "type": "integer", "minimum": 0, "maximum": 1000 },
+    "scope": { "type": "object", "additionalProperties": false, "required": ["integrationId", "saveId", "worldId", "playerId", "companionId"], "properties": { "integrationId": { "$ref": "#/$defs/opaqueId" }, "saveId": { "$ref": "#/$defs/opaqueId" }, "worldId": { "$ref": "#/$defs/opaqueId" }, "playerId": { "$ref": "#/$defs/opaqueId" }, "companionId": { "$ref": "#/$defs/opaqueId" } } },
+    "empty": { "type": "object", "additionalProperties": false },
+    "hello": { "type": "object", "additionalProperties": false, "required": ["token"], "properties": { "token": { "$ref": "#/$defs/token" } } },
+    "actionGrant": { "type": "object", "additionalProperties": false, "required": ["token", "action", "expiresAtMs", "nonce", "targetX", "targetY"], "properties": { "token": { "$ref": "#/$defs/token" }, "action": { "const": "move_to_tile" }, "expiresAtMs": { "type": "integer" }, "nonce": { "$ref": "#/$defs/opaqueId" }, "targetX": { "$ref": "#/$defs/tile" }, "targetY": { "$ref": "#/$defs/tile" } } },
+    "helloAck": { "type": "object", "additionalProperties": false, "required": ["sessionId", "capabilities", "actionGrants"], "properties": { "sessionId": { "$ref": "#/$defs/opaqueId" }, "capabilities": { "type": "array", "items": { "type": "string", "maxLength": 128 }, "maxItems": 128 }, "actionGrants": { "type": "array", "items": { "$ref": "#/$defs/actionGrant" }, "maxItems": 8 } } },
+    "activeExecution": { "type": "object", "additionalProperties": false, "required": ["executionId", "requestId", "action", "state", "reasonCode", "evidence"], "properties": { "executionId": { "$ref": "#/$defs/opaqueId" }, "requestId": { "$ref": "#/$defs/opaqueId" }, "action": { "type": "string", "maxLength": 128 }, "state": { "$ref": "#/$defs/executionState" }, "reasonCode": { "$ref": "#/$defs/reasonCode" }, "evidence": { "type": ["object", "null"] } } },
+    "snapshot": { "type": "object", "additionalProperties": false, "required": ["revision", "location", "tile", "stamina", "health", "actionable", "capabilities", "activeExecution"], "properties": { "revision": { "type": "integer" }, "location": { "type": "string" }, "tile": { "type": "object", "additionalProperties": false, "required": ["x", "y"], "properties": { "x": { "type": "number" }, "y": { "type": "number" } } }, "stamina": { "type": "number" }, "health": { "type": "number" }, "actionable": { "type": "boolean" }, "capabilities": { "type": "array", "items": { "type": "string", "maxLength": 128 }, "maxItems": 128 }, "activeExecution": { "anyOf": [{ "$ref": "#/$defs/activeExecution" }, { "type": "null" }] } } },
+    "executionRequest": { "type": "object", "additionalProperties": false, "required": ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs", "permissionToken"], "properties": { "requestId": { "$ref": "#/$defs/opaqueId" }, "idempotencyKey": { "$ref": "#/$defs/opaqueId" }, "action": { "enum": ["move_to_tile", "inspect_self"] }, "args": { "type": "object" }, "expectedRevision": { "type": "integer" }, "deadlineMs": { "type": "integer" }, "permissionToken": { "$ref": "#/$defs/token" } } },
+    "cancelRequest": { "type": "object", "additionalProperties": false, "required": ["requestId", "executionId", "reasonCode"], "properties": { "requestId": { "$ref": "#/$defs/opaqueId" }, "executionId": { "$ref": "#/$defs/opaqueId" }, "reasonCode": { "$ref": "#/$defs/reasonCode" } } },
+    "executionState": { "enum": ["accepted", "running", "meaningful_progress", "blocked", "invalidated", "succeeded", "partially_succeeded", "failed", "cancelled", "expired", "rejected", "uncertain"] },
+    "receipt": { "type": "object", "additionalProperties": false, "required": ["executionId", "requestId", "state", "reasonCode", "revision", "evidence"], "properties": { "executionId": { "$ref": "#/$defs/opaqueId" }, "requestId": { "$ref": "#/$defs/opaqueId" }, "state": { "$ref": "#/$defs/executionState" }, "reasonCode": { "$ref": "#/$defs/reasonCode" }, "revision": { "type": "integer" }, "evidence": { "type": ["object", "null"] } } },
+    "error": { "type": "object", "additionalProperties": false, "required": ["reasonCode"], "properties": { "reasonCode": { "$ref": "#/$defs/reasonCode" } } },
+    "semanticEvent": { "type": "object", "additionalProperties": false, "required": ["kind", "revision", "activeExecution", "reasonCode"], "properties": { "kind": { "enum": ["snapshot_changed", "execution_state", "connection_state", "lifecycle"] }, "revision": { "type": "integer" }, "activeExecution": { "anyOf": [{ "$ref": "#/$defs/activeExecution" }, { "type": "null" }] }, "reasonCode": { "$ref": "#/$defs/reasonCode" } } },
+    "lifecycle": { "type": "object", "additionalProperties": false, "required": ["state", "reasonCode"], "properties": { "state": { "enum": ["connected", "disconnected", "world_unavailable"] }, "reasonCode": { "$ref": "#/$defs/reasonCode" } } }
+  }
 }
