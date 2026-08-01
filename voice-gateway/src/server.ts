@@ -1,5 +1,5 @@
 import { createServer, type Server, type Socket } from "node:net";
-import { type AsrProvider, type GatewayEvent, type Mixer, type PcmFormat, type SpeechJob, type TtsProvider, VoiceGatewayCore, VOICE_GATEWAY_PROTOCOL_VERSION } from "./gateway.js";
+import { MAX_CAPTURE_BYTES, type AsrProvider, type GatewayEvent, type Mixer, type PcmFormat, type SpeechJob, type TtsProvider, VoiceGatewayCore, VOICE_GATEWAY_PROTOCOL_VERSION, REQUIRED_PCM_FORMAT } from "./gateway.js";
 
 export type VoiceGatewayServerOptions = Readonly<{ /** Loopback only; other bind addresses are rejected. */ host?: "127.0.0.1" | "::1"; port: number; token: string; core?: VoiceGatewayCore; asr?: AsrProvider; tts?: TtsProvider; mixer?: Mixer }>;
 export type StartedVoiceGateway = Readonly<{ port: number; close(): Promise<void> }>;
@@ -57,7 +57,42 @@ async function dispatch(socket: Socket, request: Request, token: string, core: V
   case "events": { const start = Math.max(0, request.after ?? 0); send(socket, { type: "events", requestId: request.requestId, events: core.events.slice(start), next: core.events.length }); return; }
  }} catch (error) { send(socket, { type: "error", requestId: request.requestId, reasonCode: error instanceof Error ? safeReason(error.message) : "gateway_request_failed" }); }
 }
-function parseRequest(line: string): Request | null { try { const value: unknown = JSON.parse(line); if (typeof value !== "object" || value === null || Array.isArray(value)) return null; const candidate = value as { type?: unknown; requestId?: unknown }; return typeof candidate.type === "string" && typeof candidate.requestId === "string" && candidate.requestId.length > 0 ? value as Request : null; } catch { return null; } }
+function parseRequest(line: string): Request | null {
+ try {
+  const value: unknown = JSON.parse(line);
+  if (!isRecord(value) || !isOpaque(value.requestId) || typeof value.type !== "string") return null;
+  switch (value.type) {
+   case "hello": return isOpaqueToken(value.token) && value.protocolVersion === VOICE_GATEWAY_PROTOCOL_VERSION ? value as unknown as Request : null;
+   case "health": return value as unknown as Request;
+   case "ptt_start": return isOpaque(value.sessionId) && (value.inputId === undefined || isOpaque(value.inputId)) && (value.locale === undefined || isLocale(value.locale)) ? value as unknown as Request : null;
+   case "ptt_frame": return isBase64(value.pcm16Base64) && value.pcm16Base64.length > 0 && value.pcm16Base64.length <= Math.ceil(MAX_CAPTURE_BYTES / 3) * 4 + 4 && (value.format === undefined || isPcmFormat(value.format)) ? value as unknown as Request : null;
+   case "ptt_stop": return value.reasonCode === undefined || isReasonCode(value.reasonCode) ? value as unknown as Request : null;
+   case "capture_cancel":
+   case "speech_cancel":
+   case "stop_all": return value.reasonCode === undefined || isReasonCode(value.reasonCode) ? (value.type === "speech_cancel" ? isOpaque(value.jobId) : true) ? value as unknown as Request : null : null;
+   case "speech_enqueue": return isSpeechJob(value.job) ? value as unknown as Request : null;
+   case "events": return value.after === undefined || isNonnegativeSafeInteger(value.after) ? value as unknown as Request : null;
+   default: return null;
+  }
+ } catch { return null; }
+}
 function safeReason(reason: string): string { return /^[a-z0-9_:-]{1,96}$/i.test(reason) ? reason : "gateway_request_failed"; }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+function isOpaque(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(value); }
+function isOpaqueToken(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_-]{16,256}$/.test(value); }
+function isLocale(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(value); }
+function isReasonCode(value: unknown): value is string { return typeof value === "string" && /^[A-Za-z0-9_:-]{1,96}$/.test(value); }
+function isBase64(value: unknown): value is string { return typeof value === "string" && value.length % 4 === 0 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value); }
+function isPcmFormat(value: unknown): value is PcmFormat {
+ return isRecord(value) && value.sampleRate === REQUIRED_PCM_FORMAT.sampleRate && value.channels === REQUIRED_PCM_FORMAT.channels && value.encoding === REQUIRED_PCM_FORMAT.encoding;
+}
+function isSpeechJob(value: unknown): value is SpeechJob {
+ if (!isRecord(value)) return false;
+ return isOpaque(value.jobId) && isOpaque(value.sessionId) && isNonnegativeSafeInteger(value.epoch)
+  && isOpaque(value.sourceEventId) && typeof value.text === "string" && value.text.length > 0 && value.text.length <= 4_000
+  && isLocale(value.locale) && isOpaque(value.voiceProfile) && isFiniteNumber(value.expiresAtMs) && typeof value.interruptible === "boolean";
+}
+function isNonnegativeSafeInteger(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
+function isFiniteNumber(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
 function send(socket: Socket, response: Response): void { socket.write(`${JSON.stringify(response)}\n`); }
 async function closeServer(server: Server): Promise<void> { await new Promise<void>((resolvePromise, reject) => server.close((error) => error === undefined ? resolvePromise() : reject(error))); }
