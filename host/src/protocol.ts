@@ -46,14 +46,17 @@ export type Snapshot = Readonly<{
   health: number;
   actionable: boolean;
   capabilities: readonly string[];
-  activeExecution: ActiveExecution | null;
+  /** Older Mod snapshots may omit fields added after the initial bridge contract. */
+  currentTool?: string | null;
+  inventorySlots?: number;
+  activeExecution?: ActiveExecution | null;
 }>;
 
 /** Mod-local player policy is summarized as live capabilities, not bearer tokens. */
 export type ExecutionRequest = Readonly<{
   requestId: string;
   idempotencyKey: string;
-  action: "move_to_tile" | "inspect_self";
+  action: "move_to_tile" | "equip_tool" | "inspect_self";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -143,7 +146,7 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
 export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
   if (!isRecord(value)) return "invalid_request";
   if (!isOpaqueId(value.requestId) || !isOpaqueId(value.idempotencyKey)) return "invalid_request_id";
-  if (value.action !== "move_to_tile" && value.action !== "inspect_self") return "unknown_action";
+  if (value.action !== "move_to_tile" && value.action !== "equip_tool" && value.action !== "inspect_self") return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
   if (!Number.isSafeInteger(value.expectedRevision) || value.expectedRevision !== snapshot.revision) return "stale_snapshot";
   if (typeof value.deadlineMs !== "number" || !Number.isFinite(value.deadlineMs) || value.deadlineMs < nowMs || value.deadlineMs > nowMs + 60_000) return "invalid_deadline";
@@ -151,6 +154,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_target_tile";
+  } else if (value.action === "equip_tool") {
+    if (!isToolSlot(value.args.slot)) return "invalid_tool_slot";
   }
   return null;
 }
@@ -167,12 +172,15 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
   return Number.isSafeInteger(value.revision) && typeof value.location === "string" && isRecord(value.tile)
     && isFiniteNumber(value.tile.x) && isFiniteNumber(value.tile.y)
     && isFiniteNumber(value.stamina) && isFiniteNumber(value.health) && typeof value.actionable === "boolean"
-    && isStringArray(value.capabilities) && (value.activeExecution === null || (isRecord(value.activeExecution) && validateActiveExecution(value.activeExecution) === null)) ? null : "invalid_snapshot";
+    && (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string")
+    && (value.inventorySlots === undefined || Number.isSafeInteger(value.inventorySlots))
+    && isStringArray(value.capabilities)
+    && (value.activeExecution === undefined || value.activeExecution === null || (isRecord(value.activeExecution) && validateActiveExecution(value.activeExecution) === null)) ? null : "invalid_snapshot";
 }
 
 function validateExecutionRequestEnvelope(value: Record<string, unknown>): string | null {
   return isOpaqueId(value.requestId) && isOpaqueId(value.idempotencyKey)
-    && (value.action === "move_to_tile" || value.action === "inspect_self")
+    && (value.action === "move_to_tile" || value.action === "equip_tool" || value.action === "inspect_self")
     && isRecord(value.args) && Number.isSafeInteger(value.expectedRevision)
     && typeof value.deadlineMs === "number" && Number.isFinite(value.deadlineMs) ? null : "invalid_execution_request";
 }
@@ -204,3 +212,4 @@ function validToken(value: unknown): value is string { return typeof value === "
 function isStringArray(value: unknown): value is readonly string[] { return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length <= 128); }
 function isFiniteNumber(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
 function isTileCoordinate(value: unknown): value is number { return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 1000; }
+function isToolSlot(value: unknown): value is number { return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 36; }

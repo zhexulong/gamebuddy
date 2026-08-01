@@ -6,5 +6,42 @@
   "WorldId": "Game1_MasterPlayer_UniqueMultiplayerID_decimal",
   "PlayerId": "configured_native_local_coop_farmhand_UniqueMultiplayerID_decimal",
   "CompanionId": "opaque_companion_id",
+  "HostFarmhandProvisioning": {
+    "Enable": false,
+    "SessionDirectory": "C:/Users/you/AppData/Local/GameBuddy/stardew-session",
+    "Endpoint": "127.0.0.1:24642",
+    "SessionToken": "replace-with-a-local-16-plus-character-token",
+    "IntegrationVersion": "0.1.0",
+    "ExpectedGameVersion": "1.6.15",
+    "ExpectedGameBuildNumber": 24356,
+    "ExpectedSmapiVersion": "4.5.2",
+    "FarmhandName": "GameBuddy",
+    "ManifestLifetimeSeconds": 120,
+    "AuthorizedCompanionIds": ["companion_01"]
+  },
+  "FarmhandProvisioner": {
+    "Enable": false,
+    "ManifestPath": "C:/Users/you/AppData/Local/GameBuddy/stardew-session/stardew-farmhand-manifest.json",
+    "SessionToken": "replace-with-the-same-local-token",
+    "IntegrationVersion": "0.1.0",
+    "ExpectedGameVersion": "1.6.15",
+    "ExpectedGameBuildNumber": 24356,
+    "ExpectedSmapiVersion": "4.5.2",
+    "TimeoutSeconds": 45
+  },
+  "HostAutomation": {
+    "Enable": false,
+    "SaveName": "A_445094166",
+    "TimeoutSeconds": 120,
+    "TriggerNativeSaveAfterAttachment": false,
+    "TriggerNativeSaveAfterClientExit": false
+  },
+  "FarmhandProvisioningProbe": {
+    "Enable": false,
+    "HostAddress": "127.0.0.1:24642",
+    "TimeoutSeconds": 30,
+    "ActivateExpectedFarmhand": false,
+    "ExpectedFarmhandId": ""
+  },
   "EnabledActions": []
 }

@@ -48,6 +48,8 @@ test("bridge message payloads fail closed", () => {
   assert.equal(validateBridgeMessage({ ...receipt, payload: { ...receipt.payload, state: "made_up" } }, scope, now), "invalid_receipt");
   const malformedSnapshot = newEnvelope("snapshot", scope, { revision: 1, location: "Farm", tile: { x: Number.NaN, y: 1 }, stamina: 1, health: 1, actionable: true, capabilities: [], activeExecution: null }, "snapshot_01", now);
   assert.equal(validateBridgeMessage(malformedSnapshot, scope, now), "invalid_snapshot");
+  const nativeSnapshotWithoutNullableActive = newEnvelope("snapshot", scope, { ...snapshot, currentTool: "(T)Axe", inventorySlots: 12, activeExecution: undefined }, "snapshot_native_01", now);
+  assert.equal(validateBridgeMessage(nativeSnapshotWithoutNullableActive, scope, now), null);
   const badActive = newEnvelope("snapshot", scope, { ...snapshot, activeExecution: { executionId: "execution_01", requestId: "request_01", action: "move_to_tile", state: "made_up", reasonCode: "bad", evidence: null } }, "snapshot_02", now);
   assert.equal(validateBridgeMessage(badActive, scope, now), "invalid_snapshot");
   assert.equal(validateBridgeMessage(newEnvelope("error", scope, { reasonCode: "authentication_failed" }, "error_01", now), scope, now), null);
@@ -61,6 +63,10 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest(valid, { ...snapshot, actionable: false }, now), "player_not_actionable");
+  const equip = { ...valid, action: "equip_tool", args: { slot: 2 } };
+  assert.equal(validateExecutionRequest(equip, snapshot, now), "capability_not_declared");
+  assert.equal(validateExecutionRequest({ ...equip, args: { slot: 37 }, }, { ...snapshot, capabilities: [...snapshot.capabilities, "equip_tool"] }, now), "invalid_tool_slot");
+  assert.equal(validateExecutionRequest({ ...equip }, { ...snapshot, capabilities: [...snapshot.capabilities, "equip_tool"] }, now), null);
 });
 
 test("protocol serialization rejects oversized, undefined, and circular values", () => {

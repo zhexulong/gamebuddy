@@ -6,9 +6,9 @@ AI Game Companion 的首个实现：以 **Stardew Valley + SMAPI Mod** 作为第
 
 ## 当前阶段
 
-Phase 0 Host runtime、SMAPI lifecycle、独立 fake Voice Gateway 与本机真实加载 smoke 已通过；Phase 1/2 已具备 local split-screen Farmhand Body Controller、per-screen execution ledger、版本化 protocol DTO、deterministic replay transport 与受限 Windows named-pipe bridge 的工程基础。正式产品路线固定为：一个合法运行的 Stardew process 通过官方 local split-screen co-op 让 AI Companion 作为原生 Farmhand 加入人类 host；Mod 只在配置 Farmhand 所属 screen 上控制真实 `Game1.player`。绝不以 `new Farmer()`、`Game1.otherFarmers` 注入、NPC 或 shadow Farmer 替代这一身份。
+Phase 0 Host runtime、SMAPI lifecycle、独立 fake Voice Gateway 与本机真实加载 smoke 已通过；现有工作树还保留了 local split-screen Farmhand Body Controller 作为早期历史 fixture，但它不是正式产品拓扑。正式产品路线是：共享 Companion App Shell 由每个 Game Integration 提供自己的 Attachment Flow；Stardew 使用独立 AI Stardew client，通过版本锁定的无 UI Farmhand Provisioning 加入人类 host，随后由 AI client 内 Mod 控制真实 `Game1.player`。绝不以 `new Farmer()`、`Game1.otherFarmers` 注入、NPC 或 shadow Farmer 替代这一身份。
 
-**尚未完成的硬验收门：** 当前机器尚未完成带空 cabin、第二本地输入设备的 dedicated split-screen Farmhand 测试；因此真实 Farmhand join/reconnect、human-screen-visible 同步、真实 native mechanics evidence，以及需要模型 provider 的 Phase 3–4 连续自主试玩尚未被宣称为完成。
+**当前验证状态：** 正式 `HostFarmhandProvisioner`、App `StardewAttachmentFlow` 与 AI-client `FarmhandProvisioner` 已在本机目标版本完成无 UI Host-first 回归：signed attachment、原生 `Saving/Saved`、AI-client `readyToPlay`、AI 退出后 Host 保存、同 Host 重连、Host 重启 nonce 轮换、旧 manifest 拒绝和新 manifest 恢复均通过。正式 AI-client named-pipe bridge 的 `equip_tool` 单项 mechanics action 也已通过：Mod 声明 capability 后，slot 3 的 `Pickaxe` 从 `Axe` 切换成功，并返回 `before/expected/after` 权威 evidence。尚未宣称完整 Phase 1/2：切日、资源改变动作、移动、Bridge/Execution Ledger 的完整回归、多步执行、Agent 规划、知识和发布 BDD 仍待按计划验证。`tools/check-stardew-phase1-prerequisites.ps1 -GamePath <path>` 继续只报告环境前置，不把 diagnostic probe 或单客户端 smoke 当作通过。
 
 已验证的本地开发基线：
 
@@ -37,7 +37,7 @@ docs/                 ADR、依赖清单、兼容性矩阵、trace 与场景说�
 - Agent 不做 tick 级控制；Stardew 侧的常驻 Body Controller 是唯一身体控制所有者。
 - bridge 仅是本机、不可信的传输层；Mod 必须对每个请求进行 scope、schema、权限、时效、幂等与后置条件校验，并 fail closed。
 - 跨 Context 产品 Memory、第二游戏抽象和多个 Companion 不在当前范围；语音已具备 provider-neutral PTT/取消/文字降级 skeleton、真实 MiMo TTS contract capture 与 TTS-to-ASR adapter diagnostic，但真实 CPU ASR 与设备场景仍须按 Phase 3–4 审计和验证。任何资源、世界或进度影响均须先有逐项验证的 Game Action、玩家定义政策及权威 evidence。
-- local split-screen 使用一个 Stardew process 和全局游戏音频 mixer。GameBuddy 不得更改共享 `startup_preferences`、持久音量、窗口或输入绑定；它以 `PerScreen<T>` 隔离 AI Farmhand 控制状态，并只让一个 Host/Voice Gateway 提供玩家可听的 Companion 输出。
+- Stardew 正式产品不依赖 local split-screen；现有 split-screen/PerScreen 代码只属于历史 fixture。正式 AI Farmhand 由独立 client 的 Integration Mod 控制，Host/Voice Gateway 提供玩家可听的 Companion 输出。
 
 本地 `design/` 保存完整计划，且不会纳入 Git；本 README 保留其关键实施边界，供干净 clone 与 CI 遵循。
 

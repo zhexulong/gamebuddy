@@ -102,7 +102,7 @@ internal sealed record BridgeSemanticEvent(
     BridgeActiveExecution? ActiveExecution,
     string ReasonCode);
 
-internal sealed record BridgeExecutionArgs(float? X, float? Y);
+internal sealed record BridgeExecutionArgs(float? X, float? Y, int? Slot);
 
 internal sealed record BridgeExecutionRequest(
     string RequestId,

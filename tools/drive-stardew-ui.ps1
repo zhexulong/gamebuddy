@@ -2,8 +2,10 @@
 param(
     [Parameter(Mandatory = $true)]
     [int]$ProcessId,
-    [ValidateSet("Focus", "Escape", "Enter", "Up", "Down", "Left", "Right", "StartLocalCoop")]
+    [ValidateSet("Focus", "Click", "ClickCenter", "Escape", "Enter", "Action", "Up", "Down", "Left", "Right", "StartLocalCoop")]
     [string]$Action = "Focus",
+    [int]$ClientX = 0,
+    [int]$ClientY = 0,
     [switch]$AllowInput
 )
 
@@ -16,18 +18,19 @@ using System.Runtime.InteropServices;
 public static class GameBuddyInput {
     [DllImport("user32.dll", SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-    [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-    [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public KEYBDINPUT ki; public MOUSEINPUT mi; public HARDWAREINPUT hi; }
-    [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
-    [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
-    [StructLayout(LayoutKind.Sequential)] public struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
-    public const uint INPUT_KEYBOARD = 1, KEYEVENTF_KEYUP = 2;
-    public static void Key(ushort vk) {
-        var inputs = new INPUT[2];
-        inputs[0].type = INPUT_KEYBOARD; inputs[0].ki.wVk = vk;
-        inputs[1].type = INPUT_KEYBOARD; inputs[1].ki.wVk = vk; inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-        if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT))) != inputs.Length)
-            throw new InvalidOperationException("SendInput failed: " + Marshal.GetLastWin32Error());
+    [DllImport("user32.dll", SetLastError=true)] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", SetLastError=true)] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    [DllImport("user32.dll", SetLastError=true)] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+    public const uint KEYEVENTF_KEYUP = 2;
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    public static void Key(byte vk) {
+        keybd_event(vk, 0, 0, UIntPtr.Zero);
+        keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
     }
 }
 "@
@@ -65,22 +68,49 @@ if ($Action -eq "StartLocalCoop") {
 [void][GameBuddyInput]::SetForegroundWindow($p.MainWindowHandle)
 Start-Sleep -Milliseconds 250
 
+if ($Action -eq "Click" -or $Action -eq "ClickCenter") {
+    if ($Action -eq "ClickCenter") {
+        $rect = New-Object GameBuddyInput+RECT
+        if (-not [GameBuddyInput]::GetWindowRect($p.MainWindowHandle, [ref]$rect)) {
+            throw "Unable to query Stardew window bounds."
+        }
+        $point = New-Object GameBuddyInput+POINT
+        $point.X = [int](($rect.Right - $rect.Left) / 2)
+        $point.Y = [int](($rect.Bottom - $rect.Top) / 2)
+    } else {
+        $point = New-Object GameBuddyInput+POINT
+        $point.X = $ClientX
+        $point.Y = $ClientY
+    }
+    if (-not [GameBuddyInput]::ClientToScreen($p.MainWindowHandle, [ref]$point)) {
+        throw "Unable to translate Stardew client coordinates to screen coordinates."
+    }
+    if (-not [GameBuddyInput]::SetCursorPos($point.X, $point.Y)) {
+        throw "Unable to position cursor in Stardew window."
+    }
+    [GameBuddyInput]::mouse_event([GameBuddyInput]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 40
+    [GameBuddyInput]::mouse_event([GameBuddyInput]::MOUSEEVENTF_LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+    Write-Output "Clicked Stardew PID $ProcessId at client coordinates ($($point.X), $($point.Y))."
+    exit 0
+}
+
 $keys = @{
-    Escape = 0x1B; Enter = 0x0D; Up = 0x26; Down = 0x28; Left = 0x25; Right = 0x27
+    Escape = 0x1B; Enter = 0x0D; Action = 0x58; Up = 0x26; Down = 0x28; Left = 0x25; Right = 0x27
 }
 if ($Action -eq "StartLocalCoop") {
     # This only navigates the visible in-game menu. A real second XInput device
     # is still required for the Farmhand join action.
-    [GameBuddyInput]::Key($keys["Escape"])
+    [GameBuddyInput]::Key([byte]$keys["Escape"])
     Start-Sleep -Milliseconds 300
-    [GameBuddyInput]::Key($keys["Down"])
+    [GameBuddyInput]::Key([byte]$keys["Down"])
     Start-Sleep -Milliseconds 150
-    [GameBuddyInput]::Key($keys["Down"])
+    [GameBuddyInput]::Key([byte]$keys["Down"])
     Start-Sleep -Milliseconds 150
-    [GameBuddyInput]::Key($keys["Enter"])
+    [GameBuddyInput]::Key([byte]$keys["Enter"])
     Write-Output "Sent menu navigation toward Start Local Co-op to Stardew PID $ProcessId."
     exit 0
 }
 
-[GameBuddyInput]::Key($keys[$Action])
+[GameBuddyInput]::Key([byte]$keys[$Action])
 Write-Output "Sent $Action to Stardew PID $ProcessId. Press Escape manually or run -Action Escape for the safe stop."

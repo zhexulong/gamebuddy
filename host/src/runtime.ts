@@ -23,20 +23,36 @@ export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
 });
 
 /**
- * The only application-facing tool in Phase 0B. It is deterministic and has
- * no filesystem, process, network, game, or bridge access.
+ * The base Companion tool is read-only and never creates game authority. Its
+ * status is sourced from the mounted integration when one exists.
  */
-export const companionStatusTool = defineTool({
-  name: "companion_status",
-  label: "Companion Status",
-  description: "Return the fixed Phase 0B Companion Host status.",
-  parameters: Type.Object({}),
-  execute: async () => ({
-    content: [{ type: "text", text: "GameBuddy Companion Host: Phase 0B runtime scaffold; no game capabilities enabled." }],
-    details: { phase: "0B", gameCapabilitiesEnabled: false },
-  }),
-});
+export function createCompanionStatusTool(integration?: CompanionIntegration) {
+  return defineTool({
+    name: "companion_status",
+    label: "Companion Status",
+    description: "Report the local Companion Host and mounted game integration status.",
+    parameters: Type.Object({}),
+    execute: async () => {
+      const state = integration?.state;
+      const details = {
+        host: "ready",
+        integrationId: integration?.scope.integrationId ?? null,
+        connected: state?.connected ?? false,
+        capabilities: state === undefined ? [] : [...state.capabilities],
+        snapshotRevision: state?.snapshot?.revision ?? null,
+        latestReceiptState: state?.latestReceipt?.state ?? null,
+        latestReasonCode: state?.latestReasonCode ?? null,
+      } as const;
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(details) }],
+        details,
+      };
+    },
+  });
+}
 
+/** Backward-compatible offline base tool for callers that do not mount an integration. */
+export const companionStatusTool = createCompanionStatusTool();
 export const PHASE_0B_ALLOWED_TOOL_NAMES = Object.freeze(["companion_status"]);
 
 export type CompanionIdentity = Readonly<{
@@ -181,6 +197,7 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
   const model = modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
   if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
 
+  const companionStatus = createCompanionStatusTool(integration);
   const integrationTools = integration === undefined ? [] : [...createStardewObservationTools(integration), ...createStardewActionTools(integration)];
   const allowedToolNames = [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite", ...integrationTools.map((tool) => tool.name)].sort();
   const { session } = await createAgentSession({
@@ -193,7 +210,7 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     model,
     noTools: "all",
     tools: allowedToolNames,
-    customTools: [companionStatusTool, ...integrationTools],
+    customTools: [companionStatus, ...integrationTools],
     thinkingLevel: "off",
   });
 
@@ -201,7 +218,7 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
   const expectedTools = allowedToolNames;
   if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
     session.dispose();
-    throw new Error(`Phase 0B tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`);
+    throw new Error(`Companion tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`);
   }
 
   return {

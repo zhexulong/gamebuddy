@@ -23,7 +23,19 @@ if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
 }
 
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
-Get-ChildItem -LiteralPath $destination -Force | Remove-Item -Recurse -Force
-Copy-Item -Path (Join-Path $source "*") -Destination $destination -Recurse -Force
+$localConfig = Join-Path $destination "config.json"
+$temporaryConfig = Join-Path ([System.IO.Path]::GetTempPath()) ("gamebuddy-config-" + [Guid]::NewGuid().ToString("N") + ".json")
+if (Test-Path -LiteralPath $localConfig -PathType Leaf) {
+    Copy-Item -LiteralPath $localConfig -Destination $temporaryConfig -Force
+}
+try {
+    Get-ChildItem -LiteralPath $destination -Force | Where-Object { $_.Name -ne "config.json" } | Remove-Item -Recurse -Force
+    Copy-Item -Path (Join-Path $source "*") -Destination $destination -Recurse -Force
+    if (Test-Path -LiteralPath $temporaryConfig -PathType Leaf) {
+        Copy-Item -LiteralPath $temporaryConfig -Destination $localConfig -Force
+    }
+} finally {
+    Remove-Item -LiteralPath $temporaryConfig -Force -ErrorAction SilentlyContinue
+}
 
-Write-Host "Deployed the client-local GameBuddy embodiment fixture to $destination"
+Write-Host "Deployed the client-local GameBuddy embodiment fixture to $destination (preserved local config.json)"

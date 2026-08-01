@@ -1,8 +1,10 @@
+using System.Reflection;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
+using StardewValley.Menus;
 
 namespace GameBuddy.Stardew;
 
@@ -13,8 +15,25 @@ namespace GameBuddy.Stardew;
 /// </summary>
 public sealed class ModEntry : Mod
 {
+    // Legacy split-screen fixture state. The formal AI client uses a single per-client state.
     private readonly PerScreen<ScreenEmbodimentState> screenStates = new(() => new ScreenEmbodimentState());
+    private readonly ScreenEmbodimentState formalState = new();
     private ModConfig config = new();
+    private HostFarmhandProvisioner? hostFarmhandProvisioner;
+    private FarmhandProvisioner? farmhandProvisioner;
+    private FarmhandProvisioningProbe? provisioningProbe;
+    private bool embodimentInitialized;
+    private bool hostRoleConfigured;
+    private bool provisioningConfigurationRejected;
+    private bool farmhandProvisioningTerminal;
+    private bool hostAutomationStarted;
+    private bool hostAutomationServerStarted;
+    private bool hostAutomationTerminal;
+    private long hostAutomationDeadlineUnixMs;
+    private long nextFarmhandProvisionerAttemptAtMs;
+    private bool hostAutomationSaveMenuOpened;
+    private bool hostAutomationObservedAiClient;
+    private bool hostAutomationObservedAiClientExit;
 
     public override void Entry(IModHelper helper)
     {
@@ -25,6 +44,7 @@ public sealed class ModEntry : Mod
         helper.Events.GameLoop.DayStarted += this.OnDayStarted;
         helper.Events.Player.Warped += this.OnWarped;
         helper.Events.GameLoop.Saving += this.OnSaving;
+        helper.Events.GameLoop.Saved += this.OnSaved;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
 
         helper.ConsoleCommands.Add("gamebuddy_farmhands", "List authoritative local-co-op player and Farmhand identities without changing game state.", this.FarmhandsCommand);
@@ -34,12 +54,55 @@ public sealed class ModEntry : Mod
         helper.ConsoleCommands.Add("gamebuddy_equip_tool_fixture", "Phase 1 local-only native mechanic fixture: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>.", this.EquipToolFixtureCommand);
         helper.ConsoleCommands.Add("gamebuddy_cancel", "Cancel the active local AI Farmhand GameBuddy execution.", this.CancelCommand);
 
-        this.Monitor.Log("GameBuddy embodiment loaded; split-screen state is isolated and no remote Farmer construction or host-side control is available.", LogLevel.Info);
+        this.Monitor.Log("GameBuddy Stardew Integration loaded; formal attachment requires a signed manifest and native Farmhand identity match.", LogLevel.Info);
     }
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
     {
-        this.Monitor.Log("GameBuddy health: SMAPI lifecycle hooks are available.", LogLevel.Trace);
+        this.Monitor.Log($"GameBuddy health: SMAPI lifecycle hooks are available for Stardew {Game1.version} / multiplayer {StardewValley.Multiplayer.protocolVersion}.", LogLevel.Trace);
+        bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
+        bool clientConfigured = this.config.FarmhandProvisioner?.Enable == true;
+        this.hostRoleConfigured = hostConfigured;
+        if (hostConfigured && clientConfigured)
+        {
+            this.provisioningConfigurationRejected = true;
+            this.Monitor.Log("GameBuddy rejected Stardew provisioning configuration: host and AI-client roles cannot be enabled in one Mod profile.", LogLevel.Error);
+            return;
+        }
+        if (hostConfigured)
+        {
+            this.hostFarmhandProvisioner = HostFarmhandProvisioner.TryStart(
+                this.Helper,
+                this.Monitor,
+                this.config.HostFarmhandProvisioning,
+                this.config.HostAutomation?.Enable == true);
+            if (this.hostFarmhandProvisioner is null)
+                this.Monitor.Log("GameBuddy host provisioning is enabled but its configuration is invalid; no client or diagnostic fallback was started.", LogLevel.Error);
+            if (this.config.HostAutomation is { Enable: true } automation && !automation.IsValid)
+            {
+                this.hostAutomationTerminal = true;
+                this.Monitor.Log("GameBuddy rejected the HostAutomation fixture configuration; no UI or fallback loader was started.", LogLevel.Error);
+            }
+            else if (this.config.HostAutomation?.Enable == true)
+            {
+                this.Monitor.Log($"GameBuddy HostAutomation fixture armed for native save '{this.config.HostAutomation.SaveName}'.", LogLevel.Info);
+            }
+            return;
+        }
+        if (clientConfigured)
+        {
+            if (this.config.FarmhandProvisioner is not { IsValid: true })
+            {
+                this.provisioningConfigurationRejected = true;
+                this.Monitor.Log("GameBuddy rejected Stardew AI-client provisioning configuration; the formal client requires a valid controlled manifest path, token, and target version.", LogLevel.Error);
+                return;
+            }
+            // Start while the native title/farmhand menu owns available-Farmhand
+            // reception; the manifest itself binds the later world scope.
+            this.TryStartFarmhandProvisioner();
+            return;
+        }
+        this.provisioningProbe = FarmhandProvisioningProbe.TryStart(this.Monitor, this.config.FarmhandProvisioningProbe);
     }
 
     private void FarmhandsCommand(string command, string[] args)
@@ -62,7 +125,34 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
-        ScreenEmbodimentState state = this.screenStates.Value;
+        // SaveGame.Load is driven by the native loader; start the diagnostic host
+        // only after SMAPI confirms the world is fully available.
+        this.TryStartHostAutomation();
+        this.TryStartFarmhandProvisioner();
+        this.TryInitializeEmbodiment();
+    }
+
+    private void TryStartFarmhandProvisioner()
+    {
+        if (this.provisioningConfigurationRejected || this.farmhandProvisioningTerminal || this.farmhandProvisioner is not null || this.config.FarmhandProvisioner?.Enable != true)
+            return;
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (now < this.nextFarmhandProvisionerAttemptAtMs)
+            return;
+        this.nextFarmhandProvisionerAttemptAtMs = now + 1_000;
+        this.farmhandProvisioner = FarmhandProvisioner.TryStart(this.Monitor, this.config.FarmhandProvisioner);
+    }
+
+    private void TryInitializeEmbodiment()
+    {
+        if (this.embodimentInitialized || this.hostRoleConfigured || this.provisioningConfigurationRejected)
+            return;
+        bool formalClientConfigured = this.config.FarmhandProvisioner?.Enable == true;
+        if (formalClientConfigured && (this.farmhandProvisioner is null || !this.farmhandProvisioner.IsReady))
+            return;
+        if (this.farmhandProvisioner is not null && !this.farmhandProvisioner.IsReady)
+            return;
+        ScreenEmbodimentState state = this.GetEmbodimentState();
         this.ClearState(state, "save_loaded");
         if (!this.IsConfiguredAiScreen(out Farmer? localPlayer, out string reason))
         {
@@ -71,33 +161,224 @@ public sealed class ModEntry : Mod
         }
 
         state.Executions = new ExecutionManager(this.Monitor, receipt => this.PublishReceipt(state, receipt), this.config.EnabledActionSet);
-        bool saveScopeMatches = this.config.SaveId == Game1.uniqueIDForThisGame.ToString();
-        bool worldScopeMatches = this.config.WorldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString();
-        bool scopeMatchesWorld = saveScopeMatches && worldScopeMatches;
-        state.BridgeSession = this.config.HasValidLocalBridgeConfiguration && scopeMatchesWorld
-            ? new BridgeSession(state.Executions, new BridgeScope("stardew", this.config.SaveId, this.config.WorldId, this.config.PlayerId, this.config.CompanionId), this.config.BridgeToken, this.config.EnabledActionSet)
+        string saveId = formalClientConfigured
+            ? this.farmhandProvisioner!.Manifest.SaveId
+            : this.config.SaveId;
+        string worldId = formalClientConfigured
+            ? this.farmhandProvisioner!.Manifest.WorldId
+            : this.config.WorldId;
+        string playerId = formalClientConfigured
+            ? this.farmhandProvisioner!.Manifest.FarmhandId
+            : this.config.PlayerId;
+        string companionId = formalClientConfigured
+            ? this.farmhandProvisioner!.Manifest.CompanionId
+            : this.config.CompanionId;
+        bool saveScopeMatches = saveId == Game1.uniqueIDForThisGame.ToString();
+        bool worldScopeMatches = worldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString();
+        bool playerScopeMatches = playerId == localPlayer!.UniqueMultiplayerID.ToString();
+        bool scopeMatchesWorld = saveScopeMatches && worldScopeMatches && playerScopeMatches;
+        bool bridgeConfigValid = this.config.EnableLocalBridge
+            && BridgeProtocol.IsOpaqueId(this.config.PipeName)
+            && this.config.BridgeToken.Length is >= 16 and <= 256
+            && new BridgeScope("stardew", saveId, worldId, playerId, companionId).IsValid;
+        state.BridgeSession = bridgeConfigValid && scopeMatchesWorld
+            ? new BridgeSession(state.Executions, new BridgeScope("stardew", saveId, worldId, playerId, companionId), this.config.BridgeToken, this.config.EnabledActionSet)
             : null;
         state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
+        if (!scopeMatchesWorld && formalClientConfigured)
+            this.Monitor.Log("GameBuddy formal attachment remains closed: manifest and local save/world/Farmhand scope do not match.", LogLevel.Warn);
         if (this.config.EnableLocalBridge && state.BridgeSession is null)
-            this.Monitor.Log(this.config.HasValidLocalBridgeConfiguration
+            this.Monitor.Log(bridgeConfigValid
                 ? "GameBuddy local bridge remains disabled: configured save/world scope does not bind to this AI Farmhand world."
                 : "GameBuddy local bridge remains disabled: configuration must use opaque scope IDs and a 16+ character token.", LogLevel.Warn);
         else if (state.LocalPipeBridge is not null)
             this.Monitor.Log($"GameBuddy local named-pipe bridge started for AI Farmhand screen {Context.ScreenId}.", LogLevel.Info);
 
+        this.embodimentInitialized = true;
         this.Monitor.Log(
-            $"GameBuddy bound configured AI Farmhand only: screen_id={Context.ScreenId}, farmhand_id={localPlayer!.UniqueMultiplayerID}, split_screen={Context.IsSplitScreen}, multiplayer={Context.IsMultiplayer}, main_player={Context.IsMainPlayer}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
+            $"GameBuddy bound native AI Farmhand only: screen_id={Context.ScreenId}, farmhand_id={localPlayer!.UniqueMultiplayerID}, formal_attachment={this.farmhandProvisioner is not null}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
             LogLevel.Info);
     }
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
-        if (!Context.IsWorldReady || !this.IsConfiguredAiScreen(out _, out _))
+        this.TryStartHostAutomation();
+        this.TryStartFarmhandProvisioner();
+        this.hostFarmhandProvisioner?.Update();
+        this.TryObserveNativeAutomationClientExit();
+        this.TryTriggerNativeAutomationSave();
+        if (this.farmhandProvisioner is not null && this.farmhandProvisioner.Update())
+        {
+            if (!this.farmhandProvisioner.IsReady)
+                this.farmhandProvisioningTerminal = true;
+        }
+        else if (this.provisioningProbe is not null && this.provisioningProbe.Update())
+        {
+            this.provisioningProbe = null;
+        }
+
+        this.TryInitializeEmbodiment();
+        if (this.hostRoleConfigured || this.provisioningConfigurationRejected || this.hostFarmhandProvisioner is not null || !Context.IsWorldReady || !this.IsConfiguredAiScreen(out _, out _))
             return;
 
-        ScreenEmbodimentState state = this.screenStates.Value;
+        ScreenEmbodimentState state = this.GetEmbodimentState();
         this.DrainLocalPipeBridge(state);
         state.Executions?.Update();
+    }
+
+    private void TryStartHostAutomation()
+    {
+        HostAutomationConfig? automation = this.config.HostAutomation;
+        if (!this.hostRoleConfigured || automation?.Enable != true || this.hostAutomationTerminal)
+            return;
+        if (this.IsNativeAutomationWorldReady())
+        {
+            if (this.hostAutomationServerStarted)
+                return;
+            this.Monitor.Log($"GameBuddy HostAutomation observed native world ready: master={Game1.IsMasterGame}, server_present={Game1.server is not null}, multiplayer_mode={Game1.multiplayerMode}.", LogLevel.Info);
+            if (!Game1.IsMasterGame)
+            {
+                this.hostAutomationTerminal = true;
+                this.Monitor.Log("GameBuddy HostAutomation refused to start a LAN server because the loaded world is not the native master game.", LogLevel.Error);
+                return;
+            }
+            try
+            {
+                if (Game1.server is null)
+                {
+                    Game1.options.enableServer = true;
+                    Game1.multiplayerMode = 2;
+                    if (!this.TryStartNativeLanServer())
+                    {
+                        this.hostAutomationTerminal = true;
+                        this.Monitor.Log("GameBuddy HostAutomation could not resolve the target-version native LAN server entry point.", LogLevel.Error);
+                        return;
+                    }
+                }
+                this.hostAutomationServerStarted = Game1.server is not null;
+                if (!this.hostAutomationServerStarted)
+                {
+                    this.hostAutomationTerminal = true;
+                    this.Monitor.Log("GameBuddy HostAutomation could not start the native LAN server.", LogLevel.Error);
+                    return;
+                }
+                this.Monitor.Log($"GameBuddy HostAutomation native world ready for save '{automation.SaveName}'; native LAN server started.", LogLevel.Info);
+            }
+            catch (Exception exception)
+            {
+                this.hostAutomationTerminal = true;
+                this.Monitor.Log($"GameBuddy HostAutomation failed to start the native LAN server: {exception.GetType().Name}.", LogLevel.Error);
+            }
+            return;
+        }
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.hostAutomationStarted)
+        {
+            if (now >= this.hostAutomationDeadlineUnixMs)
+            {
+                this.hostAutomationTerminal = true;
+                this.Monitor.Log($"GameBuddy HostAutomation fixture timed out while loading native save '{automation.SaveName}'.", LogLevel.Error);
+            }
+            return;
+        }
+
+        this.hostAutomationStarted = true;
+        this.hostAutomationDeadlineUnixMs = now + Math.Clamp(automation.TimeoutSeconds, 10, 300) * 1_000L;
+        try
+        {
+            SaveGame.Load(automation.SaveName);
+            // Match the native LoadGameMenu activation boundary. This clears
+            // the title menu after SaveGame.Load without synthesizing input,
+            // allowing the original game/SMAPI lifecycle to finish the load.
+            Game1.exitActiveMenu();
+            this.Monitor.Log($"GameBuddy HostAutomation requested native SaveGame.Load('{automation.SaveName}') and exited the native title menu; waiting for the original world/server lifecycle.", LogLevel.Info);
+        }
+        catch (Exception exception)
+        {
+            this.hostAutomationTerminal = true;
+            this.Monitor.Log($"GameBuddy HostAutomation failed to request native save load: {exception.GetType().Name}.", LogLevel.Error);
+        }
+    }
+
+    private void TryObserveNativeAutomationClientExit()
+    {
+        if (!this.hostRoleConfigured || this.config.HostAutomation is not { Enable: true, TriggerNativeSaveAfterClientExit: true } || this.hostFarmhandProvisioner is null || !Context.IsWorldReady || !Game1.IsMasterGame)
+            return;
+        bool targetOnline;
+        try
+        {
+            targetOnline = Game1.getOnlineFarmers().Any(farmer => farmer.UniqueMultiplayerID.ToString() == this.config.PlayerId);
+        }
+        catch
+        {
+            return;
+        }
+        if (targetOnline)
+        {
+            this.hostAutomationObservedAiClient = true;
+            return;
+        }
+        if (this.hostAutomationObservedAiClient && !this.hostAutomationObservedAiClientExit && !this.hostFarmhandProvisioner.IsAwaitingSave)
+            this.hostAutomationObservedAiClientExit = true;
+    }
+
+    private void TryTriggerNativeAutomationSave()
+    {
+        if (!this.hostRoleConfigured || this.config.HostAutomation is not { Enable: true } || this.hostFarmhandProvisioner is null)
+        {
+            // A completed request clears the latch so a later attachment in the
+            // same host process gets its own native Saving/Saved cycle.
+            this.hostAutomationSaveMenuOpened = false;
+            return;
+        }
+        bool attachmentSavePending = this.config.HostAutomation.TriggerNativeSaveAfterAttachment && this.hostFarmhandProvisioner.IsAwaitingSave;
+        bool clientExitSavePending = this.config.HostAutomation.TriggerNativeSaveAfterClientExit && this.hostAutomationObservedAiClientExit;
+        if (!attachmentSavePending && !clientExitSavePending)
+        {
+            this.hostAutomationSaveMenuOpened = false;
+            return;
+        }
+        if (this.hostAutomationSaveMenuOpened || !Context.IsWorldReady || !Game1.IsMasterGame || Game1.game1.IsSaving || Game1.activeClickableMenu is not null)
+            return;
+        this.hostAutomationSaveMenuOpened = true;
+        if (clientExitSavePending)
+        {
+            this.hostAutomationObservedAiClient = false;
+            this.hostAutomationObservedAiClientExit = false;
+        }
+        Game1.activeClickableMenu = new SaveGameMenu();
+        this.Monitor.Log("GameBuddy HostAutomation opened the native SaveGameMenu to drive the original Saving/Saved lifecycle for the attachment fixture.", LogLevel.Info);
+    }
+
+    private bool IsNativeAutomationWorldReady() => Context.IsWorldReady
+        || (this.config.HostAutomation?.Enable == true
+            && Game1.hasLoadedGame
+            && Game1.gameMode == Game1.playingGameMode
+            && Game1.player is not null
+            && Game1.locations is { Count: > 0 });
+
+    private bool TryStartNativeLanServer()
+    {
+        try
+        {
+            FieldInfo? multiplayerField = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic);
+            object? multiplayer = multiplayerField?.GetValue(null);
+            MethodInfo? startServer = multiplayer?.GetType().GetMethod("StartServer", BindingFlags.Instance | BindingFlags.Public);
+            if (multiplayer is null || startServer is null || startServer.GetParameters().Length != 0)
+            {
+                this.Monitor.Log($"GameBuddy HostAutomation native LAN adapter lookup failed: field={(multiplayer is not null)}, method={(startServer is not null)}.", LogLevel.Error);
+                return false;
+            }
+            this.Monitor.Log("GameBuddy HostAutomation invoking the target-version native Multiplayer.StartServer().", LogLevel.Info);
+            startServer.Invoke(multiplayer, Array.Empty<object>());
+            this.Monitor.Log($"GameBuddy HostAutomation native Multiplayer.StartServer() returned: server_present={Game1.server is not null}.", LogLevel.Info);
+            return Game1.server is not null;
+        }
+        catch (Exception exception)
+        {
+            this.Monitor.Log($"GameBuddy HostAutomation native LAN server adapter failed: {exception.GetType().Name}/{exception.InnerException?.GetType().Name ?? "none"}.", LogLevel.Error);
+            return false;
+        }
     }
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
@@ -121,6 +402,7 @@ public sealed class ModEntry : Mod
 
     private void OnSaving(object? sender, SavingEventArgs e)
     {
+        this.hostFarmhandProvisioner?.OnSaving();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
         ExecutionManager executions = state.Executions!;
@@ -128,15 +410,28 @@ public sealed class ModEntry : Mod
         this.PublishLifecycle(state, "world_unavailable", "saving");
     }
 
+    private void OnSaved(object? sender, SavedEventArgs e)
+    {
+        this.hostFarmhandProvisioner?.OnSaved();
+    }
+
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
-        ScreenEmbodimentState state = this.screenStates.Value;
+        this.hostFarmhandProvisioner?.OnReturnedToTitle();
+        this.hostAutomationSaveMenuOpened = false;
+        this.farmhandProvisioner?.Disconnect();
+        this.farmhandProvisioner = null;
+        this.farmhandProvisioningTerminal = false;
+        this.nextFarmhandProvisionerAttemptAtMs = 0;
+        ScreenEmbodimentState state = this.GetEmbodimentState();
+        this.embodimentInitialized = false;
         if (state.Executions is not null)
         {
             state.Executions.InvalidateForLifecycle("returned_to_title");
             this.PublishLifecycle(state, "world_unavailable", "returned_to_title");
         }
         this.ClearState(state, "returned_to_title");
+        this.embodimentInitialized = false;
         this.Monitor.Log($"GameBuddy cleared local embodiment state for screen {Context.ScreenId}.", LogLevel.Trace);
     }
 
@@ -295,9 +590,12 @@ public sealed class ModEntry : Mod
     private bool TryGetAiState(out ScreenEmbodimentState state)
     {
         state = null!;
-        if (!Context.IsWorldReady || !this.IsConfiguredAiScreen(out _, out _))
+        if (this.hostFarmhandProvisioner is not null
+            || (this.config.FarmhandProvisioner?.Enable == true && (this.farmhandProvisioner is null || !this.farmhandProvisioner.IsReady))
+            || !Context.IsWorldReady
+            || !this.IsConfiguredAiScreen(out _, out _))
             return false;
-        ScreenEmbodimentState candidate = this.screenStates.Value;
+        ScreenEmbodimentState candidate = this.GetEmbodimentState();
         if (candidate.Executions is null)
             return false;
         state = candidate;
@@ -320,15 +618,27 @@ public sealed class ModEntry : Mod
         reasonCode = "world_not_ready";
         if (!Context.IsWorldReady || Game1.player is null)
             return false;
-        localPlayer = Game1.player;
-        if (this.config.PlayerId != localPlayer.UniqueMultiplayerID.ToString())
+        if (this.config.FarmhandProvisioner?.Enable == true && (this.farmhandProvisioner is null || !this.farmhandProvisioner.IsReady))
         {
-            reasonCode = "screen_player_id_does_not_match_configured_ai_farmhand";
+            reasonCode = "formal_attachment_not_ready";
+            return false;
+        }
+        localPlayer = Game1.player;
+        string expectedPlayerId = this.config.FarmhandProvisioner?.Enable == true
+            ? this.farmhandProvisioner!.Manifest.FarmhandId
+            : this.config.PlayerId;
+        if (expectedPlayerId != localPlayer.UniqueMultiplayerID.ToString())
+        {
+            reasonCode = this.farmhandProvisioner is null
+                ? "screen_player_id_does_not_match_configured_ai_farmhand"
+                : "screen_player_id_does_not_match_manifest_farmhand";
             return false;
         }
         reasonCode = "configured_ai_farmhand";
         return true;
     }
+
+    private ScreenEmbodimentState GetEmbodimentState() => this.config.FarmhandProvisioner?.Enable == true ? this.formalState : this.screenStates.Value;
 
     private void ClearState(ScreenEmbodimentState state, string reasonCode)
     {

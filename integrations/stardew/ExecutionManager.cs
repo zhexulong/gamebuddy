@@ -93,6 +93,8 @@ internal sealed class ExecutionManager
     /// Farmhand's selected Tool slot; it consumes no item, stamina, time, or
     /// world resource. The before/after tool state is the postcondition.
     /// </summary>
+    public bool HasCapability(string action) => this.capabilities.Contains(action, StringComparer.Ordinal);
+
     public LocalExecutionReceipt RequestLocalEquipTool(string requestId, int slot)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -117,7 +119,7 @@ internal sealed class ExecutionManager
         if (!string.Equals(currentTool, expectedTool, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_selection_postcondition_unavailable", $"before={previousTool ?? "none"};expected={expectedTool ?? "none"};actual={currentTool ?? "none"}");
 
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_selected", $"slot={slot};before={previousTool ?? "none"};after={currentTool}");
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_selected", $"slot={slot};before={previousTool ?? "none"};expected={expectedTool};after={currentTool}");
     }
 
     public LocalExecutionReceipt Cancel(string requestId, string executionId, string reasonCode)
@@ -272,6 +274,8 @@ internal sealed class ExecutionManager
     private static IReadOnlyList<string> CreateCapabilities(IReadOnlySet<string>? enabledActions)
     {
         List<string> result = new() { "inspect_self", "cancel_active_execution" };
+        if (enabledActions?.Contains("equip_tool") == true)
+            result.Insert(0, "equip_tool");
         if (enabledActions?.Contains("move_to_tile") == true)
             result.Insert(0, "move_to_tile");
         return result;

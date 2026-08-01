@@ -41,7 +41,8 @@ export function createStardewObservationTools(integration: CompanionIntegration)
  * model prose as an authorization source.
  */
 export function createStardewActionTools(integration: CompanionIntegration) {
-  if (!isMoveCapable(integration) || !integration.state.capabilities.includes("move_to_tile")) return [] as const;
+  if (!isMoveCapable(integration)) return [] as const;
+  const tools: Array<ReturnType<typeof defineTool>> = [];
   const cancel = defineTool({
     name: "stardew_cancel_active_execution", label: "Cancel Active Stardew Execution",
     description: "Request cancellation of the exact active execution. The authoritative Mod receipt determines whether it stopped.",
@@ -67,7 +68,26 @@ export function createStardewActionTools(integration: CompanionIntegration) {
       catch (error) { return receiptResult(null, error instanceof Error ? error.message.replace(/^bridge_rejected:/, "") : "bridge_execute_failed"); }
     },
   });
-  return integration.state.capabilities.includes("cancel_active_execution") ? [move, cancel] as const : [move] as const;
+  if (integration.state.capabilities.includes("move_to_tile")) tools.push(move);
+  if (integration.state.capabilities.includes("equip_tool")) {
+    tools.push(defineTool({
+      name: "stardew_equip_tool", label: "Equip Stardew Tool",
+      description: "Select a Tool already owned by the AI Farmhand. The Mod receipt reports the authoritative before/after CurrentTool state.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => {
+        const snapshot = integration.state.snapshot;
+        if (!integration.state.connected || snapshot === null) return receiptResult(null, "integration_not_ready");
+        if (!integration.state.capabilities.includes("equip_tool") || !snapshot.capabilities.includes("equip_tool")) return receiptResult(null, "capability_not_declared");
+        const request: ExecutionRequest = { requestId: params.requestId ?? randomUUID(), idempotencyKey: params.idempotencyKey ?? randomUUID(), action: "equip_tool", args: { slot: params.slot }, expectedRevision: snapshot.revision, deadlineMs: Date.now() + 30_000 };
+        const invalid = validateExecutionRequest(request, snapshot);
+        if (invalid !== null) return receiptResult(null, invalid);
+        try { return receiptResult(await integration.execute(request), null); }
+        catch (error) { return receiptResult(null, error instanceof Error ? error.message.replace(/^bridge_rejected:/, "") : "bridge_execute_failed"); }
+      },
+    }));
+  }
+  if (integration.state.capabilities.includes("cancel_active_execution")) tools.push(cancel);
+  return tools;
 }
 function receiptResult(receipt: ExecutionReceipt | null, reasonCode: string | null) {
   return { content: [{ type: "text" as const, text: receipt === null ? `Game action was not created: ${reasonCode}.` : JSON.stringify(receipt) }], details: { receiptJson: receipt === null ? null : JSON.stringify(receipt), reasonCode } };

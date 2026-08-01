@@ -49,7 +49,7 @@ internal sealed class BridgeSession
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "execution_request", out reasonCode)) return false;
         BridgeExecutionRequest request = envelope!.Payload;
         if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;
-        string fingerprint = $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.ExpectedRevision}";
+        string fingerprint = $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.Args.Slot}:{request.ExpectedRevision}";
         if (this.idempotency.TryGetValue(request.IdempotencyKey, out IdempotentExecution? existing))
         {
             if (existing.Fingerprint != fingerprint) { reasonCode = "idempotency_key_conflict"; return false; }
@@ -65,7 +65,9 @@ internal sealed class BridgeSession
         }
         if (!this.enabledActions.Contains(request.Action)) { reasonCode = "action_disabled_by_player_policy"; return false; }
         if (!IsFreshExecutionRequest(request, out reasonCode)) return false;
-        LocalExecutionReceipt receipt = this.executions.RequestLocalMove(request.RequestId, new Microsoft.Xna.Framework.Vector2(request.Args.X!.Value, request.Args.Y!.Value), request.DeadlineMs);
+        LocalExecutionReceipt receipt = request.Action == "move_to_tile"
+            ? this.executions.RequestLocalMove(request.RequestId, new Microsoft.Xna.Framework.Vector2(request.Args.X!.Value, request.Args.Y!.Value), request.DeadlineMs)
+            : this.executions.RequestLocalEquipTool(request.RequestId, request.Args.Slot!.Value);
         this.RememberIdempotency(request.IdempotencyKey, fingerprint, request.RequestId);
         response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(receipt)); reasonCode = "accepted"; return true;
     }
@@ -104,13 +106,27 @@ internal sealed class BridgeSession
     private IReadOnlyList<string> Capabilities()
     {
         List<string> capabilities = new() { "inspect_self", "cancel_active_execution" };
+        if (this.enabledActions.Contains("equip_tool")) capabilities.Insert(0, "equip_tool");
         if (this.enabledActions.Contains("move_to_tile")) capabilities.Insert(0, "move_to_tile");
         return capabilities;
     }
     private bool IsAuthenticated(long generation, out string reasonCode) { if (this.authenticatedGeneration != generation) { reasonCode = "unauthenticated"; return false; } reasonCode = "accepted"; return true; }
     private static bool IsStructurallyValidExecutionRequest(BridgeExecutionRequest? request, out string reasonCode)
     {
-        if (request is null || !BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.IdempotencyKey) || request.Action != "move_to_tile" || request.Args is null || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000) { reasonCode = "invalid_execution_request"; return false; }
+        if (request is null || !BridgeProtocol.IsOpaqueId(request.RequestId) || !BridgeProtocol.IsOpaqueId(request.IdempotencyKey) || request.Args is null)
+        { reasonCode = "invalid_execution_request"; return false; }
+        if (request.Action == "move_to_tile")
+        {
+            if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000)
+            { reasonCode = "invalid_execution_request"; return false; }
+        }
+        else if (request.Action == "equip_tool")
+        {
+            if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36)
+            { reasonCode = "invalid_execution_request"; return false; }
+        }
+        else
+        { reasonCode = "invalid_execution_request"; return false; }
         reasonCode = "accepted"; return true;
     }
     private bool IsFreshExecutionRequest(BridgeExecutionRequest request, out string reasonCode)
