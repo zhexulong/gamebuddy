@@ -30,6 +30,22 @@ test("standalone Voice Gateway rejects non-loopback bind addresses", async () =>
   await assert.rejects(() => startVoiceGateway({ port: 0, token: "voice_token_1234567890", host: "0.0.0.0" as never }), /voice_gateway_loopback_required/);
 });
 
+test("standalone Voice Gateway validates media, speech and event request shapes before dispatch", async () => {
+  const token = "voice_token_1234567890"; const gateway = await startVoiceGateway({ port: 0, token });
+  try {
+    const responses = await exchange(gateway.port, [
+      { type: "hello", token, protocolVersion: 1, requestId: "hello_shape_01" },
+      { type: "ptt_frame", requestId: "bad_base64_01", pcm16Base64: "not-base64" },
+      { type: "ptt_frame", requestId: "bad_format_01", pcm16Base64: "AAE=", format: { sampleRate: 8_000, channels: 1, encoding: "pcm_s16le" } },
+      { type: "speech_enqueue", requestId: "bad_job_01", job: { jobId: "job_01" } },
+      { type: "events", requestId: "bad_cursor_01", after: -1 },
+    ]);
+    assert.equal(responses.length, 5);
+    assert.equal(responses.filter((response) => (response as { type?: unknown }).type === "hello_ack").length, 1);
+    assert.equal(responses.filter((response) => (response as { type?: unknown }).type === "error" && (response as { reasonCode?: unknown }).reasonCode === "malformed_request").length, 4);
+  } finally { await gateway.close(); }
+});
+
 test("standalone Voice Gateway fails closed before authentication and survives malformed peers", async () => {
   const token = "voice_token_1234567890"; const gateway = await startVoiceGateway({ port: 0, token });
   try {

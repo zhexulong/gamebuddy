@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   companionStatusTool,
+  createCompanionStatusTool,
   createCompanionRuntime,
   identityKey,
   PHASE_0B_ALLOWED_TOOL_NAMES,
@@ -41,14 +42,34 @@ test("runtime paths stay outside the repository workspace", async () => {
   assert.match(paths.sessionDir, /sessions/);
 });
 
-test("Phase 0B exposes only its deterministic Companion test tool", async () => {
+test("offline runtime exposes only its deterministic Companion status tool", async () => {
   const tool = companionStatusTool;
   const result = await tool.execute("test-call", {}, new AbortController().signal, () => {}, {} as never);
 
   assert.deepEqual(PHASE_0B_ALLOWED_TOOL_NAMES, ["companion_status"]);
   const firstContent = result.content[0];
   assert.equal(firstContent?.type, "text");
-  assert.match(firstContent?.type === "text" ? firstContent.text : "", /no game capabilities enabled/);
+  assert.match(firstContent?.type === "text" ? firstContent.text : "", /"connected":false/);
+});
+
+test("mounted Companion status reports live integration facts without inferring success", async () => {
+  const integration = {
+    scope: { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId },
+    state: {
+      connected: true,
+      sessionId: "session_01",
+      capabilities: ["equip_tool"],
+      snapshot: { revision: 9, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["equip_tool"], activeExecution: null },
+      latestReceipt: { executionId: "execution_01", requestId: "request_01", state: "accepted" as const, reasonCode: "accepted", revision: 9, evidence: null },
+      latestReasonCode: null,
+    },
+  };
+  const result = await createCompanionStatusTool(integration).execute("status", {}, new AbortController().signal, () => {}, {} as never);
+  assert.equal((result.details as { connected: boolean }).connected, true);
+  assert.deepEqual((result.details as { capabilities: readonly string[] }).capabilities, ["equip_tool"]);
+  assert.equal((result.details as { snapshotRevision: number }).snapshotRevision, 9);
+  assert.equal((result.details as { latestReceiptState: string }).latestReceiptState, "accepted");
+  assert.doesNotMatch(result.content[0]?.type === "text" ? result.content[0].text : "", /succeeded/);
 });
 
 test("runtime rejects a mounted integration whose save identity does not match", async () => {

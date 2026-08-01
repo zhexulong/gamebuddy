@@ -43,7 +43,24 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
   enabled = false;
   const result = await move.execute("test", { x: 3, y: 4 }, new AbortController().signal, () => {}, {} as never);
   assert.equal(executeCalls, 0);
-  assert.equal(result.details.reasonCode, "capability_not_declared");
+  assert.equal((result.details as { reasonCode?: string }).reasonCode, "capability_not_declared");
+});
+
+test("equip_tool mounts only from a live capability and forwards the selected slot", async () => {
+  let received: unknown = null;
+  const integration: MoveCapableIntegration = {
+    scope,
+    get state() { return { connected: true, sessionId: "session_01", capabilities: ["equip_tool"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["equip_tool"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
+    async execute(request) { received = request; return { executionId: "execution_tool_01", requestId: request.requestId, state: "succeeded", reasonCode: "tool_selected", revision: 4, evidence: { before: "(W) Axe", expected: "(W) Pickaxe", after: "(W) Pickaxe" } }; },
+    async cancel() { throw new Error("must_not_cancel"); },
+  };
+  const tools = createStardewActionTools(integration);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0]?.name, "stardew_equip_tool");
+  const result = await tools[0]!.execute("test", { slot: 2, requestId: "request_tool_01", idempotencyKey: "idempotency_tool_01" }, new AbortController().signal, () => {}, {} as never);
+  assert.equal((received as { action: string; args: { slot: number } }).action, "equip_tool");
+  assert.equal((received as { args: { slot: number } }).args.slot, 2);
+  assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /tool_selected/);
 });
 
 test("mounted Game Actions return authoritative Mod receipts without inventing completion", async () => {

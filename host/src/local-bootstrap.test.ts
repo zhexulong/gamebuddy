@@ -32,8 +32,8 @@ test("local bootstrap requires a Mod snapshot before mounting only verified tool
         const request = JSON.parse(buffer.subarray(4, length + 4).toString("utf8")) as BridgeMessage;
         buffer = buffer.subarray(length + 4);
         const payload = request.type === "hello"
-          ? { sessionId: "session_01", capabilities: ["move_to_tile"] }
-          : { revision: 1, location: "Farm", tile: { x: 0, y: 0 }, stamina: 250, health: 100, actionable: true, capabilities: ["move_to_tile"], activeExecution: null };
+          ? { sessionId: "session_01", capabilities: ["move_to_tile", "equip_tool"] }
+          : { revision: 1, location: "Farm", tile: { x: 0, y: 0 }, stamina: 250, health: 100, actionable: true, currentTool: "(W) Axe", inventorySlots: 12, capabilities: ["move_to_tile", "equip_tool"], activeExecution: null };
         socket.write(frame({ ...request, messageId: request.type === "hello" ? "mod_hello_01" : "mod_snapshot_01", type: request.type === "hello" ? "hello_ack" : "snapshot", payload }));
       }
     });
@@ -45,7 +45,7 @@ test("local bootstrap requires a Mod snapshot before mounting only verified tool
       assert.equal(connected.bridge.state.snapshot?.revision, 1);
       // The Mod's player-controlled capability declaration is the only action
       // enablement source; no Host- or model-issued authorization exists.
-      assert.deepEqual(connected.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_execution_status", "stardew_move_to_tile", "stardew_observe", "todowrite"]);
+      assert.deepEqual(connected.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_equip_tool", "stardew_execution_status", "stardew_move_to_tile", "stardew_observe", "todowrite"]);
     } finally { disconnectLocalCompanion(connected); }
   } finally {
     peer?.destroy();
