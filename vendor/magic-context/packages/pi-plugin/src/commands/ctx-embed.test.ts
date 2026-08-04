@@ -1,0 +1,147 @@
+import { afterEach, describe, expect, it } from "bun:test";
+import type { EmbeddingConfig } from "@magic-context/core/config/schema/magic-context";
+import { appendCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
+import type {
+	EmbeddingProvider,
+	EmbeddingPurpose,
+} from "@magic-context/core/features/magic-context/memory/embedding-provider";
+import {
+	_resetProjectEmbeddingRegistryForTests,
+	_setTestProviderFactoryForProject,
+	registerProjectEmbedding,
+} from "@magic-context/core/features/magic-context/project-embedding-registry";
+import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+import { createTestDb } from "../test-utils.test";
+import { runEmbedDrain } from "./ctx-embed";
+
+class FakeEmbeddingProvider implements EmbeddingProvider {
+	readonly modelId = "fake-embedding-model";
+
+	async initialize(): Promise<boolean> {
+		return true;
+	}
+
+	async embed(text: string, _signal?: AbortSignal): Promise<Float32Array> {
+		return new Float32Array([text.length, 1]);
+	}
+
+	async embedBatch(
+		texts: string[],
+		_signal?: AbortSignal,
+		_purpose?: EmbeddingPurpose,
+	): Promise<Float32Array[]> {
+		return texts.map((text) => new Float32Array([text.length, 1]));
+	}
+
+	async dispose(): Promise<void> {}
+
+	isLoaded(): boolean {
+		return true;
+	}
+}
+
+function localConfig(): EmbeddingConfig {
+	return { provider: "local", model: "fake-embedding-model" };
+}
+
+function seedCompartments(
+	db: ReturnType<typeof createTestDb>,
+	sessionId: string,
+	count: number,
+): void {
+	for (let i = 0; i < count; i += 1) {
+		const start = i * 2 + 1;
+		const end = start + 1;
+		appendCompartments(db, sessionId, [
+			{
+				sequence: i,
+				startMessage: start,
+				endMessage: end,
+				startMessageId: `u${start}`,
+				endMessageId: `a${end}`,
+				title: `Embedding slice ${i}`,
+				content: `Embedding content ${i}`,
+				p1: `Embedding content ${i}`,
+			},
+		]);
+		db.prepare(
+			"INSERT INTO message_history_fts (session_id, message_ordinal, message_id, role, content) VALUES (?, ?, ?, ?, ?)",
+		).run(sessionId, start, `${sessionId}-u${start}`, "user", `Question ${i}?`);
+		db.prepare(
+			"INSERT INTO message_history_fts (session_id, message_ordinal, message_id, role, content) VALUES (?, ?, ?, ?, ?)",
+		).run(sessionId, end, `${sessionId}-a${end}`, "assistant", `Answer ${i}.`);
+	}
+}
+
+function registerEmbedding(
+	db: ReturnType<typeof createTestDb>,
+	project: string,
+): void {
+	registerProjectEmbedding(
+		db,
+		project,
+		localConfig(),
+		{ memoryEnabled: true, gitCommitEnabled: false },
+		"/tmp/pi-embed",
+	);
+}
+
+describe("Pi /ctx-embed progress", () => {
+	afterEach(() => {
+		_resetProjectEmbeddingRegistryForTests();
+		_setTestProviderFactoryForProject(null);
+	});
+
+	it("emits start, throttled progress, and terminal summary for a multi-batch drain", async () => {
+		_setTestProviderFactoryForProject(() => new FakeEmbeddingProvider());
+		const db = createTestDb();
+		try {
+			const project = "pi-embed-project";
+			const sessionId = "pi-embed-many";
+			registerEmbedding(db, project);
+			seedCompartments(db, sessionId, 9);
+			const statuses: Array<{ text: string; level: "success" | "info" }> = [];
+
+			const terminal = await runEmbedDrain(db, project, sessionId, {
+				onStatus: (status) => statuses.push(status),
+			});
+
+			expect(statuses.map((status) => status.text)).toEqual([
+				"## /ctx-embed\n\nEmbedding 9 compartments of history…",
+				"## /ctx-embed\n\nEmbedded 8/9 compartments so far…",
+			]);
+			expect(terminal).toEqual({
+				text: "## /ctx-embed\n\nEmbedded 9 compartments of history for semantic search.",
+				level: "success",
+			});
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("emits only start and terminal summary for a single-chunk drain", async () => {
+		_setTestProviderFactoryForProject(() => new FakeEmbeddingProvider());
+		const db = createTestDb();
+		try {
+			const project = "pi-embed-project-single";
+			const sessionId = "pi-embed-one";
+			registerEmbedding(db, project);
+			seedCompartments(db, sessionId, 1);
+			const statuses: Array<{ text: string; level: "success" | "info" }> = [];
+
+			const terminal = await runEmbedDrain(db, project, sessionId, {
+				onStatus: (status) => statuses.push(status),
+			});
+
+			expect(statuses.map((status) => status.text)).toEqual([
+				"## /ctx-embed\n\nEmbedding 1 compartment of history…",
+			]);
+			expect(terminal).toEqual({
+				text: "## /ctx-embed\n\nEmbedded 1 compartment of history for semantic search.",
+				level: "success",
+			});
+		} finally {
+			closeQuietly(db);
+		}
+	});
+});

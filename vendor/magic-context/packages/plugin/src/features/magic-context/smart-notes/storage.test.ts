@@ -1,0 +1,320 @@
+/// <reference types="bun-types" />
+
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { Database } from "../../../shared/sqlite";
+import { closeQuietly } from "../../../shared/sqlite-helpers";
+import { evaluateSmartNotes } from "../dreamer/evaluate-smart-notes";
+import { acquireLease } from "../dreamer/lease";
+import { runMigrations } from "../migrations";
+import { initializeDatabase } from "../storage-db";
+import { addNote, dismissNote, getNotes, getPendingSmartNotes, updateNote } from "../storage-notes";
+import { runDueCompiledSmartNoteChecks } from "./runner";
+import {
+    commitSmartNoteState,
+    getSmartNotesNeedingCompilation,
+    markCompiledCheckFalse,
+    storeCompiledSmartNoteCheck,
+} from "./storage";
+import { SMART_NOTE_CHECK_POLICY_VERSION } from "./types";
+
+const PROJECT = "git:test";
+const tempDirs: string[] = [];
+
+function freshDb(): Database {
+    const db = new Database(":memory:");
+    initializeDatabase(db);
+    runMigrations(db);
+    return db;
+}
+
+function tempProject(): string {
+    const dir = mkdtempSync(path.join(tmpdir(), "mc-smart-note-storage-"));
+    tempDirs.push(dir);
+    return dir;
+}
+
+function setCheckColumns(db: Database, noteId: number, columns: Record<string, unknown>): void {
+    const entries = Object.entries(columns);
+    db.prepare(
+        `UPDATE notes SET ${entries.map(([key]) => `${key} = ?`).join(", ")} WHERE id = ?`,
+    ).run(...entries.map(([, value]) => value), noteId);
+}
+
+afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+});
+
+describe("smart-note compilation selection", () => {
+    test("honors check_next_due_at backoff before recompiling notes", () => {
+        const db = freshDb();
+        try {
+            const now = 10_000;
+            const due = addNote(db, "smart", {
+                projectPath: PROJECT,
+                content: "due",
+                surfaceCondition: "compile now",
+            });
+            const backedOff = addNote(db, "smart", {
+                projectPath: PROJECT,
+                content: "backoff",
+                surfaceCondition: "compile later",
+            });
+            setCheckColumns(db, due.id, { check_next_due_at: now - 1 });
+            setCheckColumns(db, backedOff.id, { check_next_due_at: now + 60_000 });
+
+            expect(getSmartNotesNeedingCompilation(db, PROJECT, now, 10).map((n) => n.id)).toEqual([
+                due.id,
+            ]);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("evaluateSmartNotes lease guard", () => {
+    test("does not commit due-check results after the lease is lost", async () => {
+        const db = freshDb();
+        try {
+            const note = addNote(db, "smart", {
+                projectPath: PROJECT,
+                content: "ready when check passes",
+                surfaceCondition: "test condition",
+            });
+            setCheckColumns(db, note.id, {
+                compiled_check: "function check() { return { met: true }; }",
+                manifest_json: JSON.stringify({ capabilities: [], summary: "test" }),
+                check_hash: "hash",
+                check_cron: "* * * * *",
+                check_version: 1,
+                check_status: "compiled",
+                check_next_due_at: 0,
+                policy_version: SMART_NOTE_CHECK_POLICY_VERSION,
+            });
+            expect(acquireLease(db, "other-holder", "smart-note-lease")).toBe(true);
+
+            await expect(
+                evaluateSmartNotes({
+                    db,
+                    client: {} as never,
+                    projectIdentity: PROJECT,
+                    parentSessionId: undefined,
+                    sessionDirectory: tempProject(),
+                    holderId: "missing-holder",
+                    leaseKey: "smart-note-lease",
+                    deadline: Date.now() + 60_000,
+                }),
+            ).rejects.toThrow("Dream lease lost");
+
+            expect(getPendingSmartNotes(db, PROJECT).map((n) => [n.id, n.status])).toEqual([
+                [note.id, "pending"],
+            ]);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("smart-note state compare-and-set", () => {
+    test("a dismissal during compilation cannot resurrect the note", () => {
+        const db = freshDb();
+        try {
+            const note = addNote(db, "smart", {
+                projectPath: PROJECT,
+                sessionId: "session",
+                content: "compile me",
+                surfaceCondition: "when ready",
+            });
+            expect(dismissNote(db, note.id, { sessionId: "session", projectPath: PROJECT })).toBe(
+                true,
+            );
+
+            const committed = commitSmartNoteState(db, {
+                phase: "compile",
+                expected: {
+                    kind: "source-revision",
+                    noteId: note.id,
+                    content: note.content,
+                    surfaceCondition: note.surfaceCondition,
+                    updatedAt: note.updatedAt,
+                },
+                write: () =>
+                    storeCompiledSmartNoteCheck(db, {
+                        noteId: note.id,
+                        compiledCheck: "function check() { return { met: true }; }",
+                        manifest: { capabilities: [] },
+                        checkHash: "new-hash",
+                        checkCron: "* * * * *",
+                        nextDueAt: Date.now(),
+                        now: Date.now(),
+                    }),
+            });
+
+            expect(committed).toBe(false);
+            const current = getNotes(db, { type: "smart", status: "dismissed" })[0];
+            expect(current.status).toBe("dismissed");
+            expect(current.compiledCheck).toBeNull();
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("a condition edit discards a stale compiled-check result", () => {
+        const db = freshDb();
+        try {
+            const note = addNote(db, "smart", {
+                projectPath: PROJECT,
+                sessionId: "session",
+                content: "watch condition",
+                surfaceCondition: "old condition",
+            });
+            setCheckColumns(db, note.id, {
+                compiled_check: "function check() { return { met: false }; }",
+                check_hash: "old-hash",
+                check_compiled_at: 123,
+                check_status: "compiled",
+                policy_version: SMART_NOTE_CHECK_POLICY_VERSION,
+            });
+            const selected = getPendingSmartNotes(db, PROJECT)[0];
+            expect(
+                updateNote(
+                    db,
+                    note.id,
+                    { surfaceCondition: "new condition" },
+                    { sessionId: "session", projectPath: PROJECT },
+                ),
+            ).not.toBeNull();
+
+            const committed = commitSmartNoteState(db, {
+                phase: "due check",
+                expected: {
+                    kind: "compiled-check",
+                    noteId: selected.id,
+                    compiledCheck: selected.compiledCheck as string,
+                    checkHash: selected.checkHash,
+                    checkCompiledAt: selected.checkCompiledAt,
+                },
+                write: () => markCompiledCheckFalse(db, selected.id, 999, 456),
+            });
+
+            expect(committed).toBe(false);
+            const current = getPendingSmartNotes(db, PROJECT)[0];
+            expect(current.surfaceCondition).toBe("new condition");
+            expect(current.lastCheckedAt).toBeNull();
+            expect(current.checkStatus).toBe("uncompiled");
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("commits when the expected source revision is unchanged", () => {
+        const db = freshDb();
+        try {
+            const note = addNote(db, "smart", {
+                projectPath: PROJECT,
+                content: "normal",
+                surfaceCondition: "normal condition",
+            });
+            const now = Date.now();
+            const committed = commitSmartNoteState(db, {
+                phase: "compile",
+                expected: {
+                    kind: "source-revision",
+                    noteId: note.id,
+                    content: note.content,
+                    surfaceCondition: note.surfaceCondition,
+                    updatedAt: note.updatedAt,
+                },
+                write: () =>
+                    storeCompiledSmartNoteCheck(db, {
+                        noteId: note.id,
+                        compiledCheck: "function check() { return { met: false }; }",
+                        manifest: { capabilities: [] },
+                        checkHash: "hash",
+                        checkCron: "* * * * *",
+                        nextDueAt: now + 60_000,
+                        now,
+                    }),
+            });
+
+            expect(committed).toBe(true);
+            expect(getPendingSmartNotes(db, PROJECT)[0].checkStatus).toBe("compiled");
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("smart-note cancellation health policy", () => {
+    test("pre-aborted due checks leave note health unchanged", async () => {
+        const db = freshDb();
+        try {
+            const note = addNote(db, "smart", {
+                projectPath: PROJECT,
+                content: "cancelled",
+                surfaceCondition: "later",
+            });
+            setCheckColumns(db, note.id, {
+                compiled_check: "function check() { return { met: true }; }",
+                check_hash: "hash",
+                check_cron: "* * * * *",
+                check_status: "compiled",
+                check_next_due_at: 0,
+                policy_version: SMART_NOTE_CHECK_POLICY_VERSION,
+            });
+            const controller = new AbortController();
+            controller.abort(new Error("lease expired"));
+
+            const result = await runDueCompiledSmartNoteChecks({
+                db,
+                projectIdentity: PROJECT,
+                projectRoot: tempProject(),
+                signal: controller.signal,
+            });
+
+            expect(result).toEqual({ ran: 1, surfaced: 0, failed: 0, networkFailed: 0 });
+            const current = getPendingSmartNotes(db, PROJECT)[0];
+            expect(current.checkFailureCount).toBe(0);
+            expect(current.checkNetworkFailureCount).toBe(0);
+            expect(current.status).toBe("pending");
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("a sandbox execution timeout still increments logic health", async () => {
+        const db = freshDb();
+        try {
+            const note = addNote(db, "smart", {
+                projectPath: PROJECT,
+                content: "timeout",
+                surfaceCondition: "later",
+            });
+            setCheckColumns(db, note.id, {
+                compiled_check: "function check() { while (true) {} }",
+                check_hash: "hash",
+                check_cron: "* * * * *",
+                check_status: "compiled",
+                check_next_due_at: 0,
+                policy_version: SMART_NOTE_CHECK_POLICY_VERSION,
+            });
+
+            const result = await runDueCompiledSmartNoteChecks({
+                db,
+                projectIdentity: PROJECT,
+                projectRoot: tempProject(),
+                sweepBudgetMs: 5_000,
+            });
+
+            expect(result.failed).toBe(1);
+            expect(getPendingSmartNotes(db, PROJECT)[0].checkFailureCount).toBe(1);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
