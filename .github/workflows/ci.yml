@@ -52,5 +52,9 @@ jobs:
         with:
           global-json-file: global.json
       - run: dotnet restore GameBuddy.sln --locked-mode
+      # A successful source-text scaffold check is not a Mod artifact gate.
+      # Build the same Release configuration used by deployment as a separate,
+      # compiler-enforced boundary.
+      - run: dotnet build GameBuddy.sln --no-restore --configuration Release --nologo
       - shell: pwsh
         run: ./tools/verify-stardew-scaffold.ps1
