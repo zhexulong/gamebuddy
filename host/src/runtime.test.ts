@@ -174,7 +174,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
   try {
     assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "todowrite"]);
     assert.equal(runtime.extensions.length, 1);
-    assert.match(runtime.extensions[0] ?? "", /pi-magic-context/);
+    assert.match(runtime.extensions[0] ?? "", /vendor[\\/]magic-context[\\/]packages[\\/]pi-plugin[\\/]dist[\\/]index\.js$/);
 
     const config = JSON.parse(await readFile(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"), "utf8"));
     assert.equal(config.embedding.provider, "off");

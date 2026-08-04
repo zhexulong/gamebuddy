@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import {
@@ -352,7 +354,13 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
   );
 
   const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
-  const magicContextEntry = import.meta.resolve("@cortexkit/pi-magic-context");
+  // A pnpm `file:` dependency materializes only package.json/README when its
+  // `files` whitelist excludes an unbuilt dist directory. Load the canonical
+  // versioned vendor artifact instead, so a clean checkout never accidentally
+  // relies on a stale pnpm-store copy. CI and product packaging build this
+  // source-owned artifact before a Host runtime is started.
+  const magicContextEntry = fileURLToPath(new URL("../../vendor/magic-context/packages/pi-plugin/dist/index.js", import.meta.url));
+  if (!existsSync(magicContextEntry)) throw new Error("magic_context_extension_build_required");
   const loader = new DefaultResourceLoader({
     cwd: paths.runtimeCwd,
     agentDir: paths.agentDir,
