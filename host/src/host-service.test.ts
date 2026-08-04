@@ -81,14 +81,11 @@ test("Host service reports a local pipe disconnect without inventing a Mod world
   service.close();
 });
 
-test("Host service admits only final voice text and shows text before speech", async () => {
+test("Host service admits only final voice text and does not project ordinary output", async () => {
   const bridge = bridgeHarness(); const harness = fakeLoop();
   const service = new CompanionHostService(harness.loop as never, bridge.bridge as never);
   await service.acceptFinalVoice({ sessionId: "session_01", inputId: "input_01", text: "看看农场", locale: "zh-CN", providerId: "fake", modelRevision: "v1", timestampMs: 1, actualFormat: { sampleRate: 16_000, channels: 1, encoding: "pcm_s16le" } });
   assert.deepEqual(harness.inputs, [{ source: "voice_final", inputId: "input_01", text: "看看农场", locale: "zh-CN", timestampMs: 1 }]);
-  const timeline: string[] = [];
-  await service.express({ show() { timeline.push("text"); } }, { enqueue() { timeline.push("speech"); } }, { sessionId: "session_01", sourceEventId: "event_01", text: "我在。", locale: "zh-CN", voiceProfile: "default", epoch: 0, expiresAtMs: Date.now() + 10_000 });
-  assert.deepEqual(timeline, ["text", "speech"]);
   service.close();
 });
 

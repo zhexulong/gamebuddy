@@ -176,10 +176,26 @@ export class StardewAttachmentFlow {
   }
 
   public async waitForManifest(requestId: string, timeoutMs = 60_000): Promise<StardewJoinManifest> {
+    const deadline = Date.now() + timeoutMs;
     const response = await this.waitForResponse(requestId, timeoutMs);
     if (response.state !== "ready" || response.manifestPath === undefined)
       throw new Error(`stardew_attachment_rejected_${response.reasonCode}`);
-    return this.readIssuedManifest(response.manifestPath, requestId);
+
+    // `ready` response, manifest, and fresh signed advertisement are separate
+    // atomically replaced files written from the Host game thread. Never accept
+    // a manifest against a stale advertisement, but tolerate their short
+    // publication hand-off by retrying only transient file/session conditions.
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      try {
+        return await this.readIssuedManifest(response.manifestPath, requestId);
+      } catch (error) {
+        lastError = error;
+        if (!isTransientManifestPublicationError(error)) throw error;
+        await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
+      }
+    }
+    throw lastError ?? new Error("stardew_attachment_timeout");
   }
 
   public async readIssuedManifest(manifestPath: string, requestId: string): Promise<StardewJoinManifest> {
@@ -256,6 +272,15 @@ function isRetryableFileReplaceError(error: unknown): boolean {
 
 function isFileNotFound(error: unknown): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function isTransientManifestPublicationError(error: unknown): boolean {
+  if (isFileNotFound(error) || error instanceof SyntaxError) return true;
+  return error instanceof Error && [
+    "stardew_session_expired",
+    "stardew_host_not_ready",
+    "invalid_stardew_session",
+  ].includes(error.message);
 }
 
 function validateSession(value: unknown): StardewSessionAdvertisement {

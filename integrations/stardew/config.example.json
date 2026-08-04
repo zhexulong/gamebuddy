@@ -27,10 +27,11 @@
     "ExpectedGameVersion": "1.6.15",
     "ExpectedGameBuildNumber": 24356,
     "ExpectedSmapiVersion": "4.5.2",
-    "TimeoutSeconds": 45
+    "TimeoutSeconds": 300
   },
   "HostAutomation": {
     "Enable": false,
+    "FixtureScenario": "",
     "SaveName": "A_445094166",
     "TimeoutSeconds": 120,
     "TriggerNativeSaveAfterAttachment": false,
@@ -43,5 +44,8 @@
     "ActivateExpectedFarmhand": false,
     "ExpectedFarmhandId": ""
   },
-  "EnabledActions": []
+  "ActionPolicyVersion": 1,
+  "DeniedActions": [],
+  "DeniedActionFamilies": [],
+  "ExperimentalActions": []
 }
