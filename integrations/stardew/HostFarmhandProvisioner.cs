@@ -47,9 +47,30 @@ internal sealed class HostFarmhandProvisioner
         this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
         this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
         this.DeleteIfOwned(FarmhandProvisioningProtocol.ResponseFileName);
+        this.DeleteIfOwned(FarmhandProvisioningProtocol.FixtureReadinessFileName);
     }
 
     internal bool IsAwaitingSave => this.pendingSaveRequest is not null && !this.pendingSaveObserved;
+
+    /// <summary>Publishes only Host-owned fixture readiness diagnostics.</summary>
+    internal void PublishFixtureReadiness(string scenario, string saveName, string state, string reasonCode)
+    {
+        if (scenario.Length == 0 || saveName.Length == 0 || state is not ("fixture_ready" or "fixture_blocked") || !BridgeProtocol.IsReasonCode(reasonCode))
+            throw new InvalidOperationException("fixture_readiness_invalid");
+        FixtureReadinessReport unsigned = new()
+        {
+            SchemaVersion = FarmhandProvisioningProtocol.Version,
+            IntegrationId = FarmhandProvisioningProtocol.IntegrationId,
+            FixtureScenario = scenario,
+            SaveName = saveName,
+            State = state,
+            ReasonCode = reasonCode,
+            PublishedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            SessionNonce = this.sessionNonce,
+        };
+        FixtureReadinessReport signed = unsigned with { Signature = FarmhandProvisioningProtocol.Sign(unsigned, this.config.SessionToken) };
+        this.WriteJson(FarmhandProvisioningProtocol.FixtureReadinessFileName, signed);
+    }
 
     internal static HostFarmhandProvisioner? TryStart(IModHelper helper, IMonitor monitor, HostFarmhandProvisioningConfig? config, bool allowNativeAutomationWorldReady = false)
     {
@@ -355,11 +376,7 @@ internal sealed class HostFarmhandProvisioner
             return;
 
         FarmhandAttachmentRequest? request;
-        try
-        {
-            request = JsonSerializer.Deserialize<FarmhandAttachmentRequest>(File.ReadAllText(path), FarmhandProvisioningProtocol.JsonOptions);
-        }
-        catch (Exception exception) when (exception is IOException or JsonException)
+        if (!this.TryReadAttachmentRequest(path, out request))
         {
             this.WriteResponse(new FarmhandAttachmentResponse
             {
@@ -370,7 +387,7 @@ internal sealed class HostFarmhandProvisioner
                 UpdatedAtUnixMs = now,
             });
             this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
-            this.monitor.Log("GameBuddy rejected an unreadable Stardew attachment request.", LogLevel.Warn);
+            this.monitor.Log("GameBuddy rejected an unreadable Stardew attachment request after bounded read retries.", LogLevel.Warn);
             return;
         }
 
@@ -694,6 +711,28 @@ internal sealed class HostFarmhandProvisioner
         }
     }
 
+    private bool TryReadAttachmentRequest(string path, out FarmhandAttachmentRequest? request)
+    {
+        request = null;
+        Exception? lastException = null;
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            try
+            {
+                request = JsonSerializer.Deserialize<FarmhandAttachmentRequest>(File.ReadAllText(path), FarmhandProvisioningProtocol.JsonOptions);
+                return true;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+            {
+                lastException = exception;
+                if (attempt < 5)
+                    Thread.Sleep(10 * (attempt + 1));
+            }
+        }
+        this.monitor.Log($"GameBuddy could not read Stardew attachment request after bounded retries: {lastException?.GetType().Name}; message={lastException?.Message}", LogLevel.Trace);
+        return false;
+    }
+
     private void WriteResponse(FarmhandAttachmentResponse response)
     {
         FarmhandAttachmentResponse signed = response with { Signature = FarmhandProvisioningProtocol.Sign(response, this.config.SessionToken) };
@@ -754,6 +793,7 @@ internal sealed class HostFarmhandProvisioner
         this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
         this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
         this.DeleteIfOwned(FarmhandProvisioningProtocol.ResponseFileName);
+        this.DeleteIfOwned(FarmhandProvisioningProtocol.FixtureReadinessFileName);
     }
 
     private void DeleteIfOwned(string fileName)

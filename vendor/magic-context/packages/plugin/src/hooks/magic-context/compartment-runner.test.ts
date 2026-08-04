@@ -1,0 +1,2647 @@
+/// <reference types="bun-types" />
+
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import {
+    acquireCompartmentLease,
+    releaseCompartmentLease,
+} from "../../features/magic-context/compartment-lease";
+import {
+    getCompartments,
+    getSessionFacts,
+    replaceAllCompartmentState,
+    replaceAllCompartments,
+} from "../../features/magic-context/compartment-storage";
+import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
+import { getMemoriesByProject } from "../../features/magic-context/memory/storage-memory";
+import {
+    acquireWrapupInProgress,
+    closeDatabase,
+    getOrCreateSessionMeta,
+    getPendingOps,
+    getTagsBySession,
+    incrementHistorianFailure,
+    loadProtectedTailMeta,
+    openDatabase,
+    updateSessionMeta,
+} from "../../features/magic-context/storage";
+import { createTagger } from "../../features/magic-context/tagger";
+import type { PluginContext } from "../../plugin/types";
+import * as shared from "../../shared";
+import { Database } from "../../shared/sqlite";
+import { closeQuietly } from "../../shared/sqlite-helpers";
+import {
+    executeContextRecomp,
+    executeContextRecompWithResult,
+    getActiveCompartmentRun,
+    registerActiveCompartmentRun,
+    runCompartmentAgent,
+    startCompartmentAgent,
+} from "./compartment-runner";
+import {
+    hasRunnableCompartmentWindow,
+    resolveOpenCodeProtectedTailBoundary,
+} from "./protected-tail-boundary";
+import { tagMessages } from "./tag-messages";
+
+const tempDirs: string[] = [];
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
+
+async function runCompartmentAgentWithLease(
+    deps: Parameters<typeof runCompartmentAgent>[0],
+): Promise<void> {
+    const holderId = `test-holder-${Math.random()}`;
+    expect(acquireCompartmentLease(deps.db, deps.sessionId, holderId)).not.toBeNull();
+    try {
+        await runCompartmentAgent({ ...deps, compartmentLeaseHolderId: holderId });
+    } finally {
+        releaseCompartmentLease(deps.db, deps.sessionId, holderId);
+    }
+}
+
+afterEach(() => {
+    closeDatabase();
+    process.env.XDG_DATA_HOME = originalXdgDataHome;
+
+    for (const dir of tempDirs) {
+        try {
+            rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        } catch {
+            // Ignore EBUSY on Windows
+        }
+    }
+    tempDirs.length = 0;
+
+    // Clean up historian debug dumps created during tests
+    const dumpDir = join(tmpdir(), "magic-context-historian");
+    try {
+        rmSync(dumpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+        // Ignore EBUSY on Windows
+    }
+});
+
+describe("executeContextRecomp", () => {
+    it("rebuilds from raw history and ignores broken stored compartments as source truth", async () => {
+        useTempDataHome("magic-recomp-rebuild-");
+        createOpenCodeDb("ses-recomp", [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "eligible three" },
+            { id: "m-4", role: "assistant", text: "eligible four" },
+            { id: "m-5", role: "user", text: "protected 1" },
+            { id: "m-6", role: "user", text: "protected 2" },
+            { id: "m-7", role: "user", text: "protected 3" },
+            { id: "m-8", role: "user", text: "protected 4" },
+            { id: "m-9", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        replaceAllCompartments(db, "ses-recomp", [
+            {
+                sequence: 0,
+                startMessage: 3,
+                endMessage: 4,
+                startMessageId: "m-3",
+                endMessageId: "m-4",
+                title: "broken",
+                content: "broken summary",
+            },
+        ]);
+        replaceAllCompartmentState(
+            db,
+            "ses-recomp",
+            [
+                {
+                    sequence: 0,
+                    startMessage: 3,
+                    endMessage: 4,
+                    startMessageId: "m-3",
+                    endMessageId: "m-4",
+                    title: "broken",
+                    content: "broken summary",
+                },
+            ],
+            [{ category: "WORKFLOW_RULES", content: "Old fact." }],
+        );
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/recomp" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-recomp" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="4" title="Recovered history"><p1>Recovered summary</p1></compartment>\n<CONSTRAINTS>\n* Rebuilt fact.\n</CONSTRAINTS>`,
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId: "ses-recomp",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(result).toContain("Rebuilt 1 compartment across 1 historian pass");
+        expect(result).toContain("Covered raw history 1-4");
+        expect(
+            getIgnoredNotificationTexts(client.session.prompt as ReturnType<typeof mock>),
+        ).toContain("## Magic Recomp\n\nHistorian pass 1, attempt 1 started for messages 1-4.");
+        expect(getCompartments(db, "ses-recomp")).toEqual([
+            expect.objectContaining({
+                startMessage: 1,
+                endMessage: 4,
+                startMessageId: "m-1",
+                endMessageId: "m-4",
+                title: "Recovered history",
+            }),
+        ]);
+        // v2: recomp is structural only — it does NOT write session_facts
+        // (facts are a promoted-memory concern, and recomp must not re-emit
+        // facts that could degrade curated memories).
+        expect(getSessionFacts(db, "ses-recomp")).toHaveLength(0);
+    });
+
+    it("aborts after winning the recomp lease if a wrapup marker appeared meanwhile", async () => {
+        useTempDataHome("magic-recomp-wrapup-race-");
+        const sessionId = "ses-recomp-wrapup-race";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        getOrCreateSessionMeta(db, sessionId);
+
+        const client = {
+            session: {
+                get: mock(async () => {
+                    throw new Error("recomp runner should not start under a live wrapup");
+                }),
+                create: mock(async () => ({ data: { id: "unused" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({ data: [] })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecompWithResult(
+            {
+                client,
+                db,
+                sessionId,
+                historianChunkTokens: 10_000,
+                directory: "/tmp",
+            },
+            {
+                onLeaseAcquired: () => {
+                    const acquired = acquireWrapupInProgress(db, sessionId, {
+                        holderId: "wrapup-holder",
+                        messagesToKeep: 5,
+                        anchorRawMessageCount: 7,
+                        targetEligibleEndOrdinal: 3,
+                        lastCompartmentEnd: -1,
+                        chunkIndex: 0,
+                        expectedChunks: 1,
+                    });
+                    expect(acquired.ok).toBe(true);
+                },
+            },
+        );
+
+        expect(result.published).toBe(false);
+        expect(result.message).toContain("/ctx-wrapup is already compacting");
+        expect(client.session.get).not.toHaveBeenCalled();
+        expect(getCompartments(db, sessionId)).toHaveLength(0);
+        expect(
+            db
+                .prepare("SELECT 1 FROM compartment_state_lease WHERE session_id = ?")
+                .get(sessionId) ?? null,
+        ).toBeNull();
+    });
+
+    it("keeps published state unchanged when a later recomp pass fails", async () => {
+        useTempDataHome("magic-recomp-fail-closed-");
+        createOpenCodeDb("ses-recomp-fail", [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "eligible three" },
+            { id: "m-4", role: "assistant", text: "eligible four" },
+            { id: "m-5", role: "user", text: "eligible five" },
+            { id: "m-6", role: "assistant", text: "eligible six" },
+            { id: "m-7", role: "user", text: "protected 1" },
+            { id: "m-8", role: "user", text: "protected 2" },
+            { id: "m-9", role: "user", text: "protected 3" },
+            { id: "m-10", role: "user", text: "protected 4" },
+            { id: "m-11", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        replaceAllCompartments(db, "ses-recomp-fail", [
+            {
+                sequence: 0,
+                startMessage: 1,
+                endMessage: 2,
+                startMessageId: "m-1",
+                endMessageId: "m-2",
+                title: "published",
+                content: "published summary",
+            },
+        ]);
+        replaceAllCompartmentState(
+            db,
+            "ses-recomp-fail",
+            [
+                {
+                    sequence: 0,
+                    startMessage: 1,
+                    endMessage: 2,
+                    startMessageId: "m-1",
+                    endMessageId: "m-2",
+                    title: "published",
+                    content: "published summary",
+                },
+            ],
+            [{ category: "WORKFLOW_RULES", content: "Published fact." }],
+        );
+
+        let historianAttempt = 0;
+        const messages = mock(async () => {
+            historianAttempt += 1;
+            const callIndex = historianAttempt;
+            if (callIndex === 1) {
+                return {
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="2" title="Chunk one"><p1>Chunk one summary</p1></compartment>\n<WORKFLOW_RULES>\n* Candidate fact.\n</WORKFLOW_RULES>\n<unprocessed_from>3</unprocessed_from>`,
+                                },
+                            ],
+                        },
+                    ],
+                };
+            }
+            return { data: [] };
+        });
+        const prompt = mock(async () => {
+            const callIndex = prompt.mock.calls.length;
+            if (callIndex >= 2) {
+                throw new Error("historian failed on second pass");
+            }
+            return {};
+        });
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/recomp-fail" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-recomp-fail" } })),
+                prompt,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId: "ses-recomp-fail",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(result).toContain("historian failed on second pass");
+        expect(getCompartments(db, "ses-recomp-fail")).toEqual([
+            expect.objectContaining({
+                startMessage: 1,
+                endMessage: 2,
+                title: "published",
+                content: "published summary",
+            }),
+        ]);
+        expect(getSessionFacts(db, "ses-recomp-fail")).toEqual([
+            expect.objectContaining({ category: "WORKFLOW_RULES", content: "Published fact." }),
+        ]);
+    });
+
+    it("retries once when historian skips a visible message and then publishes the repaired recomp result", async () => {
+        useTempDataHome("magic-recomp-repair-retry-");
+        createOpenCodeDb("ses-recomp-retry", [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "eligible three" },
+            { id: "m-4", role: "assistant", text: "eligible four" },
+            { id: "m-5", role: "user", text: "protected 1" },
+            { id: "m-6", role: "user", text: "protected 2" },
+            { id: "m-7", role: "user", text: "protected 3" },
+            { id: "m-8", role: "user", text: "protected 4" },
+            { id: "m-9", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        const prompt = mock(async () => ({}));
+        // Two distinct `session.messages` consumers now share this mock:
+        //  - the HISTORIAN output fetch (targets the agent session, passes
+        //    `query.directory`)
+        //  - notification model-pinning via resolvePromptContext (targets the
+        //    MAIN session, `query.limit` only, NO directory)
+        // Discriminate on `query.directory` so the historian-pass counter only
+        // advances on real historian fetches; prompt-context reads resolve to
+        // null (empty data) → no pin, harmless.
+        let historianFetches = 0;
+        const messages = mock(async (input: { query?: { directory?: string } }) => {
+            if (!input?.query?.directory) return { data: [] };
+            historianFetches += 1;
+            if (historianFetches === 1) {
+                return {
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="1" title="Part one"><p1>One</p1></compartment>\n<compartment start="3" end="4" title="Part two"><p1>Two</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                };
+            }
+
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: 2 } },
+                        parts: [
+                            {
+                                type: "text",
+                                text: `<compartment start="1" end="4" title="Recovered history"><p1>Recovered summary</p1></compartment>\n<CONSTRAINTS>\n* Rebuilt fact.\n</CONSTRAINTS>`,
+                            },
+                        ],
+                    },
+                ],
+            };
+        });
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/recomp-retry" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-retry" } })),
+                prompt,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId: "ses-recomp-retry",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        // The narrative gap rejects, and the repair attempt covers the same raw chunk.
+        expect(result).toContain("Rebuilt 1 compartment across 1 historian pass");
+        expect(historianFetches).toBe(2);
+        expect(getHistorianPromptCount(prompt)).toBe(2);
+        expect(getIgnoredNotificationTexts(prompt)).toEqual(
+            expect.arrayContaining([
+                "## Magic Recomp\n\nHistorian pass 1, attempt 1 started for messages 1-4.",
+                expect.stringContaining(
+                    "Historian pass 1, attempt 1 is continuing with a repair retry for messages 1-4.",
+                ),
+            ]),
+        );
+        expect(getCompartments(db, "ses-recomp-retry")).toEqual([
+            expect.objectContaining({
+                startMessage: 1,
+                endMessage: 4,
+                title: "Recovered history",
+            }),
+        ]);
+    });
+
+    it("retries flat v1 output and publishes the repaired tiered result", async () => {
+        useTempDataHome("magic-recomp-flat-repair-");
+        const sessionId = "ses-recomp-flat-repair";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "eligible three" },
+            { id: "m-4", role: "assistant", text: "eligible four" },
+            { id: "m-5", role: "user", text: "protected 1" },
+            { id: "m-6", role: "user", text: "protected 2" },
+            { id: "m-7", role: "user", text: "protected 3" },
+            { id: "m-8", role: "user", text: "protected 4" },
+            { id: "m-9", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        let historianFetches = 0;
+        const messages = mock(async (input: { query?: { directory?: string } }) => {
+            if (!input.query?.directory) return { data: [] };
+            historianFetches += 1;
+            const text =
+                historianFetches === 1
+                    ? `<output><compartment start="1" end="4" title="flat">flat summary</compartment></output>`
+                    : `<output><compartment start="1" end="4" title="repaired"><p1>tiered summary</p1></compartment></output>`;
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: historianFetches } },
+                        parts: [{ type: "text", text }],
+                    },
+                ],
+            };
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/flat-repair" } })),
+                create: mock(async () => ({ data: { id: `ses-agent-${historianFetches}` } })),
+                prompt: mock(async () => ({})),
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(result).toContain("## Magic Recomp — Complete");
+        expect(historianFetches).toBe(2);
+        expect(getCompartments(db, sessionId)).toEqual([
+            expect.objectContaining({ title: "repaired", p1: "tiered summary", legacy: 0 }),
+        ]);
+    });
+
+    it("records exhausted flat v1 output without writing legacy rows", async () => {
+        useTempDataHome("magic-recomp-flat-exhausted-");
+        const sessionId = "ses-recomp-flat-exhausted";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/flat-exhausted" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-flat" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<output><compartment start="1" end="2" title="flat">flat summary</compartment></output>`,
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(result).toContain("missing the tiered paraphrase structure");
+        expect(getCompartments(db, sessionId)).toHaveLength(0);
+        expect(
+            db
+                .prepare(
+                    "SELECT COUNT(*) AS count FROM compartments WHERE session_id = ? AND legacy = 1",
+                )
+                .get(sessionId),
+        ).toEqual({ count: 0 });
+        expect(
+            db
+                .prepare(
+                    "SELECT status, failure_reason FROM historian_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                )
+                .get(sessionId),
+        ).toEqual({
+            status: "failed",
+            failure_reason: expect.stringContaining("missing the tiered paraphrase structure"),
+        });
+    });
+
+    it("accepts full-state historian output on a later recomp pass", async () => {
+        useTempDataHome("magic-recomp-full-state-");
+        createOpenCodeDb("ses-recomp-full-state", [
+            { id: "m-1", role: "user", text: "one" },
+            { id: "m-2", role: "assistant", text: "two" },
+            { id: "m-3", role: "user", text: "three" },
+            { id: "m-4", role: "user", text: "protected 1" },
+            { id: "m-5", role: "user", text: "protected 2" },
+            { id: "m-6", role: "user", text: "protected 3" },
+            { id: "m-7", role: "user", text: "protected 4" },
+            { id: "m-8", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        const prompt = mock(async () => ({}));
+        // Discriminate historian-output fetches (pass `query.directory`) from
+        // notification model-pinning reads (resolvePromptContext: `query.limit`
+        // only, no directory) so the historian-pass counter is accurate.
+        let historianFetches = 0;
+        const messages = mock(async (input: { query?: { directory?: string } }) => {
+            if (!input?.query?.directory) return { data: [] };
+            historianFetches += 1;
+            if (historianFetches === 1) {
+                return {
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="2" title="Pass one"><p1>Initial summary</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                };
+            }
+
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: 2 } },
+                        parts: [
+                            {
+                                type: "text",
+                                text: `<compartment start="3" end="3" title="Pass two"><p1>Next summary</p1></compartment>\n<PROJECT_RULES>\n* Rewritten fact.\n</PROJECT_RULES>`,
+                            },
+                        ],
+                    },
+                ],
+            };
+        });
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/recomp-full-state" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-recomp-full-state" } })),
+                prompt,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId: "ses-recomp-full-state",
+            // Budget sized so chunking packs ~2 messages per pass with the real
+            // Claude tokenizer (ai-tokenizer). The previous value of 7 relied on
+            // the `/3.5` heuristic fallback and no longer reproduces a 2-pass
+            // split with accurate tokenization.
+            historianChunkTokens: 13,
+            directory: "/tmp",
+        });
+
+        expect(result).toContain("Rebuilt 2 compartments across 2 historian passes");
+        expect(getCompartments(db, "ses-recomp-full-state")).toEqual([
+            expect.objectContaining({
+                startMessage: 1,
+                endMessage: 2,
+                content: "Initial summary",
+            }),
+            expect.objectContaining({ startMessage: 3, endMessage: 3, content: "Next summary" }),
+        ]);
+        // v2: recomp is structural only — no session_facts written.
+        expect(getSessionFacts(db, "ses-recomp-full-state")).toHaveLength(0);
+    });
+
+    it("returns a timeout failure and keeps progress visible when a historian pass hangs", async () => {
+        useTempDataHome("magic-recomp-timeout-");
+        createOpenCodeDb("ses-recomp-timeout", [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "eligible three" },
+            { id: "m-4", role: "assistant", text: "eligible four" },
+            { id: "m-5", role: "user", text: "protected 1" },
+            { id: "m-6", role: "user", text: "protected 2" },
+            { id: "m-7", role: "user", text: "protected 3" },
+            { id: "m-8", role: "user", text: "protected 4" },
+            { id: "m-9", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        const prompt = mock(async (input: { body?: { noReply?: boolean } }) => {
+            if (input.body?.noReply === true) {
+                return {};
+            }
+            return {};
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/recomp-timeout" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-timeout" } })),
+                prompt,
+                messages: mock(async () => ({ data: [] })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const promptSyncSpy = spyOn(shared, "promptSyncWithModelSuggestionRetry").mockRejectedValue(
+            new Error("prompt timed out after 300000ms"),
+        );
+
+        let result = "";
+        try {
+            result = await withImmediateTimeouts(async () => {
+                return executeContextRecomp({
+                    client,
+                    db,
+                    sessionId: "ses-recomp-timeout",
+                    historianChunkTokens: 10_000,
+                    historianTimeoutMs: 300_000,
+                    directory: "/tmp",
+                });
+            });
+        } finally {
+            promptSyncSpy.mockRestore();
+        }
+
+        expect(result).toContain("prompt timed out after 300000ms");
+        expect(getIgnoredNotificationTexts(prompt)).toContain(
+            "## Magic Recomp\n\nHistorian pass 1, attempt 1 started for messages 1-4.",
+        );
+        expect(getCompartments(db, "ses-recomp-timeout")).toHaveLength(0);
+    });
+
+    it("shrinks the failing chunk after invalid repair output and continues recomp", async () => {
+        useTempDataHome("magic-recomp-smaller-chunk-");
+        createOpenCodeDb("ses-recomp-smaller", [
+            { id: "m-1", role: "user", text: "eligible one with a bit more text" },
+            { id: "m-2", role: "assistant", text: "eligible two with a bit more text" },
+            { id: "m-3", role: "user", text: "eligible three with a bit more text" },
+            { id: "m-4", role: "assistant", text: "eligible four with a bit more text" },
+            { id: "m-5", role: "user", text: "eligible five with a bit more text" },
+            { id: "m-6", role: "assistant", text: "eligible six with a bit more text" },
+            { id: "m-7", role: "user", text: "protected 1" },
+            { id: "m-8", role: "user", text: "protected 2" },
+            { id: "m-9", role: "user", text: "protected 3" },
+            { id: "m-10", role: "user", text: "protected 4" },
+            { id: "m-11", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        let lastHistorianPrompt = "";
+        let historianAttempt = 0;
+        const prompt = mock(
+            async (input: { body?: { noReply?: boolean; parts?: Array<{ text?: string }> } }) => {
+                if (input.body?.noReply !== true) {
+                    lastHistorianPrompt = input.body?.parts?.[0]?.text ?? "";
+                }
+                return {};
+            },
+        );
+        const messages = mock(async () => {
+            historianAttempt += 1;
+            const ordinals = [...lastHistorianPrompt.matchAll(/\[(\d+)(?:-(\d+))?\]/g)]
+                .flatMap((match) => [match[1], match[2] ?? match[1]])
+                .map((value) => Number(value))
+                .filter((value) => Number.isFinite(value));
+            const chunkStart = ordinals.length > 0 ? Math.min(...ordinals) : 1;
+            const chunkEnd = ordinals.length > 0 ? Math.max(...ordinals) : 1;
+
+            if (chunkStart === 1 && chunkEnd === 6) {
+                return {
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: historianAttempt } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="1" title="Bad one"><p1>One</p1></compartment>\n<compartment start="3" end="6" title="Bad two"><p1>Two</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                };
+            }
+
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: historianAttempt } },
+                        parts: [
+                            {
+                                type: "text",
+                                text: `<compartment start="${chunkStart}" end="${chunkEnd}" title="Chunk ${chunkStart}-${chunkEnd}"><p1>Chunk ${chunkStart}-${chunkEnd} summary</p1></compartment>\n<WORKFLOW_RULES>\n* Final fact.\n</WORKFLOW_RULES>`,
+                            },
+                        ],
+                    },
+                ],
+            };
+        });
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/recomp-smaller" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-smaller" } })),
+                prompt,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId: "ses-recomp-smaller",
+            historianChunkTokens: 80,
+            directory: "/tmp",
+        });
+
+        // Both full-size attempts omit narrative ordinal 2, so recomp must shrink
+        // the chunk rather than absorbing the gap.
+        expect(result).toContain("## Magic Recomp");
+        expect(result).toContain("Covered raw history 1-6");
+        expect(getIgnoredNotificationTexts(prompt)).toEqual(
+            expect.arrayContaining([
+                "## Magic Recomp\n\nHistorian pass 1, attempt 1 started for messages 1-6.",
+            ]),
+        );
+        expect(getCompartments(db, "ses-recomp-smaller")).toEqual([
+            expect.objectContaining({ startMessage: 1, endMessage: 3 }),
+            expect.objectContaining({ startMessage: 4, endMessage: 6 }),
+        ]);
+    });
+
+    it("fails closed when shrinking cannot produce a smaller effective chunk", async () => {
+        useTempDataHome("magic-recomp-no-smaller-");
+        createOpenCodeDb("ses-recomp-no-smaller", [
+            { id: "m-1", role: "assistant", text: "one" },
+            { id: "m-2", role: "assistant", text: "two" },
+            { id: "m-3", role: "assistant", text: "three" },
+            { id: "m-4", role: "assistant", text: "four" },
+            { id: "m-5", role: "assistant", text: "five" },
+            { id: "m-6", role: "assistant", text: "six" },
+            { id: "m-7", role: "user", text: "protected 1" },
+            { id: "m-8", role: "user", text: "protected 2" },
+            { id: "m-9", role: "user", text: "protected 3" },
+            { id: "m-10", role: "user", text: "protected 4" },
+            { id: "m-11", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        let lastHistorianPrompt = "";
+        const prompt = mock(
+            async (input: { body?: { noReply?: boolean; parts?: Array<{ text?: string }> } }) => {
+                if (input.body?.noReply !== true) {
+                    lastHistorianPrompt = input.body?.parts?.[0]?.text ?? "";
+                }
+                return {};
+            },
+        );
+        const messages = mock(async () => {
+            const ordinals = [...lastHistorianPrompt.matchAll(/\[(\d+)(?:-(\d+))?\]/g)]
+                .flatMap((match) => [match[1], match[2] ?? match[1]])
+                .map((value) => Number(value))
+                .filter((value) => Number.isFinite(value));
+            const chunkStart = ordinals.length > 0 ? Math.min(...ordinals) : 1;
+            const chunkEnd = ordinals.length > 0 ? Math.max(...ordinals) : 1;
+
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: messages.mock.calls.length } },
+                        parts: [
+                            {
+                                type: "text",
+                                text: `<compartment start="${chunkStart}" end="${chunkStart + 2}" title="Bad one"><p1>One</p1></compartment>\n<compartment start="${chunkStart + 1}" end="${chunkEnd}" title="Bad two"><p1>Two</p1></compartment>`,
+                            },
+                        ],
+                    },
+                ],
+            };
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/recomp-no-smaller" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-no-smaller" } })),
+                prompt,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId: "ses-recomp-no-smaller",
+            historianChunkTokens: 80,
+            directory: "/tmp",
+        });
+
+        // Overlapping compartments are NOT healed by gap healing, so retry/shrink triggers.
+        expect(result).toContain("Recomp failed while rebuilding messages 1-6");
+        expect(getIgnoredNotificationTexts(prompt)).toEqual(
+            expect.arrayContaining([
+                "## Magic Recomp\n\nHistorian pass 1, attempt 1 started for messages 1-6.",
+                expect.stringContaining(
+                    "Historian pass 1, attempt 1 is continuing with a repair retry for messages 1-6.",
+                ),
+            ]),
+        );
+        expect(
+            getIgnoredNotificationTexts(prompt).some((text) =>
+                text.includes("Retrying with a smaller chunk ending at"),
+            ),
+        ).toBe(false);
+        expect(getCompartments(db, "ses-recomp-no-smaller")).toHaveLength(0);
+        expect(getSessionFacts(db, "ses-recomp-no-smaller")).toHaveLength(0);
+    });
+
+    it("resets to the original token budget after a successful smaller-chunk pass", async () => {
+        useTempDataHome("magic-recomp-budget-reset-");
+        createOpenCodeDb("ses-recomp-budget-reset", [
+            { id: "m-1", role: "user", text: "short one" },
+            { id: "m-2", role: "assistant", text: "short two" },
+            { id: "m-3", role: "user", text: "short three" },
+            { id: "m-4", role: "assistant", text: "short four" },
+            { id: "m-5", role: "user", text: "short five" },
+            { id: "m-6", role: "assistant", text: "short six" },
+            {
+                id: "m-7",
+                role: "user",
+                text: "this message is intentionally much longer so only the original budget can still include it after the smaller split succeeds",
+            },
+            { id: "m-8", role: "user", text: "protected 1" },
+            { id: "m-9", role: "user", text: "protected 2" },
+            { id: "m-10", role: "user", text: "protected 3" },
+            { id: "m-11", role: "user", text: "protected 4" },
+            { id: "m-12", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        let lastHistorianPrompt = "";
+        const prompt = mock(
+            async (input: { body?: { noReply?: boolean; parts?: Array<{ text?: string }> } }) => {
+                if (input.body?.noReply !== true) {
+                    lastHistorianPrompt = input.body?.parts?.[0]?.text ?? "";
+                }
+                return {};
+            },
+        );
+        const messages = mock(async () => {
+            const ordinals = [...lastHistorianPrompt.matchAll(/\[(\d+)(?:-(\d+))?\]/g)]
+                .flatMap((match) => [match[1], match[2] ?? match[1]])
+                .map((value) => Number(value))
+                .filter((value) => Number.isFinite(value));
+            const chunkStart = ordinals.length > 0 ? Math.min(...ordinals) : 1;
+            const chunkEnd = ordinals.length > 0 ? Math.max(...ordinals) : 1;
+
+            if (chunkStart === 1 && chunkEnd === 6) {
+                return {
+                    data: [
+                        {
+                            info: {
+                                role: "assistant",
+                                time: { created: messages.mock.calls.length },
+                            },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="1" title="Bad one"><p1>One</p1></compartment>\n<compartment start="3" end="6" title="Bad two"><p1>Two</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                };
+            }
+
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: messages.mock.calls.length } },
+                        parts: [
+                            {
+                                type: "text",
+                                text: `<compartment start="${chunkStart}" end="${chunkEnd}" title="Chunk ${chunkStart}-${chunkEnd}"><p1>Chunk ${chunkStart}-${chunkEnd} summary</p1></compartment>\n<WORKFLOW_RULES>\n* Final fact.\n</WORKFLOW_RULES>`,
+                            },
+                        ],
+                    },
+                ],
+            };
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/recomp-budget-reset" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-budget-reset" } })),
+                prompt,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        const result = await executeContextRecomp({
+            client,
+            db,
+            sessionId: "ses-recomp-budget-reset",
+            historianChunkTokens: 60,
+            directory: "/tmp",
+        });
+
+        // Invalid full-size attempts force a smaller chunk; a successful smaller
+        // pass must not permanently reduce the budget for the following pass.
+        expect(result).toContain("Covered raw history 1-7");
+        expect(getIgnoredNotificationTexts(prompt)).toEqual(
+            expect.arrayContaining([
+                "## Magic Recomp\n\nHistorian pass 1, attempt 1 started for messages 1-6.",
+                "## Magic Recomp\n\nHistorian pass 2, attempt 1 started for messages 5-7.",
+            ]),
+        );
+    });
+});
+
+function useTempDataHome(prefix: string): void {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    process.env.XDG_DATA_HOME = dir;
+}
+
+function createOpenCodeDb(
+    sessionId: string,
+    messages: Array<{
+        id: string;
+        role: string;
+        text?: string;
+        toolOnly?: boolean;
+        parts?: unknown[];
+    }>,
+): void {
+    const dbPath = join(process.env.XDG_DATA_HOME!, "opencode", "opencode.db");
+    mkdirSync(dirname(dbPath), { recursive: true });
+    const db = new Database(dbPath);
+    try {
+        db.exec(`
+      CREATE TABLE IF NOT EXISTS message (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL,
+        time_updated INTEGER NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS part (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL,
+        time_updated INTEGER NOT NULL,
+        data TEXT NOT NULL
+      );
+    `);
+
+        const insertMessage = db.prepare(
+            "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+        );
+        const insertPart = db.prepare(
+            "INSERT INTO part (message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+        );
+
+        messages.forEach((message, index) => {
+            const timestamp = index + 1;
+            insertMessage.run(
+                message.id,
+                sessionId,
+                timestamp,
+                timestamp,
+                JSON.stringify({ id: message.id, role: message.role, sessionID: sessionId }),
+            );
+            if (message.parts) {
+                for (const part of message.parts) {
+                    insertPart.run(
+                        message.id,
+                        sessionId,
+                        timestamp,
+                        timestamp,
+                        JSON.stringify(part),
+                    );
+                }
+                return;
+            }
+            if (message.toolOnly) {
+                insertPart.run(
+                    message.id,
+                    sessionId,
+                    timestamp,
+                    timestamp,
+                    JSON.stringify({ type: "tool", callID: `call-${index}` }),
+                );
+            }
+            if (message.text) {
+                insertPart.run(
+                    message.id,
+                    sessionId,
+                    timestamp,
+                    timestamp,
+                    JSON.stringify({ type: "text", text: message.text }),
+                );
+            }
+        });
+    } finally {
+        closeQuietly(db);
+    }
+}
+
+function getIgnoredNotificationTexts(promptMock: ReturnType<typeof mock>): string[] {
+    return promptMock.mock.calls
+        .map(
+            (call) => call[0] as { body?: { noReply?: boolean; parts?: Array<{ text?: string }> } },
+        )
+        .filter((input) => input.body?.noReply === true)
+        .map((input) => input.body?.parts?.[0]?.text ?? "");
+}
+
+function getHistorianPromptCount(promptMock: ReturnType<typeof mock>): number {
+    return promptMock.mock.calls
+        .map((call) => call[0] as { body?: { noReply?: boolean } })
+        .filter((input) => input.body?.noReply !== true).length;
+}
+
+async function withImmediateTimeouts<T>(callback: () => Promise<T>): Promise<T> {
+    const originalSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, _timeout?: number, ...args: unknown[]) => {
+        queueMicrotask(() => {
+            if (typeof handler === "function") {
+                handler(...args);
+            }
+        });
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as unknown as typeof setTimeout;
+
+    try {
+        return await callback();
+    } finally {
+        globalThis.setTimeout = originalSetTimeout;
+    }
+}
+
+function _getHistorianDumpContents(sessionId: string): string[] {
+    const dumpDir = join(tmpdir(), "magic-context-historian");
+    try {
+        return readdirSync(dumpDir)
+            .filter((name) => name.includes(sessionId))
+            .map((name) => readFileSync(join(dumpDir, name), "utf8"));
+    } catch {
+        return [];
+    }
+}
+
+describe("runCompartmentAgent", () => {
+    it("clears compartment-in-progress when another process holds the lease", () => {
+        useTempDataHome("compartment-runner-lease-denied-");
+        const db = openDatabase();
+        const holderId = "external-holder";
+        expect(acquireCompartmentLease(db, "ses-lease-denied", holderId)).not.toBeNull();
+        updateSessionMeta(db, "ses-lease-denied", { compartmentInProgress: true });
+
+        try {
+            startCompartmentAgent({
+                client: {} as PluginContext["client"],
+                db,
+                sessionId: "ses-lease-denied",
+                historianChunkTokens: 10_000,
+                directory: "/tmp",
+            });
+
+            expect(getActiveCompartmentRun("ses-lease-denied")).toBeUndefined();
+            expect(getOrCreateSessionMeta(db, "ses-lease-denied").compartmentInProgress).toBe(
+                false,
+            );
+        } finally {
+            releaseCompartmentLease(db, "ses-lease-denied", holderId);
+        }
+    });
+
+    it("skips trigger-fired compartment starts while /ctx-wrapup is active", () => {
+        useTempDataHome("compartment-runner-wrapup-active-");
+        const db = openDatabase();
+        const sessionId = "ses-wrapup-active-skip";
+        acquireWrapupInProgress(db, sessionId, {
+            holderId: "wrapup-holder",
+            messagesToKeep: 20,
+            anchorRawMessageCount: 100,
+            targetEligibleEndOrdinal: 80,
+            lastCompartmentEnd: 0,
+            chunkIndex: 0,
+            expectedChunks: 1,
+        });
+        updateSessionMeta(db, sessionId, { compartmentInProgress: true });
+
+        startCompartmentAgent({
+            client: {} as PluginContext["client"],
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        const leaseRow = db
+            .prepare(
+                "SELECT holder_id AS holderId FROM compartment_state_lease WHERE session_id = ?",
+            )
+            .get(sessionId) as { holderId: string } | null;
+        expect(leaseRow).toBeNull();
+        expect(getActiveCompartmentRun(sessionId)).toBeUndefined();
+        expect(getOrCreateSessionMeta(db, sessionId).compartmentInProgress).toBe(false);
+    });
+
+    it("allows trigger-fired compartment starts after an expired /ctx-wrapup marker", async () => {
+        useTempDataHome("compartment-runner-wrapup-expired-");
+        const sessionId = "ses-wrapup-expired-start";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        acquireWrapupInProgress(
+            db,
+            sessionId,
+            {
+                holderId: "expired-wrapup-holder",
+                messagesToKeep: 20,
+                anchorRawMessageCount: 100,
+                targetEligibleEndOrdinal: 80,
+                lastCompartmentEnd: 0,
+                chunkIndex: 0,
+                expectedChunks: 1,
+            },
+            Date.now() - 10 * 60_000,
+        );
+        updateSessionMeta(db, sessionId, { compartmentInProgress: true });
+        const createSession = mock(async () => ({ data: { id: "ses-agent-expired" } }));
+        const prompt = mock(async () => ({}));
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/wrapup-expired" } })),
+                create: createSession,
+                prompt,
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: '<compartment start="1" end="2" title="Expired marker"><p1>Expired marker run.</p1></compartment>',
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        startCompartmentAgent({
+            client,
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+        const active = getActiveCompartmentRun(sessionId);
+        expect(active).toBeDefined();
+        await active?.promise;
+
+        expect(createSession).toHaveBeenCalledTimes(1);
+        expect(prompt).toHaveBeenCalled();
+    });
+
+    it("clears compartment-in-progress after successful compartment generation", async () => {
+        useTempDataHome("compartment-runner-reset-");
+        createOpenCodeDb("ses-1", [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        updateSessionMeta(db, "ses-1", {
+            timesExecuteThresholdReached: 3,
+            compartmentInProgress: true,
+        });
+
+        const getSession = mock(async () => ({ data: { directory: "/tmp/parent" } }));
+        const createSession = mock(
+            async (_input: {
+                body: { parentID: string; title: string };
+                query: { directory: string };
+            }) => ({ data: { id: "ses-agent" } }),
+        );
+        const promptSession = mock(
+            async (_input: { body: { agent: string; parts: Array<{ text: string }> } }) => ({}),
+        );
+        const messages = mock(async () => ({
+            data: [
+                {
+                    info: { role: "assistant", time: { created: 1 } },
+                    parts: [
+                        {
+                            type: "text",
+                            text: `<compartment start="1" end="2" title="Docs and setup"><p1>Summary content</p1></compartment>\n<WORKFLOW_RULES>\n* Commit to feat first\n</WORKFLOW_RULES>`,
+                        },
+                    ],
+                },
+            ],
+        }));
+        const deleteSession = mock(async () => ({}));
+
+        const client = {
+            session: {
+                get: getSession,
+                create: createSession,
+                prompt: promptSession,
+                messages,
+                delete: deleteSession,
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-1",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        const meta = getOrCreateSessionMeta(db, "ses-1");
+        expect(meta.compartmentInProgress).toBe(false);
+        const compartments = getCompartments(db, "ses-1");
+        expect(compartments).toHaveLength(1);
+        expect(compartments[0]?.startMessageId).toBe("m-1");
+        expect(compartments[0]?.endMessageId).toBe("m-2");
+        expect(createSession.mock.calls[0]?.[0]).toEqual({
+            body: { parentID: "ses-1", title: "magic-context-compartment" },
+            query: { directory: "/tmp/parent" },
+        });
+        expect(promptSession.mock.calls[0]?.[0]?.body.agent).toBe("historian");
+    });
+
+    it("keeps a committed publish succeeded and signaled when post-commit project registration throws", async () => {
+        useTempDataHome("compartment-runner-post-commit-registration-throw-");
+        createOpenCodeDb("ses-post-commit-registration", [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        const projectDirectory = "/tmp/post-commit-registration";
+        const onPublished = mock(() => undefined);
+        const ensureProjectRegistered = mock(async () => {
+            throw new Error("embedding provider unavailable");
+        });
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: projectDirectory } })),
+                create: mock(async () => ({ data: { id: "ses-agent-post-commit" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="2" title="Published"><p1>Summary</p1></compartment>\n<PROJECT_RULES>\n* Durable fact survives registration outage.\n</PROJECT_RULES>`,
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-post-commit-registration",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+            ensureProjectRegistered,
+            onCompartmentStatePublished: onPublished,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(getCompartments(db, "ses-post-commit-registration")).toHaveLength(1);
+        expect(loadProtectedTailMeta(db, "ses-post-commit-registration").priorBoundaryOrdinal).toBe(
+            3,
+        );
+        expect(onPublished).toHaveBeenCalledWith("ses-post-commit-registration");
+        expect(
+            getOrCreateSessionMeta(db, "ses-post-commit-registration").compartmentInProgress,
+        ).toBe(false);
+        expect(
+            getMemoriesByProject(db, resolveProjectIdentity(projectDirectory)).map(
+                (memory) => memory.content,
+            ),
+        ).toContain("Durable fact survives registration outage.");
+        expect(
+            db
+                .prepare(
+                    "SELECT status FROM historian_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                )
+                .get("ses-post-commit-registration"),
+        ).toEqual({ status: "success" });
+    });
+
+    it("rolls back compartments and boundary when durable fact insertion fails inside publish tx", async () => {
+        useTempDataHome("compartment-runner-fact-insert-rollback-");
+        createOpenCodeDb("ses-fact-insert-rollback", [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        db.exec(
+            "CREATE TRIGGER fail_memory_insert BEFORE INSERT ON memories BEGIN SELECT RAISE(ABORT, 'memory insert fail'); END;",
+        );
+        const onPublished = mock(() => undefined);
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/fact-insert-rollback" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-fact-insert" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="2" title="Should roll back"><p1>Summary</p1></compartment>\n<PROJECT_RULES>\n* This fact insert fails.\n</PROJECT_RULES>`,
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-fact-insert-rollback",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+            onCompartmentStatePublished: onPublished,
+        });
+
+        expect(getCompartments(db, "ses-fact-insert-rollback")).toEqual([]);
+        expect(
+            getMemoriesByProject(db, resolveProjectIdentity("/tmp/fact-insert-rollback")),
+        ).toEqual([]);
+        expect(loadProtectedTailMeta(db, "ses-fact-insert-rollback").priorBoundaryOrdinal).toBe(1);
+        expect(onPublished).not.toHaveBeenCalled();
+        expect(
+            db
+                .prepare(
+                    "SELECT status FROM historian_runs WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+                )
+                .get("ses-fact-insert-rollback"),
+        ).toEqual({ status: "failed" });
+    });
+
+    it("retries transient historian prompt failures on the same child session", async () => {
+        useTempDataHome("compartment-runner-retry-");
+        createOpenCodeDb("ses-retry", [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        const createSession = mock(async () => ({ data: { id: "ses-agent-retry" } }));
+        const promptSession = mock(async () => ({}));
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/retry" } })),
+                create: createSession,
+                prompt: promptSession,
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="2" title="Recovered"><p1>Summary</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        let promptSyncCallCount = 0;
+        const promptSyncSpy = spyOn(
+            shared,
+            "promptSyncWithModelSuggestionRetry",
+        ).mockImplementation(async () => {
+            promptSyncCallCount += 1;
+            if (promptSyncCallCount < 3) {
+                throw new Error("429 rate limit");
+            }
+        });
+
+        try {
+            await withImmediateTimeouts(async () => {
+                await runCompartmentAgentWithLease({
+                    client,
+                    db,
+                    sessionId: "ses-retry",
+                    historianChunkTokens: 10_000,
+                    directory: "/tmp",
+                });
+            });
+        } finally {
+            promptSyncSpy.mockRestore();
+        }
+
+        expect(createSession).toHaveBeenCalledTimes(1);
+        expect(promptSyncCallCount).toBe(3);
+        expect(getCompartments(db, "ses-retry")).toEqual([
+            expect.objectContaining({ title: "Recovered", startMessage: 1, endMessage: 2 }),
+        ]);
+    });
+
+    it("falls back to the primary session model after historian and repair output both fail validation", async () => {
+        useTempDataHome("compartment-runner-fallback-");
+        createOpenCodeDb("ses-fallback", [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        const promptSession = mock(async () => ({}));
+        const messages = mock(async () => {
+            const callIndex = messages.mock.calls.length;
+            if (callIndex < 3) {
+                return {
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: callIndex } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="3" end="4" title="Bad"><p1>Bad</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                };
+            }
+
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: callIndex } },
+                        parts: [
+                            {
+                                type: "text",
+                                text: `<compartment start="1" end="2" title="Fallback"><p1>Recovered</p1></compartment>`,
+                            },
+                        ],
+                    },
+                ],
+            };
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/fallback" } })),
+                create: mock(async () => ({
+                    data: { id: `ses-agent-${messages.mock.calls.length}` },
+                })),
+                prompt: promptSession,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-fallback",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+            fallbackModelId: "openai/gpt-4o",
+        });
+
+        const fallbackPrompts = promptSession.mock.calls as unknown as Array<
+            [
+                {
+                    body?: {
+                        agent?: string;
+                        model?: { providerID: string; modelID: string };
+                    };
+                },
+            ]
+        >;
+        expect(fallbackPrompts[0]?.[0]?.body?.agent).toBe("historian");
+        expect(fallbackPrompts[1]?.[0]?.body?.agent).toBe("historian");
+        // Fallback now includes both agent (for system prompt) and model (for override)
+        expect(fallbackPrompts[2]?.[0]?.body?.agent).toBe("historian");
+        expect(fallbackPrompts[2]?.[0]?.body?.model).toEqual({
+            providerID: "openai",
+            modelID: "gpt-4o",
+        });
+        expect(getCompartments(db, "ses-fallback")).toEqual([
+            expect.objectContaining({ title: "Fallback", startMessage: 1, endMessage: 2 }),
+        ]);
+    });
+
+    it("escalates through configured fallback_models before the session-model last resort", async () => {
+        useTempDataHome("compartment-runner-chain-");
+        createOpenCodeDb("ses-chain", [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        // Primary (call 0) + repair (call 1) both return invalid output → escalate.
+        // First configured fallback "anthropic/claude-sonnet-4-6" (call 2) returns
+        // a VALID compartment. The session-model last resort "openai/gpt-4o" must
+        // therefore NEVER be reached.
+        const promptSession = mock(async () => ({}));
+        const messages = mock(async () => {
+            const callIndex = messages.mock.calls.length;
+            if (callIndex < 3) {
+                return {
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: callIndex } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="9" end="9" title="Bad"><p1>Out of range</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                };
+            }
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: callIndex } },
+                        parts: [
+                            {
+                                type: "text",
+                                text: `<compartment start="1" end="2" title="ChainFallback"><p1>Recovered via sonnet</p1></compartment>`,
+                            },
+                        ],
+                    },
+                ],
+            };
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/chain" } })),
+                create: mock(async () => ({
+                    data: { id: `ses-agent-${messages.mock.calls.length}` },
+                })),
+                prompt: promptSession,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-chain",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+            fallbackModels: ["anthropic/claude-sonnet-4-6"],
+            fallbackModelId: "openai/gpt-4o",
+        });
+
+        const calls = promptSession.mock.calls as unknown as Array<
+            [{ body?: { model?: { providerID: string; modelID: string } } }]
+        >;
+        // Call 0 (primary) + call 1 (repair): no model override (agent default).
+        expect(calls[0]?.[0]?.body?.model).toBeUndefined();
+        expect(calls[1]?.[0]?.body?.model).toBeUndefined();
+        // Call 2: the FIRST configured fallback (sonnet), not the session model.
+        expect(calls[2]?.[0]?.body?.model).toEqual({
+            providerID: "anthropic",
+            modelID: "claude-sonnet-4-6",
+        });
+        // Session-model last resort (gpt-4o) must never be reached.
+        const usedGpt4o = calls.some(
+            (c) =>
+                c[0]?.body?.model?.providerID === "openai" &&
+                c[0]?.body?.model?.modelID === "gpt-4o",
+        );
+        expect(usedGpt4o).toBe(false);
+        expect(getCompartments(db, "ses-chain")).toEqual([
+            expect.objectContaining({ title: "ChainFallback", startMessage: 1, endMessage: 2 }),
+        ]);
+    });
+
+    it("starts new summarization after the last stored raw compartment end", async () => {
+        useTempDataHome("compartment-runner-offset-");
+        createOpenCodeDb("ses-2", [
+            { id: "m-1", role: "user", text: "zero" },
+            { id: "m-2", role: "assistant", text: "one" },
+            { id: "m-3", role: "user", text: "two" },
+            { id: "m-4", role: "assistant", text: "three" },
+            { id: "m-5", role: "user", text: "protected 1" },
+            { id: "m-6", role: "user", text: "protected 2" },
+            { id: "m-7", role: "user", text: "protected 3" },
+            { id: "m-8", role: "user", text: "protected 4" },
+            { id: "m-9", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        replaceAllCompartments(db, "ses-2", [
+            {
+                sequence: 0,
+                startMessage: 1,
+                endMessage: 2,
+                startMessageId: "m-1",
+                endMessageId: "m-2",
+                title: 'Earlier "work"',
+                content: "Old summary",
+            },
+        ]);
+        replaceAllCompartmentState(
+            db,
+            "ses-2",
+            [
+                {
+                    sequence: 0,
+                    startMessage: 1,
+                    endMessage: 2,
+                    startMessageId: "m-1",
+                    endMessageId: "m-2",
+                    title: 'Earlier "work"',
+                    content: "Old summary",
+                },
+            ],
+            [{ category: "WORKFLOW_RULES", content: "Commit to feat first." }],
+        );
+
+        const getSession = mock(async () => ({ data: { directory: "/tmp/parent-2" } }));
+        const createSession = mock(
+            async (_input: {
+                body: { parentID: string; title: string };
+                query: { directory: string };
+            }) => ({ data: { id: "ses-agent-2" } }),
+        );
+        const promptSession = mock(async (input: { body: { parts: Array<{ text: string }> } }) => ({
+            promptText: input.body.parts[0]?.text,
+        }));
+        const messages = mock(async () => ({
+            data: [
+                {
+                    info: { role: "assistant", time: { created: 1 } },
+                    parts: [
+                        {
+                            type: "text",
+                            text: `<compartment start="3" end="4" title="Later work"><p1>Later summary</p1></compartment>`,
+                        },
+                    ],
+                },
+            ],
+        }));
+        const deleteSession = mock(async () => ({}));
+
+        const client = {
+            session: {
+                get: getSession,
+                create: createSession,
+                prompt: promptSession,
+                messages,
+                delete: deleteSession,
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-2",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        const sentPrompt = promptSession.mock.calls[0]?.[0]?.body.parts[0]?.text ?? "";
+        expect(sentPrompt).toContain("Messages 3-4:");
+        expect(sentPrompt).toContain("[3] U: two");
+        expect(sentPrompt).toContain("[4] A: three");
+        expect(sentPrompt).not.toContain("msg_");
+        // v2: the unbounded existing_state dump is gone. Prior compartments now
+        // appear in the bounded <session_references> recency block (last 6),
+        // and facts are no longer dumped/replaced — they dedup against
+        // <project-memory>. The prior compartment is still shown for continuity.
+        expect(sentPrompt).toContain("<session_references>");
+        expect(sentPrompt).toContain('start="1" end="2"');
+        expect(sentPrompt).toContain('title="Earlier &quot;work&quot;"');
+        // v2: no existing_state fact-normalization block, no raw session_facts dump.
+        expect(sentPrompt).not.toContain(
+            "Existing state (read-only context for continuity and fact normalization",
+        );
+        expect(sentPrompt).not.toContain(
+            "Rewrite all facts below into canonical present-tense operational form",
+        );
+        // The chunk only covers messages 3-4, so message 1's raw text never appears.
+        expect(sentPrompt).not.toContain("[1] U: zero");
+
+        const compartments = getCompartments(db, "ses-2");
+        expect(compartments).toHaveLength(2);
+        expect(compartments[1]?.startMessage).toBe(3);
+        expect(compartments[1]?.endMessage).toBe(4);
+        expect(compartments[1]?.startMessageId).toBe("m-3");
+        expect(compartments[1]?.endMessageId).toBe("m-4");
+        expect(createSession.mock.calls[0]?.[0]).toEqual({
+            body: { parentID: "ses-2", title: "magic-context-compartment" },
+            query: { directory: "/tmp/parent-2" },
+        });
+    });
+
+    it("queues drops for text, file, and tool tags covered by stored compartments", async () => {
+        useTempDataHome("compartment-runner-tag-drops-");
+        createOpenCodeDb("ses-tag-drops", [
+            {
+                id: "m-1",
+                role: "user",
+                parts: [
+                    { type: "text", text: "User note" },
+                    { type: "file", url: "file:///tmp/demo.txt" },
+                ],
+            },
+            {
+                id: "m-2",
+                role: "assistant",
+                parts: [
+                    { type: "text", text: "Assistant context" },
+                    { type: "tool", callID: "call-1", state: { output: "Tool output" } },
+                ],
+            },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        const messages = [
+            {
+                info: { id: "m-1", role: "user", sessionID: "ses-tag-drops" },
+                parts: [
+                    { type: "text", text: "User note" },
+                    { type: "file", url: "file:///tmp/demo.txt" },
+                ],
+            },
+            {
+                info: { id: "m-2", role: "assistant" },
+                parts: [
+                    { type: "text", text: "Assistant context" },
+                    { type: "tool", callID: "call-1", state: { output: "Tool output" } },
+                ],
+            },
+        ];
+        tagMessages("ses-tag-drops", messages, createTagger(), db);
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/tag-drops" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-tag-drops" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="2" title="Stored history"><p1>Stored summary</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-tag-drops",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        const activeTagIds = getTagsBySession(db, "ses-tag-drops")
+            .filter((tag) => tag.status === "active")
+            .map((tag) => tag.tagNumber)
+            .sort((left, right) => left - right);
+        const pendingDropIds = getPendingOps(db, "ses-tag-drops")
+            .map((op) => op.tagId)
+            .sort((left, right) => left - right);
+
+        expect(activeTagIds).toHaveLength(4);
+        expect(pendingDropIds).toEqual(activeTagIds);
+    });
+
+    it("returns early without calling historian when only protected tail history remains", async () => {
+        //#given: 3 messages, all 3 user turns — protected tail starts at ordinal 1, no eligible prefix
+        useTempDataHome("compartment-runner-protected-only-");
+        createOpenCodeDb("ses-protected-only", [
+            { id: "m-1", role: "user", text: "recent 1" },
+            { id: "m-2", role: "user", text: "recent 2" },
+            { id: "m-3", role: "user", text: "recent 3" },
+        ]);
+        const db = openDatabase();
+
+        const createSession = mock(async () => ({ data: { id: "ses-agent" } }));
+        const promptSession = mock(async () => ({}));
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp" } })),
+                create: createSession,
+                prompt: promptSession,
+                messages: mock(async () => ({ data: [] })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        //#when
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-protected-only",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        //#then: historian was never invoked
+        expect(createSession).not.toHaveBeenCalled();
+        expect(promptSession).not.toHaveBeenCalled();
+    });
+
+    it("sends only the eligible prefix (before protected tail) to historian", async () => {
+        //#given: 6 user turns — first is eligible, last 5 are protected
+        useTempDataHome("compartment-runner-eligible-prefix-");
+        createOpenCodeDb("ses-eligible-prefix", [
+            { id: "m-1", role: "user", text: "eligible turn" },
+            { id: "m-2", role: "assistant", text: "done" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        const getSession = mock(async () => ({ data: { directory: "/tmp" } }));
+        const createSession = mock(async () => ({ data: { id: "ses-agent-ep" } }));
+        const promptSession = mock(
+            async (_input: { body: { parts: Array<{ text: string }> } }) => ({}),
+        );
+        const messages = mock(async () => ({
+            data: [
+                {
+                    info: { role: "assistant", time: { created: 1 } },
+                    parts: [
+                        {
+                            type: "text",
+                            text: `<compartment start="1" end="2" title="Eligible work"><p1>Summary</p1></compartment>`,
+                        },
+                    ],
+                },
+            ],
+        }));
+        const deleteSession = mock(async () => ({}));
+        const client = {
+            session: {
+                get: getSession,
+                create: createSession,
+                prompt: promptSession,
+                messages,
+                delete: deleteSession,
+            },
+        } as unknown as PluginContext["client"];
+
+        //#when
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-eligible-prefix",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        //#then: historian prompt only contains the eligible prefix (m-1, m-2)
+        const sentPrompt = promptSession.mock.calls[0]?.[0]?.body.parts[0]?.text ?? "";
+        expect(sentPrompt).toContain("eligible turn");
+        expect(sentPrompt).not.toContain("protected 1");
+        expect(sentPrompt).not.toContain("protected 2");
+        expect(sentPrompt).not.toContain("protected 3");
+    });
+
+    it("skips historian and alerts when stored compartments are already invalid", async () => {
+        useTempDataHome("compartment-runner-invalid-existing-");
+        createOpenCodeDb("ses-invalid-existing", [
+            { id: "m-1", role: "user", text: "one" },
+            { id: "m-2", role: "assistant", text: "two" },
+            { id: "m-3", role: "user", text: "three" },
+            { id: "m-4", role: "assistant", text: "four" },
+            { id: "m-5", role: "user", text: "protected 1" },
+            { id: "m-6", role: "user", text: "protected 2" },
+            { id: "m-7", role: "user", text: "protected 3" },
+            { id: "m-8", role: "user", text: "protected 4" },
+            { id: "m-9", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        replaceAllCompartments(db, "ses-invalid-existing", [
+            {
+                sequence: 0,
+                startMessage: 1,
+                endMessage: 2,
+                startMessageId: "m-1",
+                endMessageId: "m-2",
+                title: "first",
+                content: "first summary",
+            },
+            {
+                sequence: 1,
+                startMessage: 4,
+                endMessage: 4,
+                startMessageId: "m-4",
+                endMessageId: "m-4",
+                title: "gap",
+                content: "gap summary",
+            },
+        ]);
+
+        const createSession = mock(async () => ({ data: { id: "ses-agent" } }));
+        const promptSession = mock(async () => ({}));
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp" } })),
+                create: createSession,
+                prompt: promptSession,
+                messages: mock(async () => ({ data: [] })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-invalid-existing",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(createSession).not.toHaveBeenCalled();
+        expect(getCompartments(db, "ses-invalid-existing")).toHaveLength(2);
+        // First failure on a fresh session → transient/reassuring framing (the
+        // escalated "needs attention" + error detail only appears once failures
+        // persist past HISTORIAN_PERSISTENT_FAILURE_THRESHOLD).
+        expect(getIgnoredNotificationTexts(promptSession)[0].toLowerCase()).toContain("transient");
+    });
+
+    it("rejects invalid historian output without replacing compartments or facts", async () => {
+        useTempDataHome("compartment-runner-invalid-output-");
+        createOpenCodeDb("ses-invalid-output", [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        replaceAllCompartmentState(
+            db,
+            "ses-invalid-output",
+            [],
+            [{ category: "CONSTRAINTS", content: "Existing fact stays." }],
+        );
+
+        const promptSession = mock(async () => ({}));
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp" } })),
+                create: mock(async () => ({ data: { id: "ses-agent" } })),
+                prompt: promptSession,
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: `<compartment start="1" end="1" title="Part one"><p1>One</p1></compartment>\n<compartment start="3" end="3" title="Part two"><p1>Two</p1></compartment>`,
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-invalid-output",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(getCompartments(db, "ses-invalid-output")).toHaveLength(0);
+        expect(getSessionFacts(db, "ses-invalid-output")).toEqual([
+            expect.objectContaining({ category: "CONSTRAINTS", content: "Existing fact stays." }),
+        ]);
+        // First failure → transient framing (no raw error / no action ask yet).
+        expect(getIgnoredNotificationTexts(promptSession)[0].toLowerCase()).toContain("transient");
+    });
+
+    it("alerts when historian model execution fails", async () => {
+        useTempDataHome("compartment-runner-model-failure-");
+        createOpenCodeDb("ses-model-failure", [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+
+        const promptSession = mock(async (input: { body?: { noReply?: boolean } }) => {
+            if (input.body?.noReply === true) {
+                return {};
+            }
+            throw new Error("historian model unavailable");
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp" } })),
+                create: mock(async () => ({ data: { id: "ses-agent" } })),
+                prompt: promptSession,
+                messages: mock(async () => ({ data: [] })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-model-failure",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(getCompartments(db, "ses-model-failure")).toHaveLength(0);
+        // First failure → transient framing. The raw error ("historian model
+        // unavailable") is still recorded in historian_failure_state for the
+        // escalated notice + doctor diagnostics; it just isn't surfaced to the
+        // user on a single transient blip.
+        expect(getIgnoredNotificationTexts(promptSession)[0].toLowerCase()).toContain("transient");
+    });
+
+    it("escalates the historian alert to an actionable notice after persistent failures", async () => {
+        useTempDataHome("compartment-runner-persistent-failure-");
+        createOpenCodeDb("ses-persistent-failure", [
+            { id: "m-1", role: "user", text: "eligible one" },
+            { id: "m-2", role: "assistant", text: "eligible two" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        // Pre-seed prior failures so this run crosses the persistent threshold.
+        incrementHistorianFailure(db, "ses-persistent-failure", "earlier failure");
+        incrementHistorianFailure(db, "ses-persistent-failure", "earlier failure");
+
+        const promptSession = mock(async (input: { body?: { noReply?: boolean } }) => {
+            if (input.body?.noReply === true) return {};
+            throw new Error("historian model unavailable");
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp" } })),
+                create: mock(async () => ({ data: { id: "ses-agent" } })),
+                prompt: promptSession,
+                messages: mock(async () => ({ data: [] })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-persistent-failure",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        const notice = getIgnoredNotificationTexts(promptSession)[0];
+        expect(notice).toContain("needs attention");
+        expect(notice).toContain("magic-context.jsonc");
+        // The escalated notice surfaces the real error for diagnosis.
+        expect(notice).toContain("historian model unavailable");
+    });
+
+    it("re-reads narrative-gap ordinals after validation rejection", async () => {
+        useTempDataHome("compartment-runner-gap-reread-");
+        const sessionId = "ses-gap-reread";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "narrative 1" },
+            { id: "m-2", role: "assistant", text: "narrative 2" },
+            { id: "m-3", role: "user", text: "narrative 3" },
+            { id: "m-4", role: "assistant", text: "narrative 4" },
+            { id: "m-5", role: "user", text: "narrative 5" },
+            { id: "m-6", role: "assistant", text: "narrative 6" },
+            { id: "m-7", role: "assistant", text: "narrative 7" },
+            { id: "m-8", role: "user", text: "protected 1" },
+            { id: "m-9", role: "user", text: "protected 2" },
+            { id: "m-10", role: "user", text: "protected 3" },
+            { id: "m-11", role: "user", text: "protected 4" },
+            { id: "m-12", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        const prompt = mock(async () => ({}));
+        let historianFetches = 0;
+        const messages = mock(async (input: { query?: { directory?: string } }) => {
+            if (!input.query?.directory) return { data: [] };
+            historianFetches += 1;
+            const text =
+                historianFetches <= 2
+                    ? '<output><compartment start="1" end="1" title="first"><p1>First</p1></compartment><compartment start="7" end="7" title="second"><p1>Second</p1></compartment></output>'
+                    : '<output><compartment start="1" end="7" title="re-read"><p1>All narrative preserved</p1></compartment></output>';
+            return {
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: historianFetches } },
+                        parts: [{ type: "text", text }],
+                    },
+                ],
+            };
+        });
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/gap-reread" } })),
+                create: mock(async () => ({ data: { id: `ses-agent-${historianFetches}` } })),
+                prompt,
+                messages,
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+            forceDrainQuota: true,
+        });
+
+        expect(historianFetches).toBe(2);
+        expect(getCompartments(db, sessionId)).toHaveLength(0);
+        expect(loadProtectedTailMeta(db, sessionId).priorBoundaryOrdinal).toBe(1);
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+            forceDrainQuota: true,
+        });
+
+        const historianPrompts = prompt.mock.calls
+            .map(
+                (call) =>
+                    call[0] as {
+                        body?: { noReply?: boolean; parts?: Array<{ text?: string }> };
+                    },
+            )
+            .filter((input) => input.body?.noReply !== true)
+            .map((input) => input.body?.parts?.[0]?.text ?? "");
+        expect(historianFetches).toBe(3);
+        expect(historianPrompts[2]).toContain("Messages 1-7");
+        expect(historianPrompts[2]).toContain("narrative 2");
+        expect(historianPrompts[2]).toContain("narrative 6");
+        expect(getCompartments(db, sessionId)).toEqual([
+            expect.objectContaining({ startMessage: 1, endMessage: 7, title: "re-read" }),
+        ]);
+        expect(loadProtectedTailMeta(db, sessionId).priorBoundaryOrdinal).toBe(8);
+    });
+
+    // Regression: production livelock (ses_157f877e2ffepme9doYf3RTnRx). In an
+    // active session the protected tail's newest message changes every turn, so
+    // the trigger-time boundary snapshot fails validation on the "last ordinal
+    // id changed" check by the time the historian runs — even though the eligible
+    // HEAD it would compact is untouched. The runner used to no-op forever while
+    // the trigger refired each turn and queued drop ops starved. It must now
+    // re-resolve the boundary at run time and make real progress.
+    it("refreshes a stale-tail boundary snapshot at run time instead of no-op'ing forever", async () => {
+        useTempDataHome("compartment-runner-stale-tail-refresh-");
+        createOpenCodeDb("ses-stale-tail", [
+            { id: "m-1", role: "user", text: `eligible head one ${"detail ".repeat(150)}` },
+            { id: "m-2", role: "assistant", text: `eligible head two ${"detail ".repeat(150)}` },
+            { id: "m-3", role: "user", text: `tail ${"context ".repeat(3000)}` },
+        ]);
+        const db = openDatabase();
+
+        // Tag the eligible head so a successful publish also queues drop ops —
+        // proving the stale→refresh→publish chain that feeds drop application.
+        tagMessages(
+            "ses-stale-tail",
+            [
+                {
+                    info: { id: "m-1", role: "user", sessionID: "ses-stale-tail" },
+                    parts: [{ type: "text", text: `eligible head one ${"detail ".repeat(150)}` }],
+                },
+                {
+                    info: { id: "m-2", role: "assistant", sessionID: "ses-stale-tail" },
+                    parts: [{ type: "text", text: `eligible head two ${"detail ".repeat(150)}` }],
+                },
+            ],
+            createTagger(),
+            db,
+        );
+
+        // Resolve a genuine snapshot (correct fingerprint + ids), then corrupt
+        // ONLY the recorded last-tail id to simulate the live tail advancing
+        // between trigger and run. Every other check (offset, protectedTailStart,
+        // eligibleEnd, eligible-range fingerprint) still passes — exactly the
+        // production failure mode.
+        const realSnapshot = resolveOpenCodeProtectedTailBoundary({
+            db,
+            sessionId: "ses-stale-tail",
+            mode: "trigger",
+            contextLimit: 8_000,
+            executeThresholdPercentage: 65,
+            usage: { percentage: 95, inputTokens: 7_600 },
+            usageSource: "live",
+        });
+        expect(hasRunnableCompartmentWindow(realSnapshot)).toBe(true);
+        expect(realSnapshot.offset).toBe(1);
+        expect(realSnapshot.eligibleEndOrdinal).toBeGreaterThan(realSnapshot.offset);
+        expect(realSnapshot.rawRangeFingerprint.length).toBeGreaterThan(0);
+        const staleSnapshot = {
+            ...realSnapshot,
+            rawLastMessageIdAtTrigger: "m-vanished-live-tail",
+        };
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/stale-tail" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-stale-tail" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "text",
+                                    text: '<compartment start="1" end="2" title="Eligible head"><p1>Head summary</p1></compartment>',
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId: "ses-stale-tail",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+            boundarySnapshot: staleSnapshot,
+            currentContextLimit: 8_000,
+        });
+
+        // Re-derived and PUBLISHED rather than no-op'ing: progress is made.
+        const compartments = getCompartments(db, "ses-stale-tail");
+        expect(compartments).toHaveLength(1);
+        expect(compartments[0]?.startMessage).toBe(1);
+        expect(compartments[0]?.endMessage).toBe(2);
+        // And the published compartment queued drops for its covered tags, so the
+        // accumulated pending ops can finally drain (no starvation).
+        expect(getPendingOps(db, "ses-stale-tail").length).toBeGreaterThan(0);
+        expect(getOrCreateSessionMeta(db, "ses-stale-tail").compartmentInProgress).toBe(false);
+    });
+
+    // Regression: a synchronous runner no-op (stale/empty snapshot, nothing to
+    // compact) must NOT leave the rest of the transform pass believing a historian
+    // is in progress. startCompartmentAgent registers the run in `activeRuns`
+    // BEFORE the (microtask-scheduled) promise.finally can clear it; postprocess
+    // reads `getActiveCompartmentRun` synchronously in the same pass and would
+    // defer queued drop ops for a run that already finished. The no-op must clear
+    // the registration synchronously.
+    it("clears the active-run registration synchronously when the runner no-ops", async () => {
+        useTempDataHome("compartment-runner-sync-noop-clear-");
+        createOpenCodeDb("ses-sync-noop", [
+            { id: "m-1", role: "user", text: "only protected 1" },
+            { id: "m-2", role: "user", text: "only protected 2" },
+            { id: "m-3", role: "user", text: "only protected 3" },
+        ]);
+        const db = openDatabase();
+
+        // protectedTailStart === offset (1) → "nothing to compact" no-op, which
+        // returns synchronously before any await. Empty fingerprint skips the
+        // validation branch so we land squarely on the nothing-to-compact path.
+        const noopSnapshot = {
+            sessionId: "ses-sync-noop",
+            mode: "trigger" as const,
+            offset: 1,
+            offsetMessageId: "m-1",
+            protectedTailStart: 1,
+            protectedTailStartMessageId: "m-1",
+            eligibleEndOrdinal: 1,
+            eligibleEndMessageId: null,
+            rawMessageCountAtTrigger: 3,
+            rawLastMessageIdAtTrigger: "m-3",
+            N: 1_000,
+            usagePercentage: 10,
+            usageInputTokens: 1_000,
+            usageSource: "live" as const,
+            contextLimit: 128_000,
+            executeThresholdPercentage: 65,
+            triggerBudget: 5_000,
+            priorBoundaryOrdinal: 1,
+            migrationFloorActive: false,
+            providerShapeVersion: "opencode-v1" as const,
+            cacheNamespace: "test:ses-sync-noop",
+            createdAt: Date.now(),
+            rawRangeFingerprint: "",
+            trueRawEligibleTokens: 0,
+            oversizeAtomicUnit: false,
+            boundaryReason: "size-walk",
+        };
+
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/sync-noop" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-sync-noop" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({ data: [] })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        startCompartmentAgent({
+            client,
+            db,
+            sessionId: "ses-sync-noop",
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+            boundarySnapshot: noopSnapshot,
+            currentContextLimit: 128_000,
+        });
+
+        // SYNCHRONOUS assertion (no await): the no-op already cleared the
+        // registration, so the same transform pass sees no active run and can
+        // materialize queued drops instead of deferring them forever.
+        expect(getActiveCompartmentRun("ses-sync-noop")).toBeUndefined();
+        expect(getOrCreateSessionMeta(db, "ses-sync-noop").compartmentInProgress).toBe(false);
+
+        // Let the fire-and-forget promise settle so its finally clears the lease
+        // renewal interval before the db closes.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(getActiveCompartmentRun("ses-sync-noop")).toBeUndefined();
+    });
+});
+
+describe("registerActiveCompartmentRun", () => {
+    it("surfaces via getActiveCompartmentRun while the promise is pending, and clears itself when it settles", async () => {
+        const sessionId = "ses-register-active";
+        expect(getActiveCompartmentRun(sessionId)).toBeUndefined();
+
+        let resolveCompressor: (() => void) | undefined;
+        const pending = new Promise<void>((resolve) => {
+            resolveCompressor = resolve;
+        });
+
+        registerActiveCompartmentRun(sessionId, pending);
+
+        // While the compressor is still running, a later historian-start check
+        // must see the active run and know to bail out. This is the whole
+        // point of the race fix — without registration, historian could start
+        // on top of the compressor and both would write compartments.
+        expect(getActiveCompartmentRun(sessionId)).toBeDefined();
+
+        resolveCompressor?.();
+        await pending;
+        // Give the .finally() callback a tick to run.
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(getActiveCompartmentRun(sessionId)).toBeUndefined();
+    });
+
+    it("clears itself when the underlying promise settles (including swallowed failures)", async () => {
+        // Real callers attach their own .catch before handing the promise in
+        // (see transform-compartment-phase.ts: the compressor path ends its
+        // .catch by logging, then registerActiveCompartmentRun receives that
+        // already-resolved-to-undefined promise). So the active-runs map never
+        // sees an unhandled rejection; it just needs to clear on settle.
+        const sessionId = "ses-register-active-reject";
+        let rejectCompressor: ((err: unknown) => void) | undefined;
+        const pending = new Promise<void>((_, reject) => {
+            rejectCompressor = reject;
+        }).catch(() => {
+            // Simulate the caller-side swallow (matches real compressor dispatch).
+        });
+
+        registerActiveCompartmentRun(sessionId, pending);
+        expect(getActiveCompartmentRun(sessionId)).toBeDefined();
+
+        rejectCompressor?.(new Error("simulated compressor failure"));
+        await getActiveCompartmentRun(sessionId);
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(getActiveCompartmentRun(sessionId)).toBeUndefined();
+    });
+
+    it("does not delete a replacement run when the original settles", async () => {
+        // Edge case: if two registrations happen back-to-back (which
+        // shouldn't normally occur — caller is expected to check first —
+        // but defensive behavior matters), the second registration must
+        // survive after the first one settles.
+        const sessionId = "ses-register-active-replace";
+
+        let resolveFirst: (() => void) | undefined;
+        const first = new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+        });
+        registerActiveCompartmentRun(sessionId, first);
+
+        const second = new Promise<void>((resolve) => {
+            // Never resolve during test
+            void resolve;
+        });
+        registerActiveCompartmentRun(sessionId, second);
+
+        resolveFirst?.();
+        await first;
+        await new Promise((r) => setTimeout(r, 0));
+
+        // The second registration must still be surfaced — the first's
+        // finally must not have stomped it.
+        expect(getActiveCompartmentRun(sessionId)).toBeDefined();
+    });
+});
+
+it("rolls back protected-tail drain reservation when publish throws after historian success", async () => {
+    useTempDataHome("compartment-runner-drain-rollback-");
+    createOpenCodeDb("ses-drain-rollback", [
+        { id: "m-1", role: "user", text: "first small head" },
+        { id: "m-2", role: "assistant", text: "second" },
+        { id: "m-3", role: "user", text: "tail ".repeat(3000) },
+    ]);
+    const db = openDatabase();
+    db.exec(
+        "CREATE TRIGGER fail_compartment_insert BEFORE INSERT ON compartments BEGIN SELECT RAISE(ABORT, 'append fail'); END;",
+    );
+    const boundarySnapshot = {
+        sessionId: "ses-drain-rollback",
+        mode: "trigger" as const,
+        offset: 1,
+        rawMessageCountAtTrigger: 3,
+        rawLastMessageIdAtTrigger: "m-3",
+        protectedTailStart: 3,
+        eligibleEndOrdinal: 3,
+        N: 1_000,
+        usagePercentage: 95,
+        usageInputTokens: 7_600,
+        usageSource: "live" as const,
+        contextLimit: 8_000,
+        executeThresholdPercentage: 65,
+        triggerBudget: 5_200,
+        providerShapeVersion: "opencode-v1",
+        cacheNamespace: "test:ses-drain-rollback",
+        createdAt: Date.now(),
+        rawRangeFingerprint: "",
+        trueRawEligibleTokens: 500,
+        oversizeAtomicUnit: false,
+        boundaryReason: "size-walk",
+    };
+
+    const client = {
+        session: {
+            get: mock(async () => ({ data: { directory: "/tmp/parent" } })),
+            create: mock(async () => ({ data: { id: "ses-agent" } })),
+            prompt: mock(async () => ({})),
+            messages: mock(async () => ({
+                data: [
+                    {
+                        info: { role: "assistant", time: { created: 1 } },
+                        parts: [
+                            {
+                                type: "text",
+                                text: '<compartment start="1" end="2" title="Done"><p1>Summary</p1></compartment>',
+                            },
+                        ],
+                    },
+                ],
+            })),
+            delete: mock(async () => ({})),
+        },
+    } as unknown as PluginContext["client"];
+
+    await runCompartmentAgentWithLease({
+        client,
+        db,
+        sessionId: "ses-drain-rollback",
+        historianChunkTokens: 10_000,
+        directory: "/tmp",
+        boundarySnapshot,
+        currentContextLimit: 8_000,
+    });
+
+    expect(loadProtectedTailMeta(db, "ses-drain-rollback").protectedTailDrainTokens).toBe(0);
+});

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "worldBookId": "gamebuddy.worldbook.example",
+  "revision": 1,
+  "alwaysOnPremise": "这是经过玩家审核的背景设定；它不代表当前游戏世界状态。",
+  "entries": [
+    {
+      "entryId": "companion-setting",
+      "title": "共同的背景",
+      "content": "只在确有帮助时作为背景参考，不虚构共同经历或当前游戏事实。",
+      "scope": "companion",
+      "provenance": "authored",
+      "tokenBudget": "small"
+    }
+  ],
+  "canonicalHash": "7a4bbe5a4a7af97bfc4b3878915fac11413eee606cc9145eef93902750d22992"
+}

@@ -1,48 +1,15 @@
-import { randomUUID } from "node:crypto";
-
 import { type AgentSession, type AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-import { type VisibleTextSink, type VoiceSpeechPort, expressTextFirst } from "./voice.js";
-
-export type CompanionExpressionSinks = Readonly<{
-  visible: VisibleTextSink;
-  speech?: VoiceSpeechPort;
-  sessionId: string;
-  locale?: string;
-  voiceProfile?: string;
-  /** Short voice jobs must not survive a stale output turn. */
-  speechTtlMs?: number;
-}>;
-
 /**
- * Projects completed Pi assistant text to a presentation-only boundary. It
- * never turns model prose into a game fact, receipt, permission, or action.
- * Text is committed before optional speech by expressTextFirst.
+ * Legacy observation hook retained for trace consumers. It deliberately does
+ * not project ordinary Pi output to a player surface; only explicit
+ * presentation tools may do that.
  */
 export function attachCompanionExpression(
   session: Pick<AgentSession, "subscribe">,
-  sinks: CompanionExpressionSinks,
+  _sinks: unknown,
 ): () => void {
-  const locale = sinks.locale ?? "zh-CN";
-  const voiceProfile = sinks.voiceProfile ?? "companion.default";
-  const speechTtlMs = sinks.speechTtlMs ?? 20_000;
-  let epoch = 0;
-
-  return session.subscribe((event: AgentSessionEvent) => {
-    if (event.type !== "agent_end" || event.willRetry) return;
-    const text = finalAssistantText(event.messages);
-    if (text === null) return;
-    const nowMs = Date.now();
-    void expressTextFirst(sinks.visible, sinks.speech, {
-      sessionId: sinks.sessionId,
-      sourceEventId: randomUUID(),
-      text,
-      locale,
-      voiceProfile,
-      epoch: epoch++,
-      expiresAtMs: nowMs + speechTtlMs,
-    }).catch(() => undefined);
-  });
+  return session.subscribe((_event: AgentSessionEvent) => undefined);
 }
 
 /** Extract only completed assistant text blocks; thinking and tool calls stay private. */

@@ -45,7 +45,7 @@ test("local bootstrap requires a Mod snapshot before mounting only verified tool
       assert.equal(connected.bridge.state.snapshot?.revision, 1);
       // The Mod's player-controlled capability declaration is the only action
       // enablement source; no Host- or model-issued authorization exists.
-      assert.deepEqual(connected.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_equip_tool", "stardew_execution_status", "stardew_move_to_tile", "stardew_observe", "todowrite"]);
+      assert.deepEqual(connected.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "stardew_equip_tool", "stardew_execution_status", "stardew_interaction_catalog", "stardew_move_to_tile", "stardew_observe", "stardew_search_interactions", "todowrite"]);
     } finally { disconnectLocalCompanion(connected); }
   } finally {
     peer?.destroy();

@@ -15,6 +15,7 @@ internal static class FarmhandProvisioningProtocol
     internal const string RequestFileName = "stardew-attachment-request.json";
     internal const string ManifestFileName = "stardew-farmhand-manifest.json";
     internal const string ResponseFileName = "stardew-attachment-response.json";
+    internal const string FixtureReadinessFileName = "stardew-fixture-readiness.json";
     internal const string SaveDataKey = "GameBuddy.farmhand-bindings-v1";
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
@@ -104,6 +105,24 @@ internal sealed class FarmhandAttachmentRequest
     public string ExpectedFarmhandId { get; init; } = string.Empty;
     public long ConfirmedAtUnixMs { get; init; }
     public string RequestId { get; init; } = string.Empty;
+    public string Signature { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Signed Host-only report emitted after an allowlisted fixture initializer
+/// establishes its native preconditions and before LAN/AI attachment begins.
+/// It is diagnostic gating data, never a bridge receipt or target authority.
+/// </summary>
+internal sealed record FixtureReadinessReport
+{
+    public int SchemaVersion { get; init; }
+    public string IntegrationId { get; init; } = string.Empty;
+    public string FixtureScenario { get; init; } = string.Empty;
+    public string SaveName { get; init; } = string.Empty;
+    public string State { get; init; } = string.Empty;
+    public string ReasonCode { get; init; } = string.Empty;
+    public long PublishedAtUnixMs { get; init; }
+    public string SessionNonce { get; init; } = string.Empty;
     public string Signature { get; init; } = string.Empty;
 }
 

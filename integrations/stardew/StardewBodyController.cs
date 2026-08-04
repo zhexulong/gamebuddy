@@ -1,5 +1,6 @@
 using Microsoft.Xna.Framework;
 using StardewValley;
+using StardewValley.Pathfinding;
 
 namespace GameBuddy.Stardew;
 
@@ -12,10 +13,9 @@ internal sealed class StardewBodyController
 {
     private readonly Action<ExecutionState, string, string?> transition;
     private LocalMoveSpec? active;
+    private PathFindController? pathController;
     private Vector2 lastTile;
     private int lastProgressTick;
-    private int blockedTicks;
-    private bool recoveryAttempted;
     private bool hasEmittedRunning;
 
     public StardewBodyController(Action<ExecutionState, string, string?> transition)
@@ -40,12 +40,35 @@ internal sealed class StardewBodyController
             reasonCode = "player_not_actionable";
             return false;
         }
+        if (localPlayer.controller is not null)
+        {
+            reasonCode = "native_controller_owned";
+            return false;
+        }
+        if (localPlayer.currentLocation is null)
+        {
+            reasonCode = "location_unavailable";
+            return false;
+        }
+
+        PathFindController plannedPath = new(
+            localPlayer,
+            localPlayer.currentLocation,
+            new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y),
+            -1,
+            null,
+            10000);
+        if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
+        {
+            reasonCode = "no_native_path";
+            return false;
+        }
 
         this.active = specification;
+        this.pathController = plannedPath;
+        localPlayer.controller = plannedPath;
         this.lastTile = localPlayer.Tile;
         this.lastProgressTick = tick;
-        this.blockedTicks = 0;
-        this.recoveryAttempted = false;
         this.hasEmittedRunning = false;
         reasonCode = "accepted";
         return true;
@@ -62,6 +85,7 @@ internal sealed class StardewBodyController
             return;
 
         Farmer localPlayer = Game1.player;
+        PathFindController? pathController = this.pathController;
         if (!this.hasEmittedRunning)
         {
             this.hasEmittedRunning = true;
@@ -79,53 +103,60 @@ internal sealed class StardewBodyController
             this.Invalidate("menu_opened");
             return;
         }
+        if (!ReferenceEquals(localPlayer.controller, pathController))
+        {
+            bool exactArrival = Vector2.DistanceSquared(localPlayer.Tile, specification.TargetTile) <= 0.04f;
+            bool adjacentArrival = specification.AllowAdjacentArrival
+                && IsCardinalAdjacent(localPlayer.Tile, specification.TargetTile);
+            if (exactArrival || adjacentArrival)
+            {
+                localPlayer.Halt();
+                this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)};arrival={(exactArrival ? "exact" : "warp_adjacent")};path=stardew_native");
+                this.active = null;
+                this.pathController = null;
+            }
+            else
+            {
+                this.Fail("native_path_ended", $"tile={FormatTile(localPlayer.Tile)};target={FormatTile(specification.TargetTile)}");
+            }
+            return;
+        }
         if (Game1.eventUp)
         {
             this.Invalidate("event_started");
             return;
         }
+        Vector2 currentTile = localPlayer.Tile;
         if (!localPlayer.CanMove)
         {
-            this.Fail("player_not_actionable", "movement lock became active");
-            return;
+            // Stardew briefly reports the Farmhand as non-actionable while a
+            // native path controller settles at a doorway/warp approach tile.
+            // Keep ownership until the native controller ends; the final tile
+            // or path-ended result remains authoritative.
+            if (Vector2.DistanceSquared(currentTile, specification.TargetTile) > 1.01f)
+            {
+                this.Fail("player_not_actionable", "movement lock became active");
+                return;
+            }
         }
-
-        Vector2 currentTile = localPlayer.Tile;
-        if (Vector2.DistanceSquared(currentTile, specification.TargetTile) <= 0.04f)
+        bool currentTileExact = Vector2.DistanceSquared(currentTile, specification.TargetTile) <= 0.04f;
+        bool currentTileAdjacent = specification.AllowAdjacentArrival
+            && IsCardinalAdjacent(currentTile, specification.TargetTile);
+        if (currentTileExact || currentTileAdjacent)
         {
             localPlayer.Halt();
-            this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)}");
+            localPlayer.controller = null;
+            this.pathController = null;
+            this.transition(ExecutionState.Succeeded, "target_reached", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};arrival={(currentTileExact ? "exact" : "warp_adjacent")};path=stardew_native");
             this.active = null;
             return;
         }
-
-        // This controller owns no planner: it attempts only the next local
-        // cardinal segment. After one bounded stall it tries the alternate
-        // axis once, then emits a factual terminal failure rather than wander.
-        int direction = DirectionToward(currentTile, specification.TargetTile, this.recoveryAttempted);
-        SetMovement(localPlayer, direction);
 
         if (currentTile != this.lastTile)
         {
             this.lastTile = currentTile;
             this.lastProgressTick = tick;
-            this.blockedTicks = 0;
-            this.transition(ExecutionState.MeaningfulProgress, "tile_advanced", $"tile={FormatTile(currentTile)}");
-            return;
-        }
-
-        if (tick - this.lastProgressTick >= 90)
-        {
-            this.blockedTicks++;
-            this.lastProgressTick = tick;
-            if (this.blockedTicks >= 2)
-            {
-                this.Fail("locally_blocked", $"no tile progress after bounded recovery; tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)}");
-                return;
-            }
-
-            this.recoveryAttempted = true;
-            this.transition(ExecutionState.Blocked, "locally_blocked_recovering", $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};strategy=alternate_axis_once");
+            this.transition(ExecutionState.MeaningfulProgress, "tile_advanced", $"tile={FormatTile(currentTile)};path=stardew_native");
         }
     }
 
@@ -138,11 +169,13 @@ internal sealed class StardewBodyController
         if (this.active is null)
             return;
 
+        if (ReferenceEquals(Game1.player.controller, this.pathController))
+            Game1.player.controller = null;
         Game1.player.Halt();
         // Clear local ownership before the manager callback. A replacement
         // directive may only start after this old route is truly inert.
         this.active = null;
-        this.recoveryAttempted = false;
+        this.pathController = null;
         this.hasEmittedRunning = false;
         this.transition(state, reasonCode, evidence);
     }
@@ -161,26 +194,11 @@ internal sealed class StardewBodyController
         return horizontal >= 0 ? Game1.right : Game1.left;
     }
 
-    private static void SetMovement(Farmer player, int direction)
+    private static bool IsCardinalAdjacent(Vector2 current, Vector2 target)
     {
-        player.Halt();
-        switch (direction)
-        {
-            case Game1.up:
-                player.SetMovingUp(true);
-                break;
-            case Game1.right:
-                player.SetMovingRight(true);
-                break;
-            case Game1.down:
-                player.SetMovingDown(true);
-                break;
-            case Game1.left:
-                player.SetMovingLeft(true);
-                break;
-            default:
-                throw new InvalidOperationException($"Unsupported Stardew direction {direction}.");
-        }
+        int deltaX = Math.Abs((int)current.X - (int)target.X);
+        int deltaY = Math.Abs((int)current.Y - (int)target.Y);
+        return deltaX + deltaY == 1;
     }
 
     private static string FormatTile(Vector2 tile) => $"{tile.X:0.##},{tile.Y:0.##}";

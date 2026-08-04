@@ -46,6 +46,14 @@ test("bridge message payloads fail closed", () => {
   }, "receipt_01", now);
   assert.equal(validateBridgeMessage(receipt, scope, now), null);
   assert.equal(validateBridgeMessage({ ...receipt, payload: { ...receipt.payload, state: "made_up" } }, scope, now), "invalid_receipt");
+  const cancellationReceiptWithoutEvidence = newEnvelope("execution_receipt", scope, {
+    executionId: "execution_02", requestId: "request_02", state: "cancelled", reasonCode: "player_stop", revision: 6, evidence: null,
+  }, "receipt_02", now);
+  assert.equal(validateBridgeMessage(cancellationReceiptWithoutEvidence, scope, now), null);
+  const cancellationReceiptWithOmittedEvidence = newEnvelope("execution_receipt", scope, {
+    executionId: "execution_03", requestId: "request_03", state: "cancelled", reasonCode: "player_stop", revision: 7,
+  }, "receipt_03", now);
+  assert.equal(validateBridgeMessage(cancellationReceiptWithOmittedEvidence, scope, now), "invalid_receipt");
   const malformedSnapshot = newEnvelope("snapshot", scope, { revision: 1, location: "Farm", tile: { x: Number.NaN, y: 1 }, stamina: 1, health: 1, actionable: true, capabilities: [], activeExecution: null }, "snapshot_01", now);
   assert.equal(validateBridgeMessage(malformedSnapshot, scope, now), "invalid_snapshot");
   const nativeSnapshotWithoutNullableActive = newEnvelope("snapshot", scope, { ...snapshot, currentTool: "(T)Axe", inventorySlots: 12, activeExecution: undefined }, "snapshot_native_01", now);
@@ -53,6 +61,12 @@ test("bridge message payloads fail closed", () => {
   const badActive = newEnvelope("snapshot", scope, { ...snapshot, activeExecution: { executionId: "execution_01", requestId: "request_01", action: "move_to_tile", state: "made_up", reasonCode: "bad", evidence: null } }, "snapshot_02", now);
   assert.equal(validateBridgeMessage(badActive, scope, now), "invalid_snapshot");
   assert.equal(validateBridgeMessage(newEnvelope("error", scope, { reasonCode: "authentication_failed" }, "error_01", now), scope, now), null);
+  const snapshotWithSoilTiles = newEnvelope("snapshot", scope, { ...snapshot, doorTargets: [{ sourceX: 10, sourceY: 11, targetLocation: "FarmHouse", targetX: 9, targetY: 9 }], soilTiles: [{ x: 10, y: 12 }, { x: 11, y: 12 }], forageTargets: [{ targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)399", stack: 1 }], itemTargets: [{ targetId: "item_0_0_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", stack: 1 }], cropTargets: [{ targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24" }], harvestTargets: [{ targetId: "harvest_deadbeef", x: 10, y: 12, cropId: "24", qualifiedHarvestItemId: "(O)24", regrowsAfterHarvest: false }], seedTargets: [{ targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472" }], fertilizerTargets: [{ targetId: "fertilizer_deadbeef", slot: 3, x: 10, y: 12, qualifiedItemId: "(O)368" }], debrisTargets: [{ targetId: "debris_deadbeef", slot: 4, x: 10, y: 12, parentSheetIndex: 600, toolKind: "axe", requiredUpgradeLevel: 1 }], resourceTargets: [{ targetId: "resource_deadbeef", slot: 4, x: 10, y: 12, treeType: "1", growthStage: 5, stump: true, health: 5, toolKind: "axe", requiredUpgradeLevel: 0 }], npcRelationshipTargets: [{ targetId: "npc_deadbeef", x: 10, y: 12, npcName: "Abigail", friendshipPoints: 500, friendshipStatus: "Friendly", talkedToToday: false, giftsToday: 0, giftsThisWeek: 0 }], petTargets: [{ targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 500, pettedToday: false }], animalProductTargets: [{ targetId: "animal_product_deadbeef", slot: 6, x: 10, y: 12, animalType: "Cow", qualifiedProduceItemId: "(O)184", toolKind: "milk_pail", produceStack: 1 }], feedTroughTargets: [{ targetId: "feed_trough_deadbeef", slot: 7, x: 10, y: 11, hayStack: 2 }], foodTargets: [{ slot: 5, qualifiedItemId: "(O)216", stack: 3, edibility: 20, isDrink: false }] }, "snapshot_soil_01", now);
+  assert.equal(validateBridgeMessage(snapshotWithSoilTiles, scope, now), null);
+  assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, { ...snapshot, warps: Array.from({ length: 513 }, () => ({ sourceX: 1, sourceY: 1, targetLocation: "Farm", targetX: 1, targetY: 1 })) }, "snapshot_warps_01", now), scope, now), "invalid_snapshot");
+  assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, { ...snapshot, soilTiles: [{ x: -1, y: 12 }] }, "snapshot_soil_02", now), scope, now), "invalid_snapshot");
+  assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, { ...snapshot, forageTargets: [{ targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "", stack: 1 }] }, "snapshot_forage_01", now), scope, now), "invalid_snapshot");
+  assert.equal(validateBridgeMessage(newEnvelope("snapshot", scope, { ...snapshot, seedTargets: [{ targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "" }] }, "snapshot_seed_01", now), scope, now), "invalid_snapshot");
 });
 
 test("execution validation fails closed for stale, unknown, malformed, and unactionable requests", () => {
@@ -60,6 +74,12 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   assert.equal(validateExecutionRequest(valid, snapshot, now), null);
   assert.equal(validateExecutionRequest({ ...valid, expectedRevision: 3 }, snapshot, now), "stale_snapshot");
   assert.equal(validateExecutionRequest({ ...valid, action: "sell_item" }, snapshot, now), "unknown_action");
+  const travel = { ...valid, action: "travel", args: { x: 10, y: 10 } };
+  assert.equal(validateExecutionRequest(travel, { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] }, now), null);
+  const enterExit = { ...valid, action: "enter_exit", args: { x: 10, y: 11 } };
+  assert.equal(validateExecutionRequest(enterExit, { ...snapshot, capabilities: [...snapshot.capabilities, "enter_exit"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...enterExit, args: { x: -1, y: 11 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "enter_exit"] }, now), "invalid_door_target");
+  assert.equal(validateExecutionRequest({ ...travel, args: { x: -1, y: 10 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] }, now), "invalid_warp_source");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: -1, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest({ ...valid, args: { x: 11.5, y: 12 } }, snapshot, now), "invalid_target_tile");
   assert.equal(validateExecutionRequest(valid, { ...snapshot, actionable: false }, now), "player_not_actionable");
@@ -67,6 +87,56 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   assert.equal(validateExecutionRequest(equip, snapshot, now), "capability_not_declared");
   assert.equal(validateExecutionRequest({ ...equip, args: { slot: 37 }, }, { ...snapshot, capabilities: [...snapshot.capabilities, "equip_tool"] }, now), "invalid_tool_slot");
   assert.equal(validateExecutionRequest({ ...equip }, { ...snapshot, capabilities: [...snapshot.capabilities, "equip_tool"] }, now), null);
+  const tillSoil = { ...valid, action: "till_soil", args: { x: 10, y: 12 } };
+  const waterCrop = { ...valid, action: "water_crop", args: { x: 10, y: 12, expectedTargetId: "crop_deadbeef" } };
+  const harvestCrop = { ...valid, action: "harvest_crop", args: { x: 10, y: 12, expectedQualifiedItemId: "(O)24", expectedTargetId: "harvest_deadbeef" } };
+  const pickupForage = { ...valid, action: "pickup_forage", args: { x: 10, y: 12, expectedQualifiedItemId: "(O)399", expectedTargetId: "forage_deadbeef" } };
+  const pickupItem = { ...valid, action: "pickup_item", args: { x: 10, y: 12, expectedQualifiedItemId: "(O)388", expectedTargetId: "item_0_0_deadbeef" } };
+  const plantSeed = { ...valid, action: "plant_seed", args: { slot: 2, x: 10, y: 12, expectedQualifiedItemId: "(O)472", expectedTargetId: "seed_deadbeef" } };
+  assert.equal(validateExecutionRequest(plantSeed, { ...snapshot, capabilities: [...snapshot.capabilities, "plant_seed"] }, now), null);
+  const fertilizeTile = { ...valid, action: "fertilize_tile", args: { slot: 3, x: 10, y: 12, expectedQualifiedItemId: "(O)368", expectedTargetId: "fertilizer_deadbeef" } };
+  const clearDebris = { ...valid, action: "clear_debris", args: { slot: 4, x: 10, y: 12, expectedTargetId: "debris_deadbeef" } };
+  const machineInspect = { ...valid, action: "machine_inspect", args: { x: 10, y: 12, expectedTargetId: "machine_deadbeef" } };
+  const collectResource = { ...valid, action: "collect_resource", args: { slot: 4, x: 10, y: 12, expectedTargetId: "resource_deadbeef" } };
+  const npcRelationship = { ...valid, action: "npc_relationship", args: { x: 10, y: 12, expectedTargetId: "npc_deadbeef" } };
+  const petAnimal = { ...valid, action: "pet_animal", args: { x: 10, y: 12, expectedTargetId: "pet_deadbeef" } };
+  const collectAnimalProduct = { ...valid, action: "collect_animal_product", args: { slot: 6, x: 10, y: 12, expectedTargetId: "animal_product_deadbeef" } };
+  const feedAnimal = { ...valid, action: "feed_animal", args: { slot: 7, x: 10, y: 11, expectedTargetId: "feed_trough_deadbeef" } };
+  const useItem = { ...valid, action: "use_item", args: { slot: 5, expectedQualifiedItemId: "(O)216" } };
+  assert.equal(validateExecutionRequest(fertilizeTile, { ...snapshot, capabilities: [...snapshot.capabilities, "fertilize_tile"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...fertilizeTile, args: { ...fertilizeTile.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "fertilize_tile"] }, now), "invalid_fertilizer_target");
+  assert.equal(validateExecutionRequest({ ...plantSeed, args: { ...plantSeed.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "plant_seed"] }, now), "invalid_seed_target");
+  assert.equal(validateExecutionRequest({ ...plantSeed, args: { ...plantSeed.args, slot: 37 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "plant_seed"] }, now), "invalid_seed_target");
+  assert.equal(validateExecutionRequest({ ...fertilizeTile, args: { ...fertilizeTile.args, expectedQualifiedItemId: "" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "fertilize_tile"] }, now), "invalid_fertilizer_target");
+  assert.equal(validateExecutionRequest(clearDebris, { ...snapshot, capabilities: [...snapshot.capabilities, "clear_debris"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...clearDebris, args: { ...clearDebris.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "clear_debris"] }, now), "invalid_debris_target");
+  assert.equal(validateExecutionRequest(machineInspect, { ...snapshot, capabilities: [...snapshot.capabilities, "machine_inspect"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...machineInspect, args: { ...machineInspect.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "machine_inspect"] }, now), "invalid_machine_target");
+  assert.equal(validateExecutionRequest(collectResource, { ...snapshot, capabilities: [...snapshot.capabilities, "collect_resource"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...collectResource, args: { ...collectResource.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "collect_resource"] }, now), "invalid_resource_target");
+  assert.equal(validateExecutionRequest(npcRelationship, { ...snapshot, capabilities: [...snapshot.capabilities, "npc_relationship"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...npcRelationship, args: { ...npcRelationship.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "npc_relationship"] }, now), "invalid_npc_relationship_target");
+  assert.equal(validateExecutionRequest(petAnimal, { ...snapshot, capabilities: [...snapshot.capabilities, "pet_animal"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...petAnimal, args: { ...petAnimal.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "pet_animal"] }, now), "invalid_pet_target");
+  assert.equal(validateExecutionRequest(collectAnimalProduct, { ...snapshot, capabilities: [...snapshot.capabilities, "collect_animal_product"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...collectAnimalProduct, args: { ...collectAnimalProduct.args, slot: 37 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "collect_animal_product"] }, now), "invalid_animal_product_target");
+  assert.equal(validateExecutionRequest({ ...collectAnimalProduct, args: { ...collectAnimalProduct.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "collect_animal_product"] }, now), "invalid_animal_product_target");
+  assert.equal(validateExecutionRequest(feedAnimal, { ...snapshot, capabilities: [...snapshot.capabilities, "feed_animal"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...feedAnimal, args: { ...feedAnimal.args, slot: 37 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "feed_animal"] }, now), "invalid_feed_trough_target");
+  assert.equal(validateExecutionRequest({ ...feedAnimal, args: { ...feedAnimal.args, expectedTargetId: "bad target" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "feed_animal"] }, now), "invalid_feed_trough_target");
+  assert.equal(validateExecutionRequest(useItem, { ...snapshot, capabilities: [...snapshot.capabilities, "use_item"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...useItem, args: { ...useItem.args, slot: 37 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "use_item"] }, now), "invalid_item_use_target");
+  assert.equal(validateExecutionRequest({ ...useItem, args: { ...useItem.args, expectedQualifiedItemId: "" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "use_item"] }, now), "invalid_item_use_target");
+  assert.equal(validateExecutionRequest(pickupItem, { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_item"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...pickupItem, args: { x: 10, y: 12, expectedQualifiedItemId: "(O)388" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_item"] }, now), "invalid_item_target");
+  assert.equal(validateExecutionRequest(pickupForage, { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_forage"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...pickupForage, args: { x: 10, y: 12 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_forage"] }, now), "invalid_forage_target");
+  assert.equal(validateExecutionRequest(tillSoil, { ...snapshot, capabilities: [...snapshot.capabilities, "till_soil"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...tillSoil, args: { x: 10.5, y: 12 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "till_soil"] }, now), "invalid_soil_target");
+  assert.equal(validateExecutionRequest(waterCrop, { ...snapshot, capabilities: [...snapshot.capabilities, "water_crop"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...waterCrop, args: { x: 10, y: 12 } }, { ...snapshot, capabilities: [...snapshot.capabilities, "water_crop"] }, now), "invalid_crop_target");
+  assert.equal(validateExecutionRequest(harvestCrop, { ...snapshot, capabilities: [...snapshot.capabilities, "harvest_crop"] }, now), null);
+  assert.equal(validateExecutionRequest({ ...harvestCrop, args: { ...harvestCrop.args, expectedQualifiedItemId: "" } }, { ...snapshot, capabilities: [...snapshot.capabilities, "harvest_crop"] }, now), "invalid_harvest_target");
 });
 
 test("protocol serialization rejects oversized, undefined, and circular values", () => {

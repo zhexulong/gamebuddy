@@ -1,0 +1,803 @@
+import { createHash } from "node:crypto";
+import { connectionFileExists, SubcCallError, SubcClient } from "@cortexkit/subc-client";
+import { getHarness } from "../../../shared/harness";
+import { log } from "../../../shared/logger";
+import type { EmbeddingProvider } from "./embedding-provider";
+
+export const SYNAPSE_DEFAULT_MODEL = "gte-modernbert-base-f16";
+export const SYNAPSE_MAX_INPUT_TOKENS = 8192;
+export const SYNAPSE_DEFAULT_QUERY_TIMEOUT_MS = 3_000;
+export const SYNAPSE_DEFAULT_BATCH_TIMEOUT_MS = 120_000;
+
+export type SynapseErrorCode =
+    | "queue_full"
+    | "model_loading"
+    | "transport"
+    | "timeout"
+    | "artifact_invalid"
+    | "substitution_rejected"
+    | "not_certified"
+    | "probe_required"
+    | "idempotency_conflict"
+    | "schema_violation"
+    | "module_restarted";
+
+export interface SynapseCatalogEntry {
+    model: string;
+    fingerprint: string;
+    table_epoch: number;
+    // The live catalog omits dims; it is adopted from the first embed response
+    // envelope and pinned for the provider's lifetime.
+    dims?: number;
+    /** Rows per embed.batch call, from the service's measured per-lane policy. */
+    recommended_batch?: number;
+    /** Token ceiling per embed.batch call; pages split on whichever limit hits first. */
+    recommended_token_budget?: number;
+    provenance?: unknown;
+    certified?: boolean;
+    status?: string;
+}
+
+export interface SynapseLaneMetadata extends SynapseCatalogEntry {
+    laneIdentity: string;
+}
+
+export interface SynapseClientLike {
+    call<Response = unknown>(
+        moduleId: string,
+        method: string,
+        params?: unknown,
+        options?: {
+            timeoutMs?: number;
+            identity?: { project_root: string; harness: string; session: string };
+            targetKind?: "management_surface" | "tool_provider";
+        },
+    ): Promise<Response>;
+    close(): void;
+}
+
+export interface SynapseEmbeddingProviderOptions {
+    connectionFile: string;
+    projectRoot: string;
+    session: string;
+    model?: string;
+    fingerprint?: string;
+    tableEpoch?: number;
+    dims?: number;
+    recommendedBatch?: number;
+    provenance?: unknown;
+    moduleId?: string;
+    queryTimeoutMs?: number;
+    batchTimeoutMs?: number;
+    clientFactory?: () => Promise<SynapseClientLike>;
+}
+
+export class SynapseEmbeddingError extends Error {
+    readonly code: SynapseErrorCode;
+    readonly retryAfterMs?: number;
+    readonly permanent: boolean;
+
+    constructor(
+        code: SynapseErrorCode,
+        message: string,
+        options?: { retryAfterMs?: number; permanent?: boolean; cause?: unknown },
+    ) {
+        super(message, options?.cause === undefined ? undefined : { cause: options.cause });
+        this.name = "SynapseEmbeddingError";
+        this.code = code;
+        this.permanent = options?.permanent ?? isPermanentSynapseCode(code);
+        this.retryAfterMs = options?.retryAfterMs ?? (this.permanent ? undefined : 100);
+    }
+}
+
+function isPermanentSynapseCode(code: string): boolean {
+    return (
+        code === "artifact_invalid" ||
+        code === "substitution_rejected" ||
+        code === "not_certified" ||
+        code === "probe_required" ||
+        code === "idempotency_conflict" ||
+        code === "schema_violation"
+    );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function responseBody(value: unknown): Record<string, unknown> {
+    const record = asRecord(value);
+    const result = asRecord(record?.result);
+    return result ? { ...record, ...result } : (record ?? {});
+}
+
+function readRetryAfter(value: unknown): number | undefined {
+    const record = asRecord(value);
+    const candidate = record?.retry_after_ms ?? record?.retryAfterMs;
+    if (typeof candidate !== "number" || !Number.isFinite(candidate) || candidate < 0)
+        return undefined;
+    return Math.ceil(candidate);
+}
+
+function readErrorCode(value: unknown): string | undefined {
+    const record = asRecord(value);
+    if (typeof record?.code === "string") return record.code;
+    if (value instanceof Error && "code" in value && typeof value.code === "string") {
+        return value.code;
+    }
+    return undefined;
+}
+
+function classifyError(value: unknown): SynapseEmbeddingError {
+    if (value instanceof SynapseEmbeddingError) return value;
+    const code = readErrorCode(value) ?? (value instanceof Error ? value.name : "transport");
+    const normalized = code.toLowerCase();
+    let mapped: SynapseErrorCode = "transport";
+    if (normalized.includes("queue_full")) mapped = "queue_full";
+    else if (normalized.includes("model_loading")) mapped = "model_loading";
+    else if (normalized.includes("timeout") || normalized.includes("deadline")) mapped = "timeout";
+    else if (normalized.includes("artifact_invalid")) mapped = "artifact_invalid";
+    else if (normalized.includes("substitution")) mapped = "substitution_rejected";
+    else if (normalized.includes("not_certified")) mapped = "not_certified";
+    else if (normalized.includes("probe_required")) mapped = "probe_required";
+    else if (normalized.includes("idempotency_conflict")) mapped = "idempotency_conflict";
+    else if (normalized.includes("schema")) mapped = "schema_violation";
+    else if (normalized.includes("module_restarted") || normalized.includes("module restarted"))
+        mapped = "module_restarted";
+    const message = value instanceof Error ? value.message : String(value);
+    return new SynapseEmbeddingError(mapped, message, {
+        retryAfterMs: readRetryAfter(value) ?? (isPermanentSynapseCode(mapped) ? undefined : 100),
+        cause: value,
+    });
+}
+
+function wait(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function sha256(value: string): string {
+    return createHash("sha256").update(value).digest("hex");
+}
+
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (value && typeof value === "object") {
+        return `{${Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value);
+}
+
+export function getSynapseLaneIdentity(model: string, fingerprint: string): string {
+    return `synapse:v1:${sha256(stableJson({ model, fingerprint }))}`;
+}
+
+export function getSynapseBatchRequestKey(args: {
+    model: string;
+    fingerprint: string;
+    tableEpoch: number;
+    items: readonly { id: string; contentSha256: string }[];
+}): string {
+    return sha256(
+        stableJson({
+            op: "embed.batch",
+            model: args.model,
+            required_fingerprint: args.fingerprint,
+            required_epoch: args.tableEpoch,
+            allow_equivalent: false,
+            accept_declared: false,
+            ids: args.items.map((item) => item.id),
+            content_sha256: args.items.map((item) => item.contentSha256),
+        }),
+    );
+}
+
+function hashContent(text: string): string {
+    return sha256(text);
+}
+
+function extractCatalogEntries(value: unknown): SynapseCatalogEntry[] {
+    const body = responseBody(value);
+    const raw = Array.isArray(body.models)
+        ? body.models
+        : Array.isArray(body.entries)
+          ? body.entries
+          : Array.isArray(value)
+            ? value
+            : [];
+    // The live catalog serves {model_id, fingerprints[], state} per entry with
+    // table_epoch on the envelope; dims and recommended_batch arrive only on
+    // embed responses. Accept both that shape and the field-per-entry form so a
+    // future catalog enrichment does not need a parser change.
+    const envelopeEpoch =
+        typeof body.table_epoch === "number" && Number.isInteger(body.table_epoch)
+            ? body.table_epoch
+            : undefined;
+    return raw.flatMap((entry) => {
+        const record = asRecord(entry);
+        if (!record) return [];
+        const model =
+            typeof record.model === "string" && record.model.length > 0
+                ? record.model
+                : typeof record.model_id === "string"
+                  ? record.model_id
+                  : "";
+        const fingerprint =
+            typeof record.fingerprint === "string" && record.fingerprint.length > 0
+                ? record.fingerprint
+                : Array.isArray(record.fingerprints) && typeof record.fingerprints[0] === "string"
+                  ? record.fingerprints[0]
+                  : "";
+        const entryEpoch = record.table_epoch ?? record.tableEpoch;
+        const tableEpoch =
+            typeof entryEpoch === "number" && Number.isInteger(entryEpoch)
+                ? entryEpoch
+                : envelopeEpoch;
+        const dims = record.dims ?? record.dimensions;
+        if (
+            model.length === 0 ||
+            fingerprint.length === 0 ||
+            typeof tableEpoch !== "number" ||
+            !Number.isInteger(tableEpoch)
+        ) {
+            return [];
+        }
+        // recommended_batch arrives either as a bare row count (early servers) or as
+        // the measured policy object {rows, token_budget}. Accept both; a lane
+        // without a measured policy omits the field and keeps client defaults.
+        const rawBatch = record.recommended_batch ?? record.recommendedBatch;
+        const batchRecord = asRecord(rawBatch);
+        const recommendedBatch =
+            typeof rawBatch === "number" ? rawBatch : batchRecord ? batchRecord.rows : undefined;
+        const recommendedTokenBudget = batchRecord ? batchRecord.token_budget : undefined;
+        const state = typeof record.state === "string" ? record.state : undefined;
+        return [
+            {
+                model,
+                fingerprint,
+                table_epoch: tableEpoch,
+                ...(typeof dims === "number" && Number.isInteger(dims) && dims > 0 ? { dims } : {}),
+                ...(typeof recommendedBatch === "number" && recommendedBatch > 0
+                    ? { recommended_batch: Math.floor(recommendedBatch) }
+                    : {}),
+                ...(typeof recommendedTokenBudget === "number" && recommendedTokenBudget > 0
+                    ? { recommended_token_budget: Math.floor(recommendedTokenBudget) }
+                    : {}),
+                ...(record.provenance !== undefined ? { provenance: record.provenance } : {}),
+                ...(typeof record.certified === "boolean" ? { certified: record.certified } : {}),
+                ...(typeof record.status === "string"
+                    ? { status: record.status }
+                    : state
+                      ? { status: state }
+                      : {}),
+            },
+        ];
+    });
+}
+
+function extractVector(
+    value: unknown,
+): { vector: Float32Array; metadata: Record<string, unknown> } | null {
+    const body = responseBody(value);
+    // The live envelope carries vectors: [{id, vector, content_sha256}] for
+    // every embed op, including single-text queries; older sketches used a
+    // top-level vector/embedding field, kept as a fallback.
+    const fromVectors = Array.isArray(body.vectors) ? asRecord(body.vectors[0])?.vector : undefined;
+    const raw = fromVectors ?? body.vector ?? body.embedding;
+    if (
+        !Array.isArray(raw) ||
+        raw.some((item) => typeof item !== "number" || !Number.isFinite(item))
+    ) {
+        return null;
+    }
+    return { vector: Float32Array.from(raw), metadata: body };
+}
+
+function extractBatchItems(value: unknown): Array<Record<string, unknown>> {
+    const body = responseBody(value);
+    const raw = Array.isArray(body.vectors)
+        ? body.vectors
+        : Array.isArray(body.items)
+          ? body.items
+          : Array.isArray(body.results)
+            ? body.results
+            : [];
+    return raw.flatMap((item) => {
+        const record = asRecord(item);
+        return record ? [record] : [];
+    });
+}
+
+let sharedClient: SynapseClientLike | null = null;
+let sharedClientFile: string | null = null;
+let sharedClientPromise: Promise<SynapseClientLike> | null = null;
+
+const factoryClients = new WeakMap<() => Promise<SynapseClientLike>, Promise<SynapseClientLike>>();
+
+async function getSharedClient(
+    options: SynapseEmbeddingProviderOptions,
+): Promise<SynapseClientLike> {
+    if (options.clientFactory) {
+        // Factory clients (tests, embedded fixtures) memoize per factory, never
+        // in the module-global slot: a cached fixture client would otherwise
+        // leak across providers and poison every later real connection in the
+        // same process.
+        let promise = factoryClients.get(options.clientFactory);
+        if (!promise) {
+            promise = options.clientFactory();
+            factoryClients.set(options.clientFactory, promise);
+        }
+        return promise;
+    }
+    if (sharedClient && sharedClientFile === options.connectionFile) return sharedClient;
+    if (sharedClientPromise && sharedClientFile === options.connectionFile)
+        return sharedClientPromise;
+    sharedClientFile = options.connectionFile;
+    sharedClientPromise = SubcClient.connect({ connectionFile: options.connectionFile }).then(
+        (client) => {
+            sharedClient = client;
+            return client;
+        },
+    );
+    return sharedClientPromise;
+}
+
+export class SynapseEmbeddingProvider implements EmbeddingProvider {
+    modelId: string;
+    readonly maxInputTokens = SYNAPSE_MAX_INPUT_TOKENS;
+    metadata: SynapseLaneMetadata | null;
+
+    private readonly options: SynapseEmbeddingProviderOptions;
+    private client: SynapseClientLike | null = null;
+    private initialized = false;
+    private initializing: Promise<boolean> | null = null;
+    private permanentFailure = false;
+    private batchLimit = 16;
+    private tokenBudget: number | null = null;
+
+    constructor(options: SynapseEmbeddingProviderOptions) {
+        this.options = options;
+        const model = options.model || SYNAPSE_DEFAULT_MODEL;
+        const fingerprint = options.fingerprint ?? "";
+        this.metadata =
+            fingerprint &&
+            Number.isInteger(options.tableEpoch) &&
+            Number.isInteger(options.dims) &&
+            (options.dims ?? 0) > 0
+                ? {
+                      model,
+                      fingerprint,
+                      table_epoch: options.tableEpoch as number,
+                      dims: options.dims as number,
+                      ...(options.recommendedBatch
+                          ? { recommended_batch: Math.max(1, Math.floor(options.recommendedBatch)) }
+                          : {}),
+                      ...(options.provenance !== undefined
+                          ? { provenance: options.provenance }
+                          : {}),
+                      laneIdentity: getSynapseLaneIdentity(model, fingerprint),
+                  }
+                : null;
+        this.modelId = this.metadata?.laneIdentity ?? "synapse:v1:pending";
+        this.batchLimit = this.metadata?.recommended_batch ?? 16;
+        this.tokenBudget = this.metadata?.recommended_token_budget ?? null;
+    }
+
+    /**
+     * Page split honors both halves of the service's measured policy: at most
+     * batchLimit rows AND (when the lane publishes one) at most the token budget
+     * per call, estimated at 4 chars/token. Splitting on whichever limit hits
+     * first keeps a page's GPU/ANE occupancy inside the measured knee, so one
+     * oversized page cannot recreate the uninterruptible-latency regression the
+     * budget exists to bound. A single item over budget still ships alone: the
+     * service truncates per its own contract, the client never drops work.
+     */
+    private nextPage(
+        items: readonly { id: string; text: string; contentSha256: string }[],
+        start: number,
+    ): readonly { id: string; text: string; contentSha256: string }[] {
+        const hardEnd = Math.min(items.length, start + this.batchLimit);
+        if (this.tokenBudget === null) return items.slice(start, hardEnd);
+        let end = start;
+        let tokens = 0;
+        while (end < hardEnd) {
+            tokens += Math.ceil(items[end].text.length / 4);
+            if (tokens > this.tokenBudget && end > start) break;
+            end += 1;
+        }
+        return items.slice(start, Math.max(end, start + 1));
+    }
+
+    static async discover(options: SynapseEmbeddingProviderOptions): Promise<SynapseLaneMetadata> {
+        const provider = new SynapseEmbeddingProvider(options);
+        if (!(await provider.initialize()) || !provider.metadata) {
+            throw new SynapseEmbeddingError("not_certified", "Synapse lane is not ready");
+        }
+        return provider.metadata;
+    }
+
+    async initialize(): Promise<boolean> {
+        if (this.initialized) return true;
+        if (this.permanentFailure) return false;
+        if (this.initializing) return this.initializing;
+        this.initializing = (async () => {
+            try {
+                if (
+                    !this.options.clientFactory &&
+                    !(await connectionFileExists(this.options.connectionFile))
+                ) {
+                    throw new SynapseEmbeddingError(
+                        "transport",
+                        `Synapse connection file is unavailable: ${this.options.connectionFile}`,
+                    );
+                }
+                this.client = await getSharedClient(this.options);
+                if (!this.metadata) {
+                    const discovered = await this.callWithRetry<SynapseCatalogEntry[]>(
+                        "models.list",
+                        {},
+                        this.options.queryTimeoutMs ?? SYNAPSE_DEFAULT_QUERY_TIMEOUT_MS,
+                        false,
+                    );
+                    const entries = extractCatalogEntries(discovered);
+                    const requested = this.options.model?.trim() || SYNAPSE_DEFAULT_MODEL;
+                    const entry = entries.find((candidate) => candidate.model === requested);
+                    if (!entry) {
+                        throw new SynapseEmbeddingError(
+                            "artifact_invalid",
+                            `Synapse models.list did not return requested model ${requested}`,
+                        );
+                    }
+                    if (entry.certified === false || entry.status === "not_certified") {
+                        throw new SynapseEmbeddingError(
+                            "not_certified",
+                            `Synapse model ${entry.model} is not certified`,
+                        );
+                    }
+                    const metadata: SynapseLaneMetadata = {
+                        ...entry,
+                        laneIdentity: getSynapseLaneIdentity(entry.model, entry.fingerprint),
+                    };
+                    this.metadata = metadata;
+                    this.modelId = metadata.laneIdentity;
+                    this.batchLimit = metadata.recommended_batch ?? this.batchLimit;
+                    this.tokenBudget = metadata.recommended_token_budget ?? this.tokenBudget;
+                }
+                this.initialized = true;
+                return true;
+            } catch (error) {
+                const classified = classifyError(error);
+                if (classified.permanent) {
+                    this.permanentFailure = true;
+                    log(
+                        `[magic-context] Synapse lane disabled: ${classified.code}: ${classified.message}`,
+                    );
+                } else {
+                    log(`[magic-context] Synapse lane unavailable: ${classified.message}`);
+                }
+                this.initialized = false;
+                return false;
+            } finally {
+                this.initializing = null;
+            }
+        })();
+        return this.initializing;
+    }
+
+    async embed(text: string, signal?: AbortSignal): Promise<Float32Array | null> {
+        if (!(await this.initialize()) || signal?.aborted || !this.metadata) return null;
+        try {
+            const value = await this.callWithRetry(
+                "embed.query",
+                this.requestConstraints({
+                    text,
+                    deadline_ms: this.options.queryTimeoutMs ?? SYNAPSE_DEFAULT_QUERY_TIMEOUT_MS,
+                }),
+                this.options.queryTimeoutMs ?? SYNAPSE_DEFAULT_QUERY_TIMEOUT_MS,
+                true,
+                signal,
+            );
+            const extracted = extractVector(value);
+            if (!extracted)
+                throw new SynapseEmbeddingError(
+                    "schema_violation",
+                    "Synapse query returned no vector",
+                );
+            this.validateResponse(extracted.metadata, extracted.vector.length);
+            return extracted.vector;
+        } catch (error) {
+            this.logCallFailure(error, "embed.query");
+            return null;
+        }
+    }
+
+    async embedBatch(texts: string[], signal?: AbortSignal): Promise<(Float32Array | null)[]> {
+        if (texts.length === 0) return [];
+        const items = texts.map((text, index) => ({
+            id: `item:${index}`,
+            text,
+            contentSha256: hashContent(text),
+        }));
+        const map = await this.embedItems(items, signal);
+        return items.map((item) => map.get(item.id) ?? null);
+    }
+
+    async embedItems(
+        items: readonly { id: string; text: string; contentSha256: string }[],
+        signal?: AbortSignal,
+    ): Promise<Map<string, Float32Array>> {
+        const output = new Map<string, Float32Array>();
+        if (items.length === 0 || !(await this.initialize()) || !this.metadata || signal?.aborted) {
+            return output;
+        }
+        for (let start = 0; start < items.length; ) {
+            if (signal?.aborted || this.permanentFailure) break;
+            const page = this.nextPage(items, start);
+            start += page.length;
+            try {
+                const requestKey = this.requestKey(page);
+                let body: unknown = {};
+                let restarted = false;
+                for (;;) {
+                    try {
+                        body = await this.callWithRetry(
+                            "embed.batch",
+                            this.batchRequest(page, requestKey),
+                            this.options.batchTimeoutMs ?? SYNAPSE_DEFAULT_BATCH_TIMEOUT_MS,
+                            true,
+                            signal,
+                        );
+                        const first = responseBody(body);
+                        const jobId = typeof first.job_id === "string" ? first.job_id : null;
+                        if (jobId) body = await this.pollBatch(jobId, requestKey, signal);
+                        break;
+                    } catch (error) {
+                        const classified = classifyError(error);
+                        if (classified.code !== "module_restarted" || restarted) throw classified;
+                        restarted = true;
+                    }
+                }
+                const batchEnvelope = responseBody(body);
+                for (const item of extractBatchItems(body)) {
+                    const id = typeof item.id === "string" ? item.id : "";
+                    const vector = item.vector ?? item.embedding;
+                    if (!id || !Array.isArray(vector)) {
+                        throw new SynapseEmbeddingError(
+                            "schema_violation",
+                            "Synapse batch item is malformed",
+                        );
+                    }
+                    const expected = page.find((candidate) => candidate.id === id);
+                    if (!expected) {
+                        throw new SynapseEmbeddingError(
+                            "schema_violation",
+                            `Synapse returned unknown item ${id}`,
+                        );
+                    }
+                    if (
+                        typeof item.content_sha256 === "string" &&
+                        item.content_sha256 !== expected.contentSha256
+                    ) {
+                        throw new SynapseEmbeddingError(
+                            "artifact_invalid",
+                            `Synapse content hash mismatch for item ${id}`,
+                        );
+                    }
+                    const vectorArray = Float32Array.from(vector as number[]);
+                    this.validateResponse({ ...batchEnvelope, ...item }, vectorArray.length);
+                    output.set(id, vectorArray);
+                }
+            } catch (error) {
+                const classified = classifyError(error);
+                this.logCallFailure(classified, "embed.batch");
+                if (classified.code === "idempotency_conflict") throw classified;
+                if (classified.permanent) {
+                    this.permanentFailure = true;
+                    this.initialized = false;
+                    break;
+                }
+            }
+        }
+        return output;
+    }
+
+    async dispose(): Promise<void> {
+        this.initialized = false;
+        this.client = null;
+    }
+
+    isLoaded(): boolean {
+        return this.initialized;
+    }
+
+    private requestConstraints(extra: Record<string, unknown>): Record<string, unknown> {
+        const metadata = this.metadata;
+        if (!metadata) return extra;
+        return {
+            ...extra,
+            model: metadata.model,
+            required_fingerprint: metadata.fingerprint,
+            required_epoch: metadata.table_epoch,
+            allow_equivalent: false,
+            accept_declared: false,
+        };
+    }
+
+    private batchRequest(
+        items: readonly { id: string; text: string; contentSha256: string }[],
+        requestKey: string,
+    ): Record<string, unknown> {
+        return this.requestConstraints({
+            items: items.map((item) => ({
+                id: item.id,
+                text: item.text,
+                content_sha256: item.contentSha256,
+            })),
+            request_key: requestKey,
+        });
+    }
+
+    private requestKey(
+        items: readonly { id: string; text: string; contentSha256: string }[],
+    ): string {
+        if (!this.metadata)
+            throw new SynapseEmbeddingError("transport", "Synapse metadata is unavailable");
+        return getSynapseBatchRequestKey({
+            model: this.metadata.model,
+            fingerprint: this.metadata.fingerprint,
+            tableEpoch: this.metadata.table_epoch,
+            items,
+        });
+    }
+
+    private async pollBatch(
+        jobId: string,
+        requestKey: string,
+        signal?: AbortSignal,
+    ): Promise<unknown> {
+        let cursor: unknown = null;
+        const allItems: Array<Record<string, unknown>> = [];
+        for (;;) {
+            if (signal?.aborted) return {};
+            const body = await this.callWithRetry(
+                "embed.result",
+                this.requestConstraints({
+                    job_id: jobId,
+                    cursor,
+                    request_key: requestKey,
+                }),
+                this.options.batchTimeoutMs ?? SYNAPSE_DEFAULT_BATCH_TIMEOUT_MS,
+                true,
+                signal,
+            );
+            const parsed = responseBody(body);
+            const items = extractBatchItems(body);
+            allItems.push(...items);
+            const nextCursor = parsed.next_cursor ?? parsed.cursor;
+            const done =
+                parsed.done === true ||
+                parsed.complete === true ||
+                nextCursor === undefined ||
+                nextCursor === null;
+            if (done) return { ...parsed, items: allItems };
+            cursor = nextCursor;
+        }
+    }
+
+    private async callWithRetry<T>(
+        method: string,
+        params: unknown,
+        timeoutMs: number,
+        retryEmbeddings: boolean,
+        signal?: AbortSignal,
+    ): Promise<T> {
+        let attempt = 0;
+        for (;;) {
+            if (signal?.aborted)
+                throw new SynapseEmbeddingError("transport", "Synapse request aborted");
+            try {
+                if (!this.client)
+                    throw new SynapseEmbeddingError("transport", "Synapse client is unavailable");
+                return await this.client.call<T>(
+                    this.options.moduleId ?? "synapse",
+                    method,
+                    params,
+                    {
+                        timeoutMs,
+                        // Synapse registers exactly one provider role, ManagementSurface;
+                        // every op (embed.*, models.list, jobs) is dispatched by the JSON
+                        // method field over that single route.
+                        targetKind: "management_surface",
+                        identity: {
+                            project_root: this.options.projectRoot,
+                            harness: getHarness(),
+                            session: this.options.session,
+                        },
+                    },
+                );
+            } catch (error) {
+                const classified = classifyError(error);
+                if (classified.code === "idempotency_conflict") throw classified;
+                const outcomeUnknown =
+                    error instanceof SubcCallError && error.kind === "outcome_unknown";
+                const retryable = !classified.permanent && (retryEmbeddings || !outcomeUnknown);
+                if (!retryable || attempt >= 3) throw classified;
+                const delay = classified.retryAfterMs ?? Math.min(2_000, 100 * 2 ** attempt);
+                attempt += 1;
+                await wait(delay);
+            }
+        }
+    }
+
+    private validateResponse(body: Record<string, unknown>, dims: number): void {
+        const metadata = this.metadata;
+        if (!metadata) {
+            throw new SynapseEmbeddingError("artifact_invalid", "Synapse lane metadata missing");
+        }
+        // The catalog omits dims, so the first embed response pins them; every
+        // later response must match the pinned value exactly.
+        if (metadata.dims === undefined) {
+            const envelopeDims = body.dims;
+            if (typeof envelopeDims === "number" && envelopeDims !== dims) {
+                throw new SynapseEmbeddingError(
+                    "artifact_invalid",
+                    `Synapse envelope declares ${envelopeDims} dimensions but the vector has ${dims}`,
+                );
+            }
+            metadata.dims = dims;
+        }
+        if (dims !== metadata.dims) {
+            throw new SynapseEmbeddingError(
+                "artifact_invalid",
+                `Synapse returned ${dims} dimensions, expected ${metadata.dims}`,
+            );
+        }
+        const fingerprint = body.fingerprint ?? body.served_fingerprint;
+        if (typeof fingerprint !== "string") {
+            throw new SynapseEmbeddingError(
+                "artifact_invalid",
+                "Synapse response omitted the served fingerprint",
+            );
+        }
+        if (fingerprint !== metadata.fingerprint) {
+            throw new SynapseEmbeddingError(
+                "substitution_rejected",
+                `Synapse fingerprint changed from ${metadata.fingerprint} to ${fingerprint}`,
+            );
+        }
+        const epoch = body.table_epoch ?? body.tableEpoch;
+        if (typeof epoch !== "number") {
+            throw new SynapseEmbeddingError(
+                "artifact_invalid",
+                "Synapse response omitted the served table epoch",
+            );
+        }
+        if (epoch !== metadata.table_epoch) {
+            throw new SynapseEmbeddingError(
+                "substitution_rejected",
+                `Synapse table epoch changed from ${metadata.table_epoch} to ${epoch}`,
+            );
+        }
+    }
+
+    private logCallFailure(error: unknown, operation: string): void {
+        const classified = classifyError(error);
+        if (classified.permanent) this.permanentFailure = true;
+        const suffix =
+            classified.retryAfterMs === undefined
+                ? ""
+                : ` retry_after_ms=${classified.retryAfterMs}`;
+        log(
+            `[magic-context] Synapse ${operation} failed: ${classified.code}${suffix}: ${classified.message}`,
+        );
+    }
+}
+
+export function _resetSynapseClientForTests(): void {
+    sharedClient?.close();
+    sharedClient = null;
+    sharedClientFile = null;
+    sharedClientPromise = null;
+}

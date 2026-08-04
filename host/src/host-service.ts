@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { CompanionLoop } from "./companion-loop.js";
 import { type WorldFact } from "./event-pump.js";
 import { type LocalStardewBridgeClient, type LocalStardewBridgeFact, type LocalStardewConnectionFact } from "./local-stardew-bridge.js";
-import { type VoiceExpression, deliverFinalVoiceInput, expressTextFirst, type FinalVoiceInput, type VisibleTextSink, type VoiceSpeechPort } from "./voice.js";
+import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 
 export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void }>;
 
@@ -23,6 +23,7 @@ export class CompanionHostService {
   public constructor(
     private readonly loop: CompanionLoop,
     bridge: Pick<LocalStardewBridgeClient, "onFact" | "onConnectionFact">,
+    private readonly onBridgeDisconnected?: (reasonCode: string) => void,
   ) {
     this.#unsubscribe = bridge.onFact((fact) => this.acceptBridgeFact(fact));
     this.#unsubscribeConnection = bridge.onConnectionFact((fact) => this.acceptConnectionFact(fact));
@@ -73,15 +74,6 @@ export class CompanionHostService {
     return wrapped;
   }
 
-  /** Visible text is committed first; speech is a non-authoritative side path. */
-  public async express(
-    visible: VisibleTextSink,
-    speech: VoiceSpeechPort | undefined,
-    input: Omit<VoiceExpression, "expressionId">,
-  ): Promise<VoiceExpression> {
-    return expressTextFirst(visible, speech, input);
-  }
-
   /** Initial observation is forwarded exactly as an authoritative Mod fact. */
   public acceptInitialSnapshot(snapshot: LocalStardewBridgeFact): void {
     this.acceptBridgeFact(snapshot);
@@ -97,6 +89,7 @@ export class CompanionHostService {
 
   private acceptConnectionFact(fact: LocalStardewConnectionFact): void {
     if (this.#closed) return;
+    this.onBridgeDisconnected?.(fact.reasonCode);
     // This truthfully identifies the local transport source; it is never
     // presented as a Stardew world/lifecycle fact emitted by the Mod.
     this.loop.pump.enqueueFact({ source: "host_local_transport", kind: "lifecycle", correlationId: `transport_${fact.state}`, revision: 0, payload: fact });
@@ -149,15 +142,12 @@ export class CompanionHostService {
 function toWorldFact(message: LocalStardewBridgeFact): WorldFact | null {
   switch (message.type) {
     case "snapshot":
-      return { source: "stardew_mod", kind: "snapshot", correlationId: message.correlationId, revision: message.payload.revision, payload: message.payload };
+      return { source: "stardew_mod", kind: "snapshot", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, payload: message.payload };
     case "execution_receipt":
-      return { source: "stardew_mod", kind: "execution_receipt", correlationId: message.payload.executionId, revision: message.payload.revision, payload: message.payload };
+      return { source: "stardew_mod", kind: "execution_receipt", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.payload.executionId, revision: message.payload.revision, executionId: message.payload.executionId, requestId: message.payload.requestId, payload: message.payload };
     case "semantic_event":
-      // The event pump deliberately has no intent taxonomy. Preserve this
-      // Mod-originated low-frequency fact as a lifecycle/event record instead
-      // of inventing a Host semantic interpretation.
-      return { source: "stardew_mod", kind: "lifecycle", correlationId: message.correlationId, revision: message.payload.revision, payload: message.payload };
+      return { source: "stardew_mod", kind: "semantic_event", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, executionId: message.payload.activeExecution?.executionId, payload: message.payload };
     case "lifecycle":
-      return { source: "stardew_mod", kind: "lifecycle", correlationId: message.correlationId, revision: 0, payload: message.payload };
+      return { source: "stardew_mod", kind: "lifecycle", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: 0, payload: message.payload };
   }
 }

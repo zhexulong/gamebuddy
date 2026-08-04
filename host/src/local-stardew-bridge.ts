@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { type CompanionIntegration, type CompanionIntegrationState } from "./integration-types.js";
+import { type KnowledgeBundle } from "./knowledge.js";
 import { NamedPipeTransport } from "./named-pipe.js";
 import {
+  diagnoseBridgeMessage,
   newEnvelope,
   type BridgeMessage,
   type ExecutionRequest,
@@ -37,7 +39,13 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
   readonly #factListeners = new Set<(fact: LocalStardewBridgeFact) => void>();
   readonly #connectionListeners = new Set<(fact: LocalStardewConnectionFact) => void>();
 
-  private constructor(readonly scope: Scope, readonly transport: NamedPipeTransport, readonly token: string) {
+  private constructor(
+    readonly scope: Scope,
+    readonly transport: NamedPipeTransport,
+    readonly token: string,
+    readonly knowledge?: KnowledgeBundle,
+    readonly gameVersion?: string,
+  ) {
     transport.onMessage((json) => this.receive(json));
     transport.onClose((reasonCode) => {
       this.#authenticated = false;
@@ -55,9 +63,10 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     });
   }
 
-  public static async connect(scope: Scope, pipeName: string, token: string): Promise<LocalStardewBridgeClient> {
+  public static async connect(scope: Scope, pipeName: string, token: string, knowledge?: KnowledgeBundle, gameVersion?: string): Promise<LocalStardewBridgeClient> {
     if (!/^[A-Za-z0-9_-]{16,256}$/.test(token)) throw new Error("invalid_bridge_token");
-    const client = new LocalStardewBridgeClient(scope, await NamedPipeTransport.connect(pipeName), token);
+    if (knowledge !== undefined && gameVersion === undefined) throw new Error("knowledge_version_required");
+    const client = new LocalStardewBridgeClient(scope, await NamedPipeTransport.connect(pipeName), token, knowledge, gameVersion);
     await client.hello();
     return client;
   }
@@ -134,7 +143,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     try { message = JSON.parse(json) as BridgeMessage; } catch { this.transport.close("malformed_inbound_json"); return; }
     const fault = validateBridgeMessage(message, this.scope);
     if (fault !== null || message.type === "hello" || message.type === "observe_request" || message.type === "execution_request" || message.type === "cancel_request") {
-      this.transport.close(fault ?? "unexpected_inbound_request"); return;
+      this.transport.close(fault === "invalid_snapshot" ? diagnoseBridgeMessage(message, this.scope) ?? fault : fault ?? "unexpected_inbound_request"); return;
     }
     if (message.type === "hello_ack") {
       this.#snapshot = null; this.#latestReceipt = null;
