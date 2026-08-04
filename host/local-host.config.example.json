@@ -5,5 +5,12 @@
   "companionId": "opaque_companion_id",
   "pipeName": "gamebuddy_stardew",
   "bridgeToken": "replace_with_a_16_character_or_longer_local_token",
-  "model": "mimo-v2.5"
+  "model": "deepseek-v4-flash",
+  "thinkingLevel": "high",
+  "gameplaySubagent": false,
+  "actionPolicy": {
+    "policyVersion": 1,
+    "deniedActions": [],
+    "deniedFamilies": []
+  }
 }
