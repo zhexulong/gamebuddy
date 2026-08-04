@@ -67,3 +67,33 @@ node tools/run-stardew-bridge-ledger-smoke.mjs `
 ```
 
 This checks a stale revision rejection, idempotency-key conflict rejection, and a final Tool restore through the formal named-pipe bridge.
+
+
+## Ongoing-interaction Historian authoring gate
+
+`run-ongoing-interaction-historian-authoring.mjs` is a provider-backed
+verification of the Magic Context fork's Historian authoring path. It creates a
+fresh GameBuddy-owned temporary runtime and in-memory test DB, obtains the
+configured model only through that runtime's embedded Pi SDK registry, and
+directly exercises the fork's native Historian publication pipeline. It is
+intentionally not the normal long-context trigger: production scheduling stays
+unchanged and enables the same embedded, no-tool Historian only when Magic
+Context's own context-pressure scheduler requires it.
+
+```powershell
+node tools/run-ongoing-interaction-historian-authoring.mjs
+```
+
+A pass executes two native Magic Context scenarios: a one-off Episodic fixture
+must publish a compartment with zero `SEMANTIC_MEMORY` rows while
+`auto_promote=false`; a separately explicit, confirmed durable-preference
+fixture must publish exactly one scoped `SEMANTIC_MEMORY` row only with the
+test-gate's `auto_promote=true`. This verifies Magic Context's existing
+promotion semantics. GameBuddy selects Magic Context's native product
+`auto_promote` setting and automatic embedded Historian authoring. Magic
+Context alone decides when normal product sessions are under sufficient context
+pressure to run it. The Historian has no tools, browser surface, Game surface,
+Host Memory API, or system `pi` CLI path. Output contains only counts and gate
+state, never
+model text or credentials. A failure is a bounded non-zero exit and does not
+change product configuration.

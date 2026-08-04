@@ -1,6 +1,10 @@
 packages:
   - host
   - voice-gateway
+  - dialogue-web
+  # Project-maintained Magic Context fork. Kept out of the main workspace so
+  # its Bun build/runtime remains isolated from the GameBuddy Node workspace.
+  - '!vendor/magic-context/**'
 
 # Phase 0B intentionally disables optional native/model build scripts. Magic
 # Context runs with embeddings off; no optional binary is approved implicitly.
