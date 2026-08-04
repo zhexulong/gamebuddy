@@ -52,9 +52,9 @@ jobs:
         with:
           global-json-file: global.json
       - run: dotnet restore GameBuddy.sln --locked-mode
-      # A successful source-text scaffold check is not a Mod artifact gate.
-      # Build the same Release configuration used by deployment as a separate,
-      # compiler-enforced boundary.
-      - run: dotnet build GameBuddy.sln --no-restore --configuration Release --nologo
+      # GitHub-hosted runners do not have the licensed, target-version Stardew
+      # and SMAPI assemblies required by ModBuildConfig. Do not substitute fake
+      # assemblies: Release compilation remains a required local, target-version
+      # gate via tools/build-stardew.ps1 before deployment or publication.
       - shell: pwsh
         run: ./tools/verify-stardew-scaffold.ps1
