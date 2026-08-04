@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "GameBuddyFixture_AnimalProduct_1_6_15",
+  "targetGameVersion": "1.6.15",
+  "saveName": "GameBuddyFixture_AnimalProduct_1_6_15",
+  "action": "collect_animal_product",
+  "purpose": "Native MilkPail/Shears success-gate precondition contract; metadata only.",
+  "requiredLiveFacts": {
+    "minimumAnimalProductTargets": 1,
+    "requiresNearbyAdult": true,
+    "requiresCurrentProduce": true,
+    "requiresCompatibleFarmhandOwnedTool": true,
+    "requiresInventoryCapacity": true
+  },
+  "hostAutomation": {
+    "saveName": "GameBuddyFixture_AnimalProduct_1_6_15",
+    "triggerNativeSaveAfterAttachment": true,
+    "triggerNativeSaveAfterClientExit": true
+  },
+  "fixtureCreationChecklist": [
+    "Create and save the template through target-version Stardew only; do not edit XML afterward.",
+    "Configure the fixture Host profile's HostAutomation.SaveName to the identical fixture name before running the attachment regression.",
+    "Create the Milk Pail, adult ready animal, and native AnimalHouse through target-version game play before saving the template; the harness never creates them dynamically.",
+    "Ensure one free Farmhand inventory slot is available for the native produce result.",
+    "Record no opaque target ID: the smoke must rediscover it from the fresh live snapshot."
+  ],
+  "successPostconditions": [
+    "receipt.state=succeeded",
+    "receipt.reasonCode=animal_product_collected",
+    "native tool animation complete",
+    "same animal currentProduce cleared",
+    "expected qualified produce stack added to Farmhand inventory"
+  ],
+  "forbiddenFixtureBehavior": [
+    "Do not call collect_animal_product.",
+    "Do not write inventory, currentProduce, friendship, experience, receipts, or bridge messages.",
+    "Do not edit save XML after the native template is created."
+  ]
+}

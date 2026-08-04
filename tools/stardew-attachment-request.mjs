@@ -11,7 +11,7 @@ const sessionDirectory = option("--session-directory");
 const hostConfigPath = option("--host-config");
 const expectedFarmhandId = option("--expected-farmhand-id");
 const timeoutMs = Number(option("--timeout-ms"));
-const hostConfig = JSON.parse(await readFile(hostConfigPath, "utf8"));
+const hostConfig = JSON.parse((await readFile(hostConfigPath, "utf8")).replace(/^\uFEFF/, ""));
 const hostProvisioning = hostConfig.HostFarmhandProvisioning;
 if (!hostProvisioning?.SessionToken || !hostConfig.CompanionId) throw new Error("invalid_host_profile");
 
@@ -38,7 +38,7 @@ while (Date.now() < deadline) {
   } catch (error) {
     lastError = error instanceof Error ? error.message : String(error);
     if (requestId !== undefined && /stardew_attachment_rejected_/.test(lastError)) throw error;
-    if (!/stardew_session_(expired|host_not_ready|awaiting_save)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique|stardew_attachment_timeout/.test(lastError)) throw error;
+    if (!/stardew_session_(expired|host_not_ready|awaiting_save)|stardew_attachment_rejected_binding_persist_pending|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique|stardew_attachment_timeout/.test(lastError)) throw error;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 }
@@ -71,7 +71,7 @@ async function readLiveSessionWithRetry() {
       return await flow.readLiveSession();
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
-      if (!/stardew_session_(expired|host_not_ready)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique/.test(lastError)) throw error;
+      if (!/stardew_session_(expired|host_not_ready)|stardew_attachment_rejected_binding_persist_pending|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique/.test(lastError)) throw error;
       await new Promise(resolve => setTimeout(resolve, 100));
     }
   }

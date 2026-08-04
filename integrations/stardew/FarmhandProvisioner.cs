@@ -18,9 +18,10 @@ internal sealed class FarmhandProvisioner
 {
     private readonly IMonitor monitor;
     private readonly FarmhandProvisionerConfig config;
-    private readonly FarmhandJoinManifest manifest;
+    private FarmhandJoinManifest manifest;
     private readonly DateTimeOffset deadline;
-    private readonly VersionGuard versionGuard;
+    private VersionGuard versionGuard;
+    private bool waitingForManifest;
     private LidgrenClient? client;
     private bool activationRequested;
     private bool finished;
@@ -32,6 +33,7 @@ internal sealed class FarmhandProvisioner
         this.config = config;
         this.manifest = manifest;
         this.versionGuard = versionGuard;
+        this.waitingForManifest = versionGuard.ReasonCode == "manifest_pending";
         this.deadline = DateTimeOffset.UtcNow.AddSeconds(config.TimeoutSeconds);
     }
 
@@ -54,61 +56,35 @@ internal sealed class FarmhandProvisioner
             };
         }
 
-        FarmhandJoinManifest? manifest;
-        try
+        // The client may be launched before the Host has received the signed
+        // attachment request. Keep the native client in a bounded pending state
+        // instead of treating a missing manifest as a permanent configuration
+        // failure; validation still happens before any endpoint or identity is
+        // consumed.
+        return new FarmhandProvisioner(
+            monitor,
+            config,
+            new FarmhandJoinManifest(),
+            new VersionGuard(false, "manifest_pending"))
         {
-            manifest = JsonSerializer.Deserialize<FarmhandJoinManifest>(File.ReadAllText(config.ManifestPath), FarmhandProvisioningProtocol.JsonOptions);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
-        {
-            monitor.Log("GameBuddy FarmhandProvisioner failed closed: the manifest could not be read.", LogLevel.Error);
-            return new FarmhandProvisioner(monitor, config, new FarmhandJoinManifest(), new VersionGuard(false, "manifest_unreadable"))
-            {
-                finished = true,
-                result = new("failed", "manifest_unreadable"),
-            };
-        }
-
-        if (manifest is null)
-            return new FarmhandProvisioner(monitor, config, new FarmhandJoinManifest(), new VersionGuard(false, "manifest_empty"))
-            {
-                finished = true,
-                result = new("failed", "manifest_empty"),
-            };
-
-        VersionGuard guard;
-        try
-        {
-            guard = ValidateManifest(config, manifest);
-        }
-        catch (Exception exception)
-        {
-            monitor.Log($"GameBuddy FarmhandProvisioner failed closed: manifest validation raised {exception.GetType().Name}.", LogLevel.Error);
-            return new FarmhandProvisioner(monitor, config, manifest, new VersionGuard(false, "manifest_invalid"))
-            {
-                finished = true,
-                result = new("failed", "manifest_invalid"),
-            };
-        }
-        var provisioner = new FarmhandProvisioner(monitor, config, manifest, guard);
-        if (!guard.IsCompatible)
-        {
-            provisioner.finished = true;
-            provisioner.result = new("failed", guard.ReasonCode);
-            monitor.Log($"GameBuddy FarmhandProvisioner failed closed: {guard.ReasonCode}.", LogLevel.Error);
-            return provisioner;
-        }
-
-        monitor.Log("GameBuddy FarmhandProvisioner accepted a signed, version-matched manifest; native LAN connection is starting.", LogLevel.Info);
-        provisioner.client = new LidgrenClient(manifest.Endpoint);
-        provisioner.client.connect();
-        return provisioner;
+            result = new("waiting", "manifest_pending"),
+        };
     }
 
     internal bool Update()
     {
         if (this.finished)
             return true;
+
+        if (this.waitingForManifest)
+        {
+            if (DateTimeOffset.UtcNow >= this.deadline)
+                return this.Fail("manifest_timeout");
+            if (!this.TryLoadManifest())
+                return false;
+            if (this.finished)
+                return true;
+        }
 
         if (this.client is null)
             return this.Fail("native_client_unavailable");
@@ -266,6 +242,51 @@ internal sealed class FarmhandProvisioner
             this.monitor.Log($"GameBuddy could not activate the native Farmhand through the target-version adapter: {exception.GetType().Name}.", LogLevel.Error);
             return false;
         }
+    }
+
+    private bool TryLoadManifest()
+    {
+        FarmhandJoinManifest? loadedManifest;
+        try
+        {
+            if (!File.Exists(this.config.ManifestPath))
+                return false;
+            loadedManifest = JsonSerializer.Deserialize<FarmhandJoinManifest>(File.ReadAllText(this.config.ManifestPath), FarmhandProvisioningProtocol.JsonOptions);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // Host writes the manifest on the game thread. A partially observed
+            // file is retried within the provisioning deadline and never used.
+            return false;
+        }
+
+        if (loadedManifest is null)
+            return false;
+
+        VersionGuard guard;
+        try
+        {
+            guard = ValidateManifest(this.config, loadedManifest);
+        }
+        catch (Exception exception)
+        {
+            this.monitor.Log($"GameBuddy FarmhandProvisioner failed closed: manifest validation raised {exception.GetType().Name}.", LogLevel.Error);
+            this.Fail("manifest_invalid");
+            return true;
+        }
+        if (!guard.IsCompatible)
+        {
+            this.Fail(guard.ReasonCode);
+            return true;
+        }
+
+        this.manifest = loadedManifest;
+        this.versionGuard = guard;
+        this.waitingForManifest = false;
+        this.monitor.Log("GameBuddy FarmhandProvisioner accepted a signed, version-matched manifest; native LAN connection is starting.", LogLevel.Info);
+        this.client = new LidgrenClient(loadedManifest.Endpoint);
+        this.client.connect();
+        return true;
     }
 
     private bool Fail(string reasonCode)
