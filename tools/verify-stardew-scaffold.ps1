@@ -53,7 +53,9 @@ foreach ($forbiddenText in @("new Farmer", "Game1.otherFarmers", "new NPC", "Htt
     }
 }
 
-foreach ($requiredText in @("gamebuddy_farmhands", "Game1.getAllFarmers", "UniqueMultiplayerID", "PerScreen<ScreenEmbodimentState>", "Context.ScreenId", "TryStart", "Cancel", "RequestLocalMove", "cancel_active_execution", "gamebuddy_trace", "RequestLocalEquipTool", "gamebuddy_equip_tool_fixture", "tool_selected", "CurrentTool", "TryStart", "body_owned", "locally_blocked", "target_reached", "deadline_expired", "cancellation_receipt_missing", "MaximumRememberedReceipts", "CreateBridgeSnapshot", "BridgeProtocol.Version", "MaximumMessageBytes", "PartiallySucceeded", "ToWireValue", "TryAuthenticate", "TryObserve", "TryExecute", "TryCancel", "FixedTimeEquals", "HasValidLocalBridgeConfiguration", "EnabledActionSet", "action_disabled_by_player_policy", "NamedPipeServerStream", "DrainLocalPipeBridge")) {
+# `locally_blocked` belonged to the retired manual cardinal controller. Native
+# PathFindController now reports terminal `native_path_ended` instead.
+foreach ($requiredText in @("gamebuddy_farmhands", "Game1.getAllFarmers", "UniqueMultiplayerID", "PerScreen<ScreenEmbodimentState>", "Context.ScreenId", "TryStart", "Cancel", "RequestLocalMove", "cancel_active_execution", "gamebuddy_trace", "RequestLocalEquipTool", "gamebuddy_equip_tool_fixture", "tool_selected", "CurrentTool", "TryStart", "body_owned", "native_path_ended", "target_reached", "deadline_expired", "cancellation_receipt_missing", "MaximumRememberedReceipts", "CreateBridgeSnapshot", "BridgeProtocol.Version", "MaximumMessageBytes", "PartiallySucceeded", "ToWireValue", "TryAuthenticate", "TryObserve", "TryExecute", "TryCancel", "FixedTimeEquals", "HasValidLocalBridgeConfiguration", "EnabledActionSet", "NamedPipeServerStream", "DrainLocalPipeBridge")) {
     if (-not $allSource.Contains($requiredText)) {
         throw "Stardew embodiment is missing required fail-closed/trace contract text: $requiredText"
     }

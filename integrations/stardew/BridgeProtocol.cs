@@ -66,6 +66,54 @@ internal sealed record BridgeEnvelope<TPayload>(
 
 internal sealed record BridgeTile(float X, float Y);
 
+internal sealed record BridgeWarp(
+    int SourceX,
+    int SourceY,
+    string TargetLocation,
+    int TargetX,
+    int TargetY);
+
+internal sealed record BridgeDoor(
+    int SourceX,
+    int SourceY,
+    string TargetLocation,
+    int TargetX,
+    int TargetY);
+
+internal sealed record BridgeSoilTile(int X, int Y);
+
+internal sealed record BridgeToolSlot(int Slot, string Label);
+
+internal sealed record BridgeForageTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
+
+internal sealed record BridgeItemTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
+
+internal sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId);
+
+internal sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string CropId, string QualifiedHarvestItemId, bool RegrowsAfterHarvest);
+
+internal sealed record BridgeSeedTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
+
+internal sealed record BridgeFertilizerTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
+
+internal sealed record BridgeDebrisTarget(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel);
+
+internal sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId);
+
+internal sealed record BridgeResourceTarget(string TargetId, int Slot, int X, int Y, string TreeType, int GrowthStage, bool Stump, float Health, string ToolKind, int RequiredUpgradeLevel);
+
+internal sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, string NpcName, int FriendshipPoints, string FriendshipStatus, bool TalkedToToday, int GiftsToday, int GiftsThisWeek);
+
+internal sealed record BridgePetTarget(string TargetId, int X, int Y, string PetType, int Friendship, bool PettedToday);
+
+/// <summary>Nearby adult farm animal whose exact native MilkPail/Shears target is live and inventory can accept its produce.</summary>
+internal sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X, int Y, string AnimalType, string QualifiedProduceItemId, string ToolKind, int ProduceStack);
+
+/// <summary>Empty native AnimalHouse Trough paired with an owned Hay inventory slot.</summary>
+internal sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int HayStack);
+
+internal sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, int Stack, int Edibility, bool IsDrink);
+
 internal sealed record BridgeSnapshot(
     long Revision,
     string Location,
@@ -76,7 +124,25 @@ internal sealed record BridgeSnapshot(
     int InventorySlots,
     bool Actionable,
     IReadOnlyList<string> Capabilities,
-    BridgeActiveExecution? ActiveExecution);
+    BridgeActiveExecution? ActiveExecution,
+    IReadOnlyList<BridgeWarp>? Warps,
+    IReadOnlyList<BridgeDoor>? DoorTargets,
+    IReadOnlyList<BridgeSoilTile>? SoilTiles,
+    IReadOnlyList<BridgeToolSlot>? ToolSlots,
+    IReadOnlyList<BridgeForageTarget>? ForageTargets,
+    IReadOnlyList<BridgeItemTarget>? ItemTargets,
+    IReadOnlyList<BridgeCropTarget>? CropTargets,
+    IReadOnlyList<BridgeHarvestTarget>? HarvestTargets,
+    IReadOnlyList<BridgeSeedTarget>? SeedTargets,
+    IReadOnlyList<BridgeFertilizerTarget>? FertilizerTargets,
+    IReadOnlyList<BridgeDebrisTarget>? DebrisTargets,
+    IReadOnlyList<BridgeMachineTarget>? MachineTargets,
+    IReadOnlyList<BridgeResourceTarget>? ResourceTargets,
+    IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
+    IReadOnlyList<BridgePetTarget>? PetTargets,
+    IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
+    IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,
+    IReadOnlyList<BridgeFoodTarget>? FoodTargets);
 
 internal sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -84,7 +150,7 @@ internal sealed record BridgeActiveExecution(
     string Action,
     string State,
     string ReasonCode,
-    IReadOnlyDictionary<string, string>? Evidence);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence);
 
 internal sealed record BridgeReceipt(
     string ExecutionId,
@@ -92,17 +158,17 @@ internal sealed record BridgeReceipt(
     string State,
     string ReasonCode,
     long Revision,
-    IReadOnlyDictionary<string, string>? Evidence);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyDictionary<string, string>? Evidence);
 
 internal sealed record BridgeError(string ReasonCode);
 
 internal sealed record BridgeSemanticEvent(
     string Kind,
     long Revision,
-    BridgeActiveExecution? ActiveExecution,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeActiveExecution? ActiveExecution,
     string ReasonCode);
 
-internal sealed record BridgeExecutionArgs(float? X, float? Y, int? Slot);
+internal sealed record BridgeExecutionArgs(float? X, float? Y, int? Slot, string? ExpectedQualifiedItemId, string? ExpectedTargetId);
 
 internal sealed record BridgeExecutionRequest(
     string RequestId,
@@ -110,6 +176,4 @@ internal sealed record BridgeExecutionRequest(
     string Action,
     BridgeExecutionArgs Args,
     long ExpectedRevision,
-    long DeadlineMs,
-    string PermissionToken,
-    string ConfirmationId);
+    long DeadlineMs);

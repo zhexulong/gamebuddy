@@ -26,10 +26,89 @@ public sealed class ModConfig
     /// <summary>Formal AI-client provisioning adapter. It reads only a signed manifest.</summary>
     public FarmhandProvisionerConfig? FarmhandProvisioner { get; init; }
 
-    /// <summary>Player-controlled local allowlist for verified Game Actions. Empty means no actions are enabled.</summary>
-    public List<string> EnabledActions { get; init; } = new();
+    /// <summary>
+    /// Versioned deny-by-exception policy. In policy version 1, all published
+    /// actions are consented by default; these fields only remove actions from
+    /// the Agent-visible capability surface.
+    /// </summary>
+    public int ActionPolicyVersion { get; init; }
+    public List<string> DeniedActions { get; init; } = new();
+    public List<string> DeniedActionFamilies { get; init; } = new();
 
-    internal IReadOnlySet<string> EnabledActionSet => new HashSet<string>(EnabledActions.Where(action => action is "move_to_tile" or "equip_tool"), StringComparer.Ordinal);
+    /// <summary>Test-only actions; these never enter the default Agent surface.</summary>
+    public List<string> ExperimentalActions { get; init; } = new();
+
+    /// <summary>Legacy allowlist retained only for explicit pre-policy configs.</summary>
+    public List<string>? EnabledActions { get; init; }
+
+    internal IReadOnlySet<string> EnabledActionSet
+    {
+        get
+        {
+            if (this.ActionPolicyVersion == 1)
+            {
+                HashSet<string> deniedActions = new(this.DeniedActions, StringComparer.Ordinal);
+                HashSet<string> deniedFamilies = new(this.DeniedActionFamilies, StringComparer.Ordinal);
+                HashSet<string> result = new(PublishedActions.Where(action => !deniedActions.Contains(action) && !deniedFamilies.Contains(ActionFamily(action))), StringComparer.Ordinal);
+                result.UnionWith(this.ExperimentalActions.Where(action => ExperimentalActionIds.Contains(action)
+                    && !deniedActions.Contains(action)
+                    && !deniedFamilies.Contains(ActionFamily(action))));
+                return result;
+            }
+
+            // Existing configs keep their old fail-closed allowlist semantics
+            // until explicitly migrated to ActionPolicyVersion 1.
+            return new HashSet<string>((this.EnabledActions ?? Enumerable.Empty<string>()).Where(action => PublishedActions.Contains(action)), StringComparer.Ordinal);
+        }
+    }
+
+    internal bool UsesDefaultConsentPolicy => this.ActionPolicyVersion == 1;
+
+    internal bool HasValidActionPolicy
+    {
+        get
+        {
+            if (this.ActionPolicyVersion is not (0 or 1)) return false;
+            if (this.ActionPolicyVersion == 0 && (this.DeniedActions.Count > 0 || this.DeniedActionFamilies.Count > 0)) return false;
+            if (this.ActionPolicyVersion == 1 && this.EnabledActions is not null) return false;
+            return this.DeniedActions.All(action => PublishedActions.Contains(action) || ExperimentalActionIds.Contains(action))
+                && this.DeniedActionFamilies.All(PublishedFamilies.Contains)
+                && this.ExperimentalActions.All(ExperimentalActionIds.Contains);
+        }
+    }
+
+    private static readonly IReadOnlySet<string> PublishedActions = new HashSet<string>(new[] { "move_to_tile", "equip_tool", "travel", "enter_exit", "till_soil", "pickup_forage", "pickup_item", "water_crop", "plant_seed", "fertilize_tile", "machine_inspect", "collect_animal_product", "feed_animal", "use_item", "harvest_crop" }, StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> PublishedFamilies = new HashSet<string>(new[]
+    {
+        "movement_navigation", "body_tools", "transport_warps", "farming_crops", "resource_gathering", "inventory_items",
+        "crafting_cooking", "machines_processing", "animals_pets", "npc_social", "shops_economy",
+        "buildings_farm_management", "quests_progression", "story_world_scripts", "festivals_minigames", "calendar_day_progression",
+    }, StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "collect_resource", "npc_relationship", "pet_animal" }, StringComparer.Ordinal);
+
+    private static string ActionFamily(string action) => action switch
+    {
+        "move_to_tile" => "movement_navigation",
+        "equip_tool" => "body_tools",
+        "travel" => "transport_warps",
+        "enter_exit" => "movement_navigation",
+        "till_soil" => "farming_crops",
+        "pickup_forage" => "resource_gathering",
+        "pickup_item" => "inventory_items",
+        "water_crop" => "farming_crops",
+        "plant_seed" => "farming_crops",
+        "fertilize_tile" => "farming_crops",
+        "harvest_crop" => "farming_crops",
+        "clear_debris" => "resource_gathering",
+        "machine_inspect" => "machines_processing",
+        "collect_resource" => "resource_gathering",
+        "npc_relationship" => "npc_social",
+        "pet_animal" => "animals_pets",
+        "collect_animal_product" => "animals_pets",
+        "feed_animal" => "animals_pets",
+        "use_item" => "inventory_items",
+        _ => string.Empty,
+    };
 
     internal bool HasValidLocalBridgeConfiguration => EnableLocalBridge
         && BridgeProtocol.IsOpaqueId(PipeName)
@@ -84,13 +163,18 @@ public sealed class FarmhandProvisionerConfig
         && ExpectedGameVersion == "1.6.15"
         && ExpectedGameBuildNumber == 24356
         && ExpectedSmapiVersion == "4.5.2"
-        && TimeoutSeconds is >= 1 and <= 60;
+        && TimeoutSeconds is >= 1 and <= 300;
 }
 
 /// <summary>Unprivileged, title-screen-only native LAN handshake diagnostic.</summary>
 public sealed class HostAutomationConfig
 {
     public bool Enable { get; init; }
+    /// <summary>
+    /// Explicit disposable native-test setup. Only the exact known scenario on
+    /// a GameBuddyFixture save is accepted; it never belongs in user profiles.
+    /// </summary>
+    public string FixtureScenario { get; init; } = string.Empty;
     public string SaveName { get; init; } = string.Empty;
     public int TimeoutSeconds { get; init; } = 90;
     public bool TriggerNativeSaveAfterAttachment { get; init; }
@@ -99,7 +183,9 @@ public sealed class HostAutomationConfig
     internal bool IsValid => Enable
         && SaveName.Length is >= 1 and <= 128
         && SaveName.EndsWith("_", StringComparison.Ordinal) is false
-        && SaveName.All(character => char.IsLetterOrDigit(character) || character is '_' or '-');
+        && SaveName.All(character => char.IsLetterOrDigit(character) || character is '_' or '-')
+        && (FixtureScenario.Length == 0 || (SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal)
+            && FixtureScenario is "native_animal_product_v2" or "native_feed_animal_v1" or "native_water_crop_v1" or "native_fertilize_tile_v1" or "native_plant_seed_v1" or "native_till_soil_v1" or "native_machine_inspect_v1" or "native_npc_relationship_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_use_item_v1" or "native_harvest_crop_v1"));
 }
 
 public sealed class FarmhandProvisioningProbeConfig

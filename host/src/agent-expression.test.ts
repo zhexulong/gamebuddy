@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { attachCompanionExpression, finalAssistantText } from "./agent-expression.js";
 
-test("extracts only completed assistant text, not thinking or tool payloads", () => {
+test("extracts only completed assistant text for private trace", () => {
   const text = finalAssistantText([
     { role: "user", content: "hello" },
     {
@@ -20,31 +20,31 @@ test("extracts only completed assistant text, not thinking or tool payloads", ()
   assert.equal(finalAssistantText([{ role: "assistant", stopReason: "error", content: [{ type: "text", text: "do not show" }] }]), null);
 });
 
-test("completed agent expression shows text before enqueuing optional speech", async () => {
+test("ordinary agent_end output never becomes player-facing presentation", () => {
   let listener: ((event: unknown) => void) | undefined;
   const timeline: string[] = [];
   const unsubscribe = attachCompanionExpression({
-    subscribe(callback: (event: never) => void) { listener = callback as unknown as (event: unknown) => void; return () => { listener = undefined; }; },
+    subscribe(callback: (event: never) => void) {
+      listener = callback as unknown as (event: unknown) => void;
+      return () => { listener = undefined; };
+    },
   } as never, {
-    sessionId: "session_01",
-    visible: { async show(value) { timeline.push(`text:${value.text}`); } },
-    speech: { async enqueue(value) { timeline.push(`speech:${value.text}`); } },
+    visible: { show() { timeline.push("text"); } },
+    speech: { enqueue() { timeline.push("speech"); } },
   });
 
-  listener?.({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "先显示文字" }] }] });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(timeline, ["text:先显示文字", "speech:先显示文字"]);
+  listener?.({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "普通输出" }] }] });
+  assert.deepEqual(timeline, []);
   unsubscribe();
 });
 
-test("retrying and empty assistant turns do not create presentation output", async () => {
+test("retrying and empty assistant turns do not create presentation output", () => {
   let listener: ((event: unknown) => void) | undefined;
   const shown: string[] = [];
   attachCompanionExpression({
     subscribe(callback: (event: never) => void) { listener = callback as unknown as (event: unknown) => void; return () => undefined; },
-  } as never, { sessionId: "session_01", visible: { async show(value) { shown.push(value.text); } } });
+  } as never, { visible: { show() { shown.push("shown"); } } });
   listener?.({ type: "agent_end", willRetry: true, messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "retry" }] }] });
   listener?.({ type: "agent_end", willRetry: false, messages: [{ role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", name: "x" }] }] });
-  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(shown, []);
 });

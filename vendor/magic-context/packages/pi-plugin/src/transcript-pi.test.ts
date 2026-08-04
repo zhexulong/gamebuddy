@@ -1,0 +1,426 @@
+import { describe, expect, it } from "bun:test";
+import { createTagger } from "@magic-context/core/features/magic-context/tagger";
+import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
+import { tagTranscript } from "@magic-context/core/shared/tag-transcript";
+import {
+	assistantMessage,
+	assistantToolCall,
+	createTestDb,
+	textOf,
+	toolResultMessage,
+	userMessage,
+} from "./test-utils.test";
+import { createPiTranscript } from "./transcript-pi";
+
+type ToolTokenCacheEntry = { text: string; tokenCount: number };
+
+class CountingToolTokenCache extends Map<string, ToolTokenCacheEntry> {
+	writes = 0;
+
+	override set(key: string, value: ToolTokenCacheEntry): this {
+		this.writes += 1;
+		return super.set(key, value);
+	}
+
+	resetWrites(): void {
+		this.writes = 0;
+	}
+}
+
+class LegacyAggregateToolTokenCache extends CountingToolTokenCache {
+	private aggregateKey(key: string): string {
+		const suffix = key.indexOf("\0result-part:");
+		return suffix === -1 ? key : key.slice(0, suffix);
+	}
+
+	override get(key: string): ToolTokenCacheEntry | undefined {
+		return super.get(this.aggregateKey(key));
+	}
+
+	override set(key: string, value: ToolTokenCacheEntry): this {
+		return super.set(this.aggregateKey(key), value);
+	}
+}
+
+describe("createPiTranscript", () => {
+	it("round-trips Pi messages through transcript mutation and commit", () => {
+		const messages = [userMessage("hello", 10), assistantMessage("world", 11)];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+
+		expect(transcript.messages[0]?.parts[0]?.setText("hello tagged")).toBe(
+			true,
+		);
+		transcript.commit();
+		const output = transcript.getOutputMessages();
+
+		// commit() now syncs mutations from `working` back into source so
+		// downstream callers (e.g. `<session-history>` injection) can splice
+		// or unshift on the same array Pi sent us. Output is therefore the
+		// SAME reference as the source input, with mutations applied in
+		// place at the dirty indices.
+		expect(output).toBe(messages);
+		expect(textOf(output[0] as never)).toBe("hello tagged");
+		expect(textOf(output[1] as never)).toBe("world");
+	});
+
+	it("preserves source identity when there are no mutations", () => {
+		const messages = [
+			userMessage("unchanged", 10),
+			assistantMessage("same", 11),
+		];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+
+		transcript.commit();
+
+		expect(transcript.getOutputMessages()).toBe(messages);
+	});
+
+	it("injects tag prefixes into user, assistant, and folded tool-result text", () => {
+		const messages = [
+			userMessage("user text", 10),
+			assistantMessage("assistant text", 11),
+			toolResultMessage("call-1", "tool output", 12),
+			userMessage("after tool", 13),
+		];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+
+		for (const msg of transcript.messages) {
+			for (const part of msg.parts) {
+				const current = part.getText();
+				if (current) part.setText(`§99§ ${current}`);
+			}
+		}
+		transcript.commit();
+		const output = transcript.getOutputMessages();
+
+		expect(textOf(output[0] as never)).toBe("§99§ user text");
+		expect(textOf(output[1] as never)).toBe("§99§ assistant text");
+		expect(textOf(output[2] as never)).toBe("§99§ tool output");
+		expect(textOf(output[3] as never)).toBe("§99§ after tool");
+	});
+
+	it("supports tag-prefix removal via part text mutation", () => {
+		const messages = [
+			userMessage("§1§ keep me", 10),
+			assistantMessage("§2§ keep assistant", 11),
+		];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+
+		for (const msg of transcript.messages) {
+			for (const part of msg.parts) {
+				part.setText((part.getText() ?? "").replace(/§\d+§\s*/g, ""));
+			}
+		}
+		transcript.commit();
+		const output = transcript.getOutputMessages();
+
+		expect(textOf(output[0] as never)).toBe("keep me");
+		expect(textOf(output[1] as never)).toBe("keep assistant");
+	});
+
+	it("preserves mixed user content shape for string and array messages", () => {
+		const messages = [
+			userMessage("string user", 10),
+			userMessage(
+				[
+					{ type: "text", text: "array text" },
+					{ type: "image", data: "abc", mimeType: "image/png" },
+				],
+				11,
+			),
+		];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+
+		transcript.messages[0]?.parts[0]?.setText("changed string");
+		transcript.messages[1]?.parts[0]?.setText("changed array");
+		transcript.commit();
+		const output = transcript.getOutputMessages() as typeof messages;
+
+		expect(typeof (output[0] as { content: unknown }).content).toBe("string");
+		expect(Array.isArray((output[1] as { content: unknown }).content)).toBe(
+			true,
+		);
+		expect(textOf(output[0] as never)).toBe("changed string");
+		expect(textOf(output[1] as never)).toBe("changed array");
+	});
+
+	it("falls back to replacing toolCall arguments through setText", () => {
+		const messages = [
+			assistantToolCall("call-1", "Read", { path: "large-file.txt" }),
+		];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+		const part = transcript.messages[0]?.parts[0];
+
+		expect(() => part?.setToolOutput("[truncated]")).toThrow(
+			"setToolOutput on assistant part",
+		);
+		expect(part?.setText("[truncated]")).toBe(true);
+		transcript.commit();
+
+		const output = transcript.getOutputMessages() as Array<{
+			content: Array<{ type: string; arguments?: Record<string, unknown> }>;
+		}>;
+		expect(output[0]?.content[0]).toMatchObject({
+			type: "toolCall",
+			arguments: { __magic_context_replacement__: "[truncated]" },
+		});
+	});
+
+	it("getToolInput returns the toolCall arguments object, null for non-tool parts", () => {
+		const messages = [
+			assistantToolCall("call-1", "ctx_note", {
+				action: "dismiss",
+				note_id: 42,
+			}),
+			userMessage("plain text", 11),
+		];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+		const toolPart = transcript.messages[0]?.parts[0];
+		const textPart = transcript.messages[1]?.parts[0];
+
+		expect(toolPart?.getToolInput?.()).toEqual({
+			action: "dismiss",
+			note_id: 42,
+		});
+		// non-tool (text) part has no input
+		expect(textPart?.getToolInput?.() ?? null).toBeNull();
+	});
+
+	it("setToolInput replaces toolCall arguments, preserving id/name", () => {
+		const messages = [
+			assistantToolCall("call-1", "edit", {
+				filePath: "spec.md",
+				oldString: "a".repeat(200),
+			}),
+		];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+		const part = transcript.messages[0]?.parts[0];
+
+		expect(
+			part?.setToolInput?.({ filePath: "spec.md", oldString: "clamped" }),
+		).toBe(true);
+		transcript.commit();
+
+		const output = transcript.getOutputMessages() as Array<{
+			content: Array<{
+				type: string;
+				id?: string;
+				name?: string;
+				arguments?: unknown;
+			}>;
+		}>;
+		const toolCall = output[0]?.content[0];
+		expect(toolCall).toMatchObject({
+			type: "toolCall",
+			id: "call-1",
+			name: "edit",
+			arguments: { filePath: "spec.md", oldString: "clamped" },
+		});
+	});
+
+	it("folds Pi toolResult messages into the following user transcript message", () => {
+		const messages = [
+			assistantToolCall("call-1", "Read", { path: "x" }),
+			toolResultMessage("call-1", "file contents"),
+			userMessage("continue", 13),
+		];
+		const transcript = createPiTranscript(messages, "ses-transcript");
+
+		expect(transcript.messages).toHaveLength(2);
+		expect(transcript.messages[1]?.info.role).toBe("user");
+		expect(transcript.messages[1]?.parts.map((part) => part.kind)).toEqual([
+			"tool_result",
+			"text",
+		]);
+	});
+	it("gives tail synthetic tool-result users a stable deterministic id", () => {
+		const makeTranscriptId = () => {
+			const messages = [
+				assistantToolCall("call-tail", "Read", { path: "tail.txt" }, 11),
+				toolResultMessage("call-tail", "tail output", 12),
+			];
+			const transcript = createPiTranscript(messages, "ses-transcript", [
+				"entry-assistant",
+				"entry-tool-result",
+			]);
+
+			return transcript.messages[1]?.info.id;
+		};
+
+		expect(makeTranscriptId()).toBe("synth-user-entry-tool-result");
+		expect(makeTranscriptId()).toBe(makeTranscriptId());
+	});
+
+	it("covers image and multi-block tool results with one droppable tag", () => {
+		const db = createTestDb();
+		try {
+			const sessionId = "ses-image-tool-result";
+			const messages = [
+				assistantToolCall("call-image", "Read", { path: "image.png" }, 11),
+				{
+					role: "toolResult",
+					toolCallId: "call-image",
+					toolName: "Read",
+					content: [
+						{ type: "image", data: "base64-image", mimeType: "image/png" },
+						{ type: "text", text: "caption one" },
+						{ type: "text", text: "caption two" },
+					],
+					isError: false,
+					timestamp: 12,
+				},
+			];
+			const tagger = createTagger();
+			tagger.initFromDb(sessionId, db);
+			const transcript = createPiTranscript(messages, sessionId, [
+				"entry-assistant",
+				"entry-tool-result",
+			]);
+
+			expect(transcript.messages[1]?.info.id).toBe(
+				"synth-user-entry-tool-result",
+			);
+			expect(transcript.messages[1]?.parts.map((part) => part.kind)).toEqual([
+				"tool_result",
+				"tool_result",
+				"tool_result",
+			]);
+
+			const { targets } = tagTranscript(sessionId, transcript, tagger, db);
+			expect(targets.size).toBe(1);
+
+			const target = Array.from(targets.values())[0];
+			expect(target?.drop()).toBe("removed");
+			transcript.commit();
+
+			const output = transcript.getOutputMessages() as Array<{
+				content?: Array<{ type: string; text?: string }>;
+			}>;
+			expect(output[0]?.content?.[0]).toMatchObject({
+				type: "toolCall",
+				arguments: { __magic_context_dropped__: "[dropped §1§]" },
+			});
+			expect(output[1]?.content).toEqual([
+				{ type: "text", text: "[dropped §1§]" },
+				{ type: "text", text: "[dropped §1§]" },
+				{ type: "text", text: "[dropped §1§]" },
+			]);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("keeps multi-block token memoization byte- and accounting-neutral", () => {
+		const runScenario = (toolTokenCache: CountingToolTokenCache) => {
+			const db = createTestDb();
+			const sessionId = "ses-multi-block-token-cache";
+			try {
+				const tagger = createTagger();
+				tagger.initFromDb(sessionId, db);
+				const makeMessages = () => [
+					assistantToolCall(
+						"call-multi-cache",
+						"Read",
+						{ path: "large.txt" },
+						11,
+					),
+					{
+						role: "toolResult" as const,
+						toolCallId: "call-multi-cache",
+						toolName: "Read",
+						content: [
+							{ type: "text" as const, text: "first block ".repeat(200) },
+							{ type: "text" as const, text: "second block ".repeat(300) },
+						],
+						isError: false,
+						timestamp: 12,
+					},
+				];
+				const entryIds = ["entry-assistant", "entry-tool-result"];
+
+				const seed = createPiTranscript(makeMessages(), sessionId, entryIds);
+				tagTranscript(sessionId, seed, tagger, db, { toolTokenCache });
+				seed.commit();
+				toolTokenCache.resetWrites();
+
+				const replay = createPiTranscript(makeMessages(), sessionId, entryIds);
+				tagTranscript(sessionId, replay, tagger, db, {
+					reuseMessageIds: new Set(["entry-assistant", "entry-tool-result"]),
+					toolTokenCache,
+				});
+				replay.commit();
+				const rows = db
+					.prepare(
+						`SELECT tag_number, message_id, tool_owner_message_id,
+						        byte_size, input_byte_size, token_count, input_token_count
+						 FROM tags WHERE session_id = ? ORDER BY tag_number`,
+					)
+					.all(sessionId);
+				return {
+					cacheWrites: toolTokenCache.writes,
+					outputBytes: JSON.stringify(replay.getOutputMessages()),
+					rows,
+				};
+			} finally {
+				closeQuietly(db);
+			}
+		};
+
+		const legacy = runScenario(new LegacyAggregateToolTokenCache());
+		const blockScoped = runScenario(new CountingToolTokenCache());
+
+		expect(legacy.cacheWrites).toBe(2);
+		expect(blockScoped.cacheWrites).toBe(0);
+		expect(blockScoped.outputBytes).toBe(legacy.outputBytes);
+		expect(blockScoped.rows).toEqual(legacy.rows);
+	});
+
+	it("truncates mixed tool-result image blocks into stable text sentinels", () => {
+		const messages = [
+			assistantToolCall("call-image", "Read", { path: "image.png" }, 11),
+			{
+				role: "toolResult",
+				toolCallId: "call-image",
+				toolName: "Read",
+				content: [
+					{ type: "image", data: "base64-image", mimeType: "image/png" },
+					{ type: "text", text: "caption" },
+				],
+				isError: false,
+				timestamp: 12,
+			},
+		];
+		const transcript = createPiTranscript(messages, "ses-truncated-image", [
+			"entry-assistant",
+			"entry-tool-result",
+		]);
+		const toolResultParts = transcript.messages[1]?.parts ?? [];
+
+		// Truncated-mode drop: every block (incl. the image) must become a text
+		// "[truncated]" sentinel — the image bytes must NOT survive on the wire.
+		for (const part of toolResultParts) {
+			expect(part.setToolOutput("[truncated]")).toBe(true);
+		}
+		transcript.commit();
+		const output = transcript.getOutputMessages() as Array<{
+			content?: Array<{ type: string; text?: string }>;
+		}>;
+		const firstApplication = JSON.stringify(output[1]?.content);
+
+		expect(output[1]?.content).toEqual([
+			{ type: "text", text: "[truncated]" },
+			{ type: "text", text: "[truncated]" },
+		]);
+
+		// Replay must be byte-identical (defer-pass cache stability).
+		const replay = createPiTranscript(output as never, "ses-truncated-image", [
+			"entry-assistant",
+			"entry-tool-result",
+		]);
+		for (const part of replay.messages[1]?.parts ?? []) {
+			part.setToolOutput("[truncated]");
+		}
+		replay.commit();
+		expect(JSON.stringify(output[1]?.content)).toBe(firstApplication);
+	});
+});

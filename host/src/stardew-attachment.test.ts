@@ -73,6 +73,30 @@ test("Stardew attachment flow waits through awaiting_save and rejects a manifest
   }
 });
 
+test("Stardew attachment flow retries only a transient advertisement publication hand-off", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    const readySession = signed({ ...baseSession, cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }] });
+    const transientSession = signed({ ...readySession, state: "host_not_ready" });
+    const manifest = signed({
+      schemaVersion: 1, requestId: "request_01", integrationId: "stardew", integrationVersion: "0.1.0", gameVersion: "1.6.15", gameBuildNumber: 24356, smapiVersion: "4.5.2", multiplayerProtocol: "1.6.15",
+      endpoint: "127.0.0.1:24642", saveId: readySession.saveId, worldId: readySession.worldId, companionId: "companion_01", farmhandId: "123456789", cabinId: "cabin_01", sessionNonce: readySession.nonce,
+      issuedAtUnixMs: 2_000, expiresAtUnixMs: 19_000, signature: "",
+    });
+    const response = signed({ schemaVersion: 1, requestId: "request_01", state: "ready", reasonCode: "manifest_issued", updatedAtUnixMs: 2_000, manifestPath: "stardew-farmhand-manifest.json", signature: "" });
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(transientSession));
+    await writeFile(join(directory, "stardew-attachment-response.json"), JSON.stringify(response));
+    await writeFile(join(directory, "stardew-farmhand-manifest.json"), JSON.stringify(manifest));
+    const flow = new StardewAttachmentFlow({ sessionDirectory: directory, sessionToken: token, companionId: "companion_01", cabinId: "cabin_01", nowMs: () => 2_000 });
+    const pending = flow.waitForManifest("request_01", 2_000);
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 120));
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(readySession));
+    assert.equal((await pending).requestId, "request_01");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Stardew attachment flow accepts signed 64-bit negative native IDs in unrelated cabins", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
   try {

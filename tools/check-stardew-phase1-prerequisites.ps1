@@ -60,7 +60,7 @@ $gameExeValid = $gamePathValid -and (Test-Path -LiteralPath $gameExePath -PathTy
 Add-Check "smapi_launcher" $smapiValid $(if ($smapiValid) { $smapiPath } else { "StardewModdingAPI.exe is missing from the licensed game directory." })
 Add-Check "game_executable" $gameExeValid $(if ($gameExeValid) { $gameExePath } else { "Stardew Valley.exe is missing from the licensed game directory." })
 
-$sessionValid = -not [string]::IsNullOrWhiteSpace($SessionDirectory) -and [System.IO.Path]::IsPathFullyQualified($SessionDirectory)
+$sessionValid = -not [string]::IsNullOrWhiteSpace($SessionDirectory) -and (Split-Path -Path $SessionDirectory -IsAbsolute)
 Add-Check "session_directory" $sessionValid $(if ($sessionValid) { $SessionDirectory } else { "Set an absolute shared local session directory for Host/App/AI-client files." })
 
 $idValid = -not [string]::IsNullOrWhiteSpace($ExpectedFarmhandId) -and $ExpectedFarmhandId -match "^[0-9]{1,20}$" -and [long]$ExpectedFarmhandId -gt 0
