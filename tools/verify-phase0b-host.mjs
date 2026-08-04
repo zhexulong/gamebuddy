@@ -22,7 +22,7 @@ try {
   try {
     assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort());
     assert.equal(runtime.extensions.length, 1);
-    assert.match(runtime.extensions[0], /pi-magic-context/);
+    assert.match(runtime.extensions[0], /vendor[\\/]magic-context[\\/]packages[\\/]pi-plugin[\\/]dist[\\/]index\.js$/);
   } finally {
     runtime.session.dispose();
   }
