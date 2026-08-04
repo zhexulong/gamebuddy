@@ -18,15 +18,15 @@ if (configPath === undefined) throw new Error("host_config_path_required");
 const config = validateLocalHostConfig(JSON.parse(await readFile(resolve(configPath), "utf8")) as unknown);
 const knowledge = config.knowledgeBundlePath === undefined ? undefined : await loadKnowledgeBundle(resolveKnowledgeBundlePath(resolve(configPath), config.knowledgeBundlePath), config.gameVersion);
 const voice = config.voiceGateway === undefined ? undefined : await LocalVoiceGatewayClient.connect(config.voiceGateway);
-const voiceCapabilities = voice === undefined ? undefined : await voice.health();
+const voiceHealthy = voice === undefined ? false : await voice.health().then(() => true);
 const presentationProfile: PresentationProfile | undefined = config.presentation === undefined ? undefined : {
   locale: "zh-CN",
   text: false,
-  speech: config.presentation.speech === undefined || voiceCapabilities === undefined
+  speech: config.presentation.speech === undefined || !voiceHealthy
     ? null
-    : { voiceProfile: config.presentation.speech.voiceProfile, perUtteranceDirection: voiceCapabilities.perUtteranceDirection },
+    : { voiceProfile: config.presentation.speech.voiceProfile },
 };
-if (config.presentation?.speech !== undefined && (voice === undefined || voiceCapabilities === undefined)) {
+if (config.presentation?.speech !== undefined && (voice === undefined || !voiceHealthy)) {
   voice?.close();
   throw new Error("speech_presentation_unavailable");
 }

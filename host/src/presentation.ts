@@ -8,7 +8,6 @@ export type PresentationProfile = Readonly<{
   text: boolean;
   speech: Readonly<{
     voiceProfile: string;
-    perUtteranceDirection: boolean;
   }> | null;
 }>;
 
@@ -34,7 +33,6 @@ export type PresentationRuntime = Readonly<{
 }>;
 
 const MAX_PLAYER_LINE_LENGTH = 4_000;
-const MAX_DIRECTION_LENGTH = 1_000;
 const MECHANISM_LANGUAGE = /(?:subagent|tool(?:\s+call|\s+result)?|receipt|capability|execution[_ ]?id|schema|provider|json|internal|system prompt|game action)/i;
 
 export function createCompanionPresentationTools(runtime: PresentationRuntime): ToolDefinition[] {
@@ -60,20 +58,13 @@ export function createCompanionPresentationTools(runtime: PresentationRuntime): 
     tools.push(defineTool({
       name: "companion_speak",
       label: "Companion Speech",
-      description: speechProfile.perUtteranceDirection
-        ? "Speak a natural player-facing line. Optional direction is a short provider-neutral performance instruction, not provider syntax. Do not include internal Agent or tool language."
-        : "Speak a natural player-facing line. Do not include provider directions or internal Agent language.",
-      parameters: speechProfile.perUtteranceDirection
-        ? Type.Object({ line: Type.String({ minLength: 1, maxLength: MAX_PLAYER_LINE_LENGTH }), direction: Type.Optional(Type.String({ minLength: 1, maxLength: MAX_DIRECTION_LENGTH })) })
-        : Type.Object({ line: Type.String({ minLength: 1, maxLength: MAX_PLAYER_LINE_LENGTH }) }),
+      description: "Speak a natural player-facing line. Do not include provider directions or internal Agent language.",
+      parameters: Type.Object({ line: Type.String({ minLength: 1, maxLength: MAX_PLAYER_LINE_LENGTH }) }),
       execute: async (toolCallId, params) => {
         const line = validatePlayerLine(params.line);
-        const rawDirection = speechProfile.perUtteranceDirection && "direction" in params && typeof params.direction === "string" ? params.direction : undefined;
-        const direction = rawDirection === undefined ? undefined : validateDirection(rawDirection);
         const expression: VoiceExpression = Object.freeze({
           expressionId: randomUUID(), sessionId: runtime.sessionId, sourceEventId: toolCallId, text: line,
           locale: runtime.profile.locale, voiceProfile: speechProfile.voiceProfile, epoch: 0, expiresAtMs: Date.now() + 20_000,
-          ...(direction === undefined ? {} : { direction }),
         });
         await runtime.speechPort!.enqueue(expression);
         return presentationResult(expression.expressionId, "speech");
@@ -87,12 +78,6 @@ function validatePlayerLine(value: string): string {
   const text = value.trim();
   if (text.length === 0 || text.length > MAX_PLAYER_LINE_LENGTH || MECHANISM_LANGUAGE.test(text)) throw new Error("invalid_player_expression");
   return text;
-}
-
-function validateDirection(value: string): string {
-  const direction = value.trim();
-  if (direction.length === 0 || direction.length > MAX_DIRECTION_LENGTH || MECHANISM_LANGUAGE.test(direction)) throw new Error("invalid_speech_direction");
-  return direction;
 }
 
 function presentationResult(expressionId: string, surface: "text" | "speech") {
