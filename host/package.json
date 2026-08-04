@@ -9,11 +9,12 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "start": "node dist/main.js",
-    "test": "node --test dist/**/*.test.js",
+    "start:dialogue": "node dist/dialogue-web-main.js",
+    "test": "node --test --test-concurrency=1 dist/**/*.test.js",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@cortexkit/pi-magic-context": "0.33.0",
+    "@cortexkit/pi-magic-context": "file:../vendor/magic-context/packages/pi-plugin",
     "@earendil-works/pi-coding-agent": "0.82.1",
     "typebox": "1.1.38"
   },
