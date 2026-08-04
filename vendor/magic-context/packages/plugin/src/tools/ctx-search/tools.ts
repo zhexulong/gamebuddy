@@ -1,0 +1,301 @@
+import { type ToolDefinition, tool } from "@opencode-ai/plugin";
+import { getLastCompartmentEndMessage } from "../../features/magic-context/compartment-storage";
+import {
+    embedTextForProject,
+    getProjectEmbeddingSnapshot,
+} from "../../features/magic-context/memory/embedding";
+import {
+    parseIdShapedQuery,
+    resolveMemoriesByIdsForSearch,
+    type UnifiedSearchResult,
+    unifiedSearch,
+} from "../../features/magic-context/search";
+import { getVisibleMemoryIds } from "../../hooks/magic-context/inject-compartments";
+import { unwrapImitatedReducedArgs } from "../unwrap-imitated-reduced-args";
+import {
+    CTX_SEARCH_DESCRIPTION,
+    CTX_SEARCH_TOOL_NAME,
+    DEFAULT_CTX_SEARCH_LIMIT,
+} from "./constants";
+import type { CtxSearchArgs, CtxSearchSource, CtxSearchToolDeps } from "./types";
+
+const VALID_SOURCES: ReadonlySet<CtxSearchSource> = new Set([
+    "memory",
+    "message",
+    "git_commit",
+    "primer",
+    "note",
+]);
+
+function normalizeLimit(limit?: number): number {
+    if (typeof limit !== "number" || !Number.isFinite(limit)) {
+        return DEFAULT_CTX_SEARCH_LIMIT;
+    }
+
+    return Math.max(1, Math.floor(limit));
+}
+
+/** Validate and normalize the `sources` arg. Drops unknown strings (the enum
+ *  constraint catches them at the schema layer, but we still want a safe
+ *  runtime check for plugins/tests that call this directly). Returns
+ *  `undefined` only when the caller OMITTED `sources`; an explicit [] must stay
+ *  [] so unifiedSearch honors the documented "no sources" meaning instead of
+ *  widening back to "all sources". */
+function normalizeSources(sources?: string[]): CtxSearchSource[] | undefined {
+    if (sources === undefined) return undefined;
+    const result: CtxSearchSource[] = [];
+    const seen = new Set<CtxSearchSource>();
+    for (const source of sources) {
+        if (VALID_SOURCES.has(source as CtxSearchSource)) {
+            const typed = source as CtxSearchSource;
+            if (!seen.has(typed)) {
+                seen.add(typed);
+                result.push(typed);
+            }
+        }
+    }
+    return result;
+}
+
+function formatAge(committedAtMs: number): string {
+    const ageMs = Date.now() - committedAtMs;
+    if (ageMs < 0) return "future";
+    const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+    if (days <= 0) return "today";
+    if (days === 1) return "1d ago";
+    if (days < 30) return `${days}d ago`;
+    const months = Math.floor(days / 30);
+    if (months === 1) return "1mo ago";
+    if (months < 12) return `${months}mo ago`;
+    const years = Math.floor(days / 365);
+    return years === 1 ? "1y ago" : `${years}y ago`;
+}
+
+const NOTE_EXPAND_HINT =
+    "Use ctx_expand(start=N-10, end=N) around any note @msg anchor above to read the surrounding conversation context.";
+
+function formatResult(
+    result: UnifiedSearchResult,
+    index: number,
+    currentSessionId: string,
+): string {
+    if (result.source === "memory") {
+        const source = result.sourceName ? ` source=${result.sourceName}` : "";
+        return [
+            `[${index}] [memory] score=${result.score.toFixed(2)} id=${result.memoryId} category=${result.category}${source} match=${result.matchType}`,
+            result.content,
+        ].join("\n");
+    }
+
+    if (result.source === "git_commit") {
+        return [
+            `[${index}] [git_commit] score=${result.score.toFixed(2)} sha=${result.shortSha} ${formatAge(result.committedAtMs)} match=${result.matchType}`,
+            result.content,
+        ].join("\n");
+    }
+
+    if (result.source === "primer") {
+        return [
+            `[${index}] [primer] score=${result.score.toFixed(2)} id=${result.primerId} support=${result.support} match=${result.matchType}`,
+            result.content,
+        ].join("\n");
+    }
+
+    if (result.source === "note") {
+        const anchor =
+            result.anchorOrdinal !== null && result.sourceSessionId === currentSessionId
+                ? ` @msg ${result.anchorOrdinal}`
+                : "";
+        return [
+            `[${index}] [note] score=${result.score.toFixed(2)} id=#${result.noteId} status=${result.status} ${formatAge(result.createdAt)}${anchor}`,
+            result.content,
+        ].join("\n");
+    }
+
+    if (result.source === "compartment") {
+        return [
+            `[${index}] [message] score=${result.score.toFixed(2)} compartment_id=${result.compartmentId} range=${result.startOrdinal}-${result.endOrdinal} match=${result.matchType} title=${result.title}`,
+            result.snippet ? `Snippet: ${result.snippet}` : result.content,
+        ].join("\n");
+    }
+
+    const expandStart = Math.max(1, result.messageOrdinal - 3);
+    const expandEnd = result.messageOrdinal + 3;
+    return [
+        `[${index}] [message] score=${result.score.toFixed(2)} ordinal=${result.messageOrdinal} range=${expandStart}-${expandEnd} role=${result.role}`,
+        result.content,
+    ].join("\n");
+}
+
+function formatSearchResults(
+    query: string,
+    results: UnifiedSearchResult[],
+    currentSessionId: string,
+): string {
+    if (results.length === 0) {
+        return `No results found for "${query}" across notes, memories, primers, git commits, or message history.`;
+    }
+
+    const bodyParts = results.map((result, index) =>
+        formatResult(result, index + 1, currentSessionId),
+    );
+    if (results.some((result) => result.source === "message" || result.source === "compartment")) {
+        bodyParts.push(
+            "Use ctx_expand(start, end) with the range from any message result above to read the full conversation context.",
+        );
+    }
+    if (
+        results.some(
+            (result) =>
+                result.source === "note" &&
+                result.anchorOrdinal !== null &&
+                result.sourceSessionId === currentSessionId,
+        )
+    ) {
+        bodyParts.push(NOTE_EXPAND_HINT);
+    }
+    const body = bodyParts.join("\n\n");
+    return `Found ${results.length} result${results.length === 1 ? "" : "s"} for "${query}":\n\n${body}`;
+}
+
+const ctxSearchArgsShape = {
+    query: tool.schema
+        .string()
+        .optional()
+        .describe(
+            "Search query. Matches against memory content, Primers, git commit messages, and raw user/assistant message text.",
+        ),
+    limit: tool.schema.number().optional().describe("Maximum results to return (default: 10)"),
+    sources: tool.schema
+        .array(tool.schema.enum(["memory", "message", "git_commit", "primer", "note"]))
+        .optional()
+        .describe(
+            'Optional. Restrict to specific sources. Examples: ["primer"] for standing project explanations, ["git_commit"] for "when did we change X", ["memory"] for naming conventions, ["message"] for "did we discuss this earlier", ["note"] for parked decisions or follow-ups, ["git_commit","message"] for regression hunts. Omit for a broad search across all enabled sources; pass [] to search no sources.',
+        ),
+};
+// The tool definition exposes only the documented argument shape to the model
+// provider, but older callers may still send extra arguments. Parse with
+// passthrough so execute() can receive those fields without advertising them.
+const ctxSearchArgsSchema = tool.schema.object(ctxSearchArgsShape).passthrough();
+
+function createCtxSearchTool(deps: CtxSearchToolDeps): ToolDefinition {
+    return tool({
+        description: CTX_SEARCH_DESCRIPTION,
+        args: ctxSearchArgsShape,
+        async execute(rawArgs: CtxSearchArgs, toolContext) {
+            const parsedArgs = ctxSearchArgsSchema.safeParse(rawArgs);
+            let args = (parsedArgs.success ? parsedArgs.data : rawArgs) as CtxSearchArgs;
+            args = unwrapImitatedReducedArgs(args, ["query"], {
+                query: "string",
+                limit: "number",
+                sources: {
+                    type: "array",
+                    items: "string",
+                    maxItems: 5,
+                    values: ["memory", "message", "git_commit", "primer", "note"],
+                },
+            });
+            const query = args.query?.trim();
+            if (!query) {
+                return "Error: 'query' is required.";
+            }
+
+            // Only search message history up to the last compartment boundary —
+            // anything after that (the live tail, including the current turn) is
+            // still in context and already visible to the agent. When NO compartment
+            // exists yet, the historian hasn't scrolled anything out of context, so
+            // the boundary is 0: every indexed message (ordinals are 1-based) is in
+            // the live tail and must be excluded. A negative sentinel here would mean
+            // "search everything" and leak the current prompt back to the agent — the
+            // exact opposite of the intent (issue #131).
+            const lastCompartmentEnd = getLastCompartmentEndMessage(deps.db, toolContext.sessionID);
+            const messageOrdinalCutoff = lastCompartmentEnd >= 0 ? lastCompartmentEnd : 0;
+
+            // Hard-filter memories already rendered in <session-history>.
+            // They're visible in message[0], so returning them wastes output
+            // tokens and crowds out high-signal raw-history hits.
+            const visibleMemoryIds = getVisibleMemoryIds(deps.db, toolContext.sessionID);
+
+            // Resolve the session's actual project from `toolContext.directory`
+            // each call. OpenCode's top-level `ctx.directory` (the launch dir)
+            // can differ from the session's working directory when the user
+            // runs `opencode -s <id>` from outside the project.
+            const projectPath = deps.resolveProjectPath(toolContext.directory);
+            if (!projectPath) {
+                return "Error: Could not resolve project identity for search.";
+            }
+            await deps.ensureProjectRegistered?.(toolContext.directory, deps.db);
+            const embeddingSnapshot = getProjectEmbeddingSnapshot(projectPath);
+            const memoryEnabled = embeddingSnapshot?.features.memoryEnabled ?? deps.memoryEnabled;
+            const embeddingEnabled = embeddingSnapshot
+                ? embeddingSnapshot.enabled || embeddingSnapshot.gitCommitEnabled
+                : deps.embeddingEnabled;
+            const gitCommitsEnabled =
+                embeddingSnapshot?.gitCommitEnabled ?? deps.gitCommitsEnabled ?? false;
+
+            // ID-shaped short-circuit: when the whole query is one or more
+            // memory ids, bypass the lexical+semantic lanes and look the ids
+            // up directly. The agent is given memory ids everywhere
+            // (<project-memory> shows `#id:` lines, dashboard, guidance) and
+            // ctx_search was the only tool that could surface content for
+            // an id but it did so through text matching. Whole-query id list
+            // only — `parseIdShapedQuery` returns null for "fix bug 1234" so
+            // numeric phrases still search text. If no ids resolve (foreign
+            // hidden, missing, hard-deleted) the call falls through to the
+            // normal lanes so a query like "7234" with no such memory still
+            // returns the corpus text matches.
+            const idShape = parseIdShapedQuery(query);
+            if (idShape && memoryEnabled) {
+                const idResults = resolveMemoriesByIdsForSearch({
+                    db: deps.db,
+                    projectPath,
+                    ids: idShape,
+                    limit: Math.max(normalizeLimit(args.limit), idShape.length),
+                    visibleMemoryIds,
+                });
+                if (idResults !== null) {
+                    return formatSearchResults(query, idResults, toolContext.sessionID);
+                }
+            }
+
+            const results = await unifiedSearch(
+                deps.db,
+                toolContext.sessionID,
+                projectPath,
+                query,
+                {
+                    limit: normalizeLimit(args.limit),
+                    memoryEnabled,
+                    embeddingEnabled,
+                    embedQuery: async (text, signal) => {
+                        const result = await embedTextForProject(
+                            projectPath,
+                            text,
+                            signal,
+                            "query",
+                        );
+                        return result;
+                    },
+                    isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
+                    readMessages: deps.readMessages,
+                    maxMessageOrdinal: messageOrdinalCutoff,
+                    gitCommitsEnabled,
+                    sources: normalizeSources(args.sources),
+                    visibleMemoryIds,
+                    // Explicit agent search → enable literal-probe multi-query
+                    // recall for symbol/command/path lookups. Auto-search hints
+                    // (the hot path) leave this off to protect their latency.
+                    explicitSearch: true,
+                },
+            );
+
+            return formatSearchResults(query, results, toolContext.sessionID);
+        },
+    });
+}
+
+export function createCtxSearchTools(deps: CtxSearchToolDeps): Record<string, ToolDefinition> {
+    return {
+        [CTX_SEARCH_TOOL_NAME]: createCtxSearchTool(deps),
+    };
+}

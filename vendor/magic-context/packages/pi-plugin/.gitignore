@@ -1,0 +1,4 @@
+# Built from source locally for the file dependency; never version generated bundles.
+dist/
+node_modules/
+*.tsbuildinfo

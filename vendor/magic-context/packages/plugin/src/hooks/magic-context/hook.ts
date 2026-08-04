@@ -1,0 +1,1359 @@
+import {
+    isDreamerRunnable,
+    isHistorianRunnable,
+    isSidekickRunnable,
+} from "../../config/agent-disable";
+import {
+    DEFAULT_HISTORIAN_TIMEOUT_MS,
+    type DreamerConfig,
+    type HistorianConfig,
+    type SidekickConfig,
+} from "../../config/schema/magic-context";
+import type { ResolvedTransformMode } from "../../config/transform-mode";
+import type { createCompactionHandler } from "../../features/magic-context/compaction";
+import {
+    applyMirrorPage,
+    ensureContextStoreUuid,
+    getMirrorCursor,
+    getModuleNoteEvaluationBridge,
+    registerModuleNoteEvaluationBridge,
+} from "../../features/magic-context/context-authority";
+import { openOpenCodeDb } from "../../features/magic-context/dreamer/open-opencode-db";
+import { OpenCodeRetrospectiveRawProvider } from "../../features/magic-context/dreamer/retrospective-raw-provider";
+import {
+    buildDreamTaskRuntimeConfigs,
+    userMemoryCollectionEnabled,
+} from "../../features/magic-context/dreamer/task-config";
+import { createDreamTaskExecutor } from "../../features/magic-context/dreamer/task-executor";
+import {
+    runDueTasksForProject,
+    runManualDream,
+} from "../../features/magic-context/dreamer/task-scheduler";
+import {
+    clearHookInitFailure,
+    recordHookInitFailure,
+} from "../../features/magic-context/fail-closed-block";
+import {
+    resolveProjectIdentityForSession,
+    takeDubiousOwnershipProjectIdentityWarning,
+} from "../../features/magic-context/memory/project-identity";
+import {
+    embedSessionCompartmentChunks,
+    getEmbeddingCoverageStatus,
+} from "../../features/magic-context/project-embedding-registry";
+import type { Scheduler } from "../../features/magic-context/scheduler";
+import {
+    getDatabasePersistenceError,
+    getSessionsWithPendingMarker,
+    isDatabasePersisted,
+    openDatabase,
+} from "../../features/magic-context/storage";
+import {
+    getSchemaFenceRejection,
+    openDatabaseAsync,
+} from "../../features/magic-context/storage-db";
+import type { Tagger } from "../../features/magic-context/tagger";
+import type { ContextUsage } from "../../features/magic-context/types";
+import { bootQuietRemainingMs, scheduleAfterBootQuiet } from "../../plugin/boot-quiet";
+import { ensureProjectRegisteredFromOpenCodeDirectory } from "../../plugin/embedding-bootstrap";
+import type { RustToolBackends } from "../../plugin/rust-tool-backends";
+import type { PluginContext } from "../../plugin/types";
+import { getErrorMessage } from "../../shared/error-message";
+import { log } from "../../shared/logger";
+import { resolveFallbackChain } from "../../shared/resolve-fallbacks";
+import { isTuiConnected, pushNotification } from "../../shared/rpc-notifications";
+import type { Database } from "../../shared/sqlite";
+import { createMagicContextCommandHandler } from "./command-handler";
+import { deriveHistorianChunkTokens, resolveHistorianContextLimit } from "./derive-budgets";
+import {
+    autoEmbedAttemptedBySession,
+    clearEmbedSessionState,
+    embedPauseBySession,
+    embedRunStateBySession,
+    getEmbedDrainUiStatus,
+} from "./embed-session-state";
+import { createEventHandler } from "./event-handler";
+import {
+    resolveContextLimit,
+    resolveExecuteThresholdDetail,
+    resolveModelKey,
+} from "./event-resolvers";
+import { formatEmbedStatusText } from "./format-embed-status";
+import { clearInjectionCache } from "./inject-compartments";
+import { dropSlot } from "./lkg-slot";
+import { SubcModuleTransport } from "./module-transport";
+import { findLastAssistantModelFromOpenCodeDb } from "./read-session-db";
+import type { ManagedRecompContext } from "./recomp-orchestrator";
+import {
+    runManagedRecomp,
+    runManagedUpgrade,
+    setRecompStarting,
+    setRecompTerminal,
+} from "./recomp-orchestrator";
+import type { RustModeModuleClient } from "./rust-mode-transform";
+import { createTextCompleteHandler } from "./text-complete";
+import { createTransform } from "./transform";
+import { type ManagedWrapupContext, runManagedWrapup } from "./wrapup-orchestrator";
+
+export type { CommandExecuteInput, CommandExecuteOutput } from "./command-handler";
+
+import { checkCompactionMarkerConsistency } from "./compaction-marker-manager";
+import {
+    createChatMessageHook,
+    createCommandExecuteBeforeHook,
+    createEventHook,
+    createToolExecuteAfterHook,
+    getLiveNotificationParams,
+} from "./hook-handlers";
+import type { LiveSessionState } from "./live-session-state";
+import { type NotificationParams, sendIgnoredMessage } from "./send-session-notification";
+import { createSystemPromptHashHandler } from "./system-prompt-hash";
+import { maybeSendUpgradeReminder } from "./upgrade-reminder";
+
+const DREAM_SCHEDULE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+// NOTE: lastScheduleCheckMs is intentionally inside createMagicContextHook (not module scope)
+// so each hook instance has independent dream-schedule tracking across projects.
+
+export interface MagicContextDeps {
+    client: PluginContext["client"];
+    directory: string;
+    tagger: Tagger;
+    scheduler: Scheduler;
+    onSessionCacheInvalidated?: (sessionId: string) => void;
+    compactionHandler: ReturnType<typeof createCompactionHandler>;
+    liveSessionState?: LiveSessionState;
+    config: {
+        protected_tags: number;
+        language?: string;
+        smart_drops?: boolean;
+        toast_duration_ms?: number;
+        clear_reasoning_age?: number;
+        execute_threshold_percentage?: number | { default: number; [modelKey: string]: number };
+        execute_threshold_tokens?: { default?: number; [modelKey: string]: number | undefined };
+        cache_ttl: string | Record<string, string>;
+
+        historian?: HistorianConfig;
+        history_budget_percentage?: number;
+        historian_timeout_ms?: number;
+        memory?: {
+            enabled: boolean;
+            injection_budget_tokens: number;
+            /** When true, historian/recomp auto-promote eligible session facts
+             *  to project memories. When false, promotion is skipped. Issue #44. */
+            auto_promote?: boolean;
+            /** Graduated from experimental.auto_search; now memory-scoped. */
+            auto_search?: {
+                enabled: boolean;
+                score_threshold: number;
+                min_prompt_chars: number;
+            };
+        };
+        embedding?: {
+            provider?: "local" | "openai-compatible" | "off" | "synapse";
+        };
+        sidekick?: SidekickConfig;
+        dreamer?: DreamerConfig;
+        commit_cluster_trigger?: { enabled: boolean; min_clusters: number };
+        /** Issue #53: per-agent system-prompt injection opt-out. Optional in
+         *  the inline type so legacy tests/callers don't have to construct it;
+         *  Zod's .default() guarantees it's present in real loaded configs. */
+        system_prompt_injection?: { enabled: boolean; skip_signatures: string[] };
+        temporal_awareness?: boolean;
+        caveman_text_compression?: {
+            enabled: boolean;
+            min_chars: number;
+        };
+        transform_mode?: ResolvedTransformMode;
+        experimental?: {
+            mural?: { enabled: boolean; model?: string };
+        };
+    };
+    /** Test seam for the Rust authority adapter; production creates the subc client. */
+    rustModeModuleClient?: RustModeModuleClient;
+    /** Test and async-boot seam for supplying a database already opened by the caller. */
+    openDatabaseForHook?: () => Database | null;
+}
+
+function notifyMagicContextDisabled(client: PluginContext["client"], reason: string): void {
+    const detail = reason.trim();
+    // Intentional: feature-detection cast for optional/experimental OpenCode tui.showToast API
+    const c = client as {
+        tui?: {
+            showToast?: (input: {
+                body: {
+                    title: string;
+                    message: string;
+                    variant?: "warning" | "error" | "info" | "success";
+                    duration?: number;
+                };
+            }) => Promise<unknown>;
+        };
+    };
+
+    const message =
+        detail.length > 0
+            ? `Persistent storage is unavailable, so magic-context is disabled for safety. ${detail}`
+            : "Persistent storage is unavailable, so magic-context is disabled for safety.";
+
+    void c.tui
+        ?.showToast?.({
+            body: {
+                title: "Magic Context Disabled",
+                message,
+                variant: "warning",
+                duration: 8000,
+            },
+        })
+        .catch((error) => {
+            log("[magic-context] failed to show disabled toast:", error);
+        });
+}
+
+export function createMagicContextHook(deps: MagicContextDeps) {
+    const contextUsageMap = new Map<string, { usage: ContextUsage; updatedAt: number }>();
+    let db: Database;
+    try {
+        // Clear any prior init-failure latch so a successful reopen (or a
+        // non-storage null like home-directory) does not leave a stale arm.
+        clearHookInitFailure();
+        const opened = deps.openDatabaseForHook ? deps.openDatabaseForHook() : openDatabase();
+        if (!opened || !isDatabasePersisted(opened)) {
+            const reason =
+                (opened ? getDatabasePersistenceError(opened) : null) ??
+                "Failed to initialize the persistent SQLite database.";
+            log(
+                "[magic-context] disabling feature because persistent storage is unavailable:",
+                reason,
+            );
+            notifyMagicContextDisabled(deps.client, reason);
+            const fence = getSchemaFenceRejection();
+            recordHookInitFailure({
+                type: "storage",
+                reason: fence
+                    ? {
+                          kind: "schema_fence",
+                          persistedVersion: fence.persistedVersion,
+                          supportedVersion: fence.supportedVersion,
+                      }
+                    : { kind: "storage_failure", cause: reason },
+            });
+            return null;
+        }
+        db = opened;
+    } catch (error) {
+        const reason = getErrorMessage(error);
+        log("[magic-context] hook failed to open storage; disabling feature:", error);
+        notifyMagicContextDisabled(deps.client, reason);
+        clearHookInitFailure();
+        recordHookInitFailure({
+            type: "storage",
+            reason: { kind: "storage_failure", cause: reason },
+        });
+        return null;
+    }
+
+    const projectPath = resolveProjectIdentityForSession(deps.directory);
+    if (!projectPath) {
+        log("[magic-context] not binding a project identity for the user's home directory");
+        clearHookInitFailure();
+        recordHookInitFailure({ type: "no_project" });
+        return null;
+    }
+
+    // Startup consistency check: reconcile any compaction markers whose state
+    // references rows that no longer exist in OpenCode's DB. This can happen
+    // if the plugin crashed between DB writes (context.db + opencode.db are
+    // separate stores with no cross-DB transaction) or if OpenCode's DB was
+    // modified externally.
+    try {
+        checkCompactionMarkerConsistency(db);
+    } catch (error) {
+        log("[magic-context] startup compaction-marker consistency check failed:", error);
+    }
+
+    let lastScheduleCheckMs = 0;
+    let dreamQueueQuietScheduled = false;
+
+    // Derive historian chunk budget from the historian model's own context window.
+    // Historian is a single-shot summarizer, so its input is bounded by its OWN
+    // context, not the main session model's. Re-derived per historian invocation
+    // (matching RPC/TUI paths) so config/model changes take effect without
+    // restart, and so all trigger sources produce consistent chunk sizes.
+    const getHistorianChunkTokens = (): number =>
+        deriveHistorianChunkTokens(resolveHistorianContextLimit(deps.config.historian?.model));
+    const historianFallbackModels = resolveFallbackChain(deps.config.historian?.fallback_models);
+
+    // Three independent cache-busting signal sets, sourced from the
+    // process-scoped LiveSessionState so RPC handlers (TUI recomp) can
+    // share the same instances as the hook (server /ctx-recomp). When
+    // `liveSessionState` is omitted (test-only path), fall back to local
+    // sets — the production index.ts always provides one. See
+    // live-session-state.ts and hook-handlers.ts doc-comments for the
+    // full split rationale.
+    const historyRefreshSessions =
+        deps.liveSessionState?.historyRefreshSessions ?? new Set<string>();
+    const deferredHistoryRefreshSessions =
+        deps.liveSessionState?.deferredHistoryRefreshSessions ?? new Set<string>();
+    const systemPromptRefreshSessions =
+        deps.liveSessionState?.systemPromptRefreshSessions ?? new Set<string>();
+    const pendingMaterializationSessions =
+        deps.liveSessionState?.pendingMaterializationSessions ?? new Set<string>();
+    const deferredMaterializationSessions =
+        deps.liveSessionState?.deferredMaterializationSessions ?? new Set<string>();
+
+    // If the process exits after saving pending_compaction_marker_state, reload
+    // both deferred signal sets from that saved state. The next transform pass can
+    // then apply the pending marker exactly like the live publish path would.
+    try {
+        const sessionsWithPending = getSessionsWithPendingMarker(db);
+        if (sessionsWithPending.length > 0) {
+            for (const sid of sessionsWithPending) {
+                deferredHistoryRefreshSessions.add(sid);
+                deferredMaterializationSessions.add(sid);
+            }
+            log(
+                `[magic-context] rehydrated ${sessionsWithPending.length} session(s) with pending compaction-marker drain at hook init`,
+            );
+        }
+    } catch (error) {
+        log("[magic-context] hook init: pending-marker rehydration failed:", error);
+    }
+    const lastHeuristicsTurnId = new Map<string, string>();
+    const commitSeenLastPass = new Map<string, boolean>();
+    const variantBySession =
+        deps.liveSessionState?.variantBySession ?? new Map<string, string | undefined>();
+    const liveModelBySession =
+        deps.liveSessionState?.liveModelBySession ??
+        new Map<string, { providerID: string; modelID: string }>();
+    const agentBySession = deps.liveSessionState?.agentBySession ?? new Map<string, string>();
+    const sessionDirectoryBySession =
+        deps.liveSessionState?.sessionDirectoryBySession ?? new Map<string, string>();
+    const internalChildSessions = deps.liveSessionState?.internalChildSessions ?? new Set<string>();
+    // Recomp/upgrade progress map — shared with the RPC sidebar/status snapshot
+    // when liveSessionState is provided (production), local fallback in tests.
+    const recompProgressBySession =
+        deps.liveSessionState?.recompProgressBySession ??
+        new Map<string, import("./compartment-runner-types").RecompProgress>();
+    // Channel 1 (ctx_reduce tool-output nudge) per-session metric baseline.
+    // Written at the end of each transform pass (post-drop), read in
+    // tool.execute.after. Only populated for primary sessions.
+    const channel1StateBySession = new Map<string, import("./ctx-reduce-nudge").Channel1State>();
+    const channel2DirectiveTextBySession = new Map<string, string>();
+
+    /**
+     * Return the live provider/model for a session.
+     *
+     * Prefers the in-memory `liveModelBySession` map populated by transform passes
+     * and `chat.message` hooks. When the map is empty (for example `/ctx-status`
+     * is invoked before any transform pass has run since restart), falls back to
+     * reading the last assistant message from OpenCode's SQLite DB and caches the
+     * result so subsequent calls in the same process don't hit the DB again.
+     *
+     * Returns undefined only for brand-new sessions with no assistant turn yet.
+     */
+    const resolveLiveModel = (
+        sessionId: string,
+    ): { providerID: string; modelID: string } | undefined => {
+        const cached = liveModelBySession.get(sessionId);
+        if (cached) return cached;
+        const recovered = findLastAssistantModelFromOpenCodeDb(sessionId);
+        if (recovered) {
+            liveModelBySession.set(sessionId, recovered);
+            return recovered;
+        }
+        return undefined;
+    };
+
+    const maybeSendProjectIdentitySessionWarning = (sessionId: string, directory: string): void => {
+        const warning = takeDubiousOwnershipProjectIdentityWarning(directory);
+        if (!warning) return;
+        const notificationParams: NotificationParams = getLiveNotificationParams(
+            sessionId,
+            liveModelBySession,
+            variantBySession,
+            agentBySession,
+            deps.config.toast_duration_ms,
+        );
+        void sendIgnoredMessage(deps.client, sessionId, warning, notificationParams).catch(
+            (error) => {
+                log(
+                    `[magic-context] failed to send project identity warning for ${directory}: ${getErrorMessage(error)}`,
+                );
+            },
+        );
+    };
+    const dreamerRunnable = isDreamerRunnable(deps.config);
+    const dreamerConfig = dreamerRunnable ? deps.config.dreamer : undefined;
+    const historianRunnable = isHistorianRunnable(deps.config);
+
+    // Shared context for the recomp/upgrade orchestrator. Both `/ctx-recomp` and
+    // `/ctx-session-upgrade` (command paths) build this so they run through the
+    // exact same runner as the RPC dialog paths — identical fallback, progress,
+    // and terminal state. `fallbackModelId` is resolved here with the OpenCode-DB
+    // recovery (resolveLiveModel) so the last-resort fallback model is known even
+    // when a command is invoked before the first transform pass populates the map.
+    const buildManagedRecompCtx = (sessionId: string): ManagedRecompContext => ({
+        client: deps.client,
+        db,
+        // Pass the SAME map/set instances the hook uses so the orchestrator's
+        // writes (progress, session-dir cache, refresh signals) propagate to the
+        // shared live state — and the next transform pass + RPC sidebar see them.
+        liveSessionState: {
+            liveModelBySession,
+            variantBySession,
+            agentBySession,
+            historyRefreshSessions,
+            deferredHistoryRefreshSessions,
+            systemPromptRefreshSessions,
+            pendingMaterializationSessions,
+            deferredMaterializationSessions,
+            sessionDirectoryBySession,
+            recompProgressBySession,
+            internalChildSessions,
+        },
+        directory: deps.directory,
+        historianChunkTokens: getHistorianChunkTokens(),
+        historianTimeoutMs: deps.config.historian_timeout_ms ?? DEFAULT_HISTORIAN_TIMEOUT_MS,
+        memoryEnabled: deps.config.memory?.enabled ?? true,
+        autoPromote: deps.config.memory?.auto_promote ?? true,
+        fallbackModels: historianFallbackModels,
+        language: deps.config.language,
+        fallbackModelId: (() => {
+            const model = resolveLiveModel(sessionId);
+            return model ? `${model.providerID}/${model.modelID}` : undefined;
+        })(),
+        historianTwoPass: deps.config.historian?.two_pass === true,
+        runMigration: deps.config.memory?.enabled !== false && !!deps.config.historian?.model,
+        // Option C privacy gate: behavioral observation candidates are collected
+        // during historian runs only when the user has SCHEDULED the
+        // review-user-memories task (schedule != ""). Replaces the v1
+        // user_memories.enabled flag that gated both collection and review.
+        userMemoriesEnabled: userMemoryCollectionEnabled(dreamerConfig),
+        ensureProjectRegistered: ensureProjectRegisteredFromOpenCodeDirectory,
+        getNotificationParams: (sid) =>
+            getLiveNotificationParams(
+                sid,
+                liveModelBySession,
+                variantBySession,
+                agentBySession,
+                deps.config.toast_duration_ms,
+            ),
+    });
+    const buildManagedWrapupCtx = (sessionId: string): ManagedWrapupContext => ({
+        ...buildManagedRecompCtx(sessionId),
+        contextLimit: (() => {
+            const model = resolveLiveModel(sessionId);
+            return model
+                ? resolveContextLimit(model.providerID, model.modelID, { db, sessionID: sessionId })
+                : 128_000;
+        })(),
+        executeThresholdPercentage: (() => {
+            const model = resolveLiveModel(sessionId);
+            const contextLimit = model
+                ? resolveContextLimit(model.providerID, model.modelID, { db, sessionID: sessionId })
+                : 128_000;
+            return resolveExecuteThresholdDetail(
+                deps.config.execute_threshold_percentage ?? 65,
+                model ? `${model.providerID}/${model.modelID}` : undefined,
+                65,
+                {
+                    tokensConfig: deps.config.execute_threshold_tokens,
+                    contextLimit,
+                    sessionId,
+                },
+            ).percentage;
+        })(),
+        hasPendingNaturalBust: (sid) =>
+            historyRefreshSessions.has(sid) ||
+            systemPromptRefreshSessions.has(sid) ||
+            pendingMaterializationSessions.has(sid),
+    });
+    // /ctx-embed start: backfill THIS session's compartment chunk embeddings,
+    // reusing the recomp progress surface (sidebar + status bar) with kind="embed".
+    const executeEmbedHistory = async (
+        sessionId: string,
+        options?: { signal?: AbortSignal; silent?: boolean },
+    ): Promise<string> => {
+        if (deps.config.memory?.enabled === false) {
+            return "Memory is disabled for this project, so there is no semantic embedding to backfill.";
+        }
+        const directory = sessionDirectoryBySession.get(sessionId) ?? deps.directory;
+        // Idempotent start: if a drain is already running for this session, don't
+        // abort it and re-acquire — that races the just-released lease and returns
+        // "busy", killing the active run for nothing. Just report it's running.
+        const active = embedRunStateBySession.get(sessionId);
+        if (active && !active.signal.aborted && !options?.signal) {
+            return "Embedding is already running for this session.";
+        }
+        await ensureProjectRegisteredFromOpenCodeDirectory(directory, db);
+        const sessionProjectIdentity = resolveProjectIdentityForSession(directory);
+        if (!sessionProjectIdentity) return "No project identity is bound for the home directory.";
+        maybeSendProjectIdentitySessionWarning(sessionId, directory);
+        embedPauseBySession.delete(sessionId);
+        const prior = embedRunStateBySession.get(sessionId);
+        if (prior) prior.abort();
+        const controller = new AbortController();
+        embedRunStateBySession.set(sessionId, controller);
+        const signal = options?.signal ?? controller.signal;
+        if (!options?.silent) {
+            setRecompStarting(
+                { recompProgressBySession } as LiveSessionState,
+                sessionId,
+                "Embedding history…",
+                "embed",
+            );
+        }
+        let runFailed = 0;
+        let outcome: Awaited<ReturnType<typeof embedSessionCompartmentChunks>>;
+        try {
+            outcome = await embedSessionCompartmentChunks(db, sessionProjectIdentity, sessionId, {
+                signal,
+                onProgress: ({ embedded, total }) => {
+                    const cur = recompProgressBySession.get(sessionId);
+                    if (cur?.phase !== "recomp") return;
+                    recompProgressBySession.set(sessionId, {
+                        ...cur,
+                        processedMessages: embedded,
+                        totalMessages: total,
+                        updatedAt: Date.now(),
+                    });
+                },
+            });
+        } finally {
+            // Always release the per-session controller, even if the drain threw
+            // (a release-time SQLite error, etc.) — otherwise a stale controller
+            // would make every later start return "already running".
+            if (embedRunStateBySession.get(sessionId) === controller) {
+                embedRunStateBySession.delete(sessionId);
+            }
+        }
+        if ("failed" in outcome) runFailed = outcome.failed;
+        const terminal = (phase: "done" | "skipped", message: string): string => {
+            if (!options?.silent) {
+                setRecompTerminal(
+                    { recompProgressBySession } as LiveSessionState,
+                    sessionId,
+                    phase,
+                    message,
+                );
+            }
+            return message;
+        };
+        switch (outcome.status) {
+            case "nothing":
+                return terminal("done", "All of this session's history is already embedded.");
+            case "disabled":
+                return terminal(
+                    "skipped",
+                    "No embedding provider is configured, so there is nothing to embed.",
+                );
+            case "busy":
+                return terminal(
+                    "skipped",
+                    "Embedding is already running for this project. Try again shortly.",
+                );
+            case "aborted": {
+                // A drain only aborts via user pause (or session teardown). Render
+                // it as the neutral "skipped" terminal — NOT "done", which the
+                // sidebar shows as a green "✓ Embed complete" that wrongly reads as
+                // finished.
+                const cov = getEmbeddingCoverageStatus(db, sessionProjectIdentity, sessionId);
+                const msg = `Paused at ${cov.session.embedded}/${cov.session.total} compartments embedded.`;
+                return terminal("skipped", msg);
+            }
+            case "stalled":
+                return terminal(
+                    "skipped",
+                    `Embedded ${outcome.embedded} compartments; ${outcome.remaining} could not be embedded (the provider returned no result). Run /ctx-embed start again to retry them.`,
+                );
+            default:
+                return terminal(
+                    "done",
+                    `Embedded ${outcome.embedded} compartment${outcome.embedded === 1 ? "" : "s"} of history for semantic search${runFailed > 0 ? ` (${runFailed} failed)` : ""}.`,
+                );
+        }
+    };
+
+    const pauseEmbedDrain = (sessionId: string): string => {
+        embedPauseBySession.add(sessionId);
+        const ctrl = embedRunStateBySession.get(sessionId);
+        if (ctrl) ctrl.abort();
+        const directory = sessionDirectoryBySession.get(sessionId) ?? deps.directory;
+        const sessionProjectIdentity = resolveProjectIdentityForSession(directory);
+        if (!sessionProjectIdentity) return "No project identity is bound for the home directory.";
+        maybeSendProjectIdentitySessionWarning(sessionId, directory);
+        const cov = getEmbeddingCoverageStatus(db, sessionProjectIdentity, sessionId);
+        return `Paused at ${cov.session.embedded}/${cov.session.total} compartments embedded.`;
+    };
+
+    const getEmbedStatusText = (sessionId: string): string => {
+        const directory = sessionDirectoryBySession.get(sessionId) ?? deps.directory;
+        const sessionProjectIdentity = resolveProjectIdentityForSession(directory);
+        if (!sessionProjectIdentity) return "No project identity is bound for the home directory.";
+        maybeSendProjectIdentitySessionWarning(sessionId, directory);
+        const coverage = getEmbeddingCoverageStatus(db, sessionProjectIdentity, sessionId);
+        const progress = recompProgressBySession.get(sessionId);
+        const drainUi = getEmbedDrainUiStatus(sessionId, progress);
+        return formatEmbedStatusText(coverage, {
+            status: drainUi.status,
+            embedded: progress?.processedMessages,
+            total: progress?.totalMessages,
+        });
+    };
+
+    const maybeAutoEmbedSession = (sessionId: string): void => {
+        if (autoEmbedAttemptedBySession.has(sessionId)) return;
+        if (embedPauseBySession.has(sessionId)) return;
+        if (deps.config.memory?.enabled === false) return;
+        autoEmbedAttemptedBySession.add(sessionId);
+        const directory = sessionDirectoryBySession.get(sessionId) ?? deps.directory;
+        void (async () => {
+            try {
+                // Defer off the transform thread BEFORE any DB/config work.
+                // ensureProjectRegisteredFromOpenCodeDirectory is `async` but does
+                // its config load + stale-embedding wipe SYNCHRONOUSLY (no internal
+                // await), so awaiting it as the first statement would run that work
+                // on the transform's return path. A macrotask yield lets the
+                // transform return first, keeping the hot path clean.
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                await ensureProjectRegisteredFromOpenCodeDirectory(directory, db);
+                const sessionProjectIdentity = resolveProjectIdentityForSession(directory);
+                if (!sessionProjectIdentity) return;
+                maybeSendProjectIdentitySessionWarning(sessionId, directory);
+                const coverage = getEmbeddingCoverageStatus(db, sessionProjectIdentity, sessionId);
+                if (!coverage.enabled) return;
+                const remaining = coverage.session.total - coverage.session.embedded;
+                if (remaining <= 0) return;
+                const notifyParams = getLiveNotificationParams(
+                    sessionId,
+                    liveModelBySession,
+                    variantBySession,
+                    agentBySession,
+                );
+                if (!isTuiConnected(sessionId)) {
+                    const startMsg = `Embedding ${remaining} compartment${remaining === 1 ? "" : "s"} of history in the background…`;
+                    await sendIgnoredMessage(deps.client, sessionId, startMsg, {
+                        ...notifyParams,
+                    });
+                }
+                const summary = await executeEmbedHistory(sessionId);
+                if (!isTuiConnected(sessionId)) {
+                    await sendIgnoredMessage(deps.client, sessionId, summary, {
+                        ...notifyParams,
+                    });
+                }
+            } catch (error) {
+                log("[magic-context] auto-embed drain failed:", error);
+            }
+        })();
+    };
+
+    const sidekickRunnable = isSidekickRunnable(deps.config);
+    const sidekickConfig = sidekickRunnable ? deps.config.sidekick : undefined;
+    const rustMemorySyncRequestedSessions = new Set<string>();
+    // Build the same subc-backed client for the TS recovery arm. Constructing the
+    // transport is inert; it connects only if a marker actually needs draining.
+    const authorityRecoveryModuleClient =
+        deps.rustModeModuleClient ??
+        (() => {
+            const transport = new SubcModuleTransport();
+            const client: RustModeModuleClient = {
+                call: (args) => transport.call(args),
+                stateSyncCapabilities: (args) => transport.stateSyncCapabilities(args),
+                closeSession: (sessionId) => transport.closeSession(sessionId),
+                authorityStatus: (args) => transport.authorityStatus(args),
+                authorityPrepare: (args) => transport.authorityPrepare(args),
+                authoritySeed: (args) => transport.authoritySeed(args),
+                authorityDrain: (args) => transport.authorityDrain(args),
+                mirrorPull: (args) => transport.mirrorPull(args),
+                getCompartmentsAfter: async (sessionId, afterSequence) => {
+                    const response = await transport.call({
+                        sessionId,
+                        projectRoot: deps.directory,
+                        method: "session.status",
+                        body: {
+                            method: "session.status",
+                            v: 1,
+                            session_id: sessionId,
+                            include_compartments_after_seq: afterSequence,
+                        },
+                    });
+                    const value =
+                        response && typeof response === "object" && "result" in response
+                            ? (response as { result?: unknown }).result
+                            : response;
+                    const record = value && typeof value === "object" ? value : {};
+                    const compartments =
+                        "compartments" in record && Array.isArray(record.compartments)
+                            ? record.compartments
+                            : [];
+                    const maxSequence =
+                        "max_sequence" in record && typeof record.max_sequence === "number"
+                            ? record.max_sequence
+                            : afterSequence;
+                    return { max_sequence: maxSequence, compartments };
+                },
+            };
+            return client;
+        })();
+    const rustModeModuleClient =
+        deps.config.transform_mode === "rust" ? authorityRecoveryModuleClient : undefined;
+    const rustToolBackends: RustToolBackends | undefined =
+        deps.config.transform_mode === "rust" && rustModeModuleClient
+            ? {
+                  authorityState: async ({ projectPath, projectRoot, domain }) => {
+                      if (!rustModeModuleClient.authorityStatus) return null;
+                      const result = await rustModeModuleClient.authorityStatus({
+                          context_store_uuid: ensureContextStoreUuid(db),
+                          project: projectPath,
+                          projectRoot,
+                          domain,
+                      });
+                      return result.authority?.state ?? null;
+                  },
+                  reduce: ({ sessionId, projectRoot, drop, commandId }) =>
+                      rustModeModuleClient.call({
+                          sessionId,
+                          projectRoot,
+                          method: "agent_drops.append",
+                          body: {
+                              method: "agent_drops.append",
+                              v: 1,
+                              session_id: sessionId,
+                              drop,
+                              command_id: commandId,
+                          },
+                      }),
+                  note: ({
+                      commandId,
+                      sessionId,
+                      projectRoot,
+                      memoryProject,
+                      action,
+                      content,
+                      surfaceCondition,
+                      filter,
+                      limit,
+                      offset,
+                      noteId,
+                  }) =>
+                      rustModeModuleClient.call({
+                          sessionId,
+                          projectRoot,
+                          method: "ctx_note",
+                          body: {
+                              name: "ctx_note",
+                              arguments: {
+                                  ...(commandId ? { command_id: commandId } : {}),
+                                  action,
+                                  content,
+                                  memory_project: memoryProject,
+                                  surface_condition: surfaceCondition,
+                                  filter,
+                                  limit,
+                                  offset,
+                                  note_id: noteId,
+                              },
+                          },
+                      }),
+                  memory: ({
+                      commandId,
+                      sessionId,
+                      projectRoot,
+                      memoryProject,
+                      action,
+                      content,
+                      category,
+                      ids,
+                      reason,
+                  }) =>
+                      rustModeModuleClient.call({
+                          sessionId,
+                          projectRoot,
+                          method: "ctx_memory",
+                          body: {
+                              name: "ctx_memory",
+                              arguments: {
+                                  ...(commandId ? { command_id: commandId } : {}),
+                                  action,
+                                  content,
+                                  category,
+                                  ids,
+                                  reason,
+                                  memory_project: memoryProject,
+                              },
+                          },
+                      }),
+                  noteEvaluationAvailable: (evaluationProjectPath: string) =>
+                      getModuleNoteEvaluationBridge(evaluationProjectPath) !== undefined,
+                  memorySync: (sessionId: string) => {
+                      rustMemorySyncRequestedSessions.add(sessionId);
+                  },
+              }
+            : undefined;
+    // Bridges are per resolved project, and sessions can resolve projects other
+    // than the plugin's launch directory (a /cd switch, multi-project hosts).
+    // Registration is therefore an idempotent ensure invoked for every project
+    // that reaches rust-mode preparation, not a one-shot at construction.
+    const ensureModuleNoteEvaluationBridge = (bridgeProjectPath: string): void => {
+        if (!rustModeModuleClient?.mirrorPull) return;
+        if (getModuleNoteEvaluationBridge(bridgeProjectPath)) return;
+        const syncModuleNotes = async (): Promise<void> => {
+            for (;;) {
+                const cursor = getMirrorCursor(db, "notes");
+                const response = await rustModeModuleClient.mirrorPull?.({
+                    domain: "notes",
+                    cursor,
+                    limit: 1000,
+                });
+                if (!response) throw new Error("mirror.pull is unavailable for notes");
+                const next = applyMirrorPage({ db, page: response.page });
+                if (!response.page.has_more || next === cursor) break;
+            }
+        };
+        registerModuleNoteEvaluationBridge(bridgeProjectPath, {
+            sync: syncModuleNotes,
+            async evaluate({ contextNoteId, sessionId, verdict }): Promise<void> {
+                const identity = db
+                    .prepare(
+                        `SELECT identity.module_row_id, revision.status_version
+                           FROM mirror_identity identity
+                           JOIN mirror_note_revisions revision
+                             ON revision.module_project = identity.module_project
+                            AND revision.module_row_id = identity.module_row_id
+                          WHERE identity.domain = 'notes' AND identity.module_project = ?
+                            AND identity.context_row_id = ?`,
+                    )
+                    .get(bridgeProjectPath, contextNoteId) as
+                    | { module_row_id: number; status_version: number }
+                    | undefined;
+                if (!identity) {
+                    throw new Error(`module identity is missing for smart note ${contextNoteId}`);
+                }
+                await rustModeModuleClient.call({
+                    sessionId,
+                    projectRoot: deps.directory,
+                    method: "note.evaluate",
+                    body: {
+                        method: "note.evaluate",
+                        v: 1,
+                        session_id: sessionId,
+                        note_id: identity.module_row_id,
+                        source_revision: identity.status_version,
+                        verdict,
+                    },
+                });
+                await syncModuleNotes();
+            },
+        });
+    };
+    ensureModuleNoteEvaluationBridge(projectPath);
+    const notifyRustModeParked = (sessionId: string, message: string): void => {
+        const client = deps.client as {
+            tui?: {
+                showToast?: (input: {
+                    body: {
+                        title: string;
+                        message: string;
+                        variant?: "warning" | "error" | "info" | "success";
+                        duration?: number;
+                    };
+                }) => Promise<unknown>;
+            };
+        };
+        void client.tui
+            ?.showToast?.({
+                body: {
+                    title: "Rust Magic Context paused",
+                    message,
+                    variant: "warning",
+                    duration: 8000,
+                },
+            })
+            .catch((error) =>
+                log(`[magic-context] rust park toast failed for ${sessionId}:`, error),
+            );
+    };
+
+    const transform = createTransform({
+        tagger: deps.tagger,
+        scheduler: deps.scheduler,
+        contextUsageMap,
+        db,
+        channel1StateBySession,
+        channel2DirectiveTextBySession,
+        protectedTags: deps.config.protected_tags,
+        smartDrops: deps.config.smart_drops === true,
+        clearReasoningAge: deps.config.clear_reasoning_age ?? 50,
+        commitClusterTrigger: deps.config.commit_cluster_trigger,
+        historyRefreshSessions,
+        deferredHistoryRefreshSessions,
+        pendingMaterializationSessions,
+        deferredMaterializationSessions,
+        lastHeuristicsTurnId,
+        commitSeenLastPass,
+        internalChildSessions,
+        client: deps.client,
+        directory: deps.directory,
+        injectDocs: deps.config.dreamer?.inject_docs !== false,
+        memoryConfig: deps.config.memory
+            ? {
+                  enabled: deps.config.memory.enabled,
+                  injectionBudgetTokens: deps.config.memory.injection_budget_tokens,
+                  // Issue #44: thread auto_promote through. Default true to
+                  // preserve historical behavior when the field is missing.
+                  autoPromote: deps.config.memory.auto_promote ?? true,
+              }
+            : undefined,
+        ensureProjectRegistered: ensureProjectRegisteredFromOpenCodeDirectory,
+        getHistorianChunkTokens,
+        historyBudgetPercentage: deps.config.history_budget_percentage,
+        executeThresholdPercentage: deps.config.execute_threshold_percentage,
+        executeThresholdTokens: deps.config.execute_threshold_tokens,
+        historianTimeoutMs: deps.config.historian_timeout_ms ?? DEFAULT_HISTORIAN_TIMEOUT_MS,
+        fallbackModels: historianFallbackModels,
+        getNotificationParams: (sessionId) =>
+            getLiveNotificationParams(
+                sessionId,
+                liveModelBySession,
+                variantBySession,
+                agentBySession,
+                deps.config.toast_duration_ms,
+            ),
+        getModelKey: (sessionId) => {
+            const model = liveModelBySession.get(sessionId);
+            return resolveModelKey(model?.providerID, model?.modelID);
+        },
+        getFallbackModelId: (sessionId) => {
+            const model = liveModelBySession.get(sessionId);
+            return model ? `${model.providerID}/${model.modelID}` : undefined;
+        },
+        projectPath,
+        historianRunnable,
+        experimentalUserMemories: userMemoryCollectionEnabled(dreamerConfig),
+        experimentalTemporalAwareness: deps.config.temporal_awareness === true,
+        experimentalMuralEnabled: deps.config.experimental?.mural?.enabled === true,
+        historianTwoPass: deps.config.historian?.two_pass === true,
+        liveModelBySession,
+        sessionDirectoryBySession,
+        autoSearch: deps.config.memory?.auto_search?.enabled
+            ? {
+                  enabled: true,
+                  scoreThreshold: deps.config.memory?.auto_search.score_threshold,
+                  minPromptChars: deps.config.memory?.auto_search.min_prompt_chars,
+                  directory: deps.directory,
+                  ensureProjectRegistered: ensureProjectRegisteredFromOpenCodeDirectory,
+              }
+            : undefined,
+        // Age-tier caveman text compression is an opt-in primary-session pass.
+        // Subagents are excluded in transform.ts because their context is curated
+        // by the parent and they have no ctx_expand recovery path.
+        cavemanTextCompression:
+            deps.config.caveman_text_compression?.enabled === true
+                ? {
+                      enabled: true,
+                      minChars: deps.config.caveman_text_compression.min_chars ?? 500,
+                  }
+                : undefined,
+        maybeAutoEmbedSession,
+        transformMode: deps.config.transform_mode,
+        rustModeModuleClient,
+        tsAuthorityRecoveryModuleClient: authorityRecoveryModuleClient,
+        rustMemorySyncRequestedSessions,
+        onRustModeParked: notifyRustModeParked,
+        onRustModeProjectPrepared: ensureModuleNoteEvaluationBridge,
+    });
+    const eventHandler = createEventHandler({
+        contextUsageMap,
+        compactionHandler: deps.compactionHandler,
+        config: deps.config,
+        tagger: deps.tagger,
+        db,
+        client: deps.client,
+        channel1StateBySession,
+        channel2DirectiveTextBySession,
+        internalChildSessions,
+        getNotificationParams: (sessionId) =>
+            getLiveNotificationParams(
+                sessionId,
+                liveModelBySession,
+                variantBySession,
+                agentBySession,
+                deps.config.toast_duration_ms,
+            ),
+        onSessionCacheInvalidated: (sessionId: string) => {
+            dropSlot(sessionId, "session-cache-invalidated");
+            clearInjectionCache(sessionId);
+            deps.onSessionCacheInvalidated?.(sessionId);
+        },
+        onRustWireInvalidated: (sessionId: string) => {
+            transform.invalidateRustWireState(sessionId);
+        },
+        // Clean up per-session state the system-prompt handler maintains so
+        // these module/closure-scope maps don't accumulate entries over the
+        // plugin's lifetime (Finding #3).
+        onSessionDeleted: (sessionId: string) => {
+            dropSlot(sessionId, "session-deleted");
+            transform.clearRustSession(sessionId);
+            systemPromptHash.clearSession(sessionId);
+            // Prune every per-session map this hook closure owns. These
+            // accumulate one entry per session for the plugin process lifetime
+            // (which can span days/weeks across many sessions and subagents);
+            // without this, a long-lived process leaks memory steadily. Some
+            // maps are shared via liveSessionState — clearing on the terminal
+            // session.deleted event is correct since the session is gone.
+            lastHeuristicsTurnId.delete(sessionId);
+            commitSeenLastPass.delete(sessionId);
+            variantBySession.delete(sessionId);
+            liveModelBySession.delete(sessionId);
+            agentBySession.delete(sessionId);
+            sessionDirectoryBySession.delete(sessionId);
+            recompProgressBySession.delete(sessionId);
+            internalChildSessions.delete(sessionId);
+            rustMemorySyncRequestedSessions.delete(sessionId);
+            channel1StateBySession.delete(sessionId);
+            channel2DirectiveTextBySession.delete(sessionId);
+            clearEmbedSessionState(sessionId);
+        },
+    });
+
+    const runDreamQueueInBackground = (): void => {
+        if (bootQuietRemainingMs() > 0) {
+            if (!dreamQueueQuietScheduled) {
+                dreamQueueQuietScheduled = true;
+                scheduleAfterBootQuiet(() => {
+                    dreamQueueQuietScheduled = false;
+                    runDreamQueueInBackground();
+                });
+            }
+            return;
+        }
+        const dreaming = deps.config.dreamer;
+        if (!dreaming || dreaming.disable === true) {
+            return;
+        }
+
+        const now = Date.now();
+        if (now - lastScheduleCheckMs < DREAM_SCHEDULE_CHECK_INTERVAL_MS) {
+            return;
+        }
+        lastScheduleCheckMs = now;
+
+        // Dreamer v2: the per-task scheduler owns due-evaluation + keyed leases.
+        // This message-event-driven path is a secondary trigger to the process
+        // timer; both call the same idempotent scheduler (leases prevent overlap).
+        const runtimeConfigs = buildDreamTaskRuntimeConfigs(dreaming, deps.config.language);
+        const executor = createDreamTaskExecutor({
+            client: deps.client,
+            // Run in the directory this hook instance owns, not a stale sibling
+            // checkout resolved from the shared git:<sha> identity map.
+            sessionDirectory: deps.directory,
+            openOpenCodeDb,
+            retrospectiveRawProvider: (providerDb) =>
+                new OpenCodeRetrospectiveRawProvider({
+                    contextDb: providerDb,
+                    openOpenCodeDb,
+                }),
+            userMemoryCollectionEnabled: userMemoryCollectionEnabled(dreaming),
+            language: deps.config.language,
+            transformMode: deps.config.transform_mode,
+            // Scheduled/message-triggered runs must share the same direct
+            // authority.status transport as the transform path. The
+            // executor uses the live MODULE verdict, not transform state
+            // cached in a session, so a cold process cannot fall back to
+            // the guarded TypeScript child path.
+            moduleClient: rustModeModuleClient,
+        });
+        void runDueTasksForProject({
+            db,
+            projectIdentity: projectPath,
+            tasks: runtimeConfigs,
+            executor,
+        }).catch((error: unknown) => {
+            log("[dreamer] scheduled task run failed:", error);
+        });
+    };
+
+    const commandHandler = createMagicContextCommandHandler({
+        db,
+        protectedTags: deps.config.protected_tags,
+        toastDurationMs: deps.config.toast_duration_ms,
+        executeThresholdPercentage: deps.config.execute_threshold_percentage ?? 65,
+        executeThresholdTokens: deps.config.execute_threshold_tokens,
+        historyBudgetPercentage: deps.config.history_budget_percentage,
+        transformMode: deps.config.transform_mode,
+        rustModeModuleClient,
+        projectRoot: deps.directory,
+        commitClusterTrigger: deps.config.commit_cluster_trigger,
+        getLiveModelKey: (sessionId) => {
+            // Use DB fallback so /ctx-status shows the correct model-specific
+            // threshold even before the first transform pass has populated
+            // liveModelBySession after restart. Without this, the resolver
+            // falls back to the default threshold and displays a stale budget.
+            const model = resolveLiveModel(sessionId);
+            return model ? `${model.providerID}/${model.modelID}` : undefined;
+        },
+        getContextLimit: (sessionId) => {
+            // Same DB fallback as getLiveModelKey — /ctx-status's "Resolved
+            // context limit" and history-budget math depend on the live model.
+            const model = resolveLiveModel(sessionId);
+            if (!model) return undefined;
+            return resolveContextLimit(model.providerID, model.modelID);
+        },
+        // /ctx-flush is a user-initiated full refresh: signal all three sets.
+        // History rebuild + system-prompt adjuncts + force materialize.
+        onFlush: (sessionId) => {
+            historyRefreshSessions.add(sessionId);
+            systemPromptRefreshSessions.add(sessionId);
+            pendingMaterializationSessions.add(sessionId);
+        },
+        // E3 (recomp) + /ctx-session-upgrade: both run through the SHARED
+        // orchestrator (runManagedRecomp / runManagedUpgrade) so the command
+        // paths get identical model fallback + live progress + terminal state as
+        // the RPC dialog paths. Dogfood 2026-05-30: previously the command path
+        // had fallback but no progress (sidebar stuck on stale "failed") while
+        // the RPC dialog had progress but no fallback (failed on empty primary
+        // model). One runner closes both gaps.
+        executeWrapup: historianRunnable
+            ? async (sessionId, options) =>
+                  runManagedWrapup(buildManagedWrapupCtx(sessionId), sessionId, options)
+            : undefined,
+        executeRecomp: historianRunnable
+            ? async (sessionId, options) =>
+                  runManagedRecomp(buildManagedRecompCtx(sessionId), sessionId, options)
+            : undefined,
+        // E3.2 — /ctx-session-upgrade: full recomp + once-per-project memory
+        // migration in one managed run. The command handler delivers the result.
+        runUpgrade: historianRunnable
+            ? async (sessionId: string) =>
+                  runManagedUpgrade(buildManagedRecompCtx(sessionId), sessionId)
+            : undefined,
+        executeEmbedHistory,
+        pauseEmbedDrain,
+        getEmbedStatusText,
+        sendNotification: async (sessionId, text, params) => {
+            await sendIgnoredMessage(deps.client, sessionId, text, {
+                ...getLiveNotificationParams(
+                    sessionId,
+                    liveModelBySession,
+                    variantBySession,
+                    agentBySession,
+                    deps.config.toast_duration_ms,
+                ),
+                ...params,
+            });
+        },
+        sidekick: sidekickConfig
+            ? {
+                  config: sidekickConfig,
+                  projectPath,
+                  sessionDirectory: deps.directory,
+                  client: deps.client,
+                  language: deps.config.language,
+              }
+            : undefined,
+        dreamer: dreamerConfig
+            ? {
+                  config: dreamerConfig,
+                  projectPath,
+                  // Manual /ctx-dream → Dreamer v2 per-task scheduler. Runs in this
+                  // hook's own checkout (not a stale sibling worktree from the
+                  // shared git:<sha> identity map).
+                  runManual: (task) =>
+                      runManualDream({
+                          db,
+                          projectIdentity: projectPath,
+                          tasks: buildDreamTaskRuntimeConfigs(dreamerConfig, deps.config.language),
+                          executor: createDreamTaskExecutor({
+                              client: deps.client,
+                              sessionDirectory: deps.directory,
+                              openOpenCodeDb,
+                              retrospectiveRawProvider: (providerDb) =>
+                                  new OpenCodeRetrospectiveRawProvider({
+                                      contextDb: providerDb,
+                                      openOpenCodeDb,
+                                  }),
+                              userMemoryCollectionEnabled:
+                                  userMemoryCollectionEnabled(dreamerConfig),
+                              language: deps.config.language,
+                              experimentalMural: deps.config.experimental?.mural,
+                              memoryInjectionBudgetTokens:
+                                  deps.config.memory?.injection_budget_tokens,
+                              transformMode: deps.config.transform_mode,
+                              // Manual /ctx-dream uses the same live authority
+                              // lookup and module transport as scheduled runs.
+                              // Do not rely on a transform-populated cache.
+                              moduleClient: rustModeModuleClient,
+                          }),
+                          task,
+                      }),
+              }
+            : undefined,
+    });
+
+    const systemPromptHash = createSystemPromptHashHandler({
+        db,
+        protectedTags: deps.config.protected_tags,
+        dreamerEnabled: dreamerRunnable,
+        // Gates ctx_memory guidance out of the prompt when memory is off (the
+        // ctx_memory TOOL is gated in tool-registry.ts on the same flag).
+        memoryEnabled: deps.config.memory?.enabled !== false,
+        language: deps.config.language,
+        // System-prompt-hash handler reads systemPromptRefreshSessions to
+        // decide whether to re-read disk-backed adjuncts (profile, key files,
+        // sticky date), and adds to all three sets when it
+        // detects a real prompt-content change.
+        historyRefreshSessions,
+        systemPromptRefreshSessions,
+        pendingMaterializationSessions,
+        lastHeuristicsTurnId,
+        // Issue #53: per-agent injection opt-out via config.
+        // Defensive defaults for tests/legacy callers that pre-date the
+        // schema field; Zod's .default() handles real loaded configs.
+        injectionEnabled: deps.config.system_prompt_injection?.enabled ?? true,
+        injectionSkipSignatures: deps.config.system_prompt_injection?.skip_signatures ?? [
+            "<!-- magic-context: skip -->",
+        ],
+        internalChildSessions,
+        experimentalUserMemories: userMemoryCollectionEnabled(deps.config.dreamer),
+        experimentalTemporalAwareness: deps.config.temporal_awareness === true,
+        // Mirror the primary-session caveman opt-in so the agent knows older
+        // prose may be rewritten even when ctx_reduce is available.
+        experimentalCavemanTextCompression: deps.config.caveman_text_compression?.enabled === true,
+    });
+    const systemPromptHashHandler = systemPromptHash.handler;
+
+    const eventHook = createEventHook({
+        eventHandler,
+        contextUsageMap,
+        db,
+        liveModelBySession,
+        variantBySession,
+        agentBySession,
+        sessionDirectoryBySession,
+        historyRefreshSessions,
+        deferredHistoryRefreshSessions,
+        systemPromptRefreshSessions,
+        pendingMaterializationSessions,
+        deferredMaterializationSessions,
+        lastHeuristicsTurnId,
+        commitSeenLastPass,
+        client: deps.client,
+        protectedTags: deps.config.protected_tags,
+    });
+
+    const hooks = {
+        "experimental.chat.messages.transform": transform,
+        "experimental.chat.system.transform": systemPromptHashHandler,
+        "experimental.text.complete": createTextCompleteHandler(),
+        "chat.message": createChatMessageHook({
+            db,
+            liveModelBySession,
+            variantBySession,
+            agentBySession,
+            historyRefreshSessions,
+            systemPromptRefreshSessions,
+            pendingMaterializationSessions,
+            lastHeuristicsTurnId,
+            // E5 — only offer the upgrade reminder when historian can run (so
+            // /ctx-session-upgrade is actually actionable). Self-gates per session.
+            upgradeReminder: historianRunnable
+                ? (sessionId: string) =>
+                      maybeSendUpgradeReminder(
+                          {
+                              client: deps.client,
+                              db,
+                              sendIgnoredMessage,
+                              getNotificationParams: (sid) =>
+                                  getLiveNotificationParams(
+                                      sid,
+                                      liveModelBySession,
+                                      variantBySession,
+                                      agentBySession,
+                                      deps.config.toast_duration_ms,
+                                  ),
+                              isTuiConnected,
+                              pushTuiDialogAction: (sid, resume) =>
+                                  pushNotification(
+                                      "action",
+                                      resume
+                                          ? {
+                                                action: "show-upgrade-dialog",
+                                                resume: true,
+                                                stagedCount: resume.stagedCount,
+                                                stagedThrough: resume.stagedThrough,
+                                            }
+                                          : { action: "show-upgrade-dialog" },
+                                      sid,
+                                  ),
+                          },
+                          sessionId,
+                      )
+                : undefined,
+        }),
+        event: async (input: { event: { type: string; properties?: unknown } }) => {
+            await eventHook(input);
+            if (input.event.type === "message.updated") {
+                runDreamQueueInBackground();
+            }
+        },
+        "command.execute.before": createCommandExecuteBeforeHook(commandHandler),
+        "tool.execute.after": createToolExecuteAfterHook({
+            db,
+            channel1StateBySession,
+            transformMode: deps.config.transform_mode,
+            todoStateSet:
+                deps.config.transform_mode === "rust" && rustModeModuleClient
+                    ? ({ sessionId, stateJson, ownerMessageId }) =>
+                          rustModeModuleClient.call({
+                              sessionId,
+                              projectRoot: deps.directory,
+                              method: "todo_state.set",
+                              body: {
+                                  method: "todo_state.set",
+                                  v: 1,
+                                  session_id: sessionId,
+                                  state_json: stateJson,
+                                  owner_message_id: ownerMessageId,
+                              },
+                          })
+                    : undefined,
+        }),
+    };
+    const hooksWithBackends = hooks as typeof hooks & {
+        rustToolBackends?: RustToolBackends;
+    };
+    Object.defineProperty(hooksWithBackends, "rustToolBackends", {
+        value: rustToolBackends,
+        enumerable: false,
+    });
+    return hooksWithBackends;
+}
+
+/**
+ * Async boot entry point. Migration lock retries must yield between attempts,
+ * while the hook itself remains synchronous once a database is available.
+ */
+export async function createMagicContextHookAsync(
+    deps: MagicContextDeps,
+): Promise<ReturnType<typeof createMagicContextHook>> {
+    let database: Database | null;
+    try {
+        clearHookInitFailure();
+        database = await openDatabaseAsync();
+    } catch (error) {
+        const reason = getErrorMessage(error);
+        log("[magic-context] hook failed to open storage; disabling feature:", error);
+        notifyMagicContextDisabled(deps.client, reason);
+        clearHookInitFailure();
+        recordHookInitFailure({
+            type: "storage",
+            reason: { kind: "storage_failure", cause: reason },
+        });
+        return null;
+    }
+    return createMagicContextHook({
+        ...deps,
+        openDatabaseForHook: () => database,
+    });
+}

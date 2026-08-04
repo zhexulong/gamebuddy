@@ -1,0 +1,81 @@
+import { log } from "../../../shared/logger";
+import type { Database } from "../../../shared/sqlite";
+import { embedBatchForProject, getProjectEmbeddingSnapshot } from "./embedding";
+import {
+    type StoredMemoryEmbedding,
+    saveEmbeddingIfHashMatches,
+} from "./storage-memory-embeddings";
+import type { Memory } from "./types";
+
+export async function ensureMemoryEmbeddings(args: {
+    db: Database;
+    projectIdentity: string;
+    memories: Memory[];
+    existingEmbeddings: Map<number, StoredMemoryEmbedding>;
+}): Promise<Map<number, StoredMemoryEmbedding>> {
+    const snapshot = getProjectEmbeddingSnapshot(args.projectIdentity);
+    if (!snapshot?.enabled) {
+        return args.existingEmbeddings;
+    }
+
+    const missingMemories = args.memories.filter(
+        (memory) => !args.existingEmbeddings.has(memory.id),
+    );
+    if (missingMemories.length === 0) {
+        return args.existingEmbeddings;
+    }
+
+    try {
+        const result = await embedBatchForProject(
+            args.projectIdentity,
+            missingMemories.map((memory) => memory.content),
+        );
+        if (!result) {
+            return args.existingEmbeddings;
+        }
+
+        // Stage results before committing — only merge into the in-memory cache after
+        // the transaction succeeds, so a rollback doesn't leave stale Map entries.
+        const staged = new Map<number, StoredMemoryEmbedding>();
+        args.db.transaction(() => {
+            for (const [index, memory] of missingMemories.entries()) {
+                const embedding = result.vectors[index];
+                if (!embedding) {
+                    continue;
+                }
+
+                // The vector was computed from the content this memory had when the
+                // batch was assembled. If the memory was edited while the provider
+                // call was in flight, its normalized_hash no longer matches and the
+                // guarded save discards the stale vector — leaving the row unembedded
+                // so the proactive drain re-embeds the current content next round.
+                // A skipped memory must not enter the cache either: a stale cached
+                // vector would score searches until the cache is rebuilt.
+                const saved = saveEmbeddingIfHashMatches(
+                    args.db,
+                    memory.id,
+                    embedding,
+                    result.modelId,
+                    memory.normalizedHash,
+                );
+                if (saved) {
+                    staged.set(memory.id, { embedding, modelId: result.modelId });
+                }
+            }
+        })();
+
+        const currentSnapshot = getProjectEmbeddingSnapshot(args.projectIdentity);
+        if (!currentSnapshot || currentSnapshot.generation !== result.generation) {
+            return args.existingEmbeddings;
+        }
+
+        // Transaction committed — safe to merge into caller's cache
+        for (const [id, embedding] of staged) {
+            args.existingEmbeddings.set(id, embedding);
+        }
+    } catch (error) {
+        log("[magic-context] failed to backfill memory embeddings:", error);
+    }
+
+    return args.existingEmbeddings;
+}
