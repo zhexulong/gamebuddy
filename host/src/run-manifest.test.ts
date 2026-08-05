@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { writeOrVerifyRunManifest, type CompanionRunManifest } from "./run-manifest.js";
+import type { IntegrationActionPolicy } from "./integration-module.js";
 import type { RuntimePaths } from "./runtime.js";
 
 const manifest: CompanionRunManifest = {
@@ -14,7 +15,7 @@ const manifest: CompanionRunManifest = {
   model: { provider: null, modelId: null, thinkingLevel: null },
   gameplaySubagentModel: null,
   actionRegistryRevision: "revision_01",
-  actionPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
+  actionPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] } satisfies IntegrationActionPolicy,
   mountedTools: ["companion_status"],
   knowledge: { mounted: false, gameVersion: null, bundleVersion: null },
   identityProfile: { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) },

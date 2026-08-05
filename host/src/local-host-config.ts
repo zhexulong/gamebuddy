@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
-import { parseActionPolicy, type ActionPolicy } from "./action-registry.js";
+import { parseActionPolicy } from "./action-registry.js";
+import type { IntegrationActionPolicy } from "./integration-module.js";
 
 export type LocalHostConfig = Readonly<{
   playerId: string;
@@ -14,7 +15,7 @@ export type LocalHostConfig = Readonly<{
   gameVersion?: string;
   voiceGateway?: Readonly<{ port: number; token: string }>;
   presentation?: Readonly<{ speech?: Readonly<{ voiceProfile: string }> }>;
-  actionPolicy?: ActionPolicy;
+  actionPolicy?: IntegrationActionPolicy;
   gameplaySubagent?: boolean;
 }>;
 
@@ -44,7 +45,7 @@ export function validateLocalHostConfig(value: unknown): LocalHostConfig {
   const voiceCandidate = candidate.voiceGateway;
   const voiceGateway = voiceCandidate === undefined ? undefined : parseVoiceGateway(voiceCandidate);
   const presentation = candidate.presentation === undefined ? undefined : parsePresentation(candidate.presentation);
-  let actionPolicy: ActionPolicy | undefined;
+  let actionPolicy: IntegrationActionPolicy | undefined;
   if (candidate.actionPolicy !== undefined) {
     try { actionPolicy = parseActionPolicy(candidate.actionPolicy); }
     catch { throw new Error("invalid_host_config"); }

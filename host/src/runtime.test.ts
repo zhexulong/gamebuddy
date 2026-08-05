@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import {
   companionStatusTool,
   DEFAULT_COMPANION_MODEL_CONFIG,
@@ -23,7 +25,9 @@ import { CompanionIntegrationClient } from "./integration.js";
 import { type Scope } from "./protocol.js";
 import { type KnowledgeBundle } from "./knowledge.js";
 import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
-import type { CompanionRunManifest } from "./run-manifest.js";
+import { actionRegistryRevision, type CompanionRunManifest } from "./run-manifest.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
 
 const identity = Object.freeze({
   playerId: "player_01",
@@ -72,6 +76,7 @@ test("offline runtime exposes only its deterministic Companion status tool", asy
 test("mounted Companion status reports live integration facts without inferring success", async () => {
   const integration = {
     scope: { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId },
+    module: STARDEW_INTEGRATION_MODULE,
     state: {
       connected: true,
       sessionId: "session_01",
@@ -89,12 +94,57 @@ test("mounted Companion status reports live integration facts without inferring 
   assert.doesNotMatch(result.content[0]?.type === "text" ? result.content[0].text : "", /succeeded/);
 });
 
+test("runtime mounts a fake integration through the module port", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-fake-integration-runtime-"));
+  const entries = [{ actionId: "activate_console", familyId: "arcade_interaction", lifecycle: "published" as const, label: "Activate console", description: "Activate a live arcade console.", targetKinds: ["console"], requiredCapability: "activate_console" }];
+  const catalog = createIntegrationActionCatalog(entries, (actionId, receipt) => actionId === "activate_console" && receipt.state === "succeeded" && receipt.reasonCode === "console_activated" && receipt.evidence?.postcondition === "active");
+  const activateConsole = defineTool({
+    name: "arcade_activate_console", label: "Activate arcade console", description: "Fake action used only to validate the module seam.",
+    parameters: Type.Object({ consoleId: Type.String({ minLength: 1, maxLength: 32 }) }),
+    execute: async (_toolCallId, params) => ({ content: [{ type: "text" as const, text: `activated:${params.consoleId}` }], details: { receiptJson: JSON.stringify({ requestId: "request_01", executionId: "execution_01", state: "succeeded", reasonCode: "console_activated", revision: 1, evidence: { postcondition: "active" } }) } }),
+  });
+  const fake: GameIntegrationModule = {
+    descriptor: Object.freeze({ integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" }),
+    actionCatalog: catalog,
+    defaultPolicy: Object.freeze({ policyVersion: 1 as const, deniedActions: [], deniedFamilies: [] }),
+    parsePolicy: (value: unknown) => value as never,
+    assertIdentityBinding: (_connection, boundIdentity) => {
+      if (boundIdentity.playerId !== identity.playerId || boundIdentity.companionId !== identity.companionId) throw new Error("integration_identity_binding_mismatch");
+    },
+    worldScope: () => null,
+    createToolSet: ({ connection, policy }) => ({
+      observation: [],
+      actions: catalog.visibleActions((connection.state as { capabilities: readonly string[] }).capabilities, policy).some((entry) => entry.actionId === "activate_console") ? [activateConsole] : [],
+      knowledge: [],
+    }),
+    knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
+    status: (connection) => ({ connected: true, capabilities: (connection.state as { capabilities: readonly string[] }).capabilities, snapshotRevision: 1, latestReceiptState: null, latestReasonCode: null }),
+    readState: (connection) => ({ connected: true, sessionId: "arcade_session_01", capabilities: (connection.state as { capabilities: readonly string[] }).capabilities, snapshotRevision: 1, activeExecution: null, latestReceipt: null, latestReasonCode: null }),
+    cancelExecution: () => "not_supported",
+    parseReceipt: () => null,
+    actionIdForToolName: (toolName) => toolName === "arcade_activate_console" ? "activate_console" : null,
+    isCancellationTool: () => false,
+  };
+  const integration = {
+    scope: { integrationId: "test-arcade" },
+    module: fake,
+    state: { capabilities: ["activate_console"] },
+  } as never;
+  const runtime = await createCompanionRuntime(identity, root, integration);
+  try {
+    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["arcade_activate_console", "companion_status", "todowrite"]);
+    const manifest = JSON.parse(await readFile(runtime.paths.runManifestPath, "utf8")) as CompanionRunManifest;
+    assert.equal(manifest.actionRegistryRevision, catalog.revision);
+    assert.doesNotMatch(JSON.stringify(manifest.mountedTools), /stardew_/);
+  } finally { runtime.session.dispose(); }
+});
+
 test("runtime rejects a mounted integration whose save identity does not match", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase3-scope-"));
   const wrongScope: Scope = { integrationId: "stardew", saveId: "other_save", worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(wrongScope);
-  const integration = new CompanionIntegrationClient(wrongScope, hostEndpoint);
-  await assert.rejects(() => createCompanionRuntime(identity, root, integration), /exactly match/);
+  const integration = new CompanionIntegrationClient(wrongScope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
+  await assert.rejects(() => createCompanionRuntime(identity, root, integration), /integration_identity_binding_mismatch/);
   integration.dispose();
 });
 
@@ -102,7 +152,7 @@ test("game surface keeps the game system prompt when it resumes an explicit surf
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-game-surface-runtime-"));
   const scope: Scope = { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new CompanionIntegrationClient(scope, hostEndpoint);
+  const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
   const runtime = await createCompanionRuntime(identity, root, integration, undefined, undefined, undefined, false, undefined, "game_surface_01", undefined, "game");
   try {
     assert.doesNotMatch(runtime.session.systemPrompt, /<gamebuddy_chat_surface>/);
@@ -117,7 +167,7 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase3-tools-"));
   const scope: Scope = { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new CompanionIntegrationClient(scope, hostEndpoint);
+  const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
   const runtime = await createCompanionRuntime(identity, root, integration);
   try {
     // The executable action is absent until the Mod declares it in the
@@ -134,7 +184,7 @@ test("runtime materializes the optional gameplay subagent without exposing its t
   const delegatedRoot = await mkdtemp(join(tmpdir(), "gamebuddy-gameplay-subagent-enabled-"));
   const scope: Scope = { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new CompanionIntegrationClient(scope, hostEndpoint);
+  const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
   const config = { provider: "cpa-oai" as const, modelId: "deepseek-v4-flash" as const, thinkingLevel: "high" as const };
   const offline = await createCompanionRuntime(identity, offlineRoot);
   try { assert.equal(offline.session.agent.state.tools.some((tool) => tool.name === "delegate_game_task"), false); }
@@ -157,7 +207,7 @@ test("runtime mounts Host-owned version-bound knowledge only when explicitly con
   const scope: Scope = { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
   const bundle: KnowledgeBundle = { bundleVersion: 1, integrationId: "stardew", gameVersion: "1.6.15", rules: [{ id: "move-v1", integrationId: "stardew", gameVersion: "1.6.15", capability: "move_to_tile", text: "Use a fresh actionable snapshot." }] };
-  const integration = new CompanionIntegrationClient(scope, hostEndpoint, bundle, "1.6.15");
+  const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE, bundle, "1.6.15");
   const runtime = await createCompanionRuntime(identity, root, integration);
   try {
     assert.ok(runtime.session.agent.state.tools.some((tool) => tool.name === "stardew_game_knowledge"));

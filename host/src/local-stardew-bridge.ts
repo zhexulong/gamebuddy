@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { type CompanionIntegration, type CompanionIntegrationState } from "./integration-types.js";
+import { type GameIntegrationModule } from "./integration-module.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import { type KnowledgeBundle } from "./knowledge.js";
 import { NamedPipeTransport } from "./named-pipe.js";
 import {
@@ -45,6 +47,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     readonly token: string,
     readonly knowledge?: KnowledgeBundle,
     readonly gameVersion?: string,
+    readonly module: GameIntegrationModule = STARDEW_INTEGRATION_MODULE,
   ) {
     transport.onMessage((json) => this.receive(json));
     transport.onClose((reasonCode) => {
