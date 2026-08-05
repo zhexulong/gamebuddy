@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { type WorldFact } from "./event-pump.js";
 import {
   RECEIPT_BACKED_INTEGRATION_AUTHORITY,
@@ -6,9 +7,10 @@ import {
   type IntegrationLifecycleEvent,
   type IntegrationLaunchHandle,
 } from "./integration-launcher.js";
-import { parseKnowledgeBundle, type KnowledgeBundle } from "./knowledge.js";
+import { loadKnowledgeBundle, parseKnowledgeBundle, type KnowledgeBundle } from "./knowledge.js";
 import { LocalStardewBridgeClient, type LocalStardewBridgeFact, type LocalStardewConnectionFact } from "./local-stardew-bridge.js";
 import { type Scope } from "./protocol.js";
+import { type ConfigurableIntegrationLauncher, type PreparedIntegrationLaunch } from "./integration-catalog.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 /** Operator-owned local configuration for the receipt-backed Stardew adapter. */
@@ -24,9 +26,24 @@ export type StardewLauncherConfig = Readonly<{
  * conversion of validated Mod messages to Host-neutral facts. Host core never
  * imports this type or bridge schema.
  */
-export const STARDEW_INTEGRATION_LAUNCHER: IntegrationLauncher = Object.freeze({
+export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Object.freeze({
   integrationId: "stardew",
   module: STARDEW_INTEGRATION_MODULE,
+  async prepare(config, { configDirectory }): Promise<PreparedIntegrationLaunch> {
+    const operator = parseStardewOperatorConfig(config);
+    const knowledge = operator.knowledgeBundlePath === undefined
+      ? undefined
+      : await loadKnowledgeBundle(resolve(configDirectory, operator.knowledgeBundlePath), operator.gameVersion!);
+    return Object.freeze({
+      launchConfig: Object.freeze({
+        pipeName: operator.pipeName,
+        bridgeToken: operator.bridgeToken,
+        ...(knowledge === undefined ? {} : { knowledge }),
+        ...(operator.gameVersion === undefined ? {} : { gameVersion: operator.gameVersion }),
+      }),
+      identityScope: Object.freeze({ saveId: operator.saveId, worldId: operator.worldId }),
+    });
+  },
   async launch({ identity, config }): Promise<IntegrationLaunchHandle> {
     const local = parseStardewLauncherConfig(config);
     if (identity.saveId === undefined || identity.worldId === undefined) throw new Error("stardew_identity_scope_required");
@@ -113,6 +130,38 @@ export const STARDEW_INTEGRATION_LAUNCHER: IntegrationLauncher = Object.freeze({
     }
   },
 });
+
+export type StardewOperatorConfig = Readonly<{
+  pipeName: string;
+  bridgeToken: string;
+  saveId: string;
+  worldId: string;
+  knowledgeBundlePath?: string;
+  gameVersion?: string;
+}>;
+
+/** Strict adapter-owned operator config; Host sees only opaque config. */
+export function parseStardewOperatorConfig(value: unknown): StardewOperatorConfig {
+  if (!isRecord(value)
+    || Object.keys(value).some((key) => key !== "pipeName" && key !== "bridgeToken" && key !== "saveId" && key !== "worldId" && key !== "knowledgeBundlePath" && key !== "gameVersion")
+    || typeof value.pipeName !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.pipeName)
+    || typeof value.bridgeToken !== "string" || !/^[A-Za-z0-9_-]{16,256}$/.test(value.bridgeToken)
+    || typeof value.saveId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.saveId)
+    || typeof value.worldId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value.worldId)
+    || (value.knowledgeBundlePath !== undefined && (typeof value.knowledgeBundlePath !== "string" || value.knowledgeBundlePath.length === 0 || value.knowledgeBundlePath.length > 512))
+    || (value.gameVersion !== undefined && (typeof value.gameVersion !== "string" || !/^[A-Za-z0-9_.-]{1,64}$/.test(value.gameVersion)))
+    || ((value.knowledgeBundlePath === undefined) !== (value.gameVersion === undefined))) {
+    throw new Error("invalid_stardew_operator_config");
+  }
+  return Object.freeze({
+    pipeName: value.pipeName,
+    bridgeToken: value.bridgeToken,
+    saveId: value.saveId,
+    worldId: value.worldId,
+    ...(value.knowledgeBundlePath === undefined ? {} : { knowledgeBundlePath: value.knowledgeBundlePath }),
+    ...(value.gameVersion === undefined ? {} : { gameVersion: value.gameVersion }),
+  });
+}
 
 export function parseStardewLauncherConfig(value: unknown): StardewLauncherConfig {
   if (!isRecord(value)
