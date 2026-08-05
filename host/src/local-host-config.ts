@@ -1,87 +1,76 @@
-import { dirname, resolve } from "node:path";
-import { parseActionPolicy } from "./action-registry.js";
-import type { IntegrationActionPolicy } from "./integration-module.js";
-
 export type LocalHostConfig = Readonly<{
   playerId: string;
-  saveId: string;
-  worldId: string;
   companionId: string;
-  pipeName: string;
-  bridgeToken: string;
+  /** Opaque continuity may span Chat/Game; adapter scope otherwise supplies save/world partitioning. */
+  continuityId?: string;
+  integrationId: string;
+  /** Strictly parsed by the selected adapter, never by Host core. */
+  integration: unknown;
   model?: "deepseek-v4-flash";
   thinkingLevel?: "high";
-  knowledgeBundlePath?: string;
-  gameVersion?: string;
   voiceGateway?: Readonly<{ port: number; token: string }>;
   presentation?: Readonly<{ speech?: Readonly<{ voiceProfile: string }> }>;
-  actionPolicy?: IntegrationActionPolicy;
+  /** Parsed by the selected module only after catalog selection. */
+  actionPolicy?: unknown;
   gameplaySubagent?: boolean;
 }>;
 
-/** Validate operator-owned Host config without reading files or credentials. */
+const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** Validate only Host-owned operator config; integration config stays opaque. */
 export function validateLocalHostConfig(value: unknown): LocalHostConfig {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid_host_config");
-  const candidate = value as Record<string, unknown>;
-  const opaque = (key: string) => typeof candidate[key] === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(candidate[key]) ? candidate[key] : undefined;
-  const playerId = opaque("playerId");
-  const saveId = opaque("saveId");
-  const worldId = opaque("worldId");
-  const companionId = opaque("companionId");
-  const pipeName = opaque("pipeName");
-  const bridgeToken = typeof candidate.bridgeToken === "string" && /^[A-Za-z0-9_-]{16,256}$/.test(candidate.bridgeToken) ? candidate.bridgeToken : undefined;
-  const model = candidate.model === undefined ? undefined : candidate.model === "deepseek-v4-flash" ? candidate.model : undefined;
-  const thinkingLevel = candidate.thinkingLevel === undefined ? (model === undefined ? undefined : "high") : candidate.thinkingLevel === "high" ? candidate.thinkingLevel : undefined;
-  const knowledgeBundlePath = candidate.knowledgeBundlePath === undefined
-    ? undefined
-    : typeof candidate.knowledgeBundlePath === "string" && candidate.knowledgeBundlePath.length > 0 && candidate.knowledgeBundlePath.length <= 512
-      ? candidate.knowledgeBundlePath
-      : undefined;
-  const gameVersion = candidate.gameVersion === undefined
-    ? undefined
-    : typeof candidate.gameVersion === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(candidate.gameVersion)
-      ? candidate.gameVersion
-      : undefined;
-  const voiceCandidate = candidate.voiceGateway;
-  const voiceGateway = voiceCandidate === undefined ? undefined : parseVoiceGateway(voiceCandidate);
-  const presentation = candidate.presentation === undefined ? undefined : parsePresentation(candidate.presentation);
-  let actionPolicy: IntegrationActionPolicy | undefined;
-  if (candidate.actionPolicy !== undefined) {
-    try { actionPolicy = parseActionPolicy(candidate.actionPolicy); }
-    catch { throw new Error("invalid_host_config"); }
-  }
-  const gameplaySubagent = candidate.gameplaySubagent === undefined ? false : candidate.gameplaySubagent === true;
-  if (playerId === undefined || saveId === undefined || worldId === undefined || companionId === undefined || pipeName === undefined || bridgeToken === undefined
-    || (candidate.model !== undefined && model === undefined)
-    || (candidate.thinkingLevel !== undefined && thinkingLevel === undefined)
-    || (model === undefined && thinkingLevel !== undefined)
-    || (voiceCandidate !== undefined && voiceGateway === undefined)
-    || (candidate.presentation !== undefined && presentation === undefined)
-    || (candidate.actionPolicy !== undefined && actionPolicy === undefined)
-    || (candidate.gameplaySubagent !== undefined && typeof candidate.gameplaySubagent !== "boolean")
-    || (presentation?.speech !== undefined && voiceGateway === undefined)
-    || (candidate.knowledgeBundlePath !== undefined && knowledgeBundlePath === undefined)
-    || (candidate.gameVersion !== undefined && gameVersion === undefined)
-    || ((knowledgeBundlePath === undefined) !== (gameVersion === undefined))) {
+  if (!isRecord(value)
+    || Object.keys(value).some((key) => !new Set([
+      "playerId", "companionId", "continuityId", "integrationId", "integration",
+      "model", "thinkingLevel", "voiceGateway", "presentation", "actionPolicy", "gameplaySubagent",
+    ]).has(key))) {
     throw new Error("invalid_host_config");
   }
-  return { playerId, saveId, worldId, companionId, pipeName, bridgeToken, model, thinkingLevel, knowledgeBundlePath, gameVersion, voiceGateway, presentation, actionPolicy, gameplaySubagent };
+  const playerId = opaque(value.playerId);
+  const companionId = opaque(value.companionId);
+  const continuityId = value.continuityId === undefined ? undefined : opaque(value.continuityId);
+  const integrationId = opaque(value.integrationId);
+  const model = value.model === undefined ? undefined : value.model === "deepseek-v4-flash" ? value.model : undefined;
+  const thinkingLevel = value.thinkingLevel === undefined ? (model === undefined ? undefined : "high") : value.thinkingLevel === "high" ? value.thinkingLevel : undefined;
+  const voiceGateway = value.voiceGateway === undefined ? undefined : parseVoiceGateway(value.voiceGateway);
+  const presentation = value.presentation === undefined ? undefined : parsePresentation(value.presentation);
+  const gameplaySubagent = value.gameplaySubagent === undefined ? false : value.gameplaySubagent === true;
+  if (playerId === undefined || companionId === undefined || integrationId === undefined || !isRecord(value.integration)
+    || (value.continuityId !== undefined && continuityId === undefined)
+    || (value.model !== undefined && model === undefined)
+    || (value.thinkingLevel !== undefined && thinkingLevel === undefined)
+    || (model === undefined && value.thinkingLevel !== undefined)
+    || (value.voiceGateway !== undefined && voiceGateway === undefined)
+    || (value.presentation !== undefined && presentation === undefined)
+    || (value.gameplaySubagent !== undefined && typeof value.gameplaySubagent !== "boolean")
+    || (presentation?.speech !== undefined && voiceGateway === undefined)) {
+    throw new Error("invalid_host_config");
+  }
+  return Object.freeze({
+    playerId, companionId, ...(continuityId === undefined ? {} : { continuityId }),
+    integrationId, integration: value.integration,
+    ...(model === undefined ? {} : { model }), ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+    ...(voiceGateway === undefined ? {} : { voiceGateway }), ...(presentation === undefined ? {} : { presentation }),
+    ...(value.actionPolicy === undefined ? {} : { actionPolicy: value.actionPolicy }), gameplaySubagent,
+  });
 }
 
-/** Resolve an operator-configured knowledge path relative to its Host config. */
-export function resolveKnowledgeBundlePath(configPath: string, knowledgeBundlePath: string): string {
-  return resolve(dirname(configPath), knowledgeBundlePath);
+function opaque(value: unknown): string | undefined {
+  return typeof value === "string" && IDENTIFIER.test(value) ? value : undefined;
 }
 
 function parsePresentation(value: unknown): LocalHostConfig["presentation"] | undefined {
   if (!isRecord(value)) return undefined;
+  if (Object.keys(value).some((key) => key !== "speech")) return undefined;
   if (value.speech === undefined) return {};
-  if (!isRecord(value.speech) || typeof value.speech.voiceProfile !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(value.speech.voiceProfile)) return undefined;
+  if (!isRecord(value.speech) || Object.keys(value.speech).some((key) => key !== "voiceProfile")
+    || typeof value.speech.voiceProfile !== "string" || !/^[A-Za-z0-9._-]{1,128}$/.test(value.speech.voiceProfile)) return undefined;
   return { speech: { voiceProfile: value.speech.voiceProfile } };
 }
 
 function parseVoiceGateway(value: unknown): LocalHostConfig["voiceGateway"] | undefined {
-  if (!isRecord(value) || typeof value.port !== "number" || typeof value.token !== "string") return undefined;
+  if (!isRecord(value) || Object.keys(value).some((key) => key !== "port" && key !== "token")
+    || typeof value.port !== "number" || typeof value.token !== "string") return undefined;
   if (!Number.isInteger(value.port) || value.port < 1 || value.port > 65_535 || !/^[A-Za-z0-9_-]{16,256}$/.test(value.token)) return undefined;
   return { port: value.port, token: value.token };
 }

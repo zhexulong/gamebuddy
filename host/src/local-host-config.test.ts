@@ -1,40 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolve } from "node:path";
-import { resolveKnowledgeBundlePath, validateLocalHostConfig } from "./local-host-config.js";
+import { validateLocalHostConfig } from "./local-host-config.js";
 
 const baseConfig = {
   playerId: "player-01",
-  saveId: "save-01",
-  worldId: "world-01",
   companionId: "companion-01",
-  pipeName: "gamebuddy-stardew-agent",
-  bridgeToken: "1234567890abcdef",
+  integrationId: "stardew",
+  integration: {
+    saveId: "save-01",
+    worldId: "world-01",
+    pipeName: "gamebuddy-stardew-agent",
+    bridgeToken: "1234567890abcdef",
+  },
 };
 
-test("Host config locks the player-facing Agent to DeepSeek V4 Flash at high thinking", () => {
-  assert.equal(validateLocalHostConfig({ ...baseConfig, model: "deepseek-v4-flash" }).thinkingLevel, "high");
-  assert.equal(validateLocalHostConfig({ ...baseConfig, model: "deepseek-v4-flash", thinkingLevel: "high" }).thinkingLevel, "high");
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, model: "deepseek-v4-flash", thinkingLevel: "medium" }), /invalid_host_config/);
+test("Host config owns only companion and integration-selection fields", () => {
+  const parsed = validateLocalHostConfig({ ...baseConfig, model: "deepseek-v4-flash" });
+  assert.equal(parsed.thinkingLevel, "high");
+  assert.equal(parsed.integrationId, "stardew");
+  assert.deepEqual(parsed.integration, baseConfig.integration);
+  assert.throws(() => validateLocalHostConfig({ ...baseConfig, pipeName: "host_must_not_parse_adapter_fields" }), /invalid_host_config/);
+  assert.throws(() => validateLocalHostConfig({ ...baseConfig, saveId: "host_must_not_parse_adapter_fields" }), /invalid_host_config/);
+});
+
+test("Host config rejects unknown, malformed, and non-object integration selection", () => {
+  assert.throws(() => validateLocalHostConfig({ ...baseConfig, unexpected: true }), /invalid_host_config/);
+  assert.throws(() => validateLocalHostConfig({ ...baseConfig, integrationId: "not/a-valid-id" }), /invalid_host_config/);
+  assert.throws(() => validateLocalHostConfig({ ...baseConfig, integration: [] }), /invalid_host_config/);
   assert.throws(() => validateLocalHostConfig({ ...baseConfig, model: "gpt-5.6-luna" }), /invalid_host_config/);
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, model: "mimo-v2.5" }), /invalid_host_config/);
+  assert.throws(() => validateLocalHostConfig({ ...baseConfig, thinkingLevel: "medium" }), /invalid_host_config/);
 });
 
-test("Host config keeps knowledge disabled unless path and version are both configured", () => {
-  assert.equal(validateLocalHostConfig(baseConfig).knowledgeBundlePath, undefined);
-  assert.equal(validateLocalHostConfig({ ...baseConfig, knowledgeBundlePath: "knowledge.json", gameVersion: "1.6.15" }).gameVersion, "1.6.15");
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, knowledgeBundlePath: "knowledge.json" }), /invalid_host_config/);
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, gameVersion: "1.6.15" }), /invalid_host_config/);
-});
-
-test("Host config rejects invalid knowledge version and path values", () => {
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, knowledgeBundlePath: "knowledge.json", gameVersion: "1/6/15" }), /invalid_host_config/);
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, knowledgeBundlePath: "", gameVersion: "1.6.15" }), /invalid_host_config/);
-});
-
-test("knowledge path is resolved relative to the Host config file", () => {
-  assert.equal(
-    resolveKnowledgeBundlePath("C:/profiles/A-host/host.json", "data/stardew-knowledge.json"),
-    resolve("C:/profiles/A-host", "data/stardew-knowledge.json"),
-  );
+test("Host config keeps presentation and voice boundaries strict", () => {
+  assert.throws(() => validateLocalHostConfig({ ...baseConfig, presentation: { speech: { voiceProfile: "safe" } } }), /invalid_host_config/);
+  assert.throws(() => validateLocalHostConfig({ ...baseConfig, voiceGateway: { port: 0, token: "1234567890abcdef" } }), /invalid_host_config/);
+  const parsed = validateLocalHostConfig({ ...baseConfig, continuityId: "continuity-01", voiceGateway: { port: 8383, token: "1234567890abcdef" }, presentation: { speech: { voiceProfile: "safe" } } });
+  assert.equal(parsed.continuityId, "continuity-01");
 });
