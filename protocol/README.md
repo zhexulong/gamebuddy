@@ -15,5 +15,9 @@ this schema by default. Any future shared wire version requires an explicit,
 versioned protocol proposal and cross-language conformance corpus.
 
 Integration-specific capabilities and action payload validation remain owned by
-each Integration. This directory deliberately does not define pathfinding,
-animation, or generic game action taxonomies.
+each Integration. Every supported GameBuddy adapter must still provide
+authoritative live state and receipt-backed execution/evidence, but a future
+non-Stardew adapter supplies those through its own schema/transport until two
+real adapters justify a separately versioned common envelope. This directory
+deliberately does not define pathfinding, animation, or generic game action
+taxonomies.

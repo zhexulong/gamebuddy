@@ -15,24 +15,39 @@ bundle is version- and integration-validated before the read-only
 creates a capability or replaces a Mod snapshot/receipt. Remaining real model,
 voice-asset and full multiplayer BDD gates are not represented as passed.
 
-## Integration-module seam (first cross-game slice)
+## Receipt-backed integration seam
 
 The Host composition root mounts an explicit `GameIntegrationModule` through an
-`IntegrationConnection`. A module owns its integration ID/version, action
-catalog and policy parser, game-specific observation/action/knowledge tools,
-receipt/postcondition projection, and cancellation adapter. Host retains Pi
-session isolation, IdentityProfile, continuity, task budgets, receipt ownership,
-and run-manifest binding. The `Stardew` module is the first implementation;
-its named pipe, `bridge-v1` payload, Farmhand/SMAPI lifecycle, Body Controller,
-and native receipts remain Stardew-specific.
+`IntegrationConnection`, then enters Game through an adapter-owned
+`IntegrationLauncher`. A supported GameBuddy integration must provide all of:
 
-`integration-module.test.ts` includes a deliberately different `test-arcade`
-adapter to prove that the composition root can mount another module with its
-own `arcade_*` tools and action catalog without importing Stardew tool factories
-or registry data. This is only a conformance fixture—not a shipped second game,
-a generic bridge protocol, or a substitute for a real game adapter's contract
-and live gates. The current `Scope`, `Snapshot`, and `bridge-v1` wire contract
-remain Stardew-shaped and are intentionally unchanged in this slice.
+1. adapter-authenticated current live state;
+2. live action capabilities;
+3. stable request/execution lifecycle; and
+4. action-specific, authoritative receipt/evidence.
+
+The Host rejects telemetry-only, OCR/input simulation, human-confirmed, and
+request-accepted-only adapters. Those models cannot complete GameBuddy's
+`Capability → Execution → Evidence` companion loop and therefore are not
+supported game integrations.
+
+Before mounting any Game tool, Host requires a `ready` launcher with
+`observation: authoritative`, `execution: receipt_backed`, a connection matching
+its module and Companion identity, and an initial authoritative snapshot.
+Disconnect clears the adapter-owned execution surface; Host only records the
+local transport transition and never invents a game-world event. A module owns
+its integration ID/version, action catalog and policy parser, game-specific
+tools, receipt/postcondition projection, and cancellation adapter. Host retains
+Pi session isolation, IdentityProfile, continuity, task budgets, receipt
+ownership, and run-manifest binding.
+
+The `Stardew` launcher is the first implementation. Its named pipe, `bridge-v1`
+payload, Farmhand/SMAPI lifecycle, Body Controller, and native receipts remain
+Stardew-specific. `integration-launcher.test.ts` includes a deliberately
+different receipt-backed `test-arcade` fixture to prove Host bootstrap and event
+service do not require Stardew factories, transport, scope, or snapshots. It is
+not a shipped second game or a generic bridge protocol. The current `Scope`,
+`Snapshot`, and `bridge-v1` wire contract remain Stardew-shaped and unchanged.
 
 ## Dialogue Web (experimental vertical slice)
 

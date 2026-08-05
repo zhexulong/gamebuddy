@@ -25,14 +25,14 @@ function fakeModule(): GameIntegrationModule {
   const inspectZone = defineTool({
     name: "arcade_inspect_zone",
     label: "Inspect arcade zone",
-    description: "Read-only fake-game observation.",
+    description: "Receipt-backed fixture observation.",
     parameters: Type.Object({}),
     execute: async () => ({ content: [{ type: "text" as const, text: "zone" }], details: { zone: "alpha" } }),
   });
   const activateConsole = defineTool({
     name: "arcade_activate_console",
     label: "Activate arcade console",
-    description: "Fake integration action used only to verify the Host module seam.",
+    description: "Receipt-backed fixture action used only to verify the Host module seam.",
     parameters: Type.Object({ consoleId: Type.String({ minLength: 1, maxLength: 32 }) }),
     execute: async (_toolCallId, params) => {
       const receipt = { requestId: "arcade_request_01", executionId: "arcade_execution_01", state: "succeeded", reasonCode: "console_activated", revision: 1, evidence: { postcondition: "active", consoleId: params.consoleId } };
@@ -70,7 +70,15 @@ function fakeModule(): GameIntegrationModule {
       return { connected: state.connected === true, sessionId: null, capabilities: state.capabilities ?? [], snapshotRevision: null, activeExecution: null, latestReceipt: null, latestReasonCode: null };
     },
     cancelExecution: () => "not_supported",
-    parseReceipt: () => null,
+    parseReceipt: (details: unknown) => {
+      if (typeof details !== "object" || details === null || typeof (details as { receiptJson?: unknown }).receiptJson !== "string") return null;
+      try {
+        const receipt = JSON.parse((details as { receiptJson: string }).receiptJson) as Record<string, unknown>;
+        return typeof receipt.requestId === "string" && typeof receipt.executionId === "string" && typeof receipt.state === "string" && typeof receipt.reasonCode === "string"
+          ? { requestId: receipt.requestId, executionId: receipt.executionId, state: receipt.state, reasonCode: receipt.reasonCode, revision: typeof receipt.revision === "number" ? receipt.revision : null, evidence: typeof receipt.evidence === "object" && receipt.evidence !== null && !Array.isArray(receipt.evidence) ? receipt.evidence as Record<string, unknown> : null }
+          : null;
+      } catch { return null; }
+    },
     actionIdForToolName: (toolName: string) => toolName === "arcade_activate_console" ? "activate_console" : null,
     isCancellationTool: (toolName: string) => toolName === "arcade_cancel_execution",
   });

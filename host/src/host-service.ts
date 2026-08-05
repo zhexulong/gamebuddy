@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import { CompanionLoop } from "./companion-loop.js";
 import { type WorldFact } from "./event-pump.js";
-import { type LocalStardewBridgeClient, type LocalStardewBridgeFact, type LocalStardewConnectionFact } from "./local-stardew-bridge.js";
+import { type IntegrationEventSource, type IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 
 export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void }>;
 
 /**
- * Host glue with deliberately limited authority: bridge facts become ordinary
- * Agent turns; it neither plans actions nor predicts execution outcomes.
+ * Host glue with deliberately limited authority: validated adapter facts become
+ * ordinary Agent turns; it neither plans actions nor predicts execution outcomes.
  */
 export class CompanionHostService {
   readonly #unsubscribe: () => void;
@@ -22,11 +22,11 @@ export class CompanionHostService {
 
   public constructor(
     private readonly loop: CompanionLoop,
-    bridge: Pick<LocalStardewBridgeClient, "onFact" | "onConnectionFact">,
-    private readonly onBridgeDisconnected?: (reasonCode: string) => void,
+    events: IntegrationEventSource,
+    private readonly onIntegrationDisconnected?: (reasonCode: string) => void,
   ) {
-    this.#unsubscribe = bridge.onFact((fact) => this.acceptBridgeFact(fact));
-    this.#unsubscribeConnection = bridge.onConnectionFact((fact) => this.acceptConnectionFact(fact));
+    this.#unsubscribe = events.onFact((fact) => this.acceptIntegrationFact(fact));
+    this.#unsubscribeConnection = events.onLifecycle((event) => this.acceptLifecycleEvent(event));
   }
 
   public close(): void {
@@ -74,25 +74,29 @@ export class CompanionHostService {
     return wrapped;
   }
 
-  /** Initial observation is forwarded exactly as an authoritative Mod fact. */
-  public acceptInitialSnapshot(snapshot: LocalStardewBridgeFact): void {
-    this.acceptBridgeFact(snapshot);
+  /** Initial launch facts were already adapter-validated before runtime mount. */
+  public acceptInitialFacts(facts: readonly WorldFact[]): void {
+    for (const fact of facts) this.acceptIntegrationFact(fact);
   }
 
-  private acceptBridgeFact(message: LocalStardewBridgeFact): void {
+  private acceptIntegrationFact(fact: WorldFact): void {
     if (this.#closed) return;
-    const fact = toWorldFact(message);
-    if (fact === null) return;
+    // This source label is Host-reserved so an adapter cannot manufacture a
+    // local transport transition and have it confused with Host lifecycle.
+    if (fact.source === "host_local_transport") throw new Error("adapter_transport_source_reserved");
     this.loop.pump.enqueueFact(fact);
     void this.flushSoon().catch(() => undefined);
   }
 
-  private acceptConnectionFact(fact: LocalStardewConnectionFact): void {
+  private acceptLifecycleEvent(event: IntegrationLifecycleEvent): void {
     if (this.#closed) return;
-    this.onBridgeDisconnected?.(fact.reasonCode);
-    // This truthfully identifies the local transport source; it is never
-    // presented as a Stardew world/lifecycle fact emitted by the Mod.
-    this.loop.pump.enqueueFact({ source: "host_local_transport", kind: "lifecycle", correlationId: `transport_${fact.state}`, revision: 0, payload: fact });
+    // Every lifecycle event accepted by this port is terminal (the only
+    // non-terminal state, `ready`, is admitted before bootstrap). Revoke the
+    // Host execution fence for both transport loss and orderly adapter stop.
+    this.onIntegrationDisconnected?.(event.reasonCode);
+    // This truthfully identifies the local adapter transport; it is never
+    // presented as a game-world fact emitted by the integration.
+    this.loop.pump.enqueueFact({ source: "host_local_transport", kind: "lifecycle", correlationId: `transport_${event.state}`, revision: 0, payload: event });
     void this.flushSoon().catch(() => undefined);
   }
 
@@ -136,18 +140,5 @@ export class CompanionHostService {
       this.#retryTimer = undefined;
       void this.flushSoon().catch(() => undefined);
     }, delay);
-  }
-}
-
-function toWorldFact(message: LocalStardewBridgeFact): WorldFact | null {
-  switch (message.type) {
-    case "snapshot":
-      return { source: "stardew_mod", kind: "snapshot", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, payload: message.payload };
-    case "execution_receipt":
-      return { source: "stardew_mod", kind: "execution_receipt", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.payload.executionId, revision: message.payload.revision, executionId: message.payload.executionId, requestId: message.payload.requestId, payload: message.payload };
-    case "semantic_event":
-      return { source: "stardew_mod", kind: "semantic_event", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: message.payload.revision, executionId: message.payload.activeExecution?.executionId, payload: message.payload };
-    case "lifecycle":
-      return { source: "stardew_mod", kind: "lifecycle", eventId: message.messageId, occurredAtMs: message.timestampMs, correlationId: message.correlationId, revision: 0, payload: message.payload };
   }
 }
