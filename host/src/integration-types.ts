@@ -1,4 +1,4 @@
-import { type ExecutionReceipt, type Scope, type Snapshot } from "./protocol.js";
+import { type ExecutionReceipt, type Scope as StardewScope, type Snapshot } from "./protocol.js";
 import { type KnowledgeBundle } from "./knowledge.js";
 import { type GameIntegrationModule } from "./integration-module.js";
 
@@ -16,11 +16,15 @@ export type CompanionIntegrationState = Readonly<{
 }>;
 
 /**
- * Host-facing connection port. The connection owns only identity and its
- * explicitly mounted module; game facts remain behind the adapter's state.
+ * Host-neutral integration identity. Any save/world/player binding remains
+ * adapter-owned and is verified through GameIntegrationModule.
  */
+export type IntegrationScope = Readonly<{
+  integrationId: string;
+}>;
+
 export interface IntegrationConnection {
-  readonly scope: Scope;
+  readonly scope: IntegrationScope;
   readonly module: GameIntegrationModule;
   /** Adapter-owned opaque facts; Host core passes them back to the module. */
   readonly state: unknown;
@@ -36,6 +40,8 @@ export interface IntegrationConnection {
  * instead of importing Stardew registries or tool factories.
  */
 export interface CompanionIntegration extends IntegrationConnection {
+  /** Stardew bridge-v1 compatibility scope; generic Host code uses IntegrationScope only. */
+  readonly scope: StardewScope;
   readonly state: CompanionIntegrationState;
   /** Stardew compatibility data; generic Host code only sees opaque knowledge. */
   readonly knowledge?: KnowledgeBundle;

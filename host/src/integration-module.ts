@@ -2,6 +2,21 @@ import { createHash } from "node:crypto";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { IntegrationConnection } from "./integration-types.js";
 
+/** Host-owned identity fields that a selected module may bind to its connection. */
+export type IntegrationIdentityBinding = Readonly<{
+  playerId: string;
+  companionId: string;
+  saveId?: string;
+  worldId?: string;
+}>;
+
+/** Current-world key consumed by Host-owned WorldBook filtering, when applicable. */
+export type IntegrationWorldScope = Readonly<{
+  integrationId: string;
+  saveId: string;
+  worldId: string;
+}>;
+
 export type IntegrationActionLifecycle = "published" | "experimental" | "diagnostic" | "planned";
 
 /** The common deny-by-exception policy shape. Each module owns its parser. */
@@ -112,6 +127,10 @@ export type GameIntegrationModule = Readonly<{
   actionCatalog: IntegrationActionCatalog;
   defaultPolicy: IntegrationActionPolicy;
   parsePolicy(value: unknown): IntegrationActionPolicy;
+  /** Reject a connection that does not match the Host-owned Companion identity. */
+  assertIdentityBinding(connection: IntegrationConnection, identity: IntegrationIdentityBinding): void;
+  /** Return the optional current-world key for Host-owned WorldBook filtering. */
+  worldScope(connection: IntegrationConnection): IntegrationWorldScope | null;
   /** Materialize only tools backed by this module's validated connection. */
   createToolSet(context: IntegrationToolContext): IntegrationToolSet;
   /** Return immutable manifest metadata without exposing adapter state. */
@@ -211,6 +230,8 @@ export function assertIntegrationModule(module: GameIntegrationModule, integrati
     || !VERSION.test(module.descriptor.version)
     || !isToolNamePrefix(module.descriptor.toolNamePrefix)
     || module.descriptor.integrationId !== integrationId
+    || typeof module.assertIdentityBinding !== "function"
+    || typeof module.worldScope !== "function"
     || typeof module.createToolSet !== "function"
     || typeof module.knowledgeMetadata !== "function"
     || typeof module.status !== "function"

@@ -13,7 +13,7 @@ import {
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
 
-const scope = { integrationId: "test-arcade", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" } as const;
+const scope = { integrationId: "test-arcade" } as const;
 
 const fakeCatalog = createIntegrationActionCatalog([
   { actionId: "inspect_zone", familyId: "observation", lifecycle: "published", label: "Inspect zone", description: "Read the current arcade zone.", targetKinds: ["zone"], requiredCapability: "inspect_zone" },
@@ -47,6 +47,10 @@ function fakeModule(): GameIntegrationModule {
       if (typeof value !== "object" || value === null) throw new Error("invalid_test_arcade_policy");
       return value as never;
     },
+    assertIdentityBinding: (connection, identity) => {
+      if (connection.scope.integrationId !== "test-arcade" || identity.playerId.length === 0 || identity.companionId.length === 0) throw new Error("integration_identity_binding_mismatch");
+    },
+    worldScope: () => null,
     createToolSet: (context: IntegrationToolContext) => {
       const state = context.connection.state as { capabilities?: readonly string[] };
       const visible = fakeCatalog.visibleActions(state.capabilities ?? [], context.policy);
@@ -96,18 +100,22 @@ test("module descriptor must match the connection integration identity", () => {
   assert.throws(() => assertIntegrationModule({ ...module, parsePolicy: undefined } as never, "test-arcade"), /integration_module_scope_mismatch/);
   assert.throws(() => assertIntegrationModule({ ...module, knowledgeMetadata: undefined } as never, "test-arcade"), /integration_module_scope_mismatch/);
   assert.throws(() => assertIntegrationModule({ ...module, status: undefined } as never, "test-arcade"), /integration_module_scope_mismatch/);
+  assert.throws(() => assertIntegrationModule({ ...module, assertIdentityBinding: undefined } as never, "test-arcade"), /integration_module_scope_mismatch/);
   assert.throws(() => assertIntegrationModule({ ...module, descriptor: { ...module.descriptor, toolNamePrefix: "invalid" } } as never, "test-arcade"), /integration_module_scope_mismatch/);
 });
 
 test("module tools require their owning module and scope identity", () => {
   const module = STARDEW_INTEGRATION_MODULE;
-  const connection: IntegrationConnection = {
-    scope: { integrationId: "stardew", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" },
+  const stardewScope = { integrationId: "stardew", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" } as const;
+  const connection = {
+    scope: stardewScope,
     state: { connected: true, sessionId: "session_01", capabilities: ["move_to_tile"], snapshot: null, latestReceipt: null, latestReasonCode: null },
     module,
   };
   assert.throws(() => assertIntegrationModuleConformance(module, { ...connection, scope: { ...connection.scope, integrationId: "test-arcade" } } as IntegrationConnection), /integration_module_scope_mismatch/);
   assert.throws(() => assertIntegrationModuleConformance(module, { ...connection, module: fakeModule() }), /integration_module_scope_mismatch/);
+  assert.doesNotThrow(() => module.assertIdentityBinding(connection, { playerId: "player_01", companionId: "companion_01", saveId: "save_01", worldId: "world_01" }));
+  assert.throws(() => module.assertIdentityBinding(connection, { playerId: "player_01", companionId: "companion_01", saveId: "other_save", worldId: "world_01" }), /integration_identity_binding_mismatch/);
 });
 
 test("fake second-game module owns its tools and does not expose Stardew tools", () => {

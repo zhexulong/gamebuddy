@@ -108,6 +108,10 @@ test("runtime mounts a fake integration through the module port", async () => {
     actionCatalog: catalog,
     defaultPolicy: Object.freeze({ policyVersion: 1 as const, deniedActions: [], deniedFamilies: [] }),
     parsePolicy: (value: unknown) => value as never,
+    assertIdentityBinding: (_connection, boundIdentity) => {
+      if (boundIdentity.playerId !== identity.playerId || boundIdentity.companionId !== identity.companionId) throw new Error("integration_identity_binding_mismatch");
+    },
+    worldScope: () => null,
     createToolSet: ({ connection, policy }) => ({
       observation: [],
       actions: catalog.visibleActions((connection.state as { capabilities: readonly string[] }).capabilities, policy).some((entry) => entry.actionId === "activate_console") ? [activateConsole] : [],
@@ -122,7 +126,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     isCancellationTool: () => false,
   };
   const integration = {
-    scope: { integrationId: "test-arcade", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId },
+    scope: { integrationId: "test-arcade" },
     module: fake,
     state: { capabilities: ["activate_console"] },
   } as never;
@@ -140,7 +144,7 @@ test("runtime rejects a mounted integration whose save identity does not match",
   const wrongScope: Scope = { integrationId: "stardew", saveId: "other_save", worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(wrongScope);
   const integration = new CompanionIntegrationClient(wrongScope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
-  await assert.rejects(() => createCompanionRuntime(identity, root, integration), /exactly match/);
+  await assert.rejects(() => createCompanionRuntime(identity, root, integration), /integration_identity_binding_mismatch/);
   integration.dispose();
 });
 
