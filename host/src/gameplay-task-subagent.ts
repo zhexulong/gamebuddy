@@ -12,10 +12,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { createStardewActionTools, createStardewObservationTools } from "./game-tools.js";
-import { STARDEW_ACTION_REGISTRY, type ActionPolicy } from "./action-registry.js";
-import { createStardewKnowledgeTools } from "./knowledge.js";
-import { type CompanionIntegration } from "./integration-types.js";
+import { type IntegrationConnection } from "./integration-types.js";
+import { type IntegrationActionCatalog, type IntegrationActionPolicy, type IntegrationExecutionReceipt, type IntegrationStateView } from "./integration-module.js";
 import { finalAssistantText } from "./agent-expression.js";
 import { type CompanionModelConfig, type RuntimePaths } from "./runtime.js";
 
@@ -56,7 +54,7 @@ export const DEFAULT_GAMEPLAY_TASK_BUDGET: GameplayTaskBudget = Object.freeze({
 
 export type GameplayTaskRecord = Readonly<{
   taskId: string;
-  scope: CompanionIntegration["scope"];
+  scope: IntegrationConnection["scope"];
   createdAtMs: number;
   deadlineMs: number;
   cancellationEpoch: number;
@@ -89,7 +87,7 @@ export type GameplayTaskSessionFactory = Readonly<{
 }>;
 
 type MutableTaskRecord = {
-  taskId: string; scope: CompanionIntegration["scope"]; createdAtMs: number; deadlineMs: number; cancellationEpoch: number; budget: GameplayTaskBudget;
+  taskId: string; scope: IntegrationConnection["scope"]; createdAtMs: number; deadlineMs: number; cancellationEpoch: number; budget: GameplayTaskBudget;
   turns: number; toolCalls: number; modelRetries: number; acceptedActions: number; acceptedActionsByFamily: Record<string, number>;
   executions: Array<{ actionId: string; requestId: string; executionId: string; state: string }>; terminalReceipt: { requestId: string; executionId: string; state: string; reasonCode: string } | null; terminalReasonCode: string | null;
 };
@@ -100,10 +98,6 @@ type ActiveTask = Readonly<{
   record: MutableTaskRecord;
 }>;
 type GameplayTaskReport = Readonly<{ state: "completed" | "blocked" | "cancelled"; reasonCode: string; evidence?: unknown }>;
-type CancelCapableIntegration = CompanionIntegration & {
-  cancel(requestId: string, executionId: string, reasonCode: string): unknown;
-};
-
 /**
  * Thin, task-scoped Pi child. It has no Magic Context, identity profile,
  * presentation tool, todo writer, or persistent session. The parent remains
@@ -119,8 +113,8 @@ export class GameplayTaskSubagent {
 
   public constructor(
     private readonly paths: RuntimePaths,
-    private readonly integration: CompanionIntegration,
-    private readonly actionPolicy?: ActionPolicy,
+    private readonly integration: IntegrationConnection,
+    private readonly actionPolicy?: IntegrationActionPolicy,
     private readonly budget: GameplayTaskBudget = DEFAULT_GAMEPLAY_TASK_BUDGET,
     private readonly sessionFactory?: GameplayTaskSessionFactory,
   ) {
@@ -163,9 +157,10 @@ export class GameplayTaskSubagent {
     // product actor may own the currently active Mod execution. A just-accepted
     // request may not yet be present in the next snapshot, so fall back to this
     // task's sole nonterminal owned execution rather than silently abandoning it.
-    const execution = selectTaskOwnedCancellation(active.record.executions, this.integration.state.snapshot?.activeExecution);
-    if (execution !== null && isCancelCapable(this.integration)) {
-      const cancelled = this.integration.cancel(execution.requestId, execution.executionId, reasonCode);
+    const module = requireIntegrationModule(this.integration);
+    const execution = selectTaskOwnedCancellation(active.record.executions, module.readState(this.integration).activeExecution);
+    if (execution !== null) {
+      const cancelled = module.cancelExecution(this.integration, execution.requestId, execution.executionId, reasonCode);
       if (isPromiseLike(cancelled)) void cancelled.catch(() => undefined);
     }
     void active.session.abort().catch(() => undefined);
@@ -222,34 +217,36 @@ export class GameplayTaskSubagent {
         }),
         execute: async (_toolCallId, params) => {
           const report: GameplayTaskReport = Object.freeze({ state: params.state, reasonCode: params.reasonCode, ...(params.evidence === undefined ? {} : { evidence: params.evidence }) });
-          if (report.state === "completed" && !hasAuthoritativeCompletion(report, this.integration.state.latestReceipt, record.executions)) {
+          if (report.state === "completed" && !hasAuthoritativeCompletion(report, requireIntegrationModule(this.integration).readState(this.integration).latestReceipt, record.executions, requireIntegrationModule(this.integration).actionCatalog)) {
             throw new Error("authoritative_completion_receipt_required");
           }
           this.#lastReport = report;
           return { content: [{ type: "text" as const, text: JSON.stringify(report) }], details: report };
         },
       });
+      const integrationModule = requireIntegrationModule(this.integration);
       const status = defineTool({
         name: "companion_status",
         label: "Companion Status",
         description: "Read the mounted integration status for this private gameplay task.",
         parameters: Type.Object({}),
         execute: async () => {
-          const state = this.integration.state;
-          const details = { host: "ready", connected: state.connected, capabilities: [...state.capabilities], snapshotRevision: state.snapshot?.revision ?? null, latestReceiptState: state.latestReceipt?.state ?? null };
+          const state = requireIntegrationModule(this.integration).readState(this.integration);
+          const details = { host: "ready", connected: state.connected, capabilities: [...state.capabilities], snapshotRevision: state.snapshotRevision, latestReceiptState: state.latestReceipt?.state ?? null };
           return { content: [{ type: "text" as const, text: JSON.stringify(details) }], details };
         },
       });
+      const integrationToolSet = integrationModule.createToolSet({ connection: this.integration, knowledge: this.integration.knowledge, gameVersion: this.integration.gameVersion, policy: this.actionPolicy });
       const integrationTools = [
-        ...createStardewObservationTools(this.integration, this.actionPolicy),
-        ...createStardewActionTools(this.integration, this.actionPolicy),
-        ...(this.integration.knowledge !== undefined && this.integration.gameVersion !== undefined ? [...createStardewKnowledgeTools(this.integration, this.actionPolicy)] : []),
+        ...integrationToolSet.observation,
+        ...integrationToolSet.actions,
+        ...integrationToolSet.knowledge,
       ];
-      const budgetedIntegrationTools = integrationTools.map((tool) => budgetTool(tool, record, controller, this.integration, (reasonCode) => this.cancel(reasonCode)));
+      const budgetedIntegrationTools = integrationTools.map((tool) => budgetTool(tool, record, controller, this.integration, integrationModule, (reasonCode) => this.cancel(reasonCode)));
       const customTools = [
-        budgetTool(status, record, controller, this.integration, (reasonCode) => this.cancel(reasonCode)),
+        budgetTool(status, record, controller, this.integration, integrationModule, (reasonCode) => this.cancel(reasonCode)),
         ...budgetedIntegrationTools,
-        budgetTool(reportTool, record, controller, this.integration, (reasonCode) => this.cancel(reasonCode)),
+        budgetTool(reportTool, record, controller, this.integration, integrationModule, (reasonCode) => this.cancel(reasonCode)),
       ];
       const allowedToolNames = customTools.map((tool) => tool.name).sort();
       if (this.sessionFactory !== undefined) {
@@ -289,12 +286,12 @@ export class GameplayTaskSubagent {
         steps.push(Object.freeze({ name: "worker_reported_completed", reasonCode: finalReport.reasonCode }));
         // Recheck at the Host terminal boundary. A later, unrelated receipt may
         // have displaced the one that made report_to_parent admissible.
-        if (!hasAuthoritativeCompletion(finalReport, this.integration.state.latestReceipt, record.executions)) {
+        if (!hasAuthoritativeCompletion(finalReport, integrationModule.readState(this.integration).latestReceipt, record.executions, integrationModule.actionCatalog)) {
           record.terminalReasonCode = "authoritative_completion_receipt_lost";
           steps.push(Object.freeze({ name: "blocked", reasonCode: record.terminalReasonCode }));
           return { taskId, state: "blocked", summary: cap(summary), report: Object.freeze({ reasonCode: record.terminalReasonCode }) };
         }
-        const receipt = this.integration.state.latestReceipt;
+        const receipt = integrationModule.readState(this.integration).latestReceipt;
         if (receipt === null) throw new Error("authoritative_completion_receipt_lost");
         record.terminalReceipt = Object.freeze({ requestId: receipt.requestId, executionId: receipt.executionId, state: receipt.state, reasonCode: receipt.reasonCode });
       }
@@ -372,10 +369,6 @@ async function createTaskModelRuntime(agentDir: string, config: CompanionModelCo
   return ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath, modelsStorePath: join(agentDir, "models-store.json"), allowModelNetwork: true });
 }
 
-function isCancelCapable(value: CompanionIntegration): value is CancelCapableIntegration {
-  return typeof (value as Partial<CancelCapableIntegration>).cancel === "function";
-}
-
 function isPromiseLike(value: unknown): value is Promise<unknown> {
   return typeof value === "object" && value !== null && "then" in value && typeof (value as { then?: unknown }).then === "function";
 }
@@ -401,9 +394,11 @@ export function admitGameplayAction(
   actionId: string,
   record: Readonly<Pick<MutableTaskRecord, "acceptedActions" | "acceptedActionsByFamily" | "executions" | "budget">>,
   activeExecution: Readonly<{ requestId: string; executionId: string }> | null | undefined,
+  catalog: IntegrationActionCatalog,
 ): GameplayActionAdmission {
-  const familyId = STARDEW_ACTION_REGISTRY.find((entry) => entry.actionId === actionId)?.familyId;
-  if (familyId === undefined) return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
+  const entry = catalog.get(actionId);
+  const familyId = entry?.familyId;
+  if (familyId === undefined || !catalog.isPublished(actionId)) return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
   if (activeExecution !== null && activeExecution !== undefined
     || record.executions.some((known) => !isTerminalReceiptState(known.state))) {
     return Object.freeze({ ok: false, reasonCode: "gameplay_task_active_execution_exists" });
@@ -419,46 +414,26 @@ export function admitGameplayAction(
 
 export function hasAuthoritativeCompletion(
   report: Readonly<{ state: string; evidence?: unknown }>,
-  receipt: CompanionIntegration["state"]["latestReceipt"],
+  receipt: IntegrationExecutionReceipt | null,
   taskExecutions: readonly Readonly<{ actionId: string; requestId: string; executionId: string }>[],
+  catalog: IntegrationActionCatalog,
 ): boolean {
   if (report.state !== "completed" || receipt?.state !== "succeeded" || receipt.evidence === null || !isRecord(report.evidence)) return false;
   const requestId = report.evidence.requestId;
   const executionId = report.evidence.executionId;
   const execution = taskExecutions.find((known) => known.requestId === requestId && known.executionId === executionId);
   return requestId === receipt.requestId && executionId === receipt.executionId
-    && execution !== undefined && hasActionPostconditionEvidence(execution.actionId, receipt);
+    && execution !== undefined && catalog.hasCompletionEvidence(execution.actionId, receipt);
 }
 
 /**
  * This is a deliberately narrow Host-side sanity check, not a replacement for
- * Mod postconditions. Stardew's authoritative receipt maps native evidence to
- * `detail`; completion may be projected only when that evidence contains the
- * action's required observable keys. New published actions must add a case.
+ * the integration's authoritative postconditions. Each module maps its own
+ * receipt evidence to a catalog completion validator; Host never treats a
+ * generic success string as proof of completion.
  */
-export function hasActionPostconditionEvidence(actionId: string, receipt: Readonly<{ reasonCode: string; evidence: Readonly<Record<string, unknown>> | null }>): boolean {
-  const detail = receipt.evidence?.detail;
-  if (typeof detail !== "string" || detail.length === 0 || detail.length > 4_096) return false;
-  const requirements: Readonly<Record<string, Readonly<{ reasonCode: string; keys: readonly string[] }>>> = {
-    move_to_tile: { reasonCode: "target_reached", keys: ["tile=", "target=", "arrival=exact"] },
-    travel: { reasonCode: "travel_completed", keys: ["expected=", "actual="] },
-    enter_exit: { reasonCode: "enter_exit_completed", keys: ["expected=", "actual="] },
-    equip_tool: { reasonCode: "tool_selected", keys: ["slot=", "before=", "expected=", "after="] },
-    till_soil: { reasonCode: "soil_tilled", keys: ["before=", "after=HoeDirt"] },
-    pickup_forage: { reasonCode: "forage_picked_up", keys: ["target=", "inventory_"] },
-    pickup_item: { reasonCode: "item_picked_up", keys: ["target=", "inventory_"] },
-    water_crop: { reasonCode: "crop_watered", keys: ["before_watered=", "after_watered="] },
-    harvest_crop: { reasonCode: "crop_harvested", keys: ["target=", "inventory_"] },
-    plant_seed: { reasonCode: "seed_planted", keys: ["target=", "inventory_"] },
-    fertilize_tile: { reasonCode: "fertilizer_applied", keys: ["target=", "inventory_"] },
-    machine_inspect: { reasonCode: "machine_inspected", keys: ["target=", "machine="] },
-    collect_animal_product: { reasonCode: "animal_product_collected", keys: ["target=", "inventory_"] },
-    feed_animal: { reasonCode: "hay_placed_in_trough", keys: ["target=", "hay_"] },
-    use_item: { reasonCode: "item_used", keys: ["slot=", "stack_before=", "stack_after="] },
-  };
-  const requirement = requirements[actionId];
-  return requirement !== undefined && receipt.reasonCode === requirement.reasonCode
-    && requirement.keys.every((key) => detail.includes(key));
+export function hasActionPostconditionEvidence(actionId: string, receipt: Readonly<{ reasonCode: string; evidence: Readonly<Record<string, unknown>> | null }>, catalog: IntegrationActionCatalog): boolean {
+  return catalog.hasCompletionEvidence(actionId, { state: "succeeded", reasonCode: receipt.reasonCode, evidence: receipt.evidence });
 }
 
 function assertBudget(budget: GameplayTaskBudget): void {
@@ -478,10 +453,9 @@ function freezeRecord(record: MutableTaskRecord): GameplayTaskRecord {
   });
 }
 
-function budgetTool(tool: ToolDefinition, record: MutableTaskRecord, controller: AbortController, integration: CompanionIntegration, cancelTask: (reasonCode: string) => void): ToolDefinition {
-  const isAction = tool.name.startsWith("stardew_") && tool.name !== "stardew_observe" && tool.name !== "stardew_execution_status" && tool.name !== "stardew_interaction_catalog" && tool.name !== "stardew_search_interactions" && tool.name !== "stardew_cancel_active_execution";
-  const actionId = isAction ? tool.name.slice("stardew_".length) : null;
-  const isCancel = tool.name === "stardew_cancel_active_execution";
+function budgetTool(tool: ToolDefinition, record: MutableTaskRecord, controller: AbortController, integration: IntegrationConnection, integrationModule: ReturnType<typeof requireIntegrationModule>, cancelTask: (reasonCode: string) => void): ToolDefinition {
+  const actionId = integrationModule.actionIdForToolName(tool.name);
+  const isCancel = integrationModule.isCancellationTool(tool.name);
   return {
     ...tool,
     executionMode: "sequential",
@@ -502,7 +476,7 @@ function budgetTool(tool: ToolDefinition, record: MutableTaskRecord, controller:
       }
       if (actionId !== null) {
         reconcileKnownExecution(record, integration);
-        const admission = admitGameplayAction(actionId, record, integration.state.snapshot?.activeExecution);
+        const admission = admitGameplayAction(actionId, record, integrationModule.readState(integration).activeExecution, integrationModule.actionCatalog);
         if (!admission.ok) {
           if (admission.reasonCode.includes("budget_exhausted")) {
             record.terminalReasonCode ??= admission.reasonCode;
@@ -511,7 +485,7 @@ function budgetTool(tool: ToolDefinition, record: MutableTaskRecord, controller:
           throw new Error(admission.reasonCode);
         }
         const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
-        const receipt = parseReceipt(result.details);
+        const receipt = parseReceipt(result.details, integrationModule);
         if (receipt !== null && (receipt.state === "accepted" || receipt.state === "running" || receipt.state === "succeeded")) {
           record.acceptedActions++;
           record.acceptedActionsByFamily[admission.familyId] = (record.acceptedActionsByFamily[admission.familyId] ?? 0) + 1;
@@ -524,7 +498,8 @@ function budgetTool(tool: ToolDefinition, record: MutableTaskRecord, controller:
   };
 }
 
-async function abortedTaskResult(taskId: string, record: MutableTaskRecord, report: GameplayTaskReport | null, integration: CompanionIntegration): Promise<GameplayTaskResult> {
+async function abortedTaskResult(taskId: string, record: MutableTaskRecord, report: GameplayTaskReport | null, integration: IntegrationConnection): Promise<GameplayTaskResult> {
+  const integrationModule = requireIntegrationModule(integration);
   const reasonCode = record.terminalReasonCode ?? "gameplay_task_cancelled";
   const budgetExhausted = reasonCode.includes("budget_exhausted");
   const cancellation = await awaitOwnedTerminalReceipt(record, integration);
@@ -541,10 +516,11 @@ async function abortedTaskResult(taskId: string, record: MutableTaskRecord, repo
   };
 }
 
-async function awaitOwnedTerminalReceipt(record: MutableTaskRecord, integration: CompanionIntegration): Promise<MutableTaskRecord["terminalReceipt"]> {
+async function awaitOwnedTerminalReceipt(record: MutableTaskRecord, integration: IntegrationConnection): Promise<MutableTaskRecord["terminalReceipt"]> {
+  const integrationModule = requireIntegrationModule(integration);
   const deadline = Math.min(record.deadlineMs, Date.now() + 5_000);
   while (Date.now() < deadline) {
-    const receipt = integration.state.latestReceipt;
+    const receipt = requireIntegrationModule(integration).readState(integration).latestReceipt;
     if (receipt !== null && isTerminalReceiptState(receipt.state)
       && record.executions.some((known) => known.requestId === receipt.requestId && known.executionId === receipt.executionId)) {
       return Object.freeze({ requestId: receipt.requestId, executionId: receipt.executionId, state: receipt.state, reasonCode: receipt.reasonCode });
@@ -559,21 +535,20 @@ function isTerminalReceiptState(state: string): boolean {
     || state === "failed" || state === "cancelled" || state === "expired" || state === "rejected" || state === "uncertain";
 }
 
-function reconcileKnownExecution(record: MutableTaskRecord, integration: CompanionIntegration): void {
-  const receipt = integration.state.latestReceipt;
+function reconcileKnownExecution(record: MutableTaskRecord, integration: IntegrationConnection): void {
+  const receipt = requireIntegrationModule(integration).readState(integration).latestReceipt;
   if (receipt === null) return;
   const known = record.executions.find((execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId);
   if (known !== undefined) known.state = receipt.state;
 }
 
-function parseReceipt(details: unknown): Readonly<{ requestId: string; executionId: string; state: string }> | null {
-  if (!isRecord(details) || typeof details.receiptJson !== "string") return null;
-  try {
-    const receipt = JSON.parse(details.receiptJson) as unknown;
-    return isRecord(receipt) && typeof receipt.requestId === "string" && typeof receipt.executionId === "string" && typeof receipt.state === "string"
-      ? { requestId: receipt.requestId, executionId: receipt.executionId, state: receipt.state }
-      : null;
-  } catch { return null; }
+function parseReceipt(details: unknown, integrationModule: ReturnType<typeof requireIntegrationModule>): IntegrationExecutionReceipt | null {
+  return integrationModule.parseReceipt(details);
+}
+
+function requireIntegrationModule(integration: IntegrationConnection) {
+  if (integration.module === undefined) throw new Error("integration_module_required");
+  return integration.module;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
