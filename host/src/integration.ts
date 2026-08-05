@@ -8,6 +8,7 @@ import {
 } from "./protocol.js";
 import { type CompanionIntegrationState } from "./integration-types.js";
 import { type KnowledgeBundle } from "./knowledge.js";
+import { type GameIntegrationModule } from "./integration-module.js";
 import { type BridgeFault, type DeterministicBridgeEndpoint } from "./bridge.js";
 
 /**
@@ -27,6 +28,7 @@ export class CompanionIntegrationClient {
   public constructor(
     readonly scope: Scope,
     readonly endpoint: DeterministicBridgeEndpoint,
+    readonly module: GameIntegrationModule,
     readonly knowledge?: KnowledgeBundle,
     readonly gameVersion?: string,
   ) {

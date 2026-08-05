@@ -4,6 +4,7 @@ import test from "node:test";
 import { createDeterministicBridgePair } from "./bridge.js";
 import { CompanionIntegrationClient } from "./integration.js";
 import { newEnvelope, type BridgeMessage, type Scope } from "./protocol.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const scope: Scope = { integrationId: "stardew", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" };
 const now = 1_700_000_000_000;
@@ -15,7 +16,7 @@ function snapshot(revision = 3) {
 
 test("integration client exposes only Mod-originated state and receipts", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new CompanionIntegrationClient(scope, hostEndpoint);
+  const client = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
   const modInbound: string[] = [];
   modEndpoint.onMessage((message) => {
     modInbound.push(message.type);
@@ -40,7 +41,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
 
 test("integration client keeps the newest Mod snapshot when a delayed older snapshot arrives", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new CompanionIntegrationClient(scope, hostEndpoint);
+  const client = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
   modEndpoint.send(newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["inspect_self"] }, "hello_01", now), now);
   modEndpoint.send(newEnvelope("snapshot", scope, snapshot(8), "snapshot_new", now), now);
   modEndpoint.send(newEnvelope("snapshot", scope, snapshot(7), "snapshot_old", now), now);
@@ -50,7 +51,7 @@ test("integration client keeps the newest Mod snapshot when a delayed older snap
 
 test("integration client fails closed before hello/snapshot and on disconnect", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new CompanionIntegrationClient(scope, hostEndpoint);
+  const client = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
   const request = { requestId: "request_01", idempotencyKey: "idempotency_01", action: "move_to_tile" as const, args: { x: 11, y: 12 }, expectedRevision: 0, deadlineMs: now + 10_000 };
   assert.equal(client.execute(request, now), "not_ready");
   modEndpoint.disconnect("bridge_lost");

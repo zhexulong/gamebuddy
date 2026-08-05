@@ -4,6 +4,7 @@ import test from "node:test";
 import { createDeterministicBridgePair } from "./bridge.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import { CompanionIntegrationClient } from "./integration.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import { newEnvelope, type Scope } from "./protocol.js";
 
 const scope: Scope = { integrationId: "stardew", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" };
@@ -11,7 +12,7 @@ const now = 1_700_000_000_000;
 
 test("Stardew Host tools expose only factual observation and receipt surfaces", async () => {
   const [host, mod] = createDeterministicBridgePair(scope);
-  const client = new CompanionIntegrationClient(scope, host);
+  const client = new CompanionIntegrationClient(scope, host, STARDEW_INTEGRATION_MODULE);
   const [observe, execution, catalog, search] = createStardewObservationTools(client);
   assert.deepEqual([observe.name, execution.name, catalog.name, search.name], ["stardew_observe", "stardew_execution_status", "stardew_interaction_catalog", "stardew_search_interactions"]);
   const unavailable = await observe.execute("test", {}, new AbortController().signal, () => {}, {} as never);
@@ -34,6 +35,7 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
   let executeCalls = 0; let enabled = true;
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: enabled ? ["move_to_tile"] : [], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: enabled ? ["move_to_tile"] : [], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute() { executeCalls++; throw new Error("must_not_execute"); },
     async cancel() { throw new Error("must_not_cancel"); },
@@ -50,6 +52,7 @@ test("equip_tool mounts only from a live capability and forwards the selected sl
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["equip_tool"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["equip_tool"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute(request) { received = request; return { executionId: "execution_tool_01", requestId: request.requestId, state: "succeeded", reasonCode: "tool_selected", revision: 4, evidence: { before: "(W) Axe", expected: "(W) Pickaxe", after: "(W) Pickaxe" } }; },
     async cancel() { throw new Error("must_not_cancel"); },
@@ -67,6 +70,7 @@ test("enter_exit mounts from a live capability and forwards the door tile", asyn
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["enter_exit"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["enter_exit"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute(request) { received = request; return { executionId: "execution_door_01", requestId: request.requestId, state: "accepted", reasonCode: "accepted", revision: 4, evidence: null }; },
     async cancel() { throw new Error("must_not_cancel"); },
@@ -83,6 +87,7 @@ test("published pickup_item mounts only from a live capability and forwards the 
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["pickup_item"], snapshot: { revision: 3, location: "Farm", tile: { x: 25, y: 33 }, stamina: 100, health: 100, actionable: true, capabilities: ["pickup_item"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute(request) { received = request; return { executionId: "execution_item_01", requestId: request.requestId, state: "succeeded", reasonCode: "item_picked_up", revision: 4, evidence: { detail: "target=item_target_01;native_auto_collect=true;chunk_removed=true;inventory_before=0;inventory_after=1" } }; },
     async cancel() { throw new Error("must_not_cancel"); },
@@ -98,6 +103,7 @@ test("published plant_seed mounts only from a live capability and forwards the o
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["plant_seed"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["plant_seed"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute(request) { received = request; return { executionId: "execution_seed_01", requestId: request.requestId, state: "succeeded", reasonCode: "seed_planted", revision: 4, evidence: { detail: "crop=479" } }; },
     async cancel() { throw new Error("must_not_cancel"); },
@@ -114,6 +120,7 @@ test("published use_item mounts only from a live capability and forwards the foo
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["use_item"], snapshot: { revision: 3, location: "FarmHouse", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["use_item"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute(request) { received = request; return { executionId: "execution_food_01", requestId: request.requestId, state: "succeeded", reasonCode: "item_used", revision: 4, evidence: { detail: "slot=5;item=(O)216;stack_before=3;stack_after=2;animation_complete=true" } }; },
     async cancel() { throw new Error("must_not_cancel"); },
@@ -129,6 +136,7 @@ test("published harvest_crop mounts only from a live capability and forwards the
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["harvest_crop"], snapshot: { revision: 3, location: "Farm", tile: { x: 38, y: 19 }, stamina: 100, health: 100, actionable: true, capabilities: ["harvest_crop"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute(request) { received = request; return { executionId: "execution_harvest_01", requestId: request.requestId, state: "succeeded", reasonCode: "crop_harvested", revision: 4, evidence: { detail: "crop=480;item=(O)256;inventory_before=0;inventory_after=1;regrows=true" } }; },
     async cancel() { throw new Error("must_not_cancel"); },
@@ -144,6 +152,7 @@ test("published machine_inspect mounts only from a live capability and forwards 
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["machine_inspect"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["machine_inspect"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute(request) { received = request; return { executionId: "execution_machine_01", requestId: request.requestId, state: "succeeded", reasonCode: "machine_inspected", revision: 4, evidence: { detail: "machine=(BC)12" } }; },
     async cancel() { throw new Error("must_not_cancel"); },
@@ -159,6 +168,7 @@ test("mounted Game Actions return authoritative Mod receipts without inventing c
   const receipt = { executionId: "execution_01", requestId: "request_01", state: "accepted" as const, reasonCode: "accepted", revision: 3, evidence: { target: "3,4" } };
   const integration: MoveCapableIntegration = {
     scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return { connected: true, sessionId: "session_01", capabilities: ["move_to_tile", "cancel_active_execution"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["move_to_tile", "cancel_active_execution"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
     async execute(request) { assert.equal(request.expectedRevision, 3); assert.equal(request.action, "move_to_tile"); return receipt; },
     async cancel() { return receipt; },

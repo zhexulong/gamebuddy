@@ -20,7 +20,7 @@ export type LocalStardewConnection = Readonly<{
   /** Target Stardew/game version for the mounted knowledge bundle. */
   gameVersion?: string;
   /** Optional player deny policy; omitted means the Mod's filtered capability surface is authoritative. */
-  actionPolicy?: import("./action-registry.js").ActionPolicy;
+  actionPolicy?: import("./integration-module.js").IntegrationActionPolicy;
   gameplaySubagent?: boolean;
   presentationProfile?: PresentationProfile;
   textPort?: CompanionTextPort;

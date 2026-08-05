@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createStardewKnowledgeTool, decideCapability, decideKnowledge, formatExecutionForPlayer, parseKnowledgeBundle, type KnowledgeBundle } from "./knowledge.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const snapshot = { revision: 4, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["move_to_tile"], activeExecution: null } as const;
 const bundle: KnowledgeBundle = { bundleVersion: 1, integrationId: "stardew", gameVersion: "1.6.15", rules: [{ id: "move-v1", integrationId: "stardew", gameVersion: "1.6.15", capability: "move_to_tile", text: "Movement needs a fresh actionable snapshot." }] };
@@ -22,6 +23,7 @@ test("knowledge remains versioned advice and cannot override live capability fac
 test("mounted knowledge exposes advisory rules only for live, version-matched capabilities", async () => {
   const integration = {
     scope: { integrationId: "stardew", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" },
+    module: STARDEW_INTEGRATION_MODULE,
     gameVersion: "1.6.15",
     knowledge: bundle,
     state: { connected: true, sessionId: "session_01", capabilities: ["move_to_tile"], snapshot, latestReceipt: null, latestReasonCode: null },
@@ -40,6 +42,7 @@ test("mounted knowledge exposes advisory rules only for live, version-matched ca
 test("unmounted knowledge remains unavailable rather than inventing guidance", async () => {
   const integration = {
     scope: { integrationId: "stardew", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" },
+    module: STARDEW_INTEGRATION_MODULE,
     state: { connected: true, sessionId: "session_01", capabilities: ["move_to_tile"], snapshot, latestReceipt: null, latestReasonCode: null },
   };
   const result = await createStardewKnowledgeTool(integration).execute("knowledge", { capability: "move_to_tile" }, new AbortController().signal, () => {}, {} as never);
