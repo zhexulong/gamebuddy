@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle";
 export type WorldFact = Readonly<{
-  source: "stardew_mod" | "host_local_transport";
+  /** Adapter-owned source label, or Host's explicitly non-world transport label. */
+  source: string;
   kind: FactKind;
   eventId?: string;
   occurredAtMs?: number;
@@ -59,6 +60,7 @@ export class CompanionEventPump {
   #delivering = false;
 
   public enqueueFact(fact: WorldFact): void {
+    if (typeof fact.source !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(fact.source)) throw new Error("invalid_world_fact_source");
     if (fact.source === "host_local_transport" && (fact.kind !== "lifecycle" || fact.revision !== 0)) throw new Error("invalid_local_transport_fact");
     const frozen = Object.freeze({ ...fact });
     if (fact.kind === "snapshot") {

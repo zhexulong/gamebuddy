@@ -52,6 +52,10 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
       const mountedPolicy = (policy ?? DEFAULT_ACTION_POLICY) as ActionPolicy;
       const integration = connection as CompanionIntegration;
       if (!sameScope(integration.scope, connection.scope)) throw new Error("integration_scope_mismatch");
+      // Legacy in-process test/bridge connections predate launcher fencing;
+      // a launcher-created connection always supplies the gate. Only an
+      // explicit revocation removes its already-mounted tool surface.
+      if (connection.executionGate?.executable === false) return Object.freeze({ observation: [], actions: [], knowledge: [] });
       const knowledge = isKnowledgeBundle(mountedKnowledge) && mountedGameVersion !== undefined
         ? createStardewKnowledgeTools({ ...integration, knowledge: mountedKnowledge, gameVersion: mountedGameVersion }, mountedPolicy)
         : [] as const;
