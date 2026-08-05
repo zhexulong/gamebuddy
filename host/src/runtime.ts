@@ -13,6 +13,7 @@ import {
   SessionManager,
   SettingsManager,
   type AgentSession,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -223,6 +224,18 @@ export function identityKey(identity: CompanionIdentity): string {
   return createHash("sha256").update(canonical.join("\u001f")).digest("hex");
 }
 
+function gateIntegrationTool(tool: ToolDefinition, connection: IntegrationConnection): ToolDefinition {
+  return {
+    ...tool,
+    execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+      if (connection.executionGate?.executable === false) {
+        throw new Error("integration_not_ready");
+      }
+      return tool.execute(toolCallId, params, signal, onUpdate, ctx);
+    },
+  };
+}
+
 function requiredGameId(label: "saveId" | "worldId", value: string | undefined): string {
   if (value === undefined) throw new Error(`${label} is required when continuityId is absent.`);
   return value;
@@ -405,11 +418,18 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
   const integrationToolSet = integration !== undefined && integrationModule !== undefined
     ? integrationModule.createToolSet({ connection: integration, knowledge: integration.knowledge, gameVersion: integration.gameVersion, policy: mountedPolicy })
     : undefined;
-  const integrationTools = integrationToolSet === undefined ? [] : [
+  const rawIntegrationTools = integrationToolSet === undefined ? [] : [
     ...integrationToolSet.observation,
     ...integrationToolSet.actions,
     ...integrationToolSet.knowledge,
   ];
+  // Tool definitions remain mounted for the lifetime of a Pi session. Every
+  // adapter tool therefore receives a Host-owned execution fence so a later
+  // lifecycle loss revokes stale closures rather than trusting the adapter to
+  // remember to check its own disconnected state.
+  const integrationTools = integration === undefined
+    ? rawIntegrationTools
+    : rawIntegrationTools.map((tool) => gateIntegrationTool(tool, integration));
   const presentationTools = presentation === undefined ? [] : createCompanionPresentationTools(presentation);
   const worldBookScope = integration === undefined ? null : integration.module.worldScope(integration);
   const worldBookTools = worldBook === undefined ? [] : createWorldBookTools(worldBook, worldBookScope ?? undefined);
@@ -418,7 +438,13 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
       ? new GameplayTaskSubagent(paths, integration, mountedPolicy)
       : (() => { throw new Error("gameplay_subagent_requires_model_and_integration"); })()
     : undefined;
-  const gameplayTools = gameplaySubagent === undefined ? [] : [gameplaySubagent.createDelegateTool()];
+  const rawGameplayTools = gameplaySubagent === undefined ? [] : [gameplaySubagent.createDelegateTool()];
+  // The delegate itself is an execution entry point. Fence it as well as the
+  // module-owned action tools so a terminal adapter lifecycle cannot start a
+  // new worker task through an already-mounted Pi session.
+  const gameplayTools = integration === undefined
+    ? rawGameplayTools
+    : rawGameplayTools.map((tool) => gateIntegrationTool(tool, integration));
   const allowedToolNames = [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite", ...integrationTools.map((tool) => tool.name), ...worldBookTools.map((tool) => tool.name), ...presentationTools.map((tool) => tool.name), ...gameplayTools.map((tool) => tool.name)].sort();
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {

@@ -25,6 +25,12 @@ export type IntegrationScope = Readonly<{
 
 export interface IntegrationConnection {
   readonly scope: IntegrationScope;
+  /**
+   * Host-owned liveness fence. Launchers set this false before closing on a
+   * lifecycle loss; every adapter-owned action path must reject while false.
+   * It prevents a stale tool closure from treating a former connection as live.
+   */
+  readonly executionGate?: Readonly<{ executable: boolean }>;
   readonly module: GameIntegrationModule;
   /** Adapter-owned opaque facts; Host core passes them back to the module. */
   readonly state: unknown;
