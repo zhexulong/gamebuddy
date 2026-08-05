@@ -260,13 +260,7 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
   if (integration !== undefined && integrationModule === undefined) throw new Error("integration_module_required");
   if (integration !== undefined) {
     assertIntegrationModule(integration.module, integration.scope.integrationId);
-    // The current Host-owned identity binding includes these opaque scope keys;
-    // the module independently validates its transport/world facts.
-    if (identity.saveId === undefined || identity.worldId === undefined
-      || integration.scope.saveId !== identity.saveId || integration.scope.worldId !== identity.worldId
-      || integration.scope.playerId !== identity.playerId || integration.scope.companionId !== identity.companionId) {
-      throw new Error("Integration scope must exactly match the Companion runtime identity.");
-    }
+    integration.module.assertIdentityBinding(integration, identity);
   }
   const mountedPolicy = actionPolicy === undefined
     ? integrationModule?.defaultPolicy ?? DEFAULT_INTEGRATION_ACTION_POLICY
@@ -417,7 +411,8 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     ...integrationToolSet.knowledge,
   ];
   const presentationTools = presentation === undefined ? [] : createCompanionPresentationTools(presentation);
-  const worldBookTools = worldBook === undefined ? [] : createWorldBookTools(worldBook, integration === undefined ? undefined : { integrationId: integration.scope.integrationId, saveId: integration.scope.saveId, worldId: integration.scope.worldId });
+  const worldBookScope = integration === undefined ? null : integration.module.worldScope(integration);
+  const worldBookTools = worldBook === undefined ? [] : createWorldBookTools(worldBook, worldBookScope ?? undefined);
   const gameplaySubagent = gameplaySubagentEnabled
     ? integration !== undefined && modelConfig !== undefined
       ? new GameplayTaskSubagent(paths, integration, mountedPolicy)

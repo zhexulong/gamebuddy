@@ -10,6 +10,7 @@ import {
   type GameIntegrationModule,
   type IntegrationActionPolicy,
   type IntegrationExecutionReceipt,
+  type IntegrationIdentityBinding,
   type IntegrationReceiptEvidence,
   type IntegrationStateView,
   type IntegrationStatusDetails,
@@ -33,6 +34,20 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
     actionCatalog,
     defaultPolicy: DEFAULT_INTEGRATION_ACTION_POLICY,
     parsePolicy: (value: unknown): IntegrationActionPolicy => parseActionPolicy(value),
+    assertIdentityBinding: (connection, identity: IntegrationIdentityBinding) => {
+      const scope = (connection as CompanionIntegration).scope;
+      if (!sameScope(scope, connection.scope)
+        || scope.playerId !== identity.playerId || scope.companionId !== identity.companionId
+        || identity.saveId === undefined || identity.worldId === undefined
+        || scope.saveId !== identity.saveId || scope.worldId !== identity.worldId) {
+        throw new Error("integration_identity_binding_mismatch");
+      }
+    },
+    worldScope: (connection) => {
+      const scope = (connection as CompanionIntegration).scope;
+      if (!sameScope(scope, connection.scope)) throw new Error("integration_scope_mismatch");
+      return { integrationId: scope.integrationId, saveId: scope.saveId, worldId: scope.worldId };
+    },
     createToolSet: ({ connection, knowledge: mountedKnowledge, gameVersion: mountedGameVersion, policy }: IntegrationToolContext) => {
       const mountedPolicy = (policy ?? DEFAULT_ACTION_POLICY) as ActionPolicy;
       const integration = connection as CompanionIntegration;
@@ -155,9 +170,8 @@ function isKnowledgeBundle(value: unknown): value is KnowledgeBundle {
   return typeof value === "object" && value !== null && (value as { bundleVersion?: unknown }).bundleVersion === 1;
 }
 
-function sameScope(left: Scope, right: Scope): boolean {
-  return left.integrationId === right.integrationId && left.saveId === right.saveId && left.worldId === right.worldId
-    && left.playerId === right.playerId && left.companionId === right.companionId;
+function sameScope(left: Scope, right: Readonly<{ integrationId: string }>): boolean {
+  return left.integrationId === right.integrationId;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
