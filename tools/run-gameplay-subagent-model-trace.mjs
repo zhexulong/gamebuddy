@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { createDeterministicBridgePair } from "../host/dist/bridge.js";
 import { CompanionIntegrationClient } from "../host/dist/integration.js";
+import { STARDEW_INTEGRATION_MODULE } from "../host/dist/stardew-integration-module.js";
 import { newEnvelope } from "../host/dist/protocol.js";
 import { createCompanionRuntime } from "../host/dist/runtime.js";
 
@@ -14,7 +15,7 @@ const root = await mkdtemp(join(tmpdir(), "gamebuddy-gameplay-subagent-model-tra
 const scope = Object.freeze({ integrationId: "stardew", saveId: "save_trace", worldId: "world_trace", playerId: "farmhand_trace", companionId: "companion_trace" });
 const identity = Object.freeze({ playerId: scope.playerId, saveId: scope.saveId, worldId: scope.worldId, companionId: scope.companionId });
 const [host, mod] = createDeterministicBridgePair(scope);
-const integration = new CompanionIntegrationClient(scope, host);
+const integration = new CompanionIntegrationClient(scope, host, STARDEW_INTEGRATION_MODULE);
 const observedBridgeRequests = [];
 let revision = 12;
 let currentTool = "(T)Axe";

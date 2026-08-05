@@ -15,6 +15,7 @@ import {
 } from "./gameplay-task-subagent.js";
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { CompanionIntegration } from "./integration-types.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import type { RuntimePaths } from "./runtime.js";
 
 const paths: RuntimePaths = {
@@ -30,6 +31,7 @@ const paths: RuntimePaths = {
 const integration: CompanionIntegration = {
   scope: { integrationId: "stardew", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" },
   state: { connected: false, sessionId: null, capabilities: [], snapshot: null, latestReceipt: null, latestReasonCode: null },
+  module: STARDEW_INTEGRATION_MODULE,
 };
 
 function withBudget(patch: Partial<GameplayTaskBudget>): GameplayTaskBudget {
@@ -58,19 +60,19 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
   };
   const report = { state: "completed", evidence: { requestId: "request_01", executionId: "execution_01" } };
   const owned = [{ actionId: "till_soil", requestId: "request_01", executionId: "execution_01" }];
-  assert.equal(hasAuthoritativeCompletion(report, succeeded, owned), true);
-  assert.equal(hasAuthoritativeCompletion(report, { ...succeeded, evidence: null }, owned), false);
-  assert.equal(hasAuthoritativeCompletion(report, { ...succeeded, state: "running" }, owned), false);
-  assert.equal(hasAuthoritativeCompletion({ ...report, evidence: { requestId: "other", executionId: "execution_01" } }, succeeded, owned), false);
-  assert.equal(hasAuthoritativeCompletion(report, succeeded, []), false);
+  assert.equal(hasAuthoritativeCompletion(report, succeeded, owned, STARDEW_INTEGRATION_MODULE.actionCatalog), true);
+  assert.equal(hasAuthoritativeCompletion(report, { ...succeeded, evidence: null }, owned, STARDEW_INTEGRATION_MODULE.actionCatalog), false);
+  assert.equal(hasAuthoritativeCompletion(report, { ...succeeded, state: "running" }, owned, STARDEW_INTEGRATION_MODULE.actionCatalog), false);
+  assert.equal(hasAuthoritativeCompletion({ ...report, evidence: { requestId: "other", executionId: "execution_01" } }, succeeded, owned, STARDEW_INTEGRATION_MODULE.actionCatalog), false);
+  assert.equal(hasAuthoritativeCompletion(report, succeeded, [], STARDEW_INTEGRATION_MODULE.actionCatalog), false);
 });
 
 test("completion evidence must contain action-specific postcondition keys", () => {
-  assert.equal(hasActionPostconditionEvidence("equip_tool", { reasonCode: "tool_selected", evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" } }), true);
-  assert.equal(hasActionPostconditionEvidence("equip_tool", { reasonCode: "tool_selected", evidence: { detail: "slot=1;after=Axe" } }), false);
-  assert.equal(hasActionPostconditionEvidence("equip_tool", { reasonCode: "unexpected_success", evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" } }), false);
-  assert.equal(hasActionPostconditionEvidence("unknown_action", { reasonCode: "succeeded", evidence: { detail: "anything" } }), false);
-  assert.equal(hasActionPostconditionEvidence("till_soil", { reasonCode: "soil_tilled", evidence: { detail: "before=none;after=Stone" } }), false);
+  assert.equal(hasActionPostconditionEvidence("equip_tool", { reasonCode: "tool_selected", evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" } }, STARDEW_INTEGRATION_MODULE.actionCatalog), true);
+  assert.equal(hasActionPostconditionEvidence("equip_tool", { reasonCode: "tool_selected", evidence: { detail: "slot=1;after=Axe" } }, STARDEW_INTEGRATION_MODULE.actionCatalog), false);
+  assert.equal(hasActionPostconditionEvidence("equip_tool", { reasonCode: "unexpected_success", evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" } }, STARDEW_INTEGRATION_MODULE.actionCatalog), false);
+  assert.equal(hasActionPostconditionEvidence("unknown_action", { reasonCode: "succeeded", evidence: { detail: "anything" } }, STARDEW_INTEGRATION_MODULE.actionCatalog), false);
+  assert.equal(hasActionPostconditionEvidence("till_soil", { reasonCode: "soil_tilled", evidence: { detail: "before=none;after=Stone" } }, STARDEW_INTEGRATION_MODULE.actionCatalog), false);
 });
 
 test("Gameplay action admission enforces active execution, total, and family limits before dispatch", () => {
@@ -80,12 +82,12 @@ test("Gameplay action admission enforces active execution, total, and family lim
     executions: [],
     budget: withBudget({ maxAcceptedActions: 2, maxAcceptedActionsPerFamily: 1 }),
   };
-  assert.deepEqual(admitGameplayAction("till_soil", record, null), { ok: false, reasonCode: "gameplay_task_action_family_budget_exhausted" });
-  assert.deepEqual(admitGameplayAction("equip_tool", record, null), { ok: true, familyId: "body_tools" });
-  assert.deepEqual(admitGameplayAction("equip_tool", { ...record, acceptedActions: 2 }, null), { ok: false, reasonCode: "gameplay_task_action_budget_exhausted" });
-  assert.deepEqual(admitGameplayAction("equip_tool", record, { requestId: "request_01", executionId: "execution_01" }), { ok: false, reasonCode: "gameplay_task_active_execution_exists" });
-  assert.deepEqual(admitGameplayAction("not_published", record, null), { ok: false, reasonCode: "unknown_gameplay_action" });
-  assert.deepEqual(admitGameplayAction("equip_tool", { ...record, executions: [{ actionId: "move_to_tile", requestId: "request_01", executionId: "execution_01", state: "running" }] }, null), { ok: false, reasonCode: "gameplay_task_active_execution_exists" });
+  assert.deepEqual(admitGameplayAction("till_soil", record, null, STARDEW_INTEGRATION_MODULE.actionCatalog), { ok: false, reasonCode: "gameplay_task_action_family_budget_exhausted" });
+  assert.deepEqual(admitGameplayAction("equip_tool", record, null, STARDEW_INTEGRATION_MODULE.actionCatalog), { ok: true, familyId: "body_tools" });
+  assert.deepEqual(admitGameplayAction("equip_tool", { ...record, acceptedActions: 2 }, null, STARDEW_INTEGRATION_MODULE.actionCatalog), { ok: false, reasonCode: "gameplay_task_action_budget_exhausted" });
+  assert.deepEqual(admitGameplayAction("equip_tool", record, { requestId: "request_01", executionId: "execution_01" }, STARDEW_INTEGRATION_MODULE.actionCatalog), { ok: false, reasonCode: "gameplay_task_active_execution_exists" });
+  assert.deepEqual(admitGameplayAction("not_published", record, null, STARDEW_INTEGRATION_MODULE.actionCatalog), { ok: false, reasonCode: "unknown_gameplay_action" });
+  assert.deepEqual(admitGameplayAction("equip_tool", { ...record, executions: [{ actionId: "move_to_tile", requestId: "request_01", executionId: "execution_01", state: "running" }] }, null, STARDEW_INTEGRATION_MODULE.actionCatalog), { ok: false, reasonCode: "gameplay_task_active_execution_exists" });
 });
 
 type MutableIntegrationState = {
@@ -95,6 +97,7 @@ type MutableIntegrationState = {
 function scriptedIntegration(state: MutableIntegrationState, calls: { execute: string[]; cancel: string[] }): CompanionIntegration & { execute(request: any): Promise<any>; cancel(requestId: string, executionId: string, reasonCode: string): Promise<any> } {
   return {
     scope: integration.scope,
+    module: STARDEW_INTEGRATION_MODULE,
     get state() { return state; },
     async execute(request) {
       calls.execute.push(request.action);
