@@ -15,6 +15,25 @@ bundle is version- and integration-validated before the read-only
 creates a capability or replaces a Mod snapshot/receipt. Remaining real model,
 voice-asset and full multiplayer BDD gates are not represented as passed.
 
+## Integration-module seam (first cross-game slice)
+
+The Host composition root mounts an explicit `GameIntegrationModule` through an
+`IntegrationConnection`. A module owns its integration ID/version, action
+catalog and policy parser, game-specific observation/action/knowledge tools,
+receipt/postcondition projection, and cancellation adapter. Host retains Pi
+session isolation, IdentityProfile, continuity, task budgets, receipt ownership,
+and run-manifest binding. The `Stardew` module is the first implementation;
+its named pipe, `bridge-v1` payload, Farmhand/SMAPI lifecycle, Body Controller,
+and native receipts remain Stardew-specific.
+
+`integration-module.test.ts` includes a deliberately different `test-arcade`
+adapter to prove that the composition root can mount another module with its
+own `arcade_*` tools and action catalog without importing Stardew tool factories
+or registry data. This is only a conformance fixture—not a shipped second game,
+a generic bridge protocol, or a substitute for a real game adapter's contract
+and live gates. The current `Scope`, `Snapshot`, and `bridge-v1` wire contract
+remain Stardew-shaped and are intentionally unchanged in this slice.
+
 ## Dialogue Web (experimental vertical slice)
 
 `pnpm --filter @gamebuddy/dialogue-web build` builds the GameBuddy-owned local
