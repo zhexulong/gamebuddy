@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { withPathLock } from "./path-lock.js";
-import type { ActionPolicy } from "./action-registry.js";
+import type { IntegrationActionPolicy } from "./integration-module.js";
 import type { CompanionIdentity, CompanionModelConfig, RuntimePaths } from "./runtime.js";
 import type { PresentationProfile } from "./presentation.js";
 import type { IdentityProfileMetadata } from "./identity-profile.js";
@@ -15,7 +15,7 @@ export type CompanionRunManifest = Readonly<{
   model: Readonly<{ provider: string | null; modelId: string | null; thinkingLevel: string | null }>;
   gameplaySubagentModel: Readonly<{ provider: string; modelId: string; thinkingLevel: string }> | null;
   actionRegistryRevision: string;
-  actionPolicy: ActionPolicy;
+  actionPolicy: IntegrationActionPolicy;
   mountedTools: readonly string[];
   knowledge: Readonly<{ mounted: boolean; gameVersion: string | null; bundleVersion: number | null }>;
   identityProfile: IdentityProfileMetadata;

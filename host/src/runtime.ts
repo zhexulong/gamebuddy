@@ -16,13 +16,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { createStardewActionTools, createStardewObservationTools } from "./game-tools.js";
 import { createCompanionPresentationTools, type PresentationRuntime } from "./presentation.js";
-import { DEFAULT_ACTION_POLICY, STARDEW_ACTION_REGISTRY, type ActionPolicy } from "./action-registry.js";
-import { createStardewKnowledgeTools } from "./knowledge.js";
+import { assertIntegrationModule, DEFAULT_INTEGRATION_ACTION_POLICY, type GameIntegrationModule, type IntegrationActionPolicy } from "./integration-module.js";
 import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
 import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
-import { type CompanionIntegration } from "./integration-types.js";
+import { type IntegrationConnection } from "./integration-types.js";
 import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 import {
   assertProfileMatchesBinding,
@@ -102,26 +100,26 @@ async function reloadMagicContextInRuntimeRoot(loader: DefaultResourceLoader, ru
  * The base Companion tool is read-only and never creates game authority. Its
  * status is sourced from the mounted integration when one exists.
  */
-export function createCompanionStatusTool(integration?: CompanionIntegration) {
+export function createCompanionStatusTool(integration?: IntegrationConnection) {
   return defineTool({
     name: "companion_status",
     label: "Companion Status",
     description: "Report the local Companion Host and mounted game integration status.",
     parameters: Type.Object({}),
     execute: async () => {
-      const state = integration?.state;
-      const details = {
+      const details = integration === undefined ? undefined : integration.module.status(integration);
+      const fullDetails = {
         host: "ready",
         integrationId: integration?.scope.integrationId ?? null,
-        connected: state?.connected ?? false,
-        capabilities: state === undefined ? [] : [...state.capabilities],
-        snapshotRevision: state?.snapshot?.revision ?? null,
-        latestReceiptState: state?.latestReceipt?.state ?? null,
-        latestReasonCode: state?.latestReasonCode ?? null,
+        connected: details?.connected ?? false,
+        capabilities: details === undefined ? [] : [...details.capabilities],
+        snapshotRevision: details?.snapshotRevision ?? null,
+        latestReceiptState: details?.latestReceiptState ?? null,
+        latestReasonCode: details?.latestReasonCode ?? null,
       } as const;
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(details) }],
-        details,
+        content: [{ type: "text" as const, text: JSON.stringify(fullDetails) }],
+        details: fullDetails,
       };
     },
   });
@@ -254,17 +252,21 @@ export function resolveRuntimePaths(identity: CompanionIdentity, root = join(hom
  * pinned Magic Context extension can load; built-ins, project/user extensions,
  * skills, templates, context files, and coding prompts are excluded.
  */
-export async function createCompanionRuntime(identity: CompanionIdentity, root?: string, integration?: CompanionIntegration, modelConfig?: CompanionModelConfig, actionPolicy?: ActionPolicy, presentation?: PresentationRuntime, gameplaySubagentEnabled = false, initialProfile?: IdentityProfile, surfaceSessionId?: string, worldBook?: WorldBookBinding, surface?: "chat" | "game", internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride): Promise<RuntimeSession> {
+export async function createCompanionRuntime(identity: CompanionIdentity, root?: string, integration?: IntegrationConnection, modelConfig?: CompanionModelConfig, actionPolicy?: IntegrationActionPolicy, presentation?: PresentationRuntime, gameplaySubagentEnabled = false, initialProfile?: IdentityProfile, surfaceSessionId?: string, worldBook?: WorldBookBinding, surface?: "chat" | "game", internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride): Promise<RuntimeSession> {
   // A surface session ID identifies a persistent session; it must never be
   // used to infer the product surface because both Chat and Game have them.
   const runtimeSurface = surface ?? presentation?.surface ?? "game";
-  if (integration !== undefined && (
-    identity.saveId === undefined || identity.worldId === undefined
-    || integration.scope.saveId !== identity.saveId || integration.scope.worldId !== identity.worldId
-    || integration.scope.playerId !== identity.playerId || integration.scope.companionId !== identity.companionId
-  )) {
-    throw new Error("Integration scope must exactly match the Companion runtime identity.");
+  const integrationModule: GameIntegrationModule | undefined = integration?.module;
+  if (integration !== undefined && integrationModule === undefined) throw new Error("integration_module_required");
+  if (integration !== undefined) {
+    assertIntegrationModule(integration.module, integration.scope.integrationId);
+    integration.module.assertIdentityBinding(integration, identity);
   }
+  const mountedPolicy = actionPolicy === undefined
+    ? integrationModule?.defaultPolicy ?? DEFAULT_INTEGRATION_ACTION_POLICY
+    : integrationModule === undefined
+      ? actionPolicy
+      : integrationModule.parsePolicy(actionPolicy);
   const paths = resolveRuntimePaths(identity, root, surfaceSessionId);
   const identityProfileAlreadyExists = await pathExists(paths.identityProfilePath);
   await Promise.all([
@@ -400,16 +402,20 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
   if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
 
   const companionStatus = createCompanionStatusTool(integration);
-  const integrationTools = integration === undefined ? [] : [
-    ...createStardewObservationTools(integration, actionPolicy),
-    ...createStardewActionTools(integration, actionPolicy),
-    ...(integration.knowledge !== undefined && integration.gameVersion !== undefined ? [...createStardewKnowledgeTools(integration, actionPolicy)] : []),
+  const integrationToolSet = integration !== undefined && integrationModule !== undefined
+    ? integrationModule.createToolSet({ connection: integration, knowledge: integration.knowledge, gameVersion: integration.gameVersion, policy: mountedPolicy })
+    : undefined;
+  const integrationTools = integrationToolSet === undefined ? [] : [
+    ...integrationToolSet.observation,
+    ...integrationToolSet.actions,
+    ...integrationToolSet.knowledge,
   ];
   const presentationTools = presentation === undefined ? [] : createCompanionPresentationTools(presentation);
-  const worldBookTools = worldBook === undefined ? [] : createWorldBookTools(worldBook, integration === undefined ? undefined : { integrationId: integration.scope.integrationId, saveId: integration.scope.saveId, worldId: integration.scope.worldId });
+  const worldBookScope = integration === undefined ? null : integration.module.worldScope(integration);
+  const worldBookTools = worldBook === undefined ? [] : createWorldBookTools(worldBook, worldBookScope ?? undefined);
   const gameplaySubagent = gameplaySubagentEnabled
     ? integration !== undefined && modelConfig !== undefined
-      ? new GameplayTaskSubagent(paths, integration, actionPolicy)
+      ? new GameplayTaskSubagent(paths, integration, mountedPolicy)
       : (() => { throw new Error("gameplay_subagent_requires_model_and_integration"); })()
     : undefined;
   const gameplayTools = gameplaySubagent === undefined ? [] : [gameplaySubagent.createDelegateTool()];
@@ -451,17 +457,18 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     paths.identityProfileBindingPath,
     createIdentityProfileBinding(identityKey(identity), profile, sessionFile),
   );
-  const mountedPolicy = actionPolicy ?? DEFAULT_ACTION_POLICY;
   await writeOrVerifyRunManifest(paths, {
     schemaVersion: 1,
     identity,
     runtime: RUNTIME_PACKAGE_VERSIONS,
     model: { provider: modelConfig?.provider ?? null, modelId: modelConfig?.modelId ?? null, thinkingLevel: modelConfig?.thinkingLevel ?? null },
     gameplaySubagentModel: gameplaySubagent === undefined ? null : gameplaySubagent.modelConfig,
-    actionRegistryRevision: actionRegistryRevision(STARDEW_ACTION_REGISTRY),
+    actionRegistryRevision: actionRegistryRevision(integrationModule?.actionCatalog.entries ?? []),
     actionPolicy: mountedPolicy,
     mountedTools: activeTools,
-    knowledge: { mounted: integration?.knowledge !== undefined, gameVersion: integration?.gameVersion ?? null, bundleVersion: integration?.knowledge?.bundleVersion ?? null },
+    knowledge: integrationModule === undefined
+      ? { mounted: false, gameVersion: null, bundleVersion: null }
+      : integrationModule.knowledgeMetadata({ connection: integration, knowledge: integration?.knowledge, gameVersion: integration?.gameVersion }),
     identityProfile: profileMetadata,
     worldBook: worldBook === undefined ? null : worldBook.metadata,
     presentation: presentation?.profile ?? null,
