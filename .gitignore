@@ -3,8 +3,12 @@
 /ref/
 /docs/
 
-# Local Pi/subagent state
+# Local Pi/subagent state, skills, and scratch analysis outputs
 /.pi-subagents/
+/.agents/
+/.claude/
+/skills-lock.json
+/.worktree/
 
 # OS/editor artifacts
 [Nn][Uu][Ll]
@@ -14,6 +18,7 @@ Thumbs.db
 # Node.js
 node_modules/
 dist/
+dist-portfolio/
 coverage/
 *.tsbuildinfo
 
@@ -35,6 +40,15 @@ integrations/stardew/config.json
 !/.env.example
 *.log
 
-# Scratch downloads and manual research captures
+# Scratch downloads, local research, and one-off diagnostics
+/research/
 tmp_*
 .tmp-*/
+/.tmp-*
+/tavern-gate-output.json
+*.stackdump
+/tools/.tmp-*
+
+# Playwright generated artifacts
+dialogue-web/test-results/
+dialogue-web/playwright-report/
