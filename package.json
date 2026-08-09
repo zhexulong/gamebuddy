@@ -13,6 +13,8 @@
     "typecheck": "pnpm --filter @gamebuddy/companion-host typecheck && pnpm --filter @gamebuddy/voice-gateway typecheck",
     "dependency-audit": "node tools/generate-sbom.mjs",
     "verify-demo-prerequisites": "node tools/verify-demo-prerequisites.mjs",
+    "check:stardew-portfolio-p3": "node tools/check-stardew-portfolio-p3.mjs",
+    "test:stardew-portfolio-p3": "node --test tools/stardew-portfolio-contracts.test.mjs",
     "check:stardew-action-surface": "node tools/check-stardew-action-promotion.mjs",
     "test:stardew-fixture-profile": "node --test tools/stardew-fixture-profile.test.mjs",
     "test:stardew-fixture-transaction-inspector": "node --test tools/stardew-fixture-transaction-inspector.test.mjs",
