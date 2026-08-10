@@ -21,6 +21,7 @@
     "test:stardew-fixture-readiness": "node tools/await-stardew-fixture-readiness.test.mjs",
     "test:stardew-formal-action-gate": "node --test tools/stardew-formal-action-gate.test.mjs",
     "test:stardew-gate-failure-taxonomy": "node --test tools/stardew-gate-failure-taxonomy.test.mjs",
-    "test:stardew-action-gate-descriptors": "node --test tools/stardew-action-gate-descriptors.test.mjs"
+    "test:stardew-action-gate-descriptors": "node --test tools/stardew-action-gate-descriptors.test.mjs",
+    "test:stardew-portfolio-p1": "pnpm --filter @gamebuddy/companion-host exec tsc --project tsconfig.portfolio.json && pnpm --filter @gamebuddy/companion-host exec node --test dist-portfolio/portfolio-protocol.test.js dist-portfolio/portfolio-stardew-bridge.test.js"
   }
 }

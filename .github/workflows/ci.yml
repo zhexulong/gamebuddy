@@ -31,6 +31,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
+      - run: pnpm test:stardew-portfolio-p1
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
       - run: git diff --exit-code -- third_party/sbom-node.json
