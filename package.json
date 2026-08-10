@@ -14,6 +14,8 @@
     "dependency-audit": "node tools/generate-sbom.mjs",
     "verify-demo-prerequisites": "node tools/verify-demo-prerequisites.mjs",
     "check:stardew-action-surface": "node tools/check-stardew-action-promotion.mjs",
+    "derive:stardew-native-action-architecture-map": "node tools/derive-stardew-native-action-architecture-map.mjs",
+    "test:stardew-native-architecture-accounting": "node --test tools/stardew-native-architecture-accounting.test.mjs",
     "test:stardew-fixture-profile": "node --test tools/stardew-fixture-profile.test.mjs",
     "test:stardew-fixture-transaction-inspector": "node --test tools/stardew-fixture-transaction-inspector.test.mjs",
     "inspect:stardew-fixture-transaction": "node tools/inspect-stardew-fixture-transaction.mjs",
