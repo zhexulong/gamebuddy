@@ -31,6 +31,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
+      # Fixture-only parser checks require no licensed Stardew installation.
+      - run: pnpm test:stardew-csharp-syntax-structural-canary
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
       - run: git diff --exit-code -- third_party/sbom-node.json
