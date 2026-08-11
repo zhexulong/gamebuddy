@@ -11,10 +11,11 @@ namespace GameBuddy.Stardew;
 
 /// <summary>
 /// Embodiment entry point. State is isolated per local split-screen player.
-/// The configured PlayerId selects the one real local Farmhand GameBuddy may
-/// control; no state is created for the human player's screen.
+/// The normal action runtime binds the configured PlayerId to one real local
+/// Farmhand; the opt-in Portfolio topology instead observes its exact native
+/// single-player local Player and never exposes an action surface.
 /// </summary>
-public sealed class ModEntry : Mod
+public sealed partial class ModEntry : Mod
 {
     // Legacy split-screen fixture state. The formal AI client uses a single per-client state.
     private readonly PerScreen<ScreenEmbodimentState> screenStates = new(() => new ScreenEmbodimentState());
@@ -37,6 +38,13 @@ public sealed class ModEntry : Mod
     private bool hostAutomationObservedAiClientExit;
     private bool hostAutomationFixtureInitialized;
     private bool hostAutomationFixtureReadinessPublished;
+// Portfolio is a separate observe-only topology. NativeLocalPlayerFixture
+    // is a disposable mechanics harness for the ordinary action bridge.
+    private PortfolioLocalPlayerBinding? portfolioBinding;
+    private PortfolioBridgeSession? portfolioBridgeSession;
+    private PortfolioLocalPipeBridge? portfolioPipeBridge;
+    private long portfolioBindingGeneration;
+    private long portfolioLastObservedRevision = -1;
     private bool nativeLocalPlayerFixtureStarted;
     private bool nativeLocalPlayerFixtureInitialized;
     private bool nativeLocalPlayerFixtureTerminal;
@@ -79,6 +87,22 @@ public sealed class ModEntry : Mod
         {
             this.provisioningConfigurationRejected = true;
             this.Monitor.Log("GameBuddy rejected Stardew Game Action policy: use ActionPolicyVersion 1 with known DeniedActions/DeniedActionFamilies, or an explicit legacy EnabledActions configuration.", LogLevel.Error);
+            return;
+        }
+        if (this.config.Portfolio?.Enable == true)
+        {
+            this.hostRoleConfigured = false;
+            this.provisioningProbe = null;
+            if (this.config.NativeLocalPlayerFixture?.Enable == true)
+            {
+                this.provisioningConfigurationRejected = true;
+                this.Monitor.Log("GameBuddy rejected a configuration that combines Portfolio observe-only topology with NativeLocalPlayerFixture action mechanics.", LogLevel.Error);
+                return;
+            }
+            this.Monitor.Log(this.config.Portfolio.IsValid
+                ? "GameBuddy Portfolio topology enabled: Farmhand/provisioning/HostAutomation surfaces are disabled; observe-only native local Player binding will begin after SaveLoaded."
+                : "GameBuddy rejected Portfolio configuration; no Farmhand or Portfolio bridge was started.",
+                this.config.Portfolio.IsValid ? LogLevel.Info : LogLevel.Error);
             return;
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
@@ -164,6 +188,11 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        if (this.config.Portfolio?.Enable == true)
+        {
+            this.TryInitializePortfolioBinding();
+            return;
+        }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
             if (this.config.NativeLocalPlayerFixture.Bootstrap is { Enable: true })
@@ -1462,6 +1491,12 @@ public sealed class ModEntry : Mod
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
+        if (this.config.Portfolio?.Enable == true)
+        {
+            this.TryInitializePortfolioBinding();
+            this.UpdatePortfolioBridge();
+            return;
+        }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
         {
             this.TryInitializeNativeLocalPlayerFixture();
@@ -2615,6 +2650,7 @@ public sealed class ModEntry : Mod
 
     private void OnSaving(object? sender, SavingEventArgs e)
     {
+        this.InvalidatePortfolioState("portfolio_saving");
         this.hostFarmhandProvisioner?.OnSaving();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
@@ -2634,6 +2670,7 @@ public sealed class ModEntry : Mod
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        this.InvalidatePortfolioState("portfolio_returned_to_title");
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
         this.hostAutomationSaveMenuOpened = false;
         this.farmhandProvisioner?.Disconnect();

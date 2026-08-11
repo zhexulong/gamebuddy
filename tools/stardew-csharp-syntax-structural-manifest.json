@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "targetAssemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+  "decompiler": {
+    "tool": "ilspycmd",
+    "toolVersion": "ilspycmd: 9.1.0.7988",
+    "configurationDigest": "342e6a7aba57b842ed67be191f40ea560a41a5ee0cb2967b1d541c1b9b1279cf"
+  },
+  "entries": [
+    {
+      "relativePath": "StardewValley/Object.cs",
+      "expectedByteLength": 251735,
+      "expectedSha256": "2266386c871ec3ceb921644198fc180051b662ff36aa2db77a56156c3a5b6fb5",
+      "expectedTopLevelDeclaration": {
+        "declarationSyntaxKind": "class_declaration",
+        "identifierSyntax": "Object"
+      }
+    },
+    {
+      "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs",
+      "expectedByteLength": 37044,
+      "expectedSha256": "45b097e2d2eca73976193e36795455125301495bbf26a16be3e4acf8e89bded1",
+      "expectedTopLevelDeclaration": {
+        "declarationSyntaxKind": "class_declaration",
+        "identifierSyntax": "HoeDirt"
+      }
+    },
+    {
+      "relativePath": "StardewValley/Tools/FishingRod.cs",
+      "expectedByteLength": 94869,
+      "expectedSha256": "54715a7baae4d8699d9dd28cee84b4189a2fac490beef6a97127e0f92a1d26f9",
+      "expectedTopLevelDeclaration": {
+        "declarationSyntaxKind": "class_declaration",
+        "identifierSyntax": "FishingRod"
+      }
+    }
+  ]
+}

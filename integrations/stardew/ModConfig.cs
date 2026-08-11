@@ -11,6 +11,9 @@ public sealed class ModConfig
     public string PlayerId { get; init; } = string.Empty;
     public string CompanionId { get; init; } = string.Empty;
 
+    /// <summary>Independent single-player Portfolio topology. Disabled by default.</summary>
+    public PortfolioConfig? Portfolio { get; init; }
+
     /// <summary>
     /// Disposable one-process harness for the existing shared action runtime.
     /// It binds only the current native local Player and must never start a
@@ -190,6 +193,30 @@ public sealed class NativeLocalPlayerFixtureBootstrapConfig
         && SaveName.All(char.IsLetterOrDigit)
         && PlayerName.Length is >= 1 and <= 64
         && PlayerName.All(character => char.IsLetterOrDigit(character) || character is '_' or '-');
+}
+
+
+public sealed class PortfolioConfig
+{
+    public bool Enable { get; init; }
+    public string Topology { get; init; } = string.Empty;
+    public bool EnableObserveBridge { get; init; }
+    public string PipeName { get; init; } = "gamebuddy-stardew-portfolio";
+    public string BridgeToken { get; init; } = string.Empty;
+    public string SaveId { get; init; } = string.Empty;
+    public string WorldId { get; init; } = string.Empty;
+    public string LocalPlayerId { get; init; } = string.Empty;
+    public string CompanionId { get; init; } = string.Empty;
+    internal bool IsValid => Enable
+        && Topology == PortfolioBridgeProtocol.Topology
+        && PortfolioBridgeProtocol.IsOpaqueId(PipeName)
+        && PipeName.StartsWith(PortfolioBridgeProtocol.PipeNamePrefix, StringComparison.Ordinal)
+        && PortfolioBridgeProtocol.IsToken(BridgeToken)
+        && PortfolioBridgeProtocol.IsOpaqueId(SaveId)
+        && PortfolioBridgeProtocol.IsOpaqueId(WorldId)
+        && PortfolioBridgeProtocol.IsOpaqueId(LocalPlayerId)
+        && PortfolioBridgeProtocol.IsOpaqueId(CompanionId)
+        && EnableObserveBridge;
 }
 
 public sealed class HostFarmhandProvisioningConfig

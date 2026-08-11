@@ -7,7 +7,16 @@ const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function run(command, args) {
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { cwd: hostRoot, stdio: "inherit", ...(process.platform === "win32" && command.endsWith(".cmd") ? { shell: true } : {}) });
+    const child = spawn(command, args, {
+      cwd: hostRoot,
+      stdio: "inherit",
+      // Node's Windows .cmd execution requires cmd.exe. Keep the command and
+      // its arguments separate; protocol tests exercise the real wrapper
+      // lifecycle rather than treating wrapper launch as a detached success.
+      ...(process.platform === "win32" && command.endsWith(".cmd")
+        ? { shell: true }
+        : {}),
+    });
     child.once("error", rejectRun);
     child.once("exit", (code, signal) => code === 0 ? resolveRun() : rejectRun(new Error(`host_test_stage_failed:code=${code}:signal=${signal ?? "none"}`)));
   });

@@ -1,11 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, resolve } from "node:path";
-import { resolveProductionEntry } from "../host/scripts/production-artifact.mjs";
-
-const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../host");
-const productionArtifact = await resolveProductionEntry({ hostRoot, outputRoot: resolve(hostRoot, "dist"), entry: "main.js" });
-const { LocalStardewBridgeClient } = await import(pathToFileURL(resolve(productionArtifact.artifactRoot, "local-stardew-bridge.js")).href);
+import { LocalStardewBridgeClient } from "../host/dist/local-stardew-bridge.js";
 
 const SCENARIO = "native_till_soil_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "till_soil"];

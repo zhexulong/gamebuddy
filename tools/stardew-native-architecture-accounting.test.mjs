@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { accountExactPaths, deriveArchitectureAccounting } from "./lib/stardew-native-architecture-accounting.mjs";
+import { parseArgs } from "./derive-stardew-native-action-architecture-map.mjs";
 
 const sourceRecords = [
   { relativePath: "StardewValley/Game1.cs", text: "void Root() {} void Boundary() {}" },
@@ -8,6 +9,16 @@ const sourceRecords = [
 ];
 const roots = [{ id: "root:fixture", family: "fixture-root", sourcePath: "StardewValley/Game1.cs", anchor: "void Root()" }];
 const boundaries = [{ id: "boundary:fixture", family: "fixture-boundary", sourcePath: "StardewValley/Game1.cs", anchor: "void Boundary()" }];
+
+test("CLI accepts exactly one game path and local output path", () => {
+  assert.deepEqual(parseArgs(["--game-path", "C:/Stardew", "--out", ".worktree/report.json"]), {
+    "game-path": "C:/Stardew",
+    out: ".worktree/report.json",
+  });
+  assert.throws(() => parseArgs(["--game-path", "C:/Stardew", "--out", "report.json", "--unknown", "value"]), { code: "invalid_argument" });
+  assert.throws(() => parseArgs(["--game-path", "C:/Stardew", "--game-path", "D:/Stardew", "--out", "report.json"]), { code: "invalid_argument" });
+  assert.throws(() => parseArgs(["--game-path", "C:/Stardew"]), { code: "arguments_required" });
+});
 
 test("accounts every exact source/content input path without semantic classifications", () => {
   const report = deriveArchitectureAccounting({
@@ -54,4 +65,41 @@ test("fails closed on duplicate or unsafe exact paths instead of silently droppi
     ownerForPath: () => "fixture",
     kind: "content",
   }), { code: "architecture_path_invalid" });
+});
+
+test("fails closed on a register identifier reused across root and boundary namespaces", () => {
+  assert.throws(() => deriveArchitectureAccounting({
+    sourceRecords,
+    contentPaths: ["Data/Example.xnb"],
+    rootRegister: roots,
+    boundaryRegister: [{ ...boundaries[0], id: roots[0].id }],
+    requiredRootFamilies: ["fixture-root"],
+  }), { code: "architecture_register_duplicate" });
+});
+
+test("fails closed on absent, malformed, or Windows-colliding source records", () => {
+  assert.throws(() => deriveArchitectureAccounting({
+    sourceRecords: [],
+    contentPaths: ["Data/Example.xnb"],
+    rootRegister: roots,
+    boundaryRegister: boundaries,
+    requiredRootFamilies: ["fixture-root"],
+  }), { code: "architecture_source_records_empty" });
+  assert.throws(() => deriveArchitectureAccounting({
+    sourceRecords: [{ relativePath: "StardewValley/Game1.cs" }],
+    contentPaths: ["Data/Example.xnb"],
+    rootRegister: roots,
+    boundaryRegister: boundaries,
+    requiredRootFamilies: ["fixture-root"],
+  }), { code: "architecture_source_record_invalid" });
+  assert.throws(() => deriveArchitectureAccounting({
+    sourceRecords: [
+      { relativePath: "StardewValley/Game1.cs", text: "void Root() {} void Boundary() {}" },
+      { relativePath: "stardewvalley/game1.cs", text: "void Other() {}" },
+    ],
+    contentPaths: ["Data/Example.xnb"],
+    rootRegister: roots,
+    boundaryRegister: boundaries,
+    requiredRootFamilies: ["fixture-root"],
+  }), { code: "architecture_source_duplicate" });
 });

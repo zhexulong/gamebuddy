@@ -7,10 +7,17 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "noEmit": true,
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/**/test-fixtures/**", "src/**/*.test-support.ts", "src/**/**/*fixture-worker.ts", "src/windows-legacy-authority-seal/**"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/test-fixtures/**",
+    "src/**/*.test-support.ts",
+    "src/**/**/*fixture-worker.ts",
+    "src/windows-legacy-authority-seal/**"
+  ]
 }

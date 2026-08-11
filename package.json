@@ -14,6 +14,8 @@
     "dependency-audit": "node tools/generate-sbom.mjs",
     "verify-demo-prerequisites": "node tools/verify-demo-prerequisites.mjs",
     "check:stardew-action-surface": "node tools/check-stardew-action-promotion.mjs",
+    "derive:stardew-native-action-architecture-map": "node tools/derive-stardew-native-action-architecture-map.mjs",
+    "test:stardew-native-architecture-accounting": "node --test tools/stardew-native-architecture-accounting.test.mjs",
     "test:stardew-fixture-profile": "node --test tools/stardew-fixture-profile.test.mjs",
     "test:stardew-fixture-transaction-inspector": "node --test tools/stardew-fixture-transaction-inspector.test.mjs",
     "inspect:stardew-fixture-transaction": "node tools/inspect-stardew-fixture-transaction.mjs",
@@ -21,6 +23,13 @@
     "test:stardew-fixture-readiness": "node tools/await-stardew-fixture-readiness.test.mjs",
     "test:stardew-formal-action-gate": "node --test tools/stardew-formal-action-gate.test.mjs",
     "test:stardew-gate-failure-taxonomy": "node --test tools/stardew-gate-failure-taxonomy.test.mjs",
-    "test:stardew-action-gate-descriptors": "node --test tools/stardew-action-gate-descriptors.test.mjs"
+    "test:stardew-action-gate-descriptors": "node --test tools/stardew-action-gate-descriptors.test.mjs",
+    "test:stardew-portfolio-p1": "pnpm --filter @gamebuddy/companion-host exec tsc --project tsconfig.portfolio.json && pnpm --filter @gamebuddy/companion-host exec node --test dist-portfolio/portfolio-protocol.test.js dist-portfolio/portfolio-stardew-bridge.test.js",
+    "test:stardew-csharp-syntax-structural-canary": "node --test tools/stardew-csharp-syntax-structural-canary.test.mjs",
+    "derive:stardew-csharp-syntax-structural-canary": "node tools/derive-stardew-csharp-syntax-structural-canary.mjs"
+  },
+  "devDependencies": {
+    "@vscode/tree-sitter-wasm": "0.3.1",
+    "web-tree-sitter": "0.26.11"
   }
 }

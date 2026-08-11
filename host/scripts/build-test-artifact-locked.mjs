@@ -8,7 +8,12 @@ import { writeHostVerificationArtifactManifest } from "./verification-artifact-m
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = resolve(hostRoot, "dist-test");
 await rm(outputRoot, { recursive: true, force: true });
-await promisify(execFile)(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["exec", "tsc", "--project", "tsconfig.test.json"], { cwd: hostRoot, ...(process.platform === "win32" ? { shell: true } : {}) });
+await promisify(execFile)(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["exec", "tsc", "--project", "tsconfig.test.json"], {
+  cwd: hostRoot,
+  // Node launches Windows .cmd wrappers through cmd.exe. The test-artifact
+  // lock and manifest verify the resulting bounded build lifecycle.
+  ...(process.platform === "win32" ? { shell: true } : {}),
+});
 for (const entry of ["main.js", "dialogue-web-main.js"]) {
   try { await access(resolve(outputRoot, entry)); throw new Error(`test_artifact_contains_production_entry:${entry}`); }
   catch (error) { if (error?.code !== "ENOENT") throw error; }

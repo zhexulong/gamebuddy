@@ -49,10 +49,21 @@ export function accountExactPaths({ paths, ownerForPath, kind }) {
 }
 
 function indexSources(sourceRecords) {
+  if (!Array.isArray(sourceRecords) || sourceRecords.length === 0) {
+    fail("architecture_source_records_empty", "No source records were supplied.");
+  }
   const paths = new Map();
+  const foldedPaths = new Set();
   for (const source of sourceRecords) {
+    if (!source || typeof source.text !== "string") {
+      fail("architecture_source_record_invalid", "Source record must contain text.", { source });
+    }
     assertNormalizedPath(source.relativePath, "source");
-    if (paths.has(source.relativePath)) fail("architecture_source_duplicate", "Duplicate source record.", { relativePath: source.relativePath });
+    const foldedPath = source.relativePath.toLowerCase();
+    if (foldedPaths.has(foldedPath)) {
+      fail("architecture_source_duplicate", "Duplicate source record.", { relativePath: source.relativePath });
+    }
+    foldedPaths.add(foldedPath);
     paths.set(source.relativePath, source);
   }
   return paths;
@@ -73,7 +84,8 @@ export function deriveArchitectureAccounting({ sourceRecords, contentPaths, root
   const contentAccounting = accountExactPaths({ paths: contentPaths, ownerForPath: contentOwnerCluster, kind: "content" });
   const roots = rootRegister.map((record) => assertAnchoredRecord(record, sourceByPath, "root"));
   const boundaries = boundaryRegister.map((record) => assertAnchoredRecord(record, sourceByPath, "boundary"));
-  if (new Set(roots.map((root) => root.id)).size !== roots.length || new Set(boundaries.map((boundary) => boundary.id)).size !== boundaries.length) fail("architecture_register_duplicate", "Root or boundary IDs must be unique.");
+  const registerIds = [...roots, ...boundaries].map((record) => record.id);
+  if (new Set(registerIds).size !== registerIds.length) fail("architecture_register_duplicate", "Root and boundary IDs must be globally unique.");
   const rootFamilies = new Set(roots.map((root) => root.family));
   const missingRootFamilies = requiredRootFamilies.filter((family) => !rootFamilies.has(family));
   if (missingRootFamilies.length > 0) fail("architecture_root_family_missing", "The architecture root register is missing a required family.", { missingRootFamilies });

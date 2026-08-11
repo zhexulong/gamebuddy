@@ -4,8 +4,21 @@ import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const require = createRequire(resolve(root, "host", "package.json"));
-const ts = require("typescript");
+// pnpm may hoist TypeScript to the workspace root rather than create a
+// package-local host/node_modules symlink. Resolve through the workspace root
+// while still retaining an explicit package anchor for direct Host installs.
+const requireFromWorkspace = createRequire(resolve(root, "package.json"));
+const requireFromHost = createRequire(resolve(root, "host", "package.json"));
+let ts;
+try {
+  ts = requireFromWorkspace("typescript");
+} catch (workspaceError) {
+  try {
+    ts = requireFromHost("typescript");
+  } catch {
+    throw workspaceError;
+  }
+}
 
 function fail(code) {
   throw new Error(`stardew_published_action_registry_${code}`);
