@@ -5,11 +5,23 @@ changes the world, inventory, relationships, or player state. It separates
 **fixture preconditions** from the **production action proof**: a fixture can
 make a target available, but it is never evidence that an action succeeded.
 
-It applies to the formal, independent AI Farmhand topology only. Do not replace
-any step with UI automation, a single-player simulation, save-XML editing, a
-hand-written receipt, or an in-memory `Farmer`.
+It defines two **non-interchangeable** target-version native lanes:
 
-## Promotion standard
+- **Farmhand promotion lane** — formal Host-first attachment to the independent
+  native AI Farmhand. This is the only lane that can establish or retain a
+  Farmhand topology publication claim.
+- **Native-local action lane** — one isolated target-version SMAPI process and
+  its current native local Player, using the same shared typed bridge and
+  `ExecutionManager`. It validates reusable action mechanics without LAN,
+  Farmhand, Portfolio runtime, a second process, or UI/input automation.
+
+Evidence never crosses lanes: native-local evidence cannot be relabelled as a
+Farmhand receipt or Portfolio `pass`, and Farmhand evidence does not make a
+single-player fixture safe. Neither lane permits save-XML editing, a
+hand-written receipt, an in-memory `Farmer`, UI automation, or raw native-call
+fallback.
+
+## Farmhand promotion standard (Farmhand lane only)
 
 An action is eligible for `published` only when all of the following are true:
 
@@ -46,7 +58,11 @@ If any item is missing, keep the action `experimental` (or withdraw it).
 
 - Never edit a user save, save XML, active profile configuration, receipt,
   manifest, bridge token, inventory field, animal product, or world target.
-- Native templates and working names must both match `GameBuddyFixture_*`.
+- Farmhand lane templates and working names must both match
+  `GameBuddyFixture_*`; native-local names must match
+  `GameBuddyFixture[A-Za-z0-9]*` and their observed physical slots must append
+  `_<nativeUniqueId>`. Never translate an observed slot into a logical name by
+  guessing.
 - Fixture and normal Stardew save roots must be absolute and disjoint.
 - Never touch fixture files while Stardew or SMAPI is running.
 - A fixture initializer is allowed only when it is explicitly allowlisted,
@@ -62,7 +78,308 @@ If any item is missing, keep the action `experimental` (or withdraw it).
 - Do not leave a modified profile, working fixture, session exchange, game
   process, UDP listener, or locked DLL behind.
 
-## Inputs to record before a run
+## Native-local single-player SOP
+
+Use this lane to validate an existing shared typed action when a second player
+is irrelevant to its native result. It is deliberately a **thin harness**, not
+an alternate action runtime.
+
+### A. Bootstrap an event-free template
+
+1. Use a dedicated Mods profile and an empty logical name matching
+   `GameBuddyFixture[A-Za-z0-9]*`; never reuse a Farmhand fixture, a personal
+   save, or a save whose route triggers an unbounded event/cutscene.
+2. Run `tools/run-stardew-native-local-player-move-fixture.ps1` with
+   `-BootstrapNativeSave`. The Mod invokes only target-version native new-game
+   creation (`skipIntro: true`), keeps the bridge closed, then waits for real
+   `SaveLoaded`.
+3. Accept bootstrap only when it has disarmed and emitted its observed physical
+   slot plus the binding artifact (logical name, observed slot, Save/World/
+   Player/Companion identity). Bootstrap itself is **not** action evidence.
+4. Capture the complete native save directory as an external, read-only
+   template using `tools/prepare-stardew-action-fixture.ps1`. The template and
+   working names must be the exact observed physical slot from bootstrap, not
+   the logical name:
+
+   ```powershell
+   $slot = 'GameBuddyFixtureStable_<nativeUniqueId>'
+   powershell -NoProfile -File tools/prepare-stardew-action-fixture.ps1 `
+     -FixtureRoot '<absolute-fixture-root>' `
+     -TemplateName $slot -SaveName $slot `
+     -InitializeFromSaveName $slot
+   ```
+
+   The bootstrap-generated `<logical-name>.native-local-binding.json` remains
+   in `FixtureRoot`; it is not a save template and must match `$slot`. Do not
+   rename or edit save XML, inventory, world state, receipts, or postconditions.
+
+### B. Run one action from a disposable copy
+
+1. Restore a fresh working save from that template with
+   `tools/prepare-stardew-action-fixture.ps1`; source/template and working
+   roots must remain disjoint:
+
+   ```powershell
+   powershell -NoProfile -File tools/prepare-stardew-action-fixture.ps1 `
+     -FixtureRoot '<absolute-fixture-root>' `
+     -TemplateName $slot -SaveName $slot
+   ```
+2. Start the same runner without `-BootstrapNativeSave`. It requires the
+   bootstrap-captured binding for the exact observed slot, acquires its
+   profile transaction, deploys the one Release bundle, and exposes only the
+   bounded legacy `EnabledActions` needed by the slice.
+3. Fixture setup may provide only reviewed native prerequisites before bridge
+   attachment (for example, a Hoe and bare diggable ground for `till_soil`, an
+   intact adjacent `(O)590` artifact spot plus one Basic Hoe for
+   `dig_artifact_spot`, or one untouched `(O)710` plus a read-only CrabPot
+   predicate-discovered target and exactly one cardinal standing tile for
+   `place_crab_pot`). The CrabPot fixture must reject Caldera,
+   VolcanoDungeon, and MineShaft, require the exact native predicate, and must
+   find exactly one valid `(O)710` stack with **exactly one** item. An existing
+   pot stack is reused by object identity and count; duplicate, invalid, or
+   conflicting pot stacks fail closed. Native inventory insertion may normalize
+   unrelated item object references, so the fixture preserves their slot,
+   qualified-ID, and stack facts rather than their object references.
+   Only a genuinely empty inventory slot in an otherwise fresh disposable save
+   may receive one one-time pot, and the postcondition must prove every
+   pre-existing item identity and count is unchanged. The fixture must never
+   remove or rebuild a pot, call `placementAction`, reduce inventory, modify
+   water/objects, create output, or emit a receipt. Its preparation runner stops
+   after fixture invocation and fresh target/capability isolation; it sends no production request. The fixture-only CrabPot runner is `run-stardew-native-local-player-place-crab-pot-fixture-smoke.mjs`; production is separately mapped to `run-stardew-native-local-player-place-crab-pot-smoke.mjs`. The completed native-local mechanics gate selected opaque target `crab_pot_f64d58b4927b2be4` at Farm `(34,52)`, returned same-request/execution `succeeded/crab_pot_placed`, and proved source disappearance, result appearance, owner binding, inventory `1→0`, and fresh `actionable=true` without an active execution. Its all-water neighborhood produced native `directionOffset=(0,0)` and no overlay tiles; both are valid target-version facts, not failure signals. This is not bait/output/day/collection, Farmhand, Portfolio, publication, release, or save/reopen closure. The artifact fixture must not invoke `Hoe.DoFunction`,
+   `digUpArtifactSpot`, remove the source, manipulate rewards/debris, change
+   inventory as an outcome, or emit a receipt. `native_dig_artifact_spot_v1`
+   has target-version native-local mechanics evidence only: the production
+   request equipped Hoe slot `4` then returned same-execution
+   `succeeded/artifact_spot_dug` for Farm `(19,31)`, with the exact source
+   `artifact_spot_44253872405796f4` removed, same-tile crop-free `HoeDirt`
+   result `artifact_spot_result_ba2a626c2326abec`, Farm source count
+   `2→1`, and native-Hoe stamina evidence `270→268` (`delta=-2`,
+   `expected_stamina_cost=2`). The runner and Host parser bind the reported
+   expected cost to the observed nonpositive stamina delta before accepting
+   the receipt. The fixture itself does not establish stamina or invoke the
+   Hoe lifecycle. Rewards/debris/pickup/inventory outcomes remain
+   outside this source-only action; it is not Farmhand, Portfolio, publication,
+   release, or save/reopen evidence.
+4. For the action under evaluation, require its same-`executionId`
+   authoritative terminal `succeeded` receipt with native evidence and its
+   fresh action-specific postcondition. Prerequisite movement, travel, and
+   equipment actions each require their own receipt and must not be attributed
+   to the action under evaluation. Rejected navigation or stale revisions are
+   diagnostics; re-read the snapshot before any new request and never recycle
+   its revision. A scenario-specific initializer may use a reviewed
+   target-version native setup entrypoint before bridge attachment only; it
+   must establish prerequisites and assert that the action terminal state is
+   absent. It is never a generic production native-call fallback.
+5. Before **any** fixture profile/config/bundle mutation, refuse every existing
+   `StardewModdingAPI`, `StardewModdingAPI.exe`, `Stardew Valley`, or
+   `StardewValley` process. The runner may launch exactly one SMAPI process;
+   after force-stop it must verify no Stardew/SMAPI process remains before it
+   restores the transaction.
+6. For `native_water_crop_v1`, the native-local initializer is limited to a
+   nonempty current-local-player Watering Can and target-version `SpreadDirt`
+   followed by `SpreadSeeds 472`, yielding an observed unwatered crop. The
+   event-free template has no `HoeDirt`, and target-version `SpreadSeeds`
+   populates only existing dirt. It must not call `SetupBigFarm`,
+   establish/reuse a Cabin or Farmhand binding, call debug `Water`, write
+   `HoeDirt` water state, call `water_crop`, or emit a receipt. Farmhand
+   fixture setup/evidence is a different lane and cannot be copied into this
+   one.
+7. For `native_plant_seed_v1`, the native-local initializer is limited to a
+   current-local-player native inventory stack of in-season Spring seed `(O)472`
+   and target-version `RemoveDirt` followed by `SpreadDirt`, yielding observed empty native
+   `HoeDirt` after the Farmer reaches Farm. It must not call `plant_seed`,
+   `placementAction`, reduce an item stack, create a crop/terminal state, or
+   emit a receipt/postcondition. Its
+   runner rediscoveres a fresh opaque `seedTargets` entry and its published
+   seed slot, separately receipts travel/movement, then requires
+   same-execution `succeeded/seed_planted` native crop/inventory evidence:
+   exact target/item, nonempty crop, and inventory `after == before - 1`, plus
+   a fresh snapshot where that exact target is absent. In the verified
+   target-version run, production alone returned `succeeded/seed_planted` for
+   opaque target `seed_fc52b3b227bddefc` at Farm `(62,18)`, with `(O)472`
+   inventory `2→1` and same-execution `crop=472`; fresh state omitted the
+   exact seed target at matching revision while the Player remained actionable
+   and stationary. This is shared native-local mechanics evidence only, not
+   Farmhand, Portfolio, publish/release, save/reopen, crop-growth, harvest, or
+   generic seed-family closure.
+8. `native_fertilize_tile_v1` has met this lane's target-version live mechanics
+   closure. Its pre-attachment setup may provide `(O)368` Basic Fertilizer and
+   eligible empty native `HoeDirt` through `RemoveDirt → SpreadDirt`, but must
+   not apply fertilizer, call `placementAction`, or emit a receipt. Its exact
+   legacy allowlist is `move_to_tile`, `travel`, `fertilize_tile`. The production
+   action independently discovered fresh opaque target `fertilizer_…` at Farm
+   `(62,18)`, returned same-execution `succeeded/fertilizer_applied`, proved
+   `fertilizer_before=none`, `fertilizer_after=(O)368`, and inventory `2→1`, then
+   a fresh snapshot omitted that target. This is only
+   `native_local_player_fixture` shared mechanics evidence.
+9. `native_harvest_crop_v1` has met this lane's target-version live mechanics
+   closure. Its setup may create only a ready ordinary non-forage `Grab` crop and
+   prove inventory capacity; it must not harvest, remove/change that ready crop,
+   or add/delete harvest output. Its exact legacy allowlist is `move_to_tile`,
+   `travel`, `harvest_crop`. The runner handles the bounded transient after the
+   production terminal without weakening pre-request actionability. The production
+   action independently discovered opaque target `crop_…` at Farm `(70,17)`,
+   returned same-execution `succeeded/crop_harvested`, proved non-regrowing crop
+   removal and inventory `0→1`, and a fresh actionable snapshot omitted that
+   target. This is only `native_local_player_fixture` shared mechanics evidence.
+   These two scenarios remain separate and never expose both actions in one fixture.
+10. `native_pickup_forage_v1` has met this lane's target-version live mechanics
+   closure. Before bridge attachment it derives a bounded Farm search from the
+   current native local Player's FarmHouse-to-Farm warp and uses target-version
+   `dropObject` only to establish one genuine `isForage`/`IsSpawnedObject`
+   precondition; it must not call `tryToCheckAt`, `checkAction`, the production
+   request, remove the object, mutate pickup inventory, or emit a receipt. Its
+   exact legacy allowlist is `move_to_tile`, `travel`, `pickup_forage`. Production
+   independently rediscovered opaque target `forage_…` at Farm `(63,17)`, returned
+   same-execution `succeeded/forage_picked_up`, proved `(O)399` was removed and
+   inventory `0→1`, and a fresh actionable snapshot omitted that target. This is
+   only `native_local_player_fixture` shared mechanics evidence.
+11. `native_pickup_item_v1` has met this lane's target-version live mechanics
+   closure. Before attachment it uses `Game1.createItemDebris` only to establish
+   one bounded native OBJECT Debris/chunk `(O)388`; it never calls collection,
+   removes a chunk, writes inventory, or emits a receipt. Its exact legacy
+   allowlist is `move_to_tile`, `travel`, `pickup_item`. Production rediscovered
+   opaque target `item_4f15e84d0c216dc9` at Farm `(64,17)`, returned same-execution
+   `succeeded/item_picked_up`, proved `native_auto_collect=true`, chunk removal,
+   and inventory `0→1`; a fresh snapshot omitted the target. This is only
+   `native_local_player_fixture` shared mechanics evidence.
+12. `native_machine_inspect_v1` has met this lane's target-version live mechanics
+   closure. Before attachment it uses target-version `dropObject` only to place
+   an adjacent empty `(BC)12` machine in the current FarmHouse; it does not open
+   a menu, load, collect, alter machine state, or produce a receipt. Its exact
+   legacy allowlist is `move_to_tile`, `machine_inspect`. Production rediscovered
+   the opaque target, returned `succeeded/machine_inspected` at FarmHouse `(8,10)`,
+   and a fresh snapshot confirmed identical machine/input/output/ready facts. This is only
+   `native_local_player_fixture` shared mechanics evidence.
+13. `native_use_item_v1` has met this lane's target-version live mechanics closure.
+   Before attachment it supplies ordinary `(O)216` Bread through the current
+   Player's native inventory API only; it never invokes eating, alters stack,
+   stamina, health, or emits a receipt. Its exact legacy allowlist is `use_item`.
+   Production returned same-execution `succeeded/item_used` for `(O)216` in
+   slot `5`; invariant-culture stamina/health evidence matched fresh before/after state and the food target
+   disappeared after native animation. This is only `native_local_player_fixture`
+   shared mechanics evidence.
+14. `native_tree_first_hit_v1` has met this lane's target-version live mechanics
+   closure. Before bridge attachment, fixture setup uses target-version native
+   world/inventory APIs only in the disposable Farm working save to place one
+   mature ordinary tree (`health=10`, non-moss, untapped) with a legal approach
+   tile and supply exactly one Axe. It does not invoke Axe/`tree_first_hit`,
+   damage the tree, create a terminal state, or emit a receipt. Its exact
+   legacy allowlist is `move_to_tile`, `travel`, `equip_tool`,
+   `tree_first_hit`. The production runner separately receipts travel and
+   movement, equips `(T)Axe` in slot `4`, then targets the fresh opaque
+   `tree_shake_source_af99b95b5acdd092` at Farm `(64,17)`. The same execution
+   returned `succeeded/tree_first_hit` with native evidence `before=10`,
+   `after=9`, and `delta=-1`; the following fresh snapshot retained the same
+   tree source with health `9`. This is only
+   `native_local_player_fixture` shared mechanics evidence, never Portfolio or
+   Farmhand publication evidence.
+15. `native_feed_animal_v1` is a native-local-only disposable-working-save
+    slice with exact legacy profile `move_to_tile`, `travel`, `enter_exit`,
+    `feed_animal`. Before bridge attachment, it may call target-version
+    `SetupBigFarm` only to create and verify one native `AnimalHouse`, its
+    resolvable Farm entry fact, and an empty `Trough`; it may add Hay to the
+    current local Player. It must not fill a trough, call
+    `AnimalHouse.checkAction`, decrement Hay, create a receipt, modify the
+    template, or simulate any production postcondition. The runner separately
+    receipts typed travel/movement/enter-exit setup, then uses a post-entry
+    fresh snapshot as the sole source of opaque `feedTroughTargets`. It blocks
+    on zero targets and deterministically selects one fresh valid opaque target;
+    it requires feed's own same request/execution
+    `succeeded/hay_placed_in_trough` receipt, Hay `N→N-1`, filled/trough-gone,
+    and a fresh actionable snapshot. The serial target-version gate passed from
+    the source-pinned first `SetupBigFarm` Deluxe Barn `AnimalHouse`: a fresh
+    snapshot selected opaque target `feed_trough_6b8d0c86fd28f075` at `(8,3)` in
+    Hay slot `5`; production alone returned
+    `succeeded/hay_placed_in_trough` with `native_handled=true`,
+    `trough_filled=true`, and Hay `2→1`. A fresh snapshot changed eligible
+    targets `2→1` and omitted that exact target. The pre-bridge fixture only
+    established the AnimalHouse, empty trough, and Hay; it did not feed.
+    This is native-local shared mechanics evidence only, never Farmhand,
+    HostAutomation, Portfolio, publication, release, or save/reopen evidence.
+16. `native_break_rock_source_v1` has met this lane's target-version live mechanics closure. Before bridge attachment, fixture setup supplies exactly one basic Pickaxe and one ordinary adjacent one-hit `(O)2` breakable stone (`MinutesUntilReady=1`) in the disposable Farm working save; it does not invoke `Pickaxe.DoFunction`, damage/remove the source, collect drops, alter inventory output, or emit a receipt. Its exact legacy allowlist is `move_to_tile`, `travel`, `equip_tool`, `break_rock_source`. Production independently reached Farm, equipped slot `4` `(T)Pickaxe`, then targeted opaque `rock_source_d070382fe9bc99dd` at Farm `(64,17)`. The same execution returned `succeeded/rock_source_broken` with `tool=pickaxe`, `qualified_item_id=(O)2`, `durability_before=1`, `durability_after=removed`, and `removed=true`; the fresh snapshot changed eligible rock targets `1→0` and omitted that exact target. Drops and pickup are intentionally outside this action. This is only `native_local_player_fixture` shared mechanics evidence, never Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen evidence.
+17. `native_chop_tree_source_v1` has met this lane's target-version live mechanics closure. Before bridge attachment, fixture setup supplies exactly one basic Axe and one ordinary mature terrain-feature tree at `health=1`, with `stump=false`, `moss=false`, `tapped=false`, and an independently reachable approach in the disposable Farm working save. It does not invoke `Axe.DoFunction`, damage or transform the tree, collect falling drops, alter inventory output, or emit a receipt. Its exact legacy allowlist is `move_to_tile`, `travel`, `equip_tool`, `chop_tree_source`. In the target-version run, production alone reached Farm, equipped `(T)Axe` slot `4`, and targeted `tree_chop_source_db2e14e373c76083` at Farm `(64,17)`. The same execution returned `succeeded/tree_source_chopped` with `health_before=1`, `health_after=5`, `stump_before=false`, `stump_after=true`, and `source_transformed=true`; the fresh snapshot changed `treeChopSourceTargets 1→0` and `treeChopResultTargets 0→1`, showing the same-location, same-type stump result. This is only `native_local_player_fixture` shared mechanics evidence, never Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen evidence. Tree-fall drops and subsequent pickup remain separate actions.
+18. `native_clear_debris_resource_clump_v1` has met this lane's target-version live mechanics closure. Before bridge attachment, fixture setup uses the target-version native placement API to establish exactly one intact `2×2` `ResourceClump` at Farm `(62,17)`, `parentSheetIndex=752`, default health `8`, and one basic Pickaxe in the disposable working save. It validates every footprint placement tile, rejects unavailable fixed geometry and a pre-existing `parent=752` clump, and must not invoke `Pickaxe.DoFunction`, decrement health, remove the clump, collect drops, alter output inventory, or emit a receipt. Its exact legacy allowlist is `move_to_tile`, `travel`, `equip_tool`, `clear_debris`; its runner may approach only `(61,17)`, `(64,17)`, or `(62,19)`, blocks rather than searching elsewhere, and accepts only the fixed fixture tuple. Production independently reached `(61,17)`, equipped `(T)Pickaxe` slot `4`, and hit the same fresh opaque target at `(62,17)` eight times. Each hit used its own typed request and matching execution receipt: the first seven were `partially_succeeded/debris_hit`, with health descending `8→1`; the eighth request's terminal receipt was `succeeded/debris_cleared` with `health_before=1`, `health_after=0`, and `clump_removed=true`. A fresh snapshot had `debrisTargets=0` and omitted the exact target. The fixture transaction restored its exact profile, removed backup/lock and working save, and left no Stardew/SMAPI process. This is only `native_local_player_fixture` shared mechanics evidence, never Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen evidence. Drops and pickup are deliberately outside this action.
+19. `native_clear_hoedirt_v1` has met this lane's target-version live mechanics closure. Before bridge attachment, fixture setup provides exactly one Basic Pickaxe and one intact ground, crop-free, non-`IndoorPot` `HoeDirt` in the disposable Farm working save; the asynchronous native FarmHouse→Farm warp only establishes a lawful adjacent Player position. It does not invoke `Pickaxe.DoFunction`, remove terrain, alter inventory, or emit a receipt. Its exact legacy allowlist is `move_to_tile`, `travel`, `equip_tool`, `clear_hoedirt`. The production run independently selected slot `4` `(T)Pickaxe`, then targeted opaque `clear_hoedirt_8239e9dc24a59295` at Farm `(64,18)`. The same execution returned `succeeded/hoedirt_cleared` with `crop_before=false`, `hoedirt_present_before=true`, `hoedirt_present_after=false`, and `removed=true`; its fresh snapshot changed eligible targets `1→0` and omitted the exact target. This is only `native_local_player_fixture` shared mechanics evidence, never Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen evidence.
+20. `native_pet_animal_v1` has met this lane's target-version live mechanics closure. Before bridge attachment, the fixture establishes and validates exactly one native Dog at FarmHouse `(9,10)`, friendship `0`, unpetted today, and `grantedFriendshipForPet=false`; it does not call `Pet.checkAction`, mark a pet day, change friendship, or emit a receipt. Its isolated legacy allowlist is `pet_animal`. Production alone targeted opaque `pet_b4915a66ae52ef35` and returned `succeeded/pet_completed` with same-execution evidence `friendship_before=0`, `friendship_after=12`, `day_recorded=true`, and `friendship_callback=true`. The fresh snapshot contained no eligible unpetted target. The fixture transaction restored the profile and removed its backup/lock and working save. This is only `native_local_player_fixture` shared mechanics evidence, never Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen evidence.
+21. `native_npc_relationship_v1` has met this lane's target-version live mechanics closure. Before bridge attachment, fixture setup establishes bounded native Robin at Farm `(64,17)` with persisted friendship `250`, `Friendly`, `talkedToToday=false`, and zero gifts; it does not mutate relationship facts or invoke an NPC interaction/read receipt. Its isolated legacy allowlist is `move_to_tile`, `travel`, `npc_relationship`. Production traveled FarmHouse→Farm, independently moved to legal adjacent `(64,16)`, and returned `succeeded/npc_relationship_inspected` for opaque `npc_relationship_c3821ad1c48f764f`, with same-execution evidence matching Robin and all five relationship facts. A fresh reread matched the same target and unchanged facts. The transaction restored profile/working-save state and removed backup/lock. This is only `native_local_player_fixture` shared mechanics evidence, never Farmhand, HostAutomation, Portfolio, publication, release, or save/reopen evidence.
+22. The current runner force-stops its single process during teardown. Its
+   result is a live mechanics receipt/postcondition proof only, not native
+   save/reopen or persistence proof. An action whose declared result requires
+   persistence needs a separate topology-scoped native save/reopen gate before
+   any corresponding claim.
+23. The runner must restore the exact profile transaction. Then remove the
+   working save through `prepare-stardew-action-fixture.ps1 -Cleanup`; verify
+   no backup, lock, SMAPI/Stardew process, or working save remains.
+Current native-local validation record: `move_to_tile`, `till_soil`,
+`equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
+`harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `tree_first_hit`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
+receipt-plus-fresh-postcondition standard. `water_crop` has also met this lane's live
+receipt-plus-fresh-postcondition standard. Its scenario first uses the exact
+pre-attachment native setup `SpreadDirt → SpreadSeeds 472` to make dry crops;
+that initializer itself is not evidence. The action run independently equipped
+`(T)WateringCan`, traveled to Farm, and reached the fresh opaque crop target
+at Farm `(62,18)`: same-execution receipt
+`succeeded/crop_watered` recorded `before_watered=False`,
+`after_watered=True`, and water `40→39`; the exact target was absent from the
+following production snapshot. `plant_seed` independently traveled to Farm,
+reached the fresh opaque seed target at `(62,18)`, and received same-execution
+`succeeded/seed_planted` evidence with matching target,
+`item=(O)472`, `crop=472`, and inventory `2→1`; that target was absent from
+the following production snapshot. `enter_exit` independently moved to its fresh
+published FarmHouse door `(3,12)` then received
+`succeeded/enter_exit_completed` with fresh `Farm (64,15)` postcondition.
+`equip_tool` ran on the event-free
+`GameBuddyFixtureStable_445936768` disposable copy: a fresh snapshot selected
+`(T)Hoe` in slot `1`; its same-execution receipt was
+`succeeded/tool_selected` with `expected=(T)Hoe;after=(T)Hoe`; and its fresh
+post-observe reported `currentTool=(T)Hoe`. `travel` is a distinct action, not
+an alias for `move_to_tile`: a separate prerequisite move reached the
+FarmHouse source warp `(3,12)`, then travel's own execution reached
+`succeeded/travel_completed` after the native `Warped` boundary, with fresh
+`Farm (64,15)` matching the published target. The profile transaction restored,
+its backup/lock were removed, and the disposable working save was cleaned.
+`machine_load` and `machine_collect_output` passed the same target-version serial
+native-local mechanics run on `GameBuddyFixtureStable_445936768`’s disposable
+copy. `native_machine_coffee_load_v1` supplied only idle Keg `(BC)12` at
+FarmHouse `(8,10)` and exactly five Coffee Beans `(O)433`; it did not load,
+advance time, create ready output, add Coffee, or emit a receipt. Production
+first returned `succeeded/machine_coffee_loaded`, with the fresh same-Keg
+processing state `held=(O)395`, `lastInput=(O)433`, and
+`minutesUntilReady=120`. The runner then waited for actual target-game clock
+progression (no timer skip or field mutation) until the fresh same-target
+snapshot reported `readyForHarvest=true`, `minutesUntilReady=0`, held Coffee,
+and `collectOutputReady=true`. Production collection returned
+`succeeded/machine_coffee_collected`; its authoritative evidence recorded
+Coffee inventory `0→1`, cleared held output/ready state, and
+`native_check_action=true`. The fresh reread showed the same idle Keg with no
+held output, `readyForHarvest=false`, and `minutesUntilReady=0`. The profile
+transaction restored, working save was cleaned, and backup/lock/game process
+were removed. This is shared native-local mechanics evidence only, not
+Farmhand, Portfolio, publication, release, save/reopen, capacity-failure, or
+full machine-family closure. `machine_configure` is **not applicable and excluded from the pinned-version release action set**, rather than a missing live run: the hash-bound pinned `Machines.xnb` decode exhausts all `39` machine entries and reports zero nonempty `InteractMethod` values. Since the target `Object.CheckForActionOnMachine` calls a `MachineInteractDelegate` only for a non-null method, the target exposes no normal configuration ingress. Do not add a generic configuration request, fixture, runner, direct delegate invocation, or state mutation; reconsider only after target game/content drift yields a finite native ingress.
+
+`water_crop` native-local setup may use only target-version `SpreadDirt`
+followed by `SpreadSeeds 472` before bridge attachment to establish truly
+live, unwatered crops and native inventory APIs to provide a nonempty Watering
+Can. It must never invoke debug `Water`, write a watered `HoeDirt` state,
+invoke `water_crop`, or manufacture a receipt/postcondition. Its runner must
+rediscover exactly one fresh opaque `cropTargets` ID, use its exact revision,
+independently receipt equip/travel/movement, then require
+`succeeded/crop_watered` with same-execution lowercase native evidence,
+Watering Can charge `-1`, and a fresh `cropTargets` transition of exactly
+`1→0`.
+
+They remain shared action mechanics, not Portfolio capability rows or Farmhand
+evidence.
+
+## Farmhand lane inputs
+
+The following promotion phases apply only to
+`native_ai_farmhand_multiplayer`. Native-local validation follows the SOP above
+and must not start a Host, AI client, LAN server, or Farmhand attachment.
+
+## Farmhand lane inputs
 
 Record these values outside source control; do not put secrets in this file or
 commit them:
@@ -78,7 +395,7 @@ commit them:
 | Action | The exact action under evaluation and its smoke runner |
 | Config backups | Byte-for-byte transaction backup of both sidecar and actual `Mods/GameBuddy/config.json` sources for Host and AI profiles |
 
-## Phase A — preflight and restore
+## Farmhand Phase A — preflight and restore
 
 1. Stop every known Host/AI Stardew process. Verify the fixture harness itself
    accepts the process state; do not work around its process guard.
@@ -132,7 +449,7 @@ commit them:
 9. Clear only the fixed, known session-exchange files. Never accept a manifest
    path supplied by a tool response.
 
-## Phase B — fixture readiness barrier and formal attachment
+## Farmhand Phase B — fixture readiness barrier and formal attachment
 
 1. The formal attachment runner starts the Host first and waits for the fixed,
    Host-authenticated `stardew-fixture-readiness.json` **before** it starts any
@@ -177,7 +494,8 @@ commit them:
    live Mod advertises the action capability. Do not treat fixture logs,
    metadata, or old target IDs as live target evidence.
 7. If the fixture initializer created an initial condition, verify it through
-   native save/reload and the live AI Farmhand state. For example,
+   the topology-matching live state (native-local uses its fresh current-local-
+   Player snapshot; Farmhand uses the live AI Farmhand state). For example,
    `native_feed_animal_v1` supplies Hay but does not fill a trough;
    `native_plant_seed_v1` supplies only season-valid seed and uses target-version
    `RemoveDirt`/`SpreadDirt` for empty ground HoeDirt, never crop creation; the
@@ -186,7 +504,7 @@ commit them:
    `SetupBigFarm`/`RemoveDirt`; it must not call `Hoe.DoFunction` or create
    `HoeDirt`.
 
-## Phase C — production action proof
+## Farmhand Phase C — production action proof
 
 1. Use only already-published movement/transport actions to reach the target.
    Each move, warp, and door transition needs its own authoritative receipt;
@@ -210,12 +528,13 @@ commit them:
 
    | Action | Required success proof |
    | --- | --- |
-   | `collect_animal_product` | `succeeded/animal_product_collected`; native tool animation done; exact animal `currentProduce` cleared; expected inventory delta; target gone |
-   | `feed_animal` | `succeeded/hay_placed_in_trough`; exact trough contains Hay; same Farmhand Hay total decreases by one; target gone |
+   | `collect_animal_product` | `succeeded/animal_product_collected`; native tool animation done; exact animal `currentProduce` cleared; fresh selected-target removal; fresh bounded aggregate inventory facts show the exact produced `qualifiedItemId` increased by at least published `produceStack` |
+   | `feed_animal` | `succeeded/hay_placed_in_trough`; exact trough contains Hay; same topology-matching player's Hay total decreases by one; target gone |
    | `water_crop` | `succeeded/crop_watered`; exact live `HoeDirt` changes from unwatered to watered; Watering Can charge decreases by one; target gone |
    | `fertilize_tile` | `succeeded/fertilizer_applied`; exact live ground `HoeDirt.fertilizer` changes from none to the requested fertilizer; Farmhand inventory decreases by one; target gone |
    | `plant_seed` | `succeeded/seed_planted`; exact live ground `HoeDirt` gains a native crop; same Farmhand seed inventory decreases by one; target gone |
-   | `till_soil` | `succeeded/soil_tilled`; exact previously bare live diggable tile gains native `HoeDirt`; target no longer appears as bare soil. Passed fixture proof: Farm `(37,18)`, `before=none`, `after=HoeDirt`, `soilTiles 9→8` |
+   | `till_soil` | `succeeded/soil_tilled`; exact previously bare live diggable tile gains native `HoeDirt`; target no longer appears as bare soil. Hardened shared native-local rerun: Farm `(62,18)`, receipt revision `27`, `before=none`, `after=HoeDirt`, fresh bare-soil targets `2→1`, with the Player stable at Farm `(62,17)`, `actionable=true`, and no active execution. The runner requires the exact isolated fixture profile and imports the bridge client from the verified immutable Host production generation, not a flat mutable `host/dist` path. |
+   | `pickup_forage` | `succeeded/forage_picked_up`; same opaque native forage object removed; exact Farmhand qualified-item inventory increases by one; target is absent in a fresh snapshot. The bridge must enter target-version `Game1.tryToCheckAt`, never directly `GameLocation.checkAction`. |
    | future action | Exact reviewed native postcondition(s), not UI/menu/callback evidence |
 
 5. If the runner reports `blocked`, record the reason and stop. If it reports
@@ -226,7 +545,7 @@ commit them:
    contract requires it. Do not claim a persistence audit if processes must be
    force-stopped before saving.
 
-## Phase D — promotion and regression
+## Farmhand Phase D — promotion and regression
 
 1. Update the exact action lifecycle in all of:
    - `integrations/stardew/ModConfig.cs` published/experimental catalogs;
@@ -267,10 +586,10 @@ commit them:
    policy only exposes published actions that the current live Mod capability
    advertises. The current Stardew published count is 15, including `pickup_forage`,
    `pickup_item`, `use_item`, and `harvest_crop`; `clear_debris`,
-   `collect_resource`, `npc_relationship`, and other unverified slices remain experimental. `collect_resource` must not report `resource_collected`: a native Tree stump hit may remove the tree and create uncorrelated RESOURCE Debris, so `resource_drop_pending` is an uncertain boundary until native Farmhand inventory collection is proven.
+   `npc_relationship` and other unverified slices remain experimental. The former `collect_resource` bridge action is retired: a native Tree source transform and later uncorrelated RESOURCE Debris delivery are separate lifecycles. Future support must use independently verified source-transform plus fresh `pickup_item` delivery steps; no smoke runner may send the retired identifier.
    `native_use_item_v1` may only supply ordinary `(O)216` Bread through target-version `Farmer.addItemToInventory`; published `use_item` production must still provide the native animation and stack receipt. It must not invoke `Farmer.eatHeldObject` or manufacture item-use evidence. `native_pickup_item_v1` may keep its fixture-only dropped-by identity only as a short attachment handoff guard. Target-version `Debris.updateChunks` begins magnetic pickup after roughly 600 ms and owns `Debris.collect`, so published `pickup_item` does not issue a synthetic click-style collect call: its bounded production action guides the Farmhand to the live opaque chunk and waits for native magnetic collection. Its formal gate returned `succeeded/item_picked_up` for Farm `(21,29)` `(O)388`, proving `native_auto_collect=true`, exact chunk removal, Farmhand inventory `0→1`, and target disappearance. Fixture setup is never action evidence.
 
-## Phase E — teardown
+## Farmhand Phase E — teardown
 
 1. Stop the exact Host/AI processes started for the run. Verify the named-pipe
    / UDP listener is gone and deployed DLLs can be opened exclusively.
@@ -308,3 +627,10 @@ commit them:
   retrying; an output timeout cannot be classified as success or failure.
 - **Profile/session cleanup failure:** retain the cleanup todo. Do not start a
   different action fixture on a contaminated environment.
+
+
+### Native-local refill Watering Can mechanics closure
+
+Use the isolated disposable native-local working-save fixture with action `refill_watering_can`. Its profile is exactly `move_to_tile,equip_tool,refill_watering_can`; the scenario `native_refill_watering_can_v1` supplies one ordinary partially filled Watering Can and marks the current FarmHouse Back-layer tile with the target-version-recognized `WaterSource` property. It immediately verifies the native `CanRefillWateringCanOnTile` predicate before bridge attachment. This audited, working-save-only precondition must not invoke `DoFunction`, refill water, create a receipt, or modify a template/user save. Production discovers the bounded opaque source from a fresh snapshot, revalidates it on the game thread, and requires its own same-execution receipt plus a fresh same-slot can fact at max water.
+
+The target-version native-local gate passed for `watering_can_refill_cad28f88543b9ef7` at FarmHouse `(9,9)`: equipped `(T)WateringCan` slot `4`, then `succeeded/watering_can_refilled` with `water_before=39;water_after=40;water_max=40`; a fresh snapshot confirmed that same slot at `40/40`. This is shared native-local mechanics evidence only, never Farmhand or Portfolio evidence.

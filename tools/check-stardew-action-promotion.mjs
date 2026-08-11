@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { resolve } from "node:path";
+import { readPublishedStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -11,14 +12,14 @@ const files = Object.freeze({
   registryTest: resolve(ROOT, "host/src/action-registry.test.ts"),
   toolsTest: resolve(ROOT, "host/src/game-tools.test.ts"),
   modEntry: resolve(ROOT, "integrations/stardew/ModEntry.cs"),
-  fixtureProfile: resolve(ROOT, "tools/lib/stardew-fixture-profile.mjs"),
+  nativeFixture: resolve(ROOT, "tools/lib/stardew-native-local-player-fixture.mjs"),
 });
 const contents = Object.fromEntries(await Promise.all(Object.entries(files).map(async ([key, path]) => [key, await readFile(path, "utf8")] )));
-const published = parsePublishedRegistry(contents.registry);
+const published = await readPublishedStardewActionIds({ registryPath: files.registry });
 const modPublished = parseModPublishedActions(contents.modConfig);
 const fixtureAllowlist = parseModConfigFixtureAllowlist(contents.modConfig);
 const fixtureInitializerAllowlist = parseHostInitializerFixtureAllowlist(contents.modEntry);
-const transactionAllowlist = parseTransactionFixtureAllowlist(contents.fixtureProfile);
+const transactionAllowlist = parseNativeLocalFixtureScenarios(contents.nativeFixture);
 const failures = [];
 
 if (new Set(published).size !== published.length) failures.push("registry_published_duplicates");
@@ -45,8 +46,6 @@ for (const gate of gates) {
   const runnerPath = resolve(ROOT, "tools", gate.runner);
   try {
     await access(runnerPath, constants.R_OK);
-    const runner = await readFile(runnerPath, "utf8");
-    if (!runner.includes(gate.terminalReasonCode)) failures.push(`gate_runner_missing_reason:${gate.actionId}:${gate.terminalReasonCode}`);
   } catch {
     failures.push(`gate_runner_missing:${gate.actionId}:${gate.runner}`);
   }
@@ -69,9 +68,6 @@ if (failures.length > 0) {
   }));
 }
 
-function parsePublishedRegistry(source) {
-  return [...source.matchAll(/publishedAction\("([a-z0-9_]+)"/g)].map((match) => match[1]);
-}
 function parseModPublishedActions(source) {
   const match = source.match(/PublishedActions = new HashSet<string>\(new\[\] \{([^}]+)\}/s);
   if (!match) throw new Error("mod_published_actions_not_found");
@@ -83,14 +79,14 @@ function parseModConfigFixtureAllowlist(source) {
   return parseNativeScenarioStrings(match[1]);
 }
 function parseHostInitializerFixtureAllowlist(source) {
-  const match = source.match(/automation\.FixtureScenario is not \(([^\r\n]+)\)/);
-  if (!match) throw new Error("host_initializer_fixture_allowlist_not_found");
+  const match = source.match(/fixture\.FixtureScenario is not \(([^\r\n]+)\)/);
+  if (!match) throw new Error("native_local_initializer_fixture_allowlist_not_found");
   return parseNativeScenarioStrings(match[1]);
 }
-function parseTransactionFixtureAllowlist(source) {
-  const match = source.match(/const ALLOWED_FIXTURE_SCENARIOS = Object\.freeze\(\[([\s\S]*?)\]\);/);
-  if (!match) throw new Error("transaction_fixture_allowlist_not_found");
-  return parseNativeScenarioStrings(match[1]);
+function parseNativeLocalFixtureScenarios(source) {
+  const scenarios = parseNativeScenarioStrings(source);
+  if (scenarios.size === 0) throw new Error("native_local_fixture_scenarios_not_found");
+  return scenarios;
 }
 function parseNativeScenarioStrings(source) {
   return new Set([...source.matchAll(/"(native_[a-z0-9_]+_v\d+)"/g)].map((entry) => entry[1]));

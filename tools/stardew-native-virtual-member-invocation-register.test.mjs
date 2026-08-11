@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import test from "node:test";
+import { deriveNativeVirtualMemberInvocationRegister, validateNativeVirtualMemberInvocationRegister } from "./lib/stardew-native-virtual-member-invocation-register.mjs";
+const h = (text) => createHash("sha256").update(text).digest("hex");
+const tool = `namespace Demo; public class Tool { public virtual bool beginUsing(GameLocation l, int x, int y, Farmer who) { who.Halt(); Update(); return false; } }`;
+const axe = `namespace Demo; public class Axe : Tool { public override bool beginUsing(GameLocation l, int x, int y, Farmer who) { Update(); who.EndUsingTool(); return true; } }`;
+const hoe = `namespace Demo; public class Hoe : Tool { }`;
+const sourceFiles = { "StardewValley/Tool.cs": { text: tool, sha256: h(tool) }, "StardewValley/Tools/Axe.cs": { text: axe, sha256: h(axe) }, "StardewValley/Tools/Hoe.cs": { text: hoe, sha256: h(hoe) } };
+test("inventories the Tool base virtual body and direct-source visible overrides without inferring effects", async () => { const report = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" }); assert.deepEqual(report.implementations.map((item) => [item.receiverType, item.implementationKind, item.invocationCount]), [["Tool", "base_virtual", 2], ["Axe", "direct_source_override", 2]]); assert.deepEqual(report.receiverRegister.inheritedBaseReceiverTypes, ["Hoe"]); assert.equal(report.analysisBoundary.transitionDerivation, "not_performed"); assert.equal((await validateNativeVirtualMemberInvocationRegister(report, { sourceFiles })).implementationCount, 2); });
+test("fails closed when an exact implementation inventory becomes stale", async () => { const report = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" }); const stale = { ...report, implementations: [] }; await assert.rejects(() => validateNativeVirtualMemberInvocationRegister(stale, { sourceFiles }), { code: "virtual_member_invocation_register_stale" }); });
+test("forbids primitive and action vocabulary", async () => { const report = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" }); await assert.rejects(() => validateNativeVirtualMemberInvocationRegister({ ...report, actionId: "no" }, { sourceFiles }), { code: "virtual_member_invocation_register_forbidden_field" }); });

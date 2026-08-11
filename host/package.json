@@ -8,10 +8,11 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
+    "build:test": "node scripts/build-test-artifact.mjs",
     "start": "node dist/main.js",
     "start:dialogue": "node dist/dialogue-web-main.js",
-    "test": "node --test --test-concurrency=1 dist/**/*.test.js",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
+    "test": "node scripts/run-test-suite.mjs",
+    "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project tsconfig.test.json --noEmit"
   },
   "dependencies": {
     "@cortexkit/pi-magic-context": "file:../vendor/magic-context/packages/pi-plugin",

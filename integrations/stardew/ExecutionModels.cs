@@ -135,6 +135,32 @@ internal sealed record LocalFertilizerApplicationSpec(
     long RouteRevision,
     long DeadlineMs);
 
+internal sealed record LocalWoodFencePlacementSpec(
+    string ExecutionId,
+    string RequestId,
+    string Location,
+    int Slot,
+    int TargetX,
+    int TargetY,
+    string TargetId,
+    string QualifiedItemId,
+    int InventoryBefore,
+    long RouteRevision,
+    long DeadlineMs);
+
+internal sealed record LocalCrabPotPlacementSpec(
+    string ExecutionId,
+    string RequestId,
+    string Location,
+    int Slot,
+    int TargetX,
+    int TargetY,
+    string TargetId,
+    string QualifiedItemId,
+    int InventoryBefore,
+    long RouteRevision,
+    long DeadlineMs);
+
 internal sealed record LocalDebrisClearingSpec(
     string ExecutionId,
     string RequestId,
@@ -155,20 +181,6 @@ internal sealed record LocalMachineInspectionSpec(
     int TargetX,
     int TargetY,
     string TargetId,
-    long RouteRevision,
-    long DeadlineMs);
-
-internal sealed record LocalResourceCollectionSpec(
-    string ExecutionId,
-    string RequestId,
-    string Location,
-    int Slot,
-    int TargetX,
-    int TargetY,
-    string TargetId,
-    string TreeType,
-    float HealthBefore,
-    bool StumpBefore,
     long RouteRevision,
     long DeadlineMs);
 

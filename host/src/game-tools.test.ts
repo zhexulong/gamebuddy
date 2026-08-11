@@ -99,6 +99,25 @@ test("published pickup_item mounts only from a live capability and forwards the 
   assert.deepEqual(received, { requestId: "request_item_01", idempotencyKey: "idempotency_item_01", action: "pickup_item", args: { x: 21, y: 29, expectedQualifiedItemId: "(O)388", expectedTargetId: "item_target_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
 });
 
+test("published refill_watering_can mounts only from a live capability and forwards the exact source and selected can", async () => {
+  let received: unknown = null;
+  const integration: MoveCapableIntegration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    get state() { return { connected: true, sessionId: "session_01", capabilities: ["refill_watering_can"], snapshot: { revision: 3, location: "FarmHouse", tile: { x: 9, y: 8 }, stamina: 100, health: 100, actionable: true, capabilities: ["refill_watering_can"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
+    async execute(request) { received = request; return { executionId: "execution_refill_01", requestId: request.requestId, state: "succeeded", reasonCode: "watering_can_refilled", revision: 4, evidence: { detail: "target=watering_can_refill_01;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40" } }; },
+    async cancel() { throw new Error("must_not_cancel"); },
+  };
+  const tools = createStardewActionTools(integration);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0]?.name, "stardew_refill_watering_can");
+  await tools[0]!.execute("test", { slot: 4, x: 9, y: 9, expectedTargetId: "watering_can_refill_01", requestId: "request_refill_01", idempotencyKey: "idempotency_refill_01" }, new AbortController().signal, () => {}, {} as never);
+  assert.deepEqual(received, { requestId: "request_refill_01", idempotencyKey: "idempotency_refill_01", action: "refill_watering_can", args: { slot: 4, x: 9, y: 9, expectedTargetId: "watering_can_refill_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
+
+  const unavailable: MoveCapableIntegration = { ...integration, get state() { return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } }; } };
+  assert.equal(createStardewActionTools(unavailable).some((tool) => tool.name === "stardew_refill_watering_can"), false);
+});
+
 test("published plant_seed mounts only from a live capability and forwards the opaque live target", async () => {
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
@@ -114,6 +133,22 @@ test("published plant_seed mounts only from a live capability and forwards the o
   await tools[0]!.execute("test", { slot: 5, x: 2, y: 3, expectedQualifiedItemId: "(O)479", expectedTargetId: "seed_target_01", requestId: "request_seed_01", idempotencyKey: "idempotency_seed_01" }, new AbortController().signal, () => {}, {} as never);
   assert.deepEqual(received, { requestId: "request_seed_01", idempotencyKey: "idempotency_seed_01", action: "plant_seed", args: { slot: 5, x: 2, y: 3, expectedQualifiedItemId: "(O)479", expectedTargetId: "seed_target_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
   assert.ok((received as { deadlineMs: number }).deadlineMs >= Date.now() - 1_000);
+});
+
+test("published clear_hoedirt mounts only from a live capability and forwards exact arguments", async () => {
+  let received: unknown = null;
+  const integration: MoveCapableIntegration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    get state() { return { connected: true, sessionId: "session_01", capabilities: ["clear_hoedirt"], snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["clear_hoedirt"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
+    async execute(request) { received = request; return { executionId: "execution_hoedirt_01", requestId: request.requestId, state: "succeeded", reasonCode: "hoedirt_cleared", revision: 4, evidence: { detail: "location=Farm;target=hoedirt_01;tile=2,3;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true" } }; },
+    async cancel() { throw new Error("must_not_cancel"); },
+  };
+  const tools = createStardewActionTools(integration);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0]?.name, "stardew_clear_hoedirt");
+  await tools[0]!.execute("test", { slot: 4, x: 2, y: 3, expectedTargetId: "hoedirt_01", requestId: "request_hoedirt_01", idempotencyKey: "idempotency_hoedirt_01" }, new AbortController().signal, () => {}, {} as never);
+  assert.deepEqual(received, { requestId: "request_hoedirt_01", idempotencyKey: "idempotency_hoedirt_01", action: "clear_hoedirt", args: { slot: 4, x: 2, y: 3, expectedTargetId: "hoedirt_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
 });
 
 test("published use_item mounts only from a live capability and forwards the food slot", async () => {
@@ -148,6 +183,43 @@ test("published harvest_crop mounts only from a live capability and forwards the
   assert.deepEqual(received, { requestId: "request_harvest_01", idempotencyKey: "idempotency_harvest_01", action: "harvest_crop", args: { x: 39, y: 19, expectedQualifiedItemId: "(O)256", expectedTargetId: "crop_target_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
 });
 
+test("published chop_tree_source mounts only from a live Mod capability and forwards the exact source target", async () => {
+  let received: unknown = null;
+  const integration: MoveCapableIntegration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    get state() { return { connected: true, sessionId: "session_01", capabilities: ["chop_tree_source"], snapshot: { revision: 3, location: "Farm", tile: { x: 38, y: 19 }, stamina: 100, health: 100, actionable: true, capabilities: ["chop_tree_source"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
+    async execute(request) { received = request; return { executionId: "execution_tree_chop_01", requestId: request.requestId, state: "succeeded", reasonCode: "tree_source_chopped", revision: 4, evidence: { detail: "target=tree_chop_01;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true" } }; },
+    async cancel() { throw new Error("must_not_cancel"); },
+  };
+  const tools = createStardewActionTools(integration);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0]?.name, "stardew_chop_tree_source");
+  await tools[0]!.execute("test", { slot: 4, x: 39, y: 19, expectedTargetId: "tree_chop_01", requestId: "request_tree_chop_01", idempotencyKey: "idempotency_tree_chop_01" }, new AbortController().signal, () => {}, {} as never);
+  assert.deepEqual(received, { requestId: "request_tree_chop_01", idempotencyKey: "idempotency_tree_chop_01", action: "chop_tree_source", args: { slot: 4, x: 39, y: 19, expectedTargetId: "tree_chop_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
+
+  const unavailable: MoveCapableIntegration = { ...integration, get state() { return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } }; } };
+  assert.equal(createStardewActionTools(unavailable).some((tool) => tool.name === "stardew_chop_tree_source"), false);
+});
+
+test("published break_rock_source mounts only from a live Mod capability and forwards the exact source target", async () => {  let received: unknown = null;
+  const integration: MoveCapableIntegration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    get state() { return { connected: true, sessionId: "session_01", capabilities: ["break_rock_source"], snapshot: { revision: 3, location: "Farm", tile: { x: 38, y: 19 }, stamina: 100, health: 100, actionable: true, capabilities: ["break_rock_source"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
+    async execute(request) { received = request; return { executionId: "execution_rock_01", requestId: request.requestId, state: "succeeded", reasonCode: "rock_source_broken", revision: 4, evidence: { detail: "target=rock_source_01;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true" } }; },
+    async cancel() { throw new Error("must_not_cancel"); },
+  };
+  const tools = createStardewActionTools(integration);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0]?.name, "stardew_break_rock_source");
+  await tools[0]!.execute("test", { slot: 4, x: 39, y: 19, expectedTargetId: "rock_source_01", requestId: "request_rock_01", idempotencyKey: "idempotency_rock_01" }, new AbortController().signal, () => {}, {} as never);
+  assert.deepEqual(received, { requestId: "request_rock_01", idempotencyKey: "idempotency_rock_01", action: "break_rock_source", args: { slot: 4, x: 39, y: 19, expectedTargetId: "rock_source_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
+
+  const unavailable: MoveCapableIntegration = { ...integration, get state() { return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } }; } };
+  assert.equal(createStardewActionTools(unavailable).some((tool) => tool.name === "stardew_break_rock_source"), false);
+});
+
 test("published machine_inspect mounts only from a live capability and forwards the opaque target", async () => {
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
@@ -162,6 +234,39 @@ test("published machine_inspect mounts only from a live capability and forwards 
   assert.equal(tools[0]?.name, "stardew_machine_inspect");
   await tools[0]!.execute("test", { x: 14, y: 37, expectedTargetId: "machine_target_01", requestId: "request_machine_01", idempotencyKey: "idempotency_machine_01" }, new AbortController().signal, () => {}, {} as never);
   assert.deepEqual(received, { requestId: "request_machine_01", idempotencyKey: "idempotency_machine_01", action: "machine_inspect", args: { x: 14, y: 37, expectedTargetId: "machine_target_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
+});
+
+test("published machine_load mounts only from a live capability and forwards the fixed Coffee Bean contract", async () => {
+  let received: unknown = null;
+  const integration: MoveCapableIntegration = {
+    scope, module: STARDEW_INTEGRATION_MODULE,
+    get state() { return { connected: true, sessionId: "session_01", capabilities: ["machine_load"], snapshot: { revision: 3, location: "FarmHouse", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["machine_load"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
+    async execute(request) { received = request; return { executionId: "execution_machine_load_01", requestId: request.requestId, state: "succeeded", reasonCode: "machine_coffee_loaded", revision: 4, evidence: { detail: "machine=(BC)12" } }; },
+    async cancel() { throw new Error("must_not_cancel"); },
+  };
+  const tools = createStardewActionTools(integration);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0]?.name, "stardew_machine_load");
+  await tools[0]!.execute("test", { slot: 5, x: 14, y: 37, expectedQualifiedItemId: "(O)433", expectedTargetId: "machine_target_01", requestId: "request_machine_load_01", idempotencyKey: "idempotency_machine_load_01" }, new AbortController().signal, () => {}, {} as never);
+  assert.deepEqual(received, { requestId: "request_machine_load_01", idempotencyKey: "idempotency_machine_load_01", action: "machine_load", args: { slot: 5, x: 14, y: 37, expectedQualifiedItemId: "(O)433", expectedTargetId: "machine_target_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
+});
+
+test("published machine_collect_output mounts only from a live capability and forwards the opaque ready Keg target", async () => {
+  let received: unknown = null;
+  const integration: MoveCapableIntegration = {
+    scope, module: STARDEW_INTEGRATION_MODULE,
+    get state() { return { connected: true, sessionId: "session_01", capabilities: ["machine_collect_output"], snapshot: { revision: 3, location: "FarmHouse", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["machine_collect_output"], activeExecution: null }, latestReceipt: null, latestReasonCode: null }; },
+    async execute(request) { received = request; return { executionId: "execution_machine_collect_01", requestId: request.requestId, state: "succeeded", reasonCode: "machine_coffee_collected", revision: 4, evidence: { detail: "machine=(BC)12" } }; },
+    async cancel() { throw new Error("must_not_cancel"); },
+  };
+  const tools = createStardewActionTools(integration);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0]?.name, "stardew_machine_collect_output");
+  await tools[0]!.execute("test", { x: 14, y: 37, expectedTargetId: "machine_target_01", requestId: "request_machine_collect_01", idempotencyKey: "idempotency_machine_collect_01" }, new AbortController().signal, () => {}, {} as never);
+  assert.deepEqual(received, { requestId: "request_machine_collect_01", idempotencyKey: "idempotency_machine_collect_01", action: "machine_collect_output", args: { x: 14, y: 37, expectedTargetId: "machine_target_01" }, expectedRevision: 3, deadlineMs: (received as { deadlineMs: number }).deadlineMs });
+
+  const unavailable: MoveCapableIntegration = { ...integration, get state() { return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } }; } };
+  assert.equal(createStardewActionTools(unavailable).some((tool) => tool.name === "stardew_machine_collect_output"), false);
 });
 
 test("mounted Game Actions return authoritative Mod receipts without inventing completion", async () => {
