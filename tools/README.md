@@ -84,6 +84,20 @@ The derivation requires Windows, the exact target `Stardew Valley.dll` (`1.6.15.
 
 A passing report proves only `inputAccountingState: source_and_content_input_accounting_complete`. It deliberately reports `architectureAccountingState: incomplete_pending_exhaustive_root_and_handoff_review`: the checked-in root/handoff register is a conservative reviewed seed, not an exhaustive operation graph. It does **not** infer source semantics, primitive actions, player-action completeness, contracts, capability policy, receipts, live behavior, or GameBuddy public API projection. The generated report remains local under `.worktree/`; this checked-in section is the complete normative boundary for the tool.
 
+## Version-locked C# syntax structural canary
+
+```powershell
+pnpm test:stardew-csharp-syntax-structural-canary
+pnpm derive:stardew-csharp-syntax-structural-canary -- `
+  --game-path $env:GAMEBUDDY_STARDEW_GAME_PATH `
+  --out .worktree/stardew-csharp-syntax-structural-canary.json
+```
+
+This local Windows-only tool requires the exact target `Stardew Valley.dll` version `1.6.15.24356` (SHA-256 `7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee`) and `ilspycmd: 9.1.0.7988`. It re-decompiles three fixed source canaries and uses the checked-in Tree-sitter C# grammar to produce source-attested syntax facts: declarations, control syntax, invocation syntax, assignment syntax, parse gaps, and UTF-8 byte locators. It rejects mismatched target/decompiler/source bytes and parse errors. Reports must use a new direct filename beneath repository `.worktree/`; the tool refuses existing paths, nested paths, and all paths outside that root.
+
+A passing report is a static parser and syntax-input compatibility check only. It does **not** infer source semantics, operation ownership, primitive actions, player reachability, contracts, capabilities, gameplay behavior, receipts, live evidence, or release readiness. The generated report is local evidence and should be written beneath `.worktree/`.
+
+
 ## Ongoing-interaction Historian authoring gate
 
 `run-ongoing-interaction-historian-authoring.mjs` is a provider-backed
