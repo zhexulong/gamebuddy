@@ -84,6 +84,10 @@ internal sealed record BridgeSoilTile(int X, int Y);
 
 internal sealed record BridgeToolSlot(int Slot, string Label);
 
+internal sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, string Label, int Water, int Max);
+
+internal sealed record BridgeRefillWateringCanTarget(string TargetId, int X, int Y);
+
 internal sealed record BridgeForageTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
 
 internal sealed record BridgeItemTarget(string TargetId, int X, int Y, string QualifiedItemId, int Stack);
@@ -96,11 +100,43 @@ internal sealed record BridgeSeedTarget(string TargetId, int Slot, int X, int Y,
 
 internal sealed record BridgeFertilizerTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId);
 
-internal sealed record BridgeDebrisTarget(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel);
+/// <summary>Fresh native Farm binding for the finite (O)322 non-gate Fence placement slice.</summary>
+internal sealed record BridgeWoodFenceTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId);
 
-internal sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId);
+/// <summary>Fresh native result binding for one successful (O)322 non-gate Fence placement.</summary>
+internal sealed record BridgeWoodFenceResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, bool IsFence, bool IsGate, float Health, float MaxHealth);
 
-internal sealed record BridgeResourceTarget(string TargetId, int Slot, int X, int Y, string TreeType, int GrowthStage, bool Stump, float Health, string ToolKind, int RequiredUpgradeLevel);
+/// <summary>Fresh native Farm binding for the finite (O)710 Crab Pot placement slice.</summary>
+internal sealed record BridgeCrabPotTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId);
+
+/// <summary>One target-bound native overlay tile fact for a successful (O)710 Crab Pot placement.</summary>
+internal sealed record BridgeCrabPotOverlayTile(int X, int Y, int Count);
+
+/// <summary>Fresh native result binding for one successful (O)710 Crab Pot placement.</summary>
+internal sealed record BridgeCrabPotResultTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, long OwnerId, float OffsetX, float OffsetY, IReadOnlyList<BridgeCrabPotOverlayTile> OverlayTiles);
+
+internal sealed record BridgeDebrisTarget(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel, int Health);
+
+internal sealed record BridgeRockSourceTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, int Health);
+
+internal sealed record BridgeArtifactSpotTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId);
+
+/// <summary>Same-location plain ground HoeDirt created by a successful dig_artifact_spot action.</summary>
+internal sealed record BridgeArtifactSpotResultTarget(string TargetId, string Location, int X, int Y, bool Crop, bool Ground);
+
+/// <summary>Adjacent empty ground HoeDirt eligible for one native Basic Pickaxe clear.</summary>
+internal sealed record BridgeClearHoeDirtTarget(string TargetId, string Location, int X, int Y, bool Crop, bool Ground);
+
+internal sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady);
+
+/// <summary>Read-only nearby ordinary tree source eligible for a future native shake contract.</summary>
+internal sealed record BridgeTreeShakeSourceTarget(string TargetId, string Location, int X, int Y, string TreeType, int GrowthStage, float Health, bool Moss, bool Tapped);
+
+/// <summary>Ordinary mature tree at the bounded native terminal-fell starting state for chop_tree_source.</summary>
+internal sealed record BridgeTreeChopSourceTarget(string TargetId, string Location, int X, int Y, string TreeType, int GrowthStage, float Health, bool Stump, bool Moss, bool Tapped);
+
+/// <summary>Same-location native stump result published only after a chop_tree_source terminal hit.</summary>
+internal sealed record BridgeTreeChopResultTarget(string TargetId, string Location, int X, int Y, string TreeType, float Health, bool Stump, bool Moss, bool Tapped);
 
 internal sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, string NpcName, int FriendshipPoints, string FriendshipStatus, bool TalkedToToday, int GiftsToday, int GiftsThisWeek);
 
@@ -111,6 +147,9 @@ internal sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int 
 
 /// <summary>Empty native AnimalHouse Trough paired with an owned Hay inventory slot.</summary>
 internal sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int HayStack);
+
+/// <summary>Bounded live inventory fact used to independently reread collection output.</summary>
+internal sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, int Stack);
 
 internal sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, int Stack, int Edibility, bool IsDrink);
 
@@ -129,19 +168,33 @@ internal sealed record BridgeSnapshot(
     IReadOnlyList<BridgeDoor>? DoorTargets,
     IReadOnlyList<BridgeSoilTile>? SoilTiles,
     IReadOnlyList<BridgeToolSlot>? ToolSlots,
+    IReadOnlyList<BridgeWateringCanFact>? WateringCanFacts,
+    IReadOnlyList<BridgeRefillWateringCanTarget>? RefillWateringCanTargets,
     IReadOnlyList<BridgeForageTarget>? ForageTargets,
     IReadOnlyList<BridgeItemTarget>? ItemTargets,
     IReadOnlyList<BridgeCropTarget>? CropTargets,
     IReadOnlyList<BridgeHarvestTarget>? HarvestTargets,
     IReadOnlyList<BridgeSeedTarget>? SeedTargets,
     IReadOnlyList<BridgeFertilizerTarget>? FertilizerTargets,
+    IReadOnlyList<BridgeWoodFenceTarget>? WoodFenceTargets,
+    IReadOnlyList<BridgeWoodFenceResultTarget>? WoodFenceResultTargets,
+    IReadOnlyList<BridgeCrabPotTarget>? CrabPotTargets,
+    IReadOnlyList<BridgeCrabPotResultTarget>? CrabPotResultTargets,
     IReadOnlyList<BridgeDebrisTarget>? DebrisTargets,
+    IReadOnlyList<BridgeRockSourceTarget>? RockSourceTargets,
+    IReadOnlyList<BridgeClearHoeDirtTarget>? ClearHoeDirtTargets,
+    IReadOnlyList<BridgeArtifactSpotTarget>? ArtifactSpotTargets,
+    IReadOnlyList<BridgeArtifactSpotResultTarget>? ArtifactSpotResultTargets,
+    int? ArtifactSpotFarmSourceCount,
     IReadOnlyList<BridgeMachineTarget>? MachineTargets,
-    IReadOnlyList<BridgeResourceTarget>? ResourceTargets,
+    IReadOnlyList<BridgeTreeShakeSourceTarget>? TreeShakeSourceTargets,
+    IReadOnlyList<BridgeTreeChopSourceTarget>? TreeChopSourceTargets,
+    IReadOnlyList<BridgeTreeChopResultTarget>? TreeChopResultTargets,
     IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
     IReadOnlyList<BridgePetTarget>? PetTargets,
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
     IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,
+    IReadOnlyList<BridgeInventoryItemFact>? InventoryItemFacts,
     IReadOnlyList<BridgeFoodTarget>? FoodTargets);
 
 internal sealed record BridgeActiveExecution(
@@ -168,7 +221,19 @@ internal sealed record BridgeSemanticEvent(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeActiveExecution? ActiveExecution,
     string ReasonCode);
 
-internal sealed record BridgeExecutionArgs(float? X, float? Y, int? Slot, string? ExpectedQualifiedItemId, string? ExpectedTargetId);
+internal sealed class BridgeExecutionArgs
+{
+    public float? X { get; init; }
+    public float? Y { get; init; }
+    public int? Slot { get; init; }
+    public string? ExpectedQualifiedItemId { get; init; }
+    public string? ExpectedTargetId { get; init; }
+
+    // This is scoped to execution arguments. Existing actions retain their
+    // established permissive decoding; tree_first_hit rejects this collection.
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
 
 internal sealed record BridgeExecutionRequest(
     string RequestId,

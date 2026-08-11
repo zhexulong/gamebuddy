@@ -1,0 +1,355 @@
+{
+  "schemaVersion": 2,
+  "artifactKind": "native_transition_continuation_ledger",
+  "attestation": {
+    "targetAssemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "sourceManifestSha256": "cc6c0bc1eb1a040a1d85af790652aea0e8320d46c41958af4d40180500b81f4b"
+  },
+  "closureState": "partial",
+  "scopedMechanismIds": [
+    "host:febe1b24e60b30998e33bb309456d681eadf6ee47d5747f2ffe1fcf27bd9755f",
+    "host:4bd626df81b69a251aa6f7fc0413bfabd00771462bbc032975eb63db4b734020",
+    "host:ecee6c0cdbdec413bea15c3bd6bf7b0c6c637fb7c6285420339798ab0800a81b"
+  ],
+  "transitions": [
+    {
+      "transitionId": "transition:game1:press-action-router",
+      "kind": "source_router",
+      "incomingMechanismIds": [
+        "host:febe1b24e60b30998e33bb309456d681eadf6ee47d5747f2ffe1fcf27bd9755f"
+      ],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/Game1.cs",
+        "member": "Game1.pressActionButton",
+        "startByte": 337696,
+        "endByte": 348861,
+        "sourceSliceSha256": "2ee8d4f173f120a1468dc9b77a22b30f0bda2686afa72c0c263678c42ccd792c",
+        "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f"
+      },
+      "routerReason": "The normal target-check route delegates through Game1.tryToCheckAt; all other precedence branches remain unresolved in this focused slice.",
+      "possiblyGameplayBearing": true,
+      "handoffs": [
+        {
+          "toTransitionId": "transition:game1:check-action-hook-boundary",
+          "kind": "direct_call",
+          "phase": "routing",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/Game1.cs",
+            "member": "Game1.pressActionButton",
+            "sourceSliceSha256": "2ee8d4f173f120a1468dc9b77a22b30f0bda2686afa72c0c263678c42ccd792c",
+            "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f",
+            "startByte": 337696,
+            "endByte": 348861
+          },
+          "condition": "always"
+        }
+      ],
+      "exitCoverage": "partial",
+      "exitInventory": [
+        {
+          "exitId": "exit:check-action-hook",
+          "kind": "unresolved_gap",
+          "handoffSequence": 0,
+          "anchor": {
+            "sourcePath": "StardewValley/Game1.cs",
+            "member": "Game1.pressActionButton",
+            "sourceSliceSha256": "2ee8d4f173f120a1468dc9b77a22b30f0bda2686afa72c0c263678c42ccd792c",
+            "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f",
+            "startByte": 337696,
+            "endByte": 348861
+          }
+        }
+      ]
+    },
+    {
+      "transitionId": "transition:game1:check-action-hook-boundary",
+      "kind": "unresolved_gap",
+      "incomingMechanismIds": [],
+      "gapOrBoundaryReason": "Game1.tryToCheckAt wraps GameLocation.checkAction in Game1.hooks.OnGameLocation_CheckAction; hook ordering and fallback invocation are external/mod-controlled.",
+      "possiblyGameplayBearing": true,
+      "boundaryAnchor": {
+        "member": "Game1.tryToCheckAt",
+        "sourcePath": "StardewValley/Game1.cs",
+        "startByte": 349441,
+        "endByte": 350237,
+        "sourceSliceSha256": "90c1d49e24beb872566a9cefcfd13c165f32842d1ec9d79dc2f5e7aace770d86",
+        "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f"
+      },
+      "handoffs": [],
+      "exitCoverage": "exhaustive"
+    },
+    {
+      "transitionId": "transition:game1:use-tool-router",
+      "kind": "source_router",
+      "incomingMechanismIds": [
+        "host:4bd626df81b69a251aa6f7fc0413bfabd00771462bbc032975eb63db4b734020"
+      ],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/Game1.cs",
+        "member": "Game1.pressUseToolButton",
+        "startByte": 351498,
+        "endByte": 358061,
+        "sourceSliceSha256": "f069fe11950a7fd429a2b1c92204c0755f019c262318a860dfd911ffe8c6a21c",
+        "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f"
+      },
+      "routerReason": "The normal selected-tool branch forwards to Farmer.BeginUsingTool; object/location/item-placement precedence branches are retained outside this focused slice.",
+      "possiblyGameplayBearing": true,
+      "handoffs": [
+        {
+          "toTransitionId": "transition:farmer:begin-using-tool-event",
+          "kind": "direct_call",
+          "phase": "routing",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/Game1.cs",
+            "member": "Game1.pressUseToolButton",
+            "sourceSliceSha256": "f069fe11950a7fd429a2b1c92204c0755f019c262318a860dfd911ffe8c6a21c",
+            "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f",
+            "startByte": 351498,
+            "endByte": 358061
+          },
+          "condition": "always"
+        }
+      ],
+      "exitCoverage": "exhaustive",
+      "exitInventory": [
+        {
+          "exitId": "exit:handoff-0",
+          "kind": "handoff",
+          "handoffSequence": 0,
+          "anchor": {
+            "sourcePath": "StardewValley/Game1.cs",
+            "member": "Game1.pressUseToolButton",
+            "sourceSliceSha256": "f069fe11950a7fd429a2b1c92204c0755f019c262318a860dfd911ffe8c6a21c",
+            "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f",
+            "startByte": 351498,
+            "endByte": 358061
+          }
+        }
+      ]
+    },
+    {
+      "transitionId": "transition:farmer:begin-using-tool-event",
+      "kind": "owner_managed_continuation",
+      "incomingMechanismIds": [],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/Farmer.cs",
+        "member": "Farmer.BeginUsingTool",
+        "sourceSliceSha256": "36fd671e75489db54b0a1da0c064e58cce5e855cd793c552b5eabf7dd7d48249",
+        "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+        "startByte": 200895,
+        "endByte": 200962
+      },
+      "postStateObservations": [],
+      "pendingNativeContinuationState": [
+        {
+          "ownerSyntax": "Farmer",
+          "stateSyntax": "beginUsingToolEvent",
+          "anchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.BeginUsingTool",
+            "sourceSliceSha256": "36fd671e75489db54b0a1da0c064e58cce5e855cd793c552b5eabf7dd7d48249",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 200895,
+            "endByte": 200962
+          }
+        }
+      ],
+      "possiblyGameplayBearing": true,
+      "handoffs": [
+        {
+          "toTransitionId": "transition:farmer:perform-begin-using-tool",
+          "kind": "event_registration",
+          "phase": "continuation",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.BeginUsingTool",
+            "sourceSliceSha256": "36fd671e75489db54b0a1da0c064e58cce5e855cd793c552b5eabf7dd7d48249",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 200895,
+            "endByte": 200962
+          },
+          "condition": "always"
+        }
+      ],
+      "exitCoverage": "exhaustive",
+      "registrationAnchor": {
+        "sourcePath": "StardewValley/Farmer.cs",
+        "member": "Farmer.BeginUsingTool",
+        "sourceSliceSha256": "36fd671e75489db54b0a1da0c064e58cce5e855cd793c552b5eabf7dd7d48249",
+        "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+        "startByte": 200895,
+        "endByte": 200962
+      },
+      "terminalAnchor": {
+        "sourcePath": "StardewValley/Farmer.cs",
+        "member": "Farmer.BeginUsingTool",
+        "sourceSliceSha256": "36fd671e75489db54b0a1da0c064e58cce5e855cd793c552b5eabf7dd7d48249",
+        "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+        "startByte": 200895,
+        "endByte": 200962
+      },
+      "exitInventory": [
+        {
+          "exitId": "exit:handoff-0",
+          "kind": "handoff",
+          "handoffSequence": 0,
+          "anchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.BeginUsingTool",
+            "sourceSliceSha256": "36fd671e75489db54b0a1da0c064e58cce5e855cd793c552b5eabf7dd7d48249",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 200895,
+            "endByte": 200962
+          }
+        }
+      ]
+    },
+    {
+      "transitionId": "transition:farmer:perform-begin-using-tool",
+      "kind": "source_owned_transition",
+      "incomingMechanismIds": [],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/Farmer.cs",
+        "member": "Farmer.performBeginUsingTool",
+        "sourceSliceSha256": "4854974c0c794fa9da6f14dcb84ef8d55df8ec58d585e0ff236f0c70dc3b7f0c",
+        "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+        "startByte": 200967,
+        "endByte": 201271
+      },
+      "commitAnchor": {
+        "sourcePath": "StardewValley/Farmer.cs",
+        "member": "Farmer.performBeginUsingTool",
+        "sourceSliceSha256": "4854974c0c794fa9da6f14dcb84ef8d55df8ec58d585e0ff236f0c70dc3b7f0c",
+        "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+        "startByte": 200967,
+        "endByte": 201271
+      },
+      "postStateObservations": [
+        {
+          "ownerSyntax": "Farmer",
+          "stateSyntax": "CanMove",
+          "anchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.performBeginUsingTool",
+            "sourceSliceSha256": "4854974c0c794fa9da6f14dcb84ef8d55df8ec58d585e0ff236f0c70dc3b7f0c",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 200967,
+            "endByte": 201271
+          }
+        },
+        {
+          "ownerSyntax": "Farmer",
+          "stateSyntax": "UsingTool",
+          "anchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.performBeginUsingTool",
+            "sourceSliceSha256": "4854974c0c794fa9da6f14dcb84ef8d55df8ec58d585e0ff236f0c70dc3b7f0c",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 200967,
+            "endByte": 201271
+          }
+        },
+        {
+          "ownerSyntax": "Farmer",
+          "stateSyntax": "canReleaseTool",
+          "anchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.performBeginUsingTool",
+            "sourceSliceSha256": "4854974c0c794fa9da6f14dcb84ef8d55df8ec58d585e0ff236f0c70dc3b7f0c",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 200967,
+            "endByte": 201271
+          }
+        }
+      ],
+      "pendingNativeContinuationState": [],
+      "possiblyGameplayBearing": true,
+      "handoffs": [
+        {
+          "toTransitionId": "transition:tool:begin-using-virtual-dispatch",
+          "kind": "direct_call",
+          "phase": "after_commit",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.performBeginUsingTool",
+            "sourceSliceSha256": "4854974c0c794fa9da6f14dcb84ef8d55df8ec58d585e0ff236f0c70dc3b7f0c",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 200967,
+            "endByte": 201271
+          },
+          "condition": "always"
+        }
+      ],
+      "exitCoverage": "exhaustive",
+      "exitInventory": [
+        {
+          "exitId": "exit:handoff-0",
+          "kind": "handoff",
+          "handoffSequence": 0,
+          "anchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.performBeginUsingTool",
+            "sourceSliceSha256": "4854974c0c794fa9da6f14dcb84ef8d55df8ec58d585e0ff236f0c70dc3b7f0c",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 200967,
+            "endByte": 201271
+          }
+        }
+      ]
+    },
+    {
+      "transitionId": "transition:tool:begin-using-virtual-dispatch",
+      "kind": "unresolved_gap",
+      "incomingMechanismIds": [],
+      "gapOrBoundaryReason": "Farmer.performBeginUsingTool invokes runtime-selected CurrentTool.beginUsing; Tool base, overrides, animation callbacks, and update-owned phases require separate transition rows.",
+      "possiblyGameplayBearing": true,
+      "boundaryAnchor": {
+        "member": "Game1.pressSwitchToolButton",
+        "sourcePath": "StardewValley/Game1.cs",
+        "startByte": 350242,
+        "endByte": 351493,
+        "sourceSliceSha256": "5421514640868a482be433874db64abc1a23ad913404270f49c4bf77b661a3b9",
+        "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f"
+      },
+      "handoffs": [],
+      "exitCoverage": "exhaustive"
+    },
+    {
+      "transitionId": "transition:game1:control-input-hook-boundary",
+      "kind": "unresolved_gap",
+      "incomingMechanismIds": [
+        "host:ecee6c0cdbdec413bea15c3bd6bf7b0c6c637fb7c6285420339798ab0800a81b"
+      ],
+      "gapOrBoundaryReason": "Game1.UpdateControlInput passes mutable input and its native routing callback to hooks.OnGame1_UpdateControlInput; hook behavior and inputSimulator can alter routing before Farmer.setMoving.",
+      "possiblyGameplayBearing": true,
+      "boundaryAnchor": {
+        "sourcePath": "StardewValley/Game1.cs",
+        "member": "Game1.UpdateControlInput",
+        "startByte": 378572,
+        "endByte": 412507,
+        "sourceSliceSha256": "a767ef1979903d2bb626320dc308b141d7eb3eca19e5085ca7d4fd0ed61f3662",
+        "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f"
+      },
+      "handoffs": [],
+      "exitCoverage": "exhaustive"
+    }
+  ],
+  "rootBindings": [
+    {
+      "mechanismId": "host:febe1b24e60b30998e33bb309456d681eadf6ee47d5747f2ffe1fcf27bd9755f",
+      "transitionId": "transition:game1:press-action-router"
+    },
+    {
+      "mechanismId": "host:4bd626df81b69a251aa6f7fc0413bfabd00771462bbc032975eb63db4b734020",
+      "transitionId": "transition:game1:use-tool-router"
+    },
+    {
+      "mechanismId": "host:ecee6c0cdbdec413bea15c3bd6bf7b0c6c637fb7c6285420339798ab0800a81b",
+      "transitionId": "transition:game1:control-input-hook-boundary"
+    }
+  ]
+}

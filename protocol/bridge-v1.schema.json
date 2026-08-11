@@ -4,62 +4,1540 @@
   "title": "GameBuddy local bridge v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocolVersion", "messageId", "correlationId", "timestampMs", "scope", "type", "payload"],
+  "required": [
+    "protocolVersion",
+    "messageId",
+    "correlationId",
+    "timestampMs",
+    "scope",
+    "type",
+    "payload"
+  ],
   "properties": {
-    "protocolVersion": { "const": 1 },
-    "messageId": { "$ref": "#/$defs/opaqueId" },
-    "correlationId": { "$ref": "#/$defs/opaqueId" },
-    "timestampMs": { "type": "integer" },
-    "scope": { "$ref": "#/$defs/scope" },
-    "type": { "enum": ["hello", "hello_ack", "observe_request", "snapshot", "execution_request", "cancel_request", "execution_receipt", "error", "semantic_event", "lifecycle"] },
-    "payload": { "type": "object" }
+    "protocolVersion": {
+      "const": 1
+    },
+    "messageId": {
+      "$ref": "#/$defs/opaqueId"
+    },
+    "correlationId": {
+      "$ref": "#/$defs/opaqueId"
+    },
+    "timestampMs": {
+      "type": "integer"
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "type": {
+      "enum": [
+        "hello",
+        "hello_ack",
+        "observe_request",
+        "snapshot",
+        "execution_request",
+        "cancel_request",
+        "execution_receipt",
+        "error",
+        "semantic_event",
+        "lifecycle"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
   },
   "allOf": [
-    { "if": { "properties": { "type": { "const": "hello" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/hello" } } } },
-    { "if": { "properties": { "type": { "const": "hello_ack" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/helloAck" } } } },
-    { "if": { "properties": { "type": { "const": "observe_request" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/empty" } } } },
-    { "if": { "properties": { "type": { "const": "snapshot" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/snapshot" } } } },
-    { "if": { "properties": { "type": { "const": "execution_request" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/executionRequest" } } } },
-    { "if": { "properties": { "type": { "const": "cancel_request" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/cancelRequest" } } } },
-    { "if": { "properties": { "type": { "const": "execution_receipt" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/receipt" } } } },
-    { "if": { "properties": { "type": { "const": "error" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/error" } } } },
-    { "if": { "properties": { "type": { "const": "semantic_event" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/semanticEvent" } } } },
-    { "if": { "properties": { "type": { "const": "lifecycle" } } }, "then": { "properties": { "payload": { "$ref": "#/$defs/lifecycle" } } } }
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "hello"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/hello"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "hello_ack"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/helloAck"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "observe_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/empty"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "snapshot"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/snapshot"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "execution_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/executionRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "cancel_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/cancelRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "execution_receipt"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/receipt"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/error"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "semantic_event"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/semanticEvent"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "lifecycle"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/lifecycle"
+          }
+        }
+      }
+    }
   ],
   "$defs": {
-    "opaqueId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" },
-    "token": { "type": "string", "pattern": "^[A-Za-z0-9_-]{16,256}$" },
-    "reasonCode": { "type": "string", "pattern": "^[a-z0-9_:-]{1,128}$" },
-    "tile": { "type": "integer", "minimum": 0, "maximum": 1000 },
-    "scope": { "type": "object", "additionalProperties": false, "required": ["integrationId", "saveId", "worldId", "playerId", "companionId"], "properties": { "integrationId": { "$ref": "#/$defs/opaqueId" }, "saveId": { "$ref": "#/$defs/opaqueId" }, "worldId": { "$ref": "#/$defs/opaqueId" }, "playerId": { "$ref": "#/$defs/opaqueId" }, "companionId": { "$ref": "#/$defs/opaqueId" } } },
-    "empty": { "type": "object", "additionalProperties": false },
-    "hello": { "type": "object", "additionalProperties": false, "required": ["token"], "properties": { "token": { "$ref": "#/$defs/token" } } },
-    "helloAck": { "type": "object", "additionalProperties": false, "required": ["sessionId", "capabilities"], "properties": { "sessionId": { "$ref": "#/$defs/opaqueId" }, "capabilities": { "type": "array", "items": { "type": "string", "maxLength": 128 }, "maxItems": 128 } } },
-    "activeExecution": { "type": "object", "additionalProperties": false, "required": ["executionId", "requestId", "action", "state", "reasonCode", "evidence"], "properties": { "executionId": { "$ref": "#/$defs/opaqueId" }, "requestId": { "$ref": "#/$defs/opaqueId" }, "action": { "type": "string", "maxLength": 128 }, "state": { "$ref": "#/$defs/executionState" }, "reasonCode": { "$ref": "#/$defs/reasonCode" }, "evidence": { "type": ["object", "null"] } } },
-    "warp": { "type": "object", "additionalProperties": false, "required": ["sourceX", "sourceY", "targetLocation", "targetX", "targetY"], "properties": { "sourceX": { "$ref": "#/$defs/tile" }, "sourceY": { "$ref": "#/$defs/tile" }, "targetLocation": { "type": "string", "minLength": 1, "maxLength": 256 }, "targetX": { "$ref": "#/$defs/tile" }, "targetY": { "$ref": "#/$defs/tile" } } },
-    "soilTile": { "type": "object", "additionalProperties": false, "required": ["x", "y"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } } },
-    "toolSlot": { "type": "object", "additionalProperties": false, "required": ["slot", "label"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "label": { "type": "string", "minLength": 1, "maxLength": 128 } } },
-    "forageTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "x", "y", "qualifiedItemId", "stack"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "stack": { "type": "integer", "minimum": 1, "maximum": 999 } } },
-    "itemTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "x", "y", "qualifiedItemId", "stack"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "stack": { "type": "integer", "minimum": 1, "maximum": 999 } } },
-    "cropTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "x", "y", "cropId"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "cropId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
-    "harvestTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "x", "y", "cropId", "qualifiedHarvestItemId", "regrowsAfterHarvest"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "cropId": { "type": "string", "minLength": 1, "maxLength": 128 }, "qualifiedHarvestItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "regrowsAfterHarvest": { "type": "boolean" } } },
-    "seedTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "slot", "x", "y", "qualifiedItemId"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
-    "fertilizerTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "slot", "x", "y", "qualifiedItemId"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/\u0024defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
-    "debrisTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "slot", "x", "y", "parentSheetIndex", "toolKind", "requiredUpgradeLevel"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "parentSheetIndex": { "type": "integer", "minimum": 0, "maximum": 2000 }, "toolKind": { "enum": ["axe", "pickaxe"] }, "requiredUpgradeLevel": { "type": "integer", "minimum": 0, "maximum": 4 } } },
-    "machineTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "x", "y", "qualifiedItemId", "readyForHarvest", "minutesUntilReady"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "readyForHarvest": { "type": "boolean" }, "minutesUntilReady": { "type": "integer", "minimum": 0, "maximum": 100000 }, "heldObjectQualifiedItemId": { "type": ["string", "null"], "maxLength": 128 }, "lastInputQualifiedItemId": { "type": ["string", "null"], "maxLength": 128 } } },
-    "resourceTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "slot", "x", "y", "treeType", "growthStage", "stump", "health", "toolKind", "requiredUpgradeLevel"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "treeType": { "type": "string", "minLength": 1, "maxLength": 32 }, "growthStage": { "type": "integer", "minimum": 0, "maximum": 20 }, "stump": { "type": "boolean" }, "health": { "type": "number", "minimum": -100, "maximum": 100 }, "toolKind": { "const": "axe" }, "requiredUpgradeLevel": { "type": "integer", "minimum": 0, "maximum": 4 } } },
-    "npcRelationshipTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "x", "y", "npcName", "friendshipPoints", "friendshipStatus", "talkedToToday", "giftsToday", "giftsThisWeek"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "npcName": { "type": "string", "minLength": 1, "maxLength": 64 }, "friendshipPoints": { "type": "integer", "minimum": -1, "maximum": 10000 }, "friendshipStatus": { "type": "string", "minLength": 1, "maxLength": 32 }, "talkedToToday": { "type": "boolean" }, "giftsToday": { "type": "integer", "minimum": 0, "maximum": 10 }, "giftsThisWeek": { "type": "integer", "minimum": 0, "maximum": 20 } } },
-    "petTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "x", "y", "petType", "friendship", "pettedToday"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "petType": { "type": "string", "minLength": 1, "maxLength": 32 }, "friendship": { "type": "integer", "minimum": 0, "maximum": 1000 }, "pettedToday": { "const": false } } },
-    "animalProductTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "slot", "x", "y", "animalType", "qualifiedProduceItemId", "toolKind", "produceStack"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "animalType": { "type": "string", "minLength": 1, "maxLength": 64 }, "qualifiedProduceItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "toolKind": { "enum": ["milk_pail", "shears"] }, "produceStack": { "enum": [1, 2] } } },
-    "feedTroughTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "slot", "x", "y", "hayStack"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "hayStack": { "type": "integer", "minimum": 1, "maximum": 999 } } },
-    "foodTarget": { "type": "object", "additionalProperties": false, "required": ["slot", "qualifiedItemId", "stack", "edibility", "isDrink"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "stack": { "type": "integer", "minimum": 1, "maximum": 999 }, "edibility": { "type": "integer", "minimum": -299, "maximum": 1000 }, "isDrink": { "type": "boolean" } } },
-    "snapshot": { "type": "object", "additionalProperties": false, "required": ["revision", "location", "tile", "stamina", "health", "actionable", "capabilities"], "properties": { "revision": { "type": "integer" }, "location": { "type": "string" }, "tile": { "type": "object", "additionalProperties": false, "required": ["x", "y"], "properties": { "x": { "type": "number" }, "y": { "type": "number" } } }, "stamina": { "type": "number" }, "health": { "type": "number" }, "currentTool": { "type": ["string", "null"] }, "inventorySlots": { "type": "integer", "minimum": 0, "maximum": 36 }, "actionable": { "type": "boolean" }, "capabilities": { "type": "array", "items": { "type": "string", "maxLength": 128 }, "maxItems": 128 }, "activeExecution": { "anyOf": [{ "$ref": "#/$defs/activeExecution" }, { "type": "null" }] }, "warps": { "type": "array", "items": { "$ref": "#/$defs/warp" }, "maxItems": 512 }, "doorTargets": { "type": "array", "items": { "$ref": "#/$defs/warp" }, "maxItems": 64 }, "soilTiles": { "type": "array", "items": { "$ref": "#/$defs/soilTile" }, "maxItems": 64 }, "toolSlots": { "type": "array", "items": { "$ref": "#/$defs/toolSlot" }, "maxItems": 36 }, "forageTargets": { "type": "array", "items": { "$ref": "#/$defs/forageTarget" }, "maxItems": 64 }, "itemTargets": { "type": "array", "items": { "$ref": "#/$defs/itemTarget" }, "maxItems": 64 }, "cropTargets": { "type": "array", "items": { "$ref": "#/$defs/cropTarget" }, "maxItems": 64 }, "harvestTargets": { "type": "array", "items": { "$ref": "#/$defs/harvestTarget" }, "maxItems": 64 }, "seedTargets": { "type": "array", "items": { "$ref": "#/$defs/seedTarget" }, "maxItems": 64 }, "fertilizerTargets": { "type": "array", "items": { "$ref": "#/$defs/fertilizerTarget" }, "maxItems": 64 }, "debrisTargets": { "type": "array", "items": { "$ref": "#/$defs/debrisTarget" }, "maxItems": 64 }, "machineTargets": { "type": "array", "items": { "$ref": "#/$defs/machineTarget" }, "maxItems": 64 }, "resourceTargets": { "type": "array", "items": { "$ref": "#/$defs/resourceTarget" }, "maxItems": 64 }, "npcRelationshipTargets": { "type": "array", "items": { "$ref": "#/$defs/npcRelationshipTarget" }, "maxItems": 64 }, "petTargets": { "type": "array", "items": { "$ref": "#/$defs/petTarget" }, "maxItems": 16 }, "animalProductTargets": { "type": "array", "items": { "$ref": "#/$defs/animalProductTarget" }, "maxItems": 32 }, "feedTroughTargets": { "type": "array", "items": { "$ref": "#/$defs/feedTroughTarget" }, "maxItems": 32 }, "foodTargets": { "type": "array", "items": { "$ref": "#/$defs/foodTarget" }, "maxItems": 36 } } },
-    "executionRequest": { "type": "object", "additionalProperties": false, "required": ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"], "properties": { "requestId": { "$ref": "#/$defs/opaqueId" }, "idempotencyKey": { "$ref": "#/$defs/opaqueId" }, "action": { "enum": ["move_to_tile", "equip_tool", "travel", "enter_exit", "till_soil", "pickup_forage", "pickup_item", "water_crop", "harvest_crop", "plant_seed", "fertilize_tile", "clear_debris", "machine_inspect", "collect_resource", "npc_relationship", "pet_animal", "collect_animal_product", "feed_animal", "use_item", "inspect_self"] }, "args": { "type": "object" }, "expectedRevision": { "type": "integer" }, "deadlineMs": { "type": "integer" } } },
-    "cancelRequest": { "type": "object", "additionalProperties": false, "required": ["requestId", "executionId", "reasonCode"], "properties": { "requestId": { "$ref": "#/$defs/opaqueId" }, "executionId": { "$ref": "#/$defs/opaqueId" }, "reasonCode": { "$ref": "#/$defs/reasonCode" } } },
-    "executionState": { "enum": ["accepted", "running", "meaningful_progress", "blocked", "invalidated", "succeeded", "partially_succeeded", "failed", "cancelled", "expired", "rejected", "uncertain"] },
-    "receipt": { "type": "object", "additionalProperties": false, "required": ["executionId", "requestId", "state", "reasonCode", "revision", "evidence"], "properties": { "executionId": { "$ref": "#/$defs/opaqueId" }, "requestId": { "$ref": "#/$defs/opaqueId" }, "state": { "$ref": "#/$defs/executionState" }, "reasonCode": { "$ref": "#/$defs/reasonCode" }, "revision": { "type": "integer" }, "evidence": { "type": ["object", "null"] } } },
-    "error": { "type": "object", "additionalProperties": false, "required": ["reasonCode"], "properties": { "reasonCode": { "$ref": "#/$defs/reasonCode" } } },
-    "semanticEvent": { "type": "object", "additionalProperties": false, "required": ["kind", "revision", "activeExecution", "reasonCode"], "properties": { "kind": { "enum": ["snapshot_changed", "execution_state", "connection_state", "lifecycle"] }, "revision": { "type": "integer" }, "activeExecution": { "anyOf": [{ "$ref": "#/$defs/activeExecution" }, { "type": "null" }] }, "reasonCode": { "$ref": "#/$defs/reasonCode" } } },
-    "lifecycle": { "type": "object", "additionalProperties": false, "required": ["state", "reasonCode"], "properties": { "state": { "enum": ["connected", "disconnected", "world_unavailable"] }, "reasonCode": { "$ref": "#/$defs/reasonCode" } } }
+    "opaqueId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,256}$"
+    },
+    "reasonCode": {
+      "type": "string",
+      "pattern": "^[a-z0-9_:-]{1,128}$"
+    },
+    "tile": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "integrationId",
+        "saveId",
+        "worldId",
+        "playerId",
+        "companionId"
+      ],
+      "properties": {
+        "integrationId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "saveId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "worldId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "playerId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "companionId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "empty": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token"
+      ],
+      "properties": {
+        "token": {
+          "$ref": "#/$defs/token"
+        }
+      }
+    },
+    "helloAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sessionId",
+        "capabilities"
+      ],
+      "properties": {
+        "sessionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "maxItems": 128
+        }
+      }
+    },
+    "activeExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executionId",
+        "requestId",
+        "action",
+        "state",
+        "reasonCode",
+        "evidence"
+      ],
+      "properties": {
+        "executionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "requestId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "action": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "state": {
+          "$ref": "#/$defs/executionState"
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/reasonCode"
+        },
+        "evidence": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    },
+    "warp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceX",
+        "sourceY",
+        "targetLocation",
+        "targetX",
+        "targetY"
+      ],
+      "properties": {
+        "sourceX": {
+          "$ref": "#/$defs/tile"
+        },
+        "sourceY": {
+          "$ref": "#/$defs/tile"
+        },
+        "targetLocation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "targetX": {
+          "$ref": "#/$defs/tile"
+        },
+        "targetY": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
+    "soilTile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
+    "toolSlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "label"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "forageTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "stack"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stack": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999
+        }
+      }
+    },
+    "itemTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "stack"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stack": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999
+        }
+      }
+    },
+    "cropTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "cropId"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "cropId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "harvestTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "cropId",
+        "qualifiedHarvestItemId",
+        "regrowsAfterHarvest"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "cropId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "qualifiedHarvestItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "regrowsAfterHarvest": {
+          "type": "boolean"
+        }
+      }
+    },
+    "seedTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "slot",
+        "x",
+        "y",
+        "qualifiedItemId"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "fertilizerTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "slot",
+        "x",
+        "y",
+        "qualifiedItemId"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "debrisTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "slot",
+        "x",
+        "y",
+        "parentSheetIndex",
+        "toolKind",
+        "requiredUpgradeLevel",
+        "health"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "parentSheetIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2000
+        },
+        "toolKind": {
+          "enum": [
+            "axe",
+            "pickaxe"
+          ]
+        },
+        "requiredUpgradeLevel": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "health": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "machineTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "qualifiedItemId",
+        "readyForHarvest",
+        "minutesUntilReady"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "readyForHarvest": {
+          "type": "boolean"
+        },
+        "minutesUntilReady": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "heldObjectQualifiedItemId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "lastInputQualifiedItemId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "loadInputSlot": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 36
+        },
+        "loadInputQualifiedItemId": {
+          "anyOf": [{ "type": "null" }, { "const": "(O)433" }]
+        },
+        "loadInputStack": {
+          "anyOf": [{ "type": "null" }, { "const": 5 }]
+        },
+        "collectOutputReady": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "treeChopSourceTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "location", "x", "y", "treeType", "growthStage", "health", "stump", "moss", "tapped"],
+      "properties": {
+        "targetId": { "$ref": "#/$defs/opaqueId" },
+        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "x": { "$ref": "#/$defs/tile" },
+        "y": { "$ref": "#/$defs/tile" },
+        "treeType": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "growthStage": { "type": "integer", "minimum": 5, "maximum": 20 },
+        "health": { "const": 1 },
+        "stump": { "const": false },
+        "moss": { "const": false },
+        "tapped": { "const": false }
+      }
+    },
+    "treeChopResultTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "location", "x", "y", "treeType", "health", "stump", "moss", "tapped"],
+      "properties": {
+        "targetId": { "$ref": "#/$defs/opaqueId" },
+        "location": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "x": { "$ref": "#/$defs/tile" },
+        "y": { "$ref": "#/$defs/tile" },
+        "treeType": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "health": { "const": 5 },
+        "stump": { "const": true },
+        "moss": { "const": false },
+        "tapped": { "const": false }
+      }
+    },
+    "treeShakeSourceTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "treeType",
+        "growthStage",
+        "health",
+        "moss",
+        "tapped"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "treeType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "growthStage": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "health": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100
+        },
+        "moss": {
+          "type": "boolean"
+        },
+        "tapped": {
+          "type": "boolean"
+        }
+      }
+    },
+    "npcRelationshipTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "npcName",
+        "friendshipPoints",
+        "friendshipStatus",
+        "talkedToToday",
+        "giftsToday",
+        "giftsThisWeek"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "npcName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "friendshipPoints": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 10000
+        },
+        "friendshipStatus": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "talkedToToday": {
+          "type": "boolean"
+        },
+        "giftsToday": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "giftsThisWeek": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        }
+      }
+    },
+    "petTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "petType",
+        "friendship",
+        "pettedToday"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "petType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "friendship": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "pettedToday": {
+          "const": false
+        }
+      }
+    },
+    "animalProductTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "slot",
+        "x",
+        "y",
+        "animalType",
+        "qualifiedProduceItemId",
+        "toolKind",
+        "produceStack"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "animalType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "qualifiedProduceItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "toolKind": {
+          "enum": [
+            "milk_pail",
+            "shears"
+          ]
+        },
+        "produceStack": {
+          "enum": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    "feedTroughTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "slot",
+        "x",
+        "y",
+        "hayStack"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "hayStack": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999
+        }
+      }
+    },
+    "inventoryItemFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "qualifiedItemId",
+        "stack"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stack": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999
+        }
+      }
+    },
+    "foodTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "qualifiedItemId",
+        "stack",
+        "edibility",
+        "isDrink"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "stack": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999
+        },
+        "edibility": {
+          "type": "integer",
+          "minimum": -299,
+          "maximum": 1000
+        },
+        "isDrink": {
+          "type": "boolean"
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "location",
+        "tile",
+        "stamina",
+        "health",
+        "actionable",
+        "capabilities"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer"
+        },
+        "location": {
+          "type": "string"
+        },
+        "tile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
+          }
+        },
+        "stamina": {
+          "type": "number"
+        },
+        "health": {
+          "type": "number"
+        },
+        "currentTool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inventorySlots": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "actionable": {
+          "type": "boolean"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "maxItems": 128
+        },
+        "activeExecution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activeExecution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "warps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/warp"
+          },
+          "maxItems": 512
+        },
+        "doorTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/warp"
+          },
+          "maxItems": 64
+        },
+        "soilTiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/soilTile"
+          },
+          "maxItems": 64
+        },
+        "toolSlots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/toolSlot"
+          },
+          "maxItems": 36
+        },
+        "forageTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/forageTarget"
+          },
+          "maxItems": 64
+        },
+        "itemTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/itemTarget"
+          },
+          "maxItems": 64
+        },
+        "cropTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cropTarget"
+          },
+          "maxItems": 64
+        },
+        "harvestTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/harvestTarget"
+          },
+          "maxItems": 64
+        },
+        "seedTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/seedTarget"
+          },
+          "maxItems": 64
+        },
+        "fertilizerTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fertilizerTarget"
+          },
+          "maxItems": 64
+        },
+        "woodFenceTargets": { "type": "array", "items": { "$ref": "#/$defs/woodFenceTarget" }, "maxItems": 16 },
+        "woodFenceResultTargets": { "type": "array", "items": { "$ref": "#/$defs/woodFenceResultTarget" }, "maxItems": 1 },
+        "crabPotTargets": { "type": "array", "items": { "$ref": "#/$defs/crabPotTarget" }, "maxItems": 16 },
+        "crabPotResultTargets": { "type": "array", "items": { "$ref": "#/$defs/crabPotResultTarget" }, "maxItems": 1 },
+        "debrisTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/debrisTarget"
+          },
+          "maxItems": 64
+        },
+        "rockSourceTargets": { "type": "array", "items": { "$ref": "#/$defs/rockSourceTarget" }, "maxItems": 8 },
+        "clearHoeDirtTargets": { "type": "array", "items": { "$ref": "#/$defs/clearHoeDirtTarget" }, "maxItems": 8 },
+        "artifactSpotTargets": { "type": "array", "items": { "$ref": "#/$defs/artifactSpotTarget" }, "maxItems": 8 },
+        "artifactSpotResultTargets": { "type": "array", "items": { "$ref": "#/$defs/artifactSpotResultTarget" }, "maxItems": 1 },
+        "artifactSpotFarmSourceCount": { "type": ["integer", "null"], "minimum": 0 },
+        "treeChopSourceTargets": { "type": "array", "items": { "$ref": "#/$defs/treeChopSourceTarget" }, "maxItems": 64 },
+        "treeChopResultTargets": { "type": "array", "items": { "$ref": "#/$defs/treeChopResultTarget" }, "maxItems": 64 },
+        "machineTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/machineTarget"
+          },
+          "maxItems": 64
+        },
+        "wateringCanFacts": { "type": "array", "items": { "$ref": "#/$defs/wateringCanFact" }, "maxItems": 36 },
+        "refillWateringCanTargets": { "type": "array", "items": { "$ref": "#/$defs/refillWateringCanTarget" }, "maxItems": 8 },
+        "treeShakeSourceTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/treeShakeSourceTarget"
+          },
+          "maxItems": 64
+        },
+        "npcRelationshipTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/npcRelationshipTarget"
+          },
+          "maxItems": 64
+        },
+        "petTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/petTarget"
+          },
+          "maxItems": 16
+        },
+        "animalProductTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/animalProductTarget"
+          },
+          "maxItems": 32
+        },
+        "feedTroughTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/feedTroughTarget"
+          },
+          "maxItems": 32
+        },
+        "inventoryItemFacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/inventoryItemFact"
+          },
+          "maxItems": 36
+        },
+        "foodTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/foodTarget"
+          },
+          "maxItems": 36
+        }
+      }
+    },
+    "rockSourceTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "qualifiedItemId", "health"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)2" }, "health": { "const": 1 } } },
+    "clearHoeDirtTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "crop", "ground"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "crop": { "const": false }, "ground": { "const": true } } },
+    "artifactSpotTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "qualifiedItemId"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)590" } } },
+    "artifactSpotResultTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "x", "y", "crop", "ground"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 128 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "crop": { "const": false }, "ground": { "const": true } } },
+    "woodFenceTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)322" } } },
+    "woodFenceResultTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "isFence", "isGate", "health", "maxHealth"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)322" }, "isFence": { "const": true }, "isGate": { "const": false }, "health": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 }, "maxHealth": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 } } },
+    "crabPotTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)710" } } },
+    "crabPotResultTarget": { "type": "object", "additionalProperties": false, "required": ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "ownerId", "offsetX", "offsetY", "overlayTiles"], "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "location": { "type": "string", "minLength": 1, "maxLength": 256 }, "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "qualifiedItemId": { "const": "(O)710" }, "ownerId": { "type": "integer", "minimum": 0 }, "offsetX": { "type": "number" }, "offsetY": { "type": "number" }, "overlayTiles": { "type": "array", "maxItems": 4, "items": { "type": "object", "additionalProperties": false, "required": ["x", "y", "count"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "count": { "type": "integer", "minimum": 1 } } } } } },
+    "refillWateringCanTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "x", "y"],
+      "properties": { "targetId": { "$ref": "#/$defs/opaqueId" }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } }
+    },
+    "wateringCanFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot", "qualifiedItemId", "label", "water", "max"],
+      "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "qualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "label": { "type": "string", "minLength": 1, "maxLength": 128 }, "water": { "type": "integer", "minimum": 0, "maximum": 100 }, "max": { "type": "integer", "minimum": 1, "maximum": 100 } }
+    },
+    "placeWoodFenceArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)322" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "placeCrabPotArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)710" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "refillWateringCanArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slot", "x", "y", "expectedTargetId"],
+      "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } }
+    },
+    "breakRockSourceArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "clearHoeDirtArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "digArtifactSpotArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "treeFirstHitArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "x",
+        "y",
+        "expectedTargetId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "expectedTargetId": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
+    "executionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "idempotencyKey",
+        "action",
+        "args",
+        "expectedRevision",
+        "deadlineMs"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": ["action"],
+            "properties": {
+              "action": {
+                "const": "refill_watering_can"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": { "$ref": "#/$defs/refillWateringCanArgs" }
+            }
+          }
+        },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "place_wood_fence" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/placeWoodFenceArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "place_crab_pot" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/placeCrabPotArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "break_rock_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/breakRockSourceArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "clear_hoedirt" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/clearHoeDirtArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "dig_artifact_spot" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/digArtifactSpotArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "chop_tree_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/treeFirstHitArgs" } } } },
+        {
+          "if": {
+            "required": ["action"],
+            "properties": {
+              "action": {
+                "const": "tree_first_hit"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/treeFirstHitArgs"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "idempotencyKey": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "action": {
+          "enum": [
+            "move_to_tile",
+            "equip_tool",
+            "travel",
+            "enter_exit",
+            "till_soil",
+            "pickup_forage",
+            "pickup_item",
+            "water_crop",
+            "harvest_crop",
+            "plant_seed",
+            "fertilize_tile",
+            "place_wood_fence",
+            "place_crab_pot",
+            "clear_debris",
+            "machine_inspect",
+            "machine_load",
+            "machine_collect_output",
+            "npc_relationship",
+            "pet_animal",
+            "collect_animal_product",
+            "feed_animal",
+            "use_item",
+            "tree_first_hit",
+            "chop_tree_source",
+            "break_rock_source",
+            "clear_hoedirt",
+            "dig_artifact_spot",
+            "refill_watering_can",
+            "inspect_self"
+          ]
+        },
+        "args": {
+          "type": "object"
+        },
+        "expectedRevision": {
+          "type": "integer"
+        },
+        "deadlineMs": {
+          "type": "integer"
+        }
+      }
+    },
+    "cancelRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "executionId",
+        "reasonCode"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "executionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/reasonCode"
+        }
+      }
+    },
+    "executionState": {
+      "enum": [
+        "accepted",
+        "running",
+        "meaningful_progress",
+        "blocked",
+        "invalidated",
+        "succeeded",
+        "partially_succeeded",
+        "failed",
+        "cancelled",
+        "expired",
+        "rejected",
+        "uncertain"
+      ]
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executionId",
+        "requestId",
+        "state",
+        "reasonCode",
+        "revision",
+        "evidence"
+      ],
+      "properties": {
+        "executionId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "requestId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "state": {
+          "$ref": "#/$defs/executionState"
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/reasonCode"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "evidence": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reasonCode"
+      ],
+      "properties": {
+        "reasonCode": {
+          "$ref": "#/$defs/reasonCode"
+        }
+      }
+    },
+    "semanticEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "revision",
+        "activeExecution",
+        "reasonCode"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "snapshot_changed",
+            "execution_state",
+            "connection_state",
+            "lifecycle"
+          ]
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "activeExecution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/activeExecution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/reasonCode"
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "reasonCode"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "connected",
+            "disconnected",
+            "world_unavailable"
+          ]
+        },
+        "reasonCode": {
+          "$ref": "#/$defs/reasonCode"
+        }
+      }
+    }
   }
 }

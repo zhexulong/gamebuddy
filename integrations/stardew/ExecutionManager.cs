@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -29,6 +30,21 @@ internal sealed class ExecutionManager
     private LocalAnimalProductCollectionSpec? activeAnimalProduct;
     private LocalItemUseSpec? activeItemUse;
     private LocalItemPickupSpec? activeItemPickup;
+    private BridgeWoodFenceResultTarget? woodFenceResultTarget;
+    private string? woodFenceResultExecutionId;
+    private string? woodFenceResultRequestId;
+    private long woodFenceResultRevision;
+    private int woodFenceResultDay;
+    private BridgeCrabPotResultTarget? crabPotResultTarget;
+    private string? crabPotResultExecutionId;
+    private string? crabPotResultRequestId;
+    private long crabPotResultRevision;
+    private int crabPotResultDay;
+    private BridgeArtifactSpotResultTarget? artifactSpotResultTarget;
+    private string? artifactSpotResultExecutionId;
+    private string? artifactSpotResultRequestId;
+    private long artifactSpotResultRevision;
+    private int artifactSpotResultDay;
     private long revision;
     private int tick;
 
@@ -223,7 +239,11 @@ internal sealed class ExecutionManager
 
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         LocalForagePickupSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
-        bool actionHandled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, Game1.player);
+        // Preserve the target-version player action ingress. tryToCheckAt owns
+        // the bridge-state/radius guards and SMAPI check-action hook before it
+        // reaches GameLocation.checkAction; direct checkAction would bypass
+        // those native player-path constraints.
+        bool actionHandled = Game1.tryToCheckAt(tile, Game1.player);
         int afterCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         bool removed = !location.objects.ContainsKey(tile);
         bool inventoryChanged = afterCount > beforeCount;
@@ -292,6 +312,38 @@ internal sealed class ExecutionManager
         return accepted;
     }
 
+    public LocalExecutionReceipt RequestLocalRefillWateringCan(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not WateringCan wateringCan || !ReferenceEquals(Game1.player.CurrentTool, wateringCan))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped_in_requested_slot", $"slot={slot}");
+        if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
+        int before = wateringCan.WaterLeft;
+        int max = wateringCan.waterCanMax;
+        wateringCan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        int after = wateringCan.WaterLeft;
+        bool succeeded = ReferenceEquals(Game1.player.Items[slot], wateringCan) && before < max && after == max;
+        string evidence = $"target={expectedTargetId};slot={slot};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max}";
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable", evidence);
+    }
+
     public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -335,7 +387,7 @@ internal sealed class ExecutionManager
         ExecutionState state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "crop_watered" : "crop_water_postcondition_unavailable";
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
-            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};before_watered={beforeWatered};after_watered={afterWatered};water_before={beforeWater};water_after={wateringCan.WaterLeft};water_consumed={waterConsumed}");
+            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};before_watered={beforeWatered.ToString().ToLowerInvariant()};after_watered={afterWatered.ToString().ToLowerInvariant()};water_before={beforeWater};water_after={wateringCan.WaterLeft};water_consumed={waterConsumed.ToString().ToLowerInvariant()}");
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
@@ -496,6 +548,157 @@ internal sealed class ExecutionManager
         return receipt;
     }
 
+    public LocalExecutionReceipt RequestLocalPlaceWoodFence(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+            return existing;
+
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not Farm farm)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId ?? this.activeItemPickup?.ExecutionId);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (expectedQualifiedItemId != "(O)322")
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_fence_item", $"item={expectedQualifiedItemId}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object source || !IsQualifiedWoodFenceSource(source) || source.Stack <= 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_not_owned_in_slot", $"slot={slot}");
+
+        Vector2 tile = new(targetX, targetY);
+        if (!string.Equals(BuildWoodFenceTargetId(farm, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
+            || farm.objects.ContainsKey(tile)
+            || !Utility.playerCanPlaceItemHere(farm, source, targetX * 64 + 32, targetY * 64 + 32, Game1.player)
+            || !source.canBePlacedHere(farm, tile))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "wood_fence_target_unavailable", $"target={targetX},{targetY}");
+
+        int beforeCount = CountQualifiedItem(Game1.player, "(O)322");
+        bool sourceEmptyBefore = !farm.objects.ContainsKey(tile);
+        int previousSlot = Game1.player.CurrentToolIndex;
+        LocalWoodFencePlacementSpec specification = new(executionId, requestId, farm.NameOrUniqueName, slot, targetX, targetY, expectedTargetId, "(O)322", beforeCount, this.revision, requestedDeadlineMs);
+        bool placementHandled;
+        try
+        {
+            Game1.player.CurrentToolIndex = slot;
+            // Target 1.6.15's Object.placementAction has the closed IsFenceItem branch
+            // that constructs Fence for this exact source. This private wrapper is not a
+            // generic item-action surface: it rechecks the finite (O)322 Fence source.
+            placementHandled = PlaceQualifiedWoodFenceNative(farm, targetX, targetY, source, Game1.player);
+            if (placementHandled)
+                Game1.player.reduceActiveItemByOne();
+        }
+        finally
+        {
+            Game1.player.CurrentToolIndex = previousSlot;
+        }
+
+        bool isFence = farm.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Fence;
+        StardewValley.Fence? fence = placed as StardewValley.Fence;
+        bool isGate = fence?.isGate.Value ?? true;
+        float health = fence?.health.Value ?? 0f;
+        float maxHealth = fence?.maxHealth.Value ?? 0f;
+        int afterCount = CountQualifiedItem(Game1.player, "(O)322");
+        bool inventoryDecremented = afterCount == beforeCount - 1;
+        bool validFenceHealth = float.IsFinite(health) && float.IsFinite(maxHealth) && health > 0f && maxHealth >= health;
+        bool succeeded = placementHandled && sourceEmptyBefore && isFence && !isGate && validFenceHealth && inventoryDecremented;
+        ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+        string reasonCode = succeeded ? "wood_fence_placed" : "wood_fence_postcondition_unavailable";
+        if (succeeded)
+        {
+            this.woodFenceResultTarget = new BridgeWoodFenceResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)322", IsFence: true, IsGate: false, health, maxHealth);
+            this.woodFenceResultExecutionId = executionId;
+            this.woodFenceResultRequestId = requestId;
+            this.woodFenceResultRevision = this.revision;
+            this.woodFenceResultDay = Game1.Date.TotalDays;
+        }
+        string evidence = $"source=(O)322;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)322;slot={slot};source_empty_before={sourceEmptyBefore.ToString().ToLowerInvariant()};is_fence={isFence.ToString().ToLowerInvariant()};is_gate={isGate.ToString().ToLowerInvariant()};health={health.ToString(CultureInfo.InvariantCulture)};max_health={maxHealth.ToString(CultureInfo.InvariantCulture)};inventory_before={beforeCount};inventory_after={afterCount}";
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
+        this.Remember(receipt);
+        this.AddTrace(receipt);
+        return receipt;
+    }
+
+    public LocalExecutionReceipt RequestLocalPlaceCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+            return existing;
+
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not Farm farm)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activePet?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId ?? this.activeItemPickup?.ExecutionId);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (expectedQualifiedItemId != "(O)710")
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_crab_pot_item", $"item={expectedQualifiedItemId}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object source || source.QualifiedItemId != "(O)710" || source.Stack <= 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_owned_in_slot", $"slot={slot}");
+
+        Vector2 tile = new(targetX, targetY);
+        if (!string.Equals(BuildCrabPotTargetId(farm, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
+            || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, targetX, targetY)
+            || farm.objects.ContainsKey(tile))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_target_unavailable", $"target={targetX},{targetY}");
+
+        int beforeCount = CountQualifiedItem(Game1.player, "(O)710");
+        int previousSlot = Game1.player.CurrentToolIndex;
+        LocalCrabPotPlacementSpec specification = new(executionId, requestId, farm.NameOrUniqueName, slot, targetX, targetY, expectedTargetId, "(O)710", beforeCount, this.revision, requestedDeadlineMs);
+        bool placementHandled;
+        try
+        {
+            Game1.player.CurrentToolIndex = slot;
+            placementHandled = source.placementAction(farm, targetX * 64 + 32, targetY * 64 + 32, Game1.player);
+            if (placementHandled)
+                Game1.player.reduceActiveItemByOne();
+        }
+        finally
+        {
+            Game1.player.CurrentToolIndex = previousSlot;
+        }
+
+        StardewValley.Object? placed = farm.objects.TryGetValue(tile, out StardewValley.Object? candidate) ? candidate : null;
+        StardewValley.Objects.CrabPot? crabPot = placed as StardewValley.Objects.CrabPot;
+        int afterCount = CountQualifiedItem(Game1.player, "(O)710");
+        // Native CrabPot.updateOffset legitimately leaves directionOffset at
+        // Vector2.Zero for an all-water neighborhood. Finiteness, ownership,
+        // and target-bound overlay facts are the observable placement contract;
+        // nonzero offset is not a source-proven universal postcondition.
+        bool validOffset = crabPot is not null && float.IsFinite(crabPot.directionOffset.Value.X) && float.IsFinite(crabPot.directionOffset.Value.Y);
+        IReadOnlyList<BridgeCrabPotOverlayTile> overlayTiles = crabPot is null
+            ? Array.Empty<BridgeCrabPotOverlayTile>()
+            : BuildCrabPotOverlayFacts(crabPot);
+        bool succeeded = placementHandled && crabPot is not null && crabPot.QualifiedItemId == "(O)710"
+            && crabPot.owner.Value == Game1.player.UniqueMultiplayerID && validOffset && afterCount == beforeCount - 1;
+        ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+        string reasonCode = succeeded ? "crab_pot_placed" : "crab_pot_postcondition_unavailable";
+        if (succeeded)
+        {
+            this.crabPotResultTarget = new BridgeCrabPotResultTarget(expectedTargetId, specification.Location, slot, targetX, targetY, "(O)710", crabPot!.owner.Value, crabPot.directionOffset.Value.X, crabPot.directionOffset.Value.Y, overlayTiles);
+            this.crabPotResultExecutionId = executionId;
+            this.crabPotResultRequestId = requestId;
+            this.crabPotResultRevision = this.revision;
+            this.crabPotResultDay = Game1.Date.TotalDays;
+        }
+        string evidence = $"source=(O)710;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)710;slot={slot};source_empty_before=true;is_crab_pot={(crabPot is not null).ToString().ToLowerInvariant()};owner={crabPot?.owner.Value ?? 0};offset_x={crabPot?.directionOffset.Value.X.ToString(CultureInfo.InvariantCulture) ?? "none"};offset_y={crabPot?.directionOffset.Value.Y.ToString(CultureInfo.InvariantCulture) ?? "none"};overlay_tiles={string.Join("|", overlayTiles.Select(tile => $"{tile.X},{tile.Y}:{tile.Count}"))};inventory_before={beforeCount};inventory_after={afterCount}";
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
+        this.Remember(receipt);
+        this.AddTrace(receipt);
+        return receipt;
+    }
+
     public LocalExecutionReceipt RequestLocalFertilizeTile(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -577,16 +780,20 @@ internal sealed class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_owned_in_slot", $"slot={slot}");
-        if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
-
         StardewValley.GameLocation location = Game1.player.currentLocation;
         StardewValley.TerrainFeatures.ResourceClump? clump = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out int clumpIndex);
         if (clump is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "debris_target_changed", $"target={targetX},{targetY}");
+        // ResourceClumps span multiple tiles. Require an ordinary one-tile
+        // interaction radius from any footprint tile, while retaining the
+        // opaque clump-origin identity as the freshness binding.
+        if (!IsDebrisTargetWithinPlayerRadius(clump, Game1.player))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
         if (!IsValidDebrisTool(clump, tool, out string toolKind, out int requiredUpgrade))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "debris_tool_unavailable", $"target={targetX},{targetY};parent={clump.parentSheetIndex.Value}");
 
+        int parentSheetIndex = clump.parentSheetIndex.Value;
+        float healthBefore = clump.health.Value;
         int previousSlot = Game1.player.CurrentToolIndex;
         Game1.player.CurrentToolIndex = slot;
         try
@@ -614,7 +821,7 @@ internal sealed class ExecutionManager
             cleared ? ExecutionState.Succeeded : ExecutionState.PartiallySucceeded,
             cleared ? "debris_cleared" : "debris_hit",
             this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={clump.parentSheetIndex.Value};tool={toolKind};required_upgrade={requiredUpgrade};health_before={clump.health.Value:0.##};health_after={healthAfter:0.##};clump_removed={cleared.ToString().ToLowerInvariant()}");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};clump_removed={cleared.ToString().ToLowerInvariant()}");
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
@@ -628,8 +835,11 @@ internal sealed class ExecutionManager
             StardewValley.TerrainFeatures.ResourceClump clump = location.resourceClumps[index];
             Point tile = new((int)clump.Tile.X, (int)clump.Tile.Y);
             string targetId = BuildDebrisTargetId(location, index, clump);
-            if (tile.X == targetX && tile.Y == targetY && string.Equals(targetId, expectedTargetId, StringComparison.Ordinal)
-                && Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
+            // Identity matching is deliberately independent from player range.
+            // The caller applies the footprint-aware radius predicate after it
+            // resolves this exact source-bound object, so discovery and
+            // execution cannot disagree for multi-tile ResourceClumps.
+            if (tile.X == targetX && tile.Y == targetY && string.Equals(targetId, expectedTargetId, StringComparison.Ordinal))
             {
                 clumpIndex = index;
                 return clump;
@@ -662,6 +872,111 @@ internal sealed class ExecutionManager
         };
         return (toolKind == "axe" && tool is Axe && tool.UpgradeLevel >= requiredUpgrade)
             || (toolKind == "pickaxe" && tool is Pickaxe && tool.UpgradeLevel >= requiredUpgrade);
+    }
+
+    /// <summary>
+    /// Load exactly five Coffee Beans into one idle, empty Keg through the
+    /// version-locked normal GameLocation.checkAction ingress. The bridge
+    /// never invokes PlaceInMachine or Object.performObjectDropInAction: those
+    /// are downstream helpers; checkAction owns target routing, probe, commit,
+    /// and the native active-item consumption boundary.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalLoadCoffeeIntoKeg(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (expectedQualifiedItemId != "(O)433" || slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object input || input.QualifiedItemId != "(O)433" || input.Stack != 5)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "coffee_beans_not_owned_in_exact_slot", $"slot={slot}");
+
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
+            || machine.QualifiedItemId != "(BC)12"
+            || machine.GetMachineData() is null
+            || machine.heldObject.Value is not null
+            || machine.readyForHarvest.Value
+            || machine.MinutesUntilReady > 0
+            || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_target_changed", $"target={targetX},{targetY}");
+
+        int previousSlot = Game1.player.CurrentToolIndex;
+        bool nativeHandled;
+        try
+        {
+            Game1.player.CurrentToolIndex = slot;
+            nativeHandled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, Game1.player);
+        }
+        finally
+        {
+            Game1.player.CurrentToolIndex = previousSlot;
+        }
+
+        bool sourceConsumed = Game1.player.Items[slot] is null;
+        bool machineAcceptedInput = machine.lastInputItem.Value?.QualifiedItemId == "(O)433";
+        bool machineHasCoffee = machine.heldObject.Value?.QualifiedItemId == "(O)395";
+        bool processing = !machine.readyForHarvest.Value && machine.MinutesUntilReady == 120;
+        bool succeeded = nativeHandled && sourceConsumed && machineAcceptedInput && machineHasCoffee && processing;
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine=(BC)12;slot={slot};input=(O)433;input_stack_before=5;input_stack_after={(Game1.player.Items[slot]?.Stack.ToString(CultureInfo.InvariantCulture) ?? "removed")};last_input={(machine.lastInputItem.Value?.QualifiedItemId ?? "none")};held={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "machine_coffee_loaded" : "machine_coffee_load_postcondition_unavailable", evidence);
+    }
+
+    /// <summary>
+    /// Collect the finite Coffee output only when the native machine time
+    /// lifecycle has already made it ready. Like loading, this enters through
+    /// GameLocation.checkAction; it never calls the downstream object helper
+    /// or mutates held output/inventory directly.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalCollectCoffeeFromKeg(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
+            || machine.QualifiedItemId != "(BC)12"
+            || machine.GetMachineData() is null
+            || !machine.readyForHarvest.Value
+            || machine.MinutesUntilReady != 0
+            || machine.heldObject.Value?.QualifiedItemId != "(O)395"
+            || machine.lastInputItem.Value?.QualifiedItemId != "(O)433"
+            || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_collect_target_not_ready", $"target={targetX},{targetY}");
+
+        StardewValley.Object output = machine.heldObject.Value;
+        if (!Game1.player.couldInventoryAcceptThisItem(output))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_output_inventory_full", $"target={expectedTargetId};output=(O)395");
+        int coffeeBefore = Game1.player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == "(O)395").Sum(item => item.Stack);
+        bool nativeHandled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, Game1.player);
+
+        int coffeeAfter = Game1.player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == "(O)395").Sum(item => item.Stack);
+        bool succeeded = nativeHandled && machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0 && coffeeAfter == coffeeBefore + 1;
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine=(BC)12;output=(O)395;input=(O)433;ready_before=true;minutes_until_ready_before=0;inventory_coffee_before={coffeeBefore};inventory_coffee_after={coffeeAfter};held_after={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_after={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "machine_coffee_collected" : "machine_coffee_collect_postcondition_unavailable", evidence);
     }
 
     /// <summary>Published read-only machine inspection. It reads only the live machine object and never invokes the interaction menu or mutates machine state.</summary>
@@ -701,79 +1016,6 @@ internal sealed class ExecutionManager
         return receipt;
     }
 
-    /// <summary>Experimental resource collection limited to a live mature Tree stump.</summary>
-    public LocalExecutionReceipt RequestLocalCollectResource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
-    {
-        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
-            return existing;
-
-        this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
-        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
-        if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Axe axe)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "axe_not_owned_in_slot", $"slot={slot}");
-
-        StardewValley.GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.Tree tree
-            || !tree.stump.Value
-            || !string.Equals(BuildResourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "resource_target_changed", $"target={targetX},{targetY}");
-
-        float healthBefore = tree.health.Value;
-        bool stumpBefore = tree.stump.Value;
-        int resourceDebrisBefore = CountResourceDebris(location);
-        LocalResourceCollectionSpec specification = new(executionId, requestId, location.NameOrUniqueName, slot, targetX, targetY, expectedTargetId, tree.treeType.Value, healthBefore, stumpBefore, this.revision, requestedDeadlineMs);
-        int previousSlot = Game1.player.CurrentToolIndex;
-        try
-        {
-            Game1.player.CurrentToolIndex = slot;
-            if (Game1.player.CurrentTool is not Axe activeAxe)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "axe_not_equipped", $"slot={slot}");
-            activeAxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
-        }
-        finally
-        {
-            Game1.player.CurrentToolIndex = previousSlot;
-        }
-
-        bool treeRemoved = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? remaining)
-            || remaining is not StardewValley.TerrainFeatures.Tree;
-        int resourceDebrisAfter = CountResourceDebris(location);
-        // Tree.performTreeFall creates RESOURCE chunks that have no parent-stump
-        // or request identity. Their later Debris.collect lifecycle is separate
-        // from this Axe hit, so a new debris count is not collection evidence.
-        ExecutionState state = treeRemoved ? ExecutionState.Uncertain : ExecutionState.PartiallySucceeded;
-        string reasonCode = treeRemoved ? "resource_drop_pending" : "resource_hit";
-        float healthAfter = remaining is StardewValley.TerrainFeatures.Tree remainingTree ? remainingTree.health.Value : -100f;
-        string evidence = $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};tree_type={specification.TreeType};stump_before={specification.StumpBefore.ToString().ToLowerInvariant()};health_before={specification.HealthBefore:0.##};health_after={healthAfter:0.##};tree_removed={treeRemoved.ToString().ToLowerInvariant()};resource_debris_before={resourceDebrisBefore};resource_debris_after={resourceDebrisAfter};resource_collected=false;collection_identity=unavailable";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        return receipt;
-    }
-
-    private static int CountResourceDebris(StardewValley.GameLocation location)
-    {
-        return location.debris.Count(debris => debris.debrisType.Value == Debris.DebrisType.RESOURCE);
-    }
-
-    private static string BuildResourceTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
-    {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree:{tree.treeType.Value}";
-        return $"resource_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
 
     /// <summary>Experimental native item consumption. The Farmer owns animation, stat/buff changes, and inventory decrement.</summary>
     public LocalExecutionReceipt RequestLocalUseItem(string requestId, int slot, string expectedQualifiedItemId, long requestedDeadlineMs)
@@ -1041,6 +1283,182 @@ internal sealed class ExecutionManager
         return receipt;
     }
 
+    public LocalExecutionReceipt RequestLocalTreeFirstHit(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "axe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
+            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value
+            || !string.Equals(BuildTreeShakeSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_target_changed", $"target={targetX},{targetY}");
+        float before = tree.health.Value;
+        if (before != 10f)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_health_not_untouched", $"target={expectedTargetId};before={before.ToString("0.##", CultureInfo.InvariantCulture)}");
+        axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        bool sameTree = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && ReferenceEquals(afterFeature, tree);
+        float after = sameTree ? tree.health.Value : float.NaN;
+        bool succeeded = sameTree && after == 9f;
+        string evidence = $"target={expectedTargetId};tool=axe;slot={slot};tree={tree.treeType.Value};before={before.ToString("0.##", CultureInfo.InvariantCulture)};after={(float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};delta={(float.IsFinite(after) ? (after - before).ToString("0.##", CultureInfo.InvariantCulture) : "unknown")}";
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "tree_first_hit" : "tree_first_hit_postcondition_unavailable", evidence);
+    }
+
+
+    /// <summary>One native Axe strike which fells the exact mature health-one tree into its native stump state; drops remain separate pickup targets.</summary>
+    public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
+            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value != 1f
+            || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
+        float before = tree.health.Value;
+        bool stumpBefore = tree.stump.Value;
+        axe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        bool sameTree = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && ReferenceEquals(afterFeature, tree);
+        float after = sameTree ? tree.health.Value : float.NaN;
+        bool stumpAfter = sameTree && tree.stump.Value;
+        bool succeeded = sameTree && after == 5f && !stumpBefore && stumpAfter;
+        string evidence = $"target={expectedTargetId};tool=axe;slot={slot};tree={tree.treeType.Value};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={succeeded.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "tree_source_chopped" : "tree_source_chop_postcondition_unavailable", evidence);
+    }
+
+    public LocalExecutionReceipt RequestLocalBreakRockSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || pickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || rock.QualifiedItemId != "(O)2" || !rock.IsBreakableStone() || rock.MinutesUntilReady != 1 || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
+        int before = rock.MinutesUntilReady;
+        pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterRock);
+        bool succeeded = removed;
+        string evidence = $"target={expectedTargetId};tool=pickaxe;slot={slot};qualified_item_id={rock.QualifiedItemId};durability_before={before};durability_after={(removed ? "removed" : afterRock!.MinutesUntilReady.ToString(CultureInfo.InvariantCulture))};removed={removed.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "rock_source_broken" : "rock_source_postcondition_unavailable", evidence);
+    }
+
+    /// <summary>One native Basic Pickaxe use removes exactly one fresh adjacent empty ground HoeDirt; crops, IndoorPots, drops, and collection are outside this action.</summary>
+    public LocalExecutionReceipt RequestLocalDigArtifactSpot(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.InvalidateArtifactSpotResult();
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove || Game1.player.UsingTool || Game1.player.toolPower.Value != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || hoe.UpgradeLevel != 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_hoe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.isTileOnMap(tile)
+            || !location.objects.TryGetValue(tile, out StardewValley.Object? artifactSpot)
+            || artifactSpot.QualifiedItemId != "(O)590"
+            || !string.Equals(BuildArtifactSpotTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_target_changed", $"target={targetX},{targetY}");
+        bool sourcePresentBefore = true;
+        bool hoeDirtPresentBefore = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? beforeFeature) && beforeFeature is StardewValley.TerrainFeatures.HoeDirt;
+        if (hoeDirtPresentBefore)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_hoedirt_present_before", $"target={targetX},{targetY};hoedirt_present_before=true");
+        float staminaBefore = Game1.player.Stamina;
+        hoe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, Game1.player);
+        Game1.player.lastClick = Vector2.Zero;
+        Game1.player.checkForExhaustion(staminaBefore);
+        float staminaAfter = Game1.player.Stamina;
+        float staminaDelta = staminaAfter - staminaBefore;
+        float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
+        bool sourcePresentAfter = location.objects.TryGetValue(tile, out _);
+        bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+            && afterFeature is StardewValley.TerrainFeatures.HoeDirt afterDirt
+            && afterDirt.crop is null
+            && !(location.objects.TryGetValue(tile, out StardewValley.Object? placedAfter) && placedAfter is StardewValley.Objects.IndoorPot);
+        bool succeeded = !hoeDirtPresentBefore && !sourcePresentAfter && hoeDirtPresentAfter;
+        string? resultTargetId = succeeded ? BuildArtifactSpotResultTargetId(location, targetX, targetY) : null;
+        if (succeeded)
+        {
+            this.artifactSpotResultTarget = new BridgeArtifactSpotResultTarget(resultTargetId!, location.NameOrUniqueName, targetX, targetY, Crop: false, Ground: true);
+            this.artifactSpotResultExecutionId = executionId;
+            this.artifactSpotResultRequestId = requestId;
+            this.artifactSpotResultRevision = this.revision;
+            this.artifactSpotResultDay = Game1.Date.TotalDays;
+        }
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};result_target={resultTargetId ?? "none"};tile={targetX},{targetY};tool=hoe;slot={slot};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};qualified_item_id=(O)590;source_present_before={sourcePresentBefore.ToString().ToLowerInvariant()};source_present_after={sourcePresentAfter.ToString().ToLowerInvariant()};hoedirt_present_before={hoeDirtPresentBefore.ToString().ToLowerInvariant()};hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};source_removed={(!sourcePresentAfter).ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "artifact_spot_dug" : "artifact_spot_postcondition_unavailable", evidence);
+    }
+
+    public LocalExecutionReceipt RequestLocalClearHoeDirt(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!Context.IsWorldReady || Context.IsMultiplayer || !Game1.IsMasterGame || Game1.server is not null || Game1.player is null || Game1.getAllFarmers().Count() != 1 || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "native_local_player_required", null);
+        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+        if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.controller.HasActiveExecution) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", null);
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || pickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
+        pickaxe.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 0, Game1.player);
+        bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && afterFeature is StardewValley.TerrainFeatures.HoeDirt;
+        bool removed = !hoeDirtPresentAfter;
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;slot={slot};crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()}";
+        return this.RememberTerminal(requestId, executionId, removed ? ExecutionState.Succeeded : ExecutionState.Uncertain, removed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_unavailable", evidence);
+    }
+
     public LocalExecutionReceipt RequestLocalTillSoil(string requestId, int targetX, int targetY, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -1051,8 +1469,12 @@ internal sealed class ExecutionManager
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        if (Game1.activeClickableMenu is not null || Game1.eventUp || !Game1.player.CanMove)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (Game1.activeClickableMenu is not null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_menu_open", null);
+        if (Game1.eventUp)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_event_active", null);
+        if (!Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_cannot_move", null);
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
@@ -1093,8 +1515,14 @@ internal sealed class ExecutionManager
 
         this.revision++;
         string executionId = Guid.NewGuid().ToString("N");
-        if (!Context.IsWorldReady || Game1.player is null)
+        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        if (Game1.activeClickableMenu is not null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_menu_open", null);
+        if (Game1.eventUp)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_event_active", null);
+        if (!Game1.player.CanMove)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_cannot_move", null);
         if (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.controller.HasActiveExecution)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned", this.active?.ExecutionId ?? this.activeTravel?.ExecutionId ?? this.activeAnimalProduct?.ExecutionId ?? this.activeItemUse?.ExecutionId);
         if (slot < 0 || slot >= Game1.player.Items.Count)
@@ -1293,7 +1721,7 @@ internal sealed class ExecutionManager
                 this.activeItemUse = null;
                 this.revision++;
                 LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "item_used", this.revision,
-                    $"slot={specification.Slot};item={specification.QualifiedItemId};stack_before={specification.StackBefore};stack_after={remaining?.Stack ?? 0};edibility={specification.Edibility};drink={specification.IsDrink.ToString().ToLowerInvariant()};stamina_before={specification.StaminaBefore:0.##};stamina_after={Game1.player.Stamina:0.##};health_before={specification.HealthBefore};health_after={Game1.player.health};animation_complete=true");
+                    $"slot={specification.Slot};item={specification.QualifiedItemId};stack_before={specification.StackBefore};stack_after={remaining?.Stack ?? 0};edibility={specification.Edibility};drink={specification.IsDrink.ToString().ToLowerInvariant()};stamina_before={specification.StaminaBefore.ToString("0.##", CultureInfo.InvariantCulture)};stamina_after={Game1.player.Stamina.ToString("0.##", CultureInfo.InvariantCulture)};health_before={specification.HealthBefore};health_after={Game1.player.health};animation_complete=true");
                 this.Remember(receipt);
                 this.AddTrace(receipt);
             }
@@ -1383,6 +1811,9 @@ internal sealed class ExecutionManager
 
     public void InvalidateForLifecycle(string reasonCode)
     {
+        this.InvalidateWoodFenceResult();
+        this.InvalidateCrabPotResult();
+        this.InvalidateArtifactSpotResult();
         if (this.active is not null)
             this.controller.Invalidate(reasonCode);
         if (this.activeTravel is not null)
@@ -1576,19 +2007,33 @@ internal sealed class ExecutionManager
             advertisedCapabilities.Contains("enter_exit", StringComparer.Ordinal) ? DiscoverDoorTargets(player) : null,
             advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal) ? DiscoverSoilTiles(player) : null,
             DiscoverToolSlots(player),
+            advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverWateringCanFacts(player) : null,
+            advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverRefillWateringCanTargets(player) : null,
             advertisedCapabilities.Contains("pickup_forage", StringComparer.Ordinal) ? DiscoverForageTargets(player) : null,
             advertisedCapabilities.Contains("pickup_item", StringComparer.Ordinal) ? DiscoverItemTargets(player) : null,
             advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? DiscoverCropTargets(player) : null,
             advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? DiscoverHarvestTargets(player) : null,
             advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal) ? DiscoverSeedTargets(player) : null,
             advertisedCapabilities.Contains("fertilize_tile", StringComparer.Ordinal) ? DiscoverFertilizerTargets(player) : null,
+            advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? DiscoverWoodFenceTargets(player) : null,
+            advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? this.DiscoverWoodFenceResultTargets(player) : null,
+            advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? DiscoverCrabPotTargets(player) : null,
+            advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? this.DiscoverCrabPotResultTargets(player) : null,
             advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) ? DiscoverDebrisTargets(player) : null,
-            advertisedCapabilities.Contains("machine_inspect", StringComparer.Ordinal) ? DiscoverMachineTargets(player) : null,
-            advertisedCapabilities.Contains("collect_resource", StringComparer.Ordinal) ? DiscoverResourceTargets(player) : null,
+            advertisedCapabilities.Contains("break_rock_source", StringComparer.Ordinal) ? DiscoverRockSourceTargets(player) : null,
+            advertisedCapabilities.Contains("clear_hoedirt", StringComparer.Ordinal) ? DiscoverClearHoeDirtTargets(player) : null,
+            advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? DiscoverArtifactSpotTargets(player) : null,
+            advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? this.DiscoverArtifactSpotResultTargets(player) : null,
+            advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? CountArtifactSpotFarmSources() : null,
+            (advertisedCapabilities.Contains("machine_inspect", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_load", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_collect_output", StringComparer.Ordinal)) ? DiscoverMachineTargets(player) : null,
+            (advertisedCapabilities.Contains("inspect_self", StringComparer.Ordinal) || advertisedCapabilities.Contains("tree_first_hit", StringComparer.Ordinal)) ? DiscoverTreeShakeSourceTargets(player) : null,
+            advertisedCapabilities.Contains("chop_tree_source", StringComparer.Ordinal) ? DiscoverTreeChopSourceTargets(player) : null,
+            advertisedCapabilities.Contains("chop_tree_source", StringComparer.Ordinal) ? DiscoverTreeChopResultTargets(player) : null,
             advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) ? DiscoverNpcRelationshipTargets(player) : null,
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
+            advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverInventoryItemFacts(player) : null,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null);
     }
 
@@ -1649,40 +2094,6 @@ internal sealed class ExecutionManager
         return result.Values.Take(64).ToArray();
     }
 
-    private static IReadOnlyList<BridgeResourceTarget> DiscoverResourceTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeResourceTarget>();
-        List<BridgeResourceTarget> result = new();
-        foreach ((Vector2 tile, StardewValley.TerrainFeatures.TerrainFeature feature) in location.terrainFeatures.Pairs)
-        {
-            if (result.Count >= 64 || feature is not StardewValley.TerrainFeatures.Tree tree || !tree.stump.Value
-                || !Utility.tileWithinRadiusOfPlayer((int)tile.X, (int)tile.Y, 1, player))
-                continue;
-            int usableSlot = -1;
-            for (int slot = 0; slot < player.Items.Count; slot++)
-            {
-                if (player.Items[slot] is StardewValley.Tools.Axe)
-                {
-                    usableSlot = slot;
-                    break;
-                }
-            }
-            if (usableSlot < 0) continue;
-            result.Add(new BridgeResourceTarget(
-                BuildResourceTargetId(location, (int)tile.X, (int)tile.Y, tree),
-                usableSlot,
-                (int)tile.X,
-                (int)tile.Y,
-                tree.treeType.Value,
-                tree.growthStage.Value,
-                tree.stump.Value,
-                tree.health.Value,
-                "axe",
-                0));
-        }
-        return result;
-    }
 
     private static IReadOnlyList<BridgeNpcRelationshipTarget> DiscoverNpcRelationshipTargets(Farmer player)
     {
@@ -1692,7 +2103,11 @@ internal sealed class ExecutionManager
             .OfType<StardewValley.NPC>()
             .Where(npc => npc.IsVillager
                 && !string.IsNullOrWhiteSpace(npc.Name)
-                && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, 1)
+                // Read-only inspection targets may be published inside the same bounded
+                // local discovery envelope used by this native-local fixture.
+                // Execution still independently enforces its one-tile native
+                // interaction radius after a separately receipted move.
+                && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, 6)
                 && player.friendshipData.ContainsKey(npc.Name))
             .Take(64)
             .Select(npc =>
@@ -1755,7 +2170,7 @@ internal sealed class ExecutionManager
                 StardewValley.Object machine = pair.Value;
                 string? held = machine.heldObject.Value?.QualifiedItemId;
                 string? input = machine.lastInputItem.Value?.QualifiedItemId;
-                return new BridgeMachineTarget(
+                BridgeMachineTarget target = new(
                     BuildMachineTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, machine.QualifiedItemId),
                     (int)pair.Key.X,
                     (int)pair.Key.Y,
@@ -1763,7 +2178,23 @@ internal sealed class ExecutionManager
                     machine.readyForHarvest.Value,
                     machine.MinutesUntilReady,
                     held,
-                    input);
+                    input,
+                    null,
+                    null,
+                    null,
+                    machine.QualifiedItemId == "(BC)12" && machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value?.QualifiedItemId == "(O)395" && machine.lastInputItem.Value?.QualifiedItemId == "(O)433");
+                if (machine.QualifiedItemId == "(BC)12" && machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0)
+                {
+                    for (int slot = 0; slot < player.Items.Count; slot++)
+                    {
+                        if (player.Items[slot] is StardewValley.Object beans && beans.QualifiedItemId == "(O)433" && beans.Stack == 5)
+                        {
+                            target = target with { LoadInputSlot = slot, LoadInputQualifiedItemId = "(O)433", LoadInputStack = 5 };
+                            break;
+                        }
+                    }
+                }
+                return target;
             })
             .ToArray();
     }
@@ -1772,6 +2203,346 @@ internal sealed class ExecutionManager
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"machine_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    /// <summary>
+    /// Reads only the nearby ordinary full-grown trees that are eligible to be
+    /// a source for a future shake action. inspect_self is the existing
+    /// observation-safe capability and does not publish a tree-shake action.
+    /// </summary>
+    private static IReadOnlyList<BridgeTreeShakeSourceTarget> DiscoverTreeShakeSourceTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null || !IsValidTreeDiscoveryLocation(location.NameOrUniqueName))
+            return Array.Empty<BridgeTreeShakeSourceTarget>();
+
+        return location.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
+                && !tree.stump.Value
+                && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
+                && !tree.hasMoss.Value
+                && !tree.tapped.Value
+                && pair.Key.X >= 0 && pair.Key.X <= 1000
+                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player))
+            .Take(64)
+            .Select(pair =>
+            {
+                StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
+                int x = (int)pair.Key.X;
+                int y = (int)pair.Key.Y;
+                return new BridgeTreeShakeSourceTarget(
+                    BuildTreeShakeSourceTargetId(location, x, y, tree),
+                    location.NameOrUniqueName,
+                    x,
+                    y,
+                    tree.treeType.Value,
+                    tree.growthStage.Value,
+                    tree.health.Value,
+                    tree.hasMoss.Value,
+                    tree.tapped.Value);
+            })
+            .ToArray();
+    }
+
+    private static bool IsValidTreeDiscoveryLocation(string? locationName)
+    {
+        return !string.IsNullOrEmpty(locationName) && locationName.Length <= 256;
+    }
+
+    private static string BuildTreeShakeSourceTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree:{tree.treeType.Value}";
+        return $"tree_shake_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null || !IsValidTreeDiscoveryLocation(location.NameOrUniqueName))
+            return Array.Empty<BridgeTreeChopSourceTarget>();
+
+        return location.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
+                && !tree.stump.Value
+                && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
+                && !tree.hasMoss.Value
+                && !tree.tapped.Value
+                && tree.health.Value == 1f
+                && pair.Key.X >= 0 && pair.Key.X <= 1000
+                && pair.Key.Y >= 0 && pair.Key.Y <= 1000
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player))
+            .Take(64)
+            .Select(pair =>
+            {
+                StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
+                int x = (int)pair.Key.X;
+                int y = (int)pair.Key.Y;
+                return new BridgeTreeChopSourceTarget(
+                    BuildTreeChopSourceTargetId(location, x, y, tree),
+                    location.NameOrUniqueName,
+                    x,
+                    y,
+                    tree.treeType.Value,
+                    tree.growthStage.Value,
+                    tree.health.Value,
+                    tree.stump.Value,
+                    tree.hasMoss.Value,
+                    tree.tapped.Value);
+            })
+            .ToArray();
+    }
+
+    private static string BuildTreeChopSourceTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop:{tree.treeType.Value}:{tree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)}";
+        return $"tree_chop_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static IReadOnlyList<BridgeTreeChopResultTarget> DiscoverTreeChopResultTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null || !IsValidTreeDiscoveryLocation(location.NameOrUniqueName))
+            return Array.Empty<BridgeTreeChopResultTarget>();
+
+        return location.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
+                && tree.stump.Value && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
+                && !tree.hasMoss.Value && !tree.tapped.Value && tree.health.Value == 5f
+                && pair.Key.X >= 0 && pair.Key.X <= 1000 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player))
+            .Take(64)
+            .Select(pair =>
+            {
+                StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
+                int x = (int)pair.Key.X;
+                int y = (int)pair.Key.Y;
+                return new BridgeTreeChopResultTarget(
+                    BuildTreeChopResultTargetId(location, x, y, tree), location.NameOrUniqueName, x, y, tree.treeType.Value,
+                    tree.health.Value, tree.stump.Value, tree.hasMoss.Value, tree.tapped.Value);
+            })
+            .ToArray();
+    }
+
+    private static string BuildTreeChopResultTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop-result:{tree.treeType.Value}:{tree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)}";
+        return $"tree_chop_result_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static string BuildClearHoeDirtTargetId(GameLocation location, int x, int y)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:ground-empty-hoedirt";
+        return $"clear_hoedirt_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static IReadOnlyList<BridgeClearHoeDirtTarget> DiscoverClearHoeDirtTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeClearHoeDirtTarget>();
+        return location.terrainFeatures.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player)
+            && pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt && dirt.crop is null
+            && !(location.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
+            .Take(8).Select(pair => new BridgeClearHoeDirtTarget(BuildClearHoeDirtTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, Crop: false, Ground: true)).ToArray();
+    }
+
+    private static string BuildArtifactSpotTargetId(GameLocation location, int x, int y)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:(O)590";
+        return $"artifact_spot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static string BuildArtifactSpotResultTargetId(GameLocation location, int x, int y)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:artifact-spot-result:ground-hoedirt";
+        return $"artifact_spot_result_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static int CountArtifactSpotFarmSources()
+    {
+        GameLocation farm = Game1.getFarm();
+        return farm.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590");
+    }
+
+    private static IReadOnlyList<BridgeArtifactSpotTarget> DiscoverArtifactSpotTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeArtifactSpotTarget>();
+        return location.objects.Pairs
+            .Where(pair => (int)pair.Key.X is >= 0 and <= 1000 && (int)pair.Key.Y is >= 0 and <= 1000
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player)
+                && pair.Value.QualifiedItemId == "(O)590"
+                // Artifact spots themselves are object-occupied source tiles;
+                // the legal native interaction position is an adjacent
+                // passable standing tile (checked below), not a passability
+                // predicate on the source tile.
+                && location.isTileOnMap(pair.Key)
+                && !location.terrainFeatures.ContainsKey(pair.Key)
+                && location.GetHoeDirtAtTile(pair.Key) is null
+                && pair.Value is not StardewValley.Objects.IndoorPot
+                && new[] { pair.Key + new Vector2(-1f, 0f), pair.Key + new Vector2(1f, 0f), pair.Key + new Vector2(0f, -1f), pair.Key + new Vector2(0f, 1f) }
+                    .Any(standing => location.isTileOnMap(standing) && location.isTilePassable(standing)
+                        // The current player may legally occupy the only
+                        // adjacent action tile. Do not hide that exact live
+                        // target merely because the occupancy query observes
+                        // the player already standing there.
+                        && (!location.IsTileOccupiedBy(standing, CollisionMask.All, CollisionMask.None, useFarmerTile: false)
+                            || player.Tile == standing)))
+            // Keep the published list bounded, but make its cap deterministic
+            // so a fixture-selected source is always discoverable when it is
+            // within the existing eight-target publication boundary.
+            .OrderBy(pair => pair.Key.X)
+            .ThenBy(pair => pair.Key.Y)
+            .Take(8)
+            .Select(pair => new BridgeArtifactSpotTarget(BuildArtifactSpotTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, "(O)590"))
+            .ToArray();
+    }
+
+    private IReadOnlyList<BridgeWoodFenceResultTarget> DiscoverWoodFenceResultTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        BridgeWoodFenceResultTarget? target = this.woodFenceResultTarget;
+        if (target is not null
+            && (this.woodFenceResultExecutionId is null || this.woodFenceResultRequestId is null
+                || this.woodFenceResultRevision != this.revision
+                || this.woodFenceResultDay != Game1.Date.TotalDays
+                || !this.receiptsByRequestId.TryGetValue(this.woodFenceResultRequestId, out LocalExecutionReceipt? receipt)
+                || receipt.ExecutionId != this.woodFenceResultExecutionId
+                || receipt.State != ExecutionState.Succeeded
+                || receipt.ReasonCode != "wood_fence_placed"))
+        {
+            this.InvalidateWoodFenceResult();
+            target = null;
+        }
+        if (location is null || target is null
+            || !string.Equals(target.Location, location.NameOrUniqueName, StringComparison.Ordinal)
+            || !Utility.tileWithinRadiusOfPlayer(target.X, target.Y, 1, player)
+            || !location.objects.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.Object? placed)
+            || placed is not StardewValley.Fence fence
+            || fence.QualifiedItemId != target.QualifiedItemId
+            || fence.isGate.Value != target.IsGate
+            || fence.health.Value != target.Health
+            || fence.maxHealth.Value != target.MaxHealth)
+            return Array.Empty<BridgeWoodFenceResultTarget>();
+        return new[] { target };
+    }
+
+    private void InvalidateWoodFenceResult()
+    {
+        this.woodFenceResultTarget = null;
+        this.woodFenceResultExecutionId = null;
+        this.woodFenceResultRequestId = null;
+        this.woodFenceResultRevision = 0;
+        this.woodFenceResultDay = 0;
+    }
+
+    private static IReadOnlyList<BridgeCrabPotOverlayTile> BuildCrabPotOverlayFacts(StardewValley.Objects.CrabPot crabPot)
+    {
+        if (crabPot.Location is null || crabPot.Location != Game1.currentLocation)
+            return Array.Empty<BridgeCrabPotOverlayTile>();
+        return crabPot.getOverlayTiles()
+            .Where(tile => Game1.crabPotOverlayTiles.TryGetValue(tile, out int count) && count > 0)
+            .Select(tile => new BridgeCrabPotOverlayTile((int)tile.X, (int)tile.Y, Game1.crabPotOverlayTiles[tile]))
+            .ToArray();
+    }
+
+    private IReadOnlyList<BridgeCrabPotResultTarget> DiscoverCrabPotResultTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        BridgeCrabPotResultTarget? target = this.crabPotResultTarget;
+        if (target is not null
+            && (this.crabPotResultExecutionId is null || this.crabPotResultRequestId is null
+                || this.crabPotResultRevision != this.revision
+                || this.crabPotResultDay != Game1.Date.TotalDays
+                || !this.receiptsByRequestId.TryGetValue(this.crabPotResultRequestId, out LocalExecutionReceipt? receipt)
+                || receipt.ExecutionId != this.crabPotResultExecutionId
+                || receipt.State != ExecutionState.Succeeded
+                || receipt.ReasonCode != "crab_pot_placed"))
+        {
+            this.InvalidateCrabPotResult();
+            target = null;
+        }
+        if (location is null || target is null
+            || !string.Equals(target.Location, location.NameOrUniqueName, StringComparison.Ordinal)
+            || !Utility.tileWithinRadiusOfPlayer(target.X, target.Y, 1, player)
+            || !location.objects.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.Object? placed)
+            || placed is not StardewValley.Objects.CrabPot crabPot
+            || crabPot.QualifiedItemId != target.QualifiedItemId
+            || crabPot.owner.Value != target.OwnerId
+            || crabPot.directionOffset.Value.X != target.OffsetX
+            || crabPot.directionOffset.Value.Y != target.OffsetY)
+            return Array.Empty<BridgeCrabPotResultTarget>();
+        return new[] { target with { OverlayTiles = BuildCrabPotOverlayFacts(crabPot) } };
+    }
+
+    private void InvalidateCrabPotResult()
+    {
+        this.crabPotResultTarget = null;
+        this.crabPotResultExecutionId = null;
+        this.crabPotResultRequestId = null;
+        this.crabPotResultRevision = 0;
+        this.crabPotResultDay = 0;
+    }
+
+    private IReadOnlyList<BridgeArtifactSpotResultTarget> DiscoverArtifactSpotResultTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        BridgeArtifactSpotResultTarget? target = this.artifactSpotResultTarget;
+        if (target is not null
+            && (this.artifactSpotResultExecutionId is null || this.artifactSpotResultRequestId is null
+                || this.artifactSpotResultRevision != this.revision
+                || this.artifactSpotResultDay != Game1.Date.TotalDays
+                || !this.receiptsByRequestId.TryGetValue(this.artifactSpotResultRequestId, out LocalExecutionReceipt? receipt)
+                || receipt.ExecutionId != this.artifactSpotResultExecutionId
+                || receipt.State != ExecutionState.Succeeded
+                || receipt.ReasonCode != "artifact_spot_dug"))
+        {
+            this.InvalidateArtifactSpotResult();
+            target = null;
+        }
+        if (location is null || target is null
+            || !string.Equals(target.Location, location.NameOrUniqueName, StringComparison.Ordinal)
+            || !Utility.tileWithinRadiusOfPlayer(target.X, target.Y, 1, player)
+            || !location.terrainFeatures.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
+            || dirt.crop is not null
+            || (location.objects.TryGetValue(new Vector2(target.X, target.Y), out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
+            return Array.Empty<BridgeArtifactSpotResultTarget>();
+        return new[] { target };
+    }
+
+    private void InvalidateArtifactSpotResult()
+    {
+        this.artifactSpotResultTarget = null;
+        this.artifactSpotResultExecutionId = null;
+        this.artifactSpotResultRequestId = null;
+        this.artifactSpotResultRevision = 0;
+        this.artifactSpotResultDay = 0;
+    }
+
+    private static string BuildRockSourceTargetId(GameLocation location, int x, int y, StardewValley.Object rock)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:{rock.QualifiedItemId}:{rock.MinutesUntilReady}";
+        return $"rock_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static IReadOnlyList<BridgeRockSourceTarget> DiscoverRockSourceTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeRockSourceTarget>();
+        return location.objects.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, 1, player) && pair.Value.QualifiedItemId == "(O)2" && pair.Value.IsBreakableStone() && pair.Value.MinutesUntilReady == 1)
+            .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, pair.Value.MinutesUntilReady)).ToArray();
+    }
+
+    private static bool IsDebrisTargetWithinPlayerRadius(StardewValley.TerrainFeatures.ResourceClump clump, Farmer player)
+    {
+        int left = (int)clump.Tile.X;
+        int top = (int)clump.Tile.Y;
+        int right = left + clump.width.Value - 1;
+        int bottom = top + clump.height.Value - 1;
+        return Enumerable.Range(left, clump.width.Value)
+            .SelectMany(x => Enumerable.Range(top, clump.height.Value).Select(y => new Point(x, y)))
+            .Any(tile => Utility.tileWithinRadiusOfPlayer(tile.X, tile.Y, 1, player));
     }
 
     private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(Farmer player)
@@ -1784,7 +2555,7 @@ internal sealed class ExecutionManager
             StardewValley.TerrainFeatures.ResourceClump clump = location.resourceClumps[index];
             int x = (int)clump.Tile.X;
             int y = (int)clump.Tile.Y;
-            if (!Utility.tileWithinRadiusOfPlayer(x, y, 1, player)) continue;
+            if (!IsDebrisTargetWithinPlayerRadius(clump, player)) continue;
             string toolKind = clump.parentSheetIndex.Value switch
             {
                 600 or 602 => "axe",
@@ -1810,9 +2581,37 @@ internal sealed class ExecutionManager
                 }
             }
             if (usableSlot < 0) continue;
-            result.Add(new BridgeDebrisTarget(BuildDebrisTargetId(location, index, clump), usableSlot, x, y, clump.parentSheetIndex.Value, toolKind, requiredUpgrade));
+            result.Add(new BridgeDebrisTarget(BuildDebrisTargetId(location, index, clump), usableSlot, x, y, clump.parentSheetIndex.Value, toolKind, requiredUpgrade, (int)clump.health.Value));
         }
         return result;
+    }
+
+    private static IReadOnlyList<BridgeWateringCanFact> DiscoverWateringCanFacts(Farmer player) => player.Items
+        .Select((item, slot) => (item, slot))
+        .Where(entry => entry.item is WateringCan)
+        .Take(36)
+        .Select(entry =>
+        {
+            WateringCan can = (WateringCan)entry.item!;
+            return new BridgeWateringCanFact(entry.slot, can.QualifiedItemId, DescribeTool(can) ?? "watering_can", can.WaterLeft, can.waterCanMax);
+        })
+        .ToArray();
+
+    private static IReadOnlyList<BridgeRefillWateringCanTarget> DiscoverRefillWateringCanTargets(Farmer player)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeRefillWateringCanTarget>();
+        List<BridgeRefillWateringCanTarget> result = new();
+        for (int x = Math.Max(0, player.TilePoint.X - 1); x <= Math.Min(1000, player.TilePoint.X + 1) && result.Count < 8; x++)
+        for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= Math.Min(1000, player.TilePoint.Y + 1) && result.Count < 8; y++)
+            if (location.CanRefillWateringCanOnTile(x, y)) result.Add(new BridgeRefillWateringCanTarget(BuildRefillWateringCanTargetId(location, x, y), x, y));
+        return result;
+    }
+
+    private static string BuildRefillWateringCanTargetId(GameLocation location, int x, int y)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:watering_can_refill";
+        return $"watering_can_refill_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
     private static IReadOnlyList<BridgeToolSlot> DiscoverToolSlots(Farmer player)
@@ -1942,6 +2741,18 @@ internal sealed class ExecutionManager
         .Where(item => string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal))
         .Sum(item => item.Stack);
 
+    private static IReadOnlyList<BridgeInventoryItemFact> DiscoverInventoryItemFacts(Farmer player)
+    {
+        List<BridgeInventoryItemFact> result = new();
+        for (int slot = 0; slot < player.Items.Count && result.Count < 36; slot++)
+        {
+            if (player.Items[slot] is not StardewValley.Object item || string.IsNullOrWhiteSpace(item.QualifiedItemId) || item.Stack < 1)
+                continue;
+            result.Add(new BridgeInventoryItemFact(slot, item.QualifiedItemId, item.Stack));
+        }
+        return result;
+    }
+
     private static IReadOnlyList<BridgeFoodTarget> DiscoverFoodTargets(Farmer player)
     {
         List<BridgeFoodTarget> result = new();
@@ -2063,6 +2874,85 @@ internal sealed class ExecutionManager
     {
         string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}";
         return $"seed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static IReadOnlyList<BridgeWoodFenceTarget> DiscoverWoodFenceTargets(Farmer player)
+    {
+        if (player.currentLocation is not Farm farm) return Array.Empty<BridgeWoodFenceTarget>();
+        List<BridgeWoodFenceTarget> result = new();
+        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
+        {
+            if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)322" || source.Stack <= 0)
+                continue;
+            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 16; x++)
+            for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 16; y++)
+            {
+                Vector2 tile = new(x, y);
+                if (!IsTileWithinChebyshevRadius(player, x, y, 1) || !IsLegalEmptyFarmFenceTile(farm, tile, source))
+                    continue;
+                result.Add(new BridgeWoodFenceTarget(BuildWoodFenceTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)322"));
+            }
+        }
+        return result;
+    }
+
+    private static bool IsLegalEmptyFarmFenceTile(Farm farm, Vector2 tile, StardewValley.Object source)
+    {
+        return farm.isTileOnMap(tile)
+            && !farm.objects.ContainsKey(tile)
+            && Utility.playerCanPlaceItemHere(farm, source, (int)tile.X * 64 + 32, (int)tile.Y * 64 + 32, Game1.player)
+            && source.canBePlacedHere(farm, tile)
+            && farm.isTilePassable(tile)
+            && new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }
+                .Any(stance => farm.isTileOnMap(stance) && farm.isTilePassable(stance) && !farm.objects.ContainsKey(stance));
+    }
+
+    private static string BuildWoodFenceTargetId(Farm farm, int slot, int x, int y)
+    {
+        string raw = $"{farm.NameOrUniqueName}:{slot}:{x},{y}:(O)322:wood-fence";
+        return $"wood_fence_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    private static bool IsQualifiedWoodFenceSource(StardewValley.Object source)
+    {
+        return source.QualifiedItemId == "(O)322" && source.IsFenceItem();
+    }
+
+    /// <summary>
+    /// Version-locked native boundary for the finite Wood Fence source.
+    /// Object.placementAction is virtual and broad in the game API, so callers
+    /// must not invoke it without this exact (O)322 + IsFenceItem guard.
+    /// </summary>
+    private static bool PlaceQualifiedWoodFenceNative(Farm farm, int targetX, int targetY, StardewValley.Object source, Farmer player)
+    {
+        return IsQualifiedWoodFenceSource(source)
+            && source.placementAction(farm, targetX * 64 + 32, targetY * 64 + 32, player);
+    }
+
+    private static IReadOnlyList<BridgeCrabPotTarget> DiscoverCrabPotTargets(Farmer player)
+    {
+        if (player.currentLocation is not Farm farm) return Array.Empty<BridgeCrabPotTarget>();
+        List<BridgeCrabPotTarget> result = new();
+        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
+        {
+            if (item is not StardewValley.Object source || source.QualifiedItemId != "(O)710" || source.Stack <= 0)
+                continue;
+            for (int x = Math.Max(0, player.TilePoint.X - 1); x <= player.TilePoint.X + 1 && result.Count < 16; x++)
+            for (int y = Math.Max(0, player.TilePoint.Y - 1); y <= player.TilePoint.Y + 1 && result.Count < 16; y++)
+            {
+                if (!IsTileWithinChebyshevRadius(player, x, y, 1)
+                    || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, x, y))
+                    continue;
+                result.Add(new BridgeCrabPotTarget(BuildCrabPotTargetId(farm, slot, x, y), farm.NameOrUniqueName, slot, x, y, "(O)710"));
+            }
+        }
+        return result;
+    }
+
+    private static string BuildCrabPotTargetId(Farm farm, int slot, int x, int y)
+    {
+        string raw = $"{farm.NameOrUniqueName}:{slot}:{x},{y}:(O)710:crab-pot";
+        return $"crab_pot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
     private static IReadOnlyList<BridgeFertilizerTarget> DiscoverFertilizerTargets(Farmer player)
@@ -2288,12 +3178,16 @@ internal sealed class ExecutionManager
             result.Insert(0, "plant_seed");
         if (enabledActions?.Contains("fertilize_tile") == true)
             result.Insert(0, "fertilize_tile");
+        if (enabledActions?.Contains("place_wood_fence") == true)
+            result.Insert(0, "place_wood_fence");
         if (enabledActions?.Contains("clear_debris") == true)
             result.Insert(0, "clear_debris");
         if (enabledActions?.Contains("machine_inspect") == true)
             result.Insert(0, "machine_inspect");
-        if (enabledActions?.Contains("collect_resource") == true)
-            result.Insert(0, "collect_resource");
+        if (enabledActions?.Contains("machine_load") == true)
+            result.Insert(0, "machine_load");
+        if (enabledActions?.Contains("machine_collect_output") == true)
+            result.Insert(0, "machine_collect_output");
         if (enabledActions?.Contains("npc_relationship") == true)
             result.Insert(0, "npc_relationship");
         if (enabledActions?.Contains("pet_animal") == true)
@@ -2306,6 +3200,16 @@ internal sealed class ExecutionManager
             result.Insert(0, "use_item");
         if (enabledActions?.Contains("harvest_crop") == true)
             result.Insert(0, "harvest_crop");
+        if (enabledActions?.Contains("break_rock_source") == true)
+            result.Insert(0, "break_rock_source");
+        if (enabledActions?.Contains("clear_hoedirt") == true)
+            result.Insert(0, "clear_hoedirt");
+        if (enabledActions?.Contains("dig_artifact_spot") == true)
+            result.Insert(0, "dig_artifact_spot");
+        if (enabledActions?.Contains("tree_first_hit") == true)
+            result.Insert(0, "tree_first_hit");
+        if (enabledActions?.Contains("refill_watering_can") == true)
+            result.Insert(0, "refill_watering_can");
         return result;
     }
 

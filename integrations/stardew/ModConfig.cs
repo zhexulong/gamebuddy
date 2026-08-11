@@ -12,6 +12,13 @@ public sealed class ModConfig
     public string CompanionId { get; init; } = string.Empty;
 
     /// <summary>
+    /// Disposable one-process harness for the existing shared action runtime.
+    /// It binds only the current native local Player and must never start a
+    /// LAN server, Farmhand provisioner, or second process.
+    /// </summary>
+    public NativeLocalPlayerFixtureConfig? NativeLocalPlayerFixture { get; init; }
+
+    /// <summary>
     /// Opt-in diagnostic only: connect from an independent client to a LAN host,
     /// report the native available-Farmhand list, then disconnect without selecting one.
     /// </summary>
@@ -58,7 +65,10 @@ public sealed class ModConfig
 
             // Existing configs keep their old fail-closed allowlist semantics
             // until explicitly migrated to ActionPolicyVersion 1.
-            return new HashSet<string>((this.EnabledActions ?? Enumerable.Empty<string>()).Where(action => PublishedActions.Contains(action)), StringComparer.Ordinal);
+            // Legacy profiles remain explicit and fail closed. They may also
+            // opt into a test-only experimental action; that action still
+            // never enters the version-1 default player-facing surface.
+            return new HashSet<string>((this.EnabledActions ?? Enumerable.Empty<string>()).Where(action => PublishedActions.Contains(action) || ExperimentalActionIds.Contains(action)), StringComparer.Ordinal);
         }
     }
 
@@ -77,14 +87,17 @@ public sealed class ModConfig
         }
     }
 
-    private static readonly IReadOnlySet<string> PublishedActions = new HashSet<string>(new[] { "move_to_tile", "equip_tool", "travel", "enter_exit", "till_soil", "pickup_forage", "pickup_item", "water_crop", "plant_seed", "fertilize_tile", "machine_inspect", "collect_animal_product", "feed_animal", "use_item", "harvest_crop" }, StringComparer.Ordinal);
+    // This is the Mod-side declaration of the same published primitive surface
+    // materialized by host/src/action-registry.ts. machine_collect_output and
+    // the non-registry tree-first-hit probe remain unavailable.
+    private static readonly IReadOnlySet<string> PublishedActions = new HashSet<string>(new[] { "move_to_tile", "equip_tool", "travel", "enter_exit", "till_soil", "pickup_forage", "pickup_item", "water_crop", "plant_seed", "fertilize_tile", "machine_inspect", "machine_load", "machine_collect_output", "collect_animal_product", "feed_animal", "use_item", "harvest_crop", "place_wood_fence", "place_crab_pot", "chop_tree_source", "break_rock_source", "clear_hoedirt", "dig_artifact_spot", "refill_watering_can" }, StringComparer.Ordinal);
     private static readonly IReadOnlySet<string> PublishedFamilies = new HashSet<string>(new[]
     {
         "movement_navigation", "body_tools", "transport_warps", "farming_crops", "resource_gathering", "inventory_items",
         "crafting_cooking", "machines_processing", "animals_pets", "npc_social", "shops_economy",
         "buildings_farm_management", "quests_progression", "story_world_scripts", "festivals_minigames", "calendar_day_progression",
     }, StringComparer.Ordinal);
-    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "collect_resource", "npc_relationship", "pet_animal" }, StringComparer.Ordinal);
+    private static readonly IReadOnlySet<string> ExperimentalActionIds = new HashSet<string>(new[] { "clear_debris", "npc_relationship", "pet_animal" }, StringComparer.Ordinal);
 
     private static string ActionFamily(string action) => action switch
     {
@@ -99,14 +112,21 @@ public sealed class ModConfig
         "plant_seed" => "farming_crops",
         "fertilize_tile" => "farming_crops",
         "harvest_crop" => "farming_crops",
+        "place_wood_fence" => "buildings_farm_management",
+        "place_crab_pot" => "buildings_farm_management",
         "clear_debris" => "resource_gathering",
-        "machine_inspect" => "machines_processing",
-        "collect_resource" => "resource_gathering",
+        "machine_inspect" or "machine_load" or "machine_collect_output" => "machines_processing",
         "npc_relationship" => "npc_social",
         "pet_animal" => "animals_pets",
         "collect_animal_product" => "animals_pets",
         "feed_animal" => "animals_pets",
         "use_item" => "inventory_items",
+        "tree_first_hit" => "resource_gathering",
+        "chop_tree_source" => "resource_gathering",
+        "break_rock_source" => "resource_gathering",
+        "clear_hoedirt" => "farming_crops",
+        "dig_artifact_spot" => "resource_gathering",
+        "refill_watering_can" => "farming_crops",
         _ => string.Empty,
     };
 
@@ -114,6 +134,62 @@ public sealed class ModConfig
         && BridgeProtocol.IsOpaqueId(PipeName)
         && BridgeToken.Length is >= 16 and <= 256
         && new BridgeScope("stardew", SaveId, WorldId, PlayerId, CompanionId).IsValid;
+
+}
+
+public sealed class NativeLocalPlayerFixtureConfig
+{
+    public bool Enable { get; init; }
+    /// <summary>Logical name returned after target-version native load.</summary>
+    public string LogicalSaveName { get; init; } = string.Empty;
+    /// <summary>Exact observed target-version physical slot basename passed to SaveGame.Load.</summary>
+    public string ObservedSaveSlot { get; init; } = string.Empty;
+    public int TimeoutSeconds { get; init; } = 90;
+    /// <summary>Bounded pre-attachment native fixture setup; empty for move-only.</summary>
+    public string FixtureScenario { get; init; } = string.Empty;
+    /// <summary>
+    /// One-shot target-version new-game creation for a disposable local fixture.
+    /// It is valid only before a save exists; after native SaveLoaded the Mod
+    /// records the observed slot/scope and disables it before opening bridge.
+    /// </summary>
+    public NativeLocalPlayerFixtureBootstrapConfig? Bootstrap { get; init; }
+
+    internal bool IsValid => Enable
+        && LogicalSaveName.Length is >= 1 and <= 96
+        && LogicalSaveName.StartsWith("GameBuddyFixture", StringComparison.Ordinal)
+        && LogicalSaveName.All(char.IsLetterOrDigit)
+        && IsObservedFixtureSlot(ObservedSaveSlot, LogicalSaveName)
+        && TimeoutSeconds is >= 10 and <= 300
+        && (FixtureScenario is "" or "native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1")
+        && (Bootstrap is null || !Bootstrap.Enable);
+
+    internal bool IsBootstrapValid => Enable
+        && TimeoutSeconds is >= 10 and <= 300
+        && (FixtureScenario is "" or "native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1")
+        && Bootstrap is { IsValid: true };
+
+    private static bool IsObservedFixtureSlot(string slot, string logicalName)
+    {
+        string filtered = new(logicalName.Where(char.IsLetterOrDigit).ToArray());
+        if (!slot.StartsWith(filtered + "_", StringComparison.Ordinal))
+            return false;
+        string suffix = slot[(filtered.Length + 1)..];
+        return suffix.Length is >= 1 and <= 32 && suffix.All(char.IsDigit);
+    }
+}
+
+public sealed class NativeLocalPlayerFixtureBootstrapConfig
+{
+    public bool Enable { get; init; }
+    public string SaveName { get; init; } = string.Empty;
+    public string PlayerName { get; init; } = "GameBuddy";
+
+    internal bool IsValid => Enable
+        && SaveName.Length is >= 1 and <= 96
+        && SaveName.StartsWith("GameBuddyFixture", StringComparison.Ordinal)
+        && SaveName.All(char.IsLetterOrDigit)
+        && PlayerName.Length is >= 1 and <= 64
+        && PlayerName.All(character => char.IsLetterOrDigit(character) || character is '_' or '-');
 }
 
 public sealed class HostFarmhandProvisioningConfig

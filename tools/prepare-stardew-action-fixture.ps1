@@ -4,11 +4,11 @@ param(
     [string]$FixtureRoot,
 
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^GameBuddyFixture_[A-Za-z0-9_-]{1,96}$')]
+    [ValidatePattern('^GameBuddyFixture[A-Za-z0-9_-]{0,96}$')]
     [string]$TemplateName,
 
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^GameBuddyFixture_[A-Za-z0-9_-]{1,96}$')]
+    [ValidatePattern('^GameBuddyFixture[A-Za-z0-9_-]{0,96}$')]
     [string]$SaveName,
 
     [string]$StardewSaveRoot = (Join-Path $env:APPDATA 'StardewValley\Saves'),
@@ -89,8 +89,8 @@ if ($PSCmdlet.ParameterSetName -eq 'InitializeTemplate') {
     Assert-ChildPath $saveRootFull $sourceSavePath 'Source save path'
 }
 
-if (-not $SaveName.StartsWith('GameBuddyFixture_', [StringComparison]::Ordinal) -or -not $TemplateName.StartsWith('GameBuddyFixture_', [StringComparison]::Ordinal)) {
-    throw 'Only explicitly prefixed GameBuddyFixture_ saves may be handled.'
+if (-not $SaveName.StartsWith('GameBuddyFixture', [StringComparison]::Ordinal) -or -not $TemplateName.StartsWith('GameBuddyFixture', [StringComparison]::Ordinal)) {
+    throw 'Only explicitly prefixed GameBuddyFixture saves may be handled.'
 }
 if ($SaveName -ne $TemplateName) {
     throw 'SaveName must exactly equal TemplateName: Stardew native save files embed their directory name.'
@@ -99,9 +99,10 @@ if ($SaveName -ne $TemplateName) {
 Assert-NoGameProcesses
 
 if ($PSCmdlet.ParameterSetName -eq 'InitializeTemplate') {
-    if ($InitializeFromSaveName -eq $TemplateName) {
-        throw 'InitializeFromSaveName must not be the target fixture template name.'
-    }
+    # Source and template may use the same native slot basename because their
+    # roots are disjoint: source is the real save root and template is an
+    # external read-only fixture root. This lets us capture a target-version
+    # native-created save without renaming its embedded identity.
     if (-not (Test-Path -LiteralPath $sourceSavePath -PathType Container)) {
         throw "Source save directory is missing: $sourceSavePath"
     }

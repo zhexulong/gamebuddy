@@ -172,6 +172,14 @@ export function createStardewActionTools(integration: CompanionIntegration, poli
       execute: async (_toolCallId, params) => executeAction(integration, "pickup_item", { x: params.x, y: params.y, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
     }));
   }
+  if (isVisible("refill_watering_can")) {
+    tools.push(defineTool({
+      name: "stardew_refill_watering_can", label: "Refill Stardew Watering Can",
+      description: "Refill one selected, partially filled Watering Can from a live adjacent native water source.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "refill_watering_can", { slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
   if (isVisible("water_crop")) {
     tools.push(defineTool({
       name: "stardew_water_crop", label: "Water Stardew Crop",
@@ -188,6 +196,22 @@ export function createStardewActionTools(integration: CompanionIntegration, poli
       execute: async (_toolCallId, params) => executeAction(integration, "plant_seed", { slot: params.slot, x: params.x, y: params.y, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
     }));
   }
+  if (isVisible("place_wood_fence")) {
+    tools.push(defineTool({
+      name: "stardew_place_wood_fence", label: "Place Stardew Wood Fence",
+      description: "Place only a qualified (O)322 Wood Fence on a fresh empty Farm tile; native Fence evidence determines completion.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedQualifiedItemId: Type.Literal("(O)322"), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "place_wood_fence", { slot: params.slot, x: params.x, y: params.y, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
+  if (isVisible("place_crab_pot")) {
+    tools.push(defineTool({
+      name: "stardew_place_crab_pot", label: "Place Stardew Crab Pot",
+      description: "Place only a qualified (O)710 Crab Pot on a fresh valid Farm water tile; native Crab Pot evidence determines completion.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedQualifiedItemId: Type.Literal("(O)710"), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "place_crab_pot", { slot: params.slot, x: params.x, y: params.y, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
   if (isVisible("fertilize_tile")) {
     tools.push(defineTool({
       name: "stardew_fertilize_tile", label: "Fertilize Stardew Soil",
@@ -202,6 +226,22 @@ export function createStardewActionTools(integration: CompanionIntegration, poli
       description: "Read a live native machine state without opening a menu or changing the machine.",
       parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
       execute: async (_toolCallId, params) => executeAction(integration, "machine_inspect", { x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
+  if (isVisible("machine_load")) {
+    tools.push(defineTool({
+      name: "stardew_machine_load", label: "Load Coffee Beans into Keg",
+      description: "Load exactly five Coffee Beans into a live idle Keg through the normal native machine interaction. A receipt proves native input consumption and Coffee processing start.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedQualifiedItemId: Type.Literal("(O)433"), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "machine_load", { slot: params.slot, x: params.x, y: params.y, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
+  if (isVisible("machine_collect_output")) {
+    tools.push(defineTool({
+      name: "stardew_machine_collect_output", label: "Collect Coffee from Keg",
+      description: "Collect ready Coffee from the exact live Keg through the normal native machine interaction. A receipt proves native inventory delivery and cleared ready output.",
+      parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "machine_collect_output", { x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
     }));
   }
   if (isVisible("collect_animal_product")) {
@@ -234,6 +274,38 @@ export function createStardewActionTools(integration: CompanionIntegration, poli
       description: "Harvest a live ready ordinary crop. Only the native harvest receipt and inventory/regrow postcondition determine completion.",
       parameters: Type.Object({ x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedQualifiedItemId: Type.String({ minLength: 1, maxLength: 128 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
       execute: async (_toolCallId, params) => executeAction(integration, "harvest_crop", { x: params.x, y: params.y, expectedQualifiedItemId: params.expectedQualifiedItemId, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
+  if (isVisible("chop_tree_source")) {
+    tools.push(defineTool({
+      name: "stardew_chop_tree_source", label: "Chop Stardew Tree Source",
+      description: "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree source. Only source transformation in the authoritative receipt determines completion.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "chop_tree_source", { slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
+  if (isVisible("dig_artifact_spot")) {
+    tools.push(defineTool({
+      name: "stardew_dig_artifact_spot", label: "Dig Stardew Artifact Spot",
+      description: "Use one equipped Basic Hoe on a live adjacent (O)590 artifact spot. Source removal and native HoeDirt creation are required; rewards are excluded.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "dig_artifact_spot", { slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
+  if (isVisible("clear_hoedirt")) {
+    tools.push(defineTool({
+      name: "stardew_clear_hoedirt", label: "Clear Stardew HoeDirt",
+      description: "Use one equipped Basic Pickaxe hit on live adjacent empty ground HoeDirt. Crops, IndoorPots, drops, and pickup are excluded.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "clear_hoedirt", { slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
+    }));
+  }
+  if (isVisible("break_rock_source")) {
+    tools.push(defineTool({
+      name: "stardew_break_rock_source", label: "Break Stardew Rock Source",
+      description: "Use one equipped basic Pickaxe hit on a live one-hit ordinary stone source. Drops and pickup are separate actions.",
+      parameters: Type.Object({ slot: Type.Integer({ minimum: 0, maximum: 36 }), x: Type.Integer({ minimum: 0, maximum: 1000 }), y: Type.Integer({ minimum: 0, maximum: 1000 }), expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }), requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })), idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) }),
+      execute: async (_toolCallId, params) => executeAction(integration, "break_rock_source", { slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }, params.requestId, params.idempotencyKey),
     }));
   }
   if (isVisible("equip_tool")) {

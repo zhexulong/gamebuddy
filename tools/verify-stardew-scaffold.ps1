@@ -40,7 +40,9 @@ foreach ($path in @($entryPath, $managerPath, $controllerPath, $bridgeProtocolPa
 }
 
 $entry = Get-Content -Raw $entryPath
-foreach ($requiredText in @("public sealed class ModEntry : Mod", "public override void Entry(IModHelper helper)", "GameLaunched", "SaveLoaded", "UpdateTicked", "ReturnedToTitle", "Game1.player")) {
+# ModEntry is intentionally split across lifecycle/Portfolio partial files; only
+# its authoritative primary declaration may inherit SMAPI's Mod base class.
+foreach ($requiredText in @("public sealed partial class ModEntry : Mod", "public override void Entry(IModHelper helper)", "GameLaunched", "SaveLoaded", "UpdateTicked", "ReturnedToTitle", "Game1.player")) {
     if (-not $entry.Contains($requiredText)) {
         throw "ModEntry.cs is missing required lifecycle/local-player binding text: $requiredText"
     }

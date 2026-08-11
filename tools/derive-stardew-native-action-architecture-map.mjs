@@ -1,0 +1,51 @@
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile, rename } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { deriveArchitectureAccounting, sha256Text } from "./lib/stardew-native-architecture-accounting.mjs";
+
+const ASSEMBLY_NAME = "Stardew Valley.dll";
+const EXPECTED_VERSION = "1.6.15.24356";
+const EXPECTED_SHA256 = "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee";
+const DECOMPILE_OPTIONS = ["--disable-updatecheck", "-p", "--nested-directories"];
+const execFileAsync = promisify(execFile);
+
+const ROOT_REGISTER = Object.freeze([
+  { id: "root:control-action", family: "player-control", sourcePath: "StardewValley/Game1.cs", anchor: "public static bool pressActionButton(" },
+  { id: "root:control-tool", family: "player-control", sourcePath: "StardewValley/Game1.cs", anchor: "public static bool pressUseToolButton()" },
+  { id: "root:menu-host", family: "menu-event-minigame", sourcePath: "StardewValley/Game1.cs", anchor: "public static void updateActiveMenu(GameTime gameTime)" },
+  { id: "root:game-update", family: "game-update", sourcePath: "StardewValley/Game1.cs", anchor: "private void _update(GameTime gameTime)" },
+  { id: "root:world-location", family: "world-location", sourcePath: "StardewValley/GameLocation.cs", anchor: "public virtual bool performAction(string fullActionString" },
+  { id: "root:content-loader", family: "content-dispatch", sourcePath: "StardewValley/DataLoader.cs", anchor: "public static class DataLoader" },
+  { id: "root:save", family: "save-load", sourcePath: "StardewValley/SaveGame.cs", anchor: "public static IEnumerator<int> Save()" },
+  { id: "root:new-day", family: "day-progression", sourcePath: "StardewValley/Game1.cs", anchor: "public static void NewDay(float timeToPause)" },
+  { id: "root:network", family: "network", sourcePath: "StardewValley/Multiplayer.cs", anchor: "Game1.client.receiveMessages();" },
+]);
+
+const BOUNDARY_REGISTER = Object.freeze([
+  { id: "boundary:world-location-content-text", family: "content-boundary", sourcePath: "StardewValley/GameLocation.cs", anchor: "Game1.content.LoadString(" },
+  { id: "boundary:world-location-event-host", family: "event-boundary", sourcePath: "StardewValley/GameLocation.cs", anchor: "public virtual void startEvent(Event evt)" },
+  { id: "boundary:menu-host-current", family: "menu-boundary", sourcePath: "StardewValley/Game1.cs", anchor: "public static void updateActiveMenu(GameTime gameTime)" },
+  { id: "boundary:save-iterator", family: "save-boundary", sourcePath: "StardewValley/SaveGame.cs", anchor: "public static IEnumerator<int> getSaveEnumerator()" },
+  { id: "boundary:network-client", family: "network-boundary", sourcePath: "StardewValley/Multiplayer.cs", anchor: "Game1.client.receiveMessages();" },
+  { id: "boundary:content-loader", family: "content-boundary", sourcePath: "StardewValley/DataLoader.cs", anchor: "public static class DataLoader" },
+]);
+const REQUIRED_ROOT_FAMILIES = Object.freeze(["player-control", "menu-event-minigame", "game-update", "world-location", "content-dispatch", "save-load", "day-progression", "network"]);
+
+function fail(code, message, details = {}) { const error = new Error(message); error.code = code; error.details = details; throw error; }
+function canonicalJson(value) { if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`; return JSON.stringify(value); }
+function hash(value) { return createHash("sha256").update(value).digest("hex"); }
+function configurationDigest() { return hash(JSON.stringify({ tool: "ilspycmd", options: DECOMPILE_OPTIONS, target: ASSEMBLY_NAME })); }
+function parseArgs(argv) { const result = {}; for (let index = 0; index < argv.length; index += 1) { const option = argv[index]; if (!option.startsWith("--")) fail("invalid_argument", `Unexpected argument ${option}.`); const value = argv[++index]; if (!value || value.startsWith("--")) fail("invalid_argument", `Missing value for ${option}.`); result[option.slice(2)] = value; } if (!result["game-path"] || !result.out) fail("arguments_required", "Usage: --game-path <installed-game-path> --out <report-path>"); return result; }
+async function findFiles(root, current = root, output = []) { for (const entry of await readdir(current, { withFileTypes: true })) { const candidate = path.join(current, entry.name); if (entry.isDirectory()) await findFiles(root, candidate, output); else if (entry.isFile() && entry.name.endsWith(".cs")) output.push(candidate); } return output; }
+async function sha256File(filePath) { return hash(await readFile(filePath)); }
+async function inspectTarget(gamePath) { const assemblyPath = path.join(gamePath, ASSEMBLY_NAME); let assembly; try { assembly = await stat(assemblyPath); } catch { fail("target_assembly_missing", `Missing ${ASSEMBLY_NAME}.`); } const assemblySha256 = await sha256File(assemblyPath); if (assemblySha256 !== EXPECTED_SHA256) fail("target_assembly_hash_mismatch", "Supplied assembly differs from exact locked target.", { expected: EXPECTED_SHA256, actual: assemblySha256 }); const versionResult = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", "$p=$env:GAMEBUDDY_INSPECT_ASSEMBLY;(Get-Item -LiteralPath $p).VersionInfo.FileVersion"], { encoding: "utf8", env: { ...process.env, GAMEBUDDY_INSPECT_ASSEMBLY: assemblyPath } }); const fileVersion = versionResult.stdout.trim(); if (fileVersion !== EXPECTED_VERSION) fail("target_assembly_version_mismatch", "Supplied assembly differs from locked file version.", { expected: EXPECTED_VERSION, actual: fileVersion }); const contentHashesPath = path.join(gamePath, "Content", "ContentHashes.json"); let contentHashes; try { contentHashes = JSON.parse(await readFile(contentHashesPath, "utf8")); } catch { fail("content_manifest_missing", "Could not read Content/ContentHashes.json."); } return Object.freeze({ assemblyPath, target: { relativePath: ASSEMBLY_NAME, fileVersion, lengthBytes: assembly.size, sha256: assemblySha256 }, contentHashes, contentHashesSha256: await sha256File(contentHashesPath) }); }
+async function decompile(assemblyPath) { const outputRoot = await mkdtemp(path.join(os.tmpdir(), "gamebuddy-stardew-architecture-")); const tool = process.env.ILSPYCMD_PATH || "ilspycmd"; try { const version = await execFileAsync(tool, ["--version"], { encoding: "utf8" }); const toolVersion = version.stdout.trim().split(/\r?\n/)[0]; if (toolVersion !== "ilspycmd: 9.1.0.7988") fail("decompiler_version_mismatch", "Architecture map requires the locked ilspycmd version.", { actual: toolVersion }); await execFileAsync(tool, [...DECOMPILE_OPTIONS, "-o", outputRoot, assemblyPath], { encoding: "utf8", maxBuffer: 256 * 1024 }); return Object.freeze({ outputRoot, tool: "ilspycmd", toolVersion, options: DECOMPILE_OPTIONS, configurationDigest: configurationDigest() }); } catch (error) { await rm(outputRoot, { recursive: true, force: true }); if (error.code?.startsWith("decompiler_")) throw error; fail("assembly_decompilation_failed", "Could not produce the target source snapshot.", { cause: error.message }); } }
+async function sourceRecords(root) { const files = (await findFiles(root)).sort(); const records = []; const manifestRows = []; for (const filePath of files) { const relativePath = path.relative(root, filePath).replaceAll(path.sep, "/"); const text = await readFile(filePath, "utf8"); const sha256 = sha256Text(text); records.push(Object.freeze({ relativePath, text })); manifestRows.push(`${relativePath}\t${sha256}`); } return Object.freeze({ records: Object.freeze(records), fileCount: records.length, manifestSha256: hash(`${manifestRows.join("\n")}\n`) }); }
+function contentPaths(contentHashes) { return Object.keys(contentHashes).map((value) => value.replaceAll("\\", "/")).sort(); }
+function contentManifestSha256(contentHashes) { const rows = Object.entries(contentHashes).map(([key, value]) => [key.replaceAll("\\", "/"), value]).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}\t${value}`); return hash(`${rows.join("\n")}\n`); }
+async function atomicWrite(outputPath, report) { const resolved = path.resolve(outputPath); const temporary = `${resolved}.${process.pid}.${Date.now()}.tmp`; await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`, "utf8"); await rename(temporary, resolved); }
+async function main() { const args = parseArgs(process.argv.slice(2).filter((argument) => argument !== "--")); const target = await inspectTarget(path.resolve(args["game-path"])); const decompilation = await decompile(target.assemblyPath); try { const sources = await sourceRecords(decompilation.outputRoot); const paths = contentPaths(target.contentHashes); const accounting = deriveArchitectureAccounting({ sourceRecords: sources.records, contentPaths: paths, rootRegister: ROOT_REGISTER, boundaryRegister: BOUNDARY_REGISTER, requiredRootFamilies: REQUIRED_ROOT_FAMILIES }); const report = Object.freeze({ schemaVersion: 1, artifactKind: "native_action_architecture_accounting", target: target.target, decompilation: { tool: decompilation.tool, toolVersion: decompilation.toolVersion, options: decompilation.options, configurationDigest: decompilation.configurationDigest }, inputUniverse: { sourceFileCount: sources.fileCount, sourceManifestSha256: sources.manifestSha256, contentPathCount: paths.length, contentHashesSha256: target.contentHashesSha256, contentManifestSha256: contentManifestSha256(target.contentHashes) }, accounting, analysisBoundary: { sourceSemantics: "not_inferred", primitiveBasis: "not_inferred", playerActionSet: "not_inferred", gameBuddyProjection: "not_inferred", callResolution: "not_performed", liveBehaviorValidation: "not_performed" } }); await atomicWrite(args.out, report); } finally { await rm(decompilation.outputRoot, { recursive: true, force: true }); } }
+main().catch((error) => { console.error(`${error.code ?? "native_action_architecture_map_failed"}: ${error.message}`); process.exitCode = 1; });

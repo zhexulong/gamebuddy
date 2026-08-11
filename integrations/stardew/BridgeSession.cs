@@ -88,13 +88,19 @@ internal sealed class BridgeSession
                                     ? this.executions.RequestLocalPlantSeed(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedQualifiedItemId!, request.Args.ExpectedTargetId!, request.DeadlineMs)
                                     : request.Action == "fertilize_tile"
                                         ? this.executions.RequestLocalFertilizeTile(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedQualifiedItemId!, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                        : request.Action == "place_wood_fence"
+                                            ? this.executions.RequestLocalPlaceWoodFence(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedQualifiedItemId!, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                        : request.Action == "place_crab_pot"
+                                            ? this.executions.RequestLocalPlaceCrabPot(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedQualifiedItemId!, request.Args.ExpectedTargetId!, request.DeadlineMs)
                                         : request.Action == "clear_debris"
                                             ? this.executions.RequestLocalClearDebris(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
                                             : request.Action == "machine_inspect"
                                                 ? this.executions.RequestLocalInspectMachine(request.RequestId, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
-                                                : request.Action == "collect_resource"
-                                                    ? this.executions.RequestLocalCollectResource(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
-                                                    : request.Action == "npc_relationship"
+                                                : request.Action == "machine_load"
+                                                    ? this.executions.RequestLocalLoadCoffeeIntoKeg(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedQualifiedItemId!, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                                    : request.Action == "machine_collect_output"
+                                                        ? this.executions.RequestLocalCollectCoffeeFromKeg(request.RequestId, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                                : request.Action == "npc_relationship"
                                                         ? this.executions.RequestLocalInspectNpcRelationship(request.RequestId, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
                                                         : request.Action == "pet_animal"
                                                             ? this.executions.RequestLocalPetAnimal(request.RequestId, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
@@ -104,7 +110,19 @@ internal sealed class BridgeSession
                                                                 ? this.executions.RequestLocalFeedAnimal(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
                                                             : request.Action == "use_item"
                                                                 ? this.executions.RequestLocalUseItem(request.RequestId, request.Args.Slot!.Value, request.Args.ExpectedQualifiedItemId!, request.DeadlineMs)
-                                                                : this.executions.RequestLocalEquipTool(request.RequestId, request.Args.Slot!.Value);
+                                                                : request.Action == "refill_watering_can"
+                                                                    ? this.executions.RequestLocalRefillWateringCan(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                                                    : request.Action == "clear_hoedirt"
+                                                                    ? this.executions.RequestLocalClearHoeDirt(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                                                    : request.Action == "dig_artifact_spot"
+                                                                    ? this.executions.RequestLocalDigArtifactSpot(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                                                    : request.Action == "break_rock_source"
+                                                                    ? this.executions.RequestLocalBreakRockSource(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                                                    : request.Action == "tree_first_hit"
+                                                                    ? this.executions.RequestLocalTreeFirstHit(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                                                    : request.Action == "chop_tree_source"
+                                                                    ? this.executions.RequestLocalChopTreeSource(request.RequestId, request.Args.Slot!.Value, (int)request.Args.X!.Value, (int)request.Args.Y!.Value, request.Args.ExpectedTargetId!, request.DeadlineMs)
+                                                                    : this.executions.RequestLocalEquipTool(request.RequestId, request.Args.Slot!.Value);
         this.RememberIdempotency(request.IdempotencyKey, fingerprint, request.RequestId);
         response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(receipt)); reasonCode = "accepted"; return true;
     }
@@ -154,14 +172,23 @@ internal sealed class BridgeSession
         if (this.publishedCapabilities.Contains("harvest_crop")) capabilities.Insert(0, "harvest_crop");
         if (this.publishedCapabilities.Contains("plant_seed")) capabilities.Insert(0, "plant_seed");
         if (this.publishedCapabilities.Contains("fertilize_tile")) capabilities.Insert(0, "fertilize_tile");
+        if (this.publishedCapabilities.Contains("place_wood_fence")) capabilities.Insert(0, "place_wood_fence");
+        if (this.publishedCapabilities.Contains("place_crab_pot")) capabilities.Insert(0, "place_crab_pot");
         if (this.publishedCapabilities.Contains("clear_debris")) capabilities.Insert(0, "clear_debris");
         if (this.publishedCapabilities.Contains("machine_inspect")) capabilities.Insert(0, "machine_inspect");
-        if (this.publishedCapabilities.Contains("collect_resource")) capabilities.Insert(0, "collect_resource");
+        if (this.publishedCapabilities.Contains("machine_load")) capabilities.Insert(0, "machine_load");
+        if (this.publishedCapabilities.Contains("machine_collect_output")) capabilities.Insert(0, "machine_collect_output");
         if (this.publishedCapabilities.Contains("npc_relationship")) capabilities.Insert(0, "npc_relationship");
         if (this.publishedCapabilities.Contains("pet_animal")) capabilities.Insert(0, "pet_animal");
         if (this.publishedCapabilities.Contains("collect_animal_product")) capabilities.Insert(0, "collect_animal_product");
         if (this.publishedCapabilities.Contains("feed_animal")) capabilities.Insert(0, "feed_animal");
         if (this.publishedCapabilities.Contains("use_item")) capabilities.Insert(0, "use_item");
+        if (this.publishedCapabilities.Contains("break_rock_source")) capabilities.Insert(0, "break_rock_source");
+        if (this.publishedCapabilities.Contains("clear_hoedirt")) capabilities.Insert(0, "clear_hoedirt");
+        if (this.publishedCapabilities.Contains("dig_artifact_spot")) capabilities.Insert(0, "dig_artifact_spot");
+        if (this.publishedCapabilities.Contains("tree_first_hit")) capabilities.Insert(0, "tree_first_hit");
+        if (this.publishedCapabilities.Contains("chop_tree_source")) capabilities.Insert(0, "chop_tree_source");
+        if (this.publishedCapabilities.Contains("refill_watering_can")) capabilities.Insert(0, "refill_watering_can");
         return capabilities;
     }
     private bool IsAuthenticated(long generation, out string reasonCode) { if (this.authenticatedGeneration != generation) { reasonCode = "unauthenticated"; return false; } reasonCode = "accepted"; return true; }
@@ -184,9 +211,9 @@ internal sealed class BridgeSession
             if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId) || (request.Action == "harvest_crop" && request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 }))
             { reasonCode = "invalid_execution_request"; return false; }
         }
-        else if (request.Action is "plant_seed" or "fertilize_tile")
+        else if (request.Action is "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot")
         {
-            if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 } || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
+            if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 } || (request.Action == "place_wood_fence" && request.Args.ExpectedQualifiedItemId != "(O)322") || (request.Action == "place_crab_pot" && request.Args.ExpectedQualifiedItemId != "(O)710") || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
             { reasonCode = "invalid_execution_request"; return false; }
         }
         else if (request.Action == "clear_debris")
@@ -199,9 +226,14 @@ internal sealed class BridgeSession
             if (!request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
             { reasonCode = "invalid_execution_request"; return false; }
         }
-        else if (request.Action == "collect_resource")
+        else if (request.Action == "machine_load")
         {
-            if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
+            if (request.Args.AdditionalProperties is { Count: > 0 } || !request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || request.Args.ExpectedQualifiedItemId != "(O)433" || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
+            { reasonCode = "invalid_execution_request"; return false; }
+        }
+        else if (request.Action == "machine_collect_output")
+        {
+            if (request.Args.AdditionalProperties is { Count: > 0 } || request.Args.Slot.HasValue || request.Args.ExpectedQualifiedItemId is not null || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
             { reasonCode = "invalid_execution_request"; return false; }
         }
         else if (request.Action is "npc_relationship" or "pet_animal")
@@ -217,6 +249,16 @@ internal sealed class BridgeSession
         else if (request.Action == "use_item")
         {
             if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || request.Args.ExpectedQualifiedItemId is not { Length: > 0 and <= 128 })
+            { reasonCode = "invalid_execution_request"; return false; }
+        }
+        else if (request.Action is "refill_watering_can" or "tree_first_hit" or "chop_tree_source" or "break_rock_source")
+        {
+            if (request.Args.AdditionalProperties is { Count: > 0 } || !request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
+            { reasonCode = "invalid_execution_request"; return false; }
+        }
+        else if (request.Action is "clear_hoedirt" or "dig_artifact_spot")
+        {
+            if (request.Args.AdditionalProperties is { Count: > 0 } || request.Args.ExpectedQualifiedItemId is not null || !request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36 || !request.Args.X.HasValue || !request.Args.Y.HasValue || !float.IsFinite(request.Args.X.Value) || !float.IsFinite(request.Args.Y.Value) || request.Args.X.Value != MathF.Floor(request.Args.X.Value) || request.Args.Y.Value != MathF.Floor(request.Args.Y.Value) || request.Args.X.Value < 0 || request.Args.Y.Value < 0 || request.Args.X.Value > 1000 || request.Args.Y.Value > 1000 || !BridgeProtocol.IsOpaqueId(request.Args.ExpectedTargetId))
             { reasonCode = "invalid_execution_request"; return false; }
         }
         else if (request.Action == "equip_tool")

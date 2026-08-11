@@ -1,0 +1,31 @@
+import { createHash } from "node:crypto";
+import { deriveNativeRouterInvocationInventory } from "./stardew-native-router-invocation-inventory.mjs";
+import { deriveNativeVirtualReceiverRegister } from "./stardew-native-virtual-receiver-register.mjs";
+
+const SHA256 = /^[a-f0-9]{64}$/;
+const METHODS = new Set(["leftClick", "DoFunction", "endUsing", "beginUsing", "onRelease", "Update"]);
+const hash = (value) => createHash("sha256").update(value).digest("hex");
+function fail(code, message, details = {}) { const error = new Error(message); error.code = code; error.details = details; throw error; }
+function noProductTerms(value, at = "$") { const forbidden = new Set(["action", "actionId", "primitive", "primitiveId", "operation", "operationId", "semanticFamily", "intent", "contract", "receipt", "evidence", "policy", "capability", "publicActionId", "projection", "reuse"]); if (Array.isArray(value)) return value.forEach((entry, index) => noProductTerms(entry, `${at}[${index}]`)); if (!value || typeof value !== "object") return; for (const [key, entry] of Object.entries(value)) { if (forbidden.has(key)) fail("virtual_member_invocation_register_forbidden_field", `Virtual member register must not infer ${key}.`, { at: `${at}.${key}` }); noProductTerms(entry, `${at}.${key}`); } }
+function sourceRecord(sourceFiles, relativePath) { const record = sourceFiles?.[relativePath]; if (!record || typeof record.text !== "string" || !SHA256.test(record.sha256 ?? "") || hash(Buffer.from(record.text, "utf8")) !== record.sha256) fail("virtual_member_invocation_register_source_invalid", "Every exact source record must have matching text/hash.", { relativePath }); return record; }
+function signatureAt(source, startByte) { const bytes = Buffer.from(source, "utf8"); const brace = bytes.indexOf(123, startByte); if (brace < 0) fail("virtual_member_invocation_register_signature_unclosed", "Visible virtual declaration has no opening brace.", { startByte }); const before = bytes.subarray(0, brace).toString("utf8").trimEnd(); const lineStart = Math.max(before.lastIndexOf("\n") + 1, before.lastIndexOf("\r") + 1); const signature = before.slice(lineStart).trim(); if (!signature) fail("virtual_member_invocation_register_signature_missing", "Visible virtual declaration signature is empty.", { startByte }); return signature; }
+function baseSignature(source, methodName) { const pattern = new RegExp(`\\bpublic\\s+virtual\\s+(?:void|bool)\\s+${methodName}\\s*\\(`, "g"); const matches = [...source.matchAll(pattern)]; if (matches.length !== 1) fail("virtual_member_invocation_register_base_missing", "Expected one Tool base virtual declaration.", { methodName, count: matches.length }); const start = Buffer.byteLength(source.slice(0, matches[0].index), "utf8"); return signatureAt(source, start); }
+/** Inventories visible invocation syntax for the Tool base implementation and
+ * each direct-source subclass override of exactly one virtual member. It does
+ * not resolve runtime receivers, callee overloads, state effects, or behavior. */
+export async function deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName } = {}) {
+  if (!METHODS.has(methodName)) fail("virtual_member_invocation_register_method_invalid", "Expected supported Tool virtual method.", { methodName });
+  const receiverRegister = deriveNativeVirtualReceiverRegister({ sourceFiles, methodName });
+  const baseRelativePath = "StardewValley/Tool.cs";
+  const base = sourceRecord(sourceFiles, baseRelativePath);
+  const implementations = [{ implementationId: `tool-base-${methodName}`, receiverType: "Tool", implementationKind: "base_virtual", relativePath: baseRelativePath, signature: baseSignature(base.text, methodName) }];
+  for (const override of receiverRegister.overrides) {
+    const record = sourceRecord(sourceFiles, override.declaration.relativePath);
+    implementations.push({ implementationId: `tool-override-${methodName}-${override.receiverType}`, receiverType: override.receiverType, implementationKind: "direct_source_override", relativePath: override.declaration.relativePath, signature: signatureAt(record.text, override.declaration.startByte) });
+  }
+  const duplicate = implementations.find((item, index) => implementations.findIndex((other) => other.implementationId === item.implementationId) !== index); if (duplicate) fail("virtual_member_invocation_register_duplicate_implementation", "Virtual implementation IDs must be unique.", { implementationId: duplicate.implementationId });
+  const inventories = [];
+  for (const implementation of implementations) { const record = sourceRecord(sourceFiles, implementation.relativePath); const inventory = await deriveNativeRouterInvocationInventory({ source: record.text, relativePath: implementation.relativePath, signature: implementation.signature }); inventories.push(Object.freeze({ ...implementation, declaration: inventory.routerDeclaration, syntaxInventoryState: inventory.syntaxInventoryState, routerParseGaps: inventory.routerParseGaps, invocationCount: inventory.invocationCount, invocations: inventory.invocations })); }
+  return Object.freeze({ schemaVersion: 1, artifactKind: "native_virtual_member_invocation_register", baseType: "Tool", methodName, receiverRegister, implementationCount: inventories.length, implementations: Object.freeze(inventories), analysisBoundary: Object.freeze({ visibleImplementationEnumeration: "performed", syntaxInvocationInventory: "performed", runtimeConstructionReachability: "not_inferred", virtualDispatchResolution: "not_performed", overloadResolution: "not_performed", stateEffectInterpretation: "not_performed", transitionDerivation: "not_performed", primitiveDerivation: "not_performed", publicActionProjection: "not_performed" }) });
+}
+export async function validateNativeVirtualMemberInvocationRegister(register, { sourceFiles } = {}) { noProductTerms(register); const derived = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: register?.methodName }); if (JSON.stringify(register.implementations) !== JSON.stringify(derived.implementations) || JSON.stringify(register.receiverRegister) !== JSON.stringify(derived.receiverRegister)) fail("virtual_member_invocation_register_stale", "Register does not match the exact visible Tool virtual implementation inventory."); return derived; }

@@ -37,6 +37,18 @@ public sealed class ModEntry : Mod
     private bool hostAutomationObservedAiClientExit;
     private bool hostAutomationFixtureInitialized;
     private bool hostAutomationFixtureReadinessPublished;
+    private bool nativeLocalPlayerFixtureStarted;
+    private bool nativeLocalPlayerFixtureInitialized;
+    private bool nativeLocalPlayerFixtureTerminal;
+    private long nativeLocalPlayerFixtureDeadlineUnixMs;
+    private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
+    private bool nativeLocalPlayerFixtureBootstrapInvoked;
+    private bool nativeLocalPlayerFixtureBootstrapTerminal;
+    private NativeLocalFeedFixturePending? nativeLocalFeedFixturePending;
+    private NativeLocalCollectAnimalProductFixturePending? nativeLocalCollectAnimalProductFixturePending;
+    private NativeLocalClearHoeDirtFixturePending? nativeLocalClearHoeDirtFixturePending;
+    private NativeLocalDigArtifactSpotFixturePending? nativeLocalDigArtifactSpotFixturePending;
+    private NativeLocalPlaceCrabPotFixturePending? nativeLocalPlaceCrabPotFixturePending;
 
     public override void Entry(IModHelper helper)
     {
@@ -67,6 +79,23 @@ public sealed class ModEntry : Mod
         {
             this.provisioningConfigurationRejected = true;
             this.Monitor.Log("GameBuddy rejected Stardew Game Action policy: use ActionPolicyVersion 1 with known DeniedActions/DeniedActionFamilies, or an explicit legacy EnabledActions configuration.", LogLevel.Error);
+            return;
+        }
+        if (this.config.NativeLocalPlayerFixture?.Enable == true)
+        {
+            if ((!this.config.NativeLocalPlayerFixture.IsValid && !this.config.NativeLocalPlayerFixture.IsBootstrapValid)
+                || this.config.HostFarmhandProvisioning?.Enable == true
+                || this.config.FarmhandProvisioner?.Enable == true
+                || this.config.HostAutomation?.Enable == true)
+            {
+                this.provisioningConfigurationRejected = true;
+                this.Monitor.Log("GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save and no HostAutomation, Farmhand provisioning, or LAN host.", LogLevel.Error);
+                return;
+            }
+            this.hostRoleConfigured = false;
+            this.Monitor.Log(this.config.NativeLocalPlayerFixture.Bootstrap is { Enable: true }
+                ? "GameBuddy native-local-player fixture bootstrap armed: target-version new-game creation will run at title screen and bridge remains closed until native SaveLoaded records its slot/scope."
+                : "GameBuddy native-local-player fixture armed for its explicit observed native save slot.", LogLevel.Info);
             return;
         }
         bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
@@ -135,6 +164,16 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        if (this.config.NativeLocalPlayerFixture?.Enable == true)
+        {
+            if (this.config.NativeLocalPlayerFixture.Bootstrap is { Enable: true })
+            {
+                this.TryCompleteNativeLocalPlayerFixtureBootstrap();
+                return;
+            }
+            this.TryInitializeNativeLocalPlayerFixture();
+            return;
+        }
         // Fixture setup, when explicitly armed, runs on the Host game thread
         // before a LAN server/attachment exists. It never calls production actions.
         this.TryInitializeNativeFixtureScenario();
@@ -142,6 +181,1206 @@ public sealed class ModEntry : Mod
         this.TryStartHostAutomation();
         this.TryStartFarmhandProvisioner();
         this.TryInitializeEmbodiment();
+    }
+
+    private void TryInitializeNativeLocalPlayerFixture()
+    {
+        NativeLocalPlayerFixtureConfig? fixture = this.config.NativeLocalPlayerFixture;
+        if (fixture is not { Enable: true } || this.nativeLocalPlayerFixtureTerminal)
+            return;
+        if (fixture.Bootstrap is { Enable: true })
+        {
+            this.TryBootstrapNativeLocalPlayerFixture(fixture);
+            return;
+        }
+
+        if (Context.IsWorldReady)
+        {
+            // This asserts the current live actor/process, not historical
+            // Farmer records retained in a disposable fixture save. A cloned
+            // prior Farmhand fixture can still contain offline records; those
+            // must neither start nor authorize another actor here.
+            if (Context.IsMultiplayer || Game1.getAllFarmers().Count() != 1 || !Game1.IsMasterGame || Game1.server is not null || Game1.player is not Farmer localPlayer || localPlayer.UniqueMultiplayerID != Game1.MasterPlayer.UniqueMultiplayerID)
+            {
+                this.nativeLocalPlayerFixtureTerminal = true;
+                this.Monitor.Log("GameBuddy native-local-player fixture refused the loaded world because the current process is not the sole native master local Player without a LAN server.", LogLevel.Error);
+                return;
+            }
+            this.TryInitializeNativeLocalPlayerFixtureScenario(fixture);
+            // The shared embodiment initializes only after the native load
+            // lifecycle has made Game1.player available. Any scenario setup is
+            // bounded, happens before attachment, and never produces a receipt.
+            return;
+        }
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.nativeLocalPlayerFixtureStarted)
+        {
+            if (now >= this.nativeLocalPlayerFixtureDeadlineUnixMs)
+            {
+                this.nativeLocalPlayerFixtureTerminal = true;
+                this.Monitor.Log("GameBuddy native-local-player fixture timed out loading its explicit observed native save slot.", LogLevel.Error);
+            }
+            return;
+        }
+
+        this.nativeLocalPlayerFixtureStarted = true;
+        this.nativeLocalPlayerFixtureDeadlineUnixMs = now + fixture.TimeoutSeconds * 1_000L;
+        try
+        {
+            SaveGame.Load(fixture.ObservedSaveSlot);
+            Game1.exitActiveMenu();
+            this.Monitor.Log($"GameBuddy native-local-player fixture requested native SaveGame.Load for its explicit observed slot and is waiting for SaveLoaded.", LogLevel.Info);
+        }
+        catch (Exception exception)
+        {
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log($"GameBuddy native-local-player fixture failed to request native save load: {exception.GetType().Name}.", LogLevel.Error);
+        }
+    }
+
+    private void TryBootstrapNativeLocalPlayerFixture(NativeLocalPlayerFixtureConfig fixture)
+    {
+        NativeLocalPlayerFixtureBootstrapConfig? bootstrap = fixture.Bootstrap;
+        if (bootstrap is not { Enable: true } || this.nativeLocalPlayerFixtureBootstrapTerminal)
+            return;
+        if (!fixture.IsBootstrapValid)
+        {
+            this.nativeLocalPlayerFixtureBootstrapTerminal = true;
+            this.Monitor.Log("GameBuddy rejected native-local-player fixture bootstrap configuration.", LogLevel.Error);
+            return;
+        }
+        // createdNewCharacter() switches into native loading before SMAPI
+        // raises SaveLoaded. Do not mistake that expected intermediate world
+        // state for a second bootstrap attempt.
+        if (this.nativeLocalPlayerFixtureBootstrapInvoked)
+            return;
+        if (Context.IsWorldReady || Game1.hasLoadedGame)
+        {
+            this.nativeLocalPlayerFixtureBootstrapTerminal = true;
+            this.Monitor.Log("GameBuddy rejected native-local-player fixture bootstrap because a world was already loaded before native creation began.", LogLevel.Error);
+            return;
+        }
+        if (Game1.activeClickableMenu is not StardewValley.Menus.TitleMenu titleMenu)
+            return;
+        if (SaveGame.IsNewGameSaveNameCollision(bootstrap.SaveName))
+        {
+            this.nativeLocalPlayerFixtureBootstrapTerminal = true;
+            this.Monitor.Log("GameBuddy rejected native-local-player fixture bootstrap because the requested native save name already exists.", LogLevel.Error);
+            return;
+        }
+        try
+        {
+            Game1.resetPlayer();
+            Game1.SetSaveName(bootstrap.SaveName);
+            Game1.player.Name = bootstrap.PlayerName;
+            Game1.player.farmName.Value = bootstrap.SaveName;
+            Game1.player.favoriteThing.Value = "GameBuddyFixture";
+            if (!string.Equals(Game1.GetSaveGameName(set_value: false), bootstrap.SaveName, StringComparison.Ordinal))
+                throw new InvalidOperationException("fixture_native_save_name_resolution_failed");
+            this.nativeLocalPlayerFixtureBootstrapInvoked = true;
+            titleMenu.createdNewCharacter(skipIntro: true);
+            this.Monitor.Log("GameBuddy requested target-version native local fixture creation; waiting for native SaveLoaded.", LogLevel.Info);
+        }
+        catch (Exception exception)
+        {
+            this.nativeLocalPlayerFixtureBootstrapTerminal = true;
+            this.Monitor.Log($"GameBuddy native-local-player fixture bootstrap failed: {exception.GetType().Name}.", LogLevel.Error);
+        }
+    }
+
+    private void TryCompleteNativeLocalPlayerFixtureBootstrap()
+    {
+        NativeLocalPlayerFixtureConfig? fixture = this.config.NativeLocalPlayerFixture;
+        NativeLocalPlayerFixtureBootstrapConfig? bootstrap = fixture?.Bootstrap;
+        if (fixture is null || bootstrap is not { Enable: true })
+            return;
+        if (!fixture.IsBootstrapValid || !Context.IsWorldReady || !Game1.hasLoadedGame || Game1.player is null || Context.IsMultiplayer || !Game1.IsMasterGame)
+        {
+            this.nativeLocalPlayerFixtureBootstrapTerminal = true;
+            this.Monitor.Log("GameBuddy rejected native-local-player fixture bootstrap completion because the native world is not single-player local-player.", LogLevel.Error);
+            return;
+        }
+        string logicalName = Game1.GetSaveGameName(set_value: false);
+        string requestedFilteredName = new string(bootstrap.SaveName.Where(char.IsLetterOrDigit).ToArray());
+        string observedSlot = $"{requestedFilteredName}_{Game1.uniqueIDForThisGame}";
+        // Target-version new-game completion can report the physical basename
+        // from GetSaveGameName(), while the requested logical identity is the
+        // name filtered by SaveGame.FilterFileName. Bind with the observed
+        // native unique ID rather than treating the slot suffix as a failure.
+        if (!string.Equals(new string(logicalName.Where(char.IsLetterOrDigit).ToArray()), requestedFilteredName, StringComparison.Ordinal)
+            || !observedSlot.StartsWith("GameBuddyFixture", StringComparison.Ordinal))
+        {
+            this.nativeLocalPlayerFixtureBootstrapTerminal = true;
+            this.Monitor.Log("GameBuddy rejected native-local-player fixture bootstrap completion because observed native save identity differs from the requested isolated fixture name.", LogLevel.Error);
+            return;
+        }
+        NativeLocalPlayerFixtureConfig completedFixture = new()
+        {
+            Enable = true,
+            LogicalSaveName = requestedFilteredName,
+            ObservedSaveSlot = observedSlot,
+            TimeoutSeconds = fixture.TimeoutSeconds,
+            FixtureScenario = fixture.FixtureScenario,
+            Bootstrap = new NativeLocalPlayerFixtureBootstrapConfig { Enable = false, SaveName = requestedFilteredName, PlayerName = bootstrap.PlayerName },
+        };
+        this.config = new ModConfig
+        {
+            EnableLocalBridge = this.config.EnableLocalBridge,
+            PipeName = this.config.PipeName,
+            BridgeToken = this.config.BridgeToken,
+            SaveId = Game1.uniqueIDForThisGame.ToString(),
+            WorldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(),
+            PlayerId = Game1.player.UniqueMultiplayerID.ToString(),
+            CompanionId = this.config.CompanionId,
+            NativeLocalPlayerFixture = completedFixture,
+            ActionPolicyVersion = 0,
+            DeniedActions = new List<string>(),
+            DeniedActionFamilies = new List<string>(),
+            ExperimentalActions = new List<string>(),
+            EnabledActions = this.config.EnabledActions,
+        };
+        this.Helper.WriteConfig(this.config);
+        this.nativeLocalPlayerFixtureBootstrapTerminal = true;
+        this.Monitor.Log("GameBuddy recorded target-version native local fixture scope and disarmed fixture bootstrap before opening bridge.", LogLevel.Info);
+    }
+
+    private void TryInitializeNativeLocalPlayerFixtureScenario(NativeLocalPlayerFixtureConfig fixture)
+    {
+        if (this.nativeLocalPlayerFixtureInitialized || this.nativeLocalPlayerFixtureTerminal)
+            return;
+        // A fixture warp completes through the native lifecycle and its
+        // OnWarped handler finalizes the spatial precondition. Do not rerun
+        // any scenario setup while any pre-attachment transition is live.
+        if (this.nativeLocalFeedFixturePending is not null
+            || this.nativeLocalCollectAnimalProductFixturePending is not null
+            || this.nativeLocalClearHoeDirtFixturePending is not null
+            || this.nativeLocalDigArtifactSpotFixturePending is not null
+            || this.nativeLocalPlaceCrabPotFixturePending is not null)
+            return;
+        if (fixture.FixtureScenario.Length == 0)
+        {
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        {
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
+            return;
+        }
+        try
+        {
+            Farmer player = Game1.player;
+            if (fixture.FixtureScenario == "native_npc_relationship_v1")
+            {
+                // Establish a disposable, player-visible starting state only:
+                // a naturally-loaded villager and a persisted relationship
+                // fact. Production remains a read-only bridge inspection.
+                InitializeNativeLocalNpcRelationshipFixture(player, farm);
+                return;
+            }
+            if (fixture.FixtureScenario == "native_pet_animal_v1")
+            {
+                // Establish an unpetted native Pet only. Production alone calls
+                // Pet.checkAction, records the daily interaction, applies
+                // friendship, and emits a matching terminal receipt.
+                InitializeNativeLocalPetFixture(player, farm);
+                return;
+            }
+            if (player.MaxItems < 36)
+                player.increaseBackpackSize(36 - player.MaxItems);
+
+            if (fixture.FixtureScenario == "native_till_soil_v1")
+            {
+                if (!player.Items.OfType<Hoe>().Any() && player.addItemToInventory(new Hoe()) is not null)
+                    throw new InvalidOperationException("fixture_native_local_hoe_inventory_full");
+                if (!player.Items.OfType<Hoe>().Any())
+                    throw new InvalidOperationException("fixture_native_local_hoe_missing_after_add");
+                GameLocation? previousLocation = Game1.currentLocation;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("RemoveDirt", null))
+                        throw new InvalidOperationException("fixture_native_remove_dirt_command_unavailable");
+                }
+                finally { Game1.currentLocation = previousLocation; }
+                bool groundExists = Enumerable.Range(0, farm.map.Layers[0].LayerWidth)
+                    .SelectMany(x => Enumerable.Range(0, farm.map.Layers[0].LayerHeight).Select(y => new Vector2(x, y)))
+                    .Any(tile => farm.GetHoeDirtAtTile(tile) is null
+                        && farm.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") is not null
+                        && !farm.isWaterTile((int)tile.X, (int)tile.Y));
+                if (!groundExists)
+                    throw new InvalidOperationException("fixture_native_tillable_soil_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log("GameBuddy native-local-player initialized native till-soil fixture before bridge attachment: Hoe equipped candidate available; production alone creates HoeDirt and receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_place_wood_fence_v1")
+            {
+                const string fenceId = "(O)322";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == fenceId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(fenceId, 1)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_wood_fence_inventory_full");
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == fenceId && item.Stack > 0))
+                    throw new InvalidOperationException("fixture_native_local_wood_fence_missing_after_add");
+                bool targetExists = player.Items.Select((item, slot) => (item, slot)).Any(pair => pair.item is StardewValley.Object source
+                    && source.QualifiedItemId == fenceId && source.Stack > 0
+                    && Enumerable.Range(Math.Max(0, player.TilePoint.X - 1), 3).SelectMany(x => Enumerable.Range(Math.Max(0, player.TilePoint.Y - 1), 3).Select(y => new Vector2(x, y)))
+                        .Any(tile => farm.isTileOnMap(tile) && !farm.objects.ContainsKey(tile) && farm.isTilePassable(tile)
+                            && new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }.Any(stance => farm.isTileOnMap(stance) && farm.isTilePassable(stance))));
+                if (!targetExists)
+                    throw new InvalidOperationException("fixture_native_local_wood_fence_target_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized wood-fence fixture before bridge attachment: item={fenceId}; production alone invokes native placement, consumes one item, and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_place_crab_pot_v1")
+            {
+                // Supply exactly one untouched (O)710. This branch only scans
+                // the live Farm with CrabPot's exact target-version predicate,
+                // validates one cardinal stance, and completes a native warp.
+                // It performs no target mutation, inventory decrement, output
+                // generation, or execution evidence.
+                const string crabPotId = "(O)710";
+                Item?[] inventoryBefore = player.Items.ToArray();
+                int[] inventoryStacksBefore = inventoryBefore.Select(item => item?.Stack ?? -1).ToArray();
+                string?[] inventoryIdsBefore = inventoryBefore.Select(item => item?.QualifiedItemId).ToArray();
+                StardewValley.Object[] existingCrabPots = inventoryBefore
+                    .OfType<StardewValley.Object>()
+                    .Where(item => item.QualifiedItemId == crabPotId)
+                    .ToArray();
+                if (existingCrabPots.Length > 1)
+                    throw new InvalidOperationException("fixture_native_local_crab_pot_inventory_multiple_stacks");
+                if (existingCrabPots.Length == 1 && existingCrabPots[0].Stack != 1)
+                    throw new InvalidOperationException("fixture_native_local_crab_pot_inventory_stack_must_be_exactly_one");
+
+                // Never remove, rebuild, or replace an existing pot. A missing
+                // pot is provisioned only once into a genuinely empty slot in
+                // this disposable fresh-save fixture; every other inventory
+                // identity and count must remain byte-for-byte equivalent.
+                int addedCrabPotSlot = -1;
+                if (existingCrabPots.Length == 0)
+                {
+                    int? emptyCrabPotSlot = Enumerable.Range(0, player.Items.Count)
+                        .Where(slot => player.Items[slot] is null)
+                        .Select(slot => (int?)slot)
+                        .FirstOrDefault();
+                    addedCrabPotSlot = emptyCrabPotSlot ?? -1;
+                    if (addedCrabPotSlot < 0)
+                        throw new InvalidOperationException("fixture_native_local_crab_pot_inventory_empty_slot_required");
+                    if (player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(crabPotId, 1)) is not null)
+                        throw new InvalidOperationException("fixture_native_local_crab_pot_inventory_add_failed");
+                }
+                Item?[] inventoryAfter = player.Items.ToArray();
+                StardewValley.Object[] crabPotsAfter = inventoryAfter
+                    .OfType<StardewValley.Object>()
+                    .Where(item => item.QualifiedItemId == crabPotId && item.Stack > 0)
+                    .ToArray();
+                if (crabPotsAfter.Length != 1
+                    || crabPotsAfter[0].Stack != 1
+                    || (existingCrabPots.Length == 1 && !ReferenceEquals(existingCrabPots[0], crabPotsAfter[0]))
+                    || (addedCrabPotSlot >= 0 && (!ReferenceEquals(inventoryBefore[addedCrabPotSlot], null)
+                        || !ReferenceEquals(inventoryAfter[addedCrabPotSlot], crabPotsAfter[0]))))
+                    throw new InvalidOperationException("fixture_native_local_crab_pot_inventory_postcondition_failed");
+                StardewValley.Object crabPot = crabPotsAfter[0];
+                int crabPotStack = crabPot.Stack;
+                // Native inventory insertion may normalize unrelated item object
+                // references. Preserve their slot/value facts (qualified ID and
+                // stack), while retaining a strict object-identity invariant for
+                // any pre-existing Crab Pot itself.
+                for (int slot = 0; slot < inventoryBefore.Length; slot++)
+                {
+                    if (slot == addedCrabPotSlot)
+                        continue;
+                    if ((inventoryAfter[slot]?.Stack ?? -1) != inventoryStacksBefore[slot]
+                        || inventoryAfter[slot]?.QualifiedItemId != inventoryIdsBefore[slot])
+                        throw new InvalidOperationException($"fixture_native_local_crab_pot_inventory_changed:slot={slot};before_id={inventoryIdsBefore[slot] ?? "null"};before_stack={inventoryStacksBefore[slot]};after_id={inventoryAfter[slot]?.QualifiedItemId ?? "null"};after_stack={inventoryAfter[slot]?.Stack ?? -1}");
+                }
+                if (IsExcludedCrabPotLocation(farm))
+                    throw new InvalidOperationException("fixture_native_local_crab_pot_location_rejected");
+                (Vector2 TargetTile, Vector2 StandingTile)? selected = FindNativeLocalCrabPotFixtureTarget(farm);
+                if (selected is null)
+                    throw new InvalidOperationException("fixture_native_local_crab_pot_target_missing");
+                GameLocation? crabPotPreviousLocation = Game1.currentLocation;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, (int)selected.Value.TargetTile.X, (int)selected.Value.TargetTile.Y))
+                        throw new InvalidOperationException("fixture_native_local_crab_pot_target_revalidation_failed");
+                }
+                finally { Game1.currentLocation = crabPotPreviousLocation; }
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)selected.Value.StandingTile.X, (int)selected.Value.StandingTile.Y, false));
+                this.nativeLocalPlaceCrabPotFixturePending = new NativeLocalPlaceCrabPotFixturePending(
+                    farm.NameOrUniqueName,
+                    selected.Value.TargetTile,
+                    selected.Value.StandingTile,
+                    crabPot,
+                    crabPotStack,
+                    inventoryAfter,
+                    inventoryAfter.Select(item => item?.Stack ?? -1).ToArray(),
+                    inventoryAfter.Select(item => item?.QualifiedItemId).ToArray());
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_plant_seed_v1")
+            {
+                // This setup creates only a legal, empty HoeDirt target and a
+                // normal seed stack. The typed production action alone
+                // consumes the seed, creates the crop, and emits evidence.
+                // The event-free template is Spring 1 Year 1, so this must be
+                // an in-season seed; canPlantThisSeedHere remains authoritative.
+                const string seedId = "(O)472";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == seedId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(seedId, 2)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_seed_inventory_full");
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == seedId && item.Stack > 0))
+                    throw new InvalidOperationException("fixture_native_local_seed_missing_after_add");
+                GameLocation? seedSetupPreviousLocation = Game1.currentLocation;
+                int eligibleDirtCount;
+                try
+                {
+                    // Both target-version debug setup and HoeDirt's native
+                    // season/location predicate are Farm-context operations.
+                    // Restore the actual player location before bridge attach.
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("RemoveDirt", null) || !Game1.game1.parseDebugInput("SpreadDirt", null))
+                        throw new InvalidOperationException("fixture_native_local_empty_dirt_command_unavailable");
+                    // The actual Farmer remains in FarmHouse until the
+                    // separately receipted travel prerequisite. Do not call
+                    // canPlantThisSeedHere here: target-version evaluates it
+                    // against the live actor/location. Require only empty
+                    // native dirt now; the production snapshot and action
+                    // revalidate plantability after the Farmer reaches Farm.
+                    eligibleDirtCount = farm.terrainFeatures.Pairs.Count(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
+                        && dirt.crop is null
+                        && !(farm.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot));
+                }
+                finally { Game1.currentLocation = seedSetupPreviousLocation; }
+                if (eligibleDirtCount == 0)
+                    throw new InvalidOperationException("fixture_native_local_seed_target_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized native plant-seed fixture before bridge attachment: seed={seedId}; eligible_empty_dirt_count={eligibleDirtCount}; production alone plants, consumes, creates crop, and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_fertilize_tile_v1")
+            {
+                // Supply only the normal fertilizer stack and native, empty
+                // HoeDirt. Applying fertilizer remains exclusively production.
+                const string fertilizerId = "(O)368";
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == fertilizerId && item.Stack > 0)
+                    && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(fertilizerId, 2)) is not null)
+                    throw new InvalidOperationException("fixture_native_local_fertilizer_inventory_full");
+                if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == fertilizerId && item.Stack > 0))
+                    throw new InvalidOperationException("fixture_native_local_fertilizer_missing_after_add");
+                GameLocation? fertilizerSetupPreviousLocation = Game1.currentLocation;
+                int eligibleDirtCount;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("RemoveDirt", null) || !Game1.game1.parseDebugInput("SpreadDirt", null))
+                        throw new InvalidOperationException("fixture_native_local_fertilizer_dirt_command_unavailable");
+                    eligibleDirtCount = farm.terrainFeatures.Pairs.Count(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
+                        && dirt.crop is null
+                        && dirt.CanApplyFertilizer(fertilizerId)
+                        && !(farm.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot));
+                }
+                finally { Game1.currentLocation = fertilizerSetupPreviousLocation; }
+                if (eligibleDirtCount == 0)
+                    throw new InvalidOperationException("fixture_native_local_fertilizer_target_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized native fertilize-tile fixture before bridge attachment: fertilizer={fertilizerId}; eligible_empty_dirt_count={eligibleDirtCount}; production alone applies fertilizer and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_harvest_crop_v1")
+            {
+                // Target-version commands create a ready ordinary crop only;
+                // production alone performs use/harvest and changes inventory.
+                GameLocation? harvestSetupPreviousLocation = Game1.currentLocation;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("RemoveDirt", null)
+                        || !Game1.game1.parseDebugInput("SpreadDirt", null)
+                        || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
+                        || !Game1.game1.parseDebugInput("GrowCrops 6", null))
+                        throw new InvalidOperationException("fixture_native_local_harvest_crop_setup_unavailable");
+                }
+                finally { Game1.currentLocation = harvestSetupPreviousLocation; }
+                KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? selected = farm.terrainFeatures.Pairs
+                    .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
+                        && dirt.crop is not null
+                        && !dirt.crop.forageCrop.Value
+                        && dirt.readyForHarvest()
+                        && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab
+                        && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value))
+                    .Select(pair => new KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>(pair.Key, (StardewValley.TerrainFeatures.HoeDirt)pair.Value))
+                    .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
+                    .FirstOrDefault();
+                if (selected is null || selected.Value.Value.crop is null)
+                    throw new InvalidOperationException("fixture_native_local_ready_grab_crop_missing");
+                StardewValley.Item harvestItem;
+                try { harvestItem = ItemRegistry.Create(selected.Value.Value.crop.indexOfHarvest.Value, 1); }
+                catch (Exception) { throw new InvalidOperationException("fixture_native_local_harvest_item_missing"); }
+                if (!player.couldInventoryAcceptThisItem(harvestItem))
+                    throw new InvalidOperationException("fixture_native_local_harvest_inventory_unavailable");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized native harvest-crop fixture before bridge attachment: selected={selected.Value.Value.crop.netSeedIndex.Value ?? "unknown"}@{(int)selected.Value.Key.X},{(int)selected.Value.Key.Y}; harvest={harvestItem.QualifiedItemId}; ready=true; production alone harvests and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_pickup_forage_v1")
+            {
+                // Resolve the Farm target from this actual local Player's live
+                // FarmHouse warp without relying on another actor or building.
+                if (player.currentLocation is not StardewValley.Locations.FarmHouse farmHouse)
+                    throw new InvalidOperationException("fixture_native_local_pickup_forage_farmhouse_missing");
+                StardewValley.Warp? farmWarp = farmHouse.warps.FirstOrDefault(warp => !warp.npcOnly.Value
+                    && string.Equals(warp.TargetName, farm.Name, StringComparison.Ordinal));
+                if (farmWarp is null || farmWarp.TargetX < 0 || farmWarp.TargetY < 0)
+                    throw new InvalidOperationException("fixture_native_local_pickup_forage_farm_warp_missing");
+                Vector2 farmArrival = new(farmWarp.TargetX, farmWarp.TargetY);
+                // Arrival geometry is target-version map data, not a fixture
+                // contract. Search a bounded radius for a legal setup location,
+                // while leaving final placement authority to native dropObject.
+                const int placementRadius = 8;
+                Vector2[] candidateTiles = Enumerable.Range(-placementRadius, placementRadius * 2 + 1)
+                    .SelectMany(offsetX => Enumerable.Range(-placementRadius, placementRadius * 2 + 1)
+                        .Select(offsetY => new Vector2(farmArrival.X + offsetX, farmArrival.Y + offsetY)))
+                    .Where(tile => tile != farmArrival
+                        && farm.isTileOnMap(tile)
+                        && !farm.objects.ContainsKey(tile))
+                    .Where(tile => new[]
+                    {
+                        tile + new Vector2(1f, 0f),
+                        tile + new Vector2(-1f, 0f),
+                        tile + new Vector2(0f, 1f),
+                        tile + new Vector2(0f, -1f),
+                    }.Any(approach => farm.isTileOnMap(approach)
+                        && farm.isTilePassable(approach)
+                        && !farm.IsTileOccupiedBy(approach, CollisionMask.All, CollisionMask.None, useFarmerTile: true)))
+                    .OrderBy(tile => Math.Max(Math.Abs(tile.X - farmArrival.X), Math.Abs(tile.Y - farmArrival.Y)))
+                    .ThenBy(tile => Math.Abs(tile.X - farmArrival.X) + Math.Abs(tile.Y - farmArrival.Y))
+                    .ToArray();
+                string[] forageIds = new[] { "(O)399", "(O)396", "(O)398", "(O)16", "(O)18", "(O)20", "(O)22" };
+                Vector2 placedTile = Vector2.Zero;
+                StardewValley.Object? placedForage = null;
+                foreach (Vector2 tile in candidateTiles)
+                {
+                    foreach (string forageId in forageIds)
+                    {
+                        StardewValley.Object forage = ItemRegistry.Create<StardewValley.Object>(forageId, 1);
+                        if (!forage.isForage())
+                            continue;
+                        if (!player.couldInventoryAcceptThisItem(forage))
+                            throw new InvalidOperationException("fixture_native_local_pickup_forage_inventory_unavailable");
+                        if (!farm.dropObject(forage, tile * 64f, Game1.viewport, initialPlacement: true))
+                            continue;
+                        if (farm.objects.TryGetValue(tile, out StardewValley.Object? actual)
+                            && ReferenceEquals(actual, forage)
+                            && actual.QualifiedItemId == forageId
+                            && actual.isForage()
+                            && actual.IsSpawnedObject)
+                        {
+                            placedTile = tile;
+                            placedForage = actual;
+                            break;
+                        }
+                        throw new InvalidOperationException("fixture_native_local_pickup_forage_placement_validation_failed");
+                    }
+                    if (placedForage is not null)
+                        break;
+                }
+                if (placedForage is null)
+                    throw new InvalidOperationException("fixture_native_local_pickup_forage_placement_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized pickup-forage precondition before bridge attachment: forage={placedForage.QualifiedItemId}; tile={(int)placedTile.X},{(int)placedTile.Y}; spawned={placedForage.IsSpawnedObject}.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_pickup_item_v1")
+            {
+                // Derive this local-only drop from the current Player's actual
+                // FarmHouse→Farm warp. createItemDebris owns native chunk setup;
+                // no collection, removal, or inventory outcome is performed here.
+                if (player.currentLocation is not StardewValley.Locations.FarmHouse itemFarmHouse)
+                    throw new InvalidOperationException("fixture_native_local_pickup_item_farmhouse_missing");
+                StardewValley.Warp? itemFarmWarp = itemFarmHouse.warps.FirstOrDefault(warp => !warp.npcOnly.Value
+                    && string.Equals(warp.TargetName, farm.Name, StringComparison.Ordinal));
+                if (itemFarmWarp is null || itemFarmWarp.TargetX < 0 || itemFarmWarp.TargetY < 0)
+                    throw new InvalidOperationException("fixture_native_local_pickup_item_farm_warp_missing");
+                Vector2 itemArrival = new(itemFarmWarp.TargetX, itemFarmWarp.TargetY);
+                // Discovery is bounded to six tiles by the production bridge;
+                // place within that native-local discovery radius, while the
+                // production pickup still drives its own native approach.
+                Vector2? itemTile = FindNativeLocalFarmFixtureTile(farm, itemArrival, 6, requireEmptyObjectTile: true);
+                if (itemTile is null)
+                    throw new InvalidOperationException("fixture_native_local_pickup_item_placement_missing");
+                const string itemId = "(O)388";
+                StardewValley.Object item = ItemRegistry.Create<StardewValley.Object>(itemId, 1);
+                if (!player.couldInventoryAcceptThisItem(item))
+                    throw new InvalidOperationException("fixture_native_local_pickup_item_inventory_unavailable");
+                int debrisBefore = farm.debris.Count;
+                StardewValley.Debris debris = Game1.createItemDebris(item, itemTile.Value * 64f + new Vector2(32f, 32f), 2, farm, (int)(itemTile.Value.Y * 64f + 32f));
+                if (farm.debris.Count != debrisBefore + 1 || !farm.debris.Contains(debris)
+                    || debris.debrisType.Value != StardewValley.Debris.DebrisType.OBJECT || debris.Chunks.Count == 0
+                    || debris.item is null || debris.item.QualifiedItemId != itemId || debris.item.Stack != 1)
+                    throw new InvalidOperationException("fixture_native_local_pickup_item_debris_setup_missing");
+                // No dropped-by identity/grace override is used in this topology:
+                // it would encode an actor assumption rather than a setup fact.
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized pickup-item precondition before bridge attachment: item={itemId}; tile={(int)itemTile.Value.X},{(int)itemTile.Value.Y}; debris_type={debris.debrisType.Value}; chunks={debris.Chunks.Count}.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario is "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1")
+            {
+                // Machine inspection/loading are local to any loaded GameLocation. Keep this
+                // fixture in the initial FarmHouse so its target is fresh and
+                // adjacent before attachment; a Farm warp is not a machine
+                // precondition and must not become hidden fixture authority.
+                GameLocation? machineLocation = player.currentLocation;
+                if (machineLocation is null)
+                    throw new InvalidOperationException("fixture_native_local_machine_location_missing");
+                Vector2? machineTile = FindNativeLocalFarmFixtureTile(machineLocation, player.Tile, 1, requireEmptyObjectTile: true);
+                if (machineTile is null)
+                    throw new InvalidOperationException("fixture_native_local_machine_placement_missing");
+                StardewValley.Object machine = ItemRegistry.Create<StardewValley.Object>("(BC)12", 1);
+                if (machine.GetMachineData() is null || !machineLocation.dropObject(machine, machineTile.Value * 64f, Game1.viewport, initialPlacement: true)
+                    || !machineLocation.objects.TryGetValue(machineTile.Value, out StardewValley.Object? placedMachine)
+                    || !ReferenceEquals(machine, placedMachine) || placedMachine.GetMachineData() is null)
+                    throw new InvalidOperationException("fixture_native_local_machine_setup_missing");
+                if (fixture.FixtureScenario == "native_machine_coffee_load_v1")
+                {
+                    // This is only the owned exact-stack input precondition.
+                    // Production alone invokes the normal machine interaction
+                    // ingress and proves native consumption/processing.
+                    StardewValley.Object coffeeBeans = ItemRegistry.Create<StardewValley.Object>("(O)433", 5);
+                    if (player.addItemToInventory(coffeeBeans) is not null || player.Items.OfType<StardewValley.Object>().Count(item => item.QualifiedItemId == "(O)433" && item.Stack == 5) != 1)
+                        throw new InvalidOperationException("fixture_native_local_machine_coffee_input_missing");
+                }
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized {(fixture.FixtureScenario == "native_machine_coffee_load_v1" ? "machine-coffee-load" : fixture.FixtureScenario == "native_machine_coffee_collect_v1" ? "machine-coffee-collect" : "machine-inspect")} precondition before bridge attachment: machine={placedMachine.QualifiedItemId}; tile={(int)machineTile.Value.X},{(int)machineTile.Value.Y}; ready={placedMachine.readyForHarvest.Value}; minutes_until_ready={placedMachine.MinutesUntilReady}.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_dig_artifact_spot_v1")
+            {
+                foreach (Item? ownedItem in player.Items.Where(item => item is Hoe).ToArray()) player.Items.Remove(ownedItem);
+                if (player.addItemToInventory(new Hoe()) is not null || player.Items.OfType<Hoe>().Count() != 1 || player.Items.OfType<Hoe>().Single().UpgradeLevel != 0)
+                    throw new InvalidOperationException("fixture_native_local_artifact_spot_hoe_missing_or_ambiguous");
+
+                // SetupBigFarm may restore zero, one, or many artifact spots.
+                // Never remove or pre-consume an existing source: sort every Farm
+                // source by coordinate and select the first one satisfying the
+                // exact native precondition. Invalid or unreachable sources do
+                // not get repaired; a valid later source may still be selected.
+                KeyValuePair<Vector2, StardewValley.Object>[] existingArtifactSpots = farm.objects.Pairs
+                    .Where(pair => pair.Value.QualifiedItemId == "(O)590")
+                    .OrderBy(pair => pair.Key.X)
+                    .ThenBy(pair => pair.Key.Y)
+                    .ToArray();
+                Vector2 artifactTile;
+                Vector2 standingTile;
+                if (existingArtifactSpots.Length == 0)
+                {
+                    Vector2? placedTile = FindNativeLocalFarmFixtureTile(farm, new Vector2(64f, 15f), 12, requireEmptyObjectTile: true,
+                        extraPredicate: candidate => !farm.terrainFeatures.ContainsKey(candidate));
+                    if (placedTile is null)
+                        throw new InvalidOperationException("fixture_native_local_artifact_spot_placement_missing");
+                    artifactTile = placedTile.Value;
+                    StardewValley.Object artifact = ItemRegistry.Create<StardewValley.Object>("(O)590", 1);
+                    if (!farm.dropObject(artifact, artifactTile * 64f, Game1.viewport, initialPlacement: false)
+                        || !farm.objects.TryGetValue(artifactTile, out StardewValley.Object? placed)
+                        || !ReferenceEquals(artifact, placed) || placed.QualifiedItemId != "(O)590")
+                        throw new InvalidOperationException("fixture_native_local_artifact_spot_placement_validation_failed");
+                    standingTile = FindNativeLocalArtifactSpotStandingTile(farm, artifactTile)
+                        ?? throw new InvalidOperationException("fixture_native_local_artifact_spot_approach_missing");
+                }
+                else
+                {
+                    (Vector2 Tile, Vector2 StandingTile)? selected = existingArtifactSpots
+                        .Select(pair => FindNativeLocalArtifactSpotStandingTile(farm, pair.Key) is Vector2 approach
+                            ? (Tile: pair.Key, StandingTile: approach)
+                            : ((Vector2 Tile, Vector2 StandingTile)?)null)
+                        .FirstOrDefault(candidate => candidate is not null);
+                    if (selected is null)
+                        throw new InvalidOperationException("fixture_native_local_artifact_spot_existing_sources_unapproachable");
+                    artifactTile = selected.Value.Tile;
+                    standingTile = selected.Value.StandingTile;
+                }
+                int artifactSourceCount = farm.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590");
+                if (artifactSourceCount < 1
+                    || !farm.objects.TryGetValue(artifactTile, out StardewValley.Object? intactArtifact)
+                    || intactArtifact.QualifiedItemId != "(O)590"
+                    || !farm.isTileOnMap(artifactTile)
+                    || farm.terrainFeatures.ContainsKey(artifactTile)
+                    || farm.GetHoeDirtAtTile(artifactTile) is not null
+                    || intactArtifact is StardewValley.Objects.IndoorPot
+                    || player.Items.OfType<Hoe>().Count() != 1
+                    || player.Items.OfType<Hoe>().Single().UpgradeLevel != 0)
+                    throw new InvalidOperationException("fixture_native_local_artifact_spot_postsetup_validation_failed");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standingTile.X, (int)standingTile.Y, false));
+                this.nativeLocalDigArtifactSpotFixturePending = new NativeLocalDigArtifactSpotFixturePending(farm.NameOrUniqueName, artifactTile, standingTile);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_clear_hoedirt_v1")
+            {
+                // Establish only one intact, empty ground HoeDirt and exactly
+                // one Basic Pickaxe before bridge attachment. Production alone
+                // invokes Pickaxe.DoFunction and proves terrain removal.
+                foreach (Item? ownedItem in player.Items.Where(item => item is Pickaxe).ToArray()) player.Items.Remove(ownedItem);
+                if (player.addItemToInventory(new Pickaxe()) is not null || player.Items.OfType<Pickaxe>().Count() != 1) throw new InvalidOperationException("fixture_native_local_clear_hoedirt_pickaxe_missing_or_ambiguous");
+                // The FarmHouse→Farm native warp arrives at 64,15, but actual
+                // map passability/content determines a lawful source and its
+                // adjacent standing tile. Positioning is a pre-attachment fact
+                // only: production alone hits/removes the HoeDirt, changes no
+                // inventory, and emits the authoritative receipt.
+                Vector2 fixtureArrival = new(64f, 15f);
+                Vector2? dirtTile = FindNativeLocalFarmFixtureTile(farm, fixtureArrival, 12, requireEmptyObjectTile: true,
+                    extraPredicate: candidate => !farm.terrainFeatures.ContainsKey(candidate) && farm.doesTileHaveProperty((int)candidate.X, (int)candidate.Y, "Diggable", "Back") is not null && !farm.isWaterTile((int)candidate.X, (int)candidate.Y));
+                if (dirtTile is null) throw new InvalidOperationException("fixture_native_local_clear_hoedirt_placement_missing");
+                Vector2[] standingCandidates = new[]
+                {
+                    dirtTile.Value + new Vector2(-1f, 0f), dirtTile.Value + new Vector2(1f, 0f),
+                    dirtTile.Value + new Vector2(0f, -1f), dirtTile.Value + new Vector2(0f, 1f),
+                };
+                Vector2? standingTile = standingCandidates
+                    .Where(candidate => farm.isTileOnMap(candidate) && farm.isTilePassable(candidate)
+                        && !farm.IsTileOccupiedBy(candidate, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+                    .Cast<Vector2?>()
+                    .FirstOrDefault();
+                if (standingTile is null) throw new InvalidOperationException("fixture_native_local_clear_hoedirt_approach_missing");
+                StardewValley.TerrainFeatures.HoeDirt dirt = new();
+                farm.terrainFeatures.Add(dirtTile.Value, dirt);
+                if (!farm.terrainFeatures.TryGetValue(dirtTile.Value, out StardewValley.TerrainFeatures.TerrainFeature? placedFeature) || !ReferenceEquals(placedFeature, dirt) || dirt.crop is not null || (farm.objects.TryGetValue(dirtTile.Value, out StardewValley.Object? placedObject) && placedObject is StardewValley.Objects.IndoorPot)) throw new InvalidOperationException("fixture_native_local_clear_hoedirt_placement_validation_failed");
+                // Complete the normal FarmHouse→Farm warp first. Its later
+                // OnWarped continuation validates this exact lawful approach
+                // and adjusts only the Player position; it never hits/removes
+                // the target, changes inventory, or creates a receipt.
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standingTile.Value.X, (int)standingTile.Value.Y, false));
+                this.nativeLocalClearHoeDirtFixturePending = new NativeLocalClearHoeDirtFixturePending(farm.NameOrUniqueName, dirtTile.Value, standingTile.Value);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_break_rock_source_v1")
+            {
+                foreach (Item? ownedItem in player.Items.Where(item => item is Pickaxe).ToArray()) player.Items.Remove(ownedItem);
+                if (player.addItemToInventory(new Pickaxe()) is not null || player.Items.OfType<Pickaxe>().Count() != 1) throw new InvalidOperationException("fixture_native_local_basic_pickaxe_missing_or_ambiguous");
+                Vector2? rockTile = FindNativeLocalFarmFixtureTile(farm, new Vector2(64f, 15f), 12, requireEmptyObjectTile: true);
+                if (rockTile is null || farm.objects.ContainsKey(rockTile.Value)) throw new InvalidOperationException("fixture_native_local_rock_placement_missing");
+                StardewValley.Object rock = ItemRegistry.Create<StardewValley.Object>("(O)2", 1);
+                rock.MinutesUntilReady = 1;
+                farm.objects.Add(rockTile.Value, rock);
+                if (!farm.objects.TryGetValue(rockTile.Value, out StardewValley.Object? placed) || !ReferenceEquals(placed, rock) || placed.QualifiedItemId != "(O)2" || !placed.IsBreakableStone() || placed.MinutesUntilReady != 1) throw new InvalidOperationException("fixture_native_local_rock_placement_validation_failed");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized break-rock-source precondition before bridge attachment: tile={(int)rockTile.Value.X},{(int)rockTile.Value.Y}; item=(O)2; durability=1; production alone invokes exactly one Pickaxe hit and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_clear_debris_resource_clump_v1")
+            {
+                // This narrow pre-attachment recipe mirrors the target-version
+                // GameLocation placement lifecycle: it establishes one intact,
+                // default-health mine rock. Production alone performs every
+                // Pickaxe hit, all health decrements/removal, and its receipt.
+                const int debrisParentSheetIndex = 752;
+                const int debrisWidth = 2;
+                const int debrisHeight = 2;
+                const int debrisDefaultHealth = 8;
+                foreach (Item? ownedItem in player.Items.Where(item => item is Pickaxe).ToArray())
+                    player.Items.Remove(ownedItem);
+                if (player.addItemToInventory(new Pickaxe()) is not null || player.Items.OfType<Pickaxe>().Count() != 1)
+                    throw new InvalidOperationException("fixture_native_local_debris_pickaxe_missing_or_ambiguous");
+                // The versioned template owns this exact origin and the three
+                // reviewed outside interaction anchors in its runner. Never
+                // search for a substitute tile: unavailable/occupied fixture
+                // geometry blocks the run before bridge attachment.
+                Vector2 debrisTile = new(62f, 17f);
+                if (!Enumerable.Range(0, debrisWidth).SelectMany(footprintX => Enumerable.Range(0, debrisHeight)
+                    .Select(footprintY => new Vector2(debrisTile.X + footprintX, debrisTile.Y + footprintY)))
+                    .All(footprint => farm.CanItemBePlacedHere(footprint, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true)))
+                    throw new InvalidOperationException("fixture_native_local_debris_fixed_placement_unavailable");
+                if (farm.resourceClumps.Any(existing => existing.parentSheetIndex.Value == debrisParentSheetIndex))
+                    throw new InvalidOperationException("fixture_native_local_debris_parent_already_present");
+                int clumpsBefore = farm.resourceClumps.Count;
+                // addResourceClumpAndRemoveUnderlyingTerrain is the pinned
+                // target-version placement API; no direct list insertion or
+                // health mutation is permitted in this fixture.
+                farm.addResourceClumpAndRemoveUnderlyingTerrain(debrisParentSheetIndex, debrisWidth, debrisHeight, debrisTile);
+                if (farm.resourceClumps.Count != clumpsBefore + 1
+                    || farm.resourceClumps[clumpsBefore] is not StardewValley.TerrainFeatures.ResourceClump clump
+                    || clump.parentSheetIndex.Value != debrisParentSheetIndex
+                    || clump.width.Value != debrisWidth || clump.height.Value != debrisHeight
+                    || clump.Tile != debrisTile || clump.health.Value != debrisDefaultHealth)
+                    throw new InvalidOperationException("fixture_native_local_debris_placement_validation_failed");
+                // The fixture transaction owns the empty template. It does not
+                // move the Player, hit a clump, select a tool, emit a receipt,
+                // or create a production postcondition.
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized clear-debris precondition before bridge attachment: parent={debrisParentSheetIndex}; tile={(int)debrisTile.X},{(int)debrisTile.Y}; size={debrisWidth}x{debrisHeight}; health={clump.health.Value:0}; pickaxe_upgrade=0; production alone invokes the finite native Pickaxe-hit sequence, removes the clump, and emits receipts.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario is "native_tree_first_hit_v1" or "native_chop_tree_source_v1")
+            {
+                foreach (Item? ownedItem in player.Items.Where(item => item is Axe).ToArray())
+                    player.Items.Remove(ownedItem);
+                if (player.addItemToInventory(new Axe()) is not null)
+                    throw new InvalidOperationException("fixture_native_local_axe_inventory_full");
+                if (player.Items.OfType<Axe>().Count() != 1)
+                    throw new InvalidOperationException("fixture_native_local_axe_missing_or_ambiguous_after_add");
+                // The runner requires exactly one fresh full-health tree source
+                // after it approaches this setup tile. Exclude every existing
+                // tree from the Chebyshev-2 neighborhood: any legal adjacent
+                // approach tile then sees only this tree within discovery radius.
+                Vector2? treeTile = FindNativeLocalFarmFixtureTile(
+                    farm,
+                    new Vector2(64f, 15f),
+                    12,
+                    requireEmptyObjectTile: false,
+                    extraPredicate: candidate => !farm.terrainFeatures.Pairs.Any(pair => pair.Value is StardewValley.TerrainFeatures.Tree
+                        && Math.Max(Math.Abs(pair.Key.X - candidate.X), Math.Abs(pair.Key.Y - candidate.Y)) <= 2f));
+                if (treeTile is null || farm.terrainFeatures.ContainsKey(treeTile.Value))
+                    throw new InvalidOperationException("fixture_native_local_tree_placement_missing");
+                StardewValley.TerrainFeatures.Tree tree = new("1", StardewValley.TerrainFeatures.Tree.treeStage);
+                float fixtureHealth = fixture.FixtureScenario == "native_chop_tree_source_v1" ? 1f : 10f;
+                tree.health.Value = fixtureHealth;
+                farm.terrainFeatures.Add(treeTile.Value, tree);
+                if (!farm.terrainFeatures.TryGetValue(treeTile.Value, out StardewValley.TerrainFeatures.TerrainFeature? placed)
+                    || !ReferenceEquals(placed, tree) || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage
+                    || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value != fixtureHealth)
+                    throw new InvalidOperationException("fixture_native_local_tree_placement_validation_failed");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                string treeFixtureAction = fixture.FixtureScenario == "native_chop_tree_source_v1" ? "chop-tree-source" : "tree-first-hit";
+                this.Monitor.Log($"GameBuddy native-local-player initialized {treeFixtureAction} precondition before bridge attachment: tile={(int)treeTile.Value.X},{(int)treeTile.Value.Y}; health={fixtureHealth:0}; moss=false; tapped=false; production alone invokes exactly one Axe hit and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_use_item_v1")
+            {
+                if (player.MaxItems < 36)
+                    player.increaseBackpackSize(36 - player.MaxItems);
+                const string foodId = "(O)216";
+                StardewValley.Object? food = player.Items.OfType<StardewValley.Object>().FirstOrDefault(candidate => candidate.QualifiedItemId == foodId && candidate.Stack > 0);
+                if (food is null)
+                {
+                    StardewValley.Object suppliedFood = ItemRegistry.Create<StardewValley.Object>(foodId, 1);
+                    if (player.addItemToInventory(suppliedFood) is not null)
+                        throw new InvalidOperationException("fixture_native_local_use_item_inventory_full");
+                    food = player.Items.OfType<StardewValley.Object>().FirstOrDefault(candidate => candidate.QualifiedItemId == foodId && candidate.Stack > 0);
+                }
+                if (food is null || food.Edibility < 0 || (Game1.objectData.TryGetValue(food.ItemId, out var foodData) && foodData.IsDrink))
+                    throw new InvalidOperationException("fixture_native_local_use_item_food_missing");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized use-item precondition before bridge attachment: food={food.QualifiedItemId}; stack={food.Stack}; edibility={food.Edibility}; inventory_slots={player.MaxItems}.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_feed_animal_v1")
+            {
+                // This disposable native-local branch may use the pinned
+                // target-version SetupBigFarm entrypoint solely to construct an
+                // AnimalHouse/world entry precondition. It neither invokes
+                // the native feed ingress nor fills a trough, consumes Hay,
+                // creates a receipt, or changes feed_animal's postcondition.
+                GameLocation? feedSetupPreviousLocation = Game1.currentLocation;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("SetupBigFarm", null))
+                        throw new InvalidOperationException("fixture_native_feed_animal_setup_unavailable");
+                }
+                finally { Game1.currentLocation = feedSetupPreviousLocation; }
+
+                StardewValley.Buildings.Building[] animalBuildings = farm.buildings
+                    .Where(building => building.GetIndoors() is StardewValley.AnimalHouse)
+                    .ToArray();
+                // The pinned target-version SetupBigFarm source places Deluxe
+                // Barns at (16,9) and (3,16). Building interiors are instanced,
+                // so NameOrUniqueName is deliberately not a stable selector.
+                // Select only the source-defined first Deluxe Barn placement;
+                // do not guess a generated interior name or mutate the other
+                // native buildings.
+                StardewValley.Buildings.Building[] configuredBarns = animalBuildings
+                    .Where(building => string.Equals(building.buildingType.Value, "Deluxe Barn", StringComparison.Ordinal)
+                        && building.tileX.Value == 16
+                        && building.tileY.Value == 9)
+                    .ToArray();
+                if (configuredBarns.Length != 1 || configuredBarns[0].GetIndoors() is not StardewValley.AnimalHouse animalHouse)
+                    throw new InvalidOperationException("fixture_native_feed_animal_house_missing_or_ambiguous");
+                Microsoft.Xna.Framework.Point entryPoint = configuredBarns[0].getPointForHumanDoor();
+                StardewValley.Warp? entryWarp = farm.getWarpFromDoor(entryPoint, player);
+                if (entryWarp is null || !string.Equals(entryWarp.TargetName, animalHouse.NameOrUniqueName, StringComparison.Ordinal)
+                    || entryPoint.X < 0 || entryPoint.Y < 0 || !farm.isTileOnMap(new Vector2(entryPoint.X, entryPoint.Y))
+                    || entryWarp.TargetX < 0 || entryWarp.TargetY < 0 || !animalHouse.isTileOnMap(new Vector2(entryWarp.TargetX, entryWarp.TargetY)))
+                    throw new InvalidOperationException("fixture_native_feed_animal_entry_unresolvable");
+                xTile.Layers.Layer? backLayer = animalHouse.map.GetLayer("Back");
+                if (backLayer is null)
+                    throw new InvalidOperationException("fixture_native_feed_animal_trough_layer_missing");
+                Vector2[] emptyTroughs = Enumerable.Range(0, backLayer.LayerWidth)
+                    .SelectMany(x => Enumerable.Range(0, backLayer.LayerHeight).Select(y => new Vector2(x, y)))
+                    .Where(tile => animalHouse.doesTileHaveProperty((int)tile.X, (int)tile.Y, "Trough", "Back") is not null
+                        && !animalHouse.objects.ContainsKey(tile))
+                    .OrderBy(tile => tile.Y).ThenBy(tile => tile.X)
+                    .ToArray();
+                if (emptyTroughs.Length == 0)
+                    throw new InvalidOperationException("fixture_native_feed_animal_empty_trough_missing");
+                Vector2 trough = emptyTroughs[0];
+                Vector2[] standingCandidates = new[]
+                {
+                    trough + new Vector2(0f, 1f), trough + new Vector2(-1f, 0f),
+                    trough + new Vector2(1f, 0f), trough + new Vector2(0f, -1f),
+                };
+                Vector2? standingTile = standingCandidates
+                    .Where(candidate => animalHouse.isTileOnMap(candidate)
+                        && animalHouse.isTilePassable(candidate)
+                        && !animalHouse.IsTileOccupiedBy(candidate, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+                    .Cast<Vector2?>()
+                    .FirstOrDefault();
+                if (standingTile is null)
+                    throw new InvalidOperationException("fixture_native_feed_animal_trough_approach_missing");
+                // The fixture SetupBigFarm call is already running on the
+                // game-thread pre-attachment seam. Complete the exact native
+                // Farm→AnimalHouse warp lifecycle now; this positions only the
+                // local Player and does not interact with the Trough.
+                player.warpFarmer(new StardewValley.Warp(
+                    entryPoint.X,
+                    entryPoint.Y,
+                    animalHouse.NameOrUniqueName,
+                    (int)standingTile.Value.X,
+                    (int)standingTile.Value.Y,
+                    false));
+                // `warpFarmer` begins a native transition; retain the fixture
+                // target facts and finish the local-player position only after
+                // that transition has completed in a later game tick.
+                this.nativeLocalFeedFixturePending = new NativeLocalFeedFixturePending(
+                    animalHouse.NameOrUniqueName,
+                    trough,
+                    standingTile.Value);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_collect_animal_product_v1")
+            {
+                // SetupBigFarm is a target-version pre-attachment setup route
+                // for an adult animal with a ready product. It does not invoke
+                // either collection tool, clear product, add produce, or emit a
+                // receipt; the typed production action remains the sole ingress.
+                GameLocation? productSetupPreviousLocation = Game1.currentLocation;
+                try
+                {
+                    Game1.currentLocation = farm;
+                    if (!Game1.game1.parseDebugInput("SetupBigFarm", null))
+                        throw new InvalidOperationException("fixture_native_collect_animal_product_setup_unavailable");
+                }
+                finally { Game1.currentLocation = productSetupPreviousLocation; }
+
+                (StardewValley.AnimalHouse House, FarmAnimal Animal, Tool Tool, string ToolKind)? compatible = farm.buildings
+                    .Select(building => building.GetIndoors())
+                    .OfType<StardewValley.AnimalHouse>()
+                    .SelectMany(house => house.animals.Values.Select(animal => (House: house, Animal: animal)))
+                    .Where(candidate => candidate.Animal.isAdult() && candidate.Animal.currentProduce.Value is not null)
+                    .Select(candidate => candidate.Animal.CanGetProduceWithTool(new MilkPail())
+                        ? (candidate.House, candidate.Animal, Tool: (Tool)new MilkPail(), ToolKind: "milk_pail")
+                        : candidate.Animal.CanGetProduceWithTool(new Shears())
+                            ? (candidate.House, candidate.Animal, Tool: (Tool)new Shears(), ToolKind: "shears")
+                            : ((StardewValley.AnimalHouse House, FarmAnimal Animal, Tool Tool, string ToolKind)?)null)
+                    .FirstOrDefault(candidate => candidate is not null);
+                if (compatible is null)
+                    throw new InvalidOperationException("fixture_native_collect_animal_product_ready_animal_missing");
+                Vector2? standingTile = new[]
+                {
+                    compatible.Value.Animal.Tile + new Vector2(0f, 1f), compatible.Value.Animal.Tile + new Vector2(-1f, 0f),
+                    compatible.Value.Animal.Tile + new Vector2(1f, 0f), compatible.Value.Animal.Tile + new Vector2(0f, -1f),
+                }.Where(tile => compatible.Value.House.isTileOnMap(tile) && compatible.Value.House.isTilePassable(tile)
+                    && !compatible.Value.House.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+                    .Cast<Vector2?>().FirstOrDefault();
+                if (standingTile is null)
+                    throw new InvalidOperationException("fixture_native_collect_animal_product_approach_missing");
+                if (!player.Items.OfType<Tool>().Any(tool => tool.GetType() == compatible.Value.Tool.GetType())
+                    && player.addItemToInventory(compatible.Value.Tool) is not null)
+                    throw new InvalidOperationException("fixture_native_collect_animal_product_tool_inventory_full");
+                if (!player.Items.OfType<Tool>().Any(tool => tool.GetType() == compatible.Value.Tool.GetType()))
+                    throw new InvalidOperationException("fixture_native_collect_animal_product_tool_missing_after_add");
+                player.warpFarmer(new StardewValley.Warp(0, 0, compatible.Value.House.NameOrUniqueName,
+                    (int)standingTile.Value.X, (int)standingTile.Value.Y, false));
+                this.nativeLocalCollectAnimalProductFixturePending = new NativeLocalCollectAnimalProductFixturePending(
+                    compatible.Value.House.NameOrUniqueName, compatible.Value.Animal.myID.Value, compatible.Value.Animal.Tile,
+                    compatible.Value.Animal.currentProduce.Value, compatible.Value.ToolKind);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_refill_watering_can_v1")
+            {
+                // This fixture establishes only a single ordinary, partially
+                // filled can and a disposable-working-save map precondition.
+                // The pinned GameLocation predicate accepts a Back-layer
+                // WaterSource property, so mark the local player's current
+                // FarmHouse tile and verify that predicate before attachment.
+                // This never invokes the watering can or creates a receipt.
+                if (player.currentLocation is not StardewValley.Locations.FarmHouse farmHouse)
+                    throw new InvalidOperationException("fixture_native_local_refill_farmhouse_missing");
+                foreach (Item? ownedItem in player.Items.Where(item => item is WateringCan).ToArray())
+                    player.Items.Remove(ownedItem);
+                WateringCan suppliedCan = new();
+                suppliedCan.WaterLeft = Math.Max(1, suppliedCan.waterCanMax - 1);
+                if (player.addItemToInventory(suppliedCan) is not null || player.Items.OfType<WateringCan>().Count() != 1)
+                    throw new InvalidOperationException("fixture_native_local_refill_watering_can_missing_or_ambiguous");
+                Point sourceTile = player.TilePoint;
+                xTile.Layers.Layer? backLayer = farmHouse.map.GetLayer("Back");
+                if (backLayer is null || sourceTile.X < 0 || sourceTile.Y < 0 || sourceTile.X >= backLayer.LayerWidth || sourceTile.Y >= backLayer.LayerHeight || backLayer.Tiles[sourceTile.X, sourceTile.Y] is null)
+                    throw new InvalidOperationException("fixture_native_local_refill_source_tile_unavailable");
+                backLayer.Tiles[sourceTile.X, sourceTile.Y].Properties["WaterSource"] = "GameBuddyNativeLocalFixture";
+                if (!string.Equals(farmHouse.doesTileHaveProperty(sourceTile.X, sourceTile.Y, "WaterSource", "Back"), "GameBuddyNativeLocalFixture", StringComparison.Ordinal)
+                    || !farmHouse.CanRefillWateringCanOnTile(sourceTile.X, sourceTile.Y))
+                    throw new InvalidOperationException("fixture_native_local_refill_source_creation_failed");
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized refill-watering-can precondition before bridge attachment: water={suppliedCan.WaterLeft}; max={suppliedCan.waterCanMax}; fixture_farmhouse_water_source={sourceTile.X},{sourceTile.Y}; production alone refills and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario != "native_water_crop_v1")
+                throw new InvalidOperationException("fixture_native_local_scenario_dispatch_invalid");
+
+            WateringCan? availableCan = player.Items.OfType<WateringCan>().FirstOrDefault(candidate => candidate.WaterLeft > 0);
+            if (availableCan is null)
+            {
+                WateringCan suppliedCan = new();
+                if (player.addItemToInventory(suppliedCan) is not null)
+                    throw new InvalidOperationException("fixture_native_local_watering_can_inventory_full");
+                availableCan = player.Items.OfType<WateringCan>().FirstOrDefault(candidate => candidate.WaterLeft > 0);
+            }
+            if (availableCan is null)
+                throw new InvalidOperationException("fixture_native_local_watering_can_missing_after_add");
+            GameLocation? cropSetupPreviousLocation = Game1.currentLocation;
+            try
+            {
+                Game1.currentLocation = farm;
+                // Target-version SpreadSeeds populates only existing HoeDirt.
+                // The event-free native-local template starts without dirt, so
+                // establish empty native dirt before spreading the dry crop.
+                if (!Game1.game1.parseDebugInput("SpreadDirt", null))
+                    throw new InvalidOperationException("fixture_native_spread_dirt_command_unavailable");
+                if (!Game1.game1.parseDebugInput("SpreadSeeds 472", null))
+                    throw new InvalidOperationException("fixture_native_spread_seeds_command_unavailable");
+            }
+            finally { Game1.currentLocation = cropSetupPreviousLocation; }
+            int dryCropCount = farm.terrainFeatures.Pairs.Count(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
+                && dirt.needsWatering() && !dirt.isWatered());
+            if (dryCropCount == 0)
+                throw new InvalidOperationException("fixture_native_local_unwatered_crop_missing");
+            this.nativeLocalPlayerFixtureInitialized = true;
+            this.Monitor.Log($"GameBuddy native-local-player initialized native water-crop fixture before bridge attachment: watering_can_water={availableCan.WaterLeft}; unwatered_crop_count={dryCropCount}; production alone waters and emits receipt.", LogLevel.Info);
+        }
+        catch (Exception exception)
+        {
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log($"GameBuddy native-local-player fixture setup failed: scenario={fixture.FixtureScenario}; error={DescribeNativeLocalFixtureSetupFailure(exception)}; exception_type={exception.GetType().Name}.", LogLevel.Error);
+        }
+    }
+
+    private void InitializeNativeLocalNpcRelationshipFixture(Farmer player, Farm farm)
+    {
+        // `npc_relationship` only reads a relationship record. The disposable
+        // fixture therefore establishes the persisted fact and moves one
+        // target-version villager using the native warp lifecycle; it never
+        // calls the bridge ingress or changes any of the reported facts after
+        // their construction.
+        const string npcName = "Robin";
+        StardewValley.NPC? npc = Utility.getAllCharacters().FirstOrDefault(candidate => candidate.IsVillager && string.Equals(candidate.Name, npcName, StringComparison.Ordinal));
+        if (npc is null)
+            throw new InvalidOperationException("fixture_native_local_npc_relationship_npc_missing");
+        if (!player.friendshipData.TryGetValue(npcName, out Friendship? relationship))
+        {
+            relationship = new Friendship();
+            player.friendshipData[npcName] = relationship;
+        }
+        // This is an explicit fixture fact, not an NPC interaction. Reset the
+        // disposable record through Friendship's target-version domain API,
+        // then establish the read-only inspection baseline before attachment.
+        relationship.Clear();
+        relationship.Points = 250;
+        if (relationship.Points != 250 || relationship.TalkedToToday || relationship.GiftsToday != 0 || relationship.GiftsThisWeek != 0)
+            throw new InvalidOperationException("fixture_native_local_npc_relationship_fact_invalid");
+        if (player.currentLocation is not StardewValley.Locations.FarmHouse farmHouse)
+            throw new InvalidOperationException("fixture_native_local_npc_relationship_farmhouse_missing");
+        StardewValley.Warp? farmWarp = farmHouse.warps.FirstOrDefault(warp => !warp.npcOnly.Value && string.Equals(warp.TargetName, farm.NameOrUniqueName, StringComparison.Ordinal));
+        if (farmWarp is null || farmWarp.TargetX < 0 || farmWarp.TargetY < 0)
+            throw new InvalidOperationException("fixture_native_local_npc_relationship_farm_warp_missing");
+        // Give the production travel action a bounded but map-derived target:
+        // select the first legal tile inside its published six-tile discovery
+        // radius, never an arbitrary Town/schedule coordinate.
+        Vector2? targetTile = FindNativeLocalFarmFixtureTile(farm, new Vector2(farmWarp.TargetX, farmWarp.TargetY), 6, requireEmptyObjectTile: true);
+        if (targetTile is null)
+            throw new InvalidOperationException("fixture_native_local_npc_relationship_placement_missing");
+        Game1.warpCharacter(npc, farm, targetTile.Value);
+        if (npc.currentLocation != farm || npc.Tile != targetTile.Value || !player.friendshipData.TryGetValue(npcName, out Friendship? actual) || actual.Points != 250 || actual.TalkedToToday || actual.GiftsToday != 0 || actual.GiftsThisWeek != 0)
+            throw new InvalidOperationException("fixture_native_local_npc_relationship_placement_validation_failed");
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized NPC-relationship precondition before bridge attachment: npc={npcName}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; points={actual.Points}; talked_to_today=false; gifts_today=0; gifts_this_week=0; production alone inspects and emits receipt.", LogLevel.Info);
+    }
+
+    private void InitializeNativeLocalPetFixture(Farmer player, Farm farm)
+    {
+        // Pet is a player-visible precondition explicitly permitted by the
+        // fixture SOP. Use the target-version constructor and normal location
+        // registration only; do not call checkAction or manufacture a result.
+        GameLocation location = player.currentLocation ?? throw new InvalidOperationException("fixture_native_local_pet_location_missing");
+        Vector2? targetTile = FindNativeLocalFarmFixtureTile(location, player.Tile, 2, requireEmptyObjectTile: true);
+        if (targetTile is null)
+            throw new InvalidOperationException("fixture_native_local_pet_placement_missing");
+        // Pet.checkAction requires empty hands. Clearing the current selected
+        // inventory item is a legal pre-attachment starting condition, not an
+        // invocation of the interaction or any of its result mutations.
+        player.Items[player.CurrentToolIndex] = null;
+        if (player.CurrentItem is not null)
+            throw new InvalidOperationException("fixture_native_local_pet_hands_not_empty");
+        StardewValley.Characters.Pet pet = new((int)targetTile.Value.X, (int)targetTile.Value.Y, "0", "Dog");
+        pet.Name = "Dog";
+        pet.homeLocationName.Value = farm.NameOrUniqueName;
+        pet.grantedFriendshipForPet.Value = false;
+        pet.friendshipTowardFarmer.Value = 0;
+        location.addCharacter(pet);
+        pet.currentLocation = location;
+        // addCharacter owns the location registration. It may resolve ordinary
+        // behavior/position on subsequent ticks, so validate only the
+        // action-relevant native starting facts here; production rediscovery
+        // binds the exact later coordinate and opaque target ID.
+        if (!location.characters.Contains(pet) || pet.currentLocation != location || pet.petId.Value == Guid.Empty || pet.grantedFriendshipForPet.Value || pet.friendshipTowardFarmer.Value != 0 || pet.lastPetDay.TryGetValue(player.UniqueMultiplayerID, out int lastDay) && lastDay == Game1.Date.TotalDays)
+            throw new InvalidOperationException("fixture_native_local_pet_placement_validation_failed");
+        this.nativeLocalPlayerFixtureInitialized = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized pet-animal precondition before bridge attachment: pet_type={pet.petType.Value}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; friendship=0; petted_today=false; friendship_callback=false; production alone invokes Pet.checkAction and emits receipt.", LogLevel.Info);
+    }
+
+    private static Vector2? FindNativeLocalArtifactSpotStandingTile(GameLocation farm, Vector2 artifactTile)
+    {
+        if (!farm.isTileOnMap(artifactTile)
+            || farm.terrainFeatures.ContainsKey(artifactTile)
+            || farm.GetHoeDirtAtTile(artifactTile) is not null
+            || !farm.objects.TryGetValue(artifactTile, out StardewValley.Object? artifact)
+            || artifact.QualifiedItemId != "(O)590"
+            || artifact is StardewValley.Objects.IndoorPot)
+            return null;
+        return new[]
+        {
+            artifactTile + new Vector2(-1f, 0f), artifactTile + new Vector2(1f, 0f),
+            artifactTile + new Vector2(0f, -1f), artifactTile + new Vector2(0f, 1f),
+        }
+        .Where(candidate => farm.isTileOnMap(candidate) && farm.isTilePassable(candidate)
+            && !farm.IsTileOccupiedBy(candidate, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+        .Cast<Vector2?>()
+        .FirstOrDefault();
+    }
+
+    private static bool IsExcludedCrabPotLocation(GameLocation location) =>
+        location is StardewValley.Locations.Caldera or StardewValley.Locations.VolcanoDungeon or StardewValley.Locations.MineShaft;
+
+    private static bool IsCrabPotFixtureInventoryUnchanged(Farmer player, NativeLocalPlaceCrabPotFixturePending pending)
+    {
+        if (player.Items.Count != pending.InventoryItems.Length)
+            return false;
+        for (int slot = 0; slot < pending.InventoryItems.Length; slot++)
+        {
+            Item? current = player.Items[slot];
+            if (!ReferenceEquals(current, pending.InventoryItems[slot])
+                || (current?.Stack ?? -1) != pending.InventoryStacks[slot]
+                || current?.QualifiedItemId != pending.InventoryIds[slot])
+                return false;
+        }
+        return true;
+    }
+
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalCrabPotFixtureTarget(GameLocation farm)
+    {
+        if (IsExcludedCrabPotLocation(farm))
+            return null;
+        int width = farm.map.Layers[0].LayerWidth;
+        int height = farm.map.Layers[0].LayerHeight;
+        foreach (Vector2 target in Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Vector2(x, y))))
+        {
+            if (!farm.isTileOnMap(target)
+                || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, (int)target.X, (int)target.Y)
+                || farm.objects.ContainsKey(target))
+                continue;
+            Vector2[] cardinal =
+            {
+                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
+                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
+            };
+            Vector2[] validStanding = cardinal
+                .Where(standing => farm.isTileOnMap(standing)
+                    && farm.isTilePassable(standing)
+                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                .ToArray();
+            if (validStanding.Length == 1)
+                return (target, validStanding[0]);
+        }
+        return null;
+    }
+
+    private static Vector2? FindNativeLocalFarmFixtureTile(GameLocation location, Vector2 arrival, int radius, bool requireEmptyObjectTile, Func<Vector2, bool>? extraPredicate = null)
+    {
+        return Enumerable.Range(-radius, radius * 2 + 1)
+            .SelectMany(offsetX => Enumerable.Range(-radius, radius * 2 + 1)
+                .Select(offsetY => new Vector2(arrival.X + offsetX, arrival.Y + offsetY)))
+            .Where(tile => tile != arrival && location.isTileOnMap(tile) && location.isTilePassable(tile)
+                && (!requireEmptyObjectTile || !location.objects.ContainsKey(tile))
+                && (extraPredicate is null || extraPredicate(tile))
+                && !location.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.None, useFarmerTile: true))
+            .Where(tile => new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }
+                .Any(approach => location.isTileOnMap(approach) && location.isTilePassable(approach)
+                    && (Game1.player is not null && approach == Game1.player.Tile || !location.IsTileOccupiedBy(approach, CollisionMask.All, CollisionMask.None, useFarmerTile: true))))
+            .OrderBy(tile => Math.Max(Math.Abs(tile.X - arrival.X), Math.Abs(tile.Y - arrival.Y)))
+            .ThenBy(tile => Math.Abs(tile.X - arrival.X) + Math.Abs(tile.Y - arrival.Y))
+            .Cast<Vector2?>()
+            .FirstOrDefault();
+    }
+
+    private static Vector2? FindNativeLocalFarmResourceClumpFixtureTile(GameLocation location, Vector2 arrival, int radius, int width, int height)
+    {
+        return Enumerable.Range(-radius, radius * 2 + 1)
+            .SelectMany(offsetX => Enumerable.Range(-radius, radius * 2 + 1)
+                .Select(offsetY => new Vector2(arrival.X + offsetX, arrival.Y + offsetY)))
+            .Where(tile => tile != arrival && location.isTileOnMap(tile)
+                && Enumerable.Range(0, width).SelectMany(footprintX => Enumerable.Range(0, height)
+                    .Select(footprintY => new Vector2(tile.X + footprintX, tile.Y + footprintY)))
+                    .All(footprint => location.CanItemBePlacedHere(footprint, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true)))
+            .Where(tile => new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }
+                .Any(approach => location.isTileOnMap(approach) && location.isTilePassable(approach)
+                    && (Game1.player is not null && approach == Game1.player.Tile || !location.IsTileOccupiedBy(approach, CollisionMask.All, CollisionMask.None, useFarmerTile: true))))
+            .OrderBy(tile => Math.Max(Math.Abs(tile.X - arrival.X), Math.Abs(tile.Y - arrival.Y)))
+            .ThenBy(tile => Math.Abs(tile.X - arrival.X) + Math.Abs(tile.Y - arrival.Y))
+            .Cast<Vector2?>()
+            .FirstOrDefault();
+    }
+
+    private static string DescribeNativeLocalFixtureSetupFailure(Exception exception)
+    {
+        // Only our fixed diagnostic codes are safe to surface. Do not emit an
+        // arbitrary native exception message into SMAPI logs.
+        return exception is InvalidOperationException
+            && exception.Message.StartsWith("fixture_native_", StringComparison.Ordinal)
+            ? exception.Message
+            : "unexpected_fixture_setup_exception";
+    }
+
+    private void LogNativeLocalPlayerReadinessIfBlocked()
+    {
+        if (Game1.player is null || (Game1.player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp))
+            return;
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (now - this.nativeLocalPlayerFixtureLastReadinessLogUnixMs < 1_000L)
+            return;
+        this.nativeLocalPlayerFixtureLastReadinessLogUnixMs = now;
+        string state = Game1.activeClickableMenu is not null ? "menu_open" : Game1.eventUp ? "event_active" : !Game1.player.CanMove ? "player_cannot_move" : "unknown";
+        this.Monitor.Log($"[DEBUG-native-local-readiness] state={state};location={Game1.player.currentLocation?.NameOrUniqueName ?? "unknown"};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};can_move={Game1.player.CanMove};event_up={Game1.eventUp};menu={Game1.activeClickableMenu?.GetType().Name ?? "none"}.", LogLevel.Trace);
     }
 
     private void TryStartFarmhandProvisioner()
@@ -159,6 +1398,7 @@ public sealed class ModEntry : Mod
     {
         if (this.embodimentInitialized || this.hostRoleConfigured || this.provisioningConfigurationRejected)
             return;
+        bool nativeLocalFixture = this.config.NativeLocalPlayerFixture?.Enable == true;
         bool formalClientConfigured = this.config.FarmhandProvisioner?.Enable == true;
         if (formalClientConfigured && (this.farmhandProvisioner is null || !this.farmhandProvisioner.IsReady))
             return;
@@ -166,7 +1406,10 @@ public sealed class ModEntry : Mod
             return;
         ScreenEmbodimentState state = this.GetEmbodimentState();
         this.ClearState(state, "save_loaded");
-        if (!this.IsConfiguredAiScreen(out Farmer? localPlayer, out string reason))
+        bool actorConfigured = nativeLocalFixture
+            ? this.IsConfiguredNativeLocalPlayer(out Farmer? localPlayer, out string reason)
+            : this.IsConfiguredAiScreen(out localPlayer, out reason);
+        if (!actorConfigured)
         {
             this.Monitor.Log($"GameBuddy ignored local screen {Context.ScreenId}: {reason}.", LogLevel.Trace);
             return;
@@ -199,21 +1442,43 @@ public sealed class ModEntry : Mod
         state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
         if (!scopeMatchesWorld && formalClientConfigured)
             this.Monitor.Log("GameBuddy formal attachment remains closed: manifest and local save/world/Farmhand scope do not match.", LogLevel.Warn);
+        else if (!scopeMatchesWorld && nativeLocalFixture)
+            this.Monitor.Log("GameBuddy native-local-player fixture remains closed: configured save/world/local-player scope does not match the loaded native world.", LogLevel.Warn);
         if (this.config.EnableLocalBridge && state.BridgeSession is null)
             this.Monitor.Log(bridgeConfigValid
                 ? "GameBuddy local bridge remains disabled: configured save/world scope does not bind to this AI Farmhand world."
                 : "GameBuddy local bridge remains disabled: configuration must use opaque scope IDs and a 16+ character token.", LogLevel.Warn);
         else if (state.LocalPipeBridge is not null)
-            this.Monitor.Log($"GameBuddy local named-pipe bridge started for AI Farmhand screen {Context.ScreenId}.", LogLevel.Info);
+            this.Monitor.Log(nativeLocalFixture
+                ? $"GameBuddy local named-pipe bridge started for native local Player screen {Context.ScreenId}."
+                : $"GameBuddy local named-pipe bridge started for AI Farmhand screen {Context.ScreenId}.", LogLevel.Info);
 
         this.embodimentInitialized = true;
-        this.Monitor.Log(
-            $"GameBuddy bound native AI Farmhand only: screen_id={Context.ScreenId}, farmhand_id={localPlayer!.UniqueMultiplayerID}, formal_attachment={this.farmhandProvisioner is not null}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
+        this.Monitor.Log(nativeLocalFixture
+            ? $"GameBuddy bound native local Player fixture: screen_id={Context.ScreenId}, player_id={localPlayer!.UniqueMultiplayerID}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}."
+            : $"GameBuddy bound native AI Farmhand only: screen_id={Context.ScreenId}, farmhand_id={localPlayer!.UniqueMultiplayerID}, formal_attachment={this.farmhandProvisioner is not null}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
             LogLevel.Info);
     }
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
+        if (this.config.NativeLocalPlayerFixture?.Enable == true)
+        {
+            this.TryInitializeNativeLocalPlayerFixture();
+            if (this.nativeLocalPlayerFixtureTerminal || !Context.IsWorldReady)
+                return;
+            if (!this.nativeLocalPlayerFixtureInitialized)
+                return;
+            this.TryInitializeEmbodiment();
+            if (!this.IsConfiguredNativeLocalPlayer(out _, out _))
+                return;
+            this.LogNativeLocalPlayerReadinessIfBlocked();
+            ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
+            this.ObserveBridgeGeneration(nativeLocalState);
+            this.DrainLocalPipeBridge(nativeLocalState);
+            nativeLocalState.Executions?.Update();
+            return;
+        }
         this.TryInitializeNativeFixtureScenario();
         this.TryStartHostAutomation();
         this.TryStartFarmhandProvisioner();
@@ -1197,6 +2462,147 @@ public sealed class ModEntry : Mod
 
     private void OnWarped(object? sender, WarpedEventArgs e)
     {
+        if (this.nativeLocalPlaceCrabPotFixturePending is NativeLocalPlaceCrabPotFixturePending crabPotPending && e.Player == Game1.player)
+        {
+            if (e.NewLocation is Farm farm
+                && string.Equals(farm.NameOrUniqueName, crabPotPending.FarmName, StringComparison.Ordinal)
+                && !IsExcludedCrabPotLocation(farm)
+                && StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, (int)crabPotPending.TargetTile.X, (int)crabPotPending.TargetTile.Y)
+                && farm.isTileOnMap(crabPotPending.StandingTile)
+                && farm.isTilePassable(crabPotPending.StandingTile)
+                && !farm.IsTileOccupiedBy(crabPotPending.StandingTile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)
+                && e.Player.Items.Count(item => ReferenceEquals(item, crabPotPending.CrabPot)) == 1
+                && crabPotPending.CrabPot.QualifiedItemId == "(O)710"
+                && crabPotPending.CrabPot.Stack == crabPotPending.CrabPotStack
+                && crabPotPending.CrabPot.Stack > 0
+                && IsCrabPotFixtureInventoryUnchanged(e.Player, crabPotPending))
+            {
+                e.Player.Position = crabPotPending.StandingTile * Game1.tileSize;
+                this.nativeLocalPlaceCrabPotFixturePending = null;
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized place-crab-pot precondition before bridge attachment: item=(O)710; target={(int)crabPotPending.TargetTile.X},{(int)crabPotPending.TargetTile.Y}; standing_tile={(int)crabPotPending.StandingTile.X},{(int)crabPotPending.StandingTile.Y}; production alone invokes CrabPot placement and emits receipt.", LogLevel.Info);
+                return;
+            }
+            this.nativeLocalPlaceCrabPotFixturePending = null;
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_place_crab_pot_v1; error=fixture_native_local_crab_pot_approach_unreachable; exception_type=InvalidOperationException.", LogLevel.Error);
+            return;
+        }
+        if (this.nativeLocalDigArtifactSpotFixturePending is NativeLocalDigArtifactSpotFixturePending artifactPending && e.Player == Game1.player)
+        {
+            if (e.NewLocation is Farm farm
+                && string.Equals(farm.NameOrUniqueName, artifactPending.FarmName, StringComparison.Ordinal)
+                && farm.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590") >= 1
+                && farm.objects.TryGetValue(artifactPending.ArtifactTile, out StardewValley.Object? artifact)
+                && artifact.QualifiedItemId == "(O)590"
+                && farm.isTileOnMap(artifactPending.ArtifactTile)
+                && farm.terrainFeatures.ContainsKey(artifactPending.ArtifactTile) == false
+                && farm.GetHoeDirtAtTile(artifactPending.ArtifactTile) is null
+                && artifact is not StardewValley.Objects.IndoorPot
+                && farm.isTileOnMap(artifactPending.StandingTile)
+                && farm.isTilePassable(artifactPending.StandingTile)
+                && !farm.IsTileOccupiedBy(artifactPending.StandingTile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)
+                && e.Player.Items.OfType<Hoe>().Count() == 1
+                && e.Player.Items.OfType<Hoe>().Single().UpgradeLevel == 0)
+            {
+                e.Player.Position = artifactPending.StandingTile * Game1.tileSize;
+                this.nativeLocalDigArtifactSpotFixturePending = null;
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized dig-artifact-spot precondition before bridge attachment: item=(O)590; tile={(int)artifactPending.ArtifactTile.X},{(int)artifactPending.ArtifactTile.Y}; standing_tile={(int)artifactPending.StandingTile.X},{(int)artifactPending.StandingTile.Y}; production alone performs the native hoe interaction and emits source-only receipt.", LogLevel.Info);
+                return;
+            }
+            Farm? diagnosticFarm = e.NewLocation as Farm;
+            StardewValley.Object? diagnosticArtifact = diagnosticFarm is not null
+                && diagnosticFarm.objects.TryGetValue(artifactPending.ArtifactTile, out StardewValley.Object? artifactAtExpectedTile)
+                ? artifactAtExpectedTile
+                : null;
+            int diagnosticHoeCount = e.Player.Items.OfType<Hoe>().Count();
+            bool diagnosticBasicHoe = diagnosticHoeCount == 1
+                && e.Player.Items.OfType<Hoe>().Single().UpgradeLevel == 0;
+            this.Monitor.Log($"[DEBUG-artifact-fixture] player_is_game1_player={e.Player == Game1.player}; new_location_is_farm={diagnosticFarm is not null}; farm_name_equal={diagnosticFarm is not null && string.Equals(diagnosticFarm.NameOrUniqueName, artifactPending.FarmName, StringComparison.Ordinal)}; source_count={(diagnosticFarm?.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590") ?? 0)}; source_present_at_expected_tile={diagnosticArtifact is not null}; source_qid_is_590={diagnosticArtifact?.QualifiedItemId == "(O)590"}; source_on_map={diagnosticArtifact is not null && diagnosticFarm!.isTileOnMap(artifactPending.ArtifactTile)}; source_terrain_absent={diagnosticFarm is not null && !diagnosticFarm.terrainFeatures.ContainsKey(artifactPending.ArtifactTile)}; source_hoedirt_absent={diagnosticFarm is not null && diagnosticFarm.GetHoeDirtAtTile(artifactPending.ArtifactTile) is null}; source_indoor_pot={diagnosticArtifact is StardewValley.Objects.IndoorPot}; standing_on_map={diagnosticFarm is not null && diagnosticFarm.isTileOnMap(artifactPending.StandingTile)}; standing_passable={diagnosticFarm is not null && diagnosticFarm.isTilePassable(artifactPending.StandingTile)}; standing_occupied_use_farmer_tile_false={diagnosticFarm is not null && diagnosticFarm.IsTileOccupiedBy(artifactPending.StandingTile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)}; hoe_count={diagnosticHoeCount}; basic_hoe={diagnosticBasicHoe}; player_tile={(int)e.Player.Tile.X},{(int)e.Player.Tile.Y}; expected_standing_tile={(int)artifactPending.StandingTile.X},{(int)artifactPending.StandingTile.Y}.", LogLevel.Error);
+            this.nativeLocalDigArtifactSpotFixturePending = null;
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_dig_artifact_spot_v1; error=fixture_native_local_artifact_spot_approach_unreachable; exception_type=InvalidOperationException.", LogLevel.Error);
+            return;
+        }
+        if (this.nativeLocalClearHoeDirtFixturePending is NativeLocalClearHoeDirtFixturePending hoeDirtPending && e.Player == Game1.player)
+        {
+            if (e.NewLocation is Farm farm
+                && string.Equals(farm.NameOrUniqueName, hoeDirtPending.FarmName, StringComparison.Ordinal)
+                && farm.terrainFeatures.TryGetValue(hoeDirtPending.DirtTile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+                && feature is StardewValley.TerrainFeatures.HoeDirt { crop: null }
+                && farm.isTileOnMap(hoeDirtPending.StandingTile)
+                // The just-warped Player now occupies this prevalidated tile;
+                // do not reject the pending setup because of its own arrival.
+                && farm.isTilePassable(hoeDirtPending.StandingTile))
+            {
+                e.Player.Position = hoeDirtPending.StandingTile * Game1.tileSize;
+                this.nativeLocalClearHoeDirtFixturePending = null;
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized clear-hoedirt precondition before bridge attachment: tile={(int)hoeDirtPending.DirtTile.X},{(int)hoeDirtPending.DirtTile.Y}; standing_tile={(int)hoeDirtPending.StandingTile.X},{(int)hoeDirtPending.StandingTile.Y}; crop=none; indoor_pot=false. Production alone invokes exactly one Pickaxe hit and emits receipt.", LogLevel.Info);
+                return;
+            }
+            this.nativeLocalClearHoeDirtFixturePending = null;
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_clear_hoedirt_v1; error=fixture_native_local_clear_hoedirt_approach_unreachable; exception_type=InvalidOperationException.", LogLevel.Error);
+            return;
+        }
+        if (this.nativeLocalCollectAnimalProductFixturePending is NativeLocalCollectAnimalProductFixturePending productPending && e.Player == Game1.player)
+        {
+            if (e.NewLocation is StardewValley.AnimalHouse productHouse
+                && string.Equals(productHouse.NameOrUniqueName, productPending.AnimalHouseName, StringComparison.Ordinal)
+                && productHouse.animals.TryGetValue(productPending.AnimalId, out FarmAnimal? animal)
+                && animal.isAdult() && animal.currentProduce.Value == productPending.ProduceId
+                && e.Player.Items.OfType<Tool>().Any(tool => productPending.ToolKind == "milk_pail" ? tool is MilkPail : tool is Shears))
+            {
+                bool productInRange = Math.Abs((int)e.Player.Tile.X - (int)animal.Tile.X) <= 1
+                    && Math.Abs((int)e.Player.Tile.Y - (int)animal.Tile.Y) <= 1;
+                Vector2 productStandingTile = e.Player.Tile;
+                bool approachAvailable = productInRange || TryFindNativeLocalAnimalProductApproach(productHouse, animal, out productStandingTile);
+                if (approachAvailable)
+                {
+                    // The AnimalHouse may move an animal while rehydrating. This only
+                    // establishes a freshly validated player position; no collection,
+                    // output, inventory, tool-use, or receipt is produced by fixture setup.
+                    if (!productInRange)
+                        e.Player.Position = productStandingTile * Game1.tileSize;
+                    this.nativeLocalCollectAnimalProductFixturePending = null;
+                    this.nativeLocalPlayerFixtureInitialized = true;
+                    this.Monitor.Log($"GameBuddy native-local-player initialized collect-animal-product precondition before bridge attachment: animal={animal.type.Value}; tile={(int)animal.Tile.X},{(int)animal.Tile.Y}; produce=(O){productPending.ProduceId}; tool={productPending.ToolKind}. Production alone invokes collection, clears product, adds inventory output, and emits receipt.", LogLevel.Info);
+                    return;
+                }
+            }
+            string productLocation = e.NewLocation?.NameOrUniqueName ?? "none";
+            string productAnimal = e.NewLocation is StardewValley.AnimalHouse diagnosticHouse && diagnosticHouse.animals.TryGetValue(productPending.AnimalId, out FarmAnimal? diagnosticAnimal)
+                ? $"type={diagnosticAnimal.type.Value};tile={(int)diagnosticAnimal.Tile.X},{(int)diagnosticAnimal.Tile.Y};adult={diagnosticAnimal.isAdult()};produce={diagnosticAnimal.currentProduce.Value ?? "none"}"
+                : "missing";
+            this.nativeLocalCollectAnimalProductFixturePending = null;
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log($"GameBuddy native-local-player fixture setup failed: scenario=native_collect_animal_product_v1; error=fixture_native_collect_animal_product_approach_unreachable; expected_house={productPending.AnimalHouseName}; new_location={productLocation}; expected_animal={productPending.AnimalId}; animal={productAnimal}; player={(int)e.Player.Tile.X},{(int)e.Player.Tile.Y}; expected_produce={productPending.ProduceId}; tool={productPending.ToolKind}; exception_type=InvalidOperationException.", LogLevel.Error);
+            return;
+        }
+        if (this.nativeLocalFeedFixturePending is NativeLocalFeedFixturePending pending && e.Player == Game1.player)
+        {
+            if (e.NewLocation is StardewValley.AnimalHouse location
+                && string.Equals(location.NameOrUniqueName, pending.AnimalHouseName, StringComparison.Ordinal)
+                && Math.Abs((int)e.Player.Tile.X - (int)pending.TroughTile.X) <= 1
+                && Math.Abs((int)e.Player.Tile.Y - (int)pending.TroughTile.Y) <= 1
+                && location.doesTileHaveProperty((int)pending.TroughTile.X, (int)pending.TroughTile.Y, "Trough", "Back") is not null
+                && !location.objects.ContainsKey(pending.TroughTile)
+                && !e.Player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == "(O)178" && item.Stack > 0)
+                && e.Player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>("(O)178", 2)) is null
+                && e.Player.Items.OfType<StardewValley.Object>().Count(item => item.QualifiedItemId == "(O)178" && item.Stack == 2) == 1)
+            {
+                this.nativeLocalFeedFixturePending = null;
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized feed-animal precondition before bridge attachment: animal_house={location.NameOrUniqueName}; trough={pending.TroughTile.X},{pending.TroughTile.Y}; standing_tile={e.Player.Tile.X},{e.Player.Tile.Y}; hay=2. Production alone performs native feed, consumes Hay, fills the trough, and emits receipt.", LogLevel.Info);
+                return;
+            }
+            this.nativeLocalFeedFixturePending = null;
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_feed_animal_v1; error=fixture_native_feed_animal_trough_approach_unreachable; exception_type=InvalidOperationException.", LogLevel.Error);
+            return;
+        }
         if (this.TryGetAiState(out ScreenEmbodimentState state) && e.Player.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID)
         {
             ExecutionManager executions = state.Executions!;
@@ -1232,6 +2638,18 @@ public sealed class ModEntry : Mod
         this.hostAutomationSaveMenuOpened = false;
         this.farmhandProvisioner?.Disconnect();
         this.farmhandProvisioner = null;
+        this.nativeLocalPlayerFixtureStarted = false;
+        this.nativeLocalPlayerFixtureInitialized = false;
+        this.nativeLocalPlayerFixtureTerminal = false;
+        this.nativeLocalPlayerFixtureDeadlineUnixMs = 0;
+        this.nativeLocalPlayerFixtureLastReadinessLogUnixMs = 0;
+        this.nativeLocalPlayerFixtureBootstrapInvoked = false;
+        this.nativeLocalPlayerFixtureBootstrapTerminal = false;
+        this.nativeLocalFeedFixturePending = null;
+        this.nativeLocalCollectAnimalProductFixturePending = null;
+        this.nativeLocalClearHoeDirtFixturePending = null;
+        this.nativeLocalDigArtifactSpotFixturePending = null;
+        this.nativeLocalPlaceCrabPotFixturePending = null;
         this.farmhandProvisioningTerminal = false;
         this.nextFarmhandProvisionerAttemptAtMs = 0;
         ScreenEmbodimentState state = this.GetEmbodimentState();
@@ -1345,7 +2763,7 @@ public sealed class ModEntry : Mod
             }
             catch (Exception exception)
             {
-                this.Monitor.Log($"GameBuddy rejected local bridge request: {exception.GetType().Name}.", LogLevel.Warn);
+                this.Monitor.Log($"GameBuddy rejected local bridge request: {exception.GetType().Name}: {exception.Message}.", LogLevel.Warn);
             }
         }
     }
@@ -1439,6 +2857,29 @@ public sealed class ModEntry : Mod
         return true;
     }
 
+    private bool IsConfiguredNativeLocalPlayer(out Farmer? localPlayer, out string reasonCode)
+    {
+        localPlayer = null;
+        reasonCode = "world_not_ready";
+        if (this.config.NativeLocalPlayerFixture is not { IsValid: true } || !Context.IsWorldReady || Game1.player is null)
+            return false;
+        if (Context.IsMultiplayer || Game1.getAllFarmers().Count() != 1 || !Game1.IsMasterGame || Game1.server is not null || Game1.player.UniqueMultiplayerID != Game1.MasterPlayer.UniqueMultiplayerID)
+        {
+            reasonCode = "native_local_player_fixture_topology_mismatch";
+            return false;
+        }
+        localPlayer = Game1.player;
+        if (this.config.SaveId != Game1.uniqueIDForThisGame.ToString()
+            || this.config.WorldId != Game1.MasterPlayer.UniqueMultiplayerID.ToString()
+            || this.config.PlayerId != localPlayer.UniqueMultiplayerID.ToString())
+        {
+            reasonCode = "native_local_player_fixture_scope_mismatch";
+            return false;
+        }
+        reasonCode = "native_local_player_fixture";
+        return true;
+    }
+
     private bool IsConfiguredAiScreen(out Farmer? localPlayer, out string reasonCode)
     {
         localPlayer = null;
@@ -1475,6 +2916,38 @@ public sealed class ModEntry : Mod
         state.BridgeSession = null;
         state.Executions = null;
     }
+
+    private static bool TryFindNativeLocalAnimalProductApproach(StardewValley.AnimalHouse house, FarmAnimal animal, out Vector2 standingTile)
+    {
+        foreach (Vector2 candidate in new[]
+        {
+            animal.Tile + new Vector2(0f, 1f), animal.Tile + new Vector2(-1f, 0f),
+            animal.Tile + new Vector2(1f, 0f), animal.Tile + new Vector2(0f, -1f),
+        })
+        {
+            if (!house.isTileOnMap(candidate) || !house.isTilePassable(candidate)
+                || house.IsTileOccupiedBy(candidate, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+                continue;
+            standingTile = candidate;
+            return true;
+        }
+        standingTile = default;
+        return false;
+    }
+
+    private sealed record NativeLocalFeedFixturePending(string AnimalHouseName, Vector2 TroughTile, Vector2 StandingTile);
+    private sealed record NativeLocalCollectAnimalProductFixturePending(string AnimalHouseName, long AnimalId, Vector2 AnimalTile, string ProduceId, string ToolKind);
+    private sealed record NativeLocalClearHoeDirtFixturePending(string FarmName, Vector2 DirtTile, Vector2 StandingTile);
+    private sealed record NativeLocalDigArtifactSpotFixturePending(string FarmName, Vector2 ArtifactTile, Vector2 StandingTile);
+    private sealed record NativeLocalPlaceCrabPotFixturePending(
+        string FarmName,
+        Vector2 TargetTile,
+        Vector2 StandingTile,
+        StardewValley.Object CrabPot,
+        int CrabPotStack,
+        Item?[] InventoryItems,
+        int[] InventoryStacks,
+        string?[] InventoryIds);
 
     private delegate bool TryBridgeRequest<TRequest, TResponse>(BridgeEnvelope<TRequest> request, out BridgeEnvelope<TResponse>? response, out string reasonCode);
     private static bool IsOpaqueRequestId(string value) => value.Length is >= 1 and <= 64 && value.All(character => (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or '-');
