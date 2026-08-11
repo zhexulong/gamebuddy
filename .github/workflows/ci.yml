@@ -30,6 +30,7 @@ jobs:
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
       - run: pnpm typecheck
       - run: pnpm build
+      - run: pnpm test:stardew-native-architecture-accounting
       - run: pnpm test
       - run: pnpm test:stardew-portfolio-p1
       - run: node tools/verify-phase0b-host.mjs
