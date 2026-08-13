@@ -100,6 +100,36 @@ const HOST_CONTRACT_TEST_FILES = Object.freeze([
   "dist-test/tavern/conversation.test.js",
 ]);
 
+// This is deliberately a bounded ordinary-containment check. It executes the
+// actual Host security regressions rather than treating source tokens as
+// evidence. Node pathname APIs cannot prove safety against a same-user hostile
+// replacement between the final check and the filesystem operation; that P3
+// residual risk must remain explicit rather than being promoted to a release
+// claim.
+const HOST_TAVERN_CONTAINMENT_TEST_FILES = Object.freeze([
+  "dist-test/tavern/artifact-store.test.js",
+  "dist-test/tavern/chat-thread-store.test.js",
+  "dist-test/tavern/chat-draft/chat-draft-store.test.js",
+  "dist-test/tavern/world-info-management/world-info-management.test.js",
+  "dist-test/tavern/new-companion-service.test.js",
+  "dist-test/path-lock.test.js",
+]);
+
+const TAVERN_FILESYSTEM_THREAT_MODEL = Object.freeze({
+  schemaVersion: 1,
+  descriptor: Object.freeze({ name: "gamebuddy-tavern-filesystem-threat-model", version: "1" }),
+  ordinaryContainment: Object.freeze({
+    status: "required",
+    guarantees: Object.freeze(["reject_preexisting_link_or_reparse_escape", "fail_closed_outside_runtime_root"]),
+    verification: "host_deterministic_containment_tests",
+  }),
+  sameUserHostilePathRace: Object.freeze({
+    status: "P3_defense_in_depth_residual_risk",
+    guarantee: "not_provided",
+    escalation: "windows_handle_relative_no_follow_required_before_claiming_protection",
+  }),
+});
+
 const here = dirname(fileURLToPath(import.meta.url));
 export const repositoryRoot = resolve(here, "..");
 
@@ -132,6 +162,39 @@ function hostEvidenceFailures(hostRouteSource, hostTestSource, tavernSource) {
   ).map(({ flow }) => flow);
 }
 
+function validateTavernFilesystemThreatModel(model) {
+  const ordinary = model?.ordinaryContainment;
+  const hostile = model?.sameUserHostilePathRace;
+  if (
+    model?.schemaVersion !== 1 ||
+    model?.descriptor?.name !== "gamebuddy-tavern-filesystem-threat-model" ||
+    model?.descriptor?.version !== "1" ||
+    ordinary?.status !== "required" ||
+    ordinary?.verification !== "host_deterministic_containment_tests" ||
+    !Array.isArray(ordinary?.guarantees) ||
+    JSON.stringify([...ordinary.guarantees].sort()) !==
+      JSON.stringify(["fail_closed_outside_runtime_root", "reject_preexisting_link_or_reparse_escape"]) ||
+    hostile?.status !== "P3_defense_in_depth_residual_risk" ||
+    hostile?.guarantee !== "not_provided" ||
+    hostile?.escalation !== "windows_handle_relative_no_follow_required_before_claiming_protection"
+  ) {
+    return "tavern_filesystem_threat_model_drift";
+  }
+  return undefined;
+}
+
+function runTavernContainmentTests(exec, root) {
+  exec(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["--filter", "@gamebuddy/companion-host", "build:test"], {
+    cwd: root,
+    stdio: "pipe",
+    ...(process.platform === "win32" ? { shell: true } : {}),
+  });
+  exec(process.execPath, ["--test", ...HOST_TAVERN_CONTAINMENT_TEST_FILES.map((path) => resolve(root, "host", path))], {
+    cwd: root,
+    stdio: "pipe",
+  });
+}
+
 /**
  * Checks only release-profile prerequisites that can be established locally.
  * It intentionally does not turn a contract-only Magic Context source into a
@@ -142,6 +205,7 @@ export async function checkTavernReleasePrerequisites({
   verifyReferences = true,
   read = readFile,
   verifyStableContextRuntime = true,
+  tavernFilesystemThreatModel = TAVERN_FILESYSTEM_THREAT_MODEL,
   exec = execFileSync,
 } = {}) {
   const selectedPath = resolve(root, "host/src/tavern/selected-l3.v1.ts");
@@ -168,6 +232,29 @@ export async function checkTavernReleasePrerequisites({
   ]);
   const tavernSource = tavernSources.join("\n");
   const checks = [];
+  const threatModelIssue = validateTavernFilesystemThreatModel(tavernFilesystemThreatModel);
+  if (threatModelIssue) {
+    checks.push(result("tavern_filesystem_threat_model", "blocked", threatModelIssue));
+  } else {
+    try {
+      runTavernContainmentTests(exec, root);
+      checks.push(
+        result(
+          "tavern_ordinary_link_reparse_containment",
+          "passed",
+          "ordinary symlink/junction/reparse containment tests passed; same-user hostile TOCTOU is an explicit P3 residual risk, not a hostile-race safety claim",
+        ),
+      );
+    } catch {
+      checks.push(
+        result(
+          "tavern_ordinary_link_reparse_containment",
+          "blocked",
+          "tavern_ordinary_link_reparse_containment_tests_failed_or_could_not_run",
+        ),
+      );
+    }
+  }
   const must = extractStringArray(selected, "must");
   const later = extractStringArray(selected, "later");
   const unsupported = extractStringArray(selected, "unsupported");
