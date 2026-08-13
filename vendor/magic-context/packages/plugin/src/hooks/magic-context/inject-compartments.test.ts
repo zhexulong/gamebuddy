@@ -2308,7 +2308,7 @@ describe("m[0]/m[1] materialization", () => {
         expect(result.m1Text).toContain("no new content since last materialization");
     });
 
-    it("replays byte-identical m[1] on defer and surfaces additive memory on next cache-busting pass", () => {
+    it("refreshes m[1] on defer when memory coverage advances without rebuilding m[0]", () => {
         db = makeDb();
         const projectDirectory = makeProjectDir();
         replaceAllCompartmentState(
@@ -2372,8 +2372,9 @@ describe("m[0]/m[1] materialization", () => {
             isCacheBustingPass: false,
         });
 
-        expect(renderedText(deferOne[1])).toBe(initialM1);
-        expect(renderedText(deferTwo[1])).toBe(initialM1);
+        expect(renderedText(deferOne[1])).toContain("New additive memory appears only after a bust.");
+        expect(renderedText(deferTwo[1])).toContain("New additive memory appears only after a bust.");
+        expect(renderedText(deferOne[0])).toBe(renderedText(first[0]));
         expect(initialM1).not.toContain("New additive memory");
 
         const bust = [userMessage("m4", "bust")];

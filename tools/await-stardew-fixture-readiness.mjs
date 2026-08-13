@@ -12,7 +12,15 @@ const sessionDirectory = option("--session-directory");
 const hostConfigPath = option("--host-config");
 const timeoutMs = Number(option("--timeout-ms"));
 const notBeforeUnixMs = Number(option("--not-before-unix-ms"));
-if (!isAbsolute(sessionDirectory) || !isAbsolute(hostConfigPath) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000 || !Number.isSafeInteger(notBeforeUnixMs) || notBeforeUnixMs < 0) {
+if (
+  !isAbsolute(sessionDirectory) ||
+  !isAbsolute(hostConfigPath) ||
+  !Number.isInteger(timeoutMs) ||
+  timeoutMs < 1 ||
+  timeoutMs > 300_000 ||
+  !Number.isSafeInteger(notBeforeUnixMs) ||
+  notBeforeUnixMs < 0
+) {
   throw new Error("fixture_readiness_invalid_options");
 }
 
@@ -34,7 +42,13 @@ let lastError = "fixture_readiness_missing";
 while (Date.now() < deadline) {
   try {
     const value = JSON.parse(await readFile(readinessPath, "utf8"));
-    validateReadiness(value, automation.FixtureScenario, automation.SaveName, provisioning.SessionToken, notBeforeUnixMs);
+    validateReadiness(
+      value,
+      automation.FixtureScenario,
+      automation.SaveName,
+      provisioning.SessionToken,
+      notBeforeUnixMs,
+    );
     if (value.state === "fixture_blocked") throw new Error(`fixture_preflight_blocked_${value.reasonCode}`);
     console.log(JSON.stringify(value));
     process.exit(0);
@@ -45,23 +59,28 @@ while (Date.now() < deadline) {
     // also not a terminal fixture failure: wait for this Host launch to atomically
     // replace it. Authentication, structural validity, clock skew, and an
     // explicit native initializer block are fail-fast.
-    if (/^fixture_preflight_blocked_|^fixture_readiness_(authentication_failed|invalid|clock_invalid)$/.test(lastError)) throw error;
-    await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
+    if (/^fixture_preflight_blocked_|^fixture_readiness_(authentication_failed|invalid|clock_invalid)$/.test(lastError))
+      throw error;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   }
 }
 throw new Error(lastError === "fixture_readiness_missing" ? "fixture_readiness_timeout" : lastError);
 
 function validateReadiness(value, scenario, saveName, sessionToken, notBeforeUnixMs) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)
-    || value.schemaVersion !== 1
-    || value.integrationId !== "stardew"
-    || value.fixtureScenario !== scenario
-    || value.saveName !== saveName
-    || (value.state !== "fixture_ready" && value.state !== "fixture_blocked")
-    || !isReasonCode(value.reasonCode)
-    || !Number.isSafeInteger(value.publishedAtUnixMs)
-    || !isOpaque(value.sessionNonce)
-    || typeof value.signature !== "string") {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.schemaVersion !== 1 ||
+    value.integrationId !== "stardew" ||
+    value.fixtureScenario !== scenario ||
+    value.saveName !== saveName ||
+    (value.state !== "fixture_ready" && value.state !== "fixture_blocked") ||
+    !isReasonCode(value.reasonCode) ||
+    !Number.isSafeInteger(value.publishedAtUnixMs) ||
+    !isOpaque(value.sessionNonce) ||
+    typeof value.signature !== "string"
+  ) {
     throw new Error("fixture_readiness_invalid");
   }
   if (!verifySignature(value, sessionToken)) throw new Error("fixture_readiness_authentication_failed");

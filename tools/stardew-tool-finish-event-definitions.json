@@ -1,0 +1,14 @@
+[
+  {
+    "eventId": "tool-pan-finish-event",
+    "relativePath": "StardewValley/Tools/Pan.cs"
+  },
+  {
+    "eventId": "tool-milk-pail-finish-event",
+    "relativePath": "StardewValley/Tools/MilkPail.cs"
+  },
+  {
+    "eventId": "tool-shears-finish-event",
+    "relativePath": "StardewValley/Tools/Shears.cs"
+  }
+]

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_sleep_day_source_admissibility_audit",
+  "auditId": "portfolio_sleep_day_source_admissibility_v1",
+  "action": "single_player_sleep_and_advance_day",
+  "topology": "single_player_native_companion",
+  "target": {
+    "gameVersion": "1.6.15.24356",
+    "assemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee"
+  },
+  "normalPlayerPath": [
+    "TouchAction Sleep",
+    "createQuestionDialogue",
+    "player confirmation",
+    "answerDialogue(Sleep_Yes)",
+    "private GameLocation.startSleep/doSleep",
+    "Game1.NewDay"
+  ],
+  "sourceOwnedMissingSeam": {
+    "code": "native_sleep_ingress_unavailable",
+    "requiredSeam": "A separately approved source-owned typed semantic sleep entrypoint that preserves the complete normal-player decision and lifecycle without invoking a private confirmation continuation or raw save/day API.",
+    "status": "blocked"
+  },
+  "prohibitedAlternatives": [
+    "Game1.NewDay",
+    "SaveGame.Save",
+    "GameLocation.startSleep",
+    "GameLocation.doSleep",
+    "answerDialogueAction",
+    "UI/input",
+    "reflection",
+    "generic dispatcher",
+    "save edit"
+  ],
+  "requiredCrossGenerationHandoff": "PortfolioBridgeSession/PortfolioIntegration/PortfolioLocalPlayerBinding must durably record the exact old-binding execution before invalidation, and only an authenticated exact new-binding reclaim may correlate Saving, Saved, DayStarted, close, and reopen into one terminal receipt.",
+  "nonClaim": "This audit records an inadmissible direct ingress boundary only. It neither authorizes an adapter nor establishes action execution, a receipt, a fresh postcondition, persistence, or live closure."
+}

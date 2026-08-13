@@ -30,10 +30,61 @@ export type IntegrationLifecycleEvent = Readonly<{
  * Adapter-owned event stream consumed by Host glue. Facts must already be
  * source-labelled, validated game facts; Host never parses a game wire format.
  */
+export type ExecutionWake =
+  | Readonly<{ kind: "terminal"; requestId: string; executionId: string; state: string; reasonCode: string }>
+  | Readonly<{ kind: "invalidated"; reasonCode: string }>
+  | Readonly<{ kind: "disconnected"; reasonCode: string }>;
+
+/**
+ * A narrow, adapter-validated execution transition projection. This is not a
+ * game fact stream and does not grant action authority.
+ */
+export type ExecutionWakeSource = Readonly<{
+  onExecutionWake(listener: (wake: ExecutionWake) => void): () => void;
+}>;
+
+export type WakeCapableIntegrationConnection = Readonly<{
+  executionWakeSource?: ExecutionWakeSource;
+}>;
+
+/** Adapter-owned optional capability lookup; absent adapters keep polling. */
+export function executionWakeSourceFor(connection: unknown): ExecutionWakeSource | undefined {
+  if (!isRecord(connection) || !isRecord(connection.executionWakeSource)) return undefined;
+  const source = connection.executionWakeSource;
+  return typeof source.onExecutionWake === "function" ? (source as ExecutionWakeSource) : undefined;
+}
+
 export type IntegrationEventSource = Readonly<{
   onFact(listener: (fact: WorldFact) => void): () => void;
   onLifecycle(listener: (event: IntegrationLifecycleEvent) => void): () => void;
+  /** Optional low-latency receipt wake; polling remains the recovery path. */
+  onExecutionWake?: ExecutionWakeSource["onExecutionWake"];
 }>;
+
+/** Reject malformed adapter values before they can wake a task-owned waiter. */
+export function normalizeExecutionWake(value: unknown): ExecutionWake | null {
+  if (!isRecord(value) || typeof value.kind !== "string" || typeof value.reasonCode !== "string" || value.reasonCode.length === 0)
+    return null;
+  if (value.kind === "invalidated" || value.kind === "disconnected")
+    return Object.freeze({ kind: value.kind, reasonCode: value.reasonCode });
+  if (
+    value.kind !== "terminal" ||
+    typeof value.requestId !== "string" ||
+    value.requestId.length === 0 ||
+    typeof value.executionId !== "string" ||
+    value.executionId.length === 0 ||
+    typeof value.state !== "string" ||
+    value.state.length === 0
+  )
+    return null;
+  return Object.freeze({
+    kind: "terminal",
+    requestId: value.requestId,
+    executionId: value.executionId,
+    state: value.state,
+    reasonCode: value.reasonCode,
+  });
+}
 
 /** The result of one explicit user-requested integration launch. */
 export type IntegrationLaunchHandle = Readonly<{
@@ -68,21 +119,23 @@ export function assertReceiptBackedLaunch(
   handle: IntegrationLaunchHandle,
   identity: CompanionIdentity,
 ): void {
-  if (!isRecord(launcher)
-    || typeof launcher.integrationId !== "string"
-    || !isRecord(handle)
-    || handle.lifecycle !== "ready"
-    || handle.authority?.observation !== "authoritative"
-    || handle.authority?.execution !== "receipt_backed"
-    || typeof handle.revoke !== "function"
-    || typeof handle.close !== "function"
-    || !isRecord(handle.events)
-    || typeof handle.events.onFact !== "function"
-    || typeof handle.events.onLifecycle !== "function"
-    || !Array.isArray(handle.initialFacts)
-    || handle.initialFacts.length === 0
-    || handle.connection?.module !== launcher.module
-    || handle.connection.scope.integrationId !== launcher.integrationId) {
+  if (
+    !isRecord(launcher) ||
+    typeof launcher.integrationId !== "string" ||
+    !isRecord(handle) ||
+    handle.lifecycle !== "ready" ||
+    handle.authority?.observation !== "authoritative" ||
+    handle.authority?.execution !== "receipt_backed" ||
+    typeof handle.revoke !== "function" ||
+    typeof handle.close !== "function" ||
+    !isRecord(handle.events) ||
+    typeof handle.events.onFact !== "function" ||
+    typeof handle.events.onLifecycle !== "function" ||
+    !Array.isArray(handle.initialFacts) ||
+    handle.initialFacts.length === 0 ||
+    handle.connection?.module !== launcher.module ||
+    handle.connection.scope.integrationId !== launcher.integrationId
+  ) {
     throw new Error("receipt_backed_integration_launch_required");
   }
   assertIntegrationModule(launcher.module, launcher.integrationId);
@@ -93,11 +146,20 @@ export function assertReceiptBackedLaunch(
     ...(identity.worldId === undefined ? {} : { worldId: identity.worldId }),
   });
   const state = launcher.module.readState(handle.connection);
-  const toolSet = launcher.module.createToolSet({ connection: handle.connection });
-  const actionTools = toolSet.actions.filter((tool) => launcher.module.actionIdForToolName(tool.name) !== null);
-  if (!state.connected || handle.connection.executionGate?.executable !== true || state.snapshotRevision === null
-    || actionTools.length === 0
-    || !handle.initialFacts.some((fact) => fact.kind === "snapshot" && fact.revision === state.snapshotRevision)) {
+  // Launch admission must establish that a publishable action exists without
+  // materializing an executable ToolDefinition. Tool materialization requires
+  // the runtime-owned dispatch admission minted only after this boundary.
+  const publishableActions = launcher.module.actionCatalog.visibleActions(
+    state.capabilities,
+    launcher.module.defaultPolicy,
+  );
+  if (
+    !state.connected ||
+    handle.connection.executionGate?.executable !== true ||
+    state.snapshotRevision === null ||
+    publishableActions.length === 0 ||
+    !handle.initialFacts.some((fact) => fact.kind === "snapshot" && fact.revision === state.snapshotRevision)
+  ) {
     throw new Error("authoritative_initial_state_required");
   }
 }

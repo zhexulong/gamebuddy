@@ -14,6 +14,7 @@ import { ensureContextStoreUuid } from "./context-authority";
 import { runMigrations, runMigrationsWithRetry } from "./migrations";
 import { ensureColumn, healAllNullColumns } from "./storage-schema-helpers";
 import {
+    clearDatabase as clearToolDefinitionDatabase,
     loadToolDefinitionMeasurements,
     setDatabase as setToolDefinitionDatabase,
 } from "./tool-definition-tokens";
@@ -46,7 +47,7 @@ export function getSchemaFenceRejection(): {
     return lastSchemaFenceRejection;
 }
 
-export const LATEST_SUPPORTED_VERSION = 70;
+export const LATEST_SUPPORTED_VERSION = 72;
 
 // chmod is meaningless on Windows (POSIX modes are not honored), so all
 // permission tightening is skipped there. mkdir's `mode` is likewise ignored.
@@ -1058,6 +1059,8 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
       cached_m0_max_memory_mutation_id INTEGER,
       cached_m0_project_docs_hash TEXT,
       cached_m1_bytes BLOB,
+      cached_m1_max_memory_id INTEGER,
+      cached_m1_max_memory_mutation_id INTEGER,
       last_observed_model_key TEXT,
       last_usage_context_limit INTEGER NOT NULL DEFAULT 0,
       prior_boundary_ordinal INTEGER NOT NULL DEFAULT 1,
@@ -1446,6 +1449,8 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
     ensureColumn(db, "session_meta", "cached_m0_max_memory_mutation_id", "INTEGER");
     ensureColumn(db, "session_meta", "cached_m0_project_docs_hash", "TEXT");
     ensureColumn(db, "session_meta", "cached_m1_bytes", "BLOB");
+    ensureColumn(db, "session_meta", "cached_m1_max_memory_id", "INTEGER");
+    ensureColumn(db, "session_meta", "cached_m1_max_memory_mutation_id", "INTEGER");
     ensureColumn(db, "session_meta", "last_observed_model_key", "TEXT");
     ensureColumn(db, "session_meta", "last_usage_context_limit", "INTEGER NOT NULL DEFAULT 0");
     ensureColumn(db, "session_meta", "prior_boundary_ordinal", "INTEGER NOT NULL DEFAULT 1");
@@ -1811,6 +1816,11 @@ export function closeDatabase(): void {
     pendingAsyncOpens.clear();
     for (const [key, db] of databases) {
         try {
+            // Clear all process-global prepared-statement owners before closing
+            // the handle. This is required for deterministic Windows teardown:
+            // a stale statement can otherwise retain the database's WAL/SHM
+            // sidecars after `closeDatabase()` returns.
+            clearToolDefinitionDatabase(db);
             closeQuietly(db);
         } catch (error) {
             log("[magic-context] storage error:", error);

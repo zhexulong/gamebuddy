@@ -18,19 +18,19 @@ internal enum ExecutionState
     Uncertain,
 }
 
-/// <summary>Bounded, meaningful-only replay correlation record. It never logs
-/// every tick: route/body facts are recorded on receipt/state transitions.</summary>
+/// <summary>
+/// Bounded public body-transition record. It intentionally contains no action
+/// arguments, receipt evidence, planner state, or arbitrary object dumps.
+/// Idle is emitted only when an owned route has settled, never on every tick.
+/// </summary>
 internal sealed record ExecutionTrace(
-    long Revision,
-    string TimestampUtc,
+    string Category,
     string ExecutionId,
     string RequestId,
-    long RouteRevision,
-    ExecutionState State,
-    string ReasonCode,
+    int Tick,
+    long Revision,
     string? Location,
-    Vector2? ActorTile,
-    string? Evidence);
+    Vector2? ActorTile);
 
 internal sealed record LocalMoveSpec(
     string ExecutionId,
@@ -135,6 +135,32 @@ internal sealed record LocalFertilizerApplicationSpec(
     long RouteRevision,
     long DeadlineMs);
 
+internal sealed record LocalWoodFencePlacementSpec(
+    string ExecutionId,
+    string RequestId,
+    string Location,
+    int Slot,
+    int TargetX,
+    int TargetY,
+    string TargetId,
+    string QualifiedItemId,
+    int InventoryBefore,
+    long RouteRevision,
+    long DeadlineMs);
+
+internal sealed record LocalCrabPotPlacementSpec(
+    string ExecutionId,
+    string RequestId,
+    string Location,
+    int Slot,
+    int TargetX,
+    int TargetY,
+    string TargetId,
+    string QualifiedItemId,
+    int InventoryBefore,
+    long RouteRevision,
+    long DeadlineMs);
+
 internal sealed record LocalDebrisClearingSpec(
     string ExecutionId,
     string RequestId,
@@ -155,20 +181,6 @@ internal sealed record LocalMachineInspectionSpec(
     int TargetX,
     int TargetY,
     string TargetId,
-    long RouteRevision,
-    long DeadlineMs);
-
-internal sealed record LocalResourceCollectionSpec(
-    string ExecutionId,
-    string RequestId,
-    string Location,
-    int Slot,
-    int TargetX,
-    int TargetY,
-    string TargetId,
-    string TreeType,
-    float HealthBefore,
-    bool StumpBefore,
     long RouteRevision,
     long DeadlineMs);
 

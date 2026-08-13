@@ -610,6 +610,8 @@ export interface M0M1State {
     isSubagent?: boolean;
     cachedM0Bytes: Buffer | null;
     cachedM1Bytes: Buffer | null;
+    cachedM1MaxMemoryId: number | null;
+    cachedM1MaxMemoryMutationId: number | null;
     cachedM0ProjectMemoryEpoch: number | null;
     cachedM0WorkspaceFingerprint: string | null;
     cachedM0ProjectUserProfileVersion: number | null;
@@ -1809,7 +1811,11 @@ function applyMarkersToState(
     m1Bytes?: Buffer,
 ): void {
     state.cachedM0Bytes = m0Bytes;
-    if (m1Bytes) state.cachedM1Bytes = m1Bytes;
+    if (m1Bytes) {
+        state.cachedM1Bytes = m1Bytes;
+        state.cachedM1MaxMemoryId = markers.maxMemoryId;
+        state.cachedM1MaxMemoryMutationId = markers.maxMemoryMutationId;
+    }
     state.cachedM0ProjectMemoryEpoch = markers.projectMemoryEpoch;
     state.cachedM0WorkspaceFingerprint = markers.workspaceFingerprint;
     state.cachedM0ProjectUserProfileVersion = markers.projectUserProfileVersion;
@@ -2120,6 +2126,8 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             maxMutationId: snapshotMarkers.maxMutationId,
             maxMemoryMutationId: snapshotMarkers.maxMemoryMutationId,
             m1Bytes,
+            m1MaxMemoryId: snapshotMarkers.maxMemoryId,
+            m1MaxMemoryMutationId: snapshotMarkers.maxMemoryMutationId,
             projectDocsHash: snapshotMarkers.projectDocsHash,
             materializedAt: snapshotMarkers.materializedAt,
             sessionFactsVersion: snapshotMarkers.sessionFactsVersion,
@@ -2427,6 +2435,8 @@ interface CachedM0M1Row {
     cached_m0_mural_data_url: string | null;
     cached_m0_mural_hash: string | null;
     cached_m1_bytes: Buffer | Uint8Array | null;
+    cached_m1_max_memory_id: number | null;
+    cached_m1_max_memory_mutation_id: number | null;
     cached_m0_project_memory_epoch: number | null;
     cached_m0_workspace_fingerprint: string | null;
     cached_m0_project_user_profile_version: number | null;
@@ -2474,6 +2484,7 @@ function readCachedM0M1Row(db: Database, sessionId: string): CachedM0M1Row | nul
         .prepare(
             `SELECT cached_m0_bytes, cached_m0_mural_data_url,
                     cached_m0_mural_hash, cached_m1_bytes,
+                    cached_m1_max_memory_id, cached_m1_max_memory_mutation_id,
                     cached_m0_project_memory_epoch,
                     cached_m0_workspace_fingerprint,
                     cached_m0_project_user_profile_version,
@@ -2559,6 +2570,8 @@ function applyCachedRowToState(state: M0M1State, row: CachedM0M1Row): void {
     state.cachedM0MuralDataUrl = row.cached_m0_mural_data_url ?? null;
     state.cachedM0MuralHash = row.cached_m0_mural_hash ?? null;
     state.cachedM1Bytes = toBuffer(row.cached_m1_bytes);
+    state.cachedM1MaxMemoryId = row.cached_m1_max_memory_id;
+    state.cachedM1MaxMemoryMutationId = row.cached_m1_max_memory_mutation_id;
     state.cachedM0ProjectMemoryEpoch = markers.projectMemoryEpoch;
     state.cachedM0WorkspaceFingerprint = markers.workspaceFingerprint;
     state.cachedM0ProjectUserProfileVersion = markers.projectUserProfileVersion;
@@ -2584,6 +2597,44 @@ function replayCachedM1(state: M0M1State): string {
         throw new RenderM1InvalidMarkersError(state.sessionId);
     }
     return decodeM0Bytes(state.cachedM1Bytes) ?? M1_EMPTY_PLACEHOLDER;
+}
+
+function currentM1Coverage(options: M0M1RenderOptions, markers: M0SnapshotMarkers): {
+    maxMemoryId: number;
+    maxMemoryMutationId: number;
+} {
+    const workspace = resolveWorkspaceRenderContext({
+        db: options.db,
+        projectPath: options.projectPath,
+        workspaceIdentitySet: options.workspaceIdentitySet,
+    });
+    return {
+        maxMemoryId: workspace.isWorkspaced
+            ? getMaxMemoryIdForProjects(
+                  options.db,
+                  workspace.expandedIdentities,
+                  workspace.ownIdentities,
+                  workspace.shareCategories,
+                  markers.materializedAt,
+              )
+            : getMaxMemoryId(options.db, options.projectPath, markers.materializedAt),
+        maxMemoryMutationId: workspace.isWorkspaced
+            ? (getMaxMemoryMutationIdForProjects(options.db, workspace.expandedIdentities) ?? 0)
+            : options.projectPath
+              ? (getMaxMemoryMutationId(options.db, options.projectPath) ?? 0)
+              : 0,
+    };
+}
+
+function m1CoverageAdvanced(options: M0M1RenderOptions): boolean {
+    if (!options.state.snapshotMarkers) return false;
+    const coverage = currentM1Coverage(options, options.state.snapshotMarkers);
+    return (
+        options.state.cachedM1MaxMemoryId === null ||
+        options.state.cachedM1MaxMemoryMutationId === null ||
+        coverage.maxMemoryId > options.state.cachedM1MaxMemoryId ||
+        coverage.maxMemoryMutationId > options.state.cachedM1MaxMemoryMutationId
+    );
 }
 
 function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
@@ -2619,6 +2670,7 @@ function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
         const rendered = renderM1WithMetadata({ ...options }, markers, renderedM0Ids);
         const visibleMemoryIds = [...new Set([...renderedM0Ids, ...rendered.renderedMemoryIds])];
         const m1Bytes = Buffer.from(rendered.text, "utf8");
+        const coverage = currentM1Coverage(options, markers);
         // Advance the persisted baseline boundary too: soft-refresh re-renders
         // m[1] to cover every compartment up to the latest, so the boundary the
         // cached summary covers moves forward with it. Keeping it in sync here is
@@ -2628,6 +2680,8 @@ function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
             .prepare(
                 `UPDATE session_meta
                     SET cached_m1_bytes = ?,
+                        cached_m1_max_memory_id = ?,
+                        cached_m1_max_memory_mutation_id = ?,
                         cached_m0_last_baseline_end_message_id = ?,
                         memory_block_count = ?,
                         memory_block_ids = ?
@@ -2635,6 +2689,8 @@ function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
             )
             .run(
                 m1Bytes,
+                coverage.maxMemoryId,
+                coverage.maxMemoryMutationId,
                 baselineEndMessageId,
                 visibleMemoryIds.length,
                 JSON.stringify(visibleMemoryIds),
@@ -2642,6 +2698,8 @@ function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
             );
         options.db.exec("COMMIT");
         options.state.cachedM1Bytes = m1Bytes;
+        options.state.cachedM1MaxMemoryId = coverage.maxMemoryId;
+        options.state.cachedM1MaxMemoryMutationId = coverage.maxMemoryMutationId;
         options.state.snapshotMarkers = markers;
         return rendered;
     } catch (error) {
@@ -2954,7 +3012,7 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
         m1Recomputed = true;
     } else if (contentionExhausted) {
         m1Text = replayCachedM1(options.state);
-    } else if (options.isCacheBustingPass) {
+    } else if (options.isCacheBustingPass || m1CoverageAdvanced(options)) {
         const refreshed = softRefreshCachedM1(options);
         m1Text = refreshed.text;
         memoryUpdateCount = refreshed.memoryUpdateCount;

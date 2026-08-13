@@ -8,6 +8,7 @@ import { loadPiConfig, loadPiConfigDetailed } from "./index";
 
 const tempRoots: string[] = [];
 const originalHome = process.env.HOME;
+const originalUserProfile = process.env.USERPROFILE;
 const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
 
 function makeTempRoot(prefix: string): string {
@@ -18,6 +19,9 @@ function makeTempRoot(prefix: string): string {
 
 function withHome(home: string): void {
 	process.env.HOME = home;
+	// Windows path resolution prefers USERPROFILE over HOME. Pin both so these
+	// tests exercise their temporary home on every supported platform.
+	process.env.USERPROFILE = home;
 	// The user config base is `(XDG_CONFIG_HOME ?? <HOME>/.config)/cortexkit/...`.
 	// writeUserConfig() writes under `<HOME>/.config`, so pin XDG_CONFIG_HOME to
 	// match — otherwise a CI runner that exports its own XDG_CONFIG_HOME makes the
@@ -61,6 +65,11 @@ afterEach(() => {
 		delete process.env.HOME;
 	} else {
 		process.env.HOME = originalHome;
+	}
+	if (originalUserProfile === undefined) {
+		delete process.env.USERPROFILE;
+	} else {
+		process.env.USERPROFILE = originalUserProfile;
 	}
 	if (originalXdgConfigHome === undefined) {
 		delete process.env.XDG_CONFIG_HOME;

@@ -1,7 +1,9 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { connectLocalCompanion, disconnectLocalCompanion } from "../host/dist/local-bootstrap.js";
+import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+
+const { connectLocalCompanion } = await loadHostProductionModule("local-bootstrap.js");
 
 function option(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -29,7 +31,8 @@ const secondPrompt = option(
 
 const config = JSON.parse(await readFile(clientConfigPath, "utf8"));
 const required = ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"];
-if (required.some((key) => typeof config[key] !== "string" || config[key].length === 0)) throw new Error("invalid_client_config");
+if (required.some((key) => typeof config[key] !== "string" || config[key].length === 0))
+  throw new Error("invalid_client_config");
 const identity = {
   playerId: config.PlayerId,
   saveId: config.SaveId,
@@ -49,16 +52,19 @@ try {
   });
   await waitForBootstrap(connected.runtime.session, 120_000);
   phases.push(await runTurn(connected, firstPrompt, "initial"));
-  disconnectLocalCompanion(connected);
+  await connected.close();
   connected = undefined;
 
-  connected = await connectWithRetry({
-    identity,
-    pipeName: config.PipeName,
-    bridgeToken: config.BridgeToken,
-    runtimeRoot,
-    modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "high" },
-  }, 30_000);
+  connected = await connectWithRetry(
+    {
+      identity,
+      pipeName: config.PipeName,
+      bridgeToken: config.BridgeToken,
+      runtimeRoot,
+      modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+    },
+    30_000,
+  );
   await waitForBootstrap(connected.runtime.session, 120_000);
   phases.push(await runTurn(connected, secondPrompt, "reentry"));
 
@@ -67,33 +73,43 @@ try {
   const sameSessionFile = first.sessionFile !== null && first.sessionFile === second.sessionFile;
   const resumedPriorMessages = second.messagesBefore >= first.messagesAfter;
   const currentSnapshotAvailable = second.snapshotRevision !== null;
-  const passed = sameSessionFile && resumedPriorMessages && currentSnapshotAvailable && phases.every((phase) => phase.settled);
-  console.log(JSON.stringify({
-    state: passed ? "passed" : "blocked",
-    provider: "cpa-oai",
-    model: "deepseek-v4-flash",
-    thinkingLevel: "high",
-    identity: { saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId },
-    runtimeRoot,
-    sameSessionFile,
-    resumedPriorMessages,
-    currentSnapshotAvailable,
-    phases,
-    note: "This proves same-identity session re-entry and fresh live snapshot delivery. Save partition isolation remains covered by Host runtime tests; it does not claim a second live save was joined.",
-  }));
+  const passed =
+    sameSessionFile && resumedPriorMessages && currentSnapshotAvailable && phases.every((phase) => phase.settled);
+  console.log(
+    JSON.stringify({
+      state: passed ? "passed" : "blocked",
+      provider: "cpa-oai",
+      model: "deepseek-v4-flash",
+      thinkingLevel: "high",
+      identity: {
+        saveId: identity.saveId,
+        worldId: identity.worldId,
+        playerId: identity.playerId,
+        companionId: identity.companionId,
+      },
+      runtimeRoot,
+      sameSessionFile,
+      resumedPriorMessages,
+      currentSnapshotAvailable,
+      phases,
+      note: "This proves same-identity session re-entry and fresh live snapshot delivery. Save partition isolation remains covered by Host runtime tests; it does not claim a second live save was joined.",
+    }),
+  );
   if (!passed) process.exitCode = 2;
 } catch (error) {
-  console.error(JSON.stringify({
-    state: "blocked",
-    reasonCode: redact(error instanceof Error ? error.message : String(error)),
-    provider: "cpa-oai",
-    model: "deepseek-v4-flash",
-    thinkingLevel: "high",
-    phases,
-  }));
+  console.error(
+    JSON.stringify({
+      state: "blocked",
+      reasonCode: redact(error instanceof Error ? error.message : String(error)),
+      provider: "cpa-oai",
+      model: "deepseek-v4-flash",
+      thinkingLevel: "high",
+      phases,
+    }),
+  );
   process.exitCode = 2;
 } finally {
-  if (connected !== undefined) disconnectLocalCompanion(connected);
+  if (connected !== undefined) await connected.close();
   if (!keepRuntime) await rm(runtimeRoot, { recursive: true, force: true }).catch(() => undefined);
 }
 
@@ -138,7 +154,12 @@ async function runTurn(connected, prompt, phase) {
   const unsubscribe = connected.runtime.session.subscribe((event) => {
     if (event.type === "tool_execution_start") agentTools.push(event.toolName);
     if (event.type === "agent_end") {
-      const assistant = [...event.messages].reverse().find((message) => typeof message === "object" && message !== null && "role" in message && message.role === "assistant");
+      const assistant = [...event.messages]
+        .reverse()
+        .find(
+          (message) =>
+            typeof message === "object" && message !== null && "role" in message && message.role === "assistant",
+        );
       const record = assistant && typeof assistant === "object" ? assistant : undefined;
       agentEnds.push({
         stopReason: typeof record?.stopReason === "string" ? record.stopReason : null,
@@ -182,7 +203,9 @@ async function withTimeout(promise, timeoutMs, reasonCode) {
   try {
     return await Promise.race([
       promise,
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(reasonCode)), timeoutMs); }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(reasonCode)), timeoutMs);
+      }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -190,5 +213,9 @@ async function withTimeout(promise, timeoutMs, reasonCode) {
 }
 
 function redact(value) {
-  return String(value).replace(/Bearer\s+\S+/gi, "Bearer <redacted>").replace(/api[_-]?key[=: ]+\S+/gi, "api_key=<redacted>").replace(/\s+/g, " ").slice(0, 512);
+  return String(value)
+    .replace(/Bearer\s+\S+/gi, "Bearer <redacted>")
+    .replace(/api[_-]?key[=: ]+\S+/gi, "api_key=<redacted>")
+    .replace(/\s+/g, " ")
+    .slice(0, 512);
 }

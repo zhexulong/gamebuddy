@@ -72,9 +72,17 @@ export class CompanionIntegrationClient {
     return this.endpoint.send(newEnvelope("execution_request", this.scope, request, undefined, nowMs), nowMs);
   }
 
-  public cancel(requestId: string, executionId: string, reasonCode: string, nowMs = Date.now()): BridgeFault | "not_ready" | null {
+  public cancel(
+    requestId: string,
+    executionId: string,
+    reasonCode: string,
+    nowMs = Date.now(),
+  ): BridgeFault | "not_ready" | null {
     if (!this.state.connected) return "not_ready";
-    return this.endpoint.send(newEnvelope("cancel_request", this.scope, { requestId, executionId, reasonCode }, undefined, nowMs), nowMs);
+    return this.endpoint.send(
+      newEnvelope("cancel_request", this.scope, { requestId, executionId, reasonCode }, undefined, nowMs),
+      nowMs,
+    );
   }
 
   /** Accept a validated Mod-to-Host fact from any transport adapter. */
@@ -89,7 +97,8 @@ export class CompanionIntegrationClient {
         break;
       case "snapshot":
         // A delayed observation response must never replace newer Mod state.
-        if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision) this.#snapshot = message.payload;
+        if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision)
+          this.#snapshot = message.payload;
         break;
       case "execution_receipt":
         this.#latestReceipt = message.payload;
@@ -104,5 +113,4 @@ export class CompanionIntegrationClient {
         this.#latestReasonCode = "unexpected_inbound_message";
     }
   }
-
 }

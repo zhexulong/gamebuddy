@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 2,
+  "artifactKind": "native_transition_continuation_ledger",
+  "attestation": {
+    "targetAssemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "sourceManifestSha256": "cc6c0bc1eb1a040a1d85af790652aea0e8320d46c41958af4d40180500b81f4b"
+  },
+  "closureState": "partial",
+  "scopedMechanismIds": [
+    "host:90ebc50da10b0c0a35f3f4b1b1f87343a5084b464cb7182eac8a704d1403897c"
+  ],
+  "transitions": [
+    {
+      "transitionId": "transition:game1:toolbar-input-router",
+      "kind": "source_router",
+      "incomingMechanismIds": [
+        "host:90ebc50da10b0c0a35f3f4b1b1f87343a5084b464cb7182eac8a704d1403897c"
+      ],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/Game1.cs",
+        "member": "Game1.pressSwitchToolButton",
+        "sourceSliceSha256": "5421514640868a482be433874db64abc1a23ad913404270f49c4bf77b661a3b9",
+        "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f",
+        "startByte": 350242,
+        "endByte": 351493
+      },
+      "routerReason": "Game1 forwards normal toolbar input to Farmer.CurrentToolIndex; it does not own the selected-item state transition.",
+      "possiblyGameplayBearing": true,
+      "handoffs": [
+        {
+          "toTransitionId": "transition:farmer:selected-slot",
+          "kind": "direct_call",
+          "phase": "routing",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/Game1.cs",
+            "member": "Game1.pressSwitchToolButton",
+            "sourceSliceSha256": "5421514640868a482be433874db64abc1a23ad913404270f49c4bf77b661a3b9",
+            "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f",
+            "startByte": 350242,
+            "endByte": 351493
+          },
+          "condition": "always"
+        }
+      ],
+      "exitCoverage": "exhaustive"
+    },
+    {
+      "transitionId": "transition:farmer:selected-slot",
+      "kind": "source_owned_transition",
+      "incomingMechanismIds": [],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/Farmer.cs",
+        "member": "Farmer.CurrentToolIndex",
+        "sourceSliceSha256": "0b39a3ab5d1b3ca28c790df30895943fc66d695d852320e13c149dbfba2c7bab",
+        "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+        "startByte": 51298,
+        "endByte": 51644
+      },
+      "commitAnchor": {
+        "sourcePath": "StardewValley/Farmer.cs",
+        "member": "Farmer.CurrentToolIndex",
+        "sourceSliceSha256": "0b39a3ab5d1b3ca28c790df30895943fc66d695d852320e13c149dbfba2c7bab",
+        "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+        "startByte": 51298,
+        "endByte": 51644
+      },
+      "postStateObservations": [
+        {
+          "ownerSyntax": "Farmer",
+          "stateSyntax": "currentToolIndex",
+          "anchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.CurrentToolIndex",
+            "sourceSliceSha256": "0b39a3ab5d1b3ca28c790df30895943fc66d695d852320e13c149dbfba2c7bab",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 51298,
+            "endByte": 51644
+          }
+        },
+        {
+          "ownerSyntax": "Farmer",
+          "stateSyntax": "netItemStowed",
+          "anchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.CurrentToolIndex",
+            "sourceSliceSha256": "0b39a3ab5d1b3ca28c790df30895943fc66d695d852320e13c149dbfba2c7bab",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 51298,
+            "endByte": 51644
+          }
+        }
+      ],
+      "pendingNativeContinuationState": [],
+      "possiblyGameplayBearing": true,
+      "handoffs": [
+        {
+          "toTransitionId": "transition:boundary:item-held-callback",
+          "kind": "virtual_dispatch",
+          "phase": "before_commit",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.CurrentToolIndex",
+            "sourceSliceSha256": "0b39a3ab5d1b3ca28c790df30895943fc66d695d852320e13c149dbfba2c7bab",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 51298,
+            "endByte": 51644
+          },
+          "condition": "conditional",
+          "conditionAnchor": {
+            "sourcePath": "StardewValley/Farmer.cs",
+            "member": "Farmer.CurrentToolIndex",
+            "sourceSliceSha256": "0b39a3ab5d1b3ca28c790df30895943fc66d695d852320e13c149dbfba2c7bab",
+            "sourceFileSha256": "6556990203ed8b6596626000d06f180e66c1256702dc1a6c7f1f1557854d0dc6",
+            "startByte": 51298,
+            "endByte": 51644
+          }
+        }
+      ],
+      "exitCoverage": "exhaustive"
+    },
+    {
+      "transitionId": "transition:boundary:item-held-callback",
+      "kind": "unresolved_gap",
+      "incomingMechanismIds": [],
+      "gapOrBoundaryReason": "Farmer.CurrentToolIndex invokes the previous Item.actionWhenStopBeingHeld polymorphic receiver; target subtype continuation remains unreviewed.",
+      "possiblyGameplayBearing": true,
+      "boundaryAnchor": {
+        "member": "Game1.pressSwitchToolButton",
+        "sourcePath": "StardewValley/Game1.cs",
+        "startByte": 350242,
+        "endByte": 351493,
+        "sourceSliceSha256": "5421514640868a482be433874db64abc1a23ad913404270f49c4bf77b661a3b9",
+        "sourceFileSha256": "62027d26d8e7302857bb3b4dd0cf3e00887b13c1c018c72d316608e2e97fe02f"
+      },
+      "handoffs": [],
+      "exitCoverage": "exhaustive"
+    }
+  ],
+  "rootBindings": [
+    {
+      "mechanismId": "host:90ebc50da10b0c0a35f3f4b1b1f87343a5084b464cb7182eac8a704d1403897c",
+      "transitionId": "transition:game1:toolbar-input-router"
+    }
+  ]
+}

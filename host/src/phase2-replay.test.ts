@@ -7,8 +7,15 @@ import { type BridgeMessage, validateBridgeMessage } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
 
 test("Phase 2 terminal replay covers blocked/cancelled, failed, and evidence-backed success", async () => {
-  const fixture = JSON.parse(await readFile(fileURLToPath(new URL("../../fixtures/bridge-v1/phase2-terminal-replay.json", import.meta.url)), "utf8")) as {
-    nowMs: number; scope: BridgeMessage["scope"]; messages: BridgeMessage[];
+  const fixture = JSON.parse(
+    await readFile(
+      fileURLToPath(new URL("../../fixtures/bridge-v1/phase2-terminal-replay.json", import.meta.url)),
+      "utf8",
+    ),
+  ) as {
+    nowMs: number;
+    scope: BridgeMessage["scope"];
+    messages: BridgeMessage[];
   };
   const ledger = new ReceiptReplayLedger();
   for (const message of fixture.messages) {

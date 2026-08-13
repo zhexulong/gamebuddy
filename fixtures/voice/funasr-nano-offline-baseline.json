@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "funasr_llamacpp_sample_zh_01",
+  "purpose": "Offline regression baseline for the vendored Fun-ASR llama.cpp CLI; not a user-recording fixture.",
+  "source": {
+    "repository": "FunAudioLLM/Fun-ASR",
+    "relativeAudioPath": "runtime/llama.cpp/tests/sample.wav",
+    "relativeReferencePath": "runtime/llama.cpp/tests/golden/nano.txt",
+    "license": "Apache-2.0",
+    "audioSha256": "ea03e1f473ad1618a03da3327a545369cb8f6f06cb0f4115535e5a866167d47e",
+    "referenceSha256": "5d4aaaea8ff223572bf44e0eb07198b86f68d8efdb3138ac9ede831b856fa967"
+  },
+  "audio": {
+    "sampleRate": 16000,
+    "channels": 1,
+    "encoding": "pcm_s16le",
+    "durationSeconds": 6
+  },
+  "comparison": {
+    "mode": "exact_normalized",
+    "normalization": "remove Unicode whitespace and terminal punctuation only"
+  }
+}

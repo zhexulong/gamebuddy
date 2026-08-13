@@ -1,0 +1,87 @@
+function fail(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.details = details;
+  throw error;
+}
+function noProductTerms(value, at = "$") {
+  const forbidden = new Set([
+    "action",
+    "actionId",
+    "primitive",
+    "primitiveId",
+    "operation",
+    "operationId",
+    "semanticFamily",
+    "intent",
+    "contract",
+    "receipt",
+    "evidence",
+    "policy",
+    "capability",
+    "publicActionId",
+    "projection",
+    "reuse",
+  ]);
+  if (Array.isArray(value)) return value.forEach((entry, index) => noProductTerms(entry, `${at}[${index}]`));
+  if (!value || typeof value !== "object") return;
+  for (const [key, entry] of Object.entries(value)) {
+    if (forbidden.has(key))
+      fail("tool_update_dispatch_forbidden_field", `Tool Update dispatch boundary must not infer ${key}.`, {
+        at: `${at}.${key}`,
+      });
+    noProductTerms(entry, `${at}.${key}`);
+  }
+}
+/** Reports the special, source-visible fact that every direct Tool subclass
+ * inherits Tool.Update. This closes only the source-visible override question;
+ * it neither decides receiver construction nor interprets the base body. */
+export function summarizeNativeToolUpdateDispatchBoundary(register) {
+  noProductTerms(register);
+  if (
+    !register ||
+    register.schemaVersion !== 1 ||
+    register.artifactKind !== "native_virtual_member_invocation_register" ||
+    register.baseType !== "Tool" ||
+    register.methodName !== "Update" ||
+    !Array.isArray(register.implementations) ||
+    !register.receiverRegister
+  )
+    fail("tool_update_dispatch_schema_invalid", "Expected exact Tool.Update invocation register.");
+  const { implementations, receiverRegister } = register;
+  if (
+    implementations.length !== 1 ||
+    implementations[0]?.implementationId !== "tool-base-Update" ||
+    implementations[0]?.implementationKind !== "base_virtual"
+  )
+    fail("tool_update_dispatch_override_present", "Tool.Update boundary requires no visible override implementations.");
+  if (!Array.isArray(implementations[0].routerParseGaps) || implementations[0].routerParseGaps.length)
+    fail(
+      "tool_update_dispatch_parse_gap",
+      "Exact Tool.Update body must be parse-clean before source-visible dispatch closure.",
+    );
+  if (
+    receiverRegister.overrideCount !== 0 ||
+    !Array.isArray(receiverRegister.inheritedBaseReceiverTypes) ||
+    receiverRegister.inheritedBaseReceiverTypes.length !== receiverRegister.receiverCount ||
+    receiverRegister.indirectOverrideReceiverTypes?.length
+  )
+    fail(
+      "tool_update_dispatch_override_present",
+      "Every direct source Tool receiver must inherit base Update and no indirect override may remain.",
+    );
+  if (!Number.isInteger(implementations[0].invocationCount) || implementations[0].invocationCount < 0)
+    fail("tool_update_dispatch_inventory_invalid", "Base Update invocation count must be exact.");
+  return Object.freeze({
+    sourceVisibleDispatchState: "all_direct_source_receivers_inherit_base_implementation",
+    sourceReceiverCount: receiverRegister.receiverCount,
+    baseInvocationCount: implementations[0].invocationCount,
+    analysisBoundary: Object.freeze({
+      runtimeReceiverConstruction: "not_inferred",
+      baseStateEffectInterpretation: "not_performed",
+      transitionDerivation: "not_performed",
+      primitiveDerivation: "not_performed",
+      publicActionProjection: "not_performed",
+    }),
+  });
+}

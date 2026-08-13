@@ -1,0 +1,63 @@
+import { readFile, readdir, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { deriveNativeCompletionEventRegister } from "./lib/stardew-native-completion-event-register.mjs";
+function fail(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  throw error;
+}
+function args(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const key = argv[i],
+      value = argv[++i];
+    if (!key?.startsWith("--") || !value || value.startsWith("--"))
+      fail(
+        "completion_event_register_arguments_invalid",
+        "Usage: --source-root <exact-source-root> --definitions <definitions.json> --out <report.json>",
+      );
+    out[key.slice(2)] = value;
+  }
+  if (!out["source-root"] || !out.definitions || !out.out)
+    fail(
+      "completion_event_register_arguments_required",
+      "Usage: --source-root <exact-source-root> --definitions <definitions.json> --out <report.json>",
+    );
+  return out;
+}
+async function sources(root) {
+  const todo = [root],
+    output = {};
+  while (todo.length) {
+    const directory = todo.pop();
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) todo.push(absolute);
+      else if (entry.isFile() && entry.name.endsWith(".cs")) {
+        const text = await readFile(absolute, "utf8");
+        output[path.relative(root, absolute).replaceAll("\\", "/")] = {
+          text,
+          sha256: createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex"),
+        };
+      }
+    }
+  }
+  return output;
+}
+async function main() {
+  const input = args(process.argv.slice(2).filter((x) => x !== "--"));
+  const definitions = JSON.parse(await readFile(path.resolve(input.definitions), "utf8"));
+  const report = deriveNativeCompletionEventRegister({
+    sourceFiles: await sources(path.resolve(input["source-root"])),
+    definitions,
+  });
+  const temporary = `${path.resolve(input.out)}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`);
+  await rename(temporary, path.resolve(input.out));
+  process.stdout.write(`${JSON.stringify({ artifactKind: report.artifactKind, eventCount: report.eventCount })}\n`);
+}
+main().catch((error) => {
+  process.stderr.write(`${error.code ?? "completion_event_register_failed"}: ${error.message}\n`);
+  process.exitCode = 1;
+});

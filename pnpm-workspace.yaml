@@ -13,3 +13,5 @@ allowBuilds:
   onnxruntime-node: false
   protobufjs: false
   sharp: false
+  tree-sitter: true
+  tree-sitter-c-sharp: true

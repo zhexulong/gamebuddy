@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_focused_source_audit",
+  "auditId": "portfolio_m3_forage_delivery_source_audit_v1",
+  "traceFamilyId": "portfolio_m3_forage_to_inventory",
+  "topology": "single_player_native_companion",
+  "charterAuthority": {
+    "modelId": "core_valley_milestone_portfolio_v1_command_path_charter",
+    "scopeDocument": "design/16_STARDEW_DEMO_SCOPE_AND_GOAL_CONTRACTS.md",
+    "scopeDocumentSha256": "e1d458afc36e6f4c81229cab3062f17786dbbab7701f7ca7e0a6f6ad3122193e"
+  },
+  "auditSource": {
+    "provenanceDocument": "design/13_STARDEW_NATIVE_PROVENANCE.md",
+    "localSnapshotContentManifestSha256": "8ef8fc0a6eae9ca9064a37538c0bc017b0c8e4341a02441ddca072515d4c636c",
+    "targetAssemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "disposition": "unverified_audit_aid_blocks_target_version_realization"
+  },
+  "anchors": [
+    {
+      "anchorId": "forage_normal_player_range_ingress",
+      "relativePath": "StardewValley/Game1.cs",
+      "needle": "public static bool tryToCheckAt(Vector2 grabTile, Farmer who)",
+      "semanticRole": "normal_player_check_action_range_ingress",
+      "startByte": 337742,
+      "endByte": 337803,
+      "fileSha256": "09056204adb00f259dee184271e1f0d4c4023b472f752ee66cb652333f6343a9",
+      "sliceSha256": "3a33ed888b64ff82220758da607a2d79a014db0976ae8c6ab65c7ce91b2edb52"
+    },
+    {
+      "anchorId": "spawned_object_delivery_branch",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "needle": "else if (objects.TryGetValue(tilePos, out obj) && ((bool)obj.isSpawnedObject || isErrorItem))",
+      "semanticRole": "spawned_object_delivery_branch_owner",
+      "startByte": 253544,
+      "endByte": 253637,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "c94932be3b47e91896cd3a23cdea1bc7ab70d30f6b140ea42e3c8ca2c3d0a238"
+    },
+    {
+      "anchorId": "forage_capacity_guard",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "needle": "if (who.couldInventoryAcceptThisItem(obj))",
+      "semanticRole": "forage_capacity_guard",
+      "startByte": 254293,
+      "endByte": 254335,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "ba3c13eb681296b4a1507384a8c920d7ceba1b292749bc3f6d66daae0e141692"
+    },
+    {
+      "anchorId": "forage_inventory_and_removal_commit",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "needle": "who.addItemToInventoryBool(obj.getOne());",
+      "semanticRole": "spawned_object_inventory_delivery_commit",
+      "startByte": 255199,
+      "endByte": 255240,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "101781a4057f9d308a36aad2e902d6a0113d51c0776159c3d2077e413112e6ac"
+    },
+    {
+      "anchorId": "forage_object_removal_commit",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "needle": "objects.Remove(tilePos);",
+      "semanticRole": "spawned_object_removal_commit",
+      "startByte": 255538,
+      "endByte": 255562,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "8eedb57a78bf4bf71c4a0d471b5ef4cbd545e2040bbcbb73b1683b14f06d9151"
+    },
+    {
+      "anchorId": "debris_inventory_delivery_capacity_commit",
+      "relativePath": "StardewValley/Debris.cs",
+      "needle": "public virtual bool collect(Farmer farmer, Chunk chunk = null)",
+      "semanticRole": "debris_inventory_delivery_and_capacity_owner",
+      "startByte": 13260,
+      "endByte": 13322,
+      "fileSha256": "34fcdf5902b6135ed33c82089a10b1ba4a7e9299467741d5278954c182aacfcd",
+      "sliceSha256": "56ca31a2a8ab9e54568f13ae262d913e2c8d6d33b4a5e837e2f24068b292dbe4"
+    }
+  ],
+  "observedSemanticConstraints": [
+    "normal_player_forage_pickup_uses_a_range_limited_check_action_ingress_before_location_dispatch",
+    "spawned_object_delivery_checks_inventory_capacity_before_same_player_inventory_delivery_and_object_removal",
+    "forage_classification_changes_quality_experience_and_other_native_side_effects_so_signed_content_selection_must_be_preserved",
+    "Debris_uses_a_separate_automatic_collection_lifecycle_with_its_own_inventory_capacity_branch",
+    "source_snapshot_does_not_authorize_direct_inventory_mutation_raw_ui_input_or_any_bridge_projection"
+  ],
+  "unresolvedQuestions": [
+    {
+      "questionId": "m3_target_version_decompilation_correlation",
+      "question": "The committed local source snapshot is an audit aid only; a focused target-version assembly/decompilation correlation is still required before Charter source realization may become realized.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m3_target_type_partition",
+      "question": "The M3 grammar intentionally spans spawned forage Objects and Debris, but their native ingress and continuation differ; focused target-version review must decide whether a semantic partition refinement is required for the signed DSM content domain.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m3_typed_bridge_ingress_and_game_thread_contract",
+      "question": "The audit does not establish a safe typed Mod bridge ingress, game-thread revalidation, cancellation, replay, automatic-Debris observation, or evidence contract.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m3_selected_dsm_forage_or_debris_content",
+      "question": "The selected live content class and exact inventory delta remain unsigned until the Portfolio DSM is frozen.",
+      "disposition": "requires_signed_dsm_selection"
+    },
+    {
+      "questionId": "m3_target_version_live_delivery_and_reopen",
+      "question": "No formal target-version typed live request, same-execution receipt, fresh postcondition, native save/reopen reread, or recovery evidence exists.",
+      "disposition": "blocks_projection"
+    }
+  ],
+  "conclusion": {
+    "sourceRealizationStatus": "unknown",
+    "projectionState": "blocked",
+    "liveState": "not_performed",
+    "nonClaim": "This is a focused audit-aid dossier. It does not mark the Charter trace realized, derive a capability, authorize a bridge route, close a CCM row, or establish a live result."
+  }
+}

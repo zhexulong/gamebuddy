@@ -1,0 +1,45 @@
+{
+  "schema": "gamebuddy-test-portfolio/v1",
+  "version": 1,
+  "entries": [
+    {
+      "id": "p1.8-manifest-validator",
+      "riskId": "P1.8-R1",
+      "owner": "gamebuddy-ci",
+      "evidenceKind": "automated",
+      "command": "node --test tools/test-portfolio-manifest.test.mjs",
+      "triggerPaths": ["tools/test-portfolio-manifest.mjs", "tools/test-portfolio-manifest.test.mjs", ".ci/test-portfolio-manifest.v1.json"],
+      "timeoutSeconds": 60,
+      "retryPolicy": { "maxAttempts": 1, "backoffSeconds": 0 },
+      "requiredOn": ["pull_request", "main"],
+      "requires": [],
+      "liveGate": "none"
+    },
+    {
+      "id": "p1.8-portfolio-isolation-static",
+      "riskId": "P1.8-R2",
+      "owner": "gamebuddy-ci",
+      "evidenceKind": "static",
+      "command": null,
+      "triggerPaths": ["tools/check-stardew-portfolio-isolation.mjs"],
+      "timeoutSeconds": null,
+      "retryPolicy": null,
+      "requiredOn": ["manual"],
+      "requires": [],
+      "liveGate": "none"
+    },
+    {
+      "id": "p1.8-live-environment-diagnostic",
+      "riskId": "P1.8-R3",
+      "owner": "gamebuddy-release",
+      "evidenceKind": "manual-diagnostic",
+      "command": null,
+      "triggerPaths": ["tools/check-stardew-portfolio-prerequisites.mjs"],
+      "timeoutSeconds": null,
+      "retryPolicy": null,
+      "requiredOn": ["manual"],
+      "requires": [],
+      "liveGate": "none"
+    }
+  ]
+}

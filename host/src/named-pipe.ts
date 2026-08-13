@@ -28,7 +28,9 @@ export class NamedPipeTransport {
     return transport;
   }
 
-  public get connected(): boolean { return !this.#closed && this.#socket?.destroyed === false; }
+  public get connected(): boolean {
+    return !this.#closed && this.#socket?.destroyed === false;
+  }
 
   public onMessage(listener: (json: string) => void): () => void {
     this.#events.on("message", listener);

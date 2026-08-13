@@ -9,6 +9,8 @@ export type DialogueInput = Readonly<{
   clientMessageId: string;
   text: string;
   locale: string;
+  /** Explicit per-turn player grant; absent means no memory-write delegation. */
+  memoryDelegation?: true;
 }>;
 
 export type DialogueControllerEvent =
@@ -46,7 +48,7 @@ export class DialogueController {
   public constructor(
     private readonly session: DialogueSession,
     private readonly now: () => number = Date.now,
-    private readonly hasVisiblePresentation: (() => boolean) = () => true,
+    private readonly hasVisiblePresentation: () => boolean = () => true,
   ) {}
 
   public subscribe(listener: (event: DialogueControllerEvent) => void): () => void {
@@ -54,11 +56,17 @@ export class DialogueController {
     return () => this.#listeners.delete(listener);
   }
 
-  public async submit(input: DialogueInput): Promise<"accepted" | "duplicate"> {
+  public async submit(
+    input: DialogueInput,
+    beforeQueue?: (input: DialogueInput) => Promise<void>,
+  ): Promise<"accepted" | "duplicate"> {
     this.#assertOpen();
     const normalized = validateDialogueInput(input);
     if (this.#seenIds.has(normalized.clientMessageId)) return "duplicate";
     if (this.#queue.length >= MAX_DIALOGUE_QUEUE) throw new Error("dialogue_queue_full");
+    // A player-facing surface may install its durable append boundary here.
+    // Refuse to enqueue if it cannot commit the visible player turn first.
+    await beforeQueue?.(normalized);
     this.#seenIds.add(normalized.clientMessageId);
     const pending = Object.freeze({ input: normalized, receivedAtMs: this.now() });
     this.#queue.push(pending);
@@ -67,10 +75,22 @@ export class DialogueController {
     return "accepted";
   }
 
+  /**
+   * Opaque Host-owned identity of the only turn currently permitted to make
+   * current-turn-scoped companion mutations. It is never accepted from a
+   * browser or model payload.
+   */
+  public currentTurnId(): string | undefined {
+    return this.#active?.input.clientMessageId;
+  }
+
   public async stop(): Promise<void> {
     this.#assertOpen();
     const activeId = this.#active?.input.clientMessageId ?? null;
     this.#queue.length = 0;
+    // Revoke current-turn capabilities before abort crosses an async boundary.
+    // A late tool callback from the cancelled provider run must fail closed.
+    this.#active = undefined;
     await this.session.abort();
     this.session.clearQueue();
     this.#emit({ type: "turn_cancelled", clientMessageId: activeId });
@@ -123,13 +143,27 @@ export class DialogueController {
 }
 
 export function validateDialogueInput(value: unknown): DialogueInput {
-  if (!isRecord(value) || Object.keys(value).length !== 3
-    || !isOpaqueId(value.clientMessageId) || typeof value.text !== "string" || typeof value.locale !== "string"
-    || Buffer.byteLength(value.text, "utf8") < 1 || Buffer.byteLength(value.text, "utf8") > MAX_DIALOGUE_TEXT_BYTES
-    || !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(value.locale)) {
+  if (
+    !isRecord(value) ||
+    !Object.keys(value).every(
+      (key) => key === "clientMessageId" || key === "text" || key === "locale" || key === "memoryDelegation",
+    ) ||
+    !isOpaqueId(value.clientMessageId) ||
+    typeof value.text !== "string" ||
+    typeof value.locale !== "string" ||
+    (value.memoryDelegation !== undefined && value.memoryDelegation !== true) ||
+    Buffer.byteLength(value.text, "utf8") < 1 ||
+    Buffer.byteLength(value.text, "utf8") > MAX_DIALOGUE_TEXT_BYTES ||
+    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(value.locale)
+  ) {
     throw new Error("invalid_dialogue_input");
   }
-  return Object.freeze({ clientMessageId: value.clientMessageId, text: value.text, locale: value.locale });
+  return Object.freeze({
+    clientMessageId: value.clientMessageId,
+    text: value.text,
+    locale: value.locale,
+    ...(value.memoryDelegation === true ? { memoryDelegation: true as const } : {}),
+  });
 }
 
 function canonicalPrompt(pending: PendingInput): string {
@@ -138,6 +172,7 @@ function canonicalPrompt(pending: PendingInput): string {
     clientMessageId: pending.input.clientMessageId,
     text: pending.input.text,
     locale: pending.input.locale,
+    ...(pending.input.memoryDelegation === true ? { memoryDelegation: true } : {}),
     receivedAtMs: pending.receivedAtMs,
   });
 }

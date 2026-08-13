@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-test",
+    "noEmit": false,
+    "noEmitOnError": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/test-fixtures/windows-named-mutex-safety-seal-worker.ts",
+    "src/test-fixtures/semantic-known-game-process-worker.ts",
+    "src/test-fixtures/semantic-initial-chat-process-worker.ts"
+  ],
+  "exclude": [
+    "src/main.ts",
+    "src/dialogue-web-main.ts",
+    "src/dialogue-web-main.test.ts",
+    "src/windows-legacy-authority-seal/**"
+  ]
+}

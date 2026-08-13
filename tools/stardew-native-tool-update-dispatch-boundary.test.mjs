@@ -1,0 +1,94 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { summarizeNativeToolUpdateDispatchBoundary } from "./lib/stardew-native-tool-update-dispatch-boundary.mjs";
+test("reports exact source-visible Tool.Update implementation closure without inferring runtime receiver construction", () => {
+  const report = summarizeNativeToolUpdateDispatchBoundary({
+    schemaVersion: 1,
+    artifactKind: "native_virtual_member_invocation_register",
+    baseType: "Tool",
+    methodName: "Update",
+    implementations: [
+      {
+        implementationId: "tool-base-Update",
+        receiverType: "Tool",
+        implementationKind: "base_virtual",
+        invocationCount: 0,
+        routerParseGaps: [],
+      },
+    ],
+    receiverRegister: {
+      receiverCount: 2,
+      overrideCount: 0,
+      inheritedBaseReceiverTypes: ["Axe", "Pickaxe"],
+      indirectOverrideReceiverTypes: [],
+    },
+  });
+  assert.equal(report.sourceVisibleDispatchState, "all_direct_source_receivers_inherit_base_implementation");
+  assert.equal(report.baseInvocationCount, 0);
+});
+test("fails closed if Update source-visible dispatch contains an override", () => {
+  assert.throws(
+    () =>
+      summarizeNativeToolUpdateDispatchBoundary({
+        schemaVersion: 1,
+        artifactKind: "native_virtual_member_invocation_register",
+        baseType: "Tool",
+        methodName: "Update",
+        implementations: [
+          {
+            implementationId: "tool-base-Update",
+            receiverType: "Tool",
+            implementationKind: "base_virtual",
+            invocationCount: 0,
+            routerParseGaps: [],
+          },
+          {
+            implementationId: "tool-override-Update-Axe",
+            receiverType: "Axe",
+            implementationKind: "direct_source_override",
+            invocationCount: 1,
+            routerParseGaps: [],
+          },
+        ],
+        receiverRegister: {
+          receiverCount: 1,
+          overrideCount: 1,
+          inheritedBaseReceiverTypes: [],
+          indirectOverrideReceiverTypes: [],
+        },
+      }),
+    { code: "tool_update_dispatch_override_present" },
+  );
+});
+test("fails closed for source parsing gaps inside the exact Tool.Update body", () => {
+  assert.throws(
+    () =>
+      summarizeNativeToolUpdateDispatchBoundary({
+        schemaVersion: 1,
+        artifactKind: "native_virtual_member_invocation_register",
+        baseType: "Tool",
+        methodName: "Update",
+        implementations: [
+          {
+            implementationId: "tool-base-Update",
+            receiverType: "Tool",
+            implementationKind: "base_virtual",
+            invocationCount: 0,
+            routerParseGaps: [{ startByte: 3 }],
+          },
+        ],
+        receiverRegister: {
+          receiverCount: 1,
+          overrideCount: 0,
+          inheritedBaseReceiverTypes: ["Axe"],
+          indirectOverrideReceiverTypes: [],
+        },
+      }),
+    { code: "tool_update_dispatch_parse_gap" },
+  );
+});
+test("forbids product vocabulary", () => {
+  assert.throws(() => summarizeNativeToolUpdateDispatchBoundary({ actionId: "no" }), {
+    code: "tool_update_dispatch_forbidden_field",
+  });
+});

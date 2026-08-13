@@ -65,5 +65,5 @@ foreach ($entry in $started) {
     expectedFarmhandId = $ExpectedFarmhandId
     modsPath = $ModsPath
     started = $started
-    next = "Use the official Join LAN/Farmhand selection UI only in the ai_client window. After GameBuddy logs the configured Farmhand binding, stop UI automation and use the local named-pipe bridge."
+    next = "Continue with the formal non-UI App Attachment Flow. The signed Host advertisement and manifest bind the native AI Farmhand; no UI, focus, XInput, or OS input automation is used."
 } | ConvertTo-Json -Depth 4

@@ -1,12 +1,18 @@
 import { type KnowledgeBundle } from "./knowledge.js";
 import { type LocalStardewBridgeClient } from "./local-stardew-bridge.js";
-import { connectIntegrationCompanion, disconnectIntegrationCompanion, type ConnectedIntegrationCompanion } from "./integration-bootstrap.js";
+import {
+  connectIntegrationCompanion,
+  disconnectIntegrationCompanion,
+  type ConnectedIntegrationCompanion,
+} from "./integration-bootstrap.js";
 import { STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
 import { type WorldBookBinding } from "./worldbook.js";
 import { type GameCompanionIdentity, type CompanionModelConfig } from "./runtime.js";
 import { type IntegrationActionPolicy } from "./integration-module.js";
 import { type CompanionTextPort, type PresentationProfile } from "./presentation.js";
 import { type VoiceSpeechPort } from "./voice.js";
+import type { ContinuitySurfaceCoordinator } from "./continuity-surface-coordinator/continuity-surface-coordinator.js";
+export { recoverStoppedGameSurface } from "./game-surface-recovery.js";
 
 /**
  * Stardew compatibility bootstrap. New integrations use
@@ -26,14 +32,16 @@ export type LocalStardewConnection = Readonly<{
   presentationProfile?: PresentationProfile;
   textPort?: CompanionTextPort;
   speechPort?: VoiceSpeechPort;
+  continuityCoordinator?: ContinuitySurfaceCoordinator;
   surfaceSessionId?: string;
   worldBook?: WorldBookBinding;
 }>;
 
-export type ConnectedCompanion = ConnectedIntegrationCompanion & Readonly<{
-  /** Compatibility alias; generic callers use launch.connection instead. */
-  bridge: LocalStardewBridgeClient;
-}>;
+export type ConnectedCompanion = ConnectedIntegrationCompanion &
+  Readonly<{
+    /** Compatibility alias; generic callers use launch.connection instead. */
+    bridge: LocalStardewBridgeClient;
+  }>;
 
 export async function connectLocalCompanion(connection: LocalStardewConnection): Promise<ConnectedCompanion> {
   const connected = await connectIntegrationCompanion({
@@ -52,6 +60,7 @@ export async function connectLocalCompanion(connection: LocalStardewConnection):
     presentationProfile: connection.presentationProfile,
     textPort: connection.textPort,
     speechPort: connection.speechPort,
+    continuityCoordinator: connection.continuityCoordinator,
     surfaceSessionId: connection.surfaceSessionId,
     worldBook: connection.worldBook,
   });

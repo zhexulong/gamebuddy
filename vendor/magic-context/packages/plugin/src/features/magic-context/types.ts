@@ -82,6 +82,9 @@ export interface SessionMeta {
     cachedM0MuralDataUrl: string | null;
     cachedM0MuralHash: string | null;
     cachedM1Bytes: Buffer | null;
+    /** Coverage watermarks paired atomically with cachedM1Bytes. */
+    cachedM1MaxMemoryId: number | null;
+    cachedM1MaxMemoryMutationId: number | null;
     cachedM0ProjectMemoryEpoch: number | null;
     cachedM0WorkspaceFingerprint: string | null;
     cachedM0ProjectUserProfileVersion: number | null;

@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
+import { MemoryCommandFacade } from "@magic-context/core/features/magic-context/memory/command-facade";
+import { resolveProjectIdentity } from "@magic-context/core/features/magic-context/memory/project-identity";
 import {
 	__resetMessageIndexAsyncForTests,
 	isSessionReconciled,
@@ -49,6 +52,7 @@ import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner"
 import { tagTranscript } from "@magic-context/core/shared/tag-transcript";
 
 import { clearAutoSearchForPiSession } from "./auto-search-pi";
+import { publishGameBuddyStableContextSnapshot } from "./gamebuddy-stable-context-source";
 import {
 	awaitInFlightHistorians,
 	clearContextHandlerSession,
@@ -83,6 +87,174 @@ import {
 	userMessage,
 } from "./test-utils.test";
 import { createPiTranscript } from "./transcript-pi";
+
+function canonicalJsonForStableContext(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonicalJsonForStableContext).join(",")}]`;
+	if (value !== null && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJsonForStableContext(record[key])}`).join(",")}}`;
+	}
+	return JSON.stringify(value);
+}
+
+function stableSnapshot(sessionId: string, content: string) {
+	const source = {
+		sourceId: "scenario",
+		kind: "scenario",
+		revision: "1",
+		canonicalHash: createHash("sha256").update(content, "utf8").digest("hex"),
+		content,
+		budgetTokens: 32,
+		totalOrderKey: "0001",
+		provenance: "test/tavern/scenario",
+	};
+	const body = {
+		version: "gamebuddy-stable-context-source/v1",
+		continuityId: "continuity-test",
+		sessionId,
+		surface: "tavern",
+		sources: [source],
+	};
+	return {
+		...body,
+		canonicalHash: createHash("sha256").update(canonicalJsonForStableContext(body), "utf8").digest("hex"),
+	};
+}
+
+function tombstoneSnapshot(sessionId: string) {
+	const body = {
+		version: "gamebuddy-stable-context-source/v1",
+		continuityId: "continuity-test",
+		sessionId,
+		surface: "tavern",
+		sources: [],
+	};
+	return {
+		...body,
+		canonicalHash: createHash("sha256").update(canonicalJsonForStableContext(body), "utf8").digest("hex"),
+	};
+}
+
+describe("GameBuddy stable-context handler wiring", () => {
+	it("injects only the exact published Tavern Pi binding and replaces or tombstones it without synthetic Host messages", async () => {
+		const db = createTestDb();
+		const sessionId = "tavern-pi-session";
+		const otherSessionId = "other-pi-session";
+		try {
+			const fake = createFakePi();
+			registerPiContextHandler(fake.pi as never, {
+				db,
+				injection: { injectionBudgetTokens: 10_000 },
+			});
+			const handler = fake.handlers.get("context") as (event: { messages: never[] }, ctx: never) => Promise<{ messages: Array<{ content?: unknown }> }>;
+			publishGameBuddyStableContextSnapshot(
+				{ continuityId: "continuity-test", sessionId, surface: "tavern" },
+				stableSnapshot(sessionId, "first premise"),
+			);
+			const first = await handler({ messages: [userMessage("hello", 1)] as never[] }, fakeContext(sessionId) as never);
+			expect(JSON.stringify(first.messages)).toContain("first premise");
+
+			const isolated = await handler({ messages: [userMessage("hello", 1)] as never[] }, fakeContext(otherSessionId) as never);
+			expect(JSON.stringify(isolated.messages)).not.toContain("first premise");
+
+			publishGameBuddyStableContextSnapshot(
+				{ continuityId: "continuity-test", sessionId, surface: "tavern" },
+				stableSnapshot(sessionId, "replacement premise"),
+			);
+			const replacement = await handler({ messages: [userMessage("again", 2)] as never[] }, fakeContext(sessionId) as never);
+			const replacementWire = JSON.stringify(replacement.messages);
+			expect(replacementWire).toContain("replacement premise");
+			expect(replacementWire).toContain("gamebuddy-stable-context-updates");
+			expect(replacementWire).toContain('old-canonical-hash');
+
+			publishGameBuddyStableContextSnapshot(
+				{ continuityId: "continuity-test", sessionId, surface: "tavern" },
+				tombstoneSnapshot(sessionId),
+			);
+			const tombstone = await handler({ messages: [userMessage("final", 3)] as never[] }, fakeContext(sessionId) as never);
+			const tombstoneWire = JSON.stringify(tombstone.messages);
+			expect(tombstoneWire).toContain("gamebuddy-stable-context-updates");
+			expect(tombstoneWire).toContain("tombstone");
+			expect(tombstoneWire).not.toContain("replacement premise");
+
+			// Pi lifecycle cleanup owns publication cleanup too, so a reused session
+			// id cannot retain a Tavern source after disposal.
+			clearContextHandlerSession(sessionId, db);
+			const removed = await handler({ messages: [userMessage("removed", 4)] as never[] }, fakeContext(sessionId) as never);
+			expect(JSON.stringify(removed.messages)).not.toContain("gamebuddy-stable-context");
+		} finally {
+			clearContextHandlerSession(sessionId);
+			clearContextHandlerSession(otherSessionId);
+			closeQuietly(db);
+		}
+	});
+});
+
+describe("GameBuddy ongoing-interaction Memory cross-surface handler wiring", () => {
+	it("refreshes m[1] for Game and exact-origin Chat provider passes after a player command without folding either m[0]", async () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-gamebuddy-cross-surface-"));
+		const foreignCwd = mkdtempSync(join(tmpdir(), "pi-gamebuddy-cross-surface-foreign-"));
+		const chatSessionId = "chat-exact-origin";
+		const gameSessionId = "game-surface";
+		try {
+			const fake = createFakePi();
+			registerPiContextHandler(fake.pi as never, {
+				db,
+				injection: {
+					injectionBudgetTokens: 10_000,
+					memoryEnabled: true,
+					memoryDomain: "ongoing-interaction",
+				},
+			});
+			const handler = fake.handlers.get("context") as (event: { messages: never[] }, ctx: never) => Promise<{ messages: Array<{ content?: unknown }> }>;
+			const chatInitial = await handler(
+				{ messages: [userMessage("Chat initial", 10)] as never[] },
+				fakeContext(chatSessionId, cwd) as never,
+			);
+			const gameInitial = await handler(
+				{ messages: [userMessage("Game initial", 11)] as never[] },
+				fakeContext(gameSessionId, cwd) as never,
+			);
+			const chatM0 = textOf(chatInitial.messages[0] as never);
+			const gameM0 = textOf(gameInitial.messages[0] as never);
+
+			new MemoryCommandFacade(db).create({
+				actor: { principal: "player_direct", delegated: false },
+				projectPath: resolveProjectIdentity(cwd),
+				category: "SEMANTIC_MEMORY",
+				content: "The player prefers a calm explanation before a consequential choice.",
+				sourceType: "user",
+			});
+
+			const gameNext = await handler(
+				{ messages: [userMessage("Game provider invocation", 20)] as never[] },
+				fakeContext(gameSessionId, cwd) as never,
+			);
+			expect(textOf(gameNext.messages[0] as never)).toBe(gameM0);
+			expect(JSON.stringify(gameNext.messages)).toContain("The player prefers a calm explanation");
+
+			const chatReturn = await handler(
+				{ messages: [userMessage("Chat return provider invocation", 30)] as never[] },
+				fakeContext(chatSessionId, cwd) as never,
+			);
+			expect(textOf(chatReturn.messages[0] as never)).toBe(chatM0);
+			expect(JSON.stringify(chatReturn.messages)).toContain("The player prefers a calm explanation");
+
+			const isolated = await handler(
+				{ messages: [userMessage("Other continuity", 40)] as never[] },
+				fakeContext("foreign-continuity", foreignCwd) as never,
+			);
+			expect(JSON.stringify(isolated.messages)).not.toContain("The player prefers a calm explanation");
+		} finally {
+			clearContextHandlerSession(chatSessionId, db);
+			clearContextHandlerSession(gameSessionId, db);
+			rmSync(cwd, { recursive: true, force: true });
+			rmSync(foreignCwd, { recursive: true, force: true });
+			closeQuietly(db);
+		}
+	});
+});
 
 describe("applyForwardPressureFloor", () => {
 	const { FORWARD_PRESSURE_LIMIT_FACTOR, applyForwardPressureFloor } =

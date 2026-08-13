@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_static_action_contract",
+  "contractId": "portfolio_m8_elevator_action_contract_v1",
+  "topology": "single_player_native_companion",
+  "target": {
+    "gameVersion": "1.6.15.24356",
+    "assemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee"
+  },
+  "sourceAudit": {
+    "path": "tools/stardew-portfolio-m8-mine-source-audit.json",
+    "auditId": "portfolio_m8_mine_route_source_audit_v1",
+    "traceFamilyId": "portfolio_m8_native_mine_route",
+    "anchorIds": [
+      "normal_player_mine_check_action_ingress",
+      "mine_elevator_presentation_ingress",
+      "mine_elevator_progress_guard",
+      "mine_elevator_target_transition",
+      "mine_ladder_target_transition",
+      "mine_target_floor_warp",
+      "mine_ladder_spawn_guard",
+      "mine_ladder_pending_creation"
+    ],
+    "projectionState": "blocked",
+    "liveState": "not_performed"
+  },
+  "routeBoundary": {
+    "selectedVariant": "elevator_only",
+    "ladderRoute": "distinct_unselected_route_not_covered_by_this_primitive",
+    "genericMineRoute": "prohibited_not_a_typed_action",
+    "genericTravelRoute": "prohibited_not_a_typed_action",
+    "genericWarpRoute": "prohibited_not_a_typed_action_or_bridge_fallback",
+    "aggregateMonitor": "reach_mine_floor_is_monitor_only",
+    "entryBoundary": "fresh_entry_fact_is_checked; enter_mine_is separate or composed only when required"
+  },
+  "selectedDomain": {
+    "kind": "finite_runtime_selected_unlocked_checkpoint",
+    "selectionSource": "runtime_request_plus_fresh_observation",
+    "checkpointGranularity": "five_floor_checkpoint",
+    "finiteDomain": "EnabledActions permits select_mine_elevator_floor only for one runtime-selected finite five-floor checkpoint",
+    "selectedCheckpoint": {
+      "kind": "unselected",
+      "value": null
+    },
+    "selectionRule": "A runtime request selects one finite checkpoint; game-thread revalidation requires EnabledActions permission plus fresh current-floor and unlock facts; no static floor value is accepted"
+  },
+  "action": {
+    "actionId": "select_mine_elevator_floor",
+    "actionClass": "primitive",
+    "input": {
+      "selectedCheckpoint": {
+        "kind": "runtime_selected_checkpoint",
+        "source": "bridge_request",
+        "value": null
+      },
+      "entry": {
+        "kind": "fresh_native_fact",
+        "name": "mine_entry",
+        "source": "game_thread_observation",
+        "value": null
+      },
+      "currentFloor": {
+        "kind": "fresh_native_fact",
+        "name": "current_floor",
+        "source": "game_thread_observation",
+        "value": null
+      },
+      "unlockedLevel": {
+        "kind": "fresh_native_fact",
+        "name": "lowestMineLevel",
+        "source": "game_thread_observation",
+        "value": null
+      },
+      "targetResolution": {
+        "kind": "opaque_runtime_correlation",
+        "source": "fresh_game_thread_observation",
+        "value": null
+      }
+    },
+    "guards": {
+      "gameThreadRevalidation": true,
+      "topology": "single_player_native_companion",
+      "entry": "fresh_native_mine_entry_fact",
+      "currentFloor": "fresh_native_current_floor_fact",
+      "unlockedLevel": "fresh_native_lowestMineLevel_fact",
+      "targetUnlocked": true,
+      "enabledActions": "required",
+      "checkpointFinite": true,
+      "checkpointMatchesRequest": true,
+      "player": "required",
+      "world": "required",
+      "revision": "required",
+      "policy": "required",
+      "deadline": "required",
+      "idempotency": "required",
+      "cancel": "required",
+      "gameState": "required"
+    },
+    "commit": {
+      "transaction": "select_mine_elevator_floor",
+      "nativeEffects": [
+        "native_elevator_transition_started",
+        "native_current_floor_transition_observed"
+      ],
+      "notAHeadlessWarp": true,
+      "notALadderTransition": true,
+      "doesNotMutateSaveDirectly": true
+    },
+    "receiptEvidence": [
+      "entryObserved",
+      "currentFloorBefore",
+      "lowestMineLevelBefore",
+      "opaqueElevatorCorrelationObserved",
+      "nativeElevatorTransitionObserved",
+      "currentFloorAfter",
+      "lowestMineLevelAfter"
+    ],
+    "freshPostcondition": {
+      "provenance": "fresh_native_observation_after_same_execution",
+      "currentFloor": "matches_selected_checkpoint",
+      "lowestMineLevel": "fresh_native_lowestMineLevel_at_or_above_selected_checkpoint",
+      "targetCheckpoint": "matches_runtime_selected_checkpoint",
+      "entry": "native_mine_entry_fact_rechecked",
+      "sameExecution": true
+    },
+    "lifecycle": {
+      "cancellation": "local_stop_no_success",
+      "staleRevision": "reject",
+      "replay": "idempotent_native_state_or_rejected",
+      "saveReopen": "not_required_for_already_unlocked_elevator_selection",
+      "freshObservation": "required_before_and_after_transition"
+    },
+    "forbiddenBehavior": [
+      "UI/menu automation, keyboard/mouse/XInput, visual/input injection, or window inspection",
+      "Game1.activeClickableMenu, MineElevatorMenu, raw menu callback, dialogue callback, or UI dispatcher",
+      "GameLocation.checkAction, raw dispatcher string, direct callback invocation, or arbitrary native-call fallback",
+      "generic mine action, generic travel action, generic warp action, or direct warp request",
+      "ladder route selection or ladder/elevator route conflation",
+      "save XML editing, direct save mutation, direct player/world mutation, or fixture-written result",
+      "static floor number, static elevator/target ID, debug floor, or fake target ID"
+    ]
+  },
+  "sharedRequestGuards": {
+    "freshObservation": true,
+    "opaqueTarget": true,
+    "scope": true,
+    "gameThread": true,
+    "revision": true,
+    "policy": true,
+    "deadline": true,
+    "idempotency": true,
+    "cancel": true,
+    "state": true,
+    "noUiOrRawFallback": true
+  },
+  "sharedEvidenceRules": {
+    "receiptState": true,
+    "receiptEvidence": true,
+    "postcondition": true,
+    "sameExecution": true,
+    "entry": true,
+    "currentFloor": true,
+    "lowestMineLevel": true,
+    "saveReopen": false
+  },
+  "fixtureStatus": {
+    "state": "fixture_needed",
+    "liveClosure": "none",
+    "publication": "none",
+    "provisioningState": "unprovisioned",
+    "productionAdapterState": "not_implemented",
+    "successClaimAllowed": false
+  },
+  "fixtureStartingFacts": {
+    "topology": "single_player_native_companion",
+    "saveState": "target_version_native_only_nonterminal",
+    "entry": "fresh_native_observation_required",
+    "currentFloor": "fresh_native_observation_required",
+    "lowestMineLevel": "fresh_native_observation_required",
+    "selectedCheckpoint": "unselected_until_runtime_request_and_fresh_observation",
+    "terminalRouteResult": "absent",
+    "fixtureMutatesGameplayState": false,
+    "fixtureWritesEvidence": false,
+    "fixtureWritesSave": false
+  },
+  "fixtureCreationRules": [
+    "Create or inspect the starting save through target-version native Stardew only.",
+    "Keep the selected checkpoint unmaterialized until a runtime request and fresh observation resolve it.",
+    "Record no concrete floor number, opaque correlation value, receipt, execution, result, or postcondition in the fixture.",
+    "Do not advance the route, unlock a checkpoint, enter a terminal result, or write gameplay state during fixture creation.",
+    "A missing, ambiguous, contaminated, advanced, or terminal starting state fails closed."
+  ],
+  "forbiddenBehavior": [
+    "UI/menu automation, keyboard/mouse/XInput, visual/input injection, or window inspection",
+    "Game1.activeClickableMenu, MineElevatorMenu, raw menu callback, dialogue callback, or UI dispatcher",
+    "GameLocation.checkAction, raw dispatcher string, direct callback invocation, or arbitrary native-call fallback",
+    "generic mine action, generic travel action, generic warp action, or direct warp request",
+    "ladder route selection or ladder/elevator route conflation",
+    "save XML editing, direct save mutation, direct player/world mutation, or fixture-written result",
+    "static floor number, static elevator/target ID, debug floor, or fake target ID"
+  ],
+  "nonClaims": [
+    "This contract does not publish select_mine_elevator_floor or any M8 route action.",
+    "This contract does not establish target-version source realization, target-version live closure, receipt evidence, or Portfolio release evidence.",
+    "Ladder progression, generic mine/travel/warp, combat, and route discovery remain outside this elevator primitive.",
+    "The example remains unprovisioned and cannot provide a save, target, result, or terminal route state."
+  ],
+  "fixtureRef": "fixtures/stardew/portfolio-m8-elevator-contract.example.json"
+}

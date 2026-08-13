@@ -92,6 +92,10 @@ import {
 
 import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-session-formatting";
 import type { MessageLike } from "@magic-context/core/hooks/magic-context/tag-messages";
+import type {
+	GameBuddyStableContextMaterialization,
+	GameBuddyStableContextSourceRecord,
+} from "./gamebuddy-stable-context-source";
 import { sessionLog as logSession } from "@magic-context/core/shared/logger";
 import { resolvePiStableId, SYNTH_USER_ID_PREFIX } from "./read-session-pi";
 
@@ -542,6 +546,12 @@ export interface PiM0M1State {
 	/** Explicit mural wire options for tests. When set, skips on-demand resolve
 	 *  during HARD materialization (mirrors OpenCode `M0M1RenderOptions.mural`). */
 	mural?: MuralWireOptions;
+	/**
+	 * Pre-validated GameBuddy Tavern stable sources for this exact binding.
+	 * This is renderer input only. The context handler acquires the registered
+	 * process-local publication; this fork owns all m[0]/m[1] persistence.
+	 */
+	stableContext?: Readonly<GameBuddyStableContextMaterialization>;
 }
 
 function filterMemoriesForDomain(
@@ -550,8 +560,9 @@ function filterMemoriesForDomain(
 ): Memory[] {
 	// Undefined preserves upstream's existing renderer behavior for callers
 	// outside the explicit domain-aware runtime. GameBuddy always sends its
-	// selected domain, so ongoing-interaction remains fail-closed to
-	// SEMANTIC_MEMORY without silently changing legacy/custom callers.
+	// selected domain, so ongoing-interaction uses the domain's explicit
+	// Semantic Memory + Interaction Episode categories without silently changing
+	// legacy/custom callers.
 	if (domain === undefined) return memories;
 	const allowed = new Set(factCategoriesForDomain(domain));
 	return memories.filter((memory) => allowed.has(memory.category));
@@ -928,6 +939,19 @@ function setCachedBoundary(
 	db.prepare(
 		"UPDATE session_meta SET cached_m0_last_baseline_end_message_id = ? WHERE session_id = ?",
 	).run(boundary, sessionId);
+}
+
+/**
+ * Memory changes are volatile m[1] deltas. Compare their store watermarks with
+ * the cursor persisted alongside cached_m1_bytes: a normal model invocation
+ * refreshes them before prompt materialization, while a DEFER maintenance pass
+ * still calls injectM0M1Pi with its own `recomputeM1ThisPass=false` contract.
+ */
+function m1CoverageAdvancedPi(db: ContextDatabase, state: PiM0M1State): boolean {
+	const row = readCachedPiM0M1Row(db, state.sessionId);
+	if (!row || row.cached_m1_max_memory_id === null || row.cached_m1_max_memory_mutation_id === null) return true;
+	const current = readCurrentMarkers(db, state, undefined);
+	return current.maxMemoryId > row.cached_m1_max_memory_id || current.maxMemoryMutationId > row.cached_m1_max_memory_mutation_id;
 }
 
 function getCachedMarkers(
@@ -1336,6 +1360,7 @@ export function renderM0Pi(
 		trimmedProfile,
 	);
 	if (userProfile.length > 0) sections.push(userProfile);
+	if (state.stableContext) sections.push(state.stableContext.renderedBlock);
 	sections.push(
 		decayed.length > 0
 			? `<session-history>\n${decayed}\n</session-history>`
@@ -1714,6 +1739,8 @@ export function materializeM0Pi(
 			maxMutationId: snapshotMarkers.maxMutationId,
 			maxMemoryMutationId: snapshotMarkers.maxMemoryMutationId,
 			m1Bytes,
+			m1MaxMemoryId: snapshotMarkers.maxMemoryId,
+			m1MaxMemoryMutationId: snapshotMarkers.maxMemoryMutationId,
 			projectDocsHash: snapshotMarkers.projectDocsHash,
 			materializedAt: snapshotMarkers.materializedAt,
 			sessionFactsVersion: snapshotMarkers.sessionFactsVersion,
@@ -1860,6 +1887,67 @@ interface RenderM1PiResult {
 	memoryUpdateCount: number;
 }
 
+interface StableSourceBaseline {
+	kind: string;
+	sourceId: string;
+	revision: string;
+	canonicalHash: string;
+}
+
+function decodeXmlAttribute(value: string): string {
+	return value
+		.replaceAll("&quot;", '"')
+		.replaceAll("&apos;", "'")
+		.replaceAll("&lt;", "<")
+		.replaceAll("&gt;", ">")
+		.replaceAll("&amp;", "&");
+}
+
+/** Reads only the fork-owned m[0] source marker; Host never supplies a cursor. */
+function stableSourceBaselineFromM0(m0: string): Map<string, StableSourceBaseline> {
+	const baseline = new Map<string, StableSourceBaseline>();
+	const sourcePattern = /<gamebuddy-stable-source\s+([^>]+)>/g;
+	for (const match of m0.matchAll(sourcePattern)) {
+		const attributes = new Map<string, string>();
+		for (const attribute of match[1].matchAll(/([a-z-]+)="([^"]*)"/g)) {
+			attributes.set(attribute[1], decodeXmlAttribute(attribute[2]));
+		}
+		const kind = attributes.get("kind");
+		const sourceId = attributes.get("source-id");
+		const revision = attributes.get("revision");
+		const canonicalHash = attributes.get("canonical-hash");
+		if (!kind || !sourceId || !revision || !canonicalHash) continue;
+		baseline.set(`${kind}\u0000${sourceId}`, { kind, sourceId, revision, canonicalHash });
+	}
+	return baseline;
+}
+
+function renderStableContextUpdates(
+	stableContext: Readonly<GameBuddyStableContextMaterialization> | undefined,
+	baselineM0: string | undefined,
+): string | undefined {
+	if (!stableContext || baselineM0 === undefined) return undefined;
+	const previous = stableSourceBaselineFromM0(baselineM0);
+	const current = new Map<string, Readonly<GameBuddyStableContextSourceRecord>>();
+	for (const source of stableContext.sources) current.set(`${source.kind}\u0000${source.sourceId}`, source);
+	const updates: string[] = [];
+	for (const [identity, oldSource] of previous) {
+		const next = current.get(identity);
+		if (!next) {
+			updates.push(`  <tombstone kind="${oldSource.kind}" source-id="${escapeXmlContent(oldSource.sourceId)}" old-revision="${escapeXmlContent(oldSource.revision)}" old-canonical-hash="${oldSource.canonicalHash}"/>`);
+		} else if (next.revision !== oldSource.revision || next.canonicalHash !== oldSource.canonicalHash) {
+			updates.push(`  <replacement kind="${next.kind}" source-id="${escapeXmlContent(next.sourceId)}" old-revision="${escapeXmlContent(oldSource.revision)}" old-canonical-hash="${oldSource.canonicalHash}" new-revision="${escapeXmlContent(next.revision)}" new-canonical-hash="${next.canonicalHash}" provenance="${escapeXmlContent(next.provenance)}">\n${escapeXmlContent(next.content)}\n  </replacement>`);
+		}
+	}
+	for (const [identity, source] of current) {
+		if (previous.has(identity)) continue;
+		updates.push(`  <replacement kind="${source.kind}" source-id="${escapeXmlContent(source.sourceId)}" old-revision="" old-canonical-hash="" new-revision="${escapeXmlContent(source.revision)}" new-canonical-hash="${source.canonicalHash}" provenance="${escapeXmlContent(source.provenance)}">\n${escapeXmlContent(source.content)}\n  </replacement>`);
+	}
+	return updates.length > 0
+		? `<gamebuddy-stable-context-updates cursor="${stableContext.snapshotCanonicalHash}">\n${updates.join("\n")}\n</gamebuddy-stable-context-updates>`
+		: undefined;
+}
+
 function renderM1PiWithMetadata(
 	state: PiM0M1State,
 	db: ContextDatabase,
@@ -1872,8 +1960,14 @@ function renderM1PiWithMetadata(
 	// snapshot, which would leave its raw messages in the tail too (duplication).
 	// Omitted by callers that don't advance the boundary (e.g. renderM1Pi probe).
 	compartmentsOverride?: readonly PiCompartment[],
+	stableBaselineM0?: string,
 ): RenderM1PiResult {
 	const sections: string[] = [];
+	const stableUpdates = renderStableContextUpdates(
+		state.stableContext,
+		stableBaselineM0,
+	);
+	if (stableUpdates) sections.push(stableUpdates);
 	const workspace = resolveWorkspaceRenderContextPi(state, db);
 
 	const memPath = memoryProjectPath(state);
@@ -2021,6 +2115,8 @@ interface CachedPiM0M1Row {
 	cached_m0_model_key: string | null;
 	cached_m0_project_identity: string | null;
 	cached_m0_last_baseline_end_message_id: string | null;
+	cached_m1_max_memory_id: number | null;
+	cached_m1_max_memory_mutation_id: number | null;
 	memory_block_ids: string | null;
 }
 
@@ -2072,6 +2168,8 @@ function readCachedPiM0M1Row(
 					cached_m0_model_key,
 					cached_m0_project_identity,
 					cached_m0_last_baseline_end_message_id,
+					cached_m1_max_memory_id,
+					cached_m1_max_memory_mutation_id,
 					memory_block_ids
 			   FROM session_meta
 			  WHERE session_id = ?`,
@@ -2292,8 +2390,21 @@ function softRefreshCachedM1Pi(args: {
 			// from below, so a concurrent sibling publish can't put a compartment
 			// in m[1] while its raw messages stay in the tail.
 			args.compartmentsForNormalization,
+			decodeCachedM0(row.cached_m0_bytes) ?? "",
 		);
 		const m1Bytes = Buffer.from(rendered.text, "utf8");
+		const workspace = resolveWorkspaceRenderContextPi(args.state, args.db);
+		const memPath = memoryProjectPath(args.state);
+		const maxMemoryId = memPath
+			? workspace.isWorkspaced
+				? getMaxMemoryIdForProjects(args.db, workspace.expandedIdentities, workspace.ownIdentities, workspace.shareCategories, markers.materializedAt)
+				: getMaxMemoryIdForProjects(args.db, [memPath], [memPath], undefined, markers.materializedAt)
+			: 0;
+		const maxMemoryMutationId = memPath
+			? workspace.isWorkspaced
+				? (getMaxMemoryMutationIdForProjects(args.db, workspace.expandedIdentities) ?? 0)
+				: (getMaxMemoryMutationId(args.db, memPath) ?? 0)
+			: 0;
 		// Advance the persisted trim boundary to the latest compartment now rendered
 		// in m[1]. renderM1 covers compartments seq > cachedM0Seq up to the current
 		// latest, so the visible-message trim must move with it — otherwise the newly
@@ -2312,9 +2423,9 @@ function softRefreshCachedM1Pi(args: {
 				: markers.lastBaselineEndMessageId;
 		args.db
 			.prepare(
-				"UPDATE session_meta SET cached_m1_bytes = ?, cached_m0_last_baseline_end_message_id = ? WHERE session_id = ?",
+				"UPDATE session_meta SET cached_m1_bytes = ?, cached_m1_max_memory_id = ?, cached_m1_max_memory_mutation_id = ?, cached_m0_last_baseline_end_message_id = ? WHERE session_id = ?",
 			)
-			.run(m1Bytes, advancedBoundary, args.state.sessionId);
+			.run(m1Bytes, maxMemoryId, maxMemoryMutationId, advancedBoundary, args.state.sessionId);
 		args.db.exec("COMMIT");
 		return {
 			m0: decodeCachedM0(row.cached_m0_bytes) ?? "",
@@ -2395,6 +2506,8 @@ export function injectM0M1Pi(
 	piMessages: PiAgentMessage[],
 	entryIds?: readonly (string | undefined)[],
 	recomputeM1ThisPass = false,
+	/** True only for a real provider invocation; false preserves DEFER maintenance replay. */
+	allowExternalMemoryRefresh = false,
 ): PiM0M1InjectionResult {
 	// One compartment snapshot for the WHOLE decision: the materialize decision
 	// and every cached-marker reload below normalize against this same set, so a
@@ -2515,7 +2628,7 @@ export function injectM0M1Pi(
 		m1Recomputed = true;
 	} else if (contentionExhausted) {
 		// m[1] was replayed with the cached m[0] pair above.
-	} else if (recomputeM1ThisPass) {
+	} else if (recomputeM1ThisPass || (allowExternalMemoryRefresh && m1CoverageAdvancedPi(db, state))) {
 		const refreshed = softRefreshCachedM1Pi({
 			state,
 			db,

@@ -30,13 +30,19 @@ const farmhandId = process.env.GAMEBUDDY_AI_FARMHAND_ID;
 if (farmhandId && /^\d+$/.test(farmhandId)) {
   pass("configured local AI Farmhand", "opaque multiplayer ID is configured; value was not logged");
 } else {
-  fail("configured local AI Farmhand", "set GAMEBUDDY_AI_FARMHAND_ID after the native local-co-op Farmhand joins the dedicated test save");
+  fail(
+    "configured local AI Farmhand",
+    "set GAMEBUDDY_AI_FARMHAND_ID after the native local-co-op Farmhand joins the dedicated test save",
+  );
 }
 
 if (process.env.GAMEBUDDY_LOCAL_COOP_READY === "1") {
   pass("local split-screen readiness", "operator confirmed a second local input device and vacant cabin are ready");
 } else {
-  fail("local split-screen readiness", "set GAMEBUDDY_LOCAL_COOP_READY=1 only after a second local input device and vacant cabin are ready");
+  fail(
+    "local split-screen readiness",
+    "set GAMEBUDDY_LOCAL_COOP_READY=1 only after a second local input device and vacant cabin are ready",
+  );
 }
 
 if (process.env.MIMO_API_KEY && process.env.MIMO_API_KEY.trim().length > 0) {
@@ -47,7 +53,10 @@ if (process.env.MIMO_API_KEY && process.env.MIMO_API_KEY.trim().length > 0) {
 
 const senseVoiceManifest = process.env.GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST;
 if (senseVoiceManifest && existsSync(resolve(senseVoiceManifest))) {
-  pass("audited SenseVoice assets", "asset manifest is configured; Gateway performs runtime/model/VAD hash audit before ASR");
+  pass(
+    "audited SenseVoice assets",
+    "asset manifest is configured; Gateway performs runtime/model/VAD hash audit before ASR",
+  );
 } else {
   fail("audited SenseVoice assets", "set GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST to an audited SenseVoice asset manifest");
 }

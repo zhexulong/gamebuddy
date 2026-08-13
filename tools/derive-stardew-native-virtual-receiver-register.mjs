@@ -1,0 +1,61 @@
+import { readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { deriveNativeVirtualReceiverRegister } from "./lib/stardew-native-virtual-receiver-register.mjs";
+function fail(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  throw error;
+}
+function args(argv) {
+  const result = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const key = argv[i],
+      value = argv[++i];
+    if (!key?.startsWith("--") || !value || value.startsWith("--"))
+      fail(
+        "virtual_receiver_register_arguments_invalid",
+        "Usage: --source-root <exact-source-root> --method <Tool-virtual-member> --out <report.json>",
+      );
+    result[key.slice(2)] = value;
+  }
+  if (!result["source-root"] || !result.method || !result.out)
+    fail(
+      "virtual_receiver_register_arguments_required",
+      "Usage: --source-root <exact-source-root> --method <Tool-virtual-member> --out <report.json>",
+    );
+  return result;
+}
+async function files(root) {
+  const todo = [root],
+    output = {};
+  while (todo.length) {
+    const directory = todo.pop();
+    const entries = await (await import("node:fs/promises")).readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) todo.push(absolute);
+      else if (entry.isFile() && entry.name.endsWith(".cs")) {
+        const relativePath = path.relative(root, absolute).replaceAll("\\", "/");
+        const text = await readFile(absolute, "utf8");
+        const { createHash } = await import("node:crypto");
+        output[relativePath] = { text, sha256: createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex") };
+      }
+    }
+  }
+  return output;
+}
+async function main() {
+  const input = args(process.argv.slice(2).filter((x) => x !== "--"));
+  const sourceFiles = await files(path.resolve(input["source-root"]));
+  const report = deriveNativeVirtualReceiverRegister({ sourceFiles, methodName: input.method });
+  const temporary = `${path.resolve(input.out)}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`);
+  await rename(temporary, path.resolve(input.out));
+  process.stdout.write(
+    `${JSON.stringify({ artifactKind: report.artifactKind, methodName: report.methodName, receiverCount: report.receiverCount, overrideCount: report.overrideCount, indirectOverrideReceiverCount: report.indirectOverrideReceiverTypes.length })}\n`,
+  );
+}
+main().catch((error) => {
+  process.stderr.write(`${error.code ?? "virtual_receiver_register_failed"}: ${error.message}\n`);
+  process.exitCode = 1;
+});
