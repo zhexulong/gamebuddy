@@ -18,12 +18,24 @@
     ],
     "properties": [
       {
+        "name": "gamebuddy:sbom-descriptor-name",
+        "value": "gamebuddy-node-sbom"
+      },
+      {
+        "name": "gamebuddy:sbom-descriptor-version",
+        "value": "1"
+      },
+      {
+        "name": "gamebuddy:sbom-policy-schema-version",
+        "value": "1"
+      },
+      {
         "name": "gamebuddy:inventory-scope",
         "value": "node-dependencies-only"
       },
       {
         "name": "gamebuddy:accepted-claim-ecosystems",
-        "value": "Node,Bun,C#"
+        "value": "node,node.js,nodejs,npm,pnpm"
       },
       {
         "name": "gamebuddy:generator-input-command",
@@ -35,7 +47,7 @@
       },
       {
         "name": "gamebuddy:generator-input-lockfile-sha256",
-        "value": "4f646daf48b3ff886867ed908891fcf6e1ab39ea95d49a07f83fcd11d4644e9a"
+        "value": "52691f74ec9b82fe6276d03f3536f1205a024487b72926a9b035ed3f80a8c84a"
       }
     ]
   },
@@ -492,294 +504,6 @@
     },
     {
       "type": "library",
-      "name": "@babel/code-frame",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-code-frame"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/compat-data",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/babel/babel#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/core",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-core"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/generator",
-      "version": "7.29.8",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-generator"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helper-compilation-targets",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/babel/babel#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helper-globals",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/babel/babel#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helper-module-imports",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-helper-module-imports"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helper-module-transforms",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-helper-module-transforms"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helper-plugin-utils",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-helper-plugin-utils"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helper-string-parser",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-helper-string-parser"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helper-validator-identifier",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/babel/babel#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helper-validator-option",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/babel/babel#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/helpers",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-helpers"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/parser",
-      "version": "7.29.8",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-parser"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/plugin-transform-react-jsx-self",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-plugin-transform-react-jsx-self"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/plugin-transform-react-jsx-source",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-plugin-transform-react-jsx-source"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@babel/runtime",
       "version": "7.29.7",
       "licenses": [
@@ -793,60 +517,6 @@
         {
           "type": "website",
           "url": "https://babel.dev/docs/en/next/babel-runtime"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/template",
-      "version": "7.29.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-template"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/traverse",
-      "version": "7.29.8",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-traverse"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@babel/types",
-      "version": "7.29.8",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://babel.dev/docs/en/next/babel-types"
         }
       ]
     },
@@ -1177,7 +847,7 @@
     {
       "type": "library",
       "name": "@img/sharp-win32-x64",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "licenses": [
         {
           "license": {
@@ -1297,96 +967,6 @@
         {
           "type": "website",
           "url": "https://github.com/justjake/quickjs-emscripten#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@jridgewell/gen-mapping",
-      "version": "0.3.13",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/jridgewell/sourcemaps/tree/main/packages/gen-mapping"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@jridgewell/remapping",
-      "version": "2.3.5",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/jridgewell/sourcemaps/tree/main/packages/remapping"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@jridgewell/resolve-uri",
-      "version": "3.1.2",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/jridgewell/resolve-uri#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@jridgewell/sourcemap-codec",
-      "version": "1.5.5",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/jridgewell/sourcemaps/tree/main/packages/sourcemap-codec"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@jridgewell/trace-mapping",
-      "version": "0.3.31",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/jridgewell/sourcemaps/tree/main/packages/trace-mapping"
         }
       ]
     },
@@ -1735,7 +1315,7 @@
     {
       "type": "library",
       "name": "@rolldown/pluginutils",
-      "version": "1.0.0-beta.53,1.0.1",
+      "version": "1.0.1",
       "licenses": [
         {
           "license": {
@@ -1950,78 +1530,6 @@
     },
     {
       "type": "library",
-      "name": "@types/babel__core",
-      "version": "7.20.5",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/babel__core"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@types/babel__generator",
-      "version": "7.27.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/babel__generator"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@types/babel__template",
-      "version": "7.4.4",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/babel__template"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@types/babel__traverse",
-      "version": "7.28.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/babel__traverse"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@types/node",
       "version": "24.10.1",
       "licenses": [
@@ -2095,7 +1603,7 @@
     {
       "type": "library",
       "name": "@vitejs/plugin-react",
-      "version": "5.1.2",
+      "version": "6.0.5",
       "licenses": [
         {
           "license": {
@@ -2131,7 +1639,7 @@
     {
       "type": "library",
       "name": "adm-zip",
-      "version": "0.5.18",
+      "version": "0.6.0",
       "licenses": [
         {
           "license": {
@@ -2251,24 +1759,6 @@
     },
     {
       "type": "library",
-      "name": "baseline-browser-mapping",
-      "version": "2.11.10",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/web-platform-dx/baseline-browser-mapping#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "bignumber.js",
       "version": "9.3.1",
       "licenses": [
@@ -2341,24 +1831,6 @@
     },
     {
       "type": "library",
-      "name": "browserslist",
-      "version": "4.28.7",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/browserslist/browserslist#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "buffer-equal-constant-time",
       "version": "1.0.1",
       "licenses": [
@@ -2372,24 +1844,6 @@
         {
           "type": "website",
           "url": "https://github.com/goinstant/buffer-equal-constant-time#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "caniuse-lite",
-      "version": "1.0.30001806",
-      "licenses": [
-        {
-          "license": {
-            "id": "CC-BY-4.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/browserslist/caniuse-lite#readme"
         }
       ]
     },
@@ -2426,24 +1880,6 @@
         {
           "type": "website",
           "url": "https://github.com/kaelzhang/node-comment-json#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "convert-source-map",
-      "version": "2.0.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/thlorenz/convert-source-map"
         }
       ]
     },
@@ -2629,24 +2065,6 @@
     },
     {
       "type": "library",
-      "name": "electron-to-chromium",
-      "version": "1.5.399",
-      "licenses": [
-        {
-          "license": {
-            "id": "ISC"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/Kilian/electron-to-chromium#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "es-define-property",
       "version": "1.0.1",
       "licenses": [
@@ -2696,24 +2114,6 @@
         {
           "type": "website",
           "url": "https://github.com/bjyoungblood/es6-error"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "escalade",
-      "version": "3.2.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/lukeed/escalade#readme"
         }
       ]
     },
@@ -2912,24 +2312,6 @@
         {
           "type": "website",
           "url": "https://github.com/googleapis/google-cloud-node-core/tree/main/packages/gcp-metadata"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "gensync",
-      "version": "1.0.0-beta.2",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/loganfsmyth/gensync"
         }
       ]
     },
@@ -3259,42 +2641,6 @@
     },
     {
       "type": "library",
-      "name": "js-tokens",
-      "version": "4.0.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/lydell/js-tokens#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "jsesc",
-      "version": "3.1.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://mths.be/jsesc"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "json-bigint",
       "version": "1.0.0",
       "licenses": [
@@ -3362,24 +2708,6 @@
         {
           "type": "website",
           "url": "https://github.com/isaacs/json-stringify-safe"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "json5",
-      "version": "2.2.3",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "http://json5.org/"
         }
       ]
     },
@@ -3481,24 +2809,6 @@
         {
           "license": {
             "id": "BlueOak-1.0.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/isaacs/node-lru-cache#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "lru-cache",
-      "version": "5.1.1",
-      "licenses": [
-        {
-          "license": {
-            "id": "ISC"
           }
         }
       ],
@@ -3650,24 +2960,6 @@
         {
           "type": "website",
           "url": "https://github.com/node-fetch/node-fetch"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "node-releases",
-      "version": "2.0.51",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/chicoxyzzy/node-releases#readme"
         }
       ]
     },
@@ -4051,24 +3343,6 @@
     },
     {
       "type": "library",
-      "name": "react-refresh",
-      "version": "0.18.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://react.dev/"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "require-from-string",
       "version": "2.0.2",
       "licenses": [
@@ -4178,7 +3452,7 @@
     {
       "type": "library",
       "name": "semver",
-      "version": "6.3.1,7.8.0,7.8.5",
+      "version": "7.8.0,7.8.5",
       "licenses": [
         {
           "license": {
@@ -4232,7 +3506,7 @@
     {
       "type": "library",
       "name": "sharp",
-      "version": "0.34.5",
+      "version": "0.35.3",
       "licenses": [
         {
           "license": {
@@ -4483,26 +3757,8 @@
     },
     {
       "type": "library",
-      "name": "update-browserslist-db",
-      "version": "1.2.3",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/browserslist/update-db#readme"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "vite",
-      "version": "8.2.0",
+      "version": "8.2.1",
       "licenses": [
         {
           "license": {
@@ -4586,24 +3842,6 @@
         {
           "type": "website",
           "url": "https://github.com/websockets/ws"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "yallist",
-      "version": "3.1.1",
-      "licenses": [
-        {
-          "license": {
-            "id": "ISC"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "website",
-          "url": "https://github.com/isaacs/yallist#readme"
         }
       ]
     },

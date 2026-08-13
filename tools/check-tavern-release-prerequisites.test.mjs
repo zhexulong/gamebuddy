@@ -6,7 +6,7 @@ test("Tavern release prerequisite checker reports an unwired Magic Context sourc
   const report = await checkTavernReleasePrerequisites({
     read: async (path, encoding) => {
       const value = await import("node:fs/promises").then(({ readFile }) => readFile(path, encoding));
-      return path.endsWith("gamebuddy-stable-context-source.ts")
+      return path.replaceAll("\\", "/").endsWith("gamebuddy-stable-context-source.ts")
         ? `${value}\n// runtime publication is intentionally unwired`
         : value;
     },
@@ -60,14 +60,95 @@ test("Tavern release prerequisite checker reports an unwired Magic Context sourc
   });
 });
 
+test("Tavern release prerequisite checker executes ordinary containment tests rather than trusting source markers", async () => {
+  const calls = [];
+  const report = await checkTavernReleasePrerequisites({
+    verifyReferences: false,
+    exec(command, args) {
+      calls.push([command, args]);
+    },
+  });
+  assert.deepEqual(
+    report.checks.find((check) => check.id === "tavern_ordinary_link_reparse_containment"),
+    {
+      id: "tavern_ordinary_link_reparse_containment",
+      status: "passed",
+      detail:
+        "ordinary symlink/junction/reparse containment tests passed; same-user hostile TOCTOU is an explicit P3 residual risk, not a hostile-race safety claim",
+    },
+  );
+  assert.equal(
+    calls.some(([, args]) =>
+      args.some((arg) => arg.replaceAll("\\", "/").endsWith("dist-test/tavern/artifact-store.test.js")),
+    ),
+    true,
+  );
+  assert.equal(
+    calls.some(([, args]) => args.some((arg) => arg.replaceAll("\\", "/").endsWith("dist-test/path-lock.test.js"))),
+    true,
+  );
+});
+
+test("Tavern release prerequisite checker blocks when ordinary containment tests fail", async () => {
+  const report = await checkTavernReleasePrerequisites({
+    verifyReferences: false,
+    exec(_command, args) {
+      if (args.some((arg) => arg.replaceAll("\\", "/").endsWith("dist-test/tavern/artifact-store.test.js"))) {
+        throw new Error("containment regression");
+      }
+    },
+  });
+  assert.equal(report.verdict, "blocked");
+  assert.deepEqual(
+    report.checks.find((check) => check.id === "tavern_ordinary_link_reparse_containment"),
+    {
+      id: "tavern_ordinary_link_reparse_containment",
+      status: "blocked",
+      detail: "tavern_ordinary_link_reparse_containment_tests_failed_or_could_not_run",
+    },
+  );
+});
+
+test("Tavern release prerequisite checker blocks filesystem threat-model drift rather than accepting a hostile-race claim", async () => {
+  const report = await checkTavernReleasePrerequisites({
+    verifyReferences: false,
+    tavernFilesystemThreatModel: {
+      schemaVersion: 1,
+      descriptor: { name: "gamebuddy-tavern-filesystem-threat-model", version: "1" },
+      ordinaryContainment: {
+        status: "required",
+        guarantees: ["reject_preexisting_link_or_reparse_escape", "fail_closed_outside_runtime_root"],
+        verification: "host_deterministic_containment_tests",
+      },
+      sameUserHostilePathRace: {
+        status: "P3_defense_in_depth_residual_risk",
+        guarantee: "hostile-race-safe",
+        escalation: "windows_handle_relative_no_follow_required_before_claiming_protection",
+      },
+    },
+    exec() {},
+  });
+  assert.equal(report.verdict, "blocked");
+  assert.deepEqual(
+    report.checks.find((check) => check.id === "tavern_filesystem_threat_model"),
+    {
+      id: "tavern_filesystem_threat_model",
+      status: "blocked",
+      detail: "tavern_filesystem_threat_model_drift",
+    },
+  );
+});
+
 test("Tavern release prerequisite checker fails closed when a selected flow lacks a Host route test marker", async () => {
+  const markers =
+    'routeEnabled("library") routeEnabled("manage-chats") routeEnabled("new-companion") routeEnabled("new-chat") routeEnabled("new-chat-selections") routeEnabled("retry-response") routeEnabled("worldbook-bind") routeEnabled("interchange-import") routeEnabled("refresh") routeEnabled("memories-read") async listCompanions async listChats async createNewCompanion createThread openingSelection guardTavernCausalMutation worldBookBinding decodeSafeInterchange resumeThread magicContextMemoryFacade ${base}/library ${base}/manage-chats ${base}/new-companion ${base}/new-chat ${base}/new-chat/selections ${base}/retry-response ${base}/worldbook ${base}/removed-interchange-export ${base}/refresh ${base}/memories';
   const report = await checkTavernReleasePrerequisites({
     read: async (path, encoding) => {
       const value = await import("node:fs/promises").then(({ readFile }) => readFile(path, encoding));
-      return path.endsWith("dialogue-web.test.ts")
-        ? `${value.replaceAll("${base}/interchange/worldbook/export", "${base}/removed-interchange-export")}\n\${base}/memories`
-        : path.endsWith("dialogue-web.ts")
-          ? `${value}\nrouteEnabled("memories-read") magicContextMemoryFacade`
+      return path.replaceAll("\\", "/").endsWith("dialogue-web.test.ts")
+        ? `${value.replaceAll("${base}/interchange/worldbook/export", "${base}/removed-interchange-export")}\n${markers}`
+        : path.replaceAll("\\", "/").endsWith("dialogue-web.ts")
+          ? `${value}\n${markers}`
           : value;
     },
     exec() {},
@@ -90,7 +171,7 @@ test("Tavern release prerequisite checker fails closed when a selected flow lack
 test("Tavern release prerequisite checker fails closed when compiled Host must-flow contract execution fails", async () => {
   let hostBuildSeen = false;
   const markers =
-    'routeEnabled("library") routeEnabled("manage-chats") routeEnabled("new-companion") routeEnabled("new-chat") routeEnabled("new-chat-selections") routeEnabled("retry-response") routeEnabled("worldbook") routeEnabled("interchange-import") routeEnabled("refresh") routeEnabled("memories-read") async listCompanions async listChats async createNewCompanion createThread openingSelection guardTavernCausalMutation worldBookBinding decodeSafeInterchange resumeThread magicContextMemoryFacade ${base}/library ${base}/manage-chats ${base}/new-companion ${base}/new-chat ${base}/new-chat/selections ${base}/retry-response ${base}/worldbook ${base}/interchange/worldbook/export ${base}/refresh ${base}/memories';
+    'routeEnabled("library") routeEnabled("manage-chats") routeEnabled("new-companion") routeEnabled("new-chat") routeEnabled("new-chat-selections") routeEnabled("retry-response") routeEnabled("worldbook-bind") routeEnabled("interchange-import") routeEnabled("refresh") routeEnabled("memories-read") async listCompanions async listChats async createNewCompanion createThread openingSelection guardTavernCausalMutation worldBookBinding decodeSafeInterchange resumeThread magicContextMemoryFacade ${base}/library ${base}/manage-chats ${base}/new-companion ${base}/new-chat ${base}/new-chat/selections ${base}/retry-response ${base}/worldbook ${base}/interchange/worldbook/export ${base}/refresh ${base}/memories';
   const report = await checkTavernReleasePrerequisites({
     verifyReferences: false,
     read: async (path, encoding) =>
