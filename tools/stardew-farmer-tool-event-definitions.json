@@ -1,0 +1,14 @@
+[
+  {
+    "eventId": "farmer-begin-using-tool-event",
+    "relativePath": "StardewValley/Farmer.cs",
+    "eventField": "beginUsingToolEvent",
+    "handlerMember": "performBeginUsingTool"
+  },
+  {
+    "eventId": "farmer-end-using-tool-event",
+    "relativePath": "StardewValley/Farmer.cs",
+    "eventField": "endUsingToolEvent",
+    "handlerMember": "performEndUsingTool"
+  }
+]

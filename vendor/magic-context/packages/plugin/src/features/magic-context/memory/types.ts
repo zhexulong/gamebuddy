@@ -2,6 +2,7 @@ export type MemoryCategory =
     // ongoing-interaction taxonomy. These memories are interpreted only by the
     // explicit ongoing-interaction domain; they are not project rules.
     | "SEMANTIC_MEMORY"
+    | "INTERACTION_EPISODE"
     // v2 world taxonomy (the 5 categories the historian emits). CONSTRAINTS and
     // NAMING are shared with the legacy set; PROJECT_RULES/ARCHITECTURE/
     // CONFIG_VALUES are new in v2.

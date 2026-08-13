@@ -21,6 +21,37 @@
  */
 
 import { createRequire } from "node:module";
+import { registerTavernNarrativeGateMarkerHook } from "./tavern-narrative-gate-marker";
+export {
+	excludeMemorySource,
+	isMemorySourceExcluded,
+	validateMemorySourceRef,
+	type MemorySourceExclusionInput,
+	type MemorySourceRef,
+} from "./memory-source-exclusion";
+export {
+	registerTavernNarrativeGateMarker,
+	registerTavernNarrativeGateMarkerHook,
+	clearTavernNarrativeGateMarker,
+	resetTavernNarrativeGateMarkersForTest,
+	validateTavernNarrativeGateMarkerConfig,
+	TAVERN_NARRATIVE_GATE_MARKER_SCHEMA,
+} from "./tavern-narrative-gate-marker";
+export {
+	GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION,
+	createGameBuddyMemoryFacade,
+	GameBuddyStableContextSource,
+	GameBuddyStableContextSourceError,
+	clearPublishedGameBuddyStableContext,
+	materializeGameBuddyStableContextSnapshot,
+	publishGameBuddyStableContextSnapshot,
+	readPublishedGameBuddyStableContext,
+	validateGameBuddyStableContextSnapshot,
+	type GameBuddyMemoryFacade,
+	type GameBuddyStableContextBinding,
+	type GameBuddyStableContextMaterialization,
+	type GameBuddyStableContextSnapshot,
+} from "./gamebuddy-stable-context-source";
 import { join, resolve } from "node:path";
 import type {
 	ExtensionAPI,
@@ -783,6 +814,10 @@ async function startPiMagicContextRuntime(
 			`Magic Context (pi) failed to rehydrate deferred Pi compaction markers: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
+
+	// This narrow marker is inert unless the Host installs a per-session binding.
+	// It never inspects provider payloads and does not alter normal configs.
+	registerTavernNarrativeGateMarkerHook(pi);
 
 	info(
 		`loaded v${PLUGIN_VERSION} | harness=pi | db=${dbPath} | ` +
@@ -2148,7 +2183,7 @@ async function startPiMagicContextRuntime(
 				// Drain context-handler session-keyed maps too. Without
 				// this, sessions accumulate state across `session_shutdown`
 				// in long-lived Pi processes that re-init the extension.
-				clearContextHandlerSession(sessionId);
+				clearContextHandlerSession(sessionId, db);
 			}
 		} catch {
 			// best-effort cleanup
@@ -2184,7 +2219,7 @@ async function startPiMagicContextRuntime(
 				// it lets a switch-back reuse the cached prefix instead of forcing a
 				// full m[0] re-materialization (an avoidable prompt-cache bust).
 				clearPiSystemPromptSession(outgoingSessionId);
-				clearContextHandlerSession(outgoingSessionId);
+				clearContextHandlerSession(outgoingSessionId, db);
 			}
 		} catch {
 			// best-effort — Pi proceeds with the switch regardless

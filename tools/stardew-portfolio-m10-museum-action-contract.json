@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_static_action_contract",
+  "contractId": "portfolio_m10_museum_actions_v1",
+  "milestone": "M10",
+  "topology": "single_player_native_companion",
+  "targetVersion": "1.6.15.24356",
+  "sourceAudit": {
+    "path": "tools/stardew-portfolio-m10-museum-source-audit.json",
+    "auditId": "portfolio_m10_museum_source_audit_v1",
+    "anchorIds": ["museum_item_eligibility_guard", "museum_donation_mutex_presentation", "museum_placement_guard", "museum_piece_commit", "museum_donation_item_consumption", "museum_reward_eligibility_guard", "museum_reward_collection_presentation", "museum_reward_claim_commit"],
+    "projectionState": "blocked",
+    "liveState": "not_performed"
+  },
+  "pieceDomain": {
+    "kind": "finite_dsm_piece_domain",
+    "selection": "frozen_dsm_plus_fresh_observation",
+    "values": [],
+    "placeholder": {"kind": "unselected", "value": null},
+    "minCount": 1,
+    "maxCount": 40
+  },
+  "actions": [
+    {
+      "actionId": "donate_museum_item",
+      "actionClass": "primitive",
+      "target": {
+        "piece": {"kind": "opaque_runtime_museum_piece", "source": "fresh_observation", "value": null},
+        "placement": {"kind": "opaque_runtime_museum_placement", "source": "fresh_observation", "value": null}
+      },
+      "input": {
+        "piece": {"kind": "opaque_runtime_museum_piece", "source": "fresh_observation", "value": null},
+        "placement": {"kind": "opaque_runtime_museum_placement", "source": "fresh_observation", "value": null},
+        "quantity": "exactly_one",
+        "selection": "finite_dsm_piece_domain"
+      },
+      "guards": {"gameThreadRevalidation": true, "topology": "single_player_native_companion", "player": "required", "world": "required", "revision": "required", "policy": "required", "deadline": "required", "idempotency": "required", "cancel": "required", "gameState": "required"},
+      "commit": {"transaction": "native_museum_donation", "effects": ["piece_placement_committed", "one_inventory_item_consumed", "one_collection_piece_added"], "inventoryEffect": "one_item_consumed", "collectionEffect": "one_piece_added", "rewardEffect": "none", "separateFromRewardClaim": true},
+      "repeatedSemantics": {"mode": "repeat_single_piece_donation", "onePiecePerExecution": true, "finiteDomain": "pieceDomain", "freshSelectionEachExecution": true, "samePieceRejectedAfterCommit": true},
+      "terminalReceipt": {"state": "succeeded", "evidence": "non_empty_action_specific", "sameExecution": true, "actionSpecific": true},
+      "freshPostcondition": {"provenance": "fresh_native_observation", "inventoryDelta": "minus_one_exact_item", "collectionDelta": "plus_one_piece", "rewardDelta": "unchanged", "placement": "new_native_museum_piece_placement", "freshObservation": true},
+      "lifecycle": {"cancellation": "local_stop_no_success", "saveReopen": "required_when_composed"},
+      "forbiddenBehavior": ["UI automation, window/visual inspection, keyboard/mouse/XInput, or coordinate selection", "Game1.activeClickableMenu, MuseumMenu, ItemGrabMenu, raw menu callback, or dialogue callback invocation", "GameLocation.checkAction, LibraryMuseum.OpenDonationMenu, OpenRewardMenu, or any raw dispatcher string", "save XML editing, direct net-world-state/player/mail/inventory mutation, or fixture-written result state", "arbitrary native call fallback, reflection, private callback invocation, or generic method-name dispatch"]
+    },
+    {
+      "actionId": "claim_museum_reward",
+      "actionClass": "primitive",
+      "target": {"reward": {"kind": "opaque_runtime_museum_reward", "source": "fresh_observation", "value": null}},
+      "input": {"reward": {"kind": "opaque_runtime_museum_reward", "source": "fresh_observation", "value": null}, "selection": "finite_dsm_reward_domain", "delivery": "native_reward_delivery"},
+      "guards": {"gameThreadRevalidation": true, "topology": "single_player_native_companion", "player": "required", "world": "required", "revision": "required", "policy": "required", "deadline": "required", "idempotency": "required", "cancel": "required", "gameState": "required"},
+      "commit": {"transaction": "native_museum_reward_claim", "effects": ["reward_eligibility_consumed", "native_reward_delivered"], "inventoryEffect": "reward_delivery_only", "collectionEffect": "unchanged", "rewardEffect": "one_reward_claimed", "separateFromDonation": true},
+      "repeatedSemantics": {"mode": "independent_reward_claim", "oneClaimPerEligibleReward": true, "finiteDomain": "rewardDomain", "donationExecutionIndependent": true, "alreadyClaimedRejected": true},
+      "terminalReceipt": {"state": "succeeded", "evidence": "non_empty_action_specific", "sameExecution": true, "actionSpecific": true},
+      "freshPostcondition": {"provenance": "fresh_native_observation", "inventoryDelta": "plus_one_reward_or_native_delivery", "collectionDelta": "unchanged", "rewardDelta": "plus_one_claim", "eligibility": "consumed", "freshObservation": true},
+      "lifecycle": {"cancellation": "local_stop_no_success", "saveReopen": "required_when_composed"},
+      "forbiddenBehavior": ["UI automation, window/visual inspection, keyboard/mouse/XInput, or coordinate selection", "Game1.activeClickableMenu, MuseumMenu, ItemGrabMenu, raw menu callback, or dialogue callback invocation", "GameLocation.checkAction, LibraryMuseum.OpenDonationMenu, OpenRewardMenu, or any raw dispatcher string", "save XML editing, direct net-world-state/player/mail/inventory mutation, or fixture-written result state", "arbitrary native call fallback, reflection, private callback invocation, or generic method-name dispatch"]
+    }
+  ],
+  "stateDomains": {
+    "inventory": "donation consumes one ordinary native inventory item; reward claim delivery is recorded separately",
+    "collection": "donation adds one native MuseumPieces entry; reward claim does not",
+    "reward": "claim consumes native reward eligibility and delivers the selected reward; donation does not claim it",
+    "donationReceipt": "same execution succeeded with non-empty donation-specific evidence and fresh inventory/collection deltas",
+    "claimReceipt": "same execution succeeded with non-empty claim-specific evidence and fresh reward delivery/eligibility delta"
+  },
+  "sharedRequestGuards": {"freshObservation": true, "opaqueTarget": true, "scope": true, "gameThread": true, "revision": true, "policy": true, "deadline": true, "idempotency": true, "cancel": true, "state": true, "noUiOrRawFallback": true},
+  "sharedEvidenceRules": {"receiptState": true, "receiptEvidence": true, "postcondition": true, "sameExecution": true, "inventoryDelta": true, "collectionDelta": true, "rewardEligibility": true, "saveReopen": true},
+  "status": {"implementation": "implementation_needed", "fixture": "fixture_needed", "liveClosure": "none", "publication": "none"},
+  "forbiddenBehavior": ["UI automation, window/visual inspection, keyboard/mouse/XInput, or coordinate selection", "Game1.activeClickableMenu, MuseumMenu, ItemGrabMenu, raw menu callback, or dialogue callback invocation", "GameLocation.checkAction, LibraryMuseum.OpenDonationMenu, OpenRewardMenu, or any raw dispatcher string", "save XML editing, direct net-world-state/player/mail/inventory mutation, or fixture-written result state", "arbitrary native call fallback, reflection, private callback invocation, or generic method-name dispatch"],
+  "nonClaims": ["This contract does not publish donate_museum_item or claim_museum_reward.", "The typed Mod implementation is implementation_needed; the independent starting-state fixture is fixture_needed.", "This contract has no live closure, receipt evidence, target-version execution, or release evidence.", "This contract is not a Portfolio milestone pass and cannot be promoted from static or fixture evidence."],
+  "fixtureContractRef": "fixtures/stardew/portfolio-m10-museum-contract.json"
+}

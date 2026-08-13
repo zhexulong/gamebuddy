@@ -77,6 +77,13 @@ function makeMemoryDatabase(): Database {
       PRIMARY KEY(memory_id, model_id)
     );
 
+    CREATE TABLE IF NOT EXISTS memory_source_exclusions (
+      project_path TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (project_path, source_ref)
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
       category,
@@ -315,7 +322,137 @@ describe("promotion", () => {
         });
     });
 
+    describe("#given ongoing-interaction domain", () => {
+        it("promotes both Semantic Memory and Interaction Episode only in ongoing-interaction", () => {
+            db = makeMemoryDatabase();
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [
+                { category: "SEMANTIC_MEMORY", content: "The player explicitly confirmed a durable preference." },
+                { category: "INTERACTION_EPISODE", content: "The player and agent explicitly agreed to resume the named unresolved topic later." },
+            ], "ongoing-interaction");
+
+            expect(getMemoriesByProject(db, "/repo/project").map((memory) => [memory.category, memory.content])).toEqual([
+                ["INTERACTION_EPISODE", "The player and agent explicitly agreed to resume the named unresolved topic later."],
+                ["SEMANTIC_MEMORY", "The player explicitly confirmed a durable preference."],
+            ]);
+        });
+
+        it("rejects ongoing-interaction categories in coding-project while preserving coding promotion", () => {
+            db = makeMemoryDatabase();
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [
+                { category: "SEMANTIC_MEMORY", content: "The player explicitly confirmed a durable preference." },
+                { category: "INTERACTION_EPISODE", content: "A coding task happened once." },
+                { category: "PROJECT_RULES", content: "Run tests before release." },
+            ]);
+
+            expect(getMemoriesByProject(db, "/repo/project").map((memory) => memory.category)).toEqual(["PROJECT_RULES"]);
+        });
+    });
+
+    describe("#given source exclusion", () => {
+        it("skips an excluded Interaction Episode source without affecting another project", () => {
+            db = makeMemoryDatabase();
+            db.prepare("INSERT INTO memory_source_exclusions (project_path, source_ref, created_at) VALUES (?, ?, ?)")
+                .run("/repo/project", "pi-message:opaque-session:opaque-entry", Date.now());
+
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [{
+                category: "INTERACTION_EPISODE",
+                content: "The player and agent explicitly agreed to resume the named unresolved topic later.",
+                sourceRefs: ["pi-message:opaque-session:opaque-entry"],
+            }], "ongoing-interaction");
+            promoteSessionFactsDurable(db, "ses-1", "/repo/other", [{
+                category: "INTERACTION_EPISODE",
+                content: "The player and agent explicitly agreed to resume the named unresolved topic later.",
+                sourceRefs: ["pi-message:opaque-session:opaque-entry"],
+            }], "ongoing-interaction");
+
+            expect(getMemoryCount(db)).toBe(1);
+            expect(getMemoriesByProject(db, "/repo/other")).toHaveLength(1);
+        });
+
+        it("persists opaque source refs in historian metadata", () => {
+            db = makeMemoryDatabase();
+            const sourceRef = "pi-range:opaque-session:opaque-start:opaque-end";
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [{
+                category: "INTERACTION_EPISODE",
+                content: "The player and agent explicitly agreed to resume the named unresolved topic later.",
+                sourceRefs: [sourceRef],
+            }], "ongoing-interaction");
+            const memory = getMemoriesByProject(db, "/repo/project")[0];
+            expect(JSON.parse(memory?.metadataJson ?? "null")).toEqual({ source_refs: [sourceRef] });
+        });
+
+        it("skips a supplied excluded source ref without affecting another project", () => {
+            db = makeMemoryDatabase();
+            db.prepare("INSERT INTO memory_source_exclusions (project_path, source_ref, created_at) VALUES (?, ?, ?)")
+                .run("/repo/project", "pi-message:opaque-session:opaque-entry", Date.now());
+
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [{
+                category: "SEMANTIC_MEMORY",
+                content: "The player explicitly confirmed a durable preference for quiet moments.",
+                sourceRefs: ["pi-message:opaque-session:opaque-entry"],
+            }], "ongoing-interaction");
+            promoteSessionFactsDurable(db, "ses-1", "/repo/other", [{
+                category: "SEMANTIC_MEMORY",
+                content: "The player explicitly confirmed a durable preference for quiet moments.",
+                sourceRefs: ["pi-message:opaque-session:opaque-entry"],
+            }], "ongoing-interaction");
+
+            expect(getMemoryCount(db)).toBe(1);
+            expect(getMemoriesByProject(db, "/repo/other")).toHaveLength(1);
+        });
+
+        it("fails closed for malformed supplied source refs", () => {
+            db = makeMemoryDatabase();
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [{
+                category: "SEMANTIC_MEMORY",
+                content: "The player prefers quiet moments.",
+                sourceRefs: ["not-an-opaque-ref"],
+            }]);
+            expect(getMemoryCount(db)).toBe(0);
+        });
+    });
+
     describe("#given non-promotable facts", () => {
+        it("skips non-semantic ongoing-interaction facts", () => {
+            db = makeMemoryDatabase();
+
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [
+                {
+                    category: "INTERACTION_EPISODE",
+                    content: "We finished organizing tools during this game.",
+                },
+            ]);
+
+            expect(getMemoryCount(db)).toBe(0);
+        });
+
+        it("rejects operational receipt text even with an agreement marker", () => {
+            db = makeMemoryDatabase();
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [{
+                category: "INTERACTION_EPISODE",
+                content: "The tool receipt completed harvest; we explicitly agreed to continue later.",
+            }], "ongoing-interaction");
+            expect(getMemoryCount(db)).toBe(0);
+        });
+
+        it("rejects hyphenated current-state text even with semantic confirmation", () => {
+            db = makeMemoryDatabase();
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [{
+                category: "SEMANTIC_MEMORY",
+                content: "The player explicitly confirmed the current-state boundary.",
+            }], "ongoing-interaction");
+            expect(getMemoryCount(db)).toBe(0);
+        });
+
+        it("admits explicit agreement episodes in English and Chinese", () => {
+            db = makeMemoryDatabase();
+            promoteSessionFactsDurable(db, "ses-1", "/repo/project", [
+                { category: "INTERACTION_EPISODE", content: "The player and agent explicitly agreed to resume the named unresolved topic later." },
+                { category: "INTERACTION_EPISODE", content: "玩家明确约定以后继续讨论这个未解决的话题。" },
+            ], "ongoing-interaction");
+            expect(getMemoryCount(db)).toBe(2);
+        });
+
         it("skips SESSION_NOTES category", () => {
             db = makeMemoryDatabase();
 

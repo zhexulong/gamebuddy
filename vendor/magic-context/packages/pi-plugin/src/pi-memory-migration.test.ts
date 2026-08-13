@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isMemoryMigrationDone } from "@magic-context/core/features/magic-context/memory/memory-migration";
@@ -19,11 +19,17 @@ import type {
 import { runPiMemoryMigration } from "./pi-memory-migration";
 
 let prevDataHome: string | undefined;
+let prevTestDataDir: string | undefined;
 let tempHome: string;
 
 beforeEach(() => {
 	prevDataHome = process.env.XDG_DATA_HOME;
+	prevTestDataDir = process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
 	tempHome = mkdtempSync(join(tmpdir(), "mc-pi-memmig-"));
+	// resolveDatabasePath intentionally gives this test-only hard guard
+	// precedence over XDG_DATA_HOME. Override both or this suite opens the
+	// preload database and keeps its WAL handle across individual teardowns.
+	process.env.MAGIC_CONTEXT_TEST_DATA_DIR = tempHome;
 	process.env.XDG_DATA_HOME = tempHome;
 	mkdirSync(join(tempHome, "cortexkit", "magic-context"), { recursive: true });
 	closeDatabase();
@@ -33,7 +39,20 @@ afterEach(() => {
 	closeDatabase();
 	if (prevDataHome === undefined) delete process.env.XDG_DATA_HOME;
 	else process.env.XDG_DATA_HOME = prevDataHome;
-	rmSync(tempHome, { recursive: true, force: true });
+	if (prevTestDataDir === undefined) delete process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
+	else process.env.MAGIC_CONTEXT_TEST_DATA_DIR = prevTestDataDir;
+	// `node:sqlite` can retain a SQLite file handle until its prepared
+	// statements are garbage-collected on Windows. The migration assertions have
+	// already completed; closeDatabase is still mandatory, while cleanup is
+	// deliberately best-effort so a host file-lock detail cannot turn every
+	// behavioral test red or strand the Bun worker.
+	try {
+		rmSync(tempHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+	} catch (error) {
+		if ((error as { code?: string }).code !== "EBUSY") throw error;
+		const cleanupMarker = join(tempHome, ".cleanup-pending");
+		try { closeSync(openSync(cleanupMarker, "w")); } catch { /* best effort */ }
+	}
 });
 
 function runnerReturning(assistantText: string): SubagentRunner {

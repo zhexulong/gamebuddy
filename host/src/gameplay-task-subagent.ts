@@ -13,7 +13,14 @@ import {
 import { Type } from "typebox";
 
 import { type IntegrationConnection } from "./integration-types.js";
-import { type IntegrationActionCatalog, type IntegrationActionPolicy, type IntegrationExecutionReceipt, type IntegrationStateView } from "./integration-module.js";
+import { executionWakeSourceFor, normalizeExecutionWake, type ExecutionWakeSource } from "./integration-launcher.js";
+import {
+  type IntegrationActionCatalog,
+  type IntegrationActionPolicy,
+  type IntegrationDispatchAdmission,
+  type IntegrationExecutionReceipt,
+  type IntegrationStateView,
+} from "./integration-module.js";
 import { finalAssistantText } from "./agent-expression.js";
 import { type CompanionModelConfig, type RuntimePaths } from "./runtime.js";
 
@@ -65,9 +72,13 @@ export type GameplayTaskRecord = Readonly<{
   acceptedActions: number;
   acceptedActionsByFamily: Readonly<Record<string, number>>;
   executions: readonly Readonly<{ actionId: string; requestId: string; executionId: string; state: string }>[];
+  /** A request was written but its execute response has not yet been reconciled. */
+  pendingDispatch: Readonly<{ actionId: string; requestId: string; state: "dispatching" | "uncertain"; cancelRequired: boolean }> | null;
   /** Receipt reference only; evidence remains Mod-owned and is never copied into worker trace. */
   terminalReceipt: Readonly<{ requestId: string; executionId: string; state: string; reasonCode: string }> | null;
   terminalReasonCode: string | null;
+  /** Whether terminal reconciliation had an adapter wake in addition to polling. */
+  wakeMode: "polling" | "event_with_reconcile_poll";
 }>;
 
 export type GameplayTaskStep = Readonly<{
@@ -77,27 +88,61 @@ export type GameplayTaskStep = Readonly<{
 
 /** Test-only seam: production keeps the private Pi SDK setup below. */
 export type GameplayTaskSessionFactory = Readonly<{
-  create(input: Readonly<{
-    taskId: string;
-    taskRoot: string;
-    agentDir: string;
-    allowedToolNames: readonly string[];
-    customTools: readonly ToolDefinition[];
-  }>): Promise<AgentSession>;
+  create(
+    input: Readonly<{
+      taskId: string;
+      taskRoot: string;
+      agentDir: string;
+      allowedToolNames: readonly string[];
+      customTools: readonly ToolDefinition[];
+    }>,
+  ): Promise<AgentSession>;
 }>;
 
+/**
+ * Runtime-owned action correlation for one private worker task. The ledger is
+ * the only Host cancel sender; `cancelPending` preserves P4's accepted-after-
+ * cancellation race by marking the pre-write registration before a receipt is
+ * available.
+ */
+export type GameplayTaskDispatchAdmission = IntegrationDispatchAdmission &
+  Readonly<{
+    cancelPending(reasonCode: string): void;
+  }>;
+
+export type GameplayTaskDispatchAdmissionFactory = () => GameplayTaskDispatchAdmission;
+
 type MutableTaskRecord = {
-  taskId: string; scope: IntegrationConnection["scope"]; createdAtMs: number; deadlineMs: number; cancellationEpoch: number; budget: GameplayTaskBudget;
-  turns: number; toolCalls: number; modelRetries: number; acceptedActions: number; acceptedActionsByFamily: Record<string, number>;
-  executions: Array<{ actionId: string; requestId: string; executionId: string; state: string }>; terminalReceipt: { requestId: string; executionId: string; state: string; reasonCode: string } | null; terminalReasonCode: string | null;
+  taskId: string;
+  scope: IntegrationConnection["scope"];
+  createdAtMs: number;
+  deadlineMs: number;
+  cancellationEpoch: number;
+  budget: GameplayTaskBudget;
+  turns: number;
+  toolCalls: number;
+  modelRetries: number;
+  acceptedActions: number;
+  acceptedActionsByFamily: Record<string, number>;
+  executions: Array<{ actionId: string; requestId: string; executionId: string; state: string }>;
+  pendingDispatch: { actionId: string; requestId: string; state: "dispatching" | "uncertain"; cancelRequired: boolean } | null;
+  terminalReceipt: { requestId: string; executionId: string; state: string; reasonCode: string } | null;
+  terminalReasonCode: string | null;
+  wakeMode: "polling" | "event_with_reconcile_poll";
 };
-type ActiveTask = Readonly<{
+type ActiveTask = {
   taskId: string;
   controller: AbortController;
   session: AgentSession;
   record: MutableTaskRecord;
+  dispatchAdmission: GameplayTaskDispatchAdmission | undefined;
+  cancellationIssued: boolean;
+};
+type GameplayTaskReport = Readonly<{
+  state: "completed" | "blocked" | "cancelled";
+  reasonCode: string;
+  evidence?: unknown;
 }>;
-type GameplayTaskReport = Readonly<{ state: "completed" | "blocked" | "cancelled"; reasonCode: string; evidence?: unknown }>;
 /**
  * Thin, task-scoped Pi child. It has no Magic Context, identity profile,
  * presentation tool, todo writer, or persistent session. The parent remains
@@ -110,6 +155,7 @@ export class GameplayTaskSubagent {
   #lastTaskResult: GameplayTaskResult | null = null;
   #lastTaskSteps: readonly GameplayTaskStep[] = Object.freeze([]);
   #cancellationEpoch = 0;
+  readonly #executionWakeSource: ExecutionWakeSource | undefined;
 
   public constructor(
     private readonly paths: RuntimePaths,
@@ -117,24 +163,40 @@ export class GameplayTaskSubagent {
     private readonly actionPolicy?: IntegrationActionPolicy,
     private readonly budget: GameplayTaskBudget = DEFAULT_GAMEPLAY_TASK_BUDGET,
     private readonly sessionFactory?: GameplayTaskSessionFactory,
+    private readonly executionWakeSource?: ExecutionWakeSource,
+    private readonly dispatchAdmissionFactory?: GameplayTaskDispatchAdmissionFactory,
   ) {
     assertBudget(budget);
+    this.#executionWakeSource = executionWakeSource ?? executionWakeSourceFor(integration);
   }
 
-  public get modelConfig(): CompanionModelConfig { return GAMEPLAY_SUBAGENT_MODEL_CONFIG; }
+  public get modelConfig(): CompanionModelConfig {
+    return GAMEPLAY_SUBAGENT_MODEL_CONFIG;
+  }
 
-  public get activeTaskId(): string | null { return this.#active?.taskId ?? null; }
+  public get activeTaskId(): string | null {
+    return this.#active?.taskId ?? null;
+  }
   /** Immutable private-trace projection; never exposed as a player tool. */
-  public get lastTaskRecord(): GameplayTaskRecord | null { return this.#lastTaskRecord; }
-  public get lastTaskResult(): GameplayTaskResult | null { return this.#lastTaskResult; }
-  public get lastTaskSteps(): readonly GameplayTaskStep[] { return this.#lastTaskSteps; }
-  public dispose(): void { this.cancel("gameplay_subagent_disposed"); }
+  public get lastTaskRecord(): GameplayTaskRecord | null {
+    return this.#lastTaskRecord;
+  }
+  public get lastTaskResult(): GameplayTaskResult | null {
+    return this.#lastTaskResult;
+  }
+  public get lastTaskSteps(): readonly GameplayTaskStep[] {
+    return this.#lastTaskSteps;
+  }
+  public dispose(): void {
+    this.cancel("gameplay_subagent_disposed");
+  }
 
   public createDelegateTool(): ToolDefinition {
     return defineTool({
       name: "delegate_game_task",
       label: "Delegate Gameplay Task",
-      description: "Run one bounded gameplay task in a private child Agent. The child cannot speak to the player or change its own permissions.",
+      description:
+        "Run one bounded gameplay task in a private child Agent. The child cannot speak to the player or change its own permissions.",
       parameters: Type.Object({ task: Type.String({ minLength: 1, maxLength: 2_000 }) }),
       execute: async (_toolCallId, params, signal) => {
         const result = await this.run(params.task, signal);
@@ -151,24 +213,21 @@ export class GameplayTaskSubagent {
     const active = this.#active;
     if (active === undefined) return;
     active.record.terminalReasonCode ??= reasonCode;
+    // A request can be on the wire before execute() has returned its execution
+    // id. Seal cancellation admission now; settling the response below issues
+    // the exact owned cancel once the Mod correlation is known.
+    if (active.record.pendingDispatch !== null) active.record.pendingDispatch.cancelRequired = true;
+    if (active.cancellationIssued) return;
+    active.cancellationIssued = true;
     this.#cancellationEpoch++;
     active.controller.abort(reasonCode);
-    // Never cancel an execution the task did not itself receive: another
-    // product actor may own the currently active Mod execution. A just-accepted
-    // request may not yet be present in the next snapshot, so fall back to this
-    // task's sole nonterminal owned execution rather than silently abandoning it.
-    const module = requireIntegrationModule(this.integration);
-    const execution = selectTaskOwnedCancellation(active.record.executions, module.readState(this.integration).activeExecution);
-    if (execution !== null) {
-      const cancelled = module.cancelExecution(this.integration, execution.requestId, execution.executionId, reasonCode);
-      if (isPromiseLike(cancelled)) void cancelled.catch(() => undefined);
-    }
+    issueTaskOwnedCancellation(active.record, active.dispatchAdmission, reasonCode);
     void active.session.abort().catch(() => undefined);
   }
 
   public async run(task: string, parentSignal?: AbortSignal): Promise<GameplayTaskResult> {
     if (this.#active !== undefined) throw new Error("gameplay_task_already_active");
-    return this.#lastTaskResult = await this.runTask(task, parentSignal);
+    return (this.#lastTaskResult = await this.runTask(task, parentSignal));
   }
 
   private async runTask(task: string, parentSignal?: AbortSignal): Promise<GameplayTaskResult> {
@@ -189,8 +248,10 @@ export class GameplayTaskSubagent {
       acceptedActions: 0,
       acceptedActionsByFamily: {},
       executions: [],
+      pendingDispatch: null,
       terminalReceipt: null,
       terminalReasonCode: null,
+      wakeMode: this.#executionWakeSource === undefined ? "polling" : "event_with_reconcile_poll",
     };
     const controller = new AbortController();
     const onParentAbort = () => {
@@ -216,8 +277,20 @@ export class GameplayTaskSubagent {
           evidence: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
         }),
         execute: async (_toolCallId, params) => {
-          const report: GameplayTaskReport = Object.freeze({ state: params.state, reasonCode: params.reasonCode, ...(params.evidence === undefined ? {} : { evidence: params.evidence }) });
-          if (report.state === "completed" && !hasAuthoritativeCompletion(report, requireIntegrationModule(this.integration).readState(this.integration).latestReceipt, record.executions, requireIntegrationModule(this.integration).actionCatalog)) {
+          const report: GameplayTaskReport = Object.freeze({
+            state: params.state,
+            reasonCode: params.reasonCode,
+            ...(params.evidence === undefined ? {} : { evidence: params.evidence }),
+          });
+          if (
+            report.state === "completed" &&
+            !hasAuthoritativeCompletion(
+              report,
+              requireIntegrationModule(this.integration).readState(this.integration).latestReceipt,
+              record.executions,
+              requireIntegrationModule(this.integration).actionCatalog,
+            )
+          ) {
             throw new Error("authoritative_completion_receipt_required");
           }
           this.#lastReport = report;
@@ -232,21 +305,44 @@ export class GameplayTaskSubagent {
         parameters: Type.Object({}),
         execute: async () => {
           const state = requireIntegrationModule(this.integration).readState(this.integration);
-          const details = { host: "ready", connected: state.connected, capabilities: [...state.capabilities], snapshotRevision: state.snapshotRevision, latestReceiptState: state.latestReceipt?.state ?? null };
+          const details = {
+            host: "ready",
+            connected: state.connected,
+            capabilities: [...state.capabilities],
+            snapshotRevision: state.snapshotRevision,
+            latestReceiptState: state.latestReceipt?.state ?? null,
+          };
           return { content: [{ type: "text" as const, text: JSON.stringify(details) }], details };
         },
       });
-      const integrationToolSet = integrationModule.createToolSet({ connection: this.integration, knowledge: this.integration.knowledge, gameVersion: this.integration.gameVersion, policy: this.actionPolicy });
+      // Action tools are absent without a runtime-minted admission. A worker
+      // never synthesizes correlation ownership from its task id or model call.
+      const dispatchAdmission = this.dispatchAdmissionFactory?.();
+      const integrationToolSet = integrationModule.createToolSet({
+        connection: this.integration,
+        knowledge: this.integration.knowledge,
+        gameVersion: this.integration.gameVersion,
+        policy: this.actionPolicy,
+        dispatchAdmission,
+      });
       const integrationTools = [
         ...integrationToolSet.observation,
         ...integrationToolSet.actions,
         ...integrationToolSet.knowledge,
       ];
-      const budgetedIntegrationTools = integrationTools.map((tool) => budgetTool(tool, record, controller, this.integration, integrationModule, (reasonCode) => this.cancel(reasonCode)));
+      const budgetedIntegrationTools = integrationTools.map((tool) =>
+        budgetTool(tool, record, controller, this.integration, integrationModule, dispatchAdmission, (reasonCode) =>
+          this.cancel(reasonCode),
+        ),
+      );
       const customTools = [
-        budgetTool(status, record, controller, this.integration, integrationModule, (reasonCode) => this.cancel(reasonCode)),
+        budgetTool(status, record, controller, this.integration, integrationModule, dispatchAdmission, (reasonCode) =>
+          this.cancel(reasonCode),
+        ),
         ...budgetedIntegrationTools,
-        budgetTool(reportTool, record, controller, this.integration, integrationModule, (reasonCode) => this.cancel(reasonCode)),
+        budgetTool(reportTool, record, controller, this.integration, integrationModule, dispatchAdmission, (reasonCode) =>
+          this.cancel(reasonCode),
+        ),
       ];
       const allowedToolNames = customTools.map((tool) => tool.name).sort();
       if (this.sessionFactory !== undefined) {
@@ -255,24 +351,54 @@ export class GameplayTaskSubagent {
         session = await createProductionGameplayTaskSession(taskRoot, agentDir, taskId, allowedToolNames, customTools);
       }
       const actualToolNames = session.agent.state.tools.map((tool) => tool.name).sort();
-      if (JSON.stringify(actualToolNames) !== JSON.stringify(allowedToolNames)) throw new Error("gameplay_subagent_tool_isolation_failed");
-      this.#active = { taskId, controller, session, record };
-      const timeout = setTimeout(() => this.cancel("gameplay_task_wall_clock_budget_exhausted"), record.budget.maxWallClockMs);
+      if (JSON.stringify(actualToolNames) !== JSON.stringify(allowedToolNames))
+        throw new Error("gameplay_subagent_tool_isolation_failed");
+      this.#active = { taskId, controller, session, record, dispatchAdmission, cancellationIssued: false };
+      // Liveness is fail-closed for this task only: stop further tool admission,
+      // issue at most one owned cancellation, then let the existing bounded
+      // receipt watchdog determine the terminal outcome.
+      const unsubscribeLiveness = this.#executionWakeSource?.onExecutionWake((candidate) => {
+        const wake = normalizeExecutionWake(candidate);
+        if (wake?.kind === "invalidated" || wake?.kind === "disconnected")
+          this.cancel(`integration_${wake.kind}:${wake.reasonCode}`);
+      });
+      const timeout = setTimeout(
+        () => this.cancel("gameplay_task_wall_clock_budget_exhausted"),
+        record.budget.maxWallClockMs,
+      );
       const unsubscribe = session.subscribe((event) => {
         if (event.type === "agent_end") {
           record.turns++;
           if (event.willRetry) record.modelRetries++;
           if (record.turns >= record.budget.maxTurns) this.cancel("gameplay_task_turn_budget_exhausted");
-          else if (record.modelRetries > record.budget.maxModelRetries) this.cancel("gameplay_task_retry_budget_exhausted");
+          else if (record.modelRetries > record.budget.maxModelRetries)
+            this.cancel("gameplay_task_retry_budget_exhausted");
         }
       });
       try {
-        if (controller.signal.aborted) return await abortedTaskResult(taskId, record, this.#lastReport, this.integration);
+        if (controller.signal.aborted)
+          return await abortedTaskResult(
+            taskId,
+            record,
+            this.#lastReport,
+            this.integration,
+            controller.signal,
+            this.#executionWakeSource,
+          );
         await session.prompt(task);
-        if (controller.signal.aborted) return await abortedTaskResult(taskId, record, this.#lastReport, this.integration);
+        if (controller.signal.aborted)
+          return await abortedTaskResult(
+            taskId,
+            record,
+            this.#lastReport,
+            this.integration,
+            controller.signal,
+            this.#executionWakeSource,
+          );
       } finally {
         clearTimeout(timeout);
         unsubscribe();
+        unsubscribeLiveness?.();
       }
       const summary = finalAssistantText(session.messages);
       steps.push(Object.freeze({ name: "worker_finished", reasonCode: "worker_prompt_finished" }));
@@ -280,28 +406,68 @@ export class GameplayTaskSubagent {
       if (finalReport === null) {
         record.terminalReasonCode ??= "missing_terminal_report";
         steps.push(Object.freeze({ name: "blocked", reasonCode: record.terminalReasonCode }));
-        return { taskId, state: "blocked", summary: cap(summary), report: Object.freeze({ reasonCode: "missing_terminal_report" }) };
+        return {
+          taskId,
+          state: "blocked",
+          summary: cap(summary),
+          report: Object.freeze({ reasonCode: "missing_terminal_report" }),
+        };
       }
       if (finalReport.state === "completed") {
         steps.push(Object.freeze({ name: "worker_reported_completed", reasonCode: finalReport.reasonCode }));
         // Recheck at the Host terminal boundary. A later, unrelated receipt may
         // have displaced the one that made report_to_parent admissible.
-        if (!hasAuthoritativeCompletion(finalReport, integrationModule.readState(this.integration).latestReceipt, record.executions, integrationModule.actionCatalog)) {
+        if (
+          !hasAuthoritativeCompletion(
+            finalReport,
+            integrationModule.readState(this.integration).latestReceipt,
+            record.executions,
+            integrationModule.actionCatalog,
+          )
+        ) {
           record.terminalReasonCode = "authoritative_completion_receipt_lost";
           steps.push(Object.freeze({ name: "blocked", reasonCode: record.terminalReasonCode }));
-          return { taskId, state: "blocked", summary: cap(summary), report: Object.freeze({ reasonCode: record.terminalReasonCode }) };
+          return {
+            taskId,
+            state: "blocked",
+            summary: cap(summary),
+            report: Object.freeze({ reasonCode: record.terminalReasonCode }),
+          };
         }
         const receipt = integrationModule.readState(this.integration).latestReceipt;
         if (receipt === null) throw new Error("authoritative_completion_receipt_lost");
-        record.terminalReceipt = Object.freeze({ requestId: receipt.requestId, executionId: receipt.executionId, state: receipt.state, reasonCode: receipt.reasonCode });
+        record.terminalReceipt = Object.freeze({
+          requestId: receipt.requestId,
+          executionId: receipt.executionId,
+          state: receipt.state,
+          reasonCode: receipt.reasonCode,
+        });
       }
       record.terminalReasonCode ??= finalReport.reasonCode;
-      steps.push(Object.freeze({ name: finalReport.state === "completed" ? "authoritatively_completed" : finalReport.state, reasonCode: record.terminalReasonCode }));
+      steps.push(
+        Object.freeze({
+          name: finalReport.state === "completed" ? "authoritatively_completed" : finalReport.state,
+          reasonCode: record.terminalReasonCode,
+        }),
+      );
       return { taskId, state: finalReport.state, summary: cap(summary), report: finalReport };
     } catch (error) {
-      if (controller.signal.aborted || (error instanceof Error && /aborted|cancelled/i.test(error.message))) return await abortedTaskResult(taskId, record, this.#lastReport, this.integration);
+      if (controller.signal.aborted || (error instanceof Error && /aborted|cancelled/i.test(error.message)))
+        return await abortedTaskResult(
+          taskId,
+          record,
+          this.#lastReport,
+          this.integration,
+          controller.signal,
+          this.#executionWakeSource,
+        );
       record.terminalReasonCode ??= error instanceof Error ? error.message : "gameplay_subagent_failed";
-      return { taskId, state: "blocked", summary: null, report: Object.freeze({ reasonCode: record.terminalReasonCode }) };
+      return {
+        taskId,
+        state: "blocked",
+        summary: null,
+        report: Object.freeze({ reasonCode: record.terminalReasonCode }),
+      };
     } finally {
       parentSignal?.removeEventListener("abort", onParentAbort);
       this.#lastTaskRecord = freezeRecord(record);
@@ -313,7 +479,13 @@ export class GameplayTaskSubagent {
   }
 }
 
-async function createProductionGameplayTaskSession(taskRoot: string, agentDir: string, taskId: string, allowedToolNames: readonly string[], customTools: readonly ToolDefinition[]): Promise<AgentSession> {
+async function createProductionGameplayTaskSession(
+  taskRoot: string,
+  agentDir: string,
+  taskId: string,
+  allowedToolNames: readonly string[],
+  customTools: readonly ToolDefinition[],
+): Promise<AgentSession> {
   const modelRuntime = await createTaskModelRuntime(agentDir, GAMEPLAY_SUBAGENT_MODEL_CONFIG);
   const model = modelRuntime.getModel(GAMEPLAY_SUBAGENT_MODEL_CONFIG.provider, GAMEPLAY_SUBAGENT_MODEL_CONFIG.modelId);
   if (model === undefined) throw new Error("gameplay_subagent_model_unavailable");
@@ -355,52 +527,108 @@ async function createProductionGameplayTaskSession(taskRoot: string, agentDir: s
 
 async function createTaskModelRuntime(agentDir: string, config: CompanionModelConfig): Promise<ModelRuntime> {
   const modelsPath = join(agentDir, "models.json");
-  await writeFile(modelsPath, JSON.stringify({ providers: {
-    "cpa-oai": {
-      name: "CPA OpenAI-compatible Agent",
-      baseUrl: "http://127.0.0.1:8317/v1",
-      api: "openai-completions",
-      apiKey: "$CPA_OAI_API_KEY",
-      authHeader: true,
-      compat: { supportsDeveloperRole: false, supportsReasoningEffort: true },
-      models: [{ id: config.modelId, name: config.modelId, reasoning: true, thinkingLevelMap: { off: "none", minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" }, input: ["text"], contextWindow: 272_000, maxTokens: 128_000, cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 } }],
-    },
-  } }, null, 2), "utf8");
-  return ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath, modelsStorePath: join(agentDir, "models-store.json"), allowModelNetwork: true });
+  await writeFile(
+    modelsPath,
+    JSON.stringify(
+      {
+        providers: {
+          "cpa-oai": {
+            name: "CPA OpenAI-compatible Agent",
+            baseUrl: "http://127.0.0.1:8317/v1",
+            api: "openai-completions",
+            apiKey: "$CPA_OAI_API_KEY",
+            authHeader: true,
+            compat: { supportsDeveloperRole: false, supportsReasoningEffort: true },
+            models: [
+              {
+                id: config.modelId,
+                name: config.modelId,
+                reasoning: true,
+                thinkingLevelMap: {
+                  off: "none",
+                  minimal: null,
+                  low: "low",
+                  medium: "medium",
+                  high: "high",
+                  xhigh: "xhigh",
+                  max: "max",
+                },
+                input: ["text"],
+                contextWindow: 272_000,
+                maxTokens: 128_000,
+                cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+              },
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  return ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath,
+    modelsStorePath: join(agentDir, "models-store.json"),
+    allowModelNetwork: true,
+  });
 }
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {
-  return typeof value === "object" && value !== null && "then" in value && typeof (value as { then?: unknown }).then === "function";
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
 }
 
 export function selectTaskOwnedCancellation(
   taskExecutions: readonly Readonly<{ requestId: string; executionId: string; state: string }>[],
   observed: Readonly<{ requestId: string; executionId: string }> | null | undefined,
 ): Readonly<{ requestId: string; executionId: string }> | null {
-  if (observed !== null && observed !== undefined
-    && taskExecutions.some((known) => known.requestId === observed.requestId && known.executionId === observed.executionId)) {
+  if (
+    observed !== null &&
+    observed !== undefined &&
+    taskExecutions.some((known) => known.requestId === observed.requestId && known.executionId === observed.executionId)
+  ) {
     return Object.freeze({ requestId: observed.requestId, executionId: observed.executionId });
   }
   const nonterminal = taskExecutions.find((known) => !isTerminalReceiptState(known.state));
-  return nonterminal === undefined ? null : Object.freeze({ requestId: nonterminal.requestId, executionId: nonterminal.executionId });
+  return nonterminal === undefined
+    ? null
+    : Object.freeze({ requestId: nonterminal.requestId, executionId: nonterminal.executionId });
 }
 
 export type GameplayActionAdmission =
   | Readonly<{ ok: true; familyId: string }>
-  | Readonly<{ ok: false; reasonCode: "unknown_gameplay_action" | "gameplay_task_active_execution_exists" | "gameplay_task_action_budget_exhausted" | "gameplay_task_action_family_budget_exhausted" }>;
+  | Readonly<{
+      ok: false;
+      reasonCode:
+        | "unknown_gameplay_action"
+        | "gameplay_task_active_execution_exists"
+        | "gameplay_task_action_budget_exhausted"
+        | "gameplay_task_action_family_budget_exhausted";
+    }>;
 
 /** Pure Host admission decision used immediately before a Game Action tool call. */
 export function admitGameplayAction(
   actionId: string,
-  record: Readonly<Pick<MutableTaskRecord, "acceptedActions" | "acceptedActionsByFamily" | "executions" | "budget">>,
+  record: Readonly<Pick<MutableTaskRecord, "acceptedActions" | "acceptedActionsByFamily" | "executions" | "budget">> &
+    Readonly<Partial<Pick<MutableTaskRecord, "pendingDispatch">>>,
   activeExecution: Readonly<{ requestId: string; executionId: string }> | null | undefined,
   catalog: IntegrationActionCatalog,
 ): GameplayActionAdmission {
   const entry = catalog.get(actionId);
   const familyId = entry?.familyId;
-  if (familyId === undefined || !catalog.isPublished(actionId)) return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
-  if (activeExecution !== null && activeExecution !== undefined
-    || record.executions.some((known) => !isTerminalReceiptState(known.state))) {
+  if (familyId === undefined || !catalog.isPublished(actionId))
+    return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
+  if (
+    (activeExecution !== null && activeExecution !== undefined) ||
+    record.executions.some((known) => !isTerminalReceiptState(known.state)) ||
+    record.pendingDispatch != null
+  ) {
     return Object.freeze({ ok: false, reasonCode: "gameplay_task_active_execution_exists" });
   }
   if (record.acceptedActions >= record.budget.maxAcceptedActions) {
@@ -418,12 +646,22 @@ export function hasAuthoritativeCompletion(
   taskExecutions: readonly Readonly<{ actionId: string; requestId: string; executionId: string }>[],
   catalog: IntegrationActionCatalog,
 ): boolean {
-  if (report.state !== "completed" || receipt?.state !== "succeeded" || receipt.evidence === null || !isRecord(report.evidence)) return false;
+  if (
+    report.state !== "completed" ||
+    receipt?.state !== "succeeded" ||
+    receipt.evidence === null ||
+    !isRecord(report.evidence)
+  )
+    return false;
   const requestId = report.evidence.requestId;
   const executionId = report.evidence.executionId;
   const execution = taskExecutions.find((known) => known.requestId === requestId && known.executionId === executionId);
-  return requestId === receipt.requestId && executionId === receipt.executionId
-    && execution !== undefined && catalog.hasCompletionEvidence(execution.actionId, receipt);
+  return (
+    requestId === receipt.requestId &&
+    executionId === receipt.executionId &&
+    execution !== undefined &&
+    catalog.hasCompletionEvidence(execution.actionId, receipt)
+  );
 }
 
 /**
@@ -432,8 +670,16 @@ export function hasAuthoritativeCompletion(
  * receipt evidence to a catalog completion validator; Host never treats a
  * generic success string as proof of completion.
  */
-export function hasActionPostconditionEvidence(actionId: string, receipt: Readonly<{ reasonCode: string; evidence: Readonly<Record<string, unknown>> | null }>, catalog: IntegrationActionCatalog): boolean {
-  return catalog.hasCompletionEvidence(actionId, { state: "succeeded", reasonCode: receipt.reasonCode, evidence: receipt.evidence });
+export function hasActionPostconditionEvidence(
+  actionId: string,
+  receipt: Readonly<{ reasonCode: string; evidence: Readonly<Record<string, unknown>> | null }>,
+  catalog: IntegrationActionCatalog,
+): boolean {
+  return catalog.hasCompletionEvidence(actionId, {
+    state: "succeeded",
+    reasonCode: receipt.reasonCode,
+    evidence: receipt.evidence,
+  });
 }
 
 function assertBudget(budget: GameplayTaskBudget): void {
@@ -449,11 +695,20 @@ function freezeRecord(record: MutableTaskRecord): GameplayTaskRecord {
     budget: Object.freeze({ ...record.budget }),
     acceptedActionsByFamily: Object.freeze({ ...record.acceptedActionsByFamily }),
     executions: Object.freeze(record.executions.map((execution) => Object.freeze({ ...execution }))),
+    pendingDispatch: record.pendingDispatch === null ? null : Object.freeze({ ...record.pendingDispatch }),
     terminalReceipt: record.terminalReceipt === null ? null : Object.freeze({ ...record.terminalReceipt }),
   });
 }
 
-function budgetTool(tool: ToolDefinition, record: MutableTaskRecord, controller: AbortController, integration: IntegrationConnection, integrationModule: ReturnType<typeof requireIntegrationModule>, cancelTask: (reasonCode: string) => void): ToolDefinition {
+function budgetTool(
+  tool: ToolDefinition,
+  record: MutableTaskRecord,
+  controller: AbortController,
+  integration: IntegrationConnection,
+  integrationModule: ReturnType<typeof requireIntegrationModule>,
+  dispatchAdmission: GameplayTaskDispatchAdmission | undefined,
+  cancelTask: (reasonCode: string) => void,
+): ToolDefinition {
   const actionId = integrationModule.actionIdForToolName(tool.name);
   const isCancel = integrationModule.isCancellationTool(tool.name);
   return {
@@ -469,14 +724,22 @@ function budgetTool(tool: ToolDefinition, record: MutableTaskRecord, controller:
       if (isCancel) {
         const requestId = isRecord(params) ? params.requestId : undefined;
         const executionId = isRecord(params) ? params.executionId : undefined;
-        if (typeof requestId !== "string" || typeof executionId !== "string"
-          || !record.executions.some((known) => known.requestId === requestId && known.executionId === executionId)) {
+        if (
+          typeof requestId !== "string" ||
+          typeof executionId !== "string" ||
+          !record.executions.some((known) => known.requestId === requestId && known.executionId === executionId)
+        ) {
           throw new Error("gameplay_task_cancel_not_owned");
         }
       }
       if (actionId !== null) {
         reconcileKnownExecution(record, integration);
-        const admission = admitGameplayAction(actionId, record, integrationModule.readState(integration).activeExecution, integrationModule.actionCatalog);
+        const admission = admitGameplayAction(
+          actionId,
+          record,
+          integrationModule.readState(integration).activeExecution,
+          integrationModule.actionCatalog,
+        );
         if (!admission.ok) {
           if (admission.reasonCode.includes("budget_exhausted")) {
             record.terminalReasonCode ??= admission.reasonCode;
@@ -484,29 +747,51 @@ function budgetTool(tool: ToolDefinition, record: MutableTaskRecord, controller:
           }
           throw new Error(admission.reasonCode);
         }
-        const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
-        const receipt = parseReceipt(result.details, integrationModule);
-        if (receipt !== null && (receipt.state === "accepted" || receipt.state === "running" || receipt.state === "succeeded")) {
-          record.acceptedActions++;
-          record.acceptedActionsByFamily[admission.familyId] = (record.acceptedActionsByFamily[admission.familyId] ?? 0) + 1;
-          record.executions.push({ actionId, requestId: receipt.requestId, executionId: receipt.executionId, state: receipt.state });
+        const requestId = isRecord(params) ? params.requestId : undefined;
+        if (typeof requestId !== "string" || requestId.length === 0)
+          throw new Error("gameplay_task_request_id_required");
+        // Record ownership before yielding to the transport. Do not infer an
+        // execution id or issue a cancel until the Mod has returned one.
+        record.pendingDispatch = { actionId, requestId, state: "dispatching", cancelRequired: false };
+        try {
+          const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
+          settlePendingDispatch(record, integration, integrationModule, admission.familyId, result.details);
+          return result;
+        } catch (error) {
+          // A post-write transport failure is not proof that no execution
+          // exists. Retain a bounded uncertain correlation for reconciliation.
+          if (record.pendingDispatch?.requestId === requestId) record.pendingDispatch.state = "uncertain";
+          throw error;
         }
-        return result;
       }
       return tool.execute(toolCallId, params, signal, onUpdate, ctx);
     },
   };
 }
 
-async function abortedTaskResult(taskId: string, record: MutableTaskRecord, report: GameplayTaskReport | null, integration: IntegrationConnection): Promise<GameplayTaskResult> {
+async function abortedTaskResult(
+  taskId: string,
+  record: MutableTaskRecord,
+  report: GameplayTaskReport | null,
+  integration: IntegrationConnection,
+  signal: AbortSignal | undefined,
+  wakeSource: ExecutionWakeSource | undefined,
+): Promise<GameplayTaskResult> {
   const integrationModule = requireIntegrationModule(integration);
   const reasonCode = record.terminalReasonCode ?? "gameplay_task_cancelled";
   const budgetExhausted = reasonCode.includes("budget_exhausted");
-  const cancellation = await awaitOwnedTerminalReceipt(record, integration);
+  // Cancellation has already triggered the signal; continue to await the Mod's
+  // authoritative terminal receipt inside the bounded watchdog window.
+  const cancellation = await awaitPendingDispatchAndOwnedTerminalReceipt(record, integration, wakeSource);
   if (cancellation !== null) record.terminalReceipt = cancellation;
-  if (record.executions.length > 0 && cancellation === null) {
+  if (record.pendingDispatch !== null || (record.executions.length > 0 && cancellation === null)) {
     record.terminalReasonCode = "cancellation_receipt_missing";
-    return { taskId, state: "blocked", summary: null, report: Object.freeze({ reasonCode: record.terminalReasonCode }) };
+    return {
+      taskId,
+      state: "blocked",
+      summary: null,
+      report: Object.freeze({ reasonCode: record.terminalReasonCode }),
+    };
   }
   return {
     taskId,
@@ -516,33 +801,187 @@ async function abortedTaskResult(taskId: string, record: MutableTaskRecord, repo
   };
 }
 
-async function awaitOwnedTerminalReceipt(record: MutableTaskRecord, integration: IntegrationConnection): Promise<MutableTaskRecord["terminalReceipt"]> {
-  const integrationModule = requireIntegrationModule(integration);
+async function awaitOwnedTerminalReceipt(
+  record: MutableTaskRecord,
+  integration: IntegrationConnection,
+  signal: AbortSignal | undefined,
+  wakeSource: ExecutionWakeSource | undefined,
+): Promise<MutableTaskRecord["terminalReceipt"]> {
   const deadline = Math.min(record.deadlineMs, Date.now() + 5_000);
-  while (Date.now() < deadline) {
-    const receipt = requireIntegrationModule(integration).readState(integration).latestReceipt;
-    if (receipt !== null && isTerminalReceiptState(receipt.state)
-      && record.executions.some((known) => known.requestId === receipt.requestId && known.executionId === receipt.executionId)) {
-      return Object.freeze({ requestId: receipt.requestId, executionId: receipt.executionId, state: receipt.state, reasonCode: receipt.reasonCode });
+  return await awaitTaskOwnedTerminalReceipt({
+    executions: record.executions,
+    deadlineMs: deadline,
+    signal,
+    wakeSource,
+    readReceipt: () => requireIntegrationModule(integration).readState(integration).latestReceipt,
+  });
+}
+
+/**
+ * Wait for a task-owned terminal receipt. An exact validated wake causes an
+ * immediate reread; a bounded 250ms poll recovers a lost wake. Neither wake
+ * payload nor unrelated receipt can itself establish a terminal result.
+ */
+export async function awaitTaskOwnedTerminalReceipt(input: Readonly<{
+  executions: readonly Readonly<{ requestId: string; executionId: string }> [];
+  deadlineMs: number;
+  signal?: AbortSignal;
+  wakeSource?: ExecutionWakeSource;
+  readReceipt: () => IntegrationExecutionReceipt | null;
+}>): Promise<Readonly<{ requestId: string; executionId: string; state: string; reasonCode: string }> | null> {
+  const owned = (receipt: IntegrationExecutionReceipt | null) =>
+    receipt !== null &&
+    isTerminalReceiptState(receipt.state) &&
+    input.executions.some((execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId)
+      ? Object.freeze({
+          requestId: receipt.requestId,
+          executionId: receipt.executionId,
+          state: receipt.state,
+          reasonCode: receipt.reasonCode,
+        })
+      : null;
+  const initial = owned(input.readReceipt());
+  if (initial !== null) return initial;
+  if (input.signal?.aborted || Date.now() >= input.deadlineMs) return null;
+
+  return await new Promise((resolve) => {
+    let settled = false;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const finish = (receipt: ReturnType<typeof owned>) => {
+      if (settled) return;
+      settled = true;
+      if (poll !== undefined) clearInterval(poll);
+      if (deadline !== undefined) clearTimeout(deadline);
+      unsubscribe?.();
+      input.signal?.removeEventListener("abort", onAbort);
+      resolve(receipt);
+    };
+    // A matching wake is advisory: only an exact terminal receipt from the
+    // authoritative reread may settle the waiter. Null, unrelated, and
+    // nonterminal rereads keep both the subscription and watchdog alive.
+    const reconcile = () => {
+      const receipt = owned(input.readReceipt());
+      if (receipt !== null) finish(receipt);
+    };
+    const onAbort = () => finish(null);
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    poll = setInterval(reconcile, 250);
+    deadline = setTimeout(() => finish(null), Math.max(0, input.deadlineMs - Date.now()));
+    if (input.wakeSource !== undefined) {
+      unsubscribe = input.wakeSource.onExecutionWake((candidate) => {
+        const wake = normalizeExecutionWake(candidate);
+        if (wake === null) return;
+        if (wake.kind === "terminal") {
+          if (!input.executions.some((execution) => execution.requestId === wake.requestId && execution.executionId === wake.executionId))
+            return;
+          reconcile();
+          return;
+        }
+        // Adapter liveness wakes never manufacture a receipt; callers retain
+        // their existing cancellation/freeze path and the poll/deadline fence.
+      });
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
-  }
-  return null;
+  });
 }
 
 function isTerminalReceiptState(state: string): boolean {
-  return state === "blocked" || state === "invalidated" || state === "succeeded" || state === "partially_succeeded"
-    || state === "failed" || state === "cancelled" || state === "expired" || state === "rejected" || state === "uncertain";
+  return (
+    state === "blocked" ||
+    state === "invalidated" ||
+    state === "succeeded" ||
+    state === "partially_succeeded" ||
+    state === "failed" ||
+    state === "cancelled" ||
+    state === "expired" ||
+    state === "rejected" ||
+    state === "uncertain"
+  );
 }
 
 function reconcileKnownExecution(record: MutableTaskRecord, integration: IntegrationConnection): void {
   const receipt = requireIntegrationModule(integration).readState(integration).latestReceipt;
   if (receipt === null) return;
-  const known = record.executions.find((execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId);
+  const known = record.executions.find(
+    (execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId,
+  );
   if (known !== undefined) known.state = receipt.state;
 }
 
-function parseReceipt(details: unknown, integrationModule: ReturnType<typeof requireIntegrationModule>): IntegrationExecutionReceipt | null {
+function settlePendingDispatch(
+  record: MutableTaskRecord,
+  integration: IntegrationConnection,
+  integrationModule: ReturnType<typeof requireIntegrationModule>,
+  familyId: string,
+  details: unknown,
+): void {
+  const receipt = parseReceipt(details, integrationModule);
+  const pending = record.pendingDispatch;
+  if (pending == null || receipt === null || receipt.requestId !== pending.requestId) return;
+  settlePendingCorrelation(record, integration, pending.actionId, receipt.requestId, receipt.executionId, receipt.state, familyId);
+}
+
+function settlePendingCorrelation(
+  record: MutableTaskRecord,
+  integration: IntegrationConnection,
+  actionId: string,
+  requestId: string,
+  executionId: string,
+  state: string,
+  familyId?: string,
+): void {
+  const pending = record.pendingDispatch;
+  if (pending == null || pending.requestId !== requestId) return;
+  record.pendingDispatch = null;
+  // A receipt event may arrive before the execute response. Preserve that
+  // authoritative terminal state rather than issuing a stale cancel from a
+  // delayed accepted/running response.
+  const latest = requireIntegrationModule(integration).readState(integration).latestReceipt;
+  const resolvedState =
+    latest?.requestId === requestId && latest.executionId === executionId && isTerminalReceiptState(latest.state)
+      ? latest.state
+      : state;
+  const existing = record.executions.find((known) => known.requestId === requestId && known.executionId === executionId);
+  if (existing === undefined) {
+    record.executions.push({ actionId, requestId, executionId, state: resolvedState });
+    if (familyId !== undefined && (resolvedState === "accepted" || resolvedState === "running" || resolvedState === "succeeded")) {
+      record.acceptedActions++;
+      record.acceptedActionsByFamily[familyId] = (record.acceptedActionsByFamily[familyId] ?? 0) + 1;
+    }
+  } else existing.state = resolvedState;
+}
+
+function issueTaskOwnedCancellation(
+  record: MutableTaskRecord,
+  admission: GameplayTaskDispatchAdmission | undefined,
+  reasonCode: string,
+): void {
+  if (admission === undefined) return;
+  const execution = selectTaskOwnedCancellation(record.executions, undefined);
+  if (execution === null) {
+    admission.cancelPending(reasonCode);
+    return;
+  }
+  void admission.cancelExact(execution.requestId, execution.executionId, reasonCode).catch(() => undefined);
+}
+
+async function awaitPendingDispatchAndOwnedTerminalReceipt(
+  record: MutableTaskRecord,
+  integration: IntegrationConnection,
+  wakeSource: ExecutionWakeSource | undefined,
+): Promise<MutableTaskRecord["terminalReceipt"]> {
+  const deadline = Math.min(record.deadlineMs, Date.now() + 5_000);
+  while (record.pendingDispatch !== null && Date.now() < deadline)
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  if (record.pendingDispatch !== null) return null;
+  return await awaitOwnedTerminalReceipt(record, integration, undefined, wakeSource);
+}
+
+function parseReceipt(
+  details: unknown,
+  integrationModule: ReturnType<typeof requireIntegrationModule>,
+): IntegrationExecutionReceipt | null {
   return integrationModule.parseReceipt(details);
 }
 

@@ -4,10 +4,24 @@ import test from "node:test";
 import { createDeterministicBridgePair } from "./bridge.js";
 import { MAX_EVENTS_PER_WINDOW, newEnvelope, type BridgeMessage, type Envelope, type Scope } from "./protocol.js";
 
-const scope: Scope = { integrationId: "stardew", saveId: "save_01", worldId: "world_01", playerId: "player_01", companionId: "companion_01" };
+const scope: Scope = {
+  integrationId: "stardew",
+  saveId: "save_01",
+  worldId: "world_01",
+  playerId: "player_01",
+  companionId: "companion_01",
+};
 const now = 1_700_000_000_000;
-const hello = (): Envelope<"hello", { token: string }> => newEnvelope("hello", scope, { token: "a".repeat(16) }, "hello_01", now);
-const event = (id: string): BridgeMessage => newEnvelope("semantic_event", scope, { kind: "connection_state" as const, revision: 1, activeExecution: null, reasonCode: "fixture_event" }, id, now);
+const hello = (): Envelope<"hello", { token: string }> =>
+  newEnvelope("hello", scope, { token: "a".repeat(16) }, "hello_01", now);
+const event = (id: string): BridgeMessage =>
+  newEnvelope(
+    "semantic_event",
+    scope,
+    { kind: "connection_state" as const, revision: 1, activeExecution: null, reasonCode: "fixture_event" },
+    id,
+    now,
+  );
 
 test("deterministic bridge preserves an exact ordered replay", () => {
   const [host, integration] = createDeterministicBridgePair(scope);
@@ -15,9 +29,18 @@ test("deterministic bridge preserves an exact ordered replay", () => {
   integration.onMessage((message) => delivered.push(message));
 
   assert.equal(host.send(hello(), now), null);
-  const lifecycle: BridgeMessage = newEnvelope("lifecycle", scope, { state: "connected" as const, reasonCode: "fixture_connected" }, "life_01", now);
+  const lifecycle: BridgeMessage = newEnvelope(
+    "lifecycle",
+    scope,
+    { state: "connected" as const, reasonCode: "fixture_connected" },
+    "life_01",
+    now,
+  );
   assert.equal(host.send(lifecycle, now), null);
-  assert.deepEqual(delivered.map((message) => message.type), ["hello", "lifecycle"]);
+  assert.deepEqual(
+    delivered.map((message) => message.type),
+    ["hello", "lifecycle"],
+  );
   assert.notEqual(delivered[0], hello());
 });
 
@@ -36,14 +59,19 @@ test("deterministic bridge fails closed for scope/version/payload violations", (
 
 test("deterministic bridge rate limits semantic events and supports explicit reconnection", () => {
   const [host, integration] = createDeterministicBridgePair(scope);
-  for (let index = 0; index < MAX_EVENTS_PER_WINDOW; index++) assert.equal(host.send(event(`event_${index}`), now), null);
+  for (let index = 0; index < MAX_EVENTS_PER_WINDOW; index++)
+    assert.equal(host.send(event(`event_${index}`), now), null);
   assert.equal(host.send(event("event_over"), now), "rate_limited");
   assert.equal(host.send(event("event_next_window"), now + 1_000), null);
 
   let hostReason = "";
   let integrationReason = "";
-  host.onDisconnect((reason) => { hostReason = reason; });
-  integration.onDisconnect((reason) => { integrationReason = reason; });
+  host.onDisconnect((reason) => {
+    hostReason = reason;
+  });
+  integration.onDisconnect((reason) => {
+    integrationReason = reason;
+  });
   host.disconnect("fixture_disconnect");
   assert.equal(hostReason, "fixture_disconnect");
   assert.equal(integrationReason, "fixture_disconnect");

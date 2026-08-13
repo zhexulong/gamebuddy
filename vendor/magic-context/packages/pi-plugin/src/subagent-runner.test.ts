@@ -789,18 +789,21 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 
 		const result = await resultPromise;
 
-		expect(spawnImpl).toHaveBeenCalledWith(
-			"custom-pi",
-			expect.arrayContaining(["--model", "anthropic/claude-sonnet"]),
-			expect.objectContaining({
-				cwd: "/tmp/project",
-				env: expect.objectContaining({
-					MAGIC_CONTEXT_PI_SUBAGENT: "1",
-					PATH: process.env.PATH,
-				}),
-				stdio: ["ignore", "pipe", "pipe"],
+		const [spawnCommand, spawnArgs, spawnOptions] = spawnImpl.mock.calls[0] ?? [];
+		expect(spawnCommand).toBe("custom-pi");
+		expect(spawnArgs).toEqual(expect.arrayContaining(["--model", "anthropic/claude-sonnet"]));
+		expect(spawnOptions).toEqual(expect.objectContaining({
+			cwd: "/tmp/project",
+			env: expect.objectContaining({
+				MAGIC_CONTEXT_PI_SUBAGENT: "1",
+				PATH: process.env.PATH,
 			}),
-		);
+			// All win32 runs deliver the message through stdin to stay below
+			// CreateProcess's command-line cap; POSIX can keep argv delivery.
+			stdio: process.platform === "win32"
+				? ["pipe", "pipe", "pipe"]
+				: ["ignore", "pipe", "pipe"],
+		}));
 		expect(result).toEqual({
 			ok: true,
 			assistantText: "final answer",
@@ -1978,9 +1981,9 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			expect.stringMatching(/system-prompt\.txt$/),
 			"--model",
 			"anthropic/primary",
-			// No --thinking: thinkingLevel not set in options above.
-			"summarize this session",
+			// On Windows the prompt travels via stdin to avoid the CreateProcess argv cap.
 		]);
+		expect(child.stdinText).toBe("summarize this session");
 		const spawnOptions = spawnImpl.mock.calls[0]?.[2] as
 			| { env?: NodeJS.ProcessEnv }
 			| undefined;

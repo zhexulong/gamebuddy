@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "modelKind": "soil_interaction_transition_model",
+  "sourceManifestSha256": "DERIVE_FROM_SOURCE_FILES",
+  "requiredTraces": [
+    {
+      "traceId": "prepare_empty_soil",
+      "requiredVariant": "till",
+      "description": "A player can turn one eligible ground tile into an empty HoeDirt tile.",
+      "classIds": ["soil.till"]
+    },
+    {
+      "traceId": "establish_seeded_crop",
+      "requiredVariant": "plant_seed",
+      "description": "A player can establish a crop on one eligible empty HoeDirt tile using an owned seed.",
+      "classIds": ["soil.plant_seed"]
+    },
+    {
+      "traceId": "establish_fertilized_soil",
+      "requiredVariant": "fertilize_tile",
+      "description": "A player can apply one eligible fertilizer to one eligible HoeDirt tile using an owned fertilizer.",
+      "classIds": ["soil.fertilize_tile"]
+    },
+    {
+      "traceId": "hydrate_live_crop",
+      "requiredVariant": "water",
+      "description": "A player can change one eligible unwatered HoeDirt/crop tile to its watered state.",
+      "classIds": ["soil.water"]
+    },
+    {
+      "traceId": "grow_seed_to_harvestable_crop",
+      "requiredVariant": "harvest_grab",
+      "description": "A planted crop can cross native day progression, be freshly observed, and then be harvested through the ordinary grab path.",
+      "classIds": ["soil.plant_seed", "soil.water", "soil.harvest_grab"]
+    }
+  ],
+  "interactionClasses": [
+    {
+      "interactionClassId": "soil.till",
+      "requiredVariant": "till",
+      "actorTopology": "current native player on game thread",
+      "targetSort": "live eligible ground tile",
+      "parameters": ["tile"],
+      "initiation": ["Hoe is equipped", "tile is currently eligible for native hoeing"],
+      "observablePreState": ["target has no HoeDirt"],
+      "observableCommit": ["same target gains HoeDirt"],
+      "terminals": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain"],
+      "pendingContinuation": "absent after native tool completion",
+      "failureBoundary": ["ineligible tile", "wrong equipped tool", "stale target"],
+      "evidence": ["same-tile HoeDirt fresh observation"],
+      "requiredTraceIds": ["prepare_empty_soil"],
+      "nativeWitnesses": [
+        { "relativePath": "StardewValley/Tools/Hoe.cs", "needle": "location.makeHoeDirt(item)" }
+      ]
+    },
+    {
+      "interactionClassId": "soil.plant_seed",
+      "requiredVariant": "plant_seed",
+      "actorTopology": "current native player on game thread",
+      "targetSort": "live empty ground HoeDirt tile",
+      "parameters": ["tile", "owned seed slot", "expected seed identity"],
+      "initiation": ["owned active item is a seed", "native seed/location/season rules accept target"],
+      "observablePreState": ["same target has empty HoeDirt", "seed inventory count is positive"],
+      "observableCommit": ["same target gains native Crop", "matching seed inventory decreases exactly once"],
+      "terminals": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain"],
+      "pendingContinuation": "crop growth remains external native day protocol",
+      "failureBoundary": ["seed category/identity mismatch", "season/location rule rejection", "stale/occupied target"],
+      "evidence": ["same-tile crop fresh observation", "exact seed inventory delta"],
+      "requiredTraceIds": ["establish_seeded_crop", "grow_seed_to_harvestable_crop"],
+      "nativeWitnesses": [
+        { "relativePath": "StardewValley/Object.cs", "needle": "base.Category == -74 || base.Category == -19" },
+        { "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs", "needle": "crop = new Crop(itemId, point.X, point.Y, Location)" },
+        { "relativePath": "StardewValley/Utility.cs", "needle": "Game1.player.reduceActiveItemByOne()" }
+      ]
+    },
+    {
+      "interactionClassId": "soil.fertilize_tile",
+      "requiredVariant": "fertilize_tile",
+      "actorTopology": "current native player on game thread",
+      "targetSort": "live ground HoeDirt tile accepting the named fertilizer",
+      "parameters": ["tile", "owned fertilizer slot", "expected fertilizer identity"],
+      "initiation": ["owned active item is fertilizer", "native CanApplyFertilizer accepts target"],
+      "observablePreState": ["same target lacks the requested fertilizer", "fertilizer inventory count is positive"],
+      "observableCommit": ["same target fertilizer identity changes to requested fertilizer", "matching fertilizer inventory decreases exactly once"],
+      "terminals": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain"],
+      "pendingContinuation": "absent after placement completion",
+      "failureBoundary": ["fertilizer identity mismatch", "CanApplyFertilizer rejection", "stale target"],
+      "evidence": ["same-tile fertilizer identity fresh observation", "exact fertilizer inventory delta"],
+      "requiredTraceIds": ["establish_fertilized_soil"],
+      "nativeWitnesses": [
+        { "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs", "needle": "if (!CanApplyFertilizer(itemId))" },
+        { "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs", "needle": "fertilizer.Value = ItemRegistry.QualifyItemId(itemId) ?? itemId" },
+        { "relativePath": "StardewValley/Utility.cs", "needle": "Game1.player.reduceActiveItemByOne()" }
+      ]
+    },
+    {
+      "interactionClassId": "soil.water",
+      "requiredVariant": "water",
+      "actorTopology": "current native player on game thread",
+      "targetSort": "live unwatered HoeDirt/crop tile",
+      "parameters": ["tile", "equipped watering can"],
+      "initiation": ["watering can has water or native enchantment substitute", "target is currently unwatered"],
+      "observablePreState": ["same target is unwatered"],
+      "observableCommit": ["same target becomes watered", "watering-can resource changes under native rule"],
+      "terminals": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain"],
+      "pendingContinuation": "absent after native tool completion",
+      "failureBoundary": ["empty watering can without native substitute", "wrong/stale target"],
+      "evidence": ["same-tile watered state fresh observation", "watering-can delta where applicable"],
+      "requiredTraceIds": ["hydrate_live_crop", "grow_seed_to_harvestable_crop"],
+      "nativeWitnesses": [
+        { "relativePath": "StardewValley/Tools/WateringCan.cs", "needle": "WaterLeft > 0 || who.hasWateringCanEnchantment" },
+        { "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs", "needle": "if (t is WateringCan)" },
+        { "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs", "needle": "state.Value = 1" }
+      ]
+    },
+    {
+      "interactionClassId": "soil.harvest_grab",
+      "requiredVariant": "harvest_grab",
+      "actorTopology": "current native player on game thread",
+      "targetSort": "live ready ordinary crop with Grab harvest method",
+      "parameters": ["tile", "expected output identity"],
+      "initiation": ["same crop is native-ready", "harvest method is Grab", "native inventory/result capacity path is available"],
+      "observablePreState": ["same target is ready for grab harvest"],
+      "observableCommit": ["native harvest delivery occurs", "same crop transitions to native regrow/removal state"],
+      "terminals": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain"],
+      "pendingContinuation": "absent after native harvest terminal; later day growth is external protocol",
+      "failureBoundary": ["not ready", "non-Grab harvest method", "inventory/result capacity branch", "stale target"],
+      "evidence": ["qualified native inventory delivery", "same-target regrow/removal fresh observation"],
+      "requiredTraceIds": ["grow_seed_to_harvestable_crop"],
+      "nativeWitnesses": [
+        { "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs", "needle": "case HarvestMethod.Grab:" },
+        { "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs", "needle": "crop.harvest((int)tileLocation.X, (int)tileLocation.Y, this)" },
+        { "relativePath": "StardewValley/Crop.cs", "needle": "Game1.player.addItemToInventoryBool(item.getOne())" }
+      ]
+    }
+  ],
+  "protocols": [
+    {
+      "protocolId": "native_day_progression_with_fresh_observation",
+      "initiation": "A planted crop remains a native world entity and normal native day progression advances the world without any synthetic crop mutation.",
+      "terminalObservation": "A fresh target observation establishes the crop's new native phase/readiness before harvesting is requested.",
+      "freshObservationRequirement": "No action may infer crop readiness from elapsed time alone or directly advance the day/crop state.",
+      "nativeWitnesses": [
+        { "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs", "needle": "public override void dayUpdate()" },
+        { "relativePath": "StardewValley/Crop.cs", "needle": "public virtual void newDay(int state)" }
+      ]
+    }
+  ],
+  "separationObligations": [
+    {
+      "leftClassId": "soil.plant_seed",
+      "rightClassId": "soil.fertilize_tile",
+      "decision": "separate",
+      "distinguishingDimensions": ["typed target sort", "observable commit", "pending continuation", "failure boundary", "evidence"]
+    },
+    {
+      "leftClassId": "soil.till",
+      "rightClassId": "soil.plant_seed",
+      "decision": "separate",
+      "distinguishingDimensions": ["initiation", "target sort", "observable commit", "evidence"]
+    },
+    {
+      "leftClassId": "soil.water",
+      "rightClassId": "soil.harvest_grab",
+      "decision": "separate",
+      "distinguishingDimensions": ["initiation", "observable commit", "failure boundary", "evidence"]
+    }
+  ],
+  "irredundancyObligations": [
+    {
+      "interactionClassId": "soil.till",
+      "decision": "retain",
+      "lostTrace": "prepare_empty_soil",
+      "reason": "No other class creates the required empty HoeDirt target state."
+    },
+    {
+      "interactionClassId": "soil.plant_seed",
+      "decision": "retain",
+      "lostTrace": "establish_seeded_crop",
+      "reason": "Fertilizer, watering, and harvesting cannot establish the required native Crop state from an owned seed."
+    },
+    {
+      "interactionClassId": "soil.fertilize_tile",
+      "decision": "retain",
+      "lostTrace": "establish_fertilized_soil",
+      "reason": "Seed placement does not produce the named fertilizer state or preserve fertilizer-specific failure/evidence semantics."
+    },
+    {
+      "interactionClassId": "soil.water",
+      "decision": "retain",
+      "lostTrace": "hydrate_live_crop",
+      "reason": "No other class changes the observed target water state under the native watering-resource rule."
+    },
+    {
+      "interactionClassId": "soil.harvest_grab",
+      "decision": "retain",
+      "lostTrace": "grow_seed_to_harvestable_crop",
+      "reason": "No other class delivers the native crop output or applies its native regrow/removal terminal transition."
+    }
+  ]
+}

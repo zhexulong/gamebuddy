@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "portfolio_m10_museum_nonterminal_v1",
+  "topology": "single_player_native_companion",
+  "targetVersion": "1.6.15.24356",
+  "purpose": "Unprovisioned, nonterminal target-version native starting-state contract for repeated Museum donation and separate reward-claim implementation; it contains no result or live evidence.",
+  "status": {
+    "state": "fixture_needed",
+    "provisioningState": "unprovisioned",
+    "liveClosure": "none",
+    "successClaimAllowed": false
+  },
+  "startingState": {
+    "saveCreatedBy": "target_version_native_only",
+    "museumPieces": "nonterminal_empty_or_unselected",
+    "playerInventory": "ordinary_native_inventory",
+    "rewardMail": "no_museum_reward_claims",
+    "terminalFacts": "absent"
+  },
+  "freshSelectionRequirements": {
+    "pieceSet": "select_from_fresh_observation_with_finite_dsm_domain",
+    "placementSet": "select_from_fresh_observation_with_finite_dsm_domain",
+    "itemEligibility": "native_revalidated",
+    "inventoryDeltaBaseline": "capture_before_each_donation",
+    "collectionDeltaBaseline": "capture_before_each_donation",
+    "rewardEligibilityBaseline": "capture_before_claim"
+  },
+  "antiFinalStepAssertions": [
+    "No donation or reward claim request, receipt, postcondition, or final-result script occurs during fixture creation.",
+    "The selected piece and placement domains remain unmaterialized; no fake item ID substitutes for an unselected value.",
+    "The fixture contains no terminal collection count, completion flag, reward eligibility, reward inventory delta, or reward mail."
+  ],
+  "forbiddenBehavior": [
+    "terminal museum completion, preloaded selected pieces, preloaded reward eligibility, or claimed reward mail",
+    "save XML editing, direct museumPieces/inventory/mail mutation, or synthetic receipt/postcondition creation",
+    "UI/input automation, MuseumMenu/ItemGrabMenu callback invocation, raw dispatcher, or arbitrary native fallback"
+  ],
+  "nonClaims": [
+    "This fixture contract does not provision a save, publish an action, or establish live evidence.",
+    "The fixture must not contain concrete item IDs, reward IDs, opaque targets, receipts, or terminal collection state."
+  ]
+}

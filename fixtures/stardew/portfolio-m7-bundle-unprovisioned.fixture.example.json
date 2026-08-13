@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_m7_unprovisioned_fixture_contract",
+  "fixtureId": "portfolio_m7_bundle_unprovisioned_v1",
+  "topology": "single_player_native_companion",
+  "targetVersion": "1.6.15.24356",
+  "provisioningState": "unprovisioned_example",
+  "purpose": "Describe a lawful nonterminal starting state for a future target-version M7 vertical slice without provisioning content or selecting a terminal result.",
+  "startingState": {
+    "saveCreation": "target_version_native_only",
+    "communityCenter": "ordinary_nonterminal_state",
+    "bundleSlot": "unselected_not_precompleted",
+    "playerInventory": "ordinary_native_inventory",
+    "bundleReward": "not_available_unclaimed",
+    "receipts": "none",
+    "terminalFacts": "absent"
+  },
+  "freshSelectionRequirements": {
+    "slot": "fresh_opaque_observation",
+    "acceptedItemDomain": "signed_dsm_bounded_domain",
+    "quality": "dsm_bound_0_to_4_at_dispatch",
+    "stack": "dsm_bound_1_to_999_at_dispatch",
+    "dispatchBinding": "freeze_slot_item_identity_quality_stack_before_native_invocation",
+    "baseline": "capture_progress_inventory_reward_before_each_transition"
+  },
+  "antiFinalStepAssertions": [
+    "No contribution or reward claim request, receipt, postcondition, or final-result script occurs during fixture creation.",
+    "The slot, item identity, quality, stack, and reward remain unmaterialized until fresh dispatch-time observation.",
+    "The fixture contains no completed slot, bundle completion, reward availability, claimed reward, or terminal portfolio fact."
+  ],
+  "forbiddenBehavior": [
+    "terminal bundle completion, preloaded selected slot progress, reward availability, or claimed reward",
+    "save XML editing, direct community-center/player/inventory/mail/bundle mutation, or synthetic receipt/postcondition creation",
+    "UI/input automation, menu or callback invocation, raw dispatcher, or arbitrary native fallback"
+  ],
+  "nonClaims": [
+    "This example is an unprovisioned starting-state contract, not a provisioned save or live fixture.",
+    "It contains no concrete slot/item/reward identity, receipt, postcondition, or terminal result."
+  ]
+}

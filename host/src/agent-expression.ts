@@ -5,10 +5,7 @@ import { type AgentSession, type AgentSessionEvent } from "@earendil-works/pi-co
  * not project ordinary Pi output to a player surface; only explicit
  * presentation tools may do that.
  */
-export function attachCompanionExpression(
-  session: Pick<AgentSession, "subscribe">,
-  _sinks: unknown,
-): () => void {
+export function attachCompanionExpression(session: Pick<AgentSession, "subscribe">, _sinks: unknown): () => void {
   return session.subscribe((_event: AgentSessionEvent) => undefined);
 }
 
@@ -16,7 +13,14 @@ export function attachCompanionExpression(
 export function finalAssistantText(messages: readonly unknown[]): string | null {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
-    if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.content) || message.stopReason === "error" || message.stopReason === "aborted") continue;
+    if (
+      !isRecord(message) ||
+      message.role !== "assistant" ||
+      !Array.isArray(message.content) ||
+      message.stopReason === "error" ||
+      message.stopReason === "aborted"
+    )
+      continue;
     const text = message.content
       .filter(isTextBlock)
       .map((block) => block.text)

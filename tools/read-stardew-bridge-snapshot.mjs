@@ -1,8 +1,16 @@
 import { readFile } from "node:fs/promises";
-import { LocalStardewBridgeClient } from "../host/dist/local-stardew-bridge.js";
+import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+
+const { LocalStardewBridgeClient } = await loadHostProductionModule("local-stardew-bridge.js");
 const path = process.argv[process.argv.indexOf("--client-config") + 1];
 const config = JSON.parse(await readFile(path, "utf8"));
-const scope = { integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId };
+const scope = {
+  integrationId: "stardew",
+  saveId: config.SaveId,
+  worldId: config.WorldId,
+  playerId: config.PlayerId,
+  companionId: config.CompanionId,
+};
 const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
 try {
   const snapshots = [];
@@ -32,9 +40,19 @@ try {
         foodTargets: snapshot.foodTargets?.length ?? null,
         toolSlots: snapshot.toolSlots?.length ?? null,
       },
-      activeExecution: snapshot.activeExecution == null ? null : { executionId: snapshot.activeExecution.executionId, requestId: snapshot.activeExecution.requestId, state: snapshot.activeExecution.state, reasonCode: snapshot.activeExecution.reasonCode },
+      activeExecution:
+        snapshot.activeExecution == null
+          ? null
+          : {
+              executionId: snapshot.activeExecution.executionId,
+              requestId: snapshot.activeExecution.requestId,
+              state: snapshot.activeExecution.state,
+              reasonCode: snapshot.activeExecution.reasonCode,
+            },
     });
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   console.log(JSON.stringify({ state: "passed", snapshots }));
-} finally { client.close(); }
+} finally {
+  client.close();
+}

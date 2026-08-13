@@ -96,6 +96,20 @@ export function setDatabase(db: Database): void {
 }
 
 /**
+ * Drop the process-global persistence binding when its owning database closes.
+ *
+ * The metrics cache is intentionally process-global, but its prepared
+ * statement is tied to one SQLite handle. Leaving it bound after
+ * `closeDatabase()` lets a later test/runtime reuse a closed handle, retaining
+ * WAL/SHM locks on Windows and making teardown non-deterministic.
+ */
+export function clearDatabase(db?: Database): void {
+    if (db && persistenceDb !== db) return;
+    persistenceDb = null;
+    cachedInsertStmt = null;
+}
+
+/**
  * Populate the in-memory measurements map from the
  * `tool_definition_measurements` table. Called once at startup after
  * setDatabase(), before the first sidebar snapshot or status query, so the

@@ -5,7 +5,9 @@ import test from "node:test";
 import { NamedPipeTransport } from "./named-pipe.js";
 
 async function close(server: Server): Promise<void> {
-  await new Promise<void>((resolvePromise, reject) => server.close((error) => error === undefined ? resolvePromise() : reject(error)));
+  await new Promise<void>((resolvePromise, reject) =>
+    server.close((error) => (error === undefined ? resolvePromise() : reject(error))),
+  );
 }
 
 test("named-pipe transport uses bounded length-prefixed JSON frames", async () => {
@@ -28,7 +30,9 @@ test("named-pipe transport uses bounded length-prefixed JSON frames", async () =
       socket.write(Buffer.concat([header, payload]));
     });
   });
-  await new Promise<void>((resolvePromise, reject) => server.listen(pipePath, () => resolvePromise()).once("error", reject));
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(pipePath, () => resolvePromise()).once("error", reject),
+  );
   try {
     const transport = await NamedPipeTransport.connect(pipeName);
     const messages: string[] = [];

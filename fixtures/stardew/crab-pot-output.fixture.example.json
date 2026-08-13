@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "GameBuddyFixture_CrabPotOutput_1_6_15",
+  "target": {
+    "gameVersion": "1.6.15.24356",
+    "assemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "contentHashesSha256": "8143aa3110810e0039282ab8e9989417092388edb84c8c3b6c0b6f23840a4349"
+  },
+  "save": {
+    "templateName": "GameBuddyFixture_CrabPotOutput_1_6_15",
+    "requiredNativeFiles": [
+      "GameBuddyFixture_CrabPotOutput_1_6_15",
+      "SaveGameInfo"
+    ],
+    "provisioningState": "unprovisioned",
+    "templatePayloadSha256": null,
+    "provisioningAttestation": null
+  },
+  "action": "collect_crab_pot_output",
+  "fixtureScenario": "native_collect_crab_pot_output_v1",
+  "purpose": "Read-only, pre-attachment native ready-CrabPot starting-state provenance contract; it is not a production request, receipt, result, or live-action evidence artifact.",
+  "nativeOrigin": {
+    "requiredLifecycle": [
+      "ordinary target-version CrabPot placement",
+      "ordinary target-version bait interaction",
+      "ordinary target-version day transition that ran CrabPot.DayUpdate",
+      "native Saving/Saved and target-version reload before template capture"
+    ],
+    "prohibitedOrigins": [
+      "save XML editing",
+      "direct readyForHarvest, heldObject, tileIndexToShow, bait, owner, object, or inventory mutation",
+      "direct DayUpdate invocation or timer skipping",
+      "UI/input automation, raw dispatcher, debug readiness mutation, or synthetic bridge receipt",
+      "collect_crab_pot_output request or any native collection ingress before template capture"
+    ]
+  },
+  "requiredLiveFacts": {
+    "locationKind": "Farm",
+    "qualifiedItemId": "(O)710",
+    "requiresCurrentLocalPlayerOwner": true,
+    "requiresLegalCrabPotLocation": true,
+    "requiresCardinalStandingTile": true,
+    "requiresBait": true,
+    "requiresReadyForHarvest": true,
+    "requiresHeldOutput": true,
+    "requiresInventoryCapacity": true,
+    "requiresFreshOpaqueTargetRediscovery": true
+  },
+  "antiFinalStepAssertions": [
+    "No collect_crab_pot_output bridge request, execution, receipt, or other collection ingress appears in the template-creation trace.",
+    "The ready output remains on the same native-owned CrabPot after native save/reload and before bridge attachment.",
+    "No output inventory delta, held-output clearance, readiness clearance, bait clearance, pot replacement, or result fixture was produced before production execution."
+  ],
+  "fixtureCreationChecklist": [
+    "Create the complete save through target-version Stardew only, then capture it outside the repository with the existing read-only template tooling.",
+    "Record the target-version and template-payload hashes only after the native save/reload validation cycle succeeds.",
+    "Record the native lifecycle trace and same-pot continuity facts without recording an opaque target ID; production must rediscover it from a fresh snapshot.",
+    "Reject missing, duplicate, non-owned, unbaited, non-ready, no-output, illegal-location, unreachable, or ambiguous candidate pots before bridge attachment.",
+    "The fixture initializer may only validate the template's ready starting facts and position the current local Player; it must not manufacture readiness or invoke collection."
+  ],
+  "futureProductionSuccessPostconditions": [
+    "receipt.state=succeeded",
+    "receipt.reasonCode=crab_pot_output_collected",
+    "same current-local-player-owned pot output added to inventory",
+    "same pot held output cleared",
+    "same pot readyForHarvest=false",
+    "same pot bait cleared",
+    "fresh same-pot snapshot agrees with the receipt evidence"
+  ],
+  "futureProductionCapacityFailurePostconditions": [
+    "No succeeded receipt is accepted.",
+    "The same pot retains held output and readyForHarvest=true.",
+    "The Player inventory does not gain the output."
+  ],
+  "forbiddenFixtureBehavior": [
+    "Do not call collect_crab_pot_output, GameLocation.checkAction, CrabPot.checkForAction, or a raw dispatcher.",
+    "Do not call CrabPot.DayUpdate or write ready/output/bait/owner/object/inventory fields.",
+    "Do not emit a bridge request, execution, receipt, or fixture-produced success evidence.",
+    "Do not edit save XML after target-version native template creation."
+  ],
+  "nonClaims": [
+    "This contract does not publish collect_crab_pot_output.",
+    "This contract is not native-local mechanics closure, Farmhand evidence, Portfolio evidence, save/reopen action closure, or release evidence.",
+    "This contract does not prove place-bait-day-collect composite completion or CrabPot output distributions."
+  ]
+}

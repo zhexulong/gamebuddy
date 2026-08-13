@@ -1,0 +1,796 @@
+{
+  "schemaVersion": 1,
+  "modelKind": "portfolio_command_path_charter",
+  "modelId": "core_valley_milestone_portfolio_v1_command_path_charter",
+  "target": {
+    "gameVersion": "1.6.15.24356"
+  },
+  "topology": "single_player_native_companion",
+  "scopeAuthority": {
+    "document": "design/16_STARDEW_DEMO_SCOPE_AND_GOAL_CONTRACTS.md",
+    "sha256": "8a97f7028ceec626fbf1b7ad12e5bbeaa365b2f1834aa1bc03b993da9ada1187"
+  },
+  "taxonomyInputs": {
+    "allowed": [
+      "milestone_persisted_predicate",
+      "dsm_content_scope",
+      "shared_non_ui_execution_rule"
+    ],
+    "forbidden": [
+      "action_registry",
+      "gameplay_capability_catalog",
+      "legacy_action_id",
+      "old_itm_class",
+      "receipt",
+      "fixture",
+      "concrete_smoke_trace"
+    ]
+  },
+  "observationAlphabet": [
+    "actor_topology_scope",
+    "opaque_target_and_input_identity",
+    "authoritative_world_inventory_delta",
+    "pending_native_protocol_phase",
+    "authority_policy_revision",
+    "terminal_cancel_replay_outcome",
+    "fresh_evidence_and_persistence"
+  ],
+  "scopeAtoms": [
+    {
+      "scopeAtomId": "portfolio_m1_leave_and_return",
+      "milestoneId": "M1",
+      "playerSemantic": "Travel from the Farm to the selected outside-Farm obligation and return through native location transitions.",
+      "persistedPredicate": "Locked route checkpoints persist through native save and reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": [],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m2_crop_cycle",
+      "milestoneId": "M2",
+      "playerSemantic": "Establish, tend across native days, and harvest a selected crop on the same farm tiles.",
+      "persistedPredicate": "Same tiles show the selected till/plant/water/day/harvest aggregate delta after native reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m1_leave_and_return"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m3_forage_delivery",
+      "milestoneId": "M3",
+      "playerSemantic": "Bring a selected live forage result into the bound local Player inventory.",
+      "persistedPredicate": "Selected forage or Debris is absent and the exact local inventory delta persists.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m1_leave_and_return"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m4_resource_delivery",
+      "milestoneId": "M4",
+      "playerSemantic": "Transform a selected resource source, freshly discover native drops, and deliver each selected drop to inventory.",
+      "persistedPredicate": "Source transform, fresh drops, and aggregate bound-local-player delivery survive native reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m1_leave_and_return"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m5_animal_product",
+      "milestoneId": "M5",
+      "playerSemantic": "Feed the selected animal housing trough, cross a native day, and collect the selected animal product.",
+      "persistedPredicate": "Same trough/animal identities and inventory result persist after native reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m2_crop_cycle"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m6_machine_processing",
+      "milestoneId": "M6",
+      "playerSemantic": "Load a selected machine, observe native processing, and collect its selected output.",
+      "persistedPredicate": "Same machine input/output delivery persists after native reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m5_animal_product"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m7_bundle_contribution",
+      "milestoneId": "M7",
+      "playerSemantic": "Contribute an approved selected item to one exact Community Center bundle slot and claim its native reward.",
+      "persistedPredicate": "Exact selected bundle slot, alternative consumption, progress, and reward persist after native reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m2_crop_cycle"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m8_mine_depth",
+      "milestoneId": "M8",
+      "playerSemantic": "Traverse one selected native mine route to its locked target floor.",
+      "persistedPredicate": "Selected route checkpoints and lowestMineLevel persist after native reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m1_leave_and_return"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m9_special_order_reward",
+      "milestoneId": "M9",
+      "playerSemantic": "Accept the selected Special Order, satisfy its selected objectives through scoped prerequisites, and claim its reward.",
+      "persistedPredicate": "Exact selected order/objective/reward state persists after native reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m2_crop_cycle"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    },
+    {
+      "scopeAtomId": "portfolio_m10_museum_collection",
+      "milestoneId": "M10",
+      "playerSemantic": "Donate the selected Museum subset and claim its selected native reward.",
+      "persistedPredicate": "Selected MuseumPieces set, collection state, and reward persist after native reopen.",
+      "topology": "single_player_native_companion",
+      "progressionDependencies": ["portfolio_m4_resource_delivery"],
+      "contentSelectionState": "pending_signed_dsm_selection"
+    }
+  ],
+  "traceFamilies": [
+    {
+      "traceFamilyId": "portfolio_m1_leave_and_return_route",
+      "scopeAtomId": "portfolio_m1_leave_and_return",
+      "playerSemantic": "Leave the Farm through native location transitions, complete one selected outside-Farm scope obligation, and return through native location transitions.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed native location-transition targets and a selected outside-Farm obligation",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One signed DSM route class, its bounded native checkpoints, and one selected outside-Farm obligation; no literal tile recording or UI route is permitted."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          {
+            "name": "outbound_transition",
+            "sort": "freshly_observed_native_location_transition",
+            "cardinality": "exactly_one"
+          },
+          {
+            "name": "outside_obligation",
+            "sort": "signed_dsm_selected_outside_farm_obligation",
+            "cardinality": "exactly_one"
+          },
+          {
+            "name": "return_transition",
+            "sort": "freshly_observed_native_location_transition_to_farm",
+            "cardinality": "exactly_one"
+          }
+        ],
+        "bindingRules": [
+          "outbound_transition_is_bound_by_initial_fresh_scoped_observation",
+          "outside_obligation_is_bound_only_after_fresh_arrival_observation",
+          "return_transition_is_bound_only_after_fresh_outside_obligation_observation",
+          "no_literal_tile_path_or_raw_ui_input_is_a_valid_binding"
+        ],
+        "segments": [
+          {
+            "kind": "observation_boundary",
+            "phase": "initial",
+            "binds": ["outbound_transition"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "leave_farm_via_selected_native_transition",
+            "uses": ["outbound_transition"]
+          },
+          {
+            "kind": "observation_boundary",
+            "phase": "fresh_after_outbound_arrival",
+            "binds": ["outside_obligation"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "complete_selected_outside_farm_obligation",
+            "uses": ["outside_obligation"]
+          },
+          {
+            "kind": "observation_boundary",
+            "phase": "fresh_after_outside_obligation",
+            "binds": ["return_transition"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "return_to_farm_via_selected_native_transition",
+            "uses": ["return_transition"]
+          },
+          {
+            "kind": "observation_boundary",
+            "phase": "fresh_after_farm_return",
+            "binds": []
+          }
+        ]
+      },
+      "guardPartitions": [
+        "bound_player_is_in_farm_and_outbound_transition_is_live",
+        "outbound_transition_is_stale_or_unreachable",
+        "outside_obligation_is_unavailable_after_arrival",
+        "return_transition_is_stale_or_unreachable",
+        "native_location_transition_is_pending_or_cancelled"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": {
+        "kind": "persisted_predicate",
+        "sameBindingRequired": true,
+        "freshAfterExecutionRequired": true,
+        "nativeSaveReopenRereadRequired": true
+      },
+      "evidencePolicy": {
+        "topology": "single_player_native_companion",
+        "sameExecutionRequired": true,
+        "nonNullEvidenceRequired": true,
+        "freshPostconditionRequired": true,
+        "candidateClosureInheritance": "forbidden",
+        "crossTopologyInheritance": "forbidden"
+      },
+      "sourceRealization": {
+        "status": "unknown",
+        "uncertaintyId": "portfolio_m1_route_realization_pending",
+        "question": "Focused target-version route, transition, and persistent checkpoint realization is not reviewed for the signed route class.",
+        "disposition": "blocks_projection"
+      },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m2_crop_lifecycle",
+      "scopeAtomId": "portfolio_m2_crop_cycle",
+      "playerSemantic": "Establish, hydrate, advance native single-player days for, and collect one selected crop on the same fresh farm plot binding.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed eligible farm plot and owned signed-domain seed input",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One or more signed DSM selected farm plots, a selected owned seed content equivalence class, and a native day count sufficient for freshly observed harvestability."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          {
+            "name": "plot_set",
+            "sort": "freshly_observed_eligible_farm_plot_set",
+            "cardinality": "one_or_more_within_signed_dsm_bound"
+          },
+          {
+            "name": "seed",
+            "sort": "owned_signed_dsm_seed_content",
+            "cardinality": "exactly_one"
+          },
+          {
+            "name": "native_day_count",
+            "sort": "native_single_player_day_count_sufficient_for_fresh_harvestability",
+            "cardinality": "one_or_more"
+          }
+        ],
+        "bindingRules": [
+          "plot_set_is_bound_by_initial_fresh_scoped_observation",
+          "same_plot_set_is_used_for_preparation_establishment_hydration_and_collection",
+          "seed_is_bound_from_current_owned_inventory_not_a_fixture_slot",
+          "harvestability_is_rebound_by_fresh_observation_after_native_day_progression",
+          "no_direct_new_day_save_edit_or_raw_ui_input_is_a_valid_segment"
+        ],
+        "segments": [
+          {
+            "kind": "observation_boundary",
+            "phase": "initial",
+            "binds": ["plot_set", "seed", "native_day_count"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "prepare_selected_eligible_plots",
+            "uses": ["plot_set"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "establish_selected_crop_on_same_plots",
+            "uses": ["plot_set", "seed"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "hydrate_crop_on_same_plots",
+            "uses": ["plot_set"]
+          },
+          {
+            "kind": "protocol_boundary",
+            "protocolBoundary": "native_single_player_day_progression_then_fresh_harvestability_observation",
+            "uses": ["native_day_count", "plot_set"]
+          },
+          {
+            "kind": "observation_boundary",
+            "phase": "fresh_after_native_day_progression",
+            "binds": []
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "collect_ready_crop_from_same_plots",
+            "uses": ["plot_set"]
+          },
+          {
+            "kind": "observation_boundary",
+            "phase": "fresh_after_crop_collection",
+            "binds": []
+          }
+        ]
+      },
+      "guardPartitions": [
+        "plots_are_eligible_and_seed_is_owned",
+        "plot_or_seed_becomes_stale_before_establishment",
+        "hydration_is_not_applicable_or_is_rejected",
+        "native_day_progression_is_not_sleep_eligible_or_is_interrupted",
+        "crop_is_not_freshly_harvestable_after_selected_day_progression",
+        "harvest_is_capacity_blocked_or_target_becomes_stale"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": {
+        "kind": "persisted_predicate",
+        "sameBindingRequired": true,
+        "freshAfterExecutionRequired": true,
+        "nativeSaveReopenRereadRequired": true
+      },
+      "evidencePolicy": {
+        "topology": "single_player_native_companion",
+        "sameExecutionRequired": true,
+        "nonNullEvidenceRequired": true,
+        "freshPostconditionRequired": true,
+        "candidateClosureInheritance": "forbidden",
+        "crossTopologyInheritance": "forbidden"
+      },
+      "sourceRealization": {
+        "status": "unknown",
+        "uncertaintyId": "portfolio_m2_crop_lifecycle_realization_pending",
+        "question": "Focused target-version preparation, establishment, hydration, native-day, and collection realization is not reviewed for the signed crop domain.",
+        "disposition": "blocks_projection"
+      },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m3_forage_to_inventory",
+      "scopeAtomId": "portfolio_m3_forage_delivery",
+      "playerSemantic": "Freshly discover one selected visible forage or Debris target and deliver it to the bound local Player inventory.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed selected visible forage or native Debris target",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One signed DSM selected forage or Debris content equivalence class and one freshly observed live target; no pre-bound fixture target is permitted."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          {
+            "name": "forage_target",
+            "sort": "freshly_observed_selected_live_forage_or_debris_target",
+            "cardinality": "exactly_one"
+          }
+        ],
+        "bindingRules": [
+          "forage_target_is_bound_only_by_initial_fresh_scoped_observation",
+          "delivery_requires_target_identity_to_remain_live_until_native_commit",
+          "no_ui_click_raw_input_or_preloaded_inventory_result_is_a_valid_binding"
+        ],
+        "segments": [
+          {
+            "kind": "observation_boundary",
+            "phase": "initial",
+            "binds": ["forage_target"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "deliver_selected_live_forage_or_debris_to_bound_inventory",
+            "uses": ["forage_target"]
+          },
+          {
+            "kind": "observation_boundary",
+            "phase": "fresh_after_delivery",
+            "binds": []
+          }
+        ]
+      },
+      "guardPartitions": [
+        "target_is_live_selected_content_and_inventory_can_accept_delivery",
+        "target_is_stale_or_not_selected_content",
+        "delivery_is_capacity_blocked",
+        "delivery_is_cancelled_or_times_out_before_native_commit"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": {
+        "kind": "persisted_predicate",
+        "sameBindingRequired": true,
+        "freshAfterExecutionRequired": true,
+        "nativeSaveReopenRereadRequired": true
+      },
+      "evidencePolicy": {
+        "topology": "single_player_native_companion",
+        "sameExecutionRequired": true,
+        "nonNullEvidenceRequired": true,
+        "freshPostconditionRequired": true,
+        "candidateClosureInheritance": "forbidden",
+        "crossTopologyInheritance": "forbidden"
+      },
+      "sourceRealization": {
+        "status": "unknown",
+        "uncertaintyId": "portfolio_m3_forage_delivery_realization_pending",
+        "question": "Focused target-version forage/Debris discovery, delivery, capacity, and persistence realization is not reviewed for the signed content domain.",
+        "disposition": "blocks_projection"
+      },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m4_source_to_delivery",
+      "scopeAtomId": "portfolio_m4_resource_delivery",
+      "playerSemantic": "Transform one signed-domain resource source, freshly discover its resulting native drops, and deliver each selected live drop to the bound local Player inventory.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "selected live resource source followed by freshly observed native Debris targets",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One target-version native resource-source equivalence class and its finite selected content domain, to be frozen by a signed candidate manifest before any mutation."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          {
+            "name": "source",
+            "sort": "selected_live_resource_source",
+            "cardinality": "exactly_one"
+          },
+          {
+            "name": "fresh_drop_set",
+            "sort": "freshly_observed_native_debris_set",
+            "cardinality": "zero_or_more"
+          }
+        ],
+        "bindingRules": [
+          "source_is_bound_by_initial_fresh_scoped_observation",
+          "fresh_drop_set_is_bound_only_by_fresh_observation_after_native_source_commit",
+          "each_delivered_drop_must_belong_to_fresh_drop_set"
+        ],
+        "segments": [
+          {
+            "kind": "observation_boundary",
+            "phase": "initial",
+            "binds": ["source"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "transform_selected_source",
+            "uses": ["source"]
+          },
+          {
+            "kind": "observation_boundary",
+            "phase": "fresh_after_native_source_commit",
+            "binds": ["fresh_drop_set"]
+          },
+          {
+            "kind": "semantic_transition",
+            "semanticTransition": "deliver_each_selected_fresh_drop",
+            "uses": ["fresh_drop_set"]
+          },
+          {
+            "kind": "observation_boundary",
+            "phase": "fresh_after_delivery",
+            "binds": []
+          }
+        ]
+      },
+      "guardPartitions": [
+        "eligible source with required owned tool",
+        "source unavailable or stale before transform",
+        "native transform creates zero selectable drops",
+        "fresh observed drop is deliverable to bound inventory",
+        "fresh observed drop is capacity-blocked or becomes stale"
+      ],
+      "outcomeAlgebra": [
+        "succeeded",
+        "rejected",
+        "cancelled",
+        "timed_out",
+        "uncertain",
+        "protocol_pending",
+        "blocked"
+      ],
+      "requiredPostcondition": {
+        "kind": "persisted_predicate",
+        "sameBindingRequired": true,
+        "freshAfterExecutionRequired": true,
+        "nativeSaveReopenRereadRequired": true
+      },
+      "evidencePolicy": {
+        "topology": "single_player_native_companion",
+        "sameExecutionRequired": true,
+        "nonNullEvidenceRequired": true,
+        "freshPostconditionRequired": true,
+        "candidateClosureInheritance": "forbidden",
+        "crossTopologyInheritance": "forbidden"
+      },
+      "sourceRealization": {
+        "status": "unknown",
+        "uncertaintyId": "portfolio_m4_source_to_delivery_realization_pending",
+        "question": "Focused target-version source/content realization is not yet reviewed for the signed source class and resulting drop lifecycle.",
+        "disposition": "blocks_projection"
+      },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m5_animal_housing_to_product",
+      "scopeAtomId": "portfolio_m5_animal_product",
+      "playerSemantic": "Feed one selected animal-housing trough, cross a native day, freshly confirm the same selected animal product, and deliver it to the bound local Player inventory.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed selected animal-housing trough, selected housed animal, owned Hay input, and freshly observed animal product",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One signed DSM selected animal-housing class, a same-housing trough and animal binding, owned Hay, and a native single-player day count sufficient for freshly observed product availability."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          { "name": "housing_trough", "sort": "freshly_observed_selected_live_animal_housing_trough", "cardinality": "exactly_one" },
+          { "name": "housed_animal", "sort": "freshly_observed_selected_live_housed_animal", "cardinality": "exactly_one" },
+          { "name": "hay_input", "sort": "owned_signed_dsm_hay_input", "cardinality": "one_or_more" },
+          { "name": "native_day_count", "sort": "native_single_player_day_count_sufficient_for_fresh_product_availability", "cardinality": "one_or_more" },
+          { "name": "animal_product", "sort": "freshly_observed_selected_live_animal_product", "cardinality": "exactly_one" }
+        ],
+        "bindingRules": [
+          "housing_trough_and_housed_animal_are_bound_by_initial_fresh_scoped_observation",
+          "hay_input_is_bound_from_current_owned_inventory_not_a_fixture_slot",
+          "same_housing_trough_and_housed_animal_are_preserved_across_native_day_progression",
+          "animal_product_is_bound_only_by_fresh_observation_after_native_day_progression",
+          "no_direct_new_day_save_edit_or_raw_ui_input_is_a_valid_segment"
+        ],
+        "segments": [
+          { "kind": "observation_boundary", "phase": "initial", "binds": ["housing_trough", "housed_animal", "hay_input", "native_day_count"] },
+          { "kind": "semantic_transition", "semanticTransition": "feed_selected_housing_trough_with_owned_hay", "uses": ["housing_trough", "hay_input"] },
+          { "kind": "protocol_boundary", "protocolBoundary": "native_single_player_day_progression_then_fresh_animal_product_observation", "uses": ["native_day_count", "housed_animal"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_native_day_progression", "binds": ["animal_product"] },
+          { "kind": "semantic_transition", "semanticTransition": "deliver_same_selected_animal_product_to_bound_inventory", "uses": ["housed_animal", "animal_product"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_animal_product_delivery", "binds": [] }
+        ]
+      },
+      "guardPartitions": [
+        "housing_trough_and_housed_animal_are_live_and_hay_is_owned",
+        "housing_or_animal_becomes_stale_before_feed_commit",
+        "native_day_progression_is_not_sleep_eligible_or_is_interrupted",
+        "same_animal_product_is_not_freshly_available_after_selected_day_progression",
+        "animal_product_delivery_is_capacity_blocked_or_target_becomes_stale"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": { "kind": "persisted_predicate", "sameBindingRequired": true, "freshAfterExecutionRequired": true, "nativeSaveReopenRereadRequired": true },
+      "evidencePolicy": { "topology": "single_player_native_companion", "sameExecutionRequired": true, "nonNullEvidenceRequired": true, "freshPostconditionRequired": true, "candidateClosureInheritance": "forbidden", "crossTopologyInheritance": "forbidden" },
+      "sourceRealization": { "status": "unknown", "uncertaintyId": "portfolio_m5_animal_housing_product_realization_pending", "question": "Focused target-version trough feeding, same-animal product availability, delivery, capacity, and persistence realization is not reviewed for the signed housing domain.", "disposition": "blocks_projection" },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m6_machine_input_to_output",
+      "scopeAtomId": "portfolio_m6_machine_processing",
+      "playerSemantic": "Load one selected machine with one selected owned input, preserve its native processing lifecycle, freshly discover its selected output, and deliver that output to the bound local Player inventory.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed selected live machine, owned signed-domain processing input, and freshly observed machine output",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One signed DSM selected machine and input/output content equivalence class, with a bounded target-version native processing lifecycle and no preloaded output."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          { "name": "machine", "sort": "freshly_observed_selected_live_machine", "cardinality": "exactly_one" },
+          { "name": "processing_input", "sort": "owned_signed_dsm_machine_processing_input", "cardinality": "exactly_one" },
+          { "name": "machine_output", "sort": "freshly_observed_selected_live_machine_output", "cardinality": "exactly_one" }
+        ],
+        "bindingRules": [
+          "machine_and_processing_input_are_bound_by_initial_fresh_scoped_observation",
+          "processing_input_is_bound_from_current_owned_inventory_not_a_fixture_slot",
+          "machine_output_is_bound_only_by_fresh_observation_after_native_machine_processing",
+          "no_time_skip_save_edit_or_raw_ui_input_is_a_valid_segment"
+        ],
+        "segments": [
+          { "kind": "observation_boundary", "phase": "initial", "binds": ["machine", "processing_input"] },
+          { "kind": "semantic_transition", "semanticTransition": "load_selected_machine_with_owned_processing_input", "uses": ["machine", "processing_input"] },
+          { "kind": "protocol_boundary", "protocolBoundary": "native_selected_machine_processing_then_fresh_output_observation", "uses": ["machine"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_native_machine_processing", "binds": ["machine_output"] },
+          { "kind": "semantic_transition", "semanticTransition": "deliver_selected_fresh_machine_output_to_bound_inventory", "uses": ["machine", "machine_output"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_machine_output_delivery", "binds": [] }
+        ]
+      },
+      "guardPartitions": [
+        "machine_is_live_compatible_and_processing_input_is_owned",
+        "machine_or_input_becomes_stale_before_load_commit",
+        "native_machine_processing_is_pending_or_interrupted",
+        "selected_machine_output_is_not_freshly_available_after_processing",
+        "machine_output_delivery_is_capacity_blocked_or_target_becomes_stale"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": { "kind": "persisted_predicate", "sameBindingRequired": true, "freshAfterExecutionRequired": true, "nativeSaveReopenRereadRequired": true },
+      "evidencePolicy": { "topology": "single_player_native_companion", "sameExecutionRequired": true, "nonNullEvidenceRequired": true, "freshPostconditionRequired": true, "candidateClosureInheritance": "forbidden", "crossTopologyInheritance": "forbidden" },
+      "sourceRealization": { "status": "unknown", "uncertaintyId": "portfolio_m6_machine_processing_realization_pending", "question": "Focused target-version machine loading, native processing continuation, output collection, capacity, and persistence realization is not reviewed for the signed machine domain.", "disposition": "blocks_projection" },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m7_bundle_slot_to_reward",
+      "scopeAtomId": "portfolio_m7_bundle_contribution",
+      "playerSemantic": "Contribute one selected owned accepted alternative to one signed Community Center bundle slot, freshly confirm native bundle progress, and claim its selected native reward.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed signed Community Center bundle slot, owned signed-domain accepted contribution, and freshly observed selected bundle reward",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One signed DSM exact bundle slot, its bounded accepted alternative domain, one owned accepted alternative, and its signed native reward; no arbitrary content operation is permitted."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          { "name": "bundle_slot", "sort": "freshly_observed_signed_dsm_bundle_slot", "cardinality": "exactly_one" },
+          { "name": "accepted_alternative", "sort": "owned_signed_dsm_accepted_bundle_alternative", "cardinality": "exactly_one" },
+          { "name": "bundle_reward", "sort": "freshly_observed_signed_dsm_native_bundle_reward", "cardinality": "exactly_one" }
+        ],
+        "bindingRules": [
+          "bundle_slot_and_accepted_alternative_are_bound_by_initial_fresh_scoped_observation",
+          "accepted_alternative_is_bound_from_current_owned_inventory_not_a_fixture_slot",
+          "bundle_reward_is_bound_only_by_fresh_observation_after_native_slot_contribution",
+          "no_generic_content_dispatcher_or_raw_ui_input_is_a_valid_segment"
+        ],
+        "segments": [
+          { "kind": "observation_boundary", "phase": "initial", "binds": ["bundle_slot", "accepted_alternative"] },
+          { "kind": "semantic_transition", "semanticTransition": "contribute_owned_accepted_alternative_to_signed_bundle_slot", "uses": ["bundle_slot", "accepted_alternative"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_native_bundle_contribution", "binds": ["bundle_reward"] },
+          { "kind": "semantic_transition", "semanticTransition": "claim_selected_native_bundle_reward", "uses": ["bundle_slot", "bundle_reward"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_bundle_reward_claim", "binds": [] }
+        ]
+      },
+      "guardPartitions": [
+        "signed_bundle_slot_is_live_and_owned_alternative_is_accepted",
+        "bundle_slot_or_accepted_alternative_becomes_stale_before_contribution_commit",
+        "native_bundle_progress_or_reward_is_not_freshly_observable_after_contribution",
+        "bundle_reward_delivery_is_capacity_blocked_or_target_becomes_stale",
+        "selected_bundle_path_requires_an_unmodeled_presentation_or_protocol_boundary"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": { "kind": "persisted_predicate", "sameBindingRequired": true, "freshAfterExecutionRequired": true, "nativeSaveReopenRereadRequired": true },
+      "evidencePolicy": { "topology": "single_player_native_companion", "sameExecutionRequired": true, "nonNullEvidenceRequired": true, "freshPostconditionRequired": true, "candidateClosureInheritance": "forbidden", "crossTopologyInheritance": "forbidden" },
+      "sourceRealization": { "status": "unknown", "uncertaintyId": "portfolio_m7_bundle_slot_reward_realization_pending", "question": "Focused target-version exact bundle-slot contribution, accepted-alternative consumption, native reward, delivery, and persistence realization is not reviewed for the signed DSM selection.", "disposition": "blocks_projection" },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m8_native_mine_route",
+      "scopeAtomId": "portfolio_m8_mine_depth",
+      "playerSemantic": "Traverse one signed native mine route through freshly observed route checkpoints and reach its signed target floor, then freshly confirm persistent mine-depth progress.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed signed native mine-route transitions, route checkpoints, and signed target floor",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One signed DSM mine route class, its bounded native checkpoint equivalence classes, and one signed target floor; no literal tile route, combat bypass, or raw input policy is permitted."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          { "name": "mine_route", "sort": "freshly_observed_signed_dsm_native_mine_route", "cardinality": "exactly_one" },
+          { "name": "route_checkpoint_set", "sort": "freshly_observed_signed_dsm_native_mine_route_checkpoint_set", "cardinality": "one_or_more_within_signed_dsm_bound" },
+          { "name": "target_floor", "sort": "signed_dsm_native_mine_target_floor", "cardinality": "exactly_one" }
+        ],
+        "bindingRules": [
+          "mine_route_and_target_floor_are_bound_by_initial_fresh_scoped_observation",
+          "route_checkpoint_set_is_bound_only_by_fresh_observation_after_native_route_progress",
+          "each_checkpoint_must_belong_to_mine_route_and_precede_target_floor",
+          "no_literal_tile_path_raw_ui_input_or_unclosed_combat_substitution_is_a_valid_segment"
+        ],
+        "segments": [
+          { "kind": "observation_boundary", "phase": "initial", "binds": ["mine_route", "target_floor"] },
+          { "kind": "semantic_transition", "semanticTransition": "enter_and_progress_along_signed_native_mine_route", "uses": ["mine_route", "target_floor"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_native_route_progress", "binds": ["route_checkpoint_set"] },
+          { "kind": "protocol_boundary", "protocolBoundary": "native_mine_route_continuation_to_signed_target_floor", "uses": ["mine_route", "route_checkpoint_set", "target_floor"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_signed_target_floor_arrival", "binds": [] }
+        ]
+      },
+      "guardPartitions": [
+        "signed_mine_route_is_live_and_target_floor_is_authorized",
+        "route_transition_or_checkpoint_becomes_stale_or_unreachable",
+        "native_mine_route_continuation_is_pending_cancelled_or_interrupted",
+        "selected_route_requires_combat_or_other_unclosed_prerequisite",
+        "target_floor_is_not_freshly_reached_or_persisted_after_route_completion"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": { "kind": "persisted_predicate", "sameBindingRequired": true, "freshAfterExecutionRequired": true, "nativeSaveReopenRereadRequired": true },
+      "evidencePolicy": { "topology": "single_player_native_companion", "sameExecutionRequired": true, "nonNullEvidenceRequired": true, "freshPostconditionRequired": true, "candidateClosureInheritance": "forbidden", "crossTopologyInheritance": "forbidden" },
+      "sourceRealization": { "status": "unknown", "uncertaintyId": "portfolio_m8_mine_route_realization_pending", "question": "Focused target-version signed mine-route transition, progression prerequisite, target-floor persistence, and any combat boundary realization is not reviewed.", "disposition": "blocks_projection" },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m9_special_order_to_reward",
+      "scopeAtomId": "portfolio_m9_special_order_reward",
+      "playerSemantic": "Accept one signed Special Order, satisfy its signed objective set through scoped prerequisites, freshly confirm native completion, and claim its selected reward.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed signed Special Order offer, signed objective set, and freshly observed selected native reward",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One signed DSM exact Special Order, its finite signed objective set and scoped prerequisite bindings, and its selected native reward; no generic order or arbitrary objective identifier is permitted."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          { "name": "special_order", "sort": "freshly_observed_signed_dsm_special_order_offer", "cardinality": "exactly_one" },
+          { "name": "objective_set", "sort": "signed_dsm_special_order_objective_set_with_scoped_prerequisites", "cardinality": "one_or_more_within_signed_dsm_bound" },
+          { "name": "special_order_reward", "sort": "freshly_observed_signed_dsm_special_order_native_reward", "cardinality": "exactly_one" }
+        ],
+        "bindingRules": [
+          "special_order_and_objective_set_are_bound_by_initial_fresh_scoped_observation",
+          "each_objective_prerequisite_must_be_independently_bound_by_its_own_fresh_scoped_observation",
+          "special_order_reward_is_bound_only_by_fresh_observation_after_native_objective_completion",
+          "no_generic_order_dispatcher_raw_ui_input_or_preloaded_completed_order_is_a_valid_segment"
+        ],
+        "segments": [
+          { "kind": "observation_boundary", "phase": "initial", "binds": ["special_order", "objective_set"] },
+          { "kind": "semantic_transition", "semanticTransition": "accept_signed_special_order", "uses": ["special_order"] },
+          { "kind": "protocol_boundary", "protocolBoundary": "satisfy_signed_special_order_objectives_through_scoped_prerequisite_paths", "uses": ["special_order", "objective_set"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_native_special_order_completion", "binds": ["special_order_reward"] },
+          { "kind": "semantic_transition", "semanticTransition": "claim_selected_native_special_order_reward", "uses": ["special_order", "special_order_reward"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_special_order_reward_claim", "binds": [] }
+        ]
+      },
+      "guardPartitions": [
+        "signed_special_order_offer_and_objective_set_are_live_and_acceptable",
+        "special_order_offer_or_objective_prerequisite_becomes_stale_before_acceptance_or_progress",
+        "signed_objectives_require_an_unclosed_scope_or_content_path",
+        "native_special_order_completion_or_reward_is_not_freshly_observable",
+        "special_order_reward_delivery_is_capacity_blocked_or_target_becomes_stale"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": { "kind": "persisted_predicate", "sameBindingRequired": true, "freshAfterExecutionRequired": true, "nativeSaveReopenRereadRequired": true },
+      "evidencePolicy": { "topology": "single_player_native_companion", "sameExecutionRequired": true, "nonNullEvidenceRequired": true, "freshPostconditionRequired": true, "candidateClosureInheritance": "forbidden", "crossTopologyInheritance": "forbidden" },
+      "sourceRealization": { "status": "unknown", "uncertaintyId": "portfolio_m9_special_order_reward_realization_pending", "question": "Focused target-version exact Special Order acceptance, scoped objective progression, native completion, reward claim, and persistence realization is not reviewed for the signed DSM selection.", "disposition": "blocks_projection" },
+      "projectionState": "unprojected"
+    },
+    {
+      "traceFamilyId": "portfolio_m10_museum_subset_to_reward",
+      "scopeAtomId": "portfolio_m10_museum_collection",
+      "playerSemantic": "Donate one signed MuseumPieces subset through native collection state, freshly confirm the selected collection result, and claim its selected native reward.",
+      "actorSort": "bound current native local Player",
+      "targetSort": "freshly observed signed MuseumPieces subset, selected donation-eligible items, and freshly observed selected native Museum reward",
+      "parameterDomain": {
+        "kind": "parameterized",
+        "domainDescription": "One signed DSM MuseumPieces subset/hash, its bounded donation-eligible content domain, and its selected native reward; no arbitrary museum item identifier or generic content operation is permitted."
+      },
+      "pathLanguage": {
+        "quantification": "for_each_valid_binding",
+        "variables": [
+          { "name": "museum_piece_set", "sort": "freshly_observed_signed_dsm_museum_pieces_subset", "cardinality": "one_or_more_within_signed_dsm_bound" },
+          { "name": "donation_item_set", "sort": "owned_signed_dsm_donation_eligible_item_set", "cardinality": "one_or_more_within_signed_dsm_bound" },
+          { "name": "museum_reward", "sort": "freshly_observed_signed_dsm_native_museum_reward", "cardinality": "exactly_one" }
+        ],
+        "bindingRules": [
+          "museum_piece_set_and_donation_item_set_are_bound_by_initial_fresh_scoped_observation",
+          "each_donation_item_is_bound_from_current_owned_inventory_not_a_fixture_slot",
+          "museum_reward_is_bound_only_by_fresh_observation_after_native_collection_progress",
+          "no_raw_ui_input_generic_content_dispatcher_or_preloaded_collection_result_is_a_valid_segment"
+        ],
+        "segments": [
+          { "kind": "observation_boundary", "phase": "initial", "binds": ["museum_piece_set", "donation_item_set"] },
+          { "kind": "semantic_transition", "semanticTransition": "donate_signed_museum_piece_subset_from_owned_items", "uses": ["museum_piece_set", "donation_item_set"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_native_museum_collection_progress", "binds": ["museum_reward"] },
+          { "kind": "semantic_transition", "semanticTransition": "claim_selected_native_museum_reward", "uses": ["museum_piece_set", "museum_reward"] },
+          { "kind": "observation_boundary", "phase": "fresh_after_museum_reward_claim", "binds": [] }
+        ]
+      },
+      "guardPartitions": [
+        "signed_museum_piece_subset_and_owned_donation_items_are_live_and_eligible",
+        "museum_piece_or_donation_item_becomes_stale_before_native_donation_commit",
+        "native_museum_collection_progress_or_reward_is_not_freshly_observable",
+        "selected_museum_reward_delivery_is_capacity_blocked_or_target_becomes_stale",
+        "selected_subset_requires_an_unmodeled_presentation_or_content_boundary"
+      ],
+      "outcomeAlgebra": ["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending", "blocked"],
+      "requiredPostcondition": { "kind": "persisted_predicate", "sameBindingRequired": true, "freshAfterExecutionRequired": true, "nativeSaveReopenRereadRequired": true },
+      "evidencePolicy": { "topology": "single_player_native_companion", "sameExecutionRequired": true, "nonNullEvidenceRequired": true, "freshPostconditionRequired": true, "candidateClosureInheritance": "forbidden", "crossTopologyInheritance": "forbidden" },
+      "sourceRealization": { "status": "unknown", "uncertaintyId": "portfolio_m10_museum_subset_reward_realization_pending", "question": "Focused target-version signed MuseumPieces donation, collection progression, native reward, delivery, and persistence realization is not reviewed for the signed DSM selection.", "disposition": "blocks_projection" },
+      "projectionState": "unprojected"
+    }
+  ],
+  "exclusions": [],
+  "sourceImpacts": [],
+  "claims": {
+    "scopeAccounted": false,
+    "representationClosed": false,
+    "executionClosed": false,
+    "publicationClosed": false
+  },
+  "analysisBoundary": {
+    "legacyCatalog": "forbidden_discovery_input",
+    "actionRegistry": "forbidden_discovery_input",
+    "sourceRole": "per_trace_realization_and_impact_evidence_only",
+    "bridgeProjection": "not_performed",
+    "liveEvidence": "not_performed"
+  }
+}

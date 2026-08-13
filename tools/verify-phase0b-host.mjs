@@ -3,11 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadHostProductionModule } from "./lib/host-production-module.mjs";
 
-import {
-  createCompanionRuntime,
-  PHASE_0B_ALLOWED_TOOL_NAMES,
-} from "../host/dist/runtime.js";
+const { createCompanionRuntime, PHASE_0B_ALLOWED_TOOL_NAMES } = await loadHostProductionModule("runtime.js");
 
 const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-smoke-"));
 const identity = {
@@ -20,7 +18,10 @@ const identity = {
 try {
   const runtime = await createCompanionRuntime(identity, root);
   try {
-    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort());
+    assert.deepEqual(
+      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
+      [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort(),
+    );
     assert.equal(runtime.extensions.length, 1);
     assert.match(runtime.extensions[0], /vendor[\\/]magic-context[\\/]packages[\\/]pi-plugin[\\/]dist[\\/]index\.js$/);
   } finally {

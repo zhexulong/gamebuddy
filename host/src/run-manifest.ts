@@ -31,10 +31,7 @@ export type CompanionRunManifest = Readonly<{
   }>;
 }>;
 
-export async function writeOrVerifyRunManifest(
-  paths: RuntimePaths,
-  manifest: CompanionRunManifest,
-): Promise<void> {
+export async function writeOrVerifyRunManifest(paths: RuntimePaths, manifest: CompanionRunManifest): Promise<void> {
   const path = paths.runManifestPath;
   return withPathLock(path, async () => {
     const serialized = JSON.stringify(manifest, null, 2);

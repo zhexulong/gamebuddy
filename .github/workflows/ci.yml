@@ -23,11 +23,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
-      - run: pnpm install --frozen-lockfile
-      # The vendored extension ships source only; build its declared Pi entry
-      # before Host runtime tests load it through import.meta.resolve().
+      # Build the vendored source before pnpm packages the local dependency.
+      # Host production build hashes the packaged artifact against this output.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
+      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test

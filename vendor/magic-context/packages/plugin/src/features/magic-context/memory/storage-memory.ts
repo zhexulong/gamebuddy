@@ -48,6 +48,7 @@ export const COLUMN_MAP: Record<keyof Memory, string> = {
 const MEMORY_CATEGORY_LOOKUP = {
     // ongoing-interaction taxonomy
     SEMANTIC_MEMORY: true,
+    INTERACTION_EPISODE: true,
     // v2 world taxonomy
     PROJECT_RULES: true,
     ARCHITECTURE: true,
@@ -236,11 +237,13 @@ function isVerificationStatus(value: unknown): value is VerificationStatus {
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
-    return (
-        error instanceof Error &&
-        "code" in error &&
-        (error as { code?: unknown }).code === "SQLITE_CONSTRAINT_UNIQUE"
-    );
+    if (!(error instanceof Error)) return false;
+    const sqlite = error as Error & { code?: unknown; errcode?: unknown; errstr?: unknown };
+    // Bun's SQLite adapter reports SQLITE_CONSTRAINT_UNIQUE, while Node's
+    // node:sqlite reports ERR_SQLITE_ERROR plus SQLite extended errcode 2067.
+    // Both represent the same exact-hash dedup race handled below.
+    return sqlite.code === "SQLITE_CONSTRAINT_UNIQUE"
+        || (sqlite.code === "ERR_SQLITE_ERROR" && sqlite.errcode === 2067 && sqlite.errstr === "constraint failed");
 }
 
 function isNullableString(value: unknown): value is string | null {
@@ -638,9 +641,10 @@ export function insertMemory(db: Database, input: MemoryInput): Memory {
 
 /**
  * Shared-DB callers can race between their exact-hash pre-check and INSERT. When
- * the unique constraint wins, treat it as the same exact-dedup path the tool uses:
- * bump seen_count/last_seen_at on the existing row and return it instead of
- * surfacing a transient write failure.
+ * the unique constraint wins, return the existing immutable revision instead
+ * of surfacing a transient write failure. Command callers use the resulting
+ * state token as a CAS boundary, so duplicate create must not mutate
+ * `updated_at` or silently invalidate a browser's current token.
  */
 export function insertMemoryIdempotent(db: Database, input: MemoryInput): InsertMemoryResult {
     try {
@@ -654,11 +658,7 @@ export function insertMemoryIdempotent(db: Database, input: MemoryInput): Insert
         if (!existing) {
             throw error;
         }
-        updateMemorySeenCount(db, existing.id);
-        return {
-            memory: getMemoryById(db, existing.id) ?? existing,
-            inserted: false,
-        };
+        return { memory: existing, inserted: false };
     }
 }
 

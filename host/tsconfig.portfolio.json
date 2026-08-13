@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-portfolio",
+    "rootDir": "src",
+    "noEmit": false,
+    "noEmitOnError": true
+  },
+  "include": [
+    "src/portfolio-protocol.ts",
+    "src/portfolio-stardew-bridge.ts",
+    "src/portfolio-protocol.test.ts",
+    "src/portfolio-stardew-bridge.test.ts"
+  ],
+  "exclude": []
+}

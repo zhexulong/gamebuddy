@@ -6,6 +6,38 @@
   "WorldId": "Game1_MasterPlayer_UniqueMultiplayerID_decimal",
   "PlayerId": "configured_native_local_coop_farmhand_UniqueMultiplayerID_decimal",
   "CompanionId": "opaque_companion_id",
+  "NativeLocalPlayerFixture": {
+    "Enable": false,
+    "LogicalSaveName": "GameBuddyFixture",
+    "ObservedSaveSlot": "GameBuddyFixture_445094166",
+    "TimeoutSeconds": 120,
+    "FixtureScenario": "",
+    "Bootstrap": {
+      "Enable": false,
+      "SaveName": "GameBuddyFixtureStable",
+      "PlayerName": "GameBuddy"
+    }
+  },
+  "Portfolio": {
+    "Enable": false,
+    "Topology": "single_player_native_companion",
+    "EnableObserveBridge": false,
+    "PipeName": "gamebuddy-stardew-portfolio",
+    "BridgeToken": "replace_with_an_untracked_16_char_minimum_token",
+    "SaveId": "Game1_uniqueIDForThisGame_decimal",
+    "WorldId": "Game1_MasterPlayer_UniqueMultiplayerID_decimal",
+    "LocalPlayerId": "Game1_player_UniqueMultiplayerID_decimal",
+    "CompanionId": "opaque_companion_id",
+    "DataRoot": "C:/Users/you/AppData/Local/GameBuddy/stardew-portfolio",
+    "ExpectedGameVersion": "1.6.15",
+    "ExpectedGameBuildNumber": 24356,
+    "P0bLifecycleProducer": {
+      "Enable": false,
+      "LogicalSaveName": "GameBuddyPortfolioNative02",
+      "ObservedSaveSlot": "GameBuddyPortfolioNative02_445880081",
+      "TimeoutSeconds": 180
+    }
+  },
   "HostFarmhandProvisioning": {
     "Enable": false,
     "SessionDirectory": "C:/Users/you/AppData/Local/GameBuddy/stardew-session",

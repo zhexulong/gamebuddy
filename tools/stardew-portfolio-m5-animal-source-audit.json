@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_focused_source_audit",
+  "auditId": "portfolio_m5_animal_product_source_audit_v1",
+  "traceFamilyId": "portfolio_m5_animal_housing_to_product",
+  "topology": "single_player_native_companion",
+  "charterAuthority": {
+    "modelId": "core_valley_milestone_portfolio_v1_command_path_charter",
+    "scopeDocument": "design/16_STARDEW_DEMO_SCOPE_AND_GOAL_CONTRACTS.md",
+    "scopeDocumentSha256": "b4a5120b698537b136edc2cfcbcd2681e5d1fb9802a8709df28eb06b1288a10b"
+  },
+  "auditSource": {
+    "provenanceDocument": "design/13_STARDEW_NATIVE_PROVENANCE.md",
+    "localSnapshotContentManifestSha256": "8ef8fc0a6eae9ca9064a37538c0bc017b0c8e4341a02441ddca072515d4c636c",
+    "targetAssemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "disposition": "unverified_audit_aid_blocks_target_version_realization"
+  },
+  "anchors": [
+    {"anchorId":"trough_hay_placement_commit","relativePath":"StardewValley/AnimalHouse.cs","startByte":5614,"endByte":5742,"fileSha256":"4e3ad6df00829df72ce983990136ecdb0ed1656da2a074ce5bcc544de3368bb2","sliceSha256":"9ed214816fb995698ff23df59759ffe754cc3d082b7dc7831eb2a3767769b226","needle":"if (obj.QualifiedItemId == \"(O)178\" && doesTileHaveProperty((int)tileLocation.X, (int)tileLocation.Y, \"Trough\", \"Back\") != null)","semanticRole":"animal_housing_trough_hay_commit"},
+    {"anchorId":"location_to_animal_day_update","relativePath":"StardewValley/GameLocation.cs","startByte":163390,"endByte":163415,"fileSha256":"36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d","sliceSha256":"2815914113656faad8e440a2da69de771a74eb304a1de936ef6fdff8c55995b3","needle":"array[j].dayUpdate(this);","semanticRole":"native_location_animal_day_continuation"},
+    {"anchorId":"animal_day_update_owner","relativePath":"StardewValley/FarmAnimal.cs","startByte":24766,"endByte":24813,"fileSha256":"0812a8bed14c65eefc9d0b22a72cd09f3f3c16af4cdc7b58367d0662319598cc","sliceSha256":"40e67626ed27ea5526a8f2c734e393d94f5bc26f3632b6b989d87b09ebcedbcf","needle":"public void dayUpdate(GameLocation environment)","semanticRole":"same_animal_native_day_owner"},
+    {"anchorId":"animal_produce_eligibility_partition","relativePath":"StardewValley/FarmAnimal.cs","startByte":27381,"endByte":27500,"fileSha256":"0812a8bed14c65eefc9d0b22a72cd09f3f3c16af4cdc7b58367d0662319598cc","sliceSha256":"3516be9770a4a7aa2f5155c8e754586388b0d09ee95afede81995ef6c904be2a","needle":"bool produceToday = (int)daysSinceLastLay >= ((data != null) ? new int?(data.DaysToProduce - produceSpeedBonus) : null)","semanticRole":"animal_product_eligibility_and_randomness_partition"},
+    {"anchorId":"animal_product_availability_commit","relativePath":"StardewValley/FarmAnimal.cs","startByte":29266,"endByte":29302,"fileSha256":"0812a8bed14c65eefc9d0b22a72cd09f3f3c16af4cdc7b58367d0662319598cc","sliceSha256":"e9589e278c1ae4c967c6c0bcdc8221cec65f2a4bee871499b9c7313450f08366","needle":"currentProduce.Value = whichProduce;","semanticRole":"same_animal_product_availability_commit"},
+    {"anchorId":"milk_pail_target_selection","relativePath":"StardewValley.Tools/MilkPail.cs","startByte":874,"endByte":1015,"fileSha256":"c8bee330b7584597a4bd45187a07efc8f1fd3c94f7273457bd146acbebf85c1c","sliceSha256":"da622fd39f93102b3d25b2aa31fbf6c1c94af9cd14d9fa6b972b93a4b0d864b9","needle":"animal = Utility.GetBestHarvestableFarmAnimal(toolRect: new Rectangle(x - 32, y - 32, 64, 64), animals: location.animals.Values, tool: this);","semanticRole":"normal_player_tool_target_selection"},
+    {"anchorId":"milk_pail_delivery_guard","relativePath":"StardewValley.Tools/MilkPail.cs","startByte":1019,"endByte":1180,"fileSha256":"c8bee330b7584597a4bd45187a07efc8f1fd3c94f7273457bd146acbebf85c1c","sliceSha256":"54de9b227ae7846d91fb0c5ea0aa8861b8194f7e65008f472d378e46d6cca124","needle":"if (animal?.currentProduce.Value != null && animal.isAdult() && animal.CanGetProduceWithTool(this) && who.couldInventoryAcceptThisItem(animal.currentProduce, 1))","semanticRole":"animal_product_tool_and_capacity_guard"},
+    {"anchorId":"milk_pail_inventory_commit","relativePath":"StardewValley.Tools/MilkPail.cs","startByte":3677,"endByte":3717,"fileSha256":"c8bee330b7584597a4bd45187a07efc8f1fd3c94f7273457bd146acbebf85c1c","sliceSha256":"93d7548ac7c4f0422d357c5d55d36b382fcc7deaeb8ac591a6eb24babd8bfb1d","needle":"if (who.addItemToInventoryBool(produce))","semanticRole":"animal_product_inventory_delivery_commit"},
+    {"anchorId":"milk_pail_product_consumption","relativePath":"StardewValley.Tools/MilkPail.cs","startByte":3824,"endByte":3859,"fileSha256":"c8bee330b7584597a4bd45187a07efc8f1fd3c94f7273457bd146acbebf85c1c","sliceSha256":"d2eed025b58552c508738be481b97428287031a848b4afd53aa34ccea159e17f","needle":"animal.currentProduce.Value = null;","semanticRole":"same_animal_product_consumption_commit"}
+  ],
+  "observedSemanticConstraints": [
+    "normal trough feed placement has a distinct owned-Hay-to-selected-Trough commit",
+    "native location day setup calls each housed animal's dayUpdate before save and product availability is not a direct mutation",
+    "same-animal product availability is conditional on data, maturity, day count, fullness, happiness, and native randomness",
+    "this audit follows one HarvestWithTool route only; DropOvernight, DigUp, AutoGrabber, and other animal/content variants are not silently covered",
+    "normal MilkPail selection, eligibility/capacity guard, inventory delivery, and product clearing form distinct lifecycle points",
+    "this local source snapshot does not authorize raw UI input, direct new-day/save edits, bridge projection, or a source-realization claim"
+  ],
+  "unresolvedQuestions": [
+    {"questionId":"m5_target_version_decompilation_correlation","question":"The committed local source snapshot is an audit aid only; focused correlation to the actual target-version assembly/decompilation is required before Charter source realization may become realized.","disposition":"blocks_projection"},
+    {"questionId":"m5_signed_housing_animal_and_tool_content","question":"The DSM must select the exact housing class, same-animal content class, allowed product type, tool, hay provenance, and non-AutoFeed/non-AutoGrabber policy before projection.","disposition":"requires_signed_dsm_selection"},
+    {"questionId":"m5_native_day_and_randomness_evidence_contract","question":"M5's day progression and product availability contain native conditions and randomness. Target-version review must define the evidence/terminal interpretation without replacing it with a fixture or direct state edit.","disposition":"blocks_projection"},
+    {"questionId":"m5_typed_bridge_ingress_and_game_thread_contract","question":"The audit does not establish typed Mod bridge ingress, game-thread revalidation, cancellation, replay, same-animal binding, or fresh observation/evidence contracts.","disposition":"blocks_projection"},
+    {"questionId":"m5_target_version_live_feed_day_collect_reopen","question":"No formal target-version typed feed/day/collect request sequence, same-execution receipt, fresh postcondition, native save/reopen reread, or recovery evidence exists.","disposition":"blocks_projection"}
+  ],
+  "conclusion": {"sourceRealizationStatus":"unknown","projectionState":"blocked","liveState":"not_performed","nonClaim":"This is a focused audit-aid dossier. It does not mark the Charter trace realized, derive a capability, authorize a bridge route, close a CCM row, or establish a live result."}
+}

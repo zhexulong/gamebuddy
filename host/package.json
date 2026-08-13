@@ -7,15 +7,18 @@
     "node": ">=24.13.0 <25"
   },
   "scripts": {
-    "build": "tsc --project tsconfig.json",
-    "start": "node dist/main.js",
-    "start:dialogue": "node dist/dialogue-web-main.js",
-    "test": "node --test --test-concurrency=1 dist/**/*.test.js",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
+    "build": "node scripts/build-production-artifact.mjs",
+    "build:test": "node scripts/build-test-artifact.mjs",
+    "start": "node scripts/start-production-artifact.mjs main.js",
+    "start:dialogue": "node scripts/start-production-artifact.mjs dialogue-web-main.js",
+    "test": "node scripts/run-test-suite.mjs",
+    "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project tsconfig.test.json --noEmit",
+    "check:production-artifact": "node scripts/check-production-artifact.mjs",
+    "repair:test-artifact-lock": "node scripts/repair-test-artifact-lock.mjs"
   },
   "dependencies": {
     "@cortexkit/pi-magic-context": "file:../vendor/magic-context/packages/pi-plugin",
-    "@earendil-works/pi-coding-agent": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.84.1",
     "typebox": "1.1.38"
   },
   "devDependencies": {

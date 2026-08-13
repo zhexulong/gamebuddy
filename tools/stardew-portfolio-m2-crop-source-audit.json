@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_focused_source_audit",
+  "auditId": "portfolio_m2_crop_lifecycle_source_audit_v1",
+  "traceFamilyId": "portfolio_m2_crop_lifecycle",
+  "topology": "single_player_native_companion",
+  "charterAuthority": {
+    "modelId": "core_valley_milestone_portfolio_v1_command_path_charter",
+    "scopeDocument": "design/16_STARDEW_DEMO_SCOPE_AND_GOAL_CONTRACTS.md",
+    "scopeDocumentSha256": "b4a5120b698537b136edc2cfcbcd2681e5d1fb9802a8709df28eb06b1288a10b"
+  },
+  "auditSource": {
+    "provenanceDocument": "design/13_STARDEW_NATIVE_PROVENANCE.md",
+    "localSnapshotContentManifestSha256": "8ef8fc0a6eae9ca9064a37538c0bc017b0c8e4341a02441ddca072515d4c636c",
+    "targetAssemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "disposition": "unverified_audit_aid_blocks_target_version_realization"
+  },
+  "anchors": [
+    {
+      "anchorId": "prepare_selected_eligible_plots",
+      "relativePath": "StardewValley.Tools/Hoe.cs",
+      "startByte": 2377,
+      "endByte": 2412,
+      "fileSha256": "1d4374940bf2ef8f5ca8848002fe717f7f58c21126aabf2b46468302eb731a8c",
+      "sliceSha256": "69e527f7c51bd268160c3cf23ad5d532c1619e629810569266728c52fcd54299",
+      "needle": "location.makeHoeDirt(tileLocation);",
+      "semanticRole": "native_preparation_commit"
+    },
+    {
+      "anchorId": "establish_selected_crop_ingress",
+      "relativePath": "StardewValley/Object.cs",
+      "startByte": 89478,
+      "endByte": 89527,
+      "fileSha256": "f530aa672de989c975bcd33fd00356bb4d4ed6c3802ae08af3dc940012849f09",
+      "sliceSha256": "36b5b3cd65b356149d748f208d87e0ba9dffc1758aebe8278a806306e8e710b1",
+      "needle": "if (base.Category == -74 || base.Category == -19)",
+      "semanticRole": "seed_or_fertilizer_category_ingress"
+    },
+    {
+      "anchorId": "establish_selected_crop_commit",
+      "relativePath": "StardewValley.TerrainFeatures/HoeDirt.cs",
+      "startByte": 15192,
+      "endByte": 15248,
+      "fileSha256": "f6263ea511ee9e2116af84d9fe2fddec4decb13e58eb16290b7529e6dc00191b",
+      "sliceSha256": "f16c8277f054784e15e5a2d20f02a9ebbca53b3163d56e94e4a99b073bfbf779",
+      "needle": "crop = new Crop(itemId, tilePos.X, tilePos.Y, Location);",
+      "semanticRole": "same_plot_crop_establishment_commit"
+    },
+    {
+      "anchorId": "hydrate_crop_ingress",
+      "relativePath": "StardewValley.Tools/WateringCan.cs",
+      "startByte": 4521,
+      "endByte": 4577,
+      "fileSha256": "cd400279ec80321c6640a35904e3dba2ccf318617474a6f87ff2faf9f8efc686",
+      "sliceSha256": "16e2860d4f420353a19012dfda0a0fca43d894422114f53ef2236bd5000c1422",
+      "needle": "terrainFeature.performToolAction(this, 0, tileLocation);",
+      "semanticRole": "native_watering_terrain_dispatch"
+    },
+    {
+      "anchorId": "hydrate_crop_commit",
+      "relativePath": "StardewValley.TerrainFeatures/HoeDirt.cs",
+      "startByte": 18202,
+      "endByte": 18223,
+      "fileSha256": "f6263ea511ee9e2116af84d9fe2fddec4decb13e58eb16290b7529e6dc00191b",
+      "sliceSha256": "423cd96ca144a2c7f9e440fde378ede17e8314edbe5800d4bf754e3d370e069d",
+      "needle": "if (t is WateringCan)",
+      "semanticRole": "hoe_dirt_watering_guard_and_commit_path"
+    },
+    {
+      "anchorId": "native_day_progression_location_owner",
+      "relativePath": "StardewValley.TerrainFeatures/HoeDirt.cs",
+      "startByte": 23677,
+      "endByte": 23709,
+      "fileSha256": "f6263ea511ee9e2116af84d9fe2fddec4decb13e58eb16290b7529e6dc00191b",
+      "sliceSha256": "edd29a3b73caae6057432fa5888775066ad8aa5ab0ab6b22302eafdbc750e46d",
+      "needle": "public override void dayUpdate()",
+      "semanticRole": "hoe_dirt_native_day_continuation_owner"
+    },
+    {
+      "anchorId": "native_day_progression_crop_owner",
+      "relativePath": "StardewValley/Crop.cs",
+      "startByte": 24884,
+      "endByte": 24921,
+      "fileSha256": "a4d7a680f77b2df64a4d6cb63bd77dc36c12668a7caecdda29cd604c57d0674b",
+      "sliceSha256": "230983fba8d38db346b45dd99b2354baa6c4b517d41b495c60e053f0c3cf7d1f",
+      "needle": "public virtual void newDay(int state)",
+      "semanticRole": "crop_phase_and_readiness_native_day_continuation"
+    },
+    {
+      "anchorId": "collect_ready_crop_harvest_entry",
+      "relativePath": "StardewValley/Crop.cs",
+      "startByte": 13641,
+      "endByte": 13780,
+      "fileSha256": "a4d7a680f77b2df64a4d6cb63bd77dc36c12668a7caecdda29cd604c57d0674b",
+      "sliceSha256": "21f726b28a1adacbbb18e3da4c476aa126bc4dc4e7d32cf6b2a42200c2efc749",
+      "needle": "public virtual bool harvest(int xTile, int yTile, HoeDirt soil, JunimoHarvester junimoHarvester = null, bool isForcedScytheHarvest = false)",
+      "semanticRole": "native_harvest_guard_and_outcome_owner"
+    },
+    {
+      "anchorId": "collect_ready_crop_inventory_delivery",
+      "relativePath": "StardewValley/Crop.cs",
+      "startByte": 18811,
+      "endByte": 18870,
+      "fileSha256": "a4d7a680f77b2df64a4d6cb63bd77dc36c12668a7caecdda29cd604c57d0674b",
+      "sliceSha256": "9bfd7ea42718c67044df6ee4d1f203ceba8354c273fb1d0ab3579096c5180aea",
+      "needle": "Game1.player.addItemToInventoryBool(harvestedItem.getOne())",
+      "semanticRole": "ordinary_grab_inventory_delivery_and_capacity_branch"
+    }
+  ],
+  "observedSemanticConstraints": [
+    "seed_establishment_requires_native_item_category_and_location_or_season_rule_acceptance",
+    "same_plot_crop_establishment_is_a_distinct_native_commit_from_hydration",
+    "crop_progression_is_owned_by_native_day_update_and_requires_fresh_post_day_observation",
+    "ordinary_harvest_has_a_native_inventory_capacity_branch_and_can_create_secondary_debris",
+    "source_snapshot_does_not_authorize_direct_new_day_crop_mutation_raw_ui_input_or_any_bridge_projection"
+  ],
+  "unresolvedQuestions": [
+    {
+      "questionId": "m2_target_version_decompilation_correlation",
+      "question": "The committed local source snapshot is an audit aid only; a focused target-version assembly/decompilation correlation is still required before charter source realization may become realized.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m2_typed_bridge_ingress_and_game_thread_contract",
+      "question": "The audit identifies player-facing native lifecycles but does not establish a safe typed Mod bridge ingress, game-thread revalidation, cancellation, replay, or evidence contract.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m2_selected_dsm_crop_content_and_harvest_method",
+      "question": "The selected crop/content domain, growth prerequisites, and ordinary-grab eligibility remain unsigned until the Portfolio DSM is frozen.",
+      "disposition": "requires_signed_dsm_selection"
+    },
+    {
+      "questionId": "m2_target_version_live_crop_lifecycle",
+      "question": "No formal target-version typed live request, same-execution receipt, fresh postcondition, native save/reopen reread, or recovery evidence exists.",
+      "disposition": "blocks_projection"
+    }
+  ],
+  "conclusion": {
+    "sourceRealizationStatus": "unknown",
+    "projectionState": "blocked",
+    "liveState": "not_performed",
+    "nonClaim": "This is a focused audit-aid dossier. It does not mark the Charter trace realized, derive a capability, authorize a bridge route, close a CCM row, or establish a live result."
+  }
+}

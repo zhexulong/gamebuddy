@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { LocalStardewBridgeClient } from "../host/dist/local-stardew-bridge.js";
+import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+
+const { LocalStardewBridgeClient } = await loadHostProductionModule("local-stardew-bridge.js");
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -28,11 +30,46 @@ try {
   const candidates = process.argv.includes("--target")
     ? [parseTile(option("--target"))]
     : [
-        [5, 5], [6, 5], [7, 5], [8, 5], [9, 5], [10, 5], [11, 5], [12, 5],
-        [5, 6], [6, 6], [7, 6], [8, 6], [9, 6], [10, 6], [11, 6], [12, 6],
-        [5, 7], [6, 7], [7, 7], [8, 7], [9, 7], [10, 7], [11, 7], [12, 7],
-        [5, 8], [6, 8], [7, 8], [8, 8], [9, 8], [10, 8], [11, 8], [12, 8],
-        [5, 9], [6, 9], [7, 9], [8, 9], [9, 9], [10, 9], [11, 9], [12, 9],
+        [5, 5],
+        [6, 5],
+        [7, 5],
+        [8, 5],
+        [9, 5],
+        [10, 5],
+        [11, 5],
+        [12, 5],
+        [5, 6],
+        [6, 6],
+        [7, 6],
+        [8, 6],
+        [9, 6],
+        [10, 6],
+        [11, 6],
+        [12, 6],
+        [5, 7],
+        [6, 7],
+        [7, 7],
+        [8, 7],
+        [9, 7],
+        [10, 7],
+        [11, 7],
+        [12, 7],
+        [5, 8],
+        [6, 8],
+        [7, 8],
+        [8, 8],
+        [9, 8],
+        [10, 8],
+        [11, 8],
+        [12, 8],
+        [5, 9],
+        [6, 9],
+        [7, 9],
+        [8, 9],
+        [9, 9],
+        [10, 9],
+        [11, 9],
+        [12, 9],
       ].map(([x, y]) => ({ x, y }));
   const attempts = [];
   let success = null;
@@ -63,13 +100,15 @@ try {
     }
   }
   const passed = success !== null;
-  console.log(JSON.stringify({
-    state: passed ? "passed" : "blocked",
-    durationMs: Date.now() - startedAt,
-    initial: summarizeSnapshot(initial),
-    success,
-    attempts,
-  }));
+  console.log(
+    JSON.stringify({
+      state: passed ? "passed" : "blocked",
+      durationMs: Date.now() - startedAt,
+      initial: summarizeSnapshot(initial),
+      success,
+      attempts,
+    }),
+  );
   if (!passed) process.exitCode = 2;
 } finally {
   unsubscribe();
@@ -82,15 +121,38 @@ function parseTile(value) {
   return { x: Number(match[1]), y: Number(match[2]) };
 }
 function summarize(value) {
-  return { executionId: value.executionId, requestId: value.requestId, state: value.state, reasonCode: value.reasonCode, revision: value.revision, evidence: value.evidence };
+  return {
+    executionId: value.executionId,
+    requestId: value.requestId,
+    state: value.state,
+    reasonCode: value.reasonCode,
+    revision: value.revision,
+    evidence: value.evidence,
+  };
 }
 function summarizeSnapshot(value) {
-  return { revision: value.revision, location: value.location, tile: value.tile, activeExecution: value.activeExecution == null ? null : { executionId: value.activeExecution.executionId, requestId: value.activeExecution.requestId, state: value.activeExecution.state, reasonCode: value.activeExecution.reasonCode } };
+  return {
+    revision: value.revision,
+    location: value.location,
+    tile: value.tile,
+    activeExecution:
+      value.activeExecution == null
+        ? null
+        : {
+            executionId: value.activeExecution.executionId,
+            requestId: value.activeExecution.requestId,
+            state: value.activeExecution.state,
+            reasonCode: value.activeExecution.reasonCode,
+          },
+  };
 }
 async function waitForTerminal(receipts, executionId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const terminal = receipts.find((receipt) => receipt.executionId === executionId && terminalStates.has(receipt.state) && receipt.state !== "accepted");
+    const terminal = receipts.find(
+      (receipt) =>
+        receipt.executionId === executionId && terminalStates.has(receipt.state) && receipt.state !== "accepted",
+    );
     if (terminal !== undefined) return terminal;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }

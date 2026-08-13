@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "locale": "zh-CN",
+  "revision": "human-reviewed-v1",
+  "integrity": "sha256:21e2b68fcbff79f1110d8639bbc5b542016a53ae02ca34994e375f5db45f2d04",
+  "phraseSets": {
+    "open_help": ["你先帮我顾一下田里吧，我去收拾东西。","这边我有点忙，你看着帮一下就好。","田里先麻烦你留意一下。","你看现在有什么能搭把手的。"],
+    "redirect": ["这边够了，换个事做，我们去矿洞吧。","算了，先别弄这个了。","先停下田里的事，换个方向。","我想改做别的，你先跟上。"],
+    "stop": ["停一下。","先别动，我想自己来。","STOP，先到这里。","别继续了。"],
+    "silence": ["no_input_for_window","no_input_for_window_short","no_input_for_window_observe","no_input_for_window_settle"],
+    "reject": ["不用，我今天想自己慢慢逛。","先别替我安排，我自己来。","谢谢，但这次不用帮忙。","我想安静一会儿。"]
+  }
+}

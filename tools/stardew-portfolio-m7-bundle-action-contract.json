@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_static_action_contract",
+  "contractId": "portfolio_m7_bundle_actions_v1",
+  "milestone": "M7",
+  "topology": "single_player_native_companion",
+  "targetVersion": "1.6.15.24356",
+  "sourceAudit": {
+    "path": "tools/stardew-portfolio-m7-bundle-source-audit.json",
+    "auditId": "portfolio_m7_bundle_slot_reward_source_audit_v1",
+    "traceFamilyId": "portfolio_m7_bundle_slot_to_reward",
+    "anchorIds": ["community_center_bundle_mutex_ingress", "bundle_accepted_alternative_guard", "bundle_accepted_alternative_consumption", "bundle_slot_progress_commit", "bundle_completion_commit", "bundle_reward_available_commit", "bundle_reward_collection_ingress", "bundle_reward_claim_commit"],
+    "projectionState": "blocked",
+    "liveState": "not_performed"
+  },
+  "selection": {
+    "slot": {"kind": "opaque_runtime_bundle_slot", "source": "fresh_observation", "value": null},
+    "item": {
+      "identity": {"kind": "opaque_runtime_item_identity", "source": "fresh_observation", "value": null},
+      "quality": {"kind": "bounded_runtime_integer", "min": 0, "max": 4, "value": null},
+      "stack": {"kind": "bounded_runtime_integer", "min": 1, "max": 999, "value": null},
+      "selectionSource": "signed_dsm_bounded_domain_plus_fresh_observation"
+    },
+    "reward": {"kind": "opaque_runtime_bundle_reward", "source": "fresh_observation", "value": null},
+    "dispatchBinding": {"required": true, "resolution": "before_native_invocation", "immutable": true, "provenance": "fresh_observation_bound_to_signed_dsm"}
+  },
+  "actions": [
+    {
+      "actionId": "contribute_bundle_slot",
+      "actionClass": "primitive",
+      "target": {"kind": "opaque_runtime_bundle_slot", "source": "fresh_observation", "value": null},
+      "input": {
+        "itemIdentity": {"kind": "opaque_runtime_item_identity", "source": "fresh_observation", "value": null},
+        "quality": {"kind": "bounded_runtime_integer", "min": 0, "max": 4, "value": null},
+        "stack": {"kind": "bounded_runtime_integer", "min": 1, "max": 999, "value": null},
+        "boundAtDispatch": true
+      },
+      "guards": {"gameThreadRevalidation": true, "topology": "single_player_native_companion", "player": "required", "world": "required", "scope": "required", "revision": "required", "policy": "required", "deadline": "required", "idempotency": "required", "cancel": "required", "gameState": "required", "freshObservation": true, "selectedDomain": "signed_dsm_bounded_domain"},
+      "nativeBoundary": {"mutex": "community_center_bundle_mutex_revalidated", "progress": "slot_progress_commit_only", "reward": "observe_availability_only", "presentation": "no_menu_or_callback"},
+      "commit": {"transaction": "contribute_one_selected_bundle_slot", "effects": ["validate_selected_alternative_quality_category_and_stack", "consume_exact_accepted_stack", "commit_one_bundle_slot_progress"], "doesNotDo": "claim_reward_or_complete_bundle"},
+      "terminalReceipt": {"state": "succeeded", "evidence": "non_empty_action_specific", "sameExecution": true, "actionSpecific": true},
+      "freshPostcondition": {"provenance": "fresh_native_observation", "requiresRevisionAfterReceipt": true, "facts": ["selected_slot_progress_delta", "exact_inventory_delta", "bundle_completion_or_reward_availability_observed_separately"]},
+      "lifecycle": {"cancellation": "local_stop_no_success", "replay": "idempotent_same_request_only", "saveReopen": "required_when_composed"},
+      "forbiddenBehavior": ["UI automation, window/visual inspection, keyboard/mouse/XInput, or coordinate selection", "Game1.activeClickableMenu, Bundle, JunimoNoteMenu, ItemGrabMenu, raw menu callback, or dialogue callback invocation", "GameLocation.checkAction, CommunityCenter bundle ingress, raw dispatcher string, or generic method-name dispatch", "save XML editing, direct net-world-state/player/mail/inventory/bundle mutation, or fixture-written result state", "arbitrary native call fallback, reflection, private callback invocation, or synthetic receipt/postcondition", "generic complete-bundle, donate-and-claim, or combined contribution/reward action"]
+    },
+    {
+      "actionId": "claim_bundle_reward",
+      "actionClass": "primitive",
+      "target": {"kind": "opaque_runtime_bundle_slot", "source": "fresh_observation", "value": null},
+      "input": {"reward": {"kind": "opaque_runtime_bundle_reward", "source": "fresh_observation", "value": null}, "boundAtDispatch": true},
+      "guards": {"gameThreadRevalidation": true, "topology": "single_player_native_companion", "player": "required", "world": "required", "scope": "required", "revision": "required", "policy": "required", "deadline": "required", "idempotency": "required", "cancel": "required", "gameState": "required", "freshObservation": true, "selectedDomain": "signed_dsm_bounded_domain"},
+      "nativeBoundary": {"mutex": "community_center_bundle_mutex_revalidated", "progress": "observe_existing_progress_only", "reward": "reward_claim_commit_only", "presentation": "typed_non_ui_inventory_transfer"},
+      "commit": {"transaction": "claim_one_selected_bundle_reward", "effects": ["revalidate_selected_bundle_reward_available", "grant_native_reward_inventory_delta", "clear_bundle_reward_availability"], "doesNotDo": "contribute_slot_or_complete_bundle"},
+      "terminalReceipt": {"state": "succeeded", "evidence": "non_empty_action_specific", "sameExecution": true, "actionSpecific": true},
+      "freshPostcondition": {"provenance": "fresh_native_observation", "requiresRevisionAfterReceipt": true, "facts": ["reward_availability_cleared", "exact_reward_inventory_delta", "selected_slot_progress_unchanged_by_claim"]},
+      "lifecycle": {"cancellation": "local_stop_no_success", "replay": "idempotent_same_request_only", "saveReopen": "required_when_composed"},
+      "forbiddenBehavior": ["UI automation, window/visual inspection, keyboard/mouse/XInput, or coordinate selection", "Game1.activeClickableMenu, Bundle, JunimoNoteMenu, ItemGrabMenu, raw menu callback, or dialogue callback invocation", "GameLocation.checkAction, CommunityCenter bundle ingress, raw dispatcher string, or generic method-name dispatch", "save XML editing, direct net-world-state/player/mail/inventory/bundle mutation, or fixture-written result state", "arbitrary native call fallback, reflection, private callback invocation, or synthetic receipt/postcondition", "generic complete-bundle, donate-and-claim, or combined contribution/reward action"]
+    }
+  ],
+  "sharedRequestGuards": {"freshObservation": true, "opaqueSelectedSlot": true, "boundedDsmItemIdentityQualityStack": true, "scope": true, "gameThread": true, "revision": true, "policy": true, "deadline": true, "idempotency": true, "cancel": true, "state": true, "noUiOrRawFallback": true},
+  "sharedEvidenceRules": {"receiptState": true, "receiptEvidence": true, "sameExecution": true, "freshPostcondition": true, "progressDelta": true, "rewardAvailabilityDelta": true, "inventoryDelta": true, "saveReopen": true},
+  "forbiddenBehavior": ["UI automation, window/visual inspection, keyboard/mouse/XInput, or coordinate selection", "Game1.activeClickableMenu, Bundle, JunimoNoteMenu, ItemGrabMenu, raw menu callback, or dialogue callback invocation", "GameLocation.checkAction, CommunityCenter bundle ingress, raw dispatcher string, or generic method-name dispatch", "save XML editing, direct net-world-state/player/mail/inventory/bundle mutation, or fixture-written result state", "arbitrary native call fallback, reflection, private callback invocation, or synthetic receipt/postcondition", "generic complete-bundle, donate-and-claim, or combined contribution/reward action"],
+  "nonClaims": ["This static contract does not publish contribute_bundle_slot or claim_bundle_reward.", "This contract does not establish source realization, target-version live closure, receipt evidence, or release evidence.", "The current UI-owned source transaction is an implementation seam, not a reason to classify the typed action as dependency_blocked."],
+  "fixtureContractRef": "fixtures/stardew/portfolio-m7-bundle-unprovisioned.fixture.example.json",
+  "implementationStatus": "implementation_needed",
+  "fixtureStatus": "fixture_needed",
+  "liveClosure": "none",
+  "publication": "none"
+}

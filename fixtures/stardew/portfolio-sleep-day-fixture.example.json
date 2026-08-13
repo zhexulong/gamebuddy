@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "contractId": "portfolio_sleep_day_fixture_contract_v1",
+  "fixtureId": "GameBuddyPortfolioFixture_SleepDay_1_6_15",
+  "action": "single_player_sleep_and_advance_day",
+  "topology": "single_player_native_companion",
+  "target": {
+    "gameVersion": "1.6.15.24356",
+    "assemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "contentHashesSha256": "8143aa3110810e0039282ab8e9989417092388edb84c8c3b6c0b6f23840a4349"
+  },
+  "fixtureStatus": {
+    "state": "fixture_needed",
+    "liveClosure": "none",
+    "templateState": "unprovisioned",
+    "productionAdapterState": "not_implemented",
+    "successClaimAllowed": false
+  },
+  "purpose": "Static, read-only provenance and lifecycle contract for a lawful nonterminal single-player sleep/day fixture; it is not a production request, receipt, template success, or live-closure artifact.",
+  "startingFacts": {
+    "requiresSinglePlayerLocalCurrentPlayer": true,
+    "requiresTopology": "single_player_native_companion",
+    "requiresCurrentNativeLocalPlayer": true,
+    "requiresSleepEligibleState": true,
+    "requiresNoActiveMenu": true,
+    "requiresNoActiveEvent": true,
+    "requiresNoActiveMinigame": true,
+    "requiresActionablePlayer": true,
+    "requiresFreshObservation": true,
+    "requiresCurrentRevision": true,
+    "nonterminalCropPrecondition": {
+      "present": true,
+      "planted": true,
+      "watered": true,
+      "readyForHarvest": false,
+      "terminalHarvestResult": false
+    },
+    "nonterminalAnimalPrecondition": {
+      "present": true,
+      "adult": true,
+      "ownedByCurrentPlayer": true,
+      "fedToday": true,
+      "currentProduce": null,
+      "terminalProductResult": false
+    },
+    "nonterminalMachinePrecondition": {
+      "present": true,
+      "ownedByCurrentPlayer": true,
+      "loaded": true,
+      "readyForHarvest": false,
+      "heldOutput": null,
+      "terminalOutputResult": false
+    },
+    "fixtureMustNotAdvanceDateOrDay": true,
+    "fixtureMustNotMutateGameplayState": true,
+    "fixtureMustNotWriteReceiptOrPostcondition": true
+  },
+  "productionOutcomeOnly": {
+    "requiredLifecycle": [
+      "normal native local-player sleep interaction",
+      "native Saving",
+      "native Saved",
+      "native DayStarted/new-day transition",
+      "controlled close",
+      "reopen same isolated save",
+      "fresh post-reopen observation"
+    ],
+    "dateDayAdvanceOwnedBy": "production_native_game_lifecycle_only",
+    "fixtureDateDayAdvance": "none",
+    "fixtureStateAdvance": "none",
+    "directNewDayAllowed": false,
+    "productionSuccessRequiresRunnableLawfulAdapter": true
+  },
+  "traceIdentity": {
+    "requiredFields": [
+      "traceId",
+      "topology",
+      "saveId",
+      "worldId",
+      "localPlayerId",
+      "companionId",
+      "bindingGeneration",
+      "requestId",
+      "executionId",
+      "startRevision",
+      "terminalRevision",
+      "targetGameVersion"
+    ],
+    "fixedTopology": "single_player_native_companion",
+    "identityMustRemainStableThrough": [
+      "request",
+      "Saving",
+      "Saved",
+      "DayStarted",
+      "close",
+      "reopen"
+    ],
+    "reopenRequiresNewBindingGeneration": true,
+    "oldRequestCannotSucceedAfterReopen": true,
+    "opaqueTargetIdsMustComeFromFreshObservation": true
+  },
+  "phaseSequence": [
+    "fresh_start_observation",
+    "sleep_eligibility_revalidation",
+    "typed_request_accepted",
+    "native_sleep_transition",
+    "Saving",
+    "Saved",
+    "DayStarted",
+    "controlled_close",
+    "reopen_same_save",
+    "fresh_reopen_observation",
+    "teardown_and_restore"
+  ],
+  "irreversibleBoundary": "typed_request_accepted_after_game_thread_revalidation_is the last cancellation-safe boundary; native_sleep_transition may commit the native sleep/save lifecycle and must never be reported successful without all later phases.",
+  "receiptPredicate": {
+    "sameExecutionRequired": true,
+    "requiredState": "succeeded",
+    "requiredReasonCode": "single_player_sleep_and_advance_day_completed",
+    "requiresNonEmptyEvidence": true,
+    "requiredIdentityMatches": [
+      "traceId",
+      "topology",
+      "saveId",
+      "worldId",
+      "localPlayerId",
+      "companionId",
+      "bindingGeneration",
+      "requestId",
+      "executionId"
+    ],
+    "requiredEvidence": [
+      "nativeSleepObserved",
+      "savingObserved",
+      "savedObserved",
+      "dayStartedObserved",
+      "newDayIdentity",
+      "closeObserved",
+      "reopenObserved"
+    ],
+    "authoritativelyCompletedOnlyWhen": [
+      "same execution has succeeded receipt",
+      "receipt evidence is non-empty and phase-complete",
+      "fresh DayStarted observation matches the new-day identity",
+      "fresh reopen observation matches the persisted production result",
+      "no cancellation, stale revision, disconnect, scope drift, or identity mismatch occurred"
+    ],
+    "fixtureReceiptForbidden": true
+  },
+  "freshObservations": {
+    "dayStarted": {
+      "mustBeFreshAfterReceipt": true,
+      "requiredFacts": ["newDayIdentity", "currentLocalPlayerId", "saveId", "worldId", "bindingGeneration", "revision"],
+      "mustNotBeFixtureWritten": true
+    },
+    "reopen": {
+      "mustBeFreshAfterClose": true,
+      "requiredFacts": ["sameSaveId", "sameWorldId", "currentLocalPlayerId", "newBindingGeneration", "newRevision", "dayIdentityPersisted"],
+      "oldBindingGenerationMustBeRejected": true,
+      "mustNotBeFixtureWritten": true
+    }
+  },
+  "teardownRestore": {
+    "required": true,
+    "steps": [
+      "stop and quiesce the production adapter before cleanup",
+      "close the isolated game/save session through its native lifecycle",
+      "restore only files listed in the controlled backup manifest",
+      "verify restored files byte-for-byte by recorded hashes",
+      "remove only registered fixture-owned files",
+      "leave unmanaged files untouched",
+      "inspect for locks, reparse paths, receipts, traces, and residue",
+      "report cleanup failure as blocked"
+    ],
+    "restoreMustNot": [
+      "delete unmanaged files",
+      "adopt an existing save or profile",
+      "turn a failed or partial trace into success"
+    ]
+  },
+  "fixtureCreationRules": [
+    "Create or inspect the starting save through target-version native Stardew only.",
+    "Record no concrete opaque target ID, receipt, execution, result, or postcondition in the fixture.",
+    "The fixture may establish only the lawful nonterminal starting facts listed in this contract.",
+    "The fixture must remain unprovisioned until a lawful adapter and runnable trace exist.",
+    "A missing, ambiguous, terminal, contaminated, or advanced starting state fails closed."
+  ],
+  "prohibitedOperations": [
+    "direct Game1.NewDay or any direct NewDay call",
+    "direct startSleep or doSleep invocation",
+    "UI dispatcher, dialogue dispatcher, menu callback, or raw dispatcher",
+    "keyboard, mouse, XInput, visual, window, or input automation",
+    "save XML editing, save-file editing, date/day mutation, or state injection",
+    "fixture-created Saving, Saved, DayStarted, receipt, evidence, or postcondition",
+    "debug/console/helper completion, preloaded final result, or terminal-state fixture",
+    "using Farmhand, preview, or deterministic model evidence as Portfolio evidence"
+  ],
+  "nonClaims": [
+    "This contract does not implement or publish single_player_sleep_and_advance_day.",
+    "This contract does not provide a template save, action success, live closure, or Portfolio release evidence.",
+    "M2, M5, and M6 aggregate milestones remain unverified until their own native action composition and fresh persistence evidence exist.",
+    "A static checker or runner result cannot replace a lawful target-version game-thread adapter and runnable native trace."
+  ]
+}

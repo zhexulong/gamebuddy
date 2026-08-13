@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_m9_action_contract",
+  "contractId": "portfolio_m9_special_order_action_contract_v1",
+  "milestone": "M9",
+  "topology": "single_player_native_companion",
+  "target": {
+    "gameVersion": "1.6.15.24356",
+    "assemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee"
+  },
+  "sourceAudit": {
+    "auditId": "portfolio_m9_special_order_source_audit_v1",
+    "traceFamilyId": "portfolio_m9_special_order_to_reward",
+    "sourceAuditFile": "tools/stardew-portfolio-m9-special-order-source-audit.json",
+    "anchorIds": [
+      "special_order_board_acceptance_commit",
+      "special_order_objective_registration",
+      "special_order_objective_progress_commit",
+      "special_order_completion_reward_availability",
+      "special_order_completion_state_commit",
+      "special_order_reward_claim_consumption",
+      "special_order_reward_grant",
+      "special_order_failure_state"
+    ],
+    "projectionState": "blocked",
+    "liveState": "not_performed"
+  },
+  "selectedDomain": {
+    "offerTarget": { "kind": "opaque_runtime_fact", "selectionSource": "frozen_dsm_plus_fresh_observation", "resolvedAtDispatch": true, "valueEmbedded": false },
+    "orderKey": { "kind": "opaque_runtime_fact", "selectionSource": "frozen_dsm_plus_fresh_observation", "resolvedAtDispatch": true, "valueEmbedded": false },
+    "generation": { "kind": "opaque_runtime_fact", "selectionSource": "frozen_dsm_plus_fresh_observation", "resolvedAtDispatch": true, "valueEmbedded": false },
+    "objectiveSet": { "kind": "opaque_runtime_fact", "selectionSource": "frozen_dsm_plus_fresh_observation", "resolvedAtDispatch": true, "valueEmbedded": false },
+    "reward": { "kind": "opaque_runtime_fact", "selectionSource": "frozen_dsm_plus_fresh_observation", "resolvedAtDispatch": true, "valueEmbedded": false },
+    "selectionRule": "DSM selects finite content; fresh observation supplies opaque offer and generation; no static ID is accepted"
+  },
+  "objectiveBoundary": {
+    "sourceDerivedStages": [
+      "objective_registration_is_native_order_lifecycle",
+      "objective_specific_progress_commit",
+      "order_completion_sets_complete_and_participant_reward_entitlement"
+    ],
+    "objectiveWorkPolicy": {
+      "mode": "reuse_or_separately_selected",
+      "selectionRequirement": "each objective must map to an existing equivalent typed action or an independently selected typed objective action",
+      "runtimeClaim": "unselected objective domains are observable only and cannot be claimed"
+    },
+    "allowedObjectiveIngress": "existing_equivalent_action_or_separately_selected_typed_objective_action",
+    "genericProgressAction": "prohibited",
+    "genericCompleteAction": "prohibited",
+    "completionObservation": {
+      "requiresAllSelectedObjectivesComplete": true,
+      "requiresNativeCompleteState": true,
+      "requiresRewardEntitlement": true,
+      "doesNotClaimReward": true
+    }
+  },
+  "actions": [
+    {
+      "actionId": "accept_special_order_offer",
+      "actionClass": "primitive",
+      "target": { "kind": "opaque_runtime_fact", "selectionSource": "frozen_dsm_plus_fresh_observation", "resolvedAtDispatch": true, "valueEmbedded": false },
+      "input": { "offerTarget": "selectedDomain.reference", "generation": "selectedDomain.reference" },
+      "eligibility": {
+        "offerFresh": true,
+        "offerSelectedByDsm": true,
+        "generationMatchesOffer": true,
+        "orderTypeNotAlreadyAccepted": true,
+        "playerEligible": true,
+        "unselectedDomainRejected": true
+      },
+      "commit": {
+        "transaction": "accept_offer",
+        "nativeEffects": ["accepted_special_order_type_added", "generated_order_key_and_generation_added_to_native_team_state"],
+        "separateFromRewardClaim": true
+      },
+      "receiptEvidence": { "sameExecution": true, "successState": "succeeded", "evidenceNonEmpty": true, "actionSpecific": true },
+      "freshPostcondition": ["fresh native observation confirms selected order key and generation are accepted in team state", "native state is accepted_in_progress"],
+      "doesNotDo": "ui_or_raw_dispatch_or_save_mutation"
+    },
+    {
+      "actionId": "claim_special_order_reward",
+      "actionClass": "primitive",
+      "target": { "kind": "opaque_runtime_fact", "selectionSource": "frozen_dsm_plus_fresh_observation", "resolvedAtDispatch": true, "valueEmbedded": false },
+      "input": { "orderKey": "selectedDomain.reference", "generation": "selectedDomain.reference", "reward": "selectedDomain.reference" },
+      "eligibility": {
+        "nativeOrderComplete": true,
+        "participantRewardUnclaimed": true,
+        "selectedOrderMatches": true,
+        "alreadyClaimedRejected": true,
+        "unselectedDomainRejected": true
+      },
+      "commit": {
+        "transaction": "claim_reward",
+        "nativeEffects": ["participant_reward_entitlement_consumed", "native_reward_granted"],
+        "separateFromOfferAcceptance": true
+      },
+      "receiptEvidence": { "sameExecution": true, "successState": "succeeded", "evidenceNonEmpty": true, "actionSpecific": true },
+      "freshPostcondition": ["fresh native observation confirms participant reward entitlement was consumed", "fresh native observation confirms native reward grant", "native state is completed_reward_claimed"],
+      "doesNotDo": "ui_or_raw_dispatch_or_save_mutation"
+    }
+  ],
+  "stateMachine": {
+    "states": ["fresh_offer_available", "accepted_in_progress", "completed_reward_unclaimed", "completed_reward_claimed", "unselected_domain_no_claim"],
+    "transitions": [
+      { "from": "fresh_offer_available", "to": "accepted_in_progress", "nativeFacts": ["offer selected by DSM", "fresh offer and generation match"], "typedTransaction": "accept_special_order_offer" },
+      { "from": "accepted_in_progress", "to": "completed_reward_unclaimed", "nativeFacts": ["all selected objectives complete", "native complete state", "participant reward entitlement available"], "typedTransaction": "objective_specific_typed_actions_then_completion_observation" },
+      { "from": "completed_reward_unclaimed", "to": "completed_reward_claimed", "nativeFacts": ["selected order complete", "participant entitlement unclaimed", "native reward grant observed"], "typedTransaction": "claim_special_order_reward" }
+    ],
+    "unselectedDomainRule": "unselected offer/objective/reward state may be observed but has no runtime claim route"
+  },
+  "sharedRequestGuards": {
+    "freshObservation": true,
+    "opaqueOffer": true,
+    "opaqueGeneration": true,
+    "scope": true,
+    "gameThread": true,
+    "revision": true,
+    "policy": true,
+    "deadline": true,
+    "idempotency": true,
+    "cancel": true,
+    "gameState": true,
+    "noUiOrRawFallback": true
+  },
+  "sharedEvidenceRules": {
+    "receiptState": true,
+    "receiptEvidence": true,
+    "postcondition": true,
+    "sameExecution": true,
+    "objectiveSpecific": true,
+    "rewardEntitlement": true,
+    "saveReopen": true
+  },
+  "status": { "implementation": "implementation_needed", "fixture": "fixture_needed", "liveClosure": "none" },
+  "forbiddenBehavior": [
+    "generic_special_order_progress_action",
+    "generic_special_order_complete_action",
+    "ui_board_click_or_menu_callback",
+    "raw_dispatcher_or_string_action",
+    "keyboard_mouse_xinput_or_visual_input",
+    "save_xml_or_direct_save_mutation",
+    "synthetic_receipt_or_fixture_postcondition",
+    "claim_for_unselected_order_or_reward"
+  ],
+  "nonClaims": [
+    "This contract does not select an order, objective, generation, or reward value.",
+    "This contract does not publish either action or establish a target-version live closure.",
+    "This contract does not prove objective-specific action equivalence, completion, reward grant, or save/reopen persistence."
+  ],
+  "fixtureContractRef": "fixtures/stardew/portfolio-m9-special-order-action-contract-unprovisioned.example.json"
+}

@@ -18,6 +18,12 @@ export interface ParsedCompartment {
 export interface ParsedFact {
     category: string;
     content: string;
+    /**
+     * Adapter-supplied opaque provenance only. Historian XML deliberately does
+     * not define this field: callers may attach refs only when they can derive
+     * an exact source range without inventing a blanket session reference.
+     */
+    sourceRefs?: readonly string[];
 }
 
 /**

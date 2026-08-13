@@ -1,0 +1,44 @@
+{
+  "schema": "gamebuddy-host-production-artifact-config/v2",
+  "entryRoots": ["main.js", "dialogue-web-main.js"],
+  "resources": [
+    {
+      "source": "resources/windows-named-mutex-broker.ps1",
+      "destination": "windows-named-mutex-broker.ps1"
+    }
+  ],
+  "externalRuntimeClosure": {
+    "kind": "declared_external_runtime_closure",
+    "packages": [
+      "@cortexkit/pi-magic-context",
+      "@earendil-works/pi-coding-agent",
+      "typebox"
+    ],
+    "dynamicExternalImports": [
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "dialogue-web-main.js",
+        "expression": "pathToFileURL(magicContextEntry).href",
+        "occurrence": 0
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime.js",
+        "expression": "pathToFileURL(magicContextEntry).href",
+        "occurrence": 0
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime.js",
+        "expression": "pathToFileURL(magicContextEntry).href",
+        "occurrence": 1
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime.js",
+        "expression": "pathToFileURL(magicContextEntry).href",
+        "occurrence": 2
+      }
+    ]
+  }
+}

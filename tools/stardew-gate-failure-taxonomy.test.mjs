@@ -3,7 +3,9 @@ import test from "node:test";
 import { classifyStardewGateFailure } from "./lib/stardew-gate-failure-taxonomy.mjs";
 
 test("fixture-native block is classified without replacing its native reason", () => {
-  const value = classifyStardewGateFailure("fixture_preflight_blocked_fixture_native_ready_grab_crop_missing", { nativeReasonCode: "fixture_native_ready_grab_crop_missing" });
+  const value = classifyStardewGateFailure("fixture_preflight_blocked_fixture_native_ready_grab_crop_missing", {
+    nativeReasonCode: "fixture_native_ready_grab_crop_missing",
+  });
   assert.equal(value.category, "fixture_precondition");
   assert.equal(value.normalizedReasonCode, "fixture_native_precondition_missing");
   assert.equal(value.nativeReasonCode, "fixture_native_ready_grab_crop_missing");

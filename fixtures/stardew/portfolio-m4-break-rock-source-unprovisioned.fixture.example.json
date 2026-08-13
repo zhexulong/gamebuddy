@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_m4_unprovisioned_fixture_contract",
+  "fixtureId": "portfolio_m4_break_rock_source_unprovisioned_v1",
+  "topology": "single_player_native_companion",
+  "targetVersion": "1.6.15.24356",
+  "provisioningState": "unprovisioned_example",
+  "given": {
+    "source": "fresh_target_version_resource_reader_required",
+    "sourceIdentity": "unmaterialized_opaque_runtime_value",
+    "sourceHealth": "positive_and_observed_at_dispatch",
+    "equippedTool": "eligible_pickaxe_observed_at_dispatch",
+    "terminalSourceTransform": "absent",
+    "debris": "absent_until_native_source_destroy"
+  },
+  "antiFinalStepAssertions": [
+    "Fixture creation contains no source transform, Debris creation, pickup request, receipt, postcondition, or terminal portfolio fact.",
+    "No UI/input, reflection, generic dispatcher/native invoker, raw save/day call, save edit, or direct inventory mutation is used.",
+    "Source identity, health, tool eligibility, and Debris IDs remain fresh runtime observations rather than fixture constants."
+  ],
+  "nonClaims": [
+    "This is not a provisioned save, live fixture, semantic ingress, receipt, or target-version realization.",
+    "Pickup is not part of break_rock_source and is not established by this fixture."
+  ]
+}

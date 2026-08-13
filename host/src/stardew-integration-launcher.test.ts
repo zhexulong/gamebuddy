@@ -14,10 +14,7 @@ test("Stardew launcher config rejects malformed knowledge before any bridge conn
     () => parseStardewLauncherConfig({ ...base, knowledge: { bundleVersion: 1 } }),
     /invalid_stardew_launcher_config/,
   );
-  assert.throws(
-    () => parseStardewLauncherConfig({ ...base, unexpected: true }),
-    /invalid_stardew_launcher_config/,
-  );
+  assert.throws(() => parseStardewLauncherConfig({ ...base, unexpected: true }), /invalid_stardew_launcher_config/);
 });
 
 test("Stardew launcher config keeps a version-bound validated knowledge bundle", () => {
@@ -28,7 +25,15 @@ test("Stardew launcher config keeps a version-bound validated knowledge bundle",
       bundleVersion: 1,
       integrationId: "stardew",
       gameVersion: "1.6.15",
-      rules: [{ id: "fixture_rule", integrationId: "stardew", gameVersion: "1.6.15", capability: "move_to_tile", text: "Use the current authoritative snapshot." }],
+      rules: [
+        {
+          id: "fixture_rule",
+          integrationId: "stardew",
+          gameVersion: "1.6.15",
+          capability: "move_to_tile",
+          text: "Use the current authoritative snapshot.",
+        },
+      ],
     },
   });
   assert.equal(config.knowledge?.rules.length, 1);

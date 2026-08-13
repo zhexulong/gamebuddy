@@ -34,8 +34,13 @@ export function isTerminalExecutionState(state) {
  * single production action. Call close() before closing the client.
  */
 export function createFormalActionGate(client, { pollMs = 200 } = {}) {
-  if (!client || typeof client.observe !== "function" || typeof client.execute !== "function"
-    || typeof client.onFact !== "function" || typeof client.onConnectionFact !== "function") {
+  if (
+    !client ||
+    typeof client.observe !== "function" ||
+    typeof client.execute !== "function" ||
+    typeof client.onFact !== "function" ||
+    typeof client.onConnectionFact !== "function"
+  ) {
     throw new TypeError("formal_action_gate_invalid_client");
   }
   if (!Number.isInteger(pollMs) || pollMs < 25 || pollMs > 2_000) {
@@ -55,7 +60,9 @@ export function createFormalActionGate(client, { pollMs = 200 } = {}) {
   function requireOpen() {
     if (closed) throw new FormalActionGateError("formal_action_gate_closed");
     if (disconnectedReason !== null || client.state.connected !== true) {
-      throw new FormalActionGateError("bridge_disconnected", { reasonCode: disconnectedReason ?? client.state.latestReasonCode ?? "unknown" });
+      throw new FormalActionGateError("bridge_disconnected", {
+        reasonCode: disconnectedReason ?? client.state.latestReasonCode ?? "unknown",
+      });
     }
   }
 
@@ -73,7 +80,9 @@ export function createFormalActionGate(client, { pollMs = 200 } = {}) {
       return await client.observe();
     } catch (error) {
       if (disconnectedReason !== null || client.state.connected !== true) {
-        throw new FormalActionGateError("bridge_disconnected", { reasonCode: disconnectedReason ?? client.state.latestReasonCode ?? "unknown" });
+        throw new FormalActionGateError("bridge_disconnected", {
+          reasonCode: disconnectedReason ?? client.state.latestReasonCode ?? "unknown",
+        });
       }
       throw new FormalActionGateError("bridge_observe_failed", { message: boundedErrorMessage(error) });
     }
@@ -82,7 +91,7 @@ export function createFormalActionGate(client, { pollMs = 200 } = {}) {
   async function waitForActionable({ initialSnapshot = null, timeoutMs = 10_000 } = {}) {
     validateTimeout(timeoutMs, "formal_action_gate_invalid_actionable_timeout");
     const deadline = Date.now() + timeoutMs;
-    let snapshot = initialSnapshot ?? await observe();
+    let snapshot = initialSnapshot ?? (await observe());
     while (Date.now() < deadline) {
       if (snapshot.actionable === true && snapshot.activeExecution == null) return snapshot;
       await delay(Math.min(pollMs, Math.max(1, deadline - Date.now())));
@@ -118,14 +127,23 @@ export function createFormalActionGate(client, { pollMs = 200 } = {}) {
       initialReceipt = await client.execute(request);
     } catch (error) {
       if (disconnectedReason !== null || client.state.connected !== true) {
-        throw new FormalActionGateError("bridge_disconnected", { reasonCode: disconnectedReason ?? client.state.latestReasonCode ?? "unknown" });
+        throw new FormalActionGateError("bridge_disconnected", {
+          reasonCode: disconnectedReason ?? client.state.latestReasonCode ?? "unknown",
+        });
       }
       throw new FormalActionGateError("execution_submit_failed", { message: boundedErrorMessage(error) });
     }
-    if (initialReceipt === null || typeof initialReceipt !== "object" || typeof initialReceipt.executionId !== "string") {
+    if (
+      initialReceipt === null ||
+      typeof initialReceipt !== "object" ||
+      typeof initialReceipt.executionId !== "string"
+    ) {
       throw new FormalActionGateError("execution_response_invalid");
     }
-    const terminalReceipt = await waitForTerminalReceipt(initialReceipt.executionId, { initialReceipt, timeoutMs: terminalTimeoutMs });
+    const terminalReceipt = await waitForTerminalReceipt(initialReceipt.executionId, {
+      initialReceipt,
+      timeoutMs: terminalTimeoutMs,
+    });
     // A terminal receipt is necessary but not sufficient: every gate must make
     // a fresh authoritative reread after it. If the world is still briefly
     // settling, wait boundedly for the active execution to clear.

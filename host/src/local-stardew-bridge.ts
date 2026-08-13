@@ -17,7 +17,10 @@ import {
 
 export type LocalStardewBridgeState = CompanionIntegrationState & Readonly<{ authenticated: boolean }>;
 /** Validated Mod-originated facts forwarded to the Host event pump. */
-export type LocalStardewBridgeFact = Extract<BridgeMessage, { type: "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" }>;
+export type LocalStardewBridgeFact = Extract<
+  BridgeMessage,
+  { type: "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" }
+>;
 /** Local transport facts never claim a Mod/world transition. */
 export type LocalStardewConnectionFact = Readonly<{ state: "disconnected"; reasonCode: string }>;
 type PendingRequest = Readonly<{
@@ -66,10 +69,22 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     });
   }
 
-  public static async connect(scope: Scope, pipeName: string, token: string, knowledge?: KnowledgeBundle, gameVersion?: string): Promise<LocalStardewBridgeClient> {
+  public static async connect(
+    scope: Scope,
+    pipeName: string,
+    token: string,
+    knowledge?: KnowledgeBundle,
+    gameVersion?: string,
+  ): Promise<LocalStardewBridgeClient> {
     if (!/^[A-Za-z0-9_-]{16,256}$/.test(token)) throw new Error("invalid_bridge_token");
     if (knowledge !== undefined && gameVersion === undefined) throw new Error("knowledge_version_required");
-    const client = new LocalStardewBridgeClient(scope, await NamedPipeTransport.connect(pipeName), token, knowledge, gameVersion);
+    const client = new LocalStardewBridgeClient(
+      scope,
+      await NamedPipeTransport.connect(pipeName),
+      token,
+      knowledge,
+      gameVersion,
+    );
     await client.hello();
     return client;
   }
@@ -102,7 +117,11 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     return response.payload;
   }
 
-  public async cancel(requestId: string, executionId: string, reasonCode: string): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
+  public async cancel(
+    requestId: string,
+    executionId: string,
+    reasonCode: string,
+  ): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
     this.requireAuthenticated();
     const response = await this.request("cancel_request", { requestId, executionId, reasonCode });
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
@@ -110,7 +129,9 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     return response.payload;
   }
 
-  public close(): void { this.transport.close(); }
+  public close(): void {
+    this.transport.close();
+  }
   public onFact(listener: (fact: LocalStardewBridgeFact) => void): () => void {
     this.#factListeners.add(listener);
     return () => this.#factListeners.delete(listener);
@@ -128,39 +149,77 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     this.#sessionId = response.payload.sessionId;
   }
 
-  private request(type: "hello" | "observe_request" | "execution_request" | "cancel_request", payload: Record<string, unknown>): Promise<BridgeMessage> {
+  private request(
+    type: "hello" | "observe_request" | "execution_request" | "cancel_request",
+    payload: Record<string, unknown>,
+  ): Promise<BridgeMessage> {
     if (!this.transport.connected) return Promise.reject(new Error("pipe_disconnected"));
     const correlationId = randomUUID();
     const message = newEnvelope(type, this.scope, payload, correlationId);
     return new Promise<BridgeMessage>((resolvePromise, reject) => {
-      const timer = setTimeout(() => { this.#pending.delete(correlationId); reject(new Error("bridge_response_timeout")); }, 5_000);
+      const timer = setTimeout(() => {
+        this.#pending.delete(correlationId);
+        reject(new Error("bridge_response_timeout"));
+      }, 5_000);
       this.#pending.set(correlationId, { resolve: resolvePromise, reject, timer });
-      try { this.transport.send(message); } catch (error) {
-        clearTimeout(timer); this.#pending.delete(correlationId); reject(error);
+      try {
+        this.transport.send(message);
+      } catch (error) {
+        clearTimeout(timer);
+        this.#pending.delete(correlationId);
+        reject(error);
       }
     });
   }
 
   private receive(json: string): void {
     let message: BridgeMessage;
-    try { message = JSON.parse(json) as BridgeMessage; } catch { this.transport.close("malformed_inbound_json"); return; }
+    try {
+      message = JSON.parse(json) as BridgeMessage;
+    } catch {
+      this.transport.close("malformed_inbound_json");
+      return;
+    }
     const fault = validateBridgeMessage(message, this.scope);
-    if (fault !== null || message.type === "hello" || message.type === "observe_request" || message.type === "execution_request" || message.type === "cancel_request") {
-      this.transport.close(fault === "invalid_snapshot" ? diagnoseBridgeMessage(message, this.scope) ?? fault : fault ?? "unexpected_inbound_request"); return;
+    if (
+      fault !== null ||
+      message.type === "hello" ||
+      message.type === "observe_request" ||
+      message.type === "execution_request" ||
+      message.type === "cancel_request"
+    ) {
+      this.transport.close(
+        fault === "invalid_snapshot"
+          ? (diagnoseBridgeMessage(message, this.scope) ?? fault)
+          : (fault ?? "unexpected_inbound_request"),
+      );
+      return;
     }
     if (message.type === "hello_ack") {
-      this.#snapshot = null; this.#latestReceipt = null;
-      this.#capabilities = [...message.payload.capabilities]; this.#latestReasonCode = null;
+      this.#snapshot = null;
+      this.#latestReceipt = null;
+      this.#capabilities = [...message.payload.capabilities];
+      this.#latestReasonCode = null;
     } else if (message.type === "snapshot") {
       // A delayed observation response must never replace newer Mod state.
-      if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision) this.#snapshot = message.payload;
+      if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision)
+        this.#snapshot = message.payload;
     } else if (message.type === "execution_receipt") this.#latestReceipt = message.payload;
     else this.#latestReasonCode = message.payload.reasonCode;
-    if (message.type === "snapshot" || message.type === "execution_receipt" || message.type === "semantic_event" || message.type === "lifecycle") {
+    if (
+      message.type === "snapshot" ||
+      message.type === "execution_receipt" ||
+      message.type === "semantic_event" ||
+      message.type === "lifecycle"
+    ) {
       for (const listener of this.#factListeners) listener(message);
     }
     const pending = this.#pending.get(message.correlationId);
-    if (pending !== undefined) { this.#pending.delete(message.correlationId); clearTimeout(pending.timer); pending.resolve(message); }
+    if (pending !== undefined) {
+      this.#pending.delete(message.correlationId);
+      clearTimeout(pending.timer);
+      pending.resolve(message);
+    }
   }
 
   private requireAuthenticated(): void {

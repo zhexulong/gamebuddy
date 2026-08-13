@@ -3,6 +3,9 @@ import type { Database } from "../../../shared/sqlite";
 import { CATEGORY_DEFAULT_TTL, PROMOTABLE_CATEGORIES } from "./constants";
 import { embedTextForProject } from "./embedding";
 import { computeNormalizedHash } from "./normalize-hash";
+import { areMemorySourcesEligible } from "./source-exclusion";
+import { isOngoingInteractionDurableFactAdmissible } from "./ongoing-interaction-admission";
+import type { MemoryDomain } from "./domain";
 import {
     getMemoryByHash,
     getMemoryById,
@@ -15,6 +18,8 @@ import type { MemoryCategory, MemoryInput } from "./types";
 interface SessionFact {
     category: string;
     content: string;
+    /** Optional adapter-supplied opaque source refs; never parsed from Historian XML. */
+    sourceRefs?: readonly string[];
 }
 
 export interface PromotedMemoryRef {
@@ -22,7 +27,16 @@ export interface PromotedMemoryRef {
     content: string;
 }
 
-function isPromotableCategory(category: string): category is MemoryCategory {
+function isPromotableCategory(
+    category: string,
+    domain: MemoryDomain,
+): category is MemoryCategory {
+    // INTERACTION_EPISODE is a durable category only in the explicit ongoing
+    // interaction domain. Keep the coding-project allowlist unchanged rather
+    // than widening the global promotion set.
+    if (category === "SEMANTIC_MEMORY" || category === "INTERACTION_EPISODE") {
+        return domain === "ongoing-interaction";
+    }
     return PROMOTABLE_CATEGORIES.some((promotableCategory) => promotableCategory === category);
 }
 
@@ -44,6 +58,7 @@ export function promoteSessionFactsDurable(
     sessionId: string,
     projectPath: string,
     facts: SessionFact[],
+    domain: MemoryDomain = "coding-project",
 ): PromotedMemoryRef[] {
     const refs: PromotedMemoryRef[] = [];
     for (const fact of facts) {
@@ -55,7 +70,18 @@ export function promoteSessionFactsDurable(
         ) {
             continue;
         }
-        if (!isPromotableCategory(fact.category)) {
+        if (!isPromotableCategory(fact.category, domain)) {
+            continue;
+        }
+        if (
+            domain === "ongoing-interaction" &&
+            !isOngoingInteractionDurableFactAdmissible(fact.category, fact.content)
+        ) {
+            continue;
+        }
+        // Candidate-time exclusion check. A second check immediately before
+        // insertion closes the asynchronous/candidate-to-commit race.
+        if (!areMemorySourcesEligible(db, projectPath, fact.sourceRefs)) {
             continue;
         }
 
@@ -67,6 +93,12 @@ export function promoteSessionFactsDurable(
             continue;
         }
 
+        // Commit-time recheck: a player may exclude the source after a
+        // candidate has been parsed but before this publish transaction writes.
+        if (!areMemorySourcesEligible(db, projectPath, fact.sourceRefs)) {
+            continue;
+        }
+
         const memoryInput: MemoryInput = {
             projectPath,
             category: fact.category,
@@ -74,6 +106,13 @@ export function promoteSessionFactsDurable(
             sourceSessionId: sessionId,
             sourceType: "historian",
             expiresAt: resolveExpiresAt(fact.category),
+            // Preserve only adapter-supplied opaque refs. The historian XML
+            // cannot manufacture provenance, and this durable metadata lets
+            // later source exclusion find already-promoted memories.
+            metadataJson:
+                fact.sourceRefs === undefined
+                    ? null
+                    : JSON.stringify({ source_refs: [...fact.sourceRefs] }),
         };
 
         const memory = insertMemory(db, memoryInput);

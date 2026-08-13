@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { LocalStardewBridgeClient } from "../host/dist/local-stardew-bridge.js";
+import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+
+const { LocalStardewBridgeClient } = await loadHostProductionModule("local-stardew-bridge.js");
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -9,8 +11,15 @@ function option(name) {
 
 const config = JSON.parse(await readFile(option("--client-config"), "utf8"));
 const required = ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"];
-if (required.some((key) => typeof config[key] !== "string" || config[key].length === 0)) throw new Error("invalid_client_config");
-const scope = { integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId };
+if (required.some((key) => typeof config[key] !== "string" || config[key].length === 0))
+  throw new Error("invalid_client_config");
+const scope = {
+  integrationId: "stardew",
+  saveId: config.SaveId,
+  worldId: config.WorldId,
+  playerId: config.PlayerId,
+  companionId: config.CompanionId,
+};
 const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
 const startedAt = Date.now();
 try {
@@ -19,32 +28,65 @@ try {
   if (!before.capabilities.includes("plant_seed")) throw new Error("snapshot_plant_seed_capability_missing");
   const target = chooseTarget(before);
   if (target === null) {
-    console.log(JSON.stringify({ state: "blocked", reasonCode: "no_live_seed_target", snapshot: summarize(before), durationMs: Date.now() - startedAt }));
+    console.log(
+      JSON.stringify({
+        state: "blocked",
+        reasonCode: "no_live_seed_target",
+        snapshot: summarize(before),
+        durationMs: Date.now() - startedAt,
+      }),
+    );
     process.exitCode = 2;
   } else {
     const receipt = await client.execute({
       requestId: `plant_seed_${Date.now()}`,
       idempotencyKey: `plant_seed_idem_${Date.now()}`,
       action: "plant_seed",
-      args: { slot: target.slot, x: target.x, y: target.y, expectedQualifiedItemId: target.qualifiedItemId, expectedTargetId: target.targetId },
+      args: {
+        slot: target.slot,
+        x: target.x,
+        y: target.y,
+        expectedQualifiedItemId: target.qualifiedItemId,
+        expectedTargetId: target.targetId,
+      },
       expectedRevision: before.revision,
       deadlineMs: Date.now() + 30_000,
     });
     const after = await client.observe();
     const stillAvailable = after.seedTargets?.some((entry) => entry.targetId === target.targetId) === true;
     const evidence = parseEvidence(receipt.evidence);
-    const postconditionEvidence = typeof evidence.crop === "string"
-      && evidence.crop.length > 0
-      && evidence.crop !== "none"
-      && evidence.item === target.qualifiedItemId
-      && Number.isSafeInteger(Number(evidence.inventory_before))
-      && Number(evidence.inventory_after) === Number(evidence.inventory_before) - 1;
-    const passed = receipt.state === "succeeded" && receipt.reasonCode === "seed_planted" && !stillAvailable && postconditionEvidence;
-    console.log(JSON.stringify({ state: passed ? "passed" : "blocked", reasonCode: passed ? "seed_planted" : receipt.reasonCode, target, receipt: summarizeReceipt(receipt), before: summarize(before), after: summarize(after), durationMs: Date.now() - startedAt }));
+    const postconditionEvidence =
+      typeof evidence.crop === "string" &&
+      evidence.crop.length > 0 &&
+      evidence.crop !== "none" &&
+      evidence.item === target.qualifiedItemId &&
+      Number.isSafeInteger(Number(evidence.inventory_before)) &&
+      Number(evidence.inventory_after) === Number(evidence.inventory_before) - 1;
+    const passed =
+      receipt.state === "succeeded" &&
+      receipt.reasonCode === "seed_planted" &&
+      !stillAvailable &&
+      postconditionEvidence;
+    console.log(
+      JSON.stringify({
+        state: passed ? "passed" : "blocked",
+        reasonCode: passed ? "seed_planted" : receipt.reasonCode,
+        target,
+        receipt: summarizeReceipt(receipt),
+        before: summarize(before),
+        after: summarize(after),
+        durationMs: Date.now() - startedAt,
+      }),
+    );
     if (!passed) process.exitCode = 2;
   }
 } catch (error) {
-  console.error(JSON.stringify({ state: "blocked", reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256) }));
+  console.error(
+    JSON.stringify({
+      state: "blocked",
+      reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
+    }),
+  );
   process.exitCode = 2;
 } finally {
   client.close();
@@ -52,19 +94,45 @@ try {
 
 function chooseTarget(snapshot) {
   if (!Array.isArray(snapshot.seedTargets)) return null;
-  return snapshot.seedTargets.find((entry) => Number.isInteger(entry.slot) && Number.isInteger(entry.x) && Number.isInteger(entry.y)
-    && typeof entry.targetId === "string" && typeof entry.qualifiedItemId === "string") ?? null;
+  return (
+    snapshot.seedTargets.find(
+      (entry) =>
+        Number.isInteger(entry.slot) &&
+        Number.isInteger(entry.x) &&
+        Number.isInteger(entry.y) &&
+        typeof entry.targetId === "string" &&
+        typeof entry.qualifiedItemId === "string",
+    ) ?? null
+  );
 }
 function summarize(snapshot) {
-  return { revision: snapshot.revision, location: snapshot.location, tile: snapshot.tile, seedTargets: snapshot.seedTargets?.length ?? 0, inventorySlots: snapshot.inventorySlots ?? null };
+  return {
+    revision: snapshot.revision,
+    location: snapshot.location,
+    tile: snapshot.tile,
+    seedTargets: snapshot.seedTargets?.length ?? 0,
+    inventorySlots: snapshot.inventorySlots ?? null,
+  };
 }
 function parseEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  return Object.fromEntries(detail.split(";").map((part) => {
-    const index = part.indexOf("=");
-    return index > 0 ? [part.slice(0, index), part.slice(index + 1)] : null;
-  }).filter(Boolean));
+  return Object.fromEntries(
+    detail
+      .split(";")
+      .map((part) => {
+        const index = part.indexOf("=");
+        return index > 0 ? [part.slice(0, index), part.slice(index + 1)] : null;
+      })
+      .filter(Boolean),
+  );
 }
 function summarizeReceipt(receipt) {
-  return { executionId: receipt.executionId, requestId: receipt.requestId, state: receipt.state, reasonCode: receipt.reasonCode, revision: receipt.revision, evidence: receipt.evidence ?? null };
+  return {
+    executionId: receipt.executionId,
+    requestId: receipt.requestId,
+    state: receipt.state,
+    reasonCode: receipt.reasonCode,
+    revision: receipt.revision,
+    evidence: receipt.evidence ?? null,
+  };
 }
