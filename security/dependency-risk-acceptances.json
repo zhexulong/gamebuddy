@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "artifactKind": "dependency_risk_acceptances",
-  "snapshotId": "p3-5-pnpm-audit-20260812-verified",
+  "snapshotId": "p3-6-pnpm-audit-20260813-remediated",
   "lockfileHashes": {
-    "pnpm-lock.yaml": "4f646daf48b3ff886867ed908891fcf6e1ab39ea95d49a07f83fcd11d4644e9a",
+    "pnpm-lock.yaml": "52691f74ec9b82fe6276d03f3536f1205a024487b72926a9b035ed3f80a8c84a",
     "vendor/magic-context/bun.lock": "a7fdcf02987afc0ba636c5e580482481a7b8c5f587a633c668d3780cf7178392",
     "integrations/stardew/packages.lock.json": "f19e94ecb6c83805916ae8cec4573f19865a96bc196fb62c336800a2dc61719a"
   },
