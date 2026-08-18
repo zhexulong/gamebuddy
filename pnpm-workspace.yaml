@@ -1,4 +1,5 @@
 packages:
+  - packages/*
   - host
   - voice-gateway
   - dialogue-web
@@ -10,6 +11,7 @@ packages:
 # Context runs with embeddings off; no optional binary is approved implicitly.
 allowBuilds:
   '@google/genai': false
+  esbuild: true
   onnxruntime-node: false
   protobufjs: false
   sharp: false
