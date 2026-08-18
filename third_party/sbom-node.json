@@ -974,6 +974,24 @@
     },
     {
       "type": "library",
+      "name": "@esbuild/win32-x64",
+      "version": "0.27.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/evanw/esbuild#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "@google/genai",
       "version": "1.52.0",
       "licenses": [
@@ -2517,6 +2535,24 @@
     },
     {
       "type": "library",
+      "name": "esbuild",
+      "version": "0.27.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/evanw/esbuild#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "escalade",
       "version": "3.2.0",
       "licenses": [
@@ -2764,6 +2800,24 @@
         {
           "type": "website",
           "url": "https://github.com/sindresorhus/get-east-asian-width#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "get-tsconfig",
+      "version": "4.14.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/privatenumber/get-tsconfig#readme"
         }
       ]
     },
@@ -3849,6 +3903,24 @@
     },
     {
       "type": "library",
+      "name": "resolve-pkg-maps",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/privatenumber/resolve-pkg-maps#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "retry",
       "version": "0.12.0,0.13.1",
       "licenses": [
@@ -4150,6 +4222,24 @@
         {
           "type": "website",
           "url": "https://www.typescriptlang.org/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tsx",
+      "version": "4.21.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://tsx.is"
         }
       ]
     },
