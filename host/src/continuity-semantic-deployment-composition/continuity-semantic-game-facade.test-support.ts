@@ -1,4 +1,4 @@
-import type { SemanticGameProductionAuthority } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+import type { SemanticGameProductionAuthority } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import type { GameRuntimeMaterializer } from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.js";
 import {

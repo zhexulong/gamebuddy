@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  classifyNarrativeTurnOutcome,
+  createNarrativeGateDeploymentManifest,
   evaluateNarrativeGateMarker,
   evaluateNarrativeGateRuntime,
   parseArguments,
@@ -24,6 +26,27 @@ test("narrative gate accepts only its optional report argument", () => {
   assert.deepEqual(parseArguments([]), { reportPath: undefined });
   assert.throws(() => parseArguments(["--report"]), /usage:/);
   assert.throws(() => parseArguments(["--unknown", "report.json"]), /usage:/);
+});
+
+test("narrative gate creates the exact schema-v2 independent-surface deployment manifest", () => {
+  const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
+  assert.deepEqual(createNarrativeGateDeploymentManifest("C:/fresh-runtime", principal, "bootstrap_01"), {
+    schemaVersion: 2,
+    topology: "independent_chat_and_game_surfaces",
+    runtimeRoot: "C:/fresh-runtime",
+    principal,
+    bootstrapOperationId: "bootstrap_01",
+    authorityGeneration: 1,
+  });
+});
+
+test("narrative gate distinguishes a provider wait from a missing terminal signal", () => {
+  assert.equal(classifyNarrativeTurnOutcome("timeout", ["agent_start"]), "provider_request_pending");
+  assert.equal(
+    classifyNarrativeTurnOutcome("timeout", ["agent_start", "agent_end"]),
+    "dialogue_terminal_signal_unobserved",
+  );
+  assert.equal(classifyNarrativeTurnOutcome("turn_failed", ["agent_start", "agent_settled"]), undefined);
 });
 
 test("narrative gate fails closed when no child IPC marker exists", () => {
@@ -81,8 +104,15 @@ test("report writer is create-only and rejects content-bearing evidence", () =>
 test("runner source stays on authenticated API and never opens SQLite or auto-promotes", async () => {
   const source = await readFile(new URL("./run-tavern-narrative-gate.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(source, /node:sqlite|DatabaseSync|sqlite3/i);
+  assert.doesNotMatch(source, /createChatThreadStore|initial-chat-exact-content-port|chat-thread-store/i);
   assert.doesNotMatch(source, /autoPromote|auto_promote\s*:\s*true/i);
   assert.match(source, /start-production-artifact\.mjs/);
+  assert.match(source, /schemaVersion: 2/);
+  assert.match(source, /topology: "independent_chat_and_game_surfaces"/);
+  assert.match(source, /bootstrapOperationId/);
+  assert.match(source, /authorityGeneration: 1/);
+  assert.match(source, /GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: nonceSha256/);
+  assert.doesNotMatch(source, /tavernNarrativeGateNonceSha256:\s*nonceSha256/);
   assert.match(source, /X-GameBuddy-CSRF/);
   assert.match(source, /\/memories\/exclude-source/);
   assert.match(source, /sourceRef: `host-receipt:\$\{nonce\}`/);
@@ -91,6 +121,11 @@ test("runner source stays on authenticated API and never opens SQLite or auto-pr
   assert.doesNotMatch(source, /GAMEBUDDY_TAVERN_RAW_INVOCATION_SIGNAL_PATH/);
   assert.match(source, /tavern-narrative-gate-marker\/v1/);
   assert.match(source, /tavern-narrative-gate-runtime\/v1/);
-  assert.match(source, /evaluateNarrativeGateMarker\(\n      marker,\n      nonceSha256,\n      runtimeSession\.observed \? runtimeSession\.piSessionId : undefined,/);
+  assert.match(source, /provider_request_pending/);
+  assert.match(source, /dialogue_terminal_signal_unobserved/);
+  assert.match(
+    source,
+    /evaluateNarrativeGateMarker\(\n      marker,\n      nonceSha256,\n      runtimeSession\.observed \? runtimeSession\.piSessionId : undefined,/,
+  );
   assert.doesNotMatch(source, /markerSessionId = typeof marker\?\.sessionId/);
 });

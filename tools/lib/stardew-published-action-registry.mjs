@@ -31,7 +31,13 @@ function variableInitializer(source, name) {
   fail(`missing_${name}`);
 }
 
+function unwrapExpression(node) {
+  while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) node = node.expression;
+  return node;
+}
+
 function objectFreezeArray(initializer, name) {
+  initializer = unwrapExpression(initializer);
   if (
     !ts.isCallExpression(initializer) ||
     !ts.isPropertyAccessExpression(initializer.expression) ||
@@ -45,6 +51,7 @@ function objectFreezeArray(initializer, name) {
 }
 
 function assertPublishedProjection(initializer) {
+  initializer = unwrapExpression(initializer);
   if (
     !ts.isCallExpression(initializer) ||
     !ts.isPropertyAccessExpression(initializer.expression) ||
@@ -59,8 +66,19 @@ function assertPublishedProjection(initializer) {
     !ts.isPropertyAccessExpression(filter.expression) ||
     !isIdentifier(filter.expression.expression, "STARDEW_ACTION_REGISTRY") ||
     filter.expression.name.text !== "filter" ||
-    filter.arguments.length !== 1 ||
-    !isIdentifier(filter.arguments[0], "isMaterializablePublishedAction")
+    filter.arguments.length !== 1
+  )
+    fail("invalid_published_projection");
+  const predicate = filter.arguments[0];
+  if (
+    !ts.isArrowFunction(predicate) ||
+    predicate.parameters.length !== 1 ||
+    !ts.isCallExpression(predicate.body) ||
+    !isIdentifier(predicate.body.expression, "isMaterializablePublishedAction") ||
+    predicate.body.arguments.length !== 1 ||
+    !ts.isIdentifier(predicate.body.arguments[0]) ||
+    !ts.isIdentifier(predicate.parameters[0].name) ||
+    predicate.body.arguments[0].text !== predicate.parameters[0].name.text
   )
     fail("invalid_published_projection");
 }

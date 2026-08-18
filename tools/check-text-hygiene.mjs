@@ -16,6 +16,8 @@ const EXCLUDED_PREFIXES = Object.freeze([
   "host/dist/",
   "host/dist-test/",
   "host/.memory-live-check/",
+  // Ephemeral Host/Pi execution roots carry local SQLite, auth, and session state.
+  "host/contexts/",
   "dialogue-web/dist/",
   "dialogue-web/playwright-report/",
   "dialogue-web/test-results/",

@@ -21,6 +21,27 @@ const binding = Object.freeze({
   companionId: "fixture-companion",
 });
 
+// Handler bodies are intentionally split by family while retaining one partial
+// ExecutionManager ledger. Source-bound fixture assertions must inspect that
+// complete production surface rather than treating the ledger file as a second
+// handler authority.
+const EXECUTION_MANAGER_SOURCE_FILES = Object.freeze([
+  "ExecutionManager.cs",
+  "ExecutionManager.MovementHandlers.cs",
+  "ExecutionManager.FarmingConstructionHandlers.cs",
+  "ExecutionManager.MachinesAnimalsItemsHandlers.cs",
+  "ExecutionManager.ResourceToolHandlers.cs",
+  "ExecutionManager.GatheringHandlers.cs",
+]);
+
+async function readExecutionManagerSources() {
+  return (await Promise.all(
+    EXECUTION_MANAGER_SOURCE_FILES.map((file) =>
+      readFile(new URL(`../integrations/stardew/${file}`, import.meta.url), "utf8"),
+    ),
+  )).join("\n");
+}
+
 async function createFixture(t, suffix) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-native-local-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -100,7 +121,7 @@ test("native-local machine-load fixture supplies only an idle Keg and exact Coff
     setup,
     /\.checkAction\(|PlaceInMachine|performObjectDropInAction|RequestLocalLoadCoffeeIntoKeg|PublishReceipt/,
   );
-  const manager = await readFile(new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url), "utf8");
+  const manager = await readExecutionManagerSources();
   const actionStart = manager.indexOf("public LocalExecutionReceipt RequestLocalLoadCoffeeIntoKeg");
   const action = manager.slice(
     actionStart,
@@ -136,7 +157,7 @@ test("native-local machine-collect fixture starts from loading only; production 
     entry.indexOf('if (fixture.FixtureScenario == "native_dig_artifact_spot_v1")', setupStart),
   );
   assert.doesNotMatch(setup, /readyForHarvest\s*=|MinutesUntilReady\s*=|heldObject\.Value\s*=/);
-  const manager = await readFile(new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url), "utf8");
+  const manager = await readExecutionManagerSources();
   const actionStart = manager.indexOf("public LocalExecutionReceipt RequestLocalCollectCoffeeFromKeg");
   const action = manager.slice(
     actionStart,
@@ -291,10 +312,7 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
   assert.match(runner, /stamina_delta\) <= 0/);
   const protocol = await readFile(new URL("../integrations/stardew/BridgeProtocol.cs", import.meta.url), "utf8");
   assert.match(protocol, /ArtifactSpotFarmSourceCount/);
-  const executionManager = await readFile(
-    new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url),
-    "utf8",
-  );
+  const executionManager = await readExecutionManagerSources();
   assert.match(executionManager, /CountArtifactSpotFarmSources/);
   assert.match(executionManager, /farm\.objects\.Pairs\.Count\(pair => pair\.Value\.QualifiedItemId == "\(O\)590"\)/);
   assert.match(executionManager, /OrderBy\(pair => pair\.Key\.X\)/);
@@ -310,7 +328,7 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
   assert.doesNotMatch(artifactDiscovery, /location\.isTilePassable\(pair\.Key\)/);
   assert.match(artifactDiscovery, /location\.isTilePassable\(standing\)/);
   assert.match(artifactDiscovery, /\|\| player\.Tile == standing/);
-  const execution = await readFile(new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url), "utf8");
+  const execution = await readExecutionManagerSources();
   assert.match(execution, /hoe\.UpgradeLevel != 0/);
   assert.match(execution, /basic_hoe_not_equipped_in_requested_slot/);
   assert.match(
@@ -346,14 +364,17 @@ test("native-local bait-crab-pot fixture is pre-attachment only and preserves th
   assert.match(setup, /pot\.bait\.Value is not null/);
   assert.match(setup, /player\.warpFarmer/);
   assert.doesNotMatch(setup, /performObjectDropInAction|reduceActiveItemByOne|PublishReceipt/i);
-  const runner = await readFile(new URL("./run-stardew-native-local-player-bait-crab-pot-smoke.mjs", import.meta.url), "utf8");
-  assert.match(runner, /receipt\.requestId === requestId/);
-  assert.match(runner, /receipt\.executionId/);
+  const runner = await readFile(
+    new URL("./run-stardew-native-local-player-bait-crab-pot-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(runner, /executeFresh\(client, \{/);
+  assert.match(runner, /requestId,/);
   assert.match(runner, /receipt\.revision === after\.revision/);
   assert.match(runner, /inventory_before\) === 1|Number\(evidence\.inventory_before\) === 1/);
-  assert.match(runner, /after\.actionable && after\.activeExecution == null/);
+  assert.match(runner, /requireActionable: true/);
   assert.match(runner, /baitCrabPotResultTargets/);
-  const execution = await readFile(new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url), "utf8");
+  const execution = await readExecutionManagerSources();
   assert.match(execution, /RequestLocalBaitCrabPot/);
   assert.match(execution, /location\.checkAction\(new xTile\.Dimensions\.Location\(targetX, targetY\)/);
   assert.match(execution, /BuildBaitCrabPotTargetId/);
@@ -440,20 +461,20 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
   );
   assert.match(bootstrap, /native_place_crab_pot_v1/);
   assert.doesNotMatch(bootstrap, /place_crab_pot.*PublishedActions|PublishedActions.*place_crab_pot/s);
-  const publishedStart = config.indexOf("private static readonly IReadOnlySet<string> PublishedActions");
-  const published = config.slice(
-    publishedStart,
-    config.indexOf("private static readonly IReadOnlySet<string> PublishedFamilies", publishedStart),
+  const definitionsStart = config.indexOf("internal static readonly IReadOnlyList<FarmhandActionDefinition> FarmhandActionDefinitions");
+  const definitions = config.slice(
+    definitionsStart,
+    config.indexOf("private static FarmhandActionDefinition Definition", definitionsStart),
   );
-  assert.match(published, /place_crab_pot/);
+  assert.match(definitions, /Definition\("place_crab_pot"/);
   const productionRunner = await readFile(
     new URL("./run-stardew-native-local-player-place-crab-pot-smoke.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(productionRunner, /client\.execute\(/);
+  assert.match(productionRunner, /executeFresh\(/);
   assert.match(productionRunner, /source.*target disappearance|crabPotTargets/);
   assert.match(productionRunner, /overlayTiles/);
-  const execution = await readFile(new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url), "utf8");
+  const execution = await readExecutionManagerSources();
   assert.match(execution, /RequestLocalPlaceCrabPot/);
   assert.match(execution, /BuildCrabPotOverlayFacts/);
   assert.match(execution, /OverlayTiles/);
@@ -472,7 +493,7 @@ test("native-local break-rock-source fixture is isolated and cannot perform the 
   const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
   const setup = entry.slice(
     entry.indexOf('fixture.FixtureScenario == "native_break_rock_source_v1"'),
-    entry.indexOf('fixture.FixtureScenario is "native_tree_first_hit_v1" or "native_chop_tree_source_v1"'),
+    entry.indexOf('fixture.FixtureScenario is "native_chop_tree_source_v1"'),
   );
   assert.match(setup, /ItemRegistry\.Create<StardewValley\.Object>\("\(O\)2", 1\)/);
   assert.match(setup, /rock.MinutesUntilReady = 1/);
@@ -498,7 +519,7 @@ test("native-local clear-hoedirt fixture establishes only the intact empty groun
   const setupStart = entry.indexOf('if (fixture.FixtureScenario == "native_clear_hoedirt_v1")');
   const setup = entry.slice(
     setupStart,
-    entry.indexOf('fixture.FixtureScenario is "native_tree_first_hit_v1" or "native_chop_tree_source_v1"', setupStart),
+    entry.indexOf('fixture.FixtureScenario is "native_chop_tree_source_v1"', setupStart),
   );
   assert.match(setup, /new Pickaxe\(\)/);
   assert.match(setup, /Vector2 fixtureArrival = new\(64f, 15f\)/);
@@ -570,7 +591,7 @@ test("native-local clear-debris fixture establishes one intact native resource c
   const setupStart = entry.indexOf('if (fixture.FixtureScenario == "native_clear_debris_resource_clump_v1")');
   const setup = entry.slice(
     setupStart,
-    entry.indexOf('fixture.FixtureScenario is "native_tree_first_hit_v1" or "native_chop_tree_source_v1"', setupStart),
+    entry.indexOf('fixture.FixtureScenario is "native_chop_tree_source_v1"', setupStart),
   );
   assert.match(setup, /const int debrisParentSheetIndex = 752/);
   assert.match(setup, /const int debrisWidth = 2/);
@@ -592,10 +613,7 @@ test("native-local clear-debris fixture establishes one intact native resource c
     /resourceClumps\.Add|DoFunction|RequestLocalClearDebris|performToolAction|health\.Value\s*=|PublishReceipt/,
   );
 
-  const executionManager = await readFile(
-    new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url),
-    "utf8",
-  );
+  const executionManager = await readExecutionManagerSources();
   const protocol = await readFile(new URL("../integrations/stardew/BridgeProtocol.cs", import.meta.url), "utf8");
   assert.match(
     protocol,
@@ -634,10 +652,10 @@ test("native-local clear-debris fixture establishes one intact native resource c
   assert.match(runner, /receipt\.state === "partially_succeeded" && receipt\.reasonCode === "debris_hit"/);
   assert.match(runner, /receipt\.state === "succeeded" && receipt\.reasonCode === "debris_cleared"/);
   assert.match(runner, /evidence\.health_before === String\(expectedHealth\)/);
-  assert.match(runner, /connectWithRetry\(scope, config\.PipeName, config\.BridgeToken, 15_000\)/);
+  assert.match(runner, /connectWithRetry\(config, 15_000\)/);
   assert.match(runner, /error\.code === "ENOENT"/);
-  assert.match(runner, /const fixtureApproaches = \[\{ x: 61, y: 17 \}, \{ x: 64, y: 17 \}, \{ x: 62, y: 19 \}\]/);
-  assert.match(runner, /entry\.x === 62 && entry\.y === 17/);
+  assert.match(runner, /const fixtureApproaches = \[\s*\{ x: 61, y: 17 \},\s*\{ x: 64, y: 17 \},\s*\{ x: 62, y: 19 \},\s*\]/);
+  assert.match(runner, /fixtureTargets\(snapshot\)\.length === 1/);
   assert.match(runner, /move_to_clear_debris_fixture_anchor/);
   assert.match(runner, /clear_debris_fixture_target_not_at_bounded_anchor/);
   assert.doesNotMatch(runner, /for \(let radius = 1; radius <= 12/);
@@ -645,7 +663,9 @@ test("native-local clear-debris fixture establishes one intact native resource c
   assert.match(helper, /native_local_fixture_bundle_deploy_hash_mismatch/);
   assert.doesNotMatch(runner, /for \(let radius = 1; radius <= 12/);
   assert.match(runner, /freshPostcondition: \{ targetGone \}/);
-  assert.match(runner, /entry\?\.executionId === accepted\.executionId && entry\?\.requestId === accepted\.requestId/);
+  assert.match(runner, /connectNativeLocalClient\(config\)/);
+  assert.match(runner, /waitForTerminal\(receipts, accepted, timeoutMs\)/);
+  assert.match(runner, /executeFresh\(client, \{/);
   await restoreNativeLocalPlayerFixture(options);
 });
 
@@ -710,62 +730,26 @@ test("native-local npc-relationship fixture establishes an unchanged persisted f
     new URL("./run-stardew-native-local-player-npc-relationship-smoke.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(runner, /travelFreshHop\(snapshot, "FarmHouse", "Farm", "farmhouse_to_farm"\)/);
-  assert.match(runner, /chooseOnlyFreshFixtureTarget/);
-  assert.match(runner, /target\.npcName !== "Robin" \|\| target\.friendshipPoints !== 250/);
-  assert.match(runner, /moveToLiveTarget\(target, "move_to_npc_relationship_fixture"\)/);
   assert.match(
     runner,
-    /accepted\.state !== "accepted" && !\(accepted\.state === "succeeded" && accepted\.reasonCode === "npc_relationship_inspected"\)/,
+    /travelFreshHop\(\s*client,\s*receipts,\s*trace,\s*snapshot,\s*"FarmHouse",\s*"Farm",\s*"farmhouse_to_farm"/,
+  );
+  assert.match(runner, /chooseOnlyFreshFixtureTarget/);
+  assert.match(runner, /target\.npcName !== "Robin" \|\|\s*target\.friendshipPoints !== 250/);
+  assert.match(
+    runner,
+    /moveToLiveTarget\(\s*client,\s*receipts,\s*trace,\s*target,\s*"move_to_npc_relationship_fixture"/,
+  );
+  assert.match(
+    runner,
+    /accepted\.state !== "accepted" &&\s*!\(accepted\.state === "succeeded" && accepted\.reasonCode === "npc_relationship_inspected"\)/,
   );
   assert.match(runner, /nearestCardinalApproach\(snapshot\.tile, current\)/);
   assert.match(runner, /withinRadius\(snapshot\.tile, target, 6\)/);
   assert.doesNotMatch(runner, /travelToTown/);
-  const executions = await readFile(new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url), "utf8");
+  const executions = await readExecutionManagerSources();
   assert.match(executions, /IsTileWithinChebyshevRadius\(player, \(int\)npc\.Tile\.X, \(int\)npc\.Tile\.Y, 6\)/);
   await restoreNativeLocalPlayerFixture(options);
-});
-
-test("native-local tree-first-hit fixture configures its isolated profile and restores managed files", async (t) => {
-  const options = { ...(await createFixture(t, "tree-first-hit")), action: "tree_first_hit" };
-
-  const prepared = await prepareNativeLocalPlayerFixture(options);
-  assert.equal(prepared.state, "prepared");
-  const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "tree_first_hit"]);
-  assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_tree_first_hit_v1");
-  assert.equal(configured.NativeLocalPlayerFixture.ObservedSaveSlot, saveName);
-  assert.equal(configured.NativeLocalPlayerFixture.Bootstrap, undefined);
-  for (const name of BUNDLE_FILES) assert.equal(await readFile(join(options.modRoot, name), "utf8"), `release-${name}`);
-
-  const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
-  const setup = entry.slice(
-    entry.indexOf('fixture.FixtureScenario is "native_tree_first_hit_v1" or "native_chop_tree_source_v1"'),
-    entry.indexOf('fixture.FixtureScenario == "native_use_item_v1"'),
-  );
-  assert.match(setup, /float fixtureHealth = fixture\.FixtureScenario == "native_chop_tree_source_v1" \? 1f : 10f/);
-  assert.match(setup, /tree\.health\.Value = fixtureHealth/);
-  assert.doesNotMatch(setup, /DoFunction|RequestLocalTreeFirstHit|PublishReceipt/);
-  assert.match(setup, /production alone invokes exactly one Axe hit and emits receipt/);
-  const runner = await readFile(
-    new URL("./run-stardew-native-local-player-tree-first-hit-smoke.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.match(runner, /\["move_to_tile", "travel", "equip_tool", "tree_first_hit"\]/);
-  assert.match(runner, /evidence\.before === "10"/);
-  assert.match(runner, /evidence\.after === "9"/);
-  assert.match(runner, /evidence\.delta === "-1"/);
-  assert.match(runner, /reread\?\.health === 9/);
-
-  const restored = await restoreNativeLocalPlayerFixture(options);
-  assert.deepEqual(restored, { state: "restored", backup: prepared.backup, backupRemoved: true });
-  assert.equal(await readFile(join(options.modRoot, "config.json"), "utf8"), options.originalConfigBytes);
-  for (const name of BUNDLE_FILES)
-    assert.equal(await readFile(join(options.modRoot, name), "utf8"), `original-${name}`);
-  await assert.rejects(readFile(prepared.backup), { code: "ENOENT" });
-  await assert.rejects(readFile(join(options.root, ".stardew-native-local-player-fixture.lock", "transaction.json")), {
-    code: "ENOENT",
-  });
 });
 
 test("native-local chop-tree-source fixture establishes only the terminal-tree precondition", async (t) => {
@@ -776,10 +760,10 @@ test("native-local chop-tree-source fixture establishes only the terminal-tree p
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_chop_tree_source_v1");
   const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
   const setup = entry.slice(
-    entry.indexOf('fixture.FixtureScenario is "native_tree_first_hit_v1" or "native_chop_tree_source_v1"'),
+    entry.indexOf('fixture.FixtureScenario is "native_chop_tree_source_v1"'),
     entry.indexOf('fixture.FixtureScenario == "native_use_item_v1"'),
   );
-  assert.match(setup, /float fixtureHealth = fixture\.FixtureScenario == "native_chop_tree_source_v1" \? 1f : 10f/);
+  assert.match(setup, /float fixtureHealth = 1f/);
   assert.match(setup, /tree\.health\.Value = fixtureHealth/);
   assert.doesNotMatch(setup, /DoFunction|RequestLocalChopTreeSource|performTreeFall|PublishReceipt/);
   const runner = await readFile(
@@ -824,16 +808,13 @@ test("native-local refill-watering-can fixture remains isolated and pre-action o
   assert.match(runner, /["move_to_tile", "equip_tool", "refill_watering_can"]/);
   assert.ok(runner.includes("evidence.water_after === String(freshCan.max)"));
   assert.ok(runner.includes("reread?.water === freshCan.max"));
-  assert.match(runner, /receipt\.executionId === accepted\.executionId/);
-  assert.match(runner, /receipt\.requestId === accepted\.requestId/);
+  assert.match(runner, /terminal\.executionId === accepted\.executionId/);
+  assert.match(runner, /terminal\.requestId === accepted\.requestId/);
   assert.match(runner, /terminal\.state !== "succeeded" \|\| terminal\.reasonCode !== "target_reached"/);
-  assert.match(runner, /evidence\.target === `\$\{target\.x\},\$\{target\.y\}`/);
-  assert.match(runner, /evidence\.arrival === "exact"/);
+  assert.match(runner, /evidence\.target !== `\$\{target\.x\},\$\{target\.y\}` \|\| evidence\.arrival !== "exact"/);
+  assert.match(runner, /throw new Error\("move_evidence_mismatch"\)/);
   assert.match(runner, /phase: "move_terminal"/);
-  const executionManager = await readFile(
-    new URL("../integrations/stardew/ExecutionManager.cs", import.meta.url),
-    "utf8",
-  );
+  const executionManager = await readExecutionManagerSources();
   const discoveryStart = executionManager.indexOf(
     "private static IReadOnlyList<BridgeRefillWateringCanTarget> DiscoverRefillWateringCanTargets",
   );
@@ -886,7 +867,7 @@ test("native-local collect-animal-product fixture establishes only the approved 
     "utf8",
   );
   assert.match(runner, /\["collect_animal_product"\]/);
-  assert.match(runner, /entry\.executionId === accepted\.executionId && entry\.requestId === accepted\.requestId/);
+  assert.match(runner, /waitForTerminal\(receipts, accepted, terminalTimeoutMs\)/);
   assert.match(
     runner,
     /targets\.sort\(\(left, right\) => left\.y - right\.y \|\| left\.x - right\.x \|\| left\.targetId\.localeCompare\(right\.targetId\)\)/,
@@ -1004,7 +985,7 @@ test("native-local fixture setup fails closed while any warp continuation is pen
 });
 
 test("native-local fixture restore fails closed when a registered backup is tampered", async (t) => {
-  const options = { ...(await createFixture(t, "tampered-restore")), action: "tree_first_hit" };
+  const options = { ...(await createFixture(t, "tampered-restore")), action: "chop_tree_source" };
   const prepared = await prepareNativeLocalPlayerFixture(options);
   const preparedConfig = await readFile(join(options.modRoot, "config.json"), "utf8");
   await writeFile(join(prepared.backup, "config.json.backup"), "tampered backup");

@@ -39,16 +39,15 @@ export class TavernInitialChatExactContentPortError extends Error {
 
 /** Unmounted content facade. It has no selector, lifecycle, or semantic authority operations. */
 export type InitialChatExactContentPort = Readonly<{
+  /** Opens only an existing exact durable binding; missing content fails closed. */
   resumeExact(
     chatThreadId: string,
     companionId: string,
     continuityId: string,
     chatSurfaceSessionId: string,
   ): Promise<TavernExactContentReceipt>;
-  ensureExactContent(
-    binding: InitialChatExactContentBinding,
-    request: CreateChatThreadRequest,
-  ): Promise<TavernExactContentReceipt>;
+  /** Explicit initial-thread creation, distinct from exact resume. */
+  createExplicit(request: CreateChatThreadRequest): Promise<TavernExactContentReceipt>;
 }>;
 
 const trustedReceipts = new WeakSet<object>();
@@ -84,10 +83,11 @@ export function createInitialChatExactContentPort(
         throw mapStoreFailure(error);
       }
     },
-    ensureExactContent: async (binding, request) => {
-      validateExactRequestBinding(binding, request);
+    createExplicit: async (request) => {
+      validateExplicitRequest(request);
+      const binding = exactBindingFromRequest(request);
       try {
-        return receiptFromState(await capability.ensureExactContent(binding, request), binding);
+        return receiptFromState(await capability.createExplicit(request), binding);
       } catch (error) {
         throw mapStoreFailure(error);
       }
@@ -164,17 +164,13 @@ function validateExplicitRequest(request: CreateChatThreadRequest): void {
   )
     throw new TavernInitialChatExactContentPortError("invalid_create_chat_thread_request");
 }
-function validateExactRequestBinding(binding: InitialChatExactContentBinding, request: CreateChatThreadRequest): void {
-  validateExplicitRequest(request);
-  if (
-    !binding ||
-    typeof binding !== "object" ||
-    binding.chatThreadId !== request.chatThreadId ||
-    binding.companionId !== request.companionId ||
-    binding.continuityId !== request.continuityId ||
-    binding.chatSurfaceSessionId !== request.chatSurfaceSessionId
-  )
-    throw new TavernInitialChatExactContentPortError("chat_thread_binding_mismatch");
+function exactBindingFromRequest(request: CreateChatThreadRequest): InitialChatExactContentBinding {
+  return Object.freeze({
+    chatThreadId: request.chatThreadId,
+    companionId: request.companionId,
+    continuityId: request.continuityId,
+    chatSurfaceSessionId: request.chatSurfaceSessionId,
+  });
 }
 function isExactId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(value);

@@ -15,10 +15,15 @@ import {
 const execFile = promisify(execFileCallback);
 const CONTRACT = new URL("./stardew-portfolio-m9-special-order-action-contract.json", import.meta.url);
 const SCRIPT = new URL("./stardew-portfolio-m9-special-order-action-contract.mjs", import.meta.url);
-const FIXTURE = new URL("../fixtures/stardew/portfolio-m9-special-order-action-contract-unprovisioned.example.json", import.meta.url);
-async function json(url) { return JSON.parse(await readFile(url, "utf8")); }
+const FIXTURE = new URL(
+  "../fixtures/stardew/portfolio-m9-special-order-action-contract-unprovisioned.example.json",
+  import.meta.url,
+);
+async function json(url) {
+  return JSON.parse(await readFile(url, "utf8"));
+}
 
- test("M9 contract validates its exact action boundary and unprovisioned fixture", async () => {
+test("M9 contract validates its exact action boundary and unprovisioned fixture", async () => {
   const contract = await json(CONTRACT);
   const fixture = await json(FIXTURE);
   assert.deepEqual(validateM9SpecialOrderActionContract(contract), []);
@@ -30,10 +35,12 @@ async function json(url) { return JSON.parse(await readFile(url, "utf8")); }
   assert.equal(result.liveClosure, "none");
   assert.equal(result.projectionState, "blocked");
   assert.deepEqual(result.actions, ["accept_special_order_offer", "claim_special_order_reward"]);
- });
+});
 
 test("M9 CLI accepts --contract and returns truthful non-closure summary", async () => {
-  const { stdout } = await execFile(process.execPath, [fileURLToPath(SCRIPT), "--contract", fileURLToPath(CONTRACT)], { cwd: path.resolve(fileURLToPath(new URL("../", import.meta.url))) });
+  const { stdout } = await execFile(process.execPath, [fileURLToPath(SCRIPT), "--contract", fileURLToPath(CONTRACT)], {
+    cwd: path.resolve(fileURLToPath(new URL("../", import.meta.url))),
+  });
   const result = JSON.parse(stdout);
   assert.equal(result.implementationStatus, "implementation_needed");
   assert.equal(result.fixtureStatus, "fixture_needed");
@@ -66,5 +73,7 @@ test("M9 CLI/checker remains fail-closed for a malformed contract", async () => 
   const directory = await mkdtemp(path.join(tmpdir(), "m9-contract-"));
   const file = path.join(directory, "bad.json");
   await writeFile(file, JSON.stringify({ schemaVersion: 1 }));
-  await assert.rejects(() => checkM9SpecialOrderActionContract(file), { code: "m9_special_order_action_contract_invalid" });
+  await assert.rejects(() => checkM9SpecialOrderActionContract(file), {
+    code: "m9_special_order_action_contract_invalid",
+  });
 });

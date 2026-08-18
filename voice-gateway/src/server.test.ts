@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
 import test from "node:test";
 
+import { MAX_NDJSON_FRAME_BYTES } from "@gamebuddy/voice-protocol";
 import { VoiceGatewayCore } from "./gateway.js";
 import { startVoiceGateway } from "./server.js";
 
@@ -735,6 +736,48 @@ test("standalone Voice Gateway rejects non-loopback bind addresses", async () =>
     () => startVoiceGateway({ port: 0, token: "voice_token_1234567890", host: "0.0.0.0" as never }),
     /voice_gateway_loopback_required/,
   );
+});
+
+test("events responses paginate before a valid poll can exceed the NDJSON frame cap", async () => {
+  const token = "voice_token_1234567890";
+  const core = new VoiceGatewayCore(
+    {
+      providerId: "fake_asr",
+      modelRevision: "v1",
+      async transcribe() {
+        return "x".repeat(4_000);
+      },
+    },
+    { providerId: "fake_tts", modelRevision: "v1", ready: true, async *synthesize() {} },
+    { ready: true, play() {}, stop() {} },
+  );
+  for (let index = 0; index < 24; index += 1) {
+    core.startPtt("page_session", `page_input_${index}`);
+    core.pushPcm(new Uint8Array([0, 0]));
+    await core.stopPtt();
+  }
+  const gateway = await startVoiceGateway({ port: 0, token, core });
+  try {
+    const first = await exchange(gateway.port, [
+      { type: "hello", token, protocolVersion: 1, requestId: "page_hello" },
+      { type: "events", requestId: "page_first", sessionId: "page_session" },
+    ]);
+    const firstPage = first[1] as { type: string; events: unknown[]; next: number };
+    assert.equal(firstPage.type, "events");
+    assert.ok(firstPage.events.length > 0);
+    assert.ok(firstPage.events.length < core.events.length);
+    assert.ok(Buffer.byteLength(`${JSON.stringify(firstPage)}\n`, "utf8") <= MAX_NDJSON_FRAME_BYTES);
+    const second = await exchange(gateway.port, [
+      { type: "hello", token, protocolVersion: 1, requestId: "page_hello_2" },
+      { type: "events", requestId: "page_second", sessionId: "page_session", after: firstPage.next },
+    ]);
+    const secondPage = second[1] as { type: string; events: unknown[]; next: number };
+    assert.equal(secondPage.type, "events");
+    assert.ok(secondPage.events.length > 0);
+    assert.ok(Buffer.byteLength(`${JSON.stringify(secondPage)}\n`, "utf8") <= MAX_NDJSON_FRAME_BYTES);
+  } finally {
+    await gateway.close();
+  }
 });
 
 test("standalone Voice Gateway validates media, speech and event request shapes before dispatch", async () => {

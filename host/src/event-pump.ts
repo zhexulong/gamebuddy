@@ -137,6 +137,11 @@ export class CompanionEventPump {
     return this.#retryBatch !== undefined || this.#inputs.length > 0 || this.#hasPendingFactTrigger();
   }
 
+  /** Authenticated player input has been accepted but is not yet Pi-consumed. */
+  public get hasPendingPlayerInput(): boolean {
+    return this.#inputs.length > 0 || (this.#retryBatch?.inputs.length ?? 0) > 0;
+  }
+
   public async flush(sink: CompanionTurnSink): Promise<void> {
     if (this.#delivering || !this.hasPendingDelivery) return;
     this.#delivering = true;
@@ -214,7 +219,7 @@ export function isMeaningfulProgressFact(fact: WorldFact): boolean {
   return (
     fact.kind === "execution_receipt" &&
     typeof fact.payload.state === "string" &&
-    ["accepted", "running", "meaningful_progress", "blocked"].includes(fact.payload.state)
+    ["accepted", "running", "meaningful_progress"].includes(fact.payload.state)
   );
 }
 
@@ -226,9 +231,16 @@ function isTerminalExecutionFact(fact: WorldFact): boolean {
   return (
     fact.kind === "execution_receipt" &&
     typeof fact.payload.state === "string" &&
-    ["succeeded", "partially_succeeded", "failed", "cancelled", "expired", "invalidated", "rejected", "uncertain"].includes(
-      fact.payload.state,
-    )
+    [
+      "succeeded",
+      "partially_succeeded",
+      "failed",
+      "cancelled",
+      "expired",
+      "invalidated",
+      "rejected",
+      "uncertain",
+    ].includes(fact.payload.state)
   );
 }
 

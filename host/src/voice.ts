@@ -1,6 +1,8 @@
 /** Product boundary between the Companion Host and the independent Voice Gateway. */
 export type FinalVoiceInput = Readonly<{
   sessionId: string;
+  /** Gateway-authenticated source event identity; distinct from input correlation. */
+  sourceEventId: string;
   inputId: string;
   text: string;
   locale: string;

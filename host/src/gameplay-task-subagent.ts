@@ -13,7 +13,14 @@ import {
 import { Type } from "typebox";
 
 import { type IntegrationConnection } from "./integration-types.js";
-import { executionWakeSourceFor, normalizeExecutionWake, type ExecutionWakeSource } from "./integration-launcher.js";
+import {
+  executionWakeSourceFor,
+  normalizeExecutionWake,
+} from "./action-execution-coordinator.internal.js";
+import {
+  type ExecutionWake,
+  type ExecutionWakeSource,
+} from "./integration-launcher.js";
 import {
   type IntegrationActionCatalog,
   type IntegrationActionPolicy,
@@ -73,7 +80,12 @@ export type GameplayTaskRecord = Readonly<{
   acceptedActionsByFamily: Readonly<Record<string, number>>;
   executions: readonly Readonly<{ actionId: string; requestId: string; executionId: string; state: string }>[];
   /** A request was written but its execute response has not yet been reconciled. */
-  pendingDispatch: Readonly<{ actionId: string; requestId: string; state: "dispatching" | "uncertain"; cancelRequired: boolean }> | null;
+  pendingDispatch: Readonly<{
+    actionId: string;
+    requestId: string;
+    state: "dispatching" | "uncertain";
+    cancelRequired: boolean;
+  }> | null;
   /** Receipt reference only; evidence remains Mod-owned and is never copied into worker trace. */
   terminalReceipt: Readonly<{ requestId: string; executionId: string; state: string; reasonCode: string }> | null;
   terminalReasonCode: string | null;
@@ -97,6 +109,8 @@ export type GameplayTaskSessionFactory = Readonly<{
       customTools: readonly ToolDefinition[];
     }>,
   ): Promise<AgentSession>;
+  /** Test-only workspace allocation seam; production always calls mkdtemp. */
+  createWorkspace?(prefix: string): Promise<string>;
 }>;
 
 /**
@@ -125,7 +139,12 @@ type MutableTaskRecord = {
   acceptedActions: number;
   acceptedActionsByFamily: Record<string, number>;
   executions: Array<{ actionId: string; requestId: string; executionId: string; state: string }>;
-  pendingDispatch: { actionId: string; requestId: string; state: "dispatching" | "uncertain"; cancelRequired: boolean } | null;
+  pendingDispatch: {
+    actionId: string;
+    requestId: string;
+    state: "dispatching" | "uncertain";
+    cancelRequired: boolean;
+  } | null;
   terminalReceipt: { requestId: string; executionId: string; state: string; reasonCode: string } | null;
   terminalReasonCode: string | null;
   wakeMode: "polling" | "event_with_reconcile_poll";
@@ -133,7 +152,8 @@ type MutableTaskRecord = {
 type ActiveTask = {
   taskId: string;
   controller: AbortController;
-  session: AgentSession;
+  /** Undefined only while this synchronously reserved task is constructing. */
+  session: AgentSession | undefined;
   record: MutableTaskRecord;
   dispatchAdmission: GameplayTaskDispatchAdmission | undefined;
   cancellationIssued: boolean;
@@ -222,7 +242,7 @@ export class GameplayTaskSubagent {
     this.#cancellationEpoch++;
     active.controller.abort(reasonCode);
     issueTaskOwnedCancellation(active.record, active.dispatchAdmission, reasonCode);
-    void active.session.abort().catch(() => undefined);
+    void active.session?.abort().catch(() => undefined);
   }
 
   public async run(task: string, parentSignal?: AbortSignal): Promise<GameplayTaskResult> {
@@ -254,17 +274,39 @@ export class GameplayTaskSubagent {
       wakeMode: this.#executionWakeSource === undefined ? "polling" : "event_with_reconcile_poll",
     };
     const controller = new AbortController();
+    // Reserve synchronously, before the first await. This is also the exact
+    // object parent abort, liveness, timeout, and finalization are bound to.
+    // A constructor that yields cannot admit a second task into this worker.
+    const active: ActiveTask = {
+      taskId,
+      controller,
+      session: undefined,
+      record,
+      dispatchAdmission: undefined,
+      cancellationIssued: false,
+    };
+    this.#active = active;
+    const cancelThisTask = (reasonCode: string) => {
+      if (this.#active !== active) return;
+      this.cancel(reasonCode);
+    };
     const onParentAbort = () => {
-      this.cancel("parent_aborted");
+      cancelThisTask("parent_aborted");
       controller.abort(parentSignal?.reason ?? "parent_aborted");
     };
     if (parentSignal?.aborted) onParentAbort();
     else parentSignal?.addEventListener("abort", onParentAbort, { once: true });
 
-    const taskRoot = await mkdtemp(join(this.paths.runtimeCwd, "gameplay-task-"));
+    // Allocation is inside the reservation's cleanup boundary. In particular,
+    // a rejected mkdtemp must release this exact synchronous reservation and
+    // detach its parent listener before another task may be admitted.
+    let taskRoot: string | undefined;
     let session: AgentSession | undefined;
+    let taskReport: GameplayTaskReport | null = null;
     this.#lastReport = null;
     try {
+      taskRoot = await (this.sessionFactory?.createWorkspace?.(join(this.paths.runtimeCwd, "gameplay-task-")) ??
+        mkdtemp(join(this.paths.runtimeCwd, "gameplay-task-")));
       const agentDir = join(taskRoot, "pi-agent");
       await mkdir(agentDir, { recursive: true });
       const reportTool = defineTool({
@@ -293,6 +335,7 @@ export class GameplayTaskSubagent {
           ) {
             throw new Error("authoritative_completion_receipt_required");
           }
+          taskReport = report;
           this.#lastReport = report;
           return { content: [{ type: "text" as const, text: JSON.stringify(report) }], details: report };
         },
@@ -315,34 +358,54 @@ export class GameplayTaskSubagent {
           return { content: [{ type: "text" as const, text: JSON.stringify(details) }], details };
         },
       });
-      // Action tools are absent without a runtime-minted admission. A worker
-      // never synthesizes correlation ownership from its task id or model call.
-      const dispatchAdmission = this.dispatchAdmissionFactory?.();
+      // Action tools are absent without a runtime-minted admission. Never
+      // capture one in this task's tool closure: every bridge invocation must
+      // mint its own admission immediately before pre-write. Retain only the
+      // latest actually-issued admission so task cancellation targets a real
+      // owned pending/execution correlation rather than a synthetic owner.
+      const dispatchAdmissionFactory =
+        this.dispatchAdmissionFactory === undefined
+          ? undefined
+          : () => {
+              const admission = this.dispatchAdmissionFactory!();
+              active.dispatchAdmission = admission;
+              return admission;
+            };
       const integrationToolSet = integrationModule.createToolSet({
         connection: this.integration,
         knowledge: this.integration.knowledge,
         gameVersion: this.integration.gameVersion,
         policy: this.actionPolicy,
-        dispatchAdmission,
+        ...(dispatchAdmissionFactory === undefined ? {} : { dispatchAdmissionFactory }),
       });
       const integrationTools = [
         ...integrationToolSet.observation,
         ...integrationToolSet.actions,
         ...integrationToolSet.knowledge,
       ];
+      const cancelSettledPendingDispatch = (requestId: string, executionId: string) => {
+        if (!active.cancellationIssued) return;
+        const admission = active.dispatchAdmission;
+        if (admission === undefined) return;
+        void admission
+          .cancelExact(requestId, executionId, record.terminalReasonCode ?? "gameplay_task_cancelled")
+          .catch(() => undefined);
+      };
       const budgetedIntegrationTools = integrationTools.map((tool) =>
-        budgetTool(tool, record, controller, this.integration, integrationModule, dispatchAdmission, (reasonCode) =>
-          this.cancel(reasonCode),
+        budgetTool(
+          tool,
+          record,
+          controller,
+          this.integration,
+          integrationModule,
+          cancelThisTask,
+          cancelSettledPendingDispatch,
         ),
       );
       const customTools = [
-        budgetTool(status, record, controller, this.integration, integrationModule, dispatchAdmission, (reasonCode) =>
-          this.cancel(reasonCode),
-        ),
+        budgetTool(status, record, controller, this.integration, integrationModule, cancelThisTask, cancelSettledPendingDispatch),
         ...budgetedIntegrationTools,
-        budgetTool(reportTool, record, controller, this.integration, integrationModule, dispatchAdmission, (reasonCode) =>
-          this.cancel(reasonCode),
-        ),
+        budgetTool(reportTool, record, controller, this.integration, integrationModule, cancelThisTask, cancelSettledPendingDispatch),
       ];
       const allowedToolNames = customTools.map((tool) => tool.name).sort();
       if (this.sessionFactory !== undefined) {
@@ -353,26 +416,32 @@ export class GameplayTaskSubagent {
       const actualToolNames = session.agent.state.tools.map((tool) => tool.name).sort();
       if (JSON.stringify(actualToolNames) !== JSON.stringify(allowedToolNames))
         throw new Error("gameplay_subagent_tool_isolation_failed");
-      this.#active = { taskId, controller, session, record, dispatchAdmission, cancellationIssued: false };
+      active.session = session;
       // Liveness is fail-closed for this task only: stop further tool admission,
       // issue at most one owned cancellation, then let the existing bounded
       // receipt watchdog determine the terminal outcome.
       const unsubscribeLiveness = this.#executionWakeSource?.onExecutionWake((candidate) => {
         const wake = normalizeExecutionWake(candidate);
+        if (wake?.kind === "terminal") {
+          // A bridge write can still be awaiting its response when STOP lands.
+          // The adapter's terminal wake lets the task reconcile that exact
+          // request immediately; polling remains only a lost-wake fallback.
+          settlePendingTerminalWake(record, this.integration, wake);
+        }
         if (wake?.kind === "invalidated" || wake?.kind === "disconnected")
-          this.cancel(`integration_${wake.kind}:${wake.reasonCode}`);
+          cancelThisTask(`integration_${wake.kind}:${wake.reasonCode}`);
       });
       const timeout = setTimeout(
-        () => this.cancel("gameplay_task_wall_clock_budget_exhausted"),
+        () => cancelThisTask("gameplay_task_wall_clock_budget_exhausted"),
         record.budget.maxWallClockMs,
       );
       const unsubscribe = session.subscribe((event) => {
         if (event.type === "agent_end") {
           record.turns++;
           if (event.willRetry) record.modelRetries++;
-          if (record.turns >= record.budget.maxTurns) this.cancel("gameplay_task_turn_budget_exhausted");
+          if (record.turns >= record.budget.maxTurns) cancelThisTask("gameplay_task_turn_budget_exhausted");
           else if (record.modelRetries > record.budget.maxModelRetries)
-            this.cancel("gameplay_task_retry_budget_exhausted");
+            cancelThisTask("gameplay_task_retry_budget_exhausted");
         }
       });
       try {
@@ -380,7 +449,7 @@ export class GameplayTaskSubagent {
           return await abortedTaskResult(
             taskId,
             record,
-            this.#lastReport,
+            taskReport,
             this.integration,
             controller.signal,
             this.#executionWakeSource,
@@ -390,7 +459,7 @@ export class GameplayTaskSubagent {
           return await abortedTaskResult(
             taskId,
             record,
-            this.#lastReport,
+            taskReport,
             this.integration,
             controller.signal,
             this.#executionWakeSource,
@@ -402,7 +471,9 @@ export class GameplayTaskSubagent {
       }
       const summary = finalAssistantText(session.messages);
       steps.push(Object.freeze({ name: "worker_finished", reasonCode: "worker_prompt_finished" }));
-      const finalReport: GameplayTaskReport | null = this.#lastReport as GameplayTaskReport | null;
+      // Assignment occurs inside the tool callback, which TypeScript's local
+      // control-flow analysis cannot observe across await/session boundaries.
+      const finalReport = taskReport as GameplayTaskReport | null;
       if (finalReport === null) {
         record.terminalReasonCode ??= "missing_terminal_report";
         steps.push(Object.freeze({ name: "blocked", reasonCode: record.terminalReasonCode }));
@@ -456,7 +527,7 @@ export class GameplayTaskSubagent {
         return await abortedTaskResult(
           taskId,
           record,
-          this.#lastReport,
+          taskReport,
           this.integration,
           controller.signal,
           this.#executionWakeSource,
@@ -472,9 +543,10 @@ export class GameplayTaskSubagent {
       parentSignal?.removeEventListener("abort", onParentAbort);
       this.#lastTaskRecord = freezeRecord(record);
       this.#lastTaskSteps = Object.freeze([...steps]);
-      this.#active = undefined;
+      // Never let a stale task's finalizer erase a task that replaced it.
+      if (this.#active === active) this.#active = undefined;
       session?.dispose();
-      await rm(taskRoot, { recursive: true, force: true }).catch(() => undefined);
+      if (taskRoot !== undefined) await rm(taskRoot, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 }
@@ -706,8 +778,8 @@ function budgetTool(
   controller: AbortController,
   integration: IntegrationConnection,
   integrationModule: ReturnType<typeof requireIntegrationModule>,
-  dispatchAdmission: GameplayTaskDispatchAdmission | undefined,
   cancelTask: (reasonCode: string) => void,
+  cancelSettledPendingDispatch: (requestId: string, executionId: string) => void,
 ): ToolDefinition {
   const actionId = integrationModule.actionIdForToolName(tool.name);
   const isCancel = integrationModule.isCancellationTool(tool.name);
@@ -755,7 +827,14 @@ function budgetTool(
         record.pendingDispatch = { actionId, requestId, state: "dispatching", cancelRequired: false };
         try {
           const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
-          settlePendingDispatch(record, integration, integrationModule, admission.familyId, result.details);
+          settlePendingDispatch(
+            record,
+            integration,
+            integrationModule,
+            admission.familyId,
+            result.details,
+            cancelSettledPendingDispatch,
+          );
           return result;
         } catch (error) {
           // A post-write transport failure is not proof that no execution
@@ -782,7 +861,10 @@ async function abortedTaskResult(
   const budgetExhausted = reasonCode.includes("budget_exhausted");
   // Cancellation has already triggered the signal; continue to await the Mod's
   // authoritative terminal receipt inside the bounded watchdog window.
-  const cancellation = await awaitPendingDispatchAndOwnedTerminalReceipt(record, integration, wakeSource);
+  const cancellation =
+    record.pendingDispatch !== null || record.executions.length > 0
+      ? await awaitPendingDispatchAndOwnedTerminalReceipt(record, integration, wakeSource)
+      : null;
   if (cancellation !== null) record.terminalReceipt = cancellation;
   if (record.pendingDispatch !== null || (record.executions.length > 0 && cancellation === null)) {
     record.terminalReasonCode = "cancellation_receipt_missing";
@@ -822,17 +904,21 @@ async function awaitOwnedTerminalReceipt(
  * immediate reread; a bounded 250ms poll recovers a lost wake. Neither wake
  * payload nor unrelated receipt can itself establish a terminal result.
  */
-export async function awaitTaskOwnedTerminalReceipt(input: Readonly<{
-  executions: readonly Readonly<{ requestId: string; executionId: string }> [];
-  deadlineMs: number;
-  signal?: AbortSignal;
-  wakeSource?: ExecutionWakeSource;
-  readReceipt: () => IntegrationExecutionReceipt | null;
-}>): Promise<Readonly<{ requestId: string; executionId: string; state: string; reasonCode: string }> | null> {
+export async function awaitTaskOwnedTerminalReceipt(
+  input: Readonly<{
+    executions: readonly Readonly<{ requestId: string; executionId: string }>[];
+    deadlineMs: number;
+    signal?: AbortSignal;
+    wakeSource?: ExecutionWakeSource;
+    readReceipt: () => IntegrationExecutionReceipt | null;
+  }>,
+): Promise<Readonly<{ requestId: string; executionId: string; state: string; reasonCode: string }> | null> {
   const owned = (receipt: IntegrationExecutionReceipt | null) =>
     receipt !== null &&
     isTerminalReceiptState(receipt.state) &&
-    input.executions.some((execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId)
+    input.executions.some(
+      (execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId,
+    )
       ? Object.freeze({
           requestId: receipt.requestId,
           executionId: receipt.executionId,
@@ -874,7 +960,11 @@ export async function awaitTaskOwnedTerminalReceipt(input: Readonly<{
         const wake = normalizeExecutionWake(candidate);
         if (wake === null) return;
         if (wake.kind === "terminal") {
-          if (!input.executions.some((execution) => execution.requestId === wake.requestId && execution.executionId === wake.executionId))
+          if (
+            !input.executions.some(
+              (execution) => execution.requestId === wake.requestId && execution.executionId === wake.executionId,
+            )
+          )
             return;
           reconcile();
           return;
@@ -915,11 +1005,26 @@ function settlePendingDispatch(
   integrationModule: ReturnType<typeof requireIntegrationModule>,
   familyId: string,
   details: unknown,
+  cancelSettledPendingDispatch: (requestId: string, executionId: string) => void,
 ): void {
   const receipt = parseReceipt(details, integrationModule);
   const pending = record.pendingDispatch;
   if (pending == null || receipt === null || receipt.requestId !== pending.requestId) return;
-  settlePendingCorrelation(record, integration, pending.actionId, receipt.requestId, receipt.executionId, receipt.state, familyId);
+  const cancelRequired = pending.cancelRequired;
+  settlePendingCorrelation(
+    record,
+    integration,
+    pending.actionId,
+    receipt.requestId,
+    receipt.executionId,
+    receipt.state,
+    familyId,
+  );
+  const execution = record.executions.find(
+    (known) => known.requestId === receipt.requestId && known.executionId === receipt.executionId,
+  );
+  if (cancelRequired && execution !== undefined && !isTerminalReceiptState(execution.state))
+    cancelSettledPendingDispatch(receipt.requestId, receipt.executionId);
 }
 
 function settlePendingCorrelation(
@@ -942,10 +1047,15 @@ function settlePendingCorrelation(
     latest?.requestId === requestId && latest.executionId === executionId && isTerminalReceiptState(latest.state)
       ? latest.state
       : state;
-  const existing = record.executions.find((known) => known.requestId === requestId && known.executionId === executionId);
+  const existing = record.executions.find(
+    (known) => known.requestId === requestId && known.executionId === executionId,
+  );
   if (existing === undefined) {
     record.executions.push({ actionId, requestId, executionId, state: resolvedState });
-    if (familyId !== undefined && (resolvedState === "accepted" || resolvedState === "running" || resolvedState === "succeeded")) {
+    if (
+      familyId !== undefined &&
+      (resolvedState === "accepted" || resolvedState === "running" || resolvedState === "succeeded")
+    ) {
       record.acceptedActions++;
       record.acceptedActionsByFamily[familyId] = (record.acceptedActionsByFamily[familyId] ?? 0) + 1;
     }
@@ -966,16 +1076,94 @@ function issueTaskOwnedCancellation(
   void admission.cancelExact(execution.requestId, execution.executionId, reasonCode).catch(() => undefined);
 }
 
+function settlePendingTerminalWake(
+  record: MutableTaskRecord,
+  integration: IntegrationConnection,
+  wake: Extract<ExecutionWake, { kind: "terminal" }>,
+): void {
+  const pending = record.pendingDispatch;
+  if (pending === null || pending.requestId !== wake.requestId) return;
+  const receipt = requireIntegrationModule(integration).readState(integration).latestReceipt;
+  if (
+    receipt !== null &&
+    receipt.requestId === wake.requestId &&
+    receipt.executionId === wake.executionId &&
+    isTerminalReceiptState(receipt.state)
+  ) {
+    settlePendingCorrelation(
+      record,
+      integration,
+      pending.actionId,
+      receipt.requestId,
+      receipt.executionId,
+      receipt.state,
+    );
+  }
+}
+
 async function awaitPendingDispatchAndOwnedTerminalReceipt(
   record: MutableTaskRecord,
   integration: IntegrationConnection,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<MutableTaskRecord["terminalReceipt"]> {
   const deadline = Math.min(record.deadlineMs, Date.now() + 5_000);
-  while (record.pendingDispatch !== null && Date.now() < deadline)
-    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  await awaitPendingDispatchSettlement(record, integration, wakeSource, deadline);
   if (record.pendingDispatch !== null) return null;
   return await awaitOwnedTerminalReceipt(record, integration, undefined, wakeSource);
+}
+
+/**
+ * A post-write abort can precede the execute response. A matching adapter wake
+ * causes an immediate authoritative reread and binds only an exact terminal
+ * receipt; the 250ms poll is solely lost-wake recovery.
+ */
+async function awaitPendingDispatchSettlement(
+  record: MutableTaskRecord,
+  integration: IntegrationConnection,
+  wakeSource: ExecutionWakeSource | undefined,
+  deadlineMs: number,
+): Promise<void> {
+  if (record.pendingDispatch === null || Date.now() >= deadlineMs) return;
+  const integrationModule = requireIntegrationModule(integration);
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (poll !== undefined) clearInterval(poll);
+      if (deadline !== undefined) clearTimeout(deadline);
+      unsubscribe?.();
+      resolve();
+    };
+    const reconcile = () => {
+      const pending = record.pendingDispatch;
+      if (pending === null) return finish();
+      const receipt = integrationModule.readState(integration).latestReceipt;
+      if (receipt !== null && receipt.requestId === pending.requestId && isTerminalReceiptState(receipt.state)) {
+        settlePendingCorrelation(
+          record,
+          integration,
+          pending.actionId,
+          receipt.requestId,
+          receipt.executionId,
+          receipt.state,
+        );
+        finish();
+      }
+    };
+    poll = setInterval(reconcile, 250);
+    deadline = setTimeout(finish, Math.max(0, deadlineMs - Date.now()));
+    if (wakeSource !== undefined) {
+      unsubscribe = wakeSource.onExecutionWake((candidate) => {
+        const wake = normalizeExecutionWake(candidate);
+        if (wake?.kind === "terminal" && wake.requestId === record.pendingDispatch?.requestId) reconcile();
+      });
+    }
+    reconcile();
+  });
 }
 
 function parseReceipt(

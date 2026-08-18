@@ -37,14 +37,32 @@ test("P0b producer is default-disabled and emits a signed native start manifest"
   ]) {
     assert.match(config, new RegExp(`this\\.${mode}\\?\\.Enable != true`));
   }
-  assert.match(entry, /P0b requires every fixture, bootstrap, automation, and provisioning mode to be explicitly disabled/);
-  const saveLoadedHandler = entry.slice(entry.indexOf("private void OnSaveLoaded"), entry.indexOf("private void TryInitializeNativeLocalPlayerFixture"));
-  const updateTickedHandler = entry.slice(entry.indexOf("private void OnUpdateTicked"), entry.indexOf("private void OnWarped"));
+  assert.match(
+    entry,
+    /P0b requires every fixture, bootstrap, automation, and provisioning mode to be explicitly disabled/,
+  );
+  const saveLoadedHandler = entry.slice(
+    entry.indexOf("private void OnSaveLoaded"),
+    entry.indexOf("private void TryInitializeNativeLocalPlayerFixture"),
+  );
+  const updateTickedHandler = entry.slice(
+    entry.indexOf("private void OnUpdateTicked"),
+    entry.indexOf("private void OnWarped"),
+  );
   assert.match(saveLoadedHandler, /if \(this\.provisioningConfigurationRejected\)\s*return;/);
   assert.match(updateTickedHandler, /if \(this\.provisioningConfigurationRejected\)\s*return;/);
-  assert.ok(updateTickedHandler.indexOf("provisioningConfigurationRejected") < updateTickedHandler.indexOf("TryInitializePortfolioBinding"));
-  assert.ok(updateTickedHandler.indexOf("provisioningConfigurationRejected") < updateTickedHandler.indexOf("UpdatePortfolioP0bLifecycleProducer"));
-  assert.ok(updateTickedHandler.indexOf("provisioningConfigurationRejected") < updateTickedHandler.indexOf("UpdatePortfolioBridge"));
+  assert.ok(
+    updateTickedHandler.indexOf("provisioningConfigurationRejected") <
+      updateTickedHandler.indexOf("TryInitializePortfolioBinding"),
+  );
+  assert.ok(
+    updateTickedHandler.indexOf("provisioningConfigurationRejected") <
+      updateTickedHandler.indexOf("UpdatePortfolioP0bLifecycleProducer"),
+  );
+  assert.ok(
+    updateTickedHandler.indexOf("provisioningConfigurationRejected") <
+      updateTickedHandler.indexOf("UpdatePortfolioBridge"),
+  );
   assert.match(
     producer,
     /!Context\.IsWorldReady \|\| !Game1\.hasLoadedGame \|\| Game1\.player is null \|\| this\.portfolioBinding is null/,
@@ -140,7 +158,10 @@ test("P0b clears live bindings before producer callbacks and rejects reparse tra
 test("P0b publication boundaries invoke recursive ancestor reparse checks for all authority paths", async () => {
   const producer = await readFile(producerPath, "utf8");
   // Structural-only proof: this test verifies source wiring, not Windows filesystem behavior.
-  const writeMethod = producer.slice(producer.indexOf("private bool WritePortfolioP0bStartManifest"), producer.indexOf("private static string HashFile"));
+  const writeMethod = producer.slice(
+    producer.indexOf("private bool WritePortfolioP0bStartManifest"),
+    producer.indexOf("private static string HashFile"),
+  );
   assert.match(writeMethod, /IsExistingNonReparseDirectoryTree\(outputDirectory\)/);
   assert.match(writeMethod, /IsExistingNonReparseDirectoryTree\(saveRoot\)/);
   assert.match(writeMethod, /IsExistingNonReparseDirectoryTree\(saveDirectory\)/);

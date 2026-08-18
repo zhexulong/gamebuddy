@@ -1,8 +1,10 @@
-import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import {
   createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
+  createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   type MountedChatRuntimeLease,
-} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+  type SemanticChatRuntimeMountOptions,
+} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { ProductionChatRuntimeReadback } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 
 /** Internal-only unmounted Chat construction product. No runtime internals escape. */
@@ -16,23 +18,36 @@ export type ConstructedUnmountedChatSemanticFacade = Readonly<{
 }>;
 
 /**
- * The sole deployment-path Chat composition. The selected manifest is loaded
- * here, while authority, Windows mutex, binding, and Host materializer remain
+ * The sole deployment-path Chat composition. Its caller supplies the one
+ * already-loaded immutable deployment manifest; authority, Windows mutex,
+ * binding, and Host materializer all consume that exact object and remain
  * owned by the production coordinator. This module is deliberately not a
  * public deployment facade and does not mount a UI/runtime entrypoint.
  */
-export async function createFreshUnmountedChatSemanticFacade(
-  manifestPath: string,
+async function createUnmountedChatSemanticFacade(
+  authority: Awaited<ReturnType<typeof createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest>>,
 ): Promise<ConstructedUnmountedChatSemanticFacade> {
-  if (typeof manifestPath !== "string" || manifestPath.length === 0) {
-    throw new Error("invalid_chat_semantic_composition_input");
-  }
-  const manifest = await loadHostDeploymentManifest(manifestPath);
-  const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   return Object.freeze({
     authority: "SEMANTIC" as const,
     startChatRuntime: authority.startChatRuntime,
     startMountedChatRuntime: authority.startMountedChatRuntime,
     close: authority.close,
   });
+}
+
+export async function createFreshUnmountedChatSemanticFacade(
+  manifest: HostDeploymentManifest,
+  options: SemanticChatRuntimeMountOptions = {},
+): Promise<ConstructedUnmountedChatSemanticFacade> {
+  const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest, options);
+  return createUnmountedChatSemanticFacade(authority);
+}
+
+export async function createKnownUnmountedChatSemanticFacade(
+  manifest: HostDeploymentManifest,
+  options: SemanticChatRuntimeMountOptions = {},
+): Promise<ConstructedUnmountedChatSemanticFacade> {
+  return createUnmountedChatSemanticFacade(
+    await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest, options),
+  );
 }

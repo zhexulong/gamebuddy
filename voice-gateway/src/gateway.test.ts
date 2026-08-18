@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { isVoiceGatewayEvent } from "@gamebuddy/voice-protocol";
 import { type AsrProvider, type Mixer, type SpeechJob, type TtsProvider, VoiceGatewayCore } from "./gateway.js";
 
 const asr: AsrProvider = {
@@ -130,6 +131,26 @@ test("Fun-ASR no-speech result never produces a final transcript", async () => {
     ),
     true,
   );
+});
+
+test("maximal runtime ASR diagnostic is reduced to a valid stable reason code", async () => {
+  const gateway = new VoiceGatewayCore(
+    {
+      providerId: "sensevoice",
+      modelRevision: "test",
+      async transcribe() {
+        throw new Error(`sensevoice_runtime_failed:${"unsafe diagnostic / with spaces?".repeat(64)}`);
+      },
+    },
+    tts,
+    mixer(),
+  );
+  gateway.startPtt("diagnostic_session", "diagnostic_input");
+  gateway.pushPcm(new Uint8Array([0, 0]));
+  assert.equal(await gateway.stopPtt(), null);
+  const failure = gateway.events.find((event) => event.type === "asr_failure");
+  assert.deepEqual(failure?.type === "asr_failure" ? failure.reasonCode : undefined, "asr_runtime_failed");
+  assert.equal(isVoiceGatewayEvent(failure), true);
 });
 
 test("capture terminal emission is exactly once and input IDs cannot collide while finalizing", async () => {

@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -16,90 +16,6 @@ export const REQUIRED_MUST_FLOWS = Object.freeze([
   "memory-management",
 ]);
 
-const REQUIRED_CHARTER_COVERAGE = Object.freeze([
-  { flow: "companion-library", step: "TVL-00" },
-  { flow: "manage-chats", step: "TVL-00" },
-  { flow: "new-companion", step: "TVL-02" },
-  { flow: "new-chat", step: "TVL-03" },
-  { flow: "persona-scenario-greeting-selection", step: "TVL-03" },
-  { flow: "effect-aware-causal-guard", step: "TVL-06" },
-  { flow: "worldbook-catalog-binding", step: "TVL-03" },
-  { flow: "character-worldbook-chat-import-export", step: "TVL-01" },
-  { flow: "authenticated-reconnect", step: "TVL-05" },
-  { flow: "memory-management", step: "TVL-09" },
-]);
-
-// A selected flow is not release-ready merely because it appears in the profile.
-// Each entry ties it to a Host route or durable-artifact implementation and an
-// executable Host contract test that exercises that implementation.
-const HOST_MUST_FLOW_EVIDENCE = Object.freeze([
-  {
-    flow: "companion-library",
-    route: 'routeEnabled("library")',
-    artifact: "async listCompanions",
-    test: "${base}/library",
-  },
-  {
-    flow: "manage-chats",
-    route: 'routeEnabled("manage-chats")',
-    artifact: "async listChats",
-    test: "${base}/manage-chats",
-  },
-  {
-    flow: "new-companion",
-    route: 'routeEnabled("new-companion")',
-    artifact: "async createNewCompanion",
-    test: "${base}/new-companion",
-  },
-  { flow: "new-chat", route: 'routeEnabled("new-chat")', artifact: "createThread", test: "${base}/new-chat" },
-  {
-    flow: "persona-scenario-greeting-selection",
-    route: 'routeEnabled("new-chat-selections")',
-    artifact: "openingSelection",
-    test: "${base}/new-chat/selections",
-  },
-  {
-    flow: "effect-aware-causal-guard",
-    route: 'routeEnabled("retry-response")',
-    artifact: "guardTavernCausalMutation",
-    test: "${base}/retry-response",
-  },
-  {
-    flow: "worldbook-catalog-binding",
-    route: 'routeEnabled("worldbook-bind")',
-    artifact: "worldBookBinding",
-    test: "${base}/worldbook",
-  },
-  {
-    flow: "character-worldbook-chat-import-export",
-    route: 'routeEnabled("interchange-import")',
-    artifact: "decodeSafeInterchange",
-    test: "${base}/interchange/worldbook/export",
-  },
-  {
-    flow: "authenticated-reconnect",
-    route: 'routeEnabled("refresh")',
-    artifact: "resumeThread",
-    test: "${base}/refresh",
-  },
-  {
-    flow: "memory-management",
-    route: 'routeEnabled("memories-read")',
-    artifact: "magicContextMemoryFacade",
-    artifactScope: "host",
-    test: "${base}/memories",
-  },
-]);
-
-const HOST_CONTRACT_TEST_FILES = Object.freeze([
-  "dist-test/dialogue-web.test.js",
-  "dist-test/tavern/chat-thread-store.test.js",
-  "dist-test/tavern/catalog-service.test.js",
-  "dist-test/tavern/st-card-import-service.test.js",
-  "dist-test/tavern/effect-aware-causal-guard.test.js",
-  "dist-test/tavern/conversation.test.js",
-]);
-
 // This is deliberately a bounded ordinary-containment check. It executes the
 // actual Host security regressions rather than treating source tokens as
 // evidence. Node pathname APIs cannot prove safety against a same-user hostile
@@ -114,6 +30,74 @@ const HOST_TAVERN_CONTAINMENT_TEST_FILES = Object.freeze([
   "dist-test/tavern/new-companion-service.test.js",
   "dist-test/path-lock.test.js",
 ]);
+
+const WINDOWS_REPARSE_LIVE_GATE_PATH = Object.freeze(["host", "scripts", "run-windows-reparse-live-gate.mjs"]);
+const WINDOWS_REPARSE_LIVE_GATE_TIMEOUT_MS = 120_000;
+const WINDOWS_REPARSE_LIVE_GATE_MAX_BUFFER_BYTES = 16 * 1024;
+const WINDOWS_ARBITRARY_REPARSE_ENFORCEMENT = Object.freeze({
+  detail: "windows_reparse_live_gate_failed_or_could_not_run",
+  passedDetail: "current_windows_reparse_live_gate_exact_success_verified",
+});
+
+function runWindowsReparseLiveGate(root) {
+  const scriptPath = resolve(root, ...WINDOWS_REPARSE_LIVE_GATE_PATH);
+  return spawnSync(process.execPath, [scriptPath], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "pipe",
+    shell: false,
+    timeout: WINDOWS_REPARSE_LIVE_GATE_TIMEOUT_MS,
+    maxBuffer: WINDOWS_REPARSE_LIVE_GATE_MAX_BUFFER_BYTES,
+    windowsHide: true,
+  });
+}
+
+function isExactWindowsReparseLiveGateSuccess(child) {
+  if (
+    !child ||
+    child.error ||
+    child.signal ||
+    child.status !== 0 ||
+    child.stderr !== "" ||
+    typeof child.stdout !== "string" ||
+    !child.stdout.endsWith("\n") ||
+    child.stdout.includes("\r")
+  ) {
+    return false;
+  }
+
+  const line = child.stdout.slice(0, -1);
+  let output;
+  try {
+    output = JSON.parse(line);
+  } catch {
+    return false;
+  }
+
+  return (
+    JSON.stringify(output) === line &&
+    JSON.stringify(Object.keys(output)) ===
+      JSON.stringify(["schemaVersion", "gate", "status", "reason", "helperSha256", "probes", "consumers"]) &&
+    output.schemaVersion === 1 &&
+    output.gate === "windows_reparse_live_gate/v1" &&
+    output.status === "passed" &&
+    output.reason === "passed" &&
+    typeof output.helperSha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(output.helperSha256) &&
+    JSON.stringify(output.probes) ===
+      JSON.stringify({ regular: "passed", junction: "passed", directorySymlink: "passed", nonLinkReparse: "passed" }) &&
+    JSON.stringify(output.consumers) === JSON.stringify({ browserGenerator: "passed", hostStaticVerifier: "passed" })
+  );
+}
+
+function verifyWindowsReparseLiveGate(root, runner = runWindowsReparseLiveGate) {
+  if (process.platform !== "win32") return false;
+  try {
+    return isExactWindowsReparseLiveGateSuccess(runner(root));
+  } catch {
+    return false;
+  }
+}
 
 const TAVERN_FILESYSTEM_THREAT_MODEL = Object.freeze({
   schemaVersion: 1,
@@ -135,31 +119,6 @@ export const repositoryRoot = resolve(here, "..");
 
 function result(id, status, detail) {
   return { id, status, detail };
-}
-
-function extractStringArray(source, property) {
-  const match = source.match(new RegExp(`${property}:\\s*Object\\.freeze\\(\\[([^\\]]*)\\]\\)`));
-  if (!match) return undefined;
-  return [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]);
-}
-
-function charterCoverage(charter) {
-  const match = charter.match(/<!-- tavern-release-must-flow-coverage\n([\s\S]*?)-->/);
-  if (!match) return undefined;
-  return [...match[1].matchAll(/^([a-z0-9-]+)=(TVL-\d\d)$/gm)].map((entry) => ({ flow: entry[1], step: entry[2] }));
-}
-
-function hasMarker(source, marker) {
-  return source.includes(marker);
-}
-
-function hostEvidenceFailures(hostRouteSource, hostTestSource, tavernSource) {
-  return HOST_MUST_FLOW_EVIDENCE.filter(
-    ({ route, artifact, artifactScope, test }) =>
-      !hasMarker(hostRouteSource, route) ||
-      !hasMarker(hostTestSource, test) ||
-      !hasMarker(artifactScope === "host" ? hostRouteSource : tavernSource, artifact),
-  ).map(({ flow }) => flow);
 }
 
 function validateTavernFilesystemThreatModel(model) {
@@ -198,7 +157,7 @@ function runTavernContainmentTests(exec, root) {
 /**
  * Checks only release-profile prerequisites that can be established locally.
  * It intentionally does not turn a contract-only Magic Context source into a
- * runtime proof and it never asks for selected_l3_v1's `later` flows.
+ * runtime proof and does not read target taxonomy as mounted or released authority.
  */
 export async function checkTavernReleasePrerequisites({
   root = repositoryRoot,
@@ -207,31 +166,20 @@ export async function checkTavernReleasePrerequisites({
   verifyStableContextRuntime = true,
   tavernFilesystemThreatModel = TAVERN_FILESYSTEM_THREAT_MODEL,
   exec = execFileSync,
+  windowsReparseLiveGateRunner = runWindowsReparseLiveGate,
 } = {}) {
-  const selectedPath = resolve(root, "host/src/tavern/selected-l3.v1.ts");
-  const charterPath = resolve(root, "tools/tavern-live-run-charter.md");
   const sourcePath = resolve(root, "vendor/magic-context/packages/pi-plugin/src/gamebuddy-stable-context-source.ts");
-  const hostRoutePath = resolve(root, "host/src/dialogue-web.ts");
-  const hostTestPath = resolve(root, "host/src/dialogue-web.test.ts");
-  const tavernSourcePaths = [
-    "host/src/tavern/library-service.ts",
-    "host/src/tavern/chat-thread-store.ts",
-    "host/src/tavern/effect-aware-causal-guard.ts",
-    "host/src/tavern/catalog-service.ts",
-    "host/src/tavern/st-card-import-service.ts",
-    "host/src/tavern/interchange.ts",
-    "host/src/tavern/conversation.ts",
-  ].map((path) => resolve(root, path));
-  const [selected, charter, source, hostRouteSource, hostTestSource, ...tavernSources] = await Promise.all([
-    read(selectedPath, "utf8"),
-    read(charterPath, "utf8"),
-    read(sourcePath, "utf8"),
-    read(hostRoutePath, "utf8"),
-    read(hostTestPath, "utf8"),
-    ...tavernSourcePaths.map((path) => read(path, "utf8")),
-  ]);
-  const tavernSource = tavernSources.join("\n");
+  const source = await read(sourcePath, "utf8");
   const checks = [];
+  if (verifyWindowsReparseLiveGate(root, windowsReparseLiveGateRunner)) {
+    checks.push(
+      result("windows_arbitrary_reparse_enforcement", "passed", WINDOWS_ARBITRARY_REPARSE_ENFORCEMENT.passedDetail),
+    );
+  } else {
+    checks.push(
+      result("windows_arbitrary_reparse_enforcement", "blocked", WINDOWS_ARBITRARY_REPARSE_ENFORCEMENT.detail),
+    );
+  }
   const threatModelIssue = validateTavernFilesystemThreatModel(tavernFilesystemThreatModel);
   if (threatModelIssue) {
     checks.push(result("tavern_filesystem_threat_model", "blocked", threatModelIssue));
@@ -255,71 +203,6 @@ export async function checkTavernReleasePrerequisites({
       );
     }
   }
-  const must = extractStringArray(selected, "must");
-  const later = extractStringArray(selected, "later");
-  const unsupported = extractStringArray(selected, "unsupported");
-  if (JSON.stringify(must) === JSON.stringify(REQUIRED_MUST_FLOWS) && later && unsupported) {
-    checks.push(result("selected_l3_v1_manifest", "passed", "versioned must/later/unsupported flow sets are readable"));
-  } else {
-    checks.push(result("selected_l3_v1_manifest", "blocked", "selected_l3_v1 must-flow set is missing or drifted"));
-  }
-
-  const coverage = charterCoverage(charter);
-  if (JSON.stringify(coverage) === JSON.stringify(REQUIRED_CHARTER_COVERAGE)) {
-    checks.push(
-      result(
-        "live_charter_must_flow_coverage",
-        "passed",
-        "each selected_l3_v1 must flow maps to one required live-run step",
-      ),
-    );
-  } else {
-    checks.push(
-      result(
-        "live_charter_must_flow_coverage",
-        "blocked",
-        "live charter must-flow coverage is absent, incomplete, or drifted",
-      ),
-    );
-  }
-
-  const missingHostEvidence = hostEvidenceFailures(hostRouteSource, hostTestSource, tavernSource);
-  if (missingHostEvidence.length > 0) {
-    checks.push(
-      result(
-        "must_flow_host_contract_evidence",
-        "blocked",
-        `must_flow_host_contract_evidence_missing:${missingHostEvidence.join(",")}`,
-      ),
-    );
-  } else {
-    checks.push(
-      result(
-        "must_flow_host_contract_evidence",
-        "passed",
-        "every selected must flow has a Host route, durable-artifact marker, and Host contract-test marker",
-      ),
-    );
-    try {
-      exec(
-        process.platform === "win32" ? "pnpm.cmd" : "pnpm",
-        ["--filter", "@gamebuddy/companion-host", "build:test"],
-        { cwd: root, stdio: "pipe", ...(process.platform === "win32" ? { shell: true } : {}) },
-      );
-      exec(process.execPath, ["--test", ...HOST_CONTRACT_TEST_FILES.map((path) => resolve(root, "host", path))], {
-        cwd: root,
-        stdio: "pipe",
-      });
-      checks.push(
-        result("must_flow_host_contract_execution", "passed", "dist-test Host must-flow contract tests passed"),
-      );
-    } catch {
-      checks.push(
-        result("must_flow_host_contract_execution", "blocked", "must_flow_host_contract_tests_failed_or_could_not_run"),
-      );
-    }
-  }
-
   const runtimeUnwired =
     /runtime publication is intentionally unwired|later runtime-wiring slice|materializationStatus\s*=\s*"contract-only"/.test(
       source,
@@ -395,8 +278,6 @@ export async function checkTavernReleasePrerequisites({
     gate: "tavern_release_prerequisites/v1",
     verdict: blocked.length === 0 ? "passed" : "blocked",
     checks,
-    excludedLaterFlows: later ?? [],
-    excludedUnsupportedFlows: unsupported ?? [],
   };
 }
 

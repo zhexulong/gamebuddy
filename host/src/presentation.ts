@@ -15,13 +15,25 @@ export type PresentationProfile = Readonly<{
   speech: Readonly<{ voiceProfile: string }> | null;
 }>;
 
-export type CompanionTextExpression = Readonly<{
+export type ChatCompanionTextExpression = Readonly<{
+  surface: "chat";
   expressionId: string;
   sessionId: string;
+  text: string;
+  locale: string;
+}>;
+
+export type GameCompanionTextExpression = Readonly<{
+  surface: "game";
+  expressionId: string;
+  sessionId: string;
+  /** Game/native text is always bound to a source-owned event. */
   sourceEventId: string;
   text: string;
   locale: string;
 }>;
+
+export type CompanionTextExpression = ChatCompanionTextExpression | GameCompanionTextExpression;
 
 /** Opaque, immutable binding to the Host companion-interruption admission epoch. */
 export type HostPresentationBinding = object;
@@ -31,13 +43,26 @@ export type PresentationCommitAdmission = Readonly<{
   assertHostCurrent(binding: HostPresentationBinding): void;
 }>;
 
+export type ChatPresentationAdmissionCapture = Readonly<{
+  surface: "chat";
+  sourceEventId?: never;
+  admission: PresentationCommitAdmission;
+}>;
+
+export type GamePresentationAdmissionCapture = Readonly<{
+  surface: "game";
+  sourceEventId: string;
+  admission: PresentationCommitAdmission;
+}>;
+
 /**
- * Host-owned per-invocation authority. It derives both the originating event
- * and opaque interruption binding at tool execution time, never at runtime
- * construction or from model/browser input.
+ * Host-owned per-invocation authority. It derives the originating event and
+ * opaque interruption binding at tool execution time, never at construction or
+ * from model/browser input. The discriminant prevents a Chat capture from
+ * entering a Game presentation port.
  */
 export interface HostPresentationAdmissionProvider {
-  capture(): Readonly<{ sourceEventId: string; admission: PresentationCommitAdmission }>;
+  capture(): ChatPresentationAdmissionCapture | GamePresentationAdmissionCapture;
 }
 
 export interface CompanionTextPort {
@@ -47,7 +72,7 @@ export interface CompanionTextPort {
 
 export type PresentationRuntime = Readonly<{
   profile: PresentationProfile;
-  surface?: "chat" | "game";
+  surface: "chat" | "game";
   sessionId: string;
   /** Absent Host-owned per-invocation authority disables presentation tools. */
   admissionProvider?: HostPresentationAdmissionProvider;
@@ -57,54 +82,91 @@ export type PresentationRuntime = Readonly<{
 }>;
 
 const MAX_PLAYER_LINE_LENGTH = 4_000;
-const FORBIDDEN_ENVELOPE = /(?:\btool(?:[ _-]?(?:call|result|request))?\b\s*[:={[]|\b(?:receipt|execution)[ _-]?id\b\s*[:=]|\b(?:system|provider)[ _-]?(?:prompt|payload|request|response)\b\s*[:={[]|\b(?:function|tool)[ _-]?arguments\b\s*[:={[])/i;
-const FORBIDDEN_NARRATION = /\b(?:i(?:'m| am)|will|going to)\s+(?:call|invoke|use|run)\s+(?:a\s+)?(?:tool|subagent|provider)\b/i;
+const FORBIDDEN_ENVELOPE =
+  /(?:\btool(?:[ _-]?(?:call|result|request))?\b\s*[:={[]|\b(?:receipt|execution)[ _-]?id\b\s*[:=]|\b(?:system|provider)[ _-]?(?:prompt|payload|request|response)\b\s*[:={[]|\b(?:function|tool)[ _-]?arguments\b\s*[:={[])/i;
+const FORBIDDEN_NARRATION =
+  /\b(?:i(?:'m| am)|will|going to)\s+(?:call|invoke|use|run)\s+(?:a\s+)?(?:tool|subagent|provider)\b/i;
 
 export function createCompanionPresentationTools(runtime: PresentationRuntime): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
   if (runtime.profile.text && runtime.textPort !== undefined && runtime.admissionProvider !== undefined) {
-    tools.push(defineTool({
-      name: "companion_text",
-      label: runtime.surface === "chat" ? "Chat Message" : "Game Text",
-      description: "Deliver a natural player-facing line only.",
-      parameters: Type.Object({ text: Type.String({ minLength: 1, maxLength: MAX_PLAYER_LINE_LENGTH }) }),
-      execute: async (_toolCallId, params) => {
-        const text = validatePlayerLine(params.text);
-        const captured = runtime.admissionProvider!.capture();
-        captured.admission.assertHostCurrent(captured.admission.hostBinding);
-        const expression: CompanionTextExpression = Object.freeze({
-          expressionId: randomUUID(), sessionId: runtime.sessionId, sourceEventId: captured.sourceEventId, text, locale: runtime.profile.locale,
-        });
-        await runtime.textPort!.present(expression, captured.admission);
-        return presentationResult(expression.expressionId, "text");
-      },
-    }));
+    tools.push(
+      defineTool({
+        name: "companion_text",
+        label: runtime.surface === "chat" ? "Chat Message" : "Game Text",
+        description: "Deliver a natural player-facing line only.",
+        parameters: Type.Object({ text: Type.String({ minLength: 1, maxLength: MAX_PLAYER_LINE_LENGTH }) }),
+        execute: async (_toolCallId, params) => {
+          const text = validatePlayerLine(params.text);
+          const captured = runtime.admissionProvider!.capture();
+          captured.admission.assertHostCurrent(captured.admission.hostBinding);
+          if (captured.surface !== runtime.surface) throw new Error("presentation_surface_mismatch");
+          const expression: CompanionTextExpression =
+            captured.surface === "chat"
+              ? Object.freeze({
+                  surface: "chat" as const,
+                  expressionId: randomUUID(),
+                  sessionId: runtime.sessionId,
+                  text,
+                  locale: runtime.profile.locale,
+                })
+              : Object.freeze({
+                  surface: "game" as const,
+                  expressionId: randomUUID(),
+                  sessionId: runtime.sessionId,
+                  sourceEventId: captured.sourceEventId,
+                  text,
+                  locale: runtime.profile.locale,
+                });
+          await runtime.textPort!.present(expression, captured.admission);
+          return presentationResult(expression.expressionId, "text");
+        },
+      }),
+    );
   }
-  if (runtime.profile.speech !== null && runtime.speechPort !== undefined && runtime.voiceAudioAdmission !== undefined && runtime.admissionProvider !== undefined) {
+  if (
+    runtime.profile.speech !== null &&
+    runtime.speechPort !== undefined &&
+    runtime.voiceAudioAdmission !== undefined &&
+    runtime.admissionProvider !== undefined
+  ) {
     const speechProfile = runtime.profile.speech;
-    tools.push(defineTool({
-      name: "companion_speak",
-      label: "Companion Speech",
-      description: "Speak a natural player-facing line only.",
-      parameters: Type.Object({ line: Type.String({ minLength: 1, maxLength: MAX_PLAYER_LINE_LENGTH }) }),
-      execute: async (_toolCallId, params) => {
-        const line = validatePlayerLine(params.line);
-        const captured = runtime.admissionProvider!.capture();
-        const audioBinding = runtime.voiceAudioAdmission!.capture();
-        captured.admission.assertHostCurrent(captured.admission.hostBinding);
-        runtime.voiceAudioAdmission!.assertCurrent(audioBinding);
-        const expression: VoiceExpression = Object.freeze({
-          expressionId: randomUUID(), sessionId: runtime.sessionId, sourceEventId: captured.sourceEventId, text: line,
-          locale: runtime.profile.locale, voiceProfile: speechProfile.voiceProfile,
-          epoch: runtime.voiceAudioAdmission!.epoch(audioBinding), expiresAtMs: Date.now() + 20_000,
-        });
-        await runtime.speechPort!.enqueue(
-          expression,
-          voiceEnqueueAdmission(captured.admission, runtime.voiceAudioAdmission!, audioBinding),
-        );
-        return presentationResult(expression.expressionId, "speech");
-      },
-    }));
+    tools.push(
+      defineTool({
+        name: "companion_speak",
+        label: "Companion Speech",
+        description: "Speak a natural player-facing line only.",
+        parameters: Type.Object({ line: Type.String({ minLength: 1, maxLength: MAX_PLAYER_LINE_LENGTH }) }),
+        execute: async (_toolCallId, params) => {
+          const line = validatePlayerLine(params.line);
+          const captured = runtime.admissionProvider!.capture();
+          if (captured.surface !== "game") throw new Error("presentation_surface_mismatch");
+          const audioBinding = runtime.voiceAudioAdmission!.capture();
+          captured.admission.assertHostCurrent(captured.admission.hostBinding);
+          runtime.voiceAudioAdmission!.assertCurrent(audioBinding);
+          // Speech/voice is a Game/native surface only: it keeps the strict
+          // source-owned event requirement and never accepts a Chat-shaped
+          // admission that omits one.
+          if (captured.sourceEventId === undefined)
+            throw new Error("companion_speech_source_event_required");
+          const expression: VoiceExpression = Object.freeze({
+            expressionId: randomUUID(),
+            sessionId: runtime.sessionId,
+            sourceEventId: captured.sourceEventId,
+            text: line,
+            locale: runtime.profile.locale,
+            voiceProfile: speechProfile.voiceProfile,
+            epoch: runtime.voiceAudioAdmission!.epoch(audioBinding),
+            expiresAtMs: Date.now() + 20_000,
+          });
+          await runtime.speechPort!.enqueue(
+            expression,
+            voiceEnqueueAdmission(captured.admission, runtime.voiceAudioAdmission!, audioBinding),
+          );
+          return presentationResult(expression.expressionId, "speech");
+        },
+      }),
+    );
   }
   return tools;
 }
@@ -124,7 +186,12 @@ function voiceEnqueueAdmission(
 
 function validatePlayerLine(value: string): string {
   const text = value.trim();
-  if (text.length === 0 || text.length > MAX_PLAYER_LINE_LENGTH || FORBIDDEN_ENVELOPE.test(text) || FORBIDDEN_NARRATION.test(text)) {
+  if (
+    text.length === 0 ||
+    text.length > MAX_PLAYER_LINE_LENGTH ||
+    FORBIDDEN_ENVELOPE.test(text) ||
+    FORBIDDEN_NARRATION.test(text)
+  ) {
     throw new Error("invalid_player_expression");
   }
   return text;

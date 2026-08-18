@@ -1,9 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import {
-  loadSelectedHostProductionModule,
-  selectHostProductionArtifact,
-} from "./lib/host-production-module.mjs";
+import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ID = /^[A-Za-z0-9._-]{1,128}$/u;
@@ -63,7 +60,10 @@ async function main(argv) {
   const selected = await selectHostProductionArtifact();
   const { resolveRuntimePaths } = await loadSelectedHostProductionModule(selected, "runtime.js");
   const { TavernArtifactStore } = await loadSelectedHostProductionModule(selected, "tavern/artifact-store.js");
-  const { resolveTavernPaths, tavernRevisionPath } = await loadSelectedHostProductionModule(selected, "tavern/tavern-paths.js");
+  const { resolveTavernPaths, tavernRevisionPath } = await loadSelectedHostProductionModule(
+    selected,
+    "tavern/tavern-paths.js",
+  );
   const { validateTavernArtifact } = await loadSelectedHostProductionModule(selected, "tavern/types.js");
   const runtimePaths = resolveRuntimePaths(identity, runtimeRoot);
   const tavernPaths = resolveTavernPaths(runtimePaths, identity);

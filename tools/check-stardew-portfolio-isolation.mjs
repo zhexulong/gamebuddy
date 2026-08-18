@@ -57,7 +57,6 @@ for (const required of [
   "portfolio_duplicate_mod_bundle",
   "portfolio_transaction_locked",
   "portfolio_game_path_missing",
-  "portfolio_p0b_start_manifest_inspection_required",
   "portfolio_config_unknown_field",
   'toLocaleLowerCase("en-US")',
   "byte-for-byte",
@@ -98,7 +97,7 @@ if (
 if (!packageSource.includes('"test:stardew-portfolio-p1c"')) failures.push("portfolio_p1c_test_script_missing");
 if (!prerequisite.includes("GAMEBUDDY_STARDEW_GAME_PATH"))
   failures.push("portfolio_game_path_environment_gate_missing");
-if (!prerequisite.includes("requireP0bAttestation: true")) failures.push("portfolio_p0b_attestation_gate_missing");
+if (prerequisite.includes("requireP0bAttestation: true")) failures.push("portfolio_p0b_attestation_must_not_gate_action_first");
 for (const required of [
   "portfolio_installation_attestation",
   "portfolio_save_directory_missing",

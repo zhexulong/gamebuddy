@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { TavernArtifactStore } from "../artifact-store.js";
-import { validateTavernArtifact } from "../types.js";
 import { createScenarioManagementService } from "./scenario-management.js";
 
 test("scenario management durably creates, reads, and exactly revises a safe player projection", async () => {
@@ -42,7 +41,7 @@ test("scenario management durably creates, reads, and exactly revises a safe pla
   }
 });
 
-test("scenario management uses legacy only when canonical is absent and fails closed for corrupt canonical revisions", async () => {
+test("scenario management fails closed for corrupt canonical revisions", async () => {
   const root = await mkdtemp(join(tmpdir(), "scenario-management-"));
   try {
     const store = new TavernArtifactStore(root);
@@ -60,49 +59,35 @@ test("scenario management uses legacy only when canonical is absent and fails cl
       "{ corrupt",
       "utf8",
     );
-    assert.deepEqual(await service.read(), { revision: 1, name: "One", description: "First", preview: "First" });
-    await writeFile(
-      join(
-        resolve(root),
-        "scenarios",
-        `player-scenario-${createHash("sha256").update(resolve(root), "utf8").digest("hex").slice(0, 32)}`,
-        "revisions",
-        "1.json",
-      ),
-      "{ corrupt",
-      "utf8",
-    );
     await assert.rejects(service.read(), /invalid_scenario_artifact/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("scenario management reads legacy text-only artifacts and bounds previews", async () => {
+test("scenario management rejects nonnumeric revision-directory entries", async () => {
   const root = await mkdtemp(join(tmpdir(), "scenario-management-"));
   try {
-    const store = new TavernArtifactStore(root);
-    const description = "a".repeat(241);
-    const legacy = {
-      schemaVersion: 1 as const,
-      revision: 1,
-      scenarioId: "legacy-scenario",
-      text: description,
-      provenance: "imported" as const,
-      owner: "imported_candidate" as const,
-    };
-    await store.write(
-      join(resolve(root), "scenario-management", "scenario.json"),
-      legacy,
-      (value) => validateTavernArtifact(value) as typeof legacy,
-    );
+    const service = createScenarioManagementService(new TavernArtifactStore(root), root);
+    await service.create({ name: "One", description: "First" });
+    const id = `player-scenario-${createHash("sha256").update(resolve(root), "utf8").digest("hex").slice(0, 32)}`;
+    await writeFile(join(resolve(root), "scenarios", id, "revisions", "2.tmp"), "junk", "utf8");
+    await assert.rejects(service.read(), /invalid_scenario_artifact/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
-    assert.deepEqual(await createScenarioManagementService(store, root).read(), {
-      revision: 1,
-      name: "Scenario",
-      description,
-      preview: "a".repeat(240),
-    });
+test("scenario management ignores a legacy singleton when no canonical revision exists", async () => {
+  const root = await mkdtemp(join(tmpdir(), "scenario-management-"));
+  try {
+    await (await import("node:fs/promises")).mkdir(join(resolve(root), "scenario-management"), { recursive: true });
+    await writeFile(
+      join(resolve(root), "scenario-management", "scenario.json"),
+      JSON.stringify({ schemaVersion: 1, revision: 1, scenarioId: "legacy", text: "Must not load" }),
+      "utf8",
+    );
+    assert.equal(await createScenarioManagementService(new TavernArtifactStore(root), root).read(), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

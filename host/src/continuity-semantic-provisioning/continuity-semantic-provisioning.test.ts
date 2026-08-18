@@ -6,7 +6,6 @@ import test from "node:test";
 import {
   provisionFreshProductionContinuity,
   openKnownProductionContinuity,
-  setProvisionCloseHookForTest,
 } from "./continuity-semantic-provisioning.internal.js";
 import { PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 const principal = { continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" };
@@ -38,31 +37,27 @@ test("production provisioning is fresh-only and malformed store is byte-preserve
   }
 });
 
-test("provision close remains close-only and retries after an ordinary close failure", () => {
-  const root = mkdtempSync(join(tmpdir(), "s3-close-retry-"));
-  const authorityRoot = join(root, ".gamebuddy-semantic-continuity-v1");
-  let failures = 0;
+test("provision close is terminal at the public store boundary", () => {
+  const root = mkdtempSync(join(tmpdir(), "s3-close-terminal-"));
   try {
     const fresh = provisionFreshProductionContinuity(input(root));
-    setProvisionCloseHookForTest(authorityRoot, () => {
-      failures += 1;
-      throw new Error("close_transient");
-    });
-    assert.throws(() => fresh.close(), /close_transient/);
-    assert.throws(() => fresh.store.readChatCatalog(), /production_store_already_closed/);
     fresh.close();
-    assert.equal(failures, 1);
+    assert.throws(() => fresh.store.readChatCatalog(), /production_store_already_closed/);
     assert.throws(() => fresh.close(), /production_store_already_closed/);
   } finally {
-    setProvisionCloseHookForTest(undefined);
-    try { rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* best effort */ }
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      /* best effort */
+    }
   }
 });
 
-test("fresh authority writes the exact v40 schema and v21 marker pair", () => {
+test("fresh authority writes the exact v42 fresh-only schema and v21 marker pair", () => {
   const root = mkdtempSync(join(tmpdir(), "s3-marker-exact-"));
   try {
     const fresh = provisionFreshProductionContinuity(input(root));
+    const expectedStoreId = fresh.storeId;
     fresh.close();
     const markerPath = join(root, ".gamebuddy-semantic-continuity-v1", "production-authority-marker.json"),
       marker = JSON.parse(readFileSync(markerPath, "utf8")) as Record<string, unknown>;
@@ -78,8 +73,16 @@ test("fresh authority writes the exact v40 schema and v21 marker pair", () => {
       "version",
     ]);
     assert.equal(marker.version, 21);
-    assert.equal(marker.schemaVersion, 40);
-    assert.equal(PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION, 40);
+    assert.equal(marker.schemaVersion, 42);
+    assert.equal(PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION, 42);
+    const reopened = openKnownProductionContinuity(input(root));
+    try {
+      assert.equal(reopened.schemaVersion, 42);
+      assert.equal(reopened.storeId, expectedStoreId);
+      assert.equal(reopened.store.readChatCatalog().vector.partitionRevision, 1);
+    } finally {
+      reopened.close();
+    }
   } finally {
     try {
       rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -89,7 +92,7 @@ test("fresh authority writes the exact v40 schema and v21 marker pair", () => {
   }
 });
 
-test("historical fresh marker pairs through v37/v21 are rejected byte-preserving", () => {
+test("historical fresh marker pairs through v41/v21 are rejected byte-preserving", () => {
   for (const marker of [
     { version: 2, schemaVersion: 15 },
     { version: 3, schemaVersion: 16 },
@@ -115,7 +118,10 @@ test("historical fresh marker pairs through v37/v21 are rejected byte-preserving
     { version: 21, schemaVersion: 35 },
     { version: 21, schemaVersion: 36 },
     { version: 21, schemaVersion: 37 },
+    { version: 21, schemaVersion: 38 },
     { version: 21, schemaVersion: 39 },
+    { version: 21, schemaVersion: 40 },
+    { version: 21, schemaVersion: 41 },
   ]) {
     const root = mkdtempSync(join(tmpdir(), "s3-marker-"));
     try {

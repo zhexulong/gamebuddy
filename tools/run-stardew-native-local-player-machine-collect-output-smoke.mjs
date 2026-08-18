@@ -1,90 +1,91 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, resolve } from "node:path";
-import { resolveProductionEntry } from "../host/scripts/production-artifact.mjs";
-
-const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../host");
-const productionArtifact = await resolveProductionEntry({
-  hostRoot,
-  outputRoot: resolve(hostRoot, "dist"),
-  entry: "main.js",
-});
-const { LocalStardewBridgeClient } = await import(
-  pathToFileURL(resolve(productionArtifact.artifactRoot, "local-stardew-bridge.js")).href
-);
+import {
+  assertExactCapabilities,
+  connectNativeLocalClient,
+  delay,
+  executeFresh,
+  observeFresh,
+  readNativeClientConfig,
+  summarizeReceipt,
+  summarizeSnapshot,
+  waitForTerminal,
+} from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION_LOAD = "machine_load";
 const ACTION_COLLECT = "machine_collect_output";
 const SCENARIO = "native_machine_coffee_load_v1";
 const EXPECTED_ACTIONS = [ACTION_LOAD, ACTION_COLLECT];
 const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION_LOAD, ACTION_COLLECT];
-const config = JSON.parse(await readFile(required("--client-config"), "utf8"));
-validateConfig(config);
-const scope = {
-  integrationId: "stardew",
-  saveId: config.SaveId,
-  worldId: config.WorldId,
-  playerId: config.PlayerId,
-  companionId: config.CompanionId,
-};
-const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
-const startedAt = Date.now();
-const receipts = [];
-const trace = [];
-const unsubscribe = client.onFact((fact) => {
-  if (fact.type === "execution_receipt") receipts.push(fact.payload);
-});
-try {
-  const before = await actionableSnapshot();
-  requireExactCapabilities(before);
-  const loadTarget = chooseOnlyLoadableKeg(before);
-  const loadAccepted = await execute(
-    ACTION_LOAD,
-    {
-      slot: loadTarget.loadInputSlot,
-      x: loadTarget.x,
-      y: loadTarget.y,
-      expectedQualifiedItemId: loadTarget.loadInputQualifiedItemId,
-      expectedTargetId: loadTarget.targetId,
-    },
-    before,
-  );
-  const loadTerminal = await terminalFor(loadAccepted, 5_000, "machine_load_terminal_timeout");
-  if (loadTerminal.state !== "succeeded" || loadTerminal.reasonCode !== "machine_coffee_loaded")
-    throw new Error(`machine_load_failed:${loadTerminal.reasonCode}`);
-  const loaded = await actionableSnapshot();
-  const processingTarget = (loaded.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
-  if (!isProcessingCoffee(processingTarget)) throw new Error("machine_collect_processing_postcondition_mismatch");
 
-  const ready = await waitForReadyTarget(loadTarget.targetId, 180_000);
-  const collectAccepted = await execute(
-    ACTION_COLLECT,
-    { x: ready.x, y: ready.y, expectedTargetId: ready.targetId },
-    await actionableSnapshot(),
-  );
-  const collectTerminal = await terminalFor(collectAccepted, 5_000, "machine_collect_terminal_timeout");
-  if (collectTerminal.state !== "succeeded" || collectTerminal.reasonCode !== "machine_coffee_collected")
-    throw new Error(`machine_collect_failed:${collectTerminal.reasonCode}`);
-  const evidence = parseEvidence(collectTerminal.evidence);
-  const after = await actionableSnapshot();
-  requireExactCapabilities(after);
-  const reread = (after.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
-  const passed =
-    evidence.machine === "(BC)12" &&
-    evidence.output === "(O)395" &&
-    evidence.input === "(O)433" &&
-    evidence.ready_before === "true" &&
-    evidence.minutes_until_ready_before === "0" &&
-    evidence.inventory_coffee_after === String(Number(evidence.inventory_coffee_before) + 1) &&
-    evidence.held_after === "none" &&
-    evidence.ready_after === "false" &&
-    evidence.native_check_action === "true" &&
-    reread?.heldObjectQualifiedItemId == null &&
-    reread?.readyForHarvest === false &&
-    reread?.minutesUntilReady === 0 &&
-    reread?.collectOutputReady === false;
-  console.log(
-    JSON.stringify({
+/** Execute the machine-collect contract against an already-connected bridge session. */
+export async function runMachineCollectOutputSmoke(
+  client,
+  receipts,
+  config,
+  { terminalTimeoutMs = 5_000, readyTimeoutMs = 180_000 } = {},
+) {
+  const trace = [];
+  const startedAt = Date.now();
+  validateNativeLocalFixtureConfig(config);
+  try {
+    const before = await requireActionableMachineSnapshot(client);
+    assertExactCapabilities(before, EXPECTED_CAPABILITIES);
+    const loadTarget = chooseOnlyLoadableKeg(before);
+    const loadAccepted = await execute(
+      client,
+      trace,
+      ACTION_LOAD,
+      {
+        slot: loadTarget.loadInputSlot,
+        x: loadTarget.x,
+        y: loadTarget.y,
+        expectedQualifiedItemId: loadTarget.loadInputQualifiedItemId,
+        expectedTargetId: loadTarget.targetId,
+      },
+      before,
+    );
+    const loadTerminal = await waitForTerminal(receipts, loadAccepted, terminalTimeoutMs);
+    if (loadTerminal.state !== "succeeded" || loadTerminal.reasonCode !== "machine_coffee_loaded")
+      throw new Error(`machine_load_failed:${loadTerminal.reasonCode}`);
+    const loaded = await requireActionableMachineSnapshot(client);
+    const processingTarget = (loaded.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
+    if (!isProcessingCoffee(processingTarget)) throw new Error("machine_collect_processing_postcondition_mismatch");
+
+    const ready = await waitForReadyTarget(client, loadTarget.targetId, readyTimeoutMs);
+    const collectAccepted = await execute(
+      client,
+      trace,
+      ACTION_COLLECT,
+      { x: ready.x, y: ready.y, expectedTargetId: ready.targetId },
+      await requireActionableMachineSnapshot(client),
+    );
+    const collectTerminal = await waitForTerminal(receipts, collectAccepted, terminalTimeoutMs);
+    if (collectTerminal.state !== "succeeded" || collectTerminal.reasonCode !== "machine_coffee_collected")
+      throw new Error(`machine_collect_failed:${collectTerminal.reasonCode}`);
+    const evidence = parseEvidence(collectTerminal.evidence);
+    const after = await requireActionableMachineSnapshot(client);
+    assertExactCapabilities(after, EXPECTED_CAPABILITIES);
+    const reread = (after.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
+    const inventoryBefore = parseNonNegativeSafeInteger(evidence.inventory_coffee_before);
+    const inventoryAfter = parseNonNegativeSafeInteger(evidence.inventory_coffee_after);
+    const passed =
+      evidence.location === before.location &&
+      evidence.target === loadTarget.targetId &&
+      evidence.tile === `${ready.x},${ready.y}` &&
+      evidence.machine === "(BC)12" &&
+      evidence.output === "(O)395" &&
+      evidence.input === "(O)433" &&
+      evidence.ready_before === "true" &&
+      evidence.minutes_until_ready_before === "0" &&
+      inventoryBefore !== null &&
+      inventoryAfter === inventoryBefore + 1 &&
+      evidence.held_after === "none" &&
+      evidence.ready_after === "false" &&
+      evidence.native_check_action === "true" &&
+      reread?.heldObjectQualifiedItemId == null &&
+      reread?.readyForHarvest === false &&
+      reread?.minutesUntilReady === 0 &&
+      reread?.collectOutputReady === false;
+    return {
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
       reasonCode: passed ? "machine_coffee_collected" : "machine_collect_postcondition_mismatch",
@@ -95,31 +96,36 @@ try {
       evidence,
       reread: summarizeTarget(reread),
       trace,
-      before: summarizeSnapshot(before),
-      loaded: summarizeSnapshot(loaded),
-      after: summarizeSnapshot(after),
+      before: summarizeWithMachines(before),
+      loaded: summarizeWithMachines(loaded),
+      after: summarizeWithMachines(after),
       durationMs: Date.now() - startedAt,
-    }),
-  );
-  if (!passed) process.exitCode = 2;
-} catch (error) {
-  console.error(
-    JSON.stringify({
+    };
+  } catch (error) {
+    return {
       state: "blocked",
       topology: "native_local_player_fixture",
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
-      latestReceipt: summarizeReceipt(client.state.latestReceipt),
+      latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       trace,
       durationMs: Date.now() - startedAt,
-    }),
-  );
-  process.exitCode = 2;
-} finally {
-  unsubscribe();
-  client.close();
+    };
+  }
 }
 
-function validateConfig(value) {
+if (import.meta.main) {
+  const config = await readNativeClientConfig();
+  const session = await connectNativeLocalClient(config);
+  try {
+    const result = await runMachineCollectOutputSmoke(session.client, session.receipts, config);
+    console.log(JSON.stringify(result));
+    if (result.state !== "passed") process.exitCode = 2;
+  } finally {
+    session.close();
+  }
+}
+
+function validateNativeLocalFixtureConfig(value) {
   const fixture = value?.NativeLocalPlayerFixture;
   if (
     fixture?.Enable !== true ||
@@ -137,18 +143,9 @@ function validateConfig(value) {
   )
     throw new Error("native_local_machine_collect_topology_invalid");
 }
-function requireExactCapabilities(snapshot) {
-  if (!same([...(snapshot.capabilities ?? [])].sort(), [...EXPECTED_CAPABILITIES].sort()))
-    throw new Error("native_local_machine_collect_capability_not_isolated");
-}
-async function actionableSnapshot() {
-  const snapshot = await client.observe();
-  if (
-    !snapshot?.actionable ||
-    snapshot.activeExecution != null ||
-    !Number.isInteger(snapshot.revision) ||
-    !Array.isArray(snapshot.machineTargets)
-  )
+async function requireActionableMachineSnapshot(client) {
+  const snapshot = await observeFresh(client, { actionable: true });
+  if (!Number.isInteger(snapshot?.revision) || !Array.isArray(snapshot?.machineTargets))
     throw new Error("native_local_machine_collect_snapshot_not_actionable");
   return snapshot;
 }
@@ -179,10 +176,10 @@ function isProcessingCoffee(entry) {
     entry.lastInputQualifiedItemId === "(O)433"
   );
 }
-async function waitForReadyTarget(targetId, timeoutMs) {
+async function waitForReadyTarget(client, targetId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const snapshot = await actionableSnapshot();
+    const snapshot = await requireActionableMachineSnapshot(client);
     const entry = snapshot.machineTargets.find((candidate) => candidate?.targetId === targetId);
     if (
       entry?.qualifiedItemId === "(BC)12" &&
@@ -197,35 +194,17 @@ async function waitForReadyTarget(targetId, timeoutMs) {
   }
   throw new Error("machine_ready_timeout_without_time_skip");
 }
-async function execute(action, args, snapshot) {
+async function execute(client, trace, action, args, snapshot) {
   const requestId = `native_local_${action}_${Date.now()}`;
-  const receipt = await client.execute({
+  const receipt = await executeFresh(client, {
     requestId,
     idempotencyKey: `${requestId}_idem`,
     action,
     args,
-    expectedRevision: snapshot.revision,
-    deadlineMs: Date.now() + 30_000,
+    snapshot,
+    timeoutMs: 30_000,
   });
   trace.push({ action, args, receipt: summarizeReceipt(receipt) });
-  return receipt;
-}
-async function terminalFor(receipt, timeoutMs, code) {
-  if (isTerminal(receipt?.state)) return requireIdentity(receipt, receipt.executionId, receipt.requestId);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const terminal = receipts.find(
-      (item) =>
-        item.executionId === receipt?.executionId && item.requestId === receipt?.requestId && isTerminal(item.state),
-    );
-    if (terminal) return requireIdentity(terminal, receipt.executionId, receipt.requestId);
-    await delay(100);
-  }
-  throw new Error(code);
-}
-function requireIdentity(receipt, executionId, requestId) {
-  if (receipt?.executionId !== executionId || receipt?.requestId !== requestId)
-    throw new Error("machine_collect_receipt_identity_mismatch");
   return receipt;
 }
 function parseEvidence(receiptEvidence) {
@@ -258,19 +237,13 @@ function parseEvidence(receiptEvidence) {
     throw new Error("invalid_machine_collect_evidence");
   return fields;
 }
+function parseNonNegativeSafeInteger(value) {
+  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
 function same(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
-}
-function isTerminal(state) {
-  return ["succeeded", "failed", "invalidated", "cancelled", "expired", "uncertain", "rejected"].includes(state);
-}
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-function required(name) {
-  const index = process.argv.indexOf(name);
-  if (index < 0 || !process.argv[index + 1]) throw new Error(`missing_${name.slice(2)}`);
-  return process.argv[index + 1];
 }
 function summarizeTarget(value) {
   return value
@@ -281,29 +254,15 @@ function summarizeTarget(value) {
         qualifiedItemId: value.qualifiedItemId,
         readyForHarvest: value.readyForHarvest,
         minutesUntilReady: value.minutesUntilReady,
-        heldObjectQualifiedItemId: value.heldObjectQualifiedItemId,
-        lastInputQualifiedItemId: value.lastInputQualifiedItemId,
-        collectOutputReady: value.collectOutputReady,
+        heldObjectQualifiedItemId: value.heldObjectQualifiedItemId ?? null,
+        lastInputQualifiedItemId: value.lastInputQualifiedItemId ?? null,
+        loadInputSlot: value.loadInputSlot ?? null,
+        loadInputQualifiedItemId: value.loadInputQualifiedItemId ?? null,
+        loadInputStack: value.loadInputStack ?? null,
+        collectOutputReady: value.collectOutputReady ?? null,
       }
     : null;
 }
-function summarizeReceipt(value) {
-  return value
-    ? {
-        executionId: value.executionId,
-        requestId: value.requestId,
-        state: value.state,
-        reasonCode: value.reasonCode,
-        revision: value.revision,
-      }
-    : null;
-}
-function summarizeSnapshot(value) {
-  return {
-    revision: value.revision,
-    location: value.location,
-    tile: value.tile,
-    capabilities: value.capabilities,
-    machineTargets: value.machineTargets?.map(summarizeTarget),
-  };
+function summarizeWithMachines(snapshot) {
+  return { ...summarizeSnapshot(snapshot), machineTargets: snapshot.machineTargets?.map(summarizeTarget) ?? [] };
 }

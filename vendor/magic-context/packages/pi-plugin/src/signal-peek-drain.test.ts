@@ -151,16 +151,35 @@ describe("source contract: peek-then-drain in runPipeline (history)", () => {
 
 	test("history drain happens AFTER injectM0M1Pi succeeds", () => {
 		// Find the injection block inside runPipeline. The drain must be:
-		//  1. Inside the try block (so it only runs on success)
+		//  1. Inside the same try block (so it only runs on success)
 		//  2. After the injectM0M1Pi seam returns
 		//  3. Guarded by isCacheBusting
-		const idx = code.indexOf("injectM0M1PiForRun(");
-		expect(idx).toBeGreaterThan(0);
-		// Look at the next ~600 chars after the injection call
-		const segment = code.slice(idx, idx + 1200);
-		// The drain must mention historyRefreshSessions.delete and isCacheBusting
-		expect(segment).toContain("historyRefreshSessions.delete(args.sessionId)");
-		expect(segment).toMatch(/if\s*\(\s*args\.isCacheBusting\s*\)/);
+		const injectionStart = code.indexOf("injectM0M1PiForRun(");
+		expect(injectionStart).toBeGreaterThan(0);
+		const openParen = code.indexOf("(", injectionStart);
+		let depth = 0;
+		let injectionEnd = -1;
+		for (let index = openParen; index < code.length; index += 1) {
+			if (code[index] === "(") depth += 1;
+			if (code[index] === ")") {
+				depth -= 1;
+				if (depth === 0) {
+					injectionEnd = index;
+					break;
+				}
+			}
+		}
+		expect(injectionEnd).toBeGreaterThan(openParen);
+
+		const drain = "historyRefreshSessions.delete(args.sessionId)";
+		const drainIndex = code.indexOf(drain, injectionEnd);
+		const catchIndex = code.indexOf("} catch (err)", injectionEnd);
+		expect(drainIndex).toBeGreaterThan(injectionEnd);
+		expect(catchIndex).toBeGreaterThan(drainIndex);
+		const successOnlySegment = code.slice(injectionEnd, catchIndex);
+		expect(successOnlySegment).toMatch(
+			/if\s*\(\s*args\.isCacheBusting\s*\)\s*\{\s*historyRefreshSessions\.delete\(args\.sessionId\)/,
+		);
 	});
 
 	test("deferred publication drains only on a MID-TURN-AWARE can-consume-late gate", () => {

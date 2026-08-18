@@ -49,8 +49,8 @@ export function tavernImportPath(paths: TavernPaths, importId: string, file: "ca
 function safeDirectory(path: string): string {
   const resolved = resolve(path);
   const normalized = resolved.replaceAll("\\", "/").split("/").filter(Boolean);
-  const hasTavernV1 = normalized.some((part, index) =>
-    part.toLowerCase() === "tavern" && normalized[index + 1]?.toLowerCase() === "v1",
+  const hasTavernV1 = normalized.some(
+    (part, index) => part.toLowerCase() === "tavern" && normalized[index + 1]?.toLowerCase() === "v1",
   );
   if (!hasTavernV1) throw new Error("unsafe_tavern_path");
   return resolved;

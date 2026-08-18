@@ -33,7 +33,13 @@ internal sealed class FarmhandProvisioningProbe
             return null;
 
         int timeoutSeconds = Math.Clamp(config.TimeoutSeconds, 1, 45);
-        var client = new LidgrenClient(config.HostAddress);
+        // Mirror the target game's join composition. SMAPI overrides InitClient
+        // to install the ModMessage context hooks before native connection.
+        if (!FarmhandProvisioner.TryCreateInitializedNativeClient(config.HostAddress, out LidgrenClient client))
+        {
+            monitor.Log("GameBuddy provisioning probe failed closed: native_client_initialization_failed.", LogLevel.Error);
+            return null;
+        }
         var probe = new FarmhandProvisioningProbe(monitor, client, config, DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds));
         client.connect();
         monitor.Log($"GameBuddy provisioning probe started for native LAN endpoint '{config.HostAddress}'; activation={config.ActivateExpectedFarmhand}.", LogLevel.Info);

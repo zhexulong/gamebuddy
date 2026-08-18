@@ -1,106 +1,97 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, resolve } from "node:path";
-import { resolveProductionEntry } from "../host/scripts/production-artifact.mjs";
+import {
+  NativeSmokeHarnessError,
+  connectNativeLocalClient,
+  delay,
+  executeFresh,
+  observeFresh,
+  readNativeClientConfig,
+  summarizeReceipt as summarizeHarnessReceipt,
+  summarizeSnapshot,
+  waitForFreshSnapshot,
+  waitForTerminal,
+} from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../host");
-const productionArtifact = await resolveProductionEntry({
-  hostRoot,
-  outputRoot: resolve(hostRoot, "dist"),
-  entry: "main.js",
-});
-const { LocalStardewBridgeClient } = await import(
-  pathToFileURL(resolve(productionArtifact.artifactRoot, "local-stardew-bridge.js")).href
-);
+/** Execute the clear-debris contract against an already-connected bridge session. */
+export async function runClearDebrisSmoke(client, receipts, config) {
+  validateConfig(config);
+  const trace = [];
+  const startedAt = Date.now();
+  let lastSnapshot = null;
+  try {
+    let snapshot = await actionableSnapshot(client);
+    lastSnapshot = snapshot;
+    requireCapabilities(snapshot);
+    if (snapshot.location !== "FarmHouse") throw new Error("clear_debris_route_must_start_at_farmhouse");
 
-const config = JSON.parse(await readFile(required("--client-config"), "utf8"));
-validateConfig(config);
-const scope = {
-  integrationId: "stardew",
-  saveId: config.SaveId,
-  worldId: config.WorldId,
-  playerId: config.PlayerId,
-  companionId: config.CompanionId,
-};
-const client = await connectWithRetry(scope, config.PipeName, config.BridgeToken, 15_000);
-const receipts = [];
-const trace = [];
-const startedAt = Date.now();
-let lastSnapshot;
-const unsubscribe = client.onFact((fact) => {
-  if (fact.type === "execution_receipt") receipts.push(fact.payload);
-});
+    snapshot = await travelToFarm(client, receipts, trace, snapshot);
+    lastSnapshot = snapshot;
+    snapshot = await moveToFixtureApproach(client, receipts, trace, snapshot);
+    lastSnapshot = snapshot;
+    const initialTarget = chooseFixtureTarget(snapshot);
+    if (initialTarget.health !== 8) throw new Error("clear_debris_fixture_health_not_intact");
+    const pickaxe = choosePickaxe(snapshot);
+    const equipped = await execute(client, trace, "equip_pickaxe", "equip_tool", { slot: pickaxe.slot }, snapshot);
+    if (equipped.state !== "succeeded" || equipped.reasonCode !== "tool_selected")
+      throw new Error(`pickaxe_equip_failed:${equipped.reasonCode}`);
 
-try {
-  let snapshot = await actionableSnapshot();
-  requireCapabilities(snapshot);
-  if (snapshot.location !== "FarmHouse") throw new Error("clear_debris_route_must_start_at_farmhouse");
-
-  snapshot = await travelToFarm(snapshot);
-  snapshot = await moveToFixtureApproach(snapshot);
-  const initialTarget = chooseFixtureTarget(snapshot);
-  if (initialTarget.health !== 8) throw new Error("clear_debris_fixture_health_not_intact");
-  const pickaxe = choosePickaxe(snapshot);
-  const equipped = await execute("equip_pickaxe", "equip_tool", { slot: pickaxe.slot }, snapshot);
-  if (equipped.state !== "succeeded" || equipped.reasonCode !== "tool_selected")
-    throw new Error(`pickaxe_equip_failed:${equipped.reasonCode}`);
-
-  let expectedHealth = 8;
-  let target = initialTarget;
-  let terminal = null;
-  for (let hit = 1; hit <= 8; hit += 1) {
-    snapshot = await actionableSnapshot();
-    target = findSameFixtureTarget(snapshot, initialTarget);
-    if (
-      !target ||
-      target.parentSheetIndex !== 752 ||
-      target.toolKind !== "pickaxe" ||
-      target.requiredUpgradeLevel !== 0 ||
-      target.health !== expectedHealth
-    ) {
-      throw new Error("debris_target_changed_before_hit");
+    let expectedHealth = 8;
+    let target = initialTarget;
+    let terminal = null;
+    for (let hit = 1; hit <= 8; hit += 1) {
+      snapshot = await actionableSnapshot(client);
+      lastSnapshot = snapshot;
+      target = findSameFixtureTarget(snapshot, initialTarget);
+      if (
+        !target ||
+        target.parentSheetIndex !== 752 ||
+        target.toolKind !== "pickaxe" ||
+        target.requiredUpgradeLevel !== 0 ||
+        target.health !== expectedHealth
+      ) {
+        throw new Error("debris_target_changed_before_hit");
+      }
+      const receipt = await execute(
+        client,
+        trace,
+        `clear_debris_hit_${hit}`,
+        "clear_debris",
+        {
+          slot: pickaxe.slot,
+          x: target.x,
+          y: target.y,
+          expectedTargetId: target.targetId,
+        },
+        snapshot,
+      );
+      const evidence = parseEvidence(receipt.evidence);
+      const expectedTerminal = hit === 8;
+      const validReceipt =
+        typeof receipt.executionId === "string" &&
+        receipt.executionId.length > 0 &&
+        evidence.location === snapshot.location &&
+        evidence.target === target.targetId &&
+        evidence.tile === `${target.x},${target.y}` &&
+        evidence.parent === "752" &&
+        evidence.tool === "pickaxe" &&
+        evidence.required_upgrade === "0" &&
+        evidence.health_before === String(expectedHealth) &&
+        evidence.health_after === String(expectedTerminal ? 0 : expectedHealth - 1) &&
+        evidence.clump_removed === String(expectedTerminal) &&
+        ((expectedTerminal && receipt.state === "succeeded" && receipt.reasonCode === "debris_cleared") ||
+          (!expectedTerminal && receipt.state === "partially_succeeded" && receipt.reasonCode === "debris_hit"));
+      if (!validReceipt) throw new Error(`debris_hit_receipt_invalid:${hit}:${receipt.reasonCode}`);
+      terminal = receipt;
+      if (expectedTerminal) break;
+      expectedHealth -= 1;
     }
-    const receipt = await execute(
-      `clear_debris_hit_${hit}`,
-      "clear_debris",
-      {
-        slot: pickaxe.slot,
-        x: target.x,
-        y: target.y,
-        expectedTargetId: target.targetId,
-      },
-      snapshot,
-    );
-    const evidence = parseEvidence(receipt.evidence);
-    const expectedTerminal = hit === 8;
-    const validReceipt =
-      receipt.requestId === trace.at(-1)?.receipt?.requestId &&
-      typeof receipt.executionId === "string" &&
-      receipt.executionId.length > 0 &&
-      evidence.location === snapshot.location &&
-      evidence.target === target.targetId &&
-      evidence.tile === `${target.x},${target.y}` &&
-      evidence.parent === "752" &&
-      evidence.tool === "pickaxe" &&
-      evidence.required_upgrade === "0" &&
-      evidence.health_before === String(expectedHealth) &&
-      evidence.health_after === String(expectedTerminal ? 0 : expectedHealth - 1) &&
-      evidence.clump_removed === String(expectedTerminal) &&
-      ((expectedTerminal && receipt.state === "succeeded" && receipt.reasonCode === "debris_cleared") ||
-        (!expectedTerminal && receipt.state === "partially_succeeded" && receipt.reasonCode === "debris_hit"));
-    if (!validReceipt) throw new Error(`debris_hit_receipt_invalid:${hit}:${receipt.reasonCode}`);
-    terminal = receipt;
-    if (expectedTerminal) break;
-    expectedHealth -= 1;
-  }
 
-  const after = await actionableSnapshot();
-  const targetGone =
-    !Array.isArray(after.debrisTargets) ||
-    !after.debrisTargets.some((entry) => entry?.targetId === initialTarget.targetId);
-  const passed = terminal?.state === "succeeded" && terminal.reasonCode === "debris_cleared" && targetGone;
-  console.log(
-    JSON.stringify({
+    const after = await actionableSnapshot(client);
+    lastSnapshot = after;
+    const targetGone =
+      !Array.isArray(after.debrisTargets) ||
+      !after.debrisTargets.some((entry) => entry?.targetId === initialTarget.targetId);
+    const passed = terminal?.state === "succeeded" && terminal.reasonCode === "debris_cleared" && targetGone;
+    return {
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
       reasonCode: passed ? "debris_cleared" : "clear_debris_postcondition_mismatch",
@@ -110,16 +101,13 @@ try {
       after: summarize(after),
       freshPostcondition: { targetGone },
       durationMs: Date.now() - startedAt,
-    }),
-  );
-  if (!passed) process.exitCode = 2;
-} catch (error) {
-  console.error(
-    JSON.stringify({
+    };
+  } catch (error) {
+    return {
       state: "blocked",
       topology: "native_local_player_fixture",
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
-      latestReceipt: summarizeReceipt(client.state.latestReceipt),
+      latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       trace,
       lastSnapshot: lastSnapshot
         ? {
@@ -132,20 +120,31 @@ try {
           }
         : null,
       durationMs: Date.now() - startedAt,
-    }),
-  );
-  process.exitCode = 2;
-} finally {
-  unsubscribe();
-  client.close();
+    };
+  }
 }
 
-async function connectWithRetry(scope, pipeName, bridgeToken, timeoutMs) {
+if (import.meta.main) {
+  const config = await readNativeClientConfig();
+  const session = await connectWithRetry(config, 15_000);
+  try {
+    const result = await runClearDebrisSmoke(session.client, session.receipts, config);
+    if (result.state === "passed") console.log(JSON.stringify(result));
+    else console.error(JSON.stringify(result));
+    if (result.state !== "passed") process.exitCode = 2;
+  } finally {
+    session.close();
+  }
+}
+
+// The game process creates its named pipe asynchronously after launch, so the
+// harness-owned connect session is retried on ENOENT within a bounded window.
+async function connectWithRetry(config, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
     try {
-      return await LocalStardewBridgeClient.connect(scope, pipeName, bridgeToken);
+      return await connectNativeLocalClient(config);
     } catch (error) {
       lastError = error;
       if (!(error && typeof error === "object" && error.code === "ENOENT")) throw error;
@@ -182,40 +181,42 @@ function requireCapabilities(snapshot) {
     throw new Error("native_local_clear_debris_capability_not_isolated");
 }
 
-async function actionableSnapshot() {
-  const snapshot = await client.observe();
-  lastSnapshot = snapshot;
-  if (!snapshot.actionable || snapshot.activeExecution != null || !Number.isInteger(snapshot.revision))
-    throw new Error("native_local_clear_debris_snapshot_not_actionable");
-  return snapshot;
+async function actionableSnapshot(client) {
+  return observeFresh(client, { actionable: true });
 }
 
-async function execute(phase, action, args, snapshot) {
+async function execute(client, trace, phase, action, args, snapshot) {
   if (!snapshot.actionable || snapshot.activeExecution != null) throw new Error(`${phase}_player_not_actionable`);
   const requestId = `native_local_clear_debris_${phase}_${Date.now()}_${trace.length}`;
-  const receipt = await client.execute({
+  const receipt = await executeFresh(client, {
     requestId,
     idempotencyKey: `${requestId}_idem`,
     action,
     args,
-    expectedRevision: snapshot.revision,
-    deadlineMs: Date.now() + 30_000,
+    snapshot,
+    timeoutMs: 30_000,
   });
   trace.push({ phase, action, args, receipt: summarizeReceipt(receipt) });
   return receipt;
 }
 
-async function travelToFarm(snapshot) {
+async function travelToFarm(client, receipts, trace, snapshot) {
   const warps = (snapshot.warps ?? []).filter(
     (entry) => entry?.targetLocation === "Farm" && validTile(entry.sourceX) && validTile(entry.sourceY),
   );
   if (warps.length !== 1) throw new Error(warps.length ? "ambiguous_farm_warp" : "farm_warp_missing");
   const warp = warps[0];
   if (!adjacent(snapshot.tile, { x: warp.sourceX, y: warp.sourceY }))
-    snapshot = await move(snapshot, { x: warp.sourceX, y: warp.sourceY }, "move_to_farm_warp");
-  const accepted = await execute("travel", "travel", { x: warp.sourceX, y: warp.sourceY }, snapshot);
+    snapshot = await move(client, receipts, trace, snapshot, { x: warp.sourceX, y: warp.sourceY }, "move_to_farm_warp");
+  const accepted = await execute(client, trace, "travel", "travel", { x: warp.sourceX, y: warp.sourceY }, snapshot);
   if (accepted.state !== "accepted") throw new Error(`travel_not_accepted:${accepted.reasonCode}`);
-  const completion = await waitForTerminal(accepted, (latest) => latest.location === "Farm", 15_000);
+  const completion = await waitForNavigationTerminal(
+    client,
+    receipts,
+    accepted,
+    (latest) => latest.location === "Farm",
+    15_000,
+  );
   trace.push({
     phase: "travel_terminal",
     action: "travel",
@@ -225,7 +226,7 @@ async function travelToFarm(snapshot) {
   return completion.snapshot;
 }
 
-async function moveToFixtureApproach(snapshot) {
+async function moveToFixtureApproach(client, receipts, trace, snapshot) {
   // The frozen fixture target is (62,17), with its 2×2 footprint occupying
   // (62..63,17..18). These three source-reviewed outside interaction tiles
   // are the entire movement budget. A rejected native route is not retried or
@@ -238,8 +239,8 @@ async function moveToFixtureApproach(snapshot) {
   for (const approach of fixtureApproaches) {
     try {
       if (!sameTile(snapshot.tile, approach))
-        snapshot = await move(snapshot, approach, "move_to_clear_debris_fixture_anchor");
-      else snapshot = await actionableSnapshot();
+        snapshot = await move(client, receipts, trace, snapshot, approach, "move_to_clear_debris_fixture_anchor");
+      else snapshot = await actionableSnapshot(client);
     } catch (error) {
       const reason = String(error instanceof Error ? error.message : error);
       if (
@@ -248,17 +249,23 @@ async function moveToFixtureApproach(snapshot) {
         !reason.startsWith("navigation_timeout:")
       )
         throw error;
-      snapshot = await actionableSnapshot();
+      snapshot = await actionableSnapshot(client);
     }
     if (fixtureTargets(snapshot).length === 1) return snapshot;
   }
   throw new Error("clear_debris_fixture_target_not_at_bounded_anchor");
 }
 
-async function move(snapshot, target, phase) {
-  const accepted = await execute(phase, "move_to_tile", target, snapshot);
+async function move(client, receipts, trace, snapshot, target, phase) {
+  const accepted = await execute(client, trace, phase, "move_to_tile", target, snapshot);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
-  const completion = await waitForTerminal(accepted, (latest) => adjacent(latest.tile, target), 55_000);
+  const completion = await waitForNavigationTerminal(
+    client,
+    receipts,
+    accepted,
+    (latest) => adjacent(latest.tile, target),
+    55_000,
+  );
   trace.push({
     phase: `${phase}_terminal`,
     action: "move_to_tile",
@@ -268,27 +275,32 @@ async function move(snapshot, target, phase) {
   return completion.snapshot;
 }
 
-async function waitForTerminal(accepted, predicate, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const snapshot = await client.observe();
-    const terminal = receipts.find(
-      (entry) =>
-        entry?.executionId === accepted.executionId &&
-        entry?.requestId === accepted.requestId &&
-        isTerminal(entry.state),
-    );
-    if (terminal && terminal.state !== "succeeded") throw new Error(`navigation_failed:${terminal.reasonCode}`);
-    if (
-      terminal?.state === "succeeded" &&
-      snapshot.actionable &&
-      snapshot.activeExecution == null &&
-      predicate(snapshot)
-    )
-      return { receipt: terminal, snapshot };
-    await delay(200);
+// Terminal wait with the harness's exact request/execution identity, then a
+// fresh post-terminal observation bound to the terminal revision. Harness
+// timeout codes are mapped back to the runner's navigation vocabulary so the
+// bounded fixture-approach fallback keeps its original decision surface.
+async function waitForNavigationTerminal(client, receipts, accepted, predicate, timeoutMs) {
+  let terminal;
+  try {
+    terminal = await waitForTerminal(receipts, accepted, timeoutMs);
+  } catch (error) {
+    if (error instanceof NativeSmokeHarnessError) throw new Error(`navigation_timeout:${accepted.executionId}`);
+    throw error;
   }
-  throw new Error(`navigation_timeout:${accepted.executionId}`);
+  if (terminal.state !== "succeeded") throw new Error(`navigation_failed:${terminal.reasonCode}`);
+  let snapshot;
+  try {
+    snapshot = await waitForFreshSnapshot(client, {
+      minRevision: terminal.revision,
+      timeoutMs,
+      requireActionable: true,
+      check: predicate,
+    });
+  } catch (error) {
+    if (error instanceof NativeSmokeHarnessError) throw new Error(`navigation_timeout:${accepted.executionId}`);
+    throw error;
+  }
+  return { receipt: terminal, snapshot };
 }
 
 function fixtureTargets(snapshot) {
@@ -349,11 +361,6 @@ function parseEvidence(evidence) {
     }),
   );
 }
-function required(name) {
-  const index = process.argv.indexOf(name);
-  if (index < 0 || !process.argv[index + 1]) throw new Error(`missing_${name.slice(2)}`);
-  return process.argv[index + 1];
-}
 function validTile(value) {
   return Number.isInteger(value) && value >= 0 && value <= 1000;
 }
@@ -366,31 +373,13 @@ function sameTile(left, right) {
 function same(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
-function isTerminal(state) {
-  return ["succeeded", "failed", "invalidated", "cancelled", "expired", "uncertain", "rejected"].includes(state);
-}
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 function summarize(snapshot) {
   return {
-    revision: snapshot.revision,
-    location: snapshot.location,
-    tile: snapshot.tile,
-    actionable: snapshot.actionable,
+    ...summarizeSnapshot(snapshot),
     debrisTargets: snapshot.debrisTargets?.length ?? 0,
-    activeExecution: snapshot.activeExecution ?? null,
   };
 }
 function summarizeReceipt(receipt) {
-  return receipt
-    ? {
-        executionId: receipt.executionId,
-        requestId: receipt.requestId,
-        state: receipt.state,
-        reasonCode: receipt.reasonCode,
-        revision: receipt.revision,
-        evidence: receipt.evidence ?? null,
-      }
-    : null;
+  if (receipt == null) return null;
+  return { ...summarizeHarnessReceipt(receipt), evidence: receipt.evidence ?? null };
 }

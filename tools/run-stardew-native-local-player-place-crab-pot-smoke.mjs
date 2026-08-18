@@ -1,40 +1,32 @@
-import { readFile } from "node:fs/promises";
-import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+import {
+  connectNativeLocalClient,
+  executeFresh,
+  observeFresh,
+  readNativeClientConfig,
+  summarizeReceipt,
+  summarizeSnapshot,
+  waitForFreshSnapshot,
+} from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const { LocalStardewBridgeClient } = await loadHostProductionModule("local-stardew-bridge.js");
-function option(name) {
-  const i = process.argv.indexOf(name);
-  if (i < 0 || i + 1 >= process.argv.length) throw new Error(`missing_${name.slice(2)}`);
-  return process.argv[i + 1];
-}
-const config = JSON.parse(await readFile(option("--client-config"), "utf8"));
-const required = ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"];
-if (required.some((key) => typeof config[key] !== "string" || config[key].length === 0))
-  throw new Error("invalid_client_config");
-if (JSON.stringify(config.EnabledActions) !== JSON.stringify(["move_to_tile", "travel", "place_crab_pot"]))
-  throw new Error("production_capability_profile_invalid");
-const scope = {
-  integrationId: "stardew",
-  saveId: config.SaveId,
-  worldId: config.WorldId,
-  playerId: config.PlayerId,
-  companionId: config.CompanionId,
-};
-const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
-try {
-  let before = await client.observe();
-  for (const action of ["move_to_tile", "travel", "place_crab_pot"])
+const ACTION = "place_crab_pot";
+const EXPECTED_ACTIONS = ["move_to_tile", "travel", "place_crab_pot"];
+
+/** Execute the place-crab-pot contract against an already-connected bridge session. */
+export async function runPlaceCrabPotSmoke(client, config, { postconditionTimeoutMs = 5_000 } = {}) {
+  validateConfig(config);
+  const before = await observeFresh(client, { actionable: true });
+  for (const action of EXPECTED_ACTIONS)
     if (!before.capabilities.includes(action)) throw new Error(`native_local_${action}_capability_missing`);
-  if (!before.actionable || before.activeExecution != null) throw new Error("production_player_not_actionable");
   const target = before.crabPotTargets?.find(
     (entry) => Math.abs(entry.x - before.tile.x) <= 1 && Math.abs(entry.y - before.tile.y) <= 1,
   );
   if (!target) throw new Error("no_adjacent_live_crab_pot_target");
+
   const requestId = `native_local_place_crab_pot_${Date.now()}`;
-  const receipt = await client.execute({
+  const receipt = await executeFresh(client, {
     requestId,
     idempotencyKey: `${requestId}_idem`,
-    action: "place_crab_pot",
+    action: ACTION,
     args: {
       slot: target.slot,
       x: target.x,
@@ -42,10 +34,15 @@ try {
       expectedQualifiedItemId: target.qualifiedItemId,
       expectedTargetId: target.targetId,
     },
-    expectedRevision: before.revision,
-    deadlineMs: Date.now() + 30_000,
+    snapshot: before,
+    timeoutMs: 30_000,
   });
-  const after = await client.observe();
+  const after = await waitForFreshSnapshot(client, {
+    minRevision: receipt.revision,
+    timeoutMs: postconditionTimeoutMs,
+    requireActionable: true,
+    check: (snapshot) => Array.isArray(snapshot.crabPotResultTargets),
+  });
   const evidence = parseEvidence(receipt.evidence?.detail);
   const result = after.crabPotResultTargets?.find((entry) => entry.targetId === target.targetId);
   // Native CrabPot.updateOffset and getOverlayTiles can both legitimately
@@ -97,24 +94,45 @@ try {
     after.crabPotResultTargets?.some((entry) => entry.targetId === target.targetId) &&
     after.actionable &&
     after.activeExecution == null;
-  console.log(
-    JSON.stringify({
-      state: passed ? "passed" : "blocked",
-      action: "place_crab_pot",
-      target,
-      receipt,
-      evidence,
-      result: result ?? null,
-      evidenceMatches,
-      resultMatches,
-      before: summarize(before),
-      after: summarize(after),
-    }),
-  );
-  if (!passed) process.exitCode = 2;
-} finally {
-  client.close();
+  return {
+    state: passed ? "passed" : "blocked",
+    action: ACTION,
+    target,
+    receipt: summarizeReceipt(receipt),
+    evidence,
+    result: result ?? null,
+    evidenceMatches,
+    resultMatches,
+    before: summarize(before),
+    after: summarize(after),
+  };
 }
+
+if (import.meta.main) {
+  const config = await readNativeClientConfig();
+  const session = await connectNativeLocalClient(config);
+  try {
+    const result = await runPlaceCrabPotSmoke(session.client, config);
+    console.log(JSON.stringify(result));
+    if (result.state !== "passed") process.exitCode = 2;
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        state: "blocked",
+        reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
+      }),
+    );
+    process.exitCode = 2;
+  } finally {
+    session.close();
+  }
+}
+
+function validateConfig(config) {
+  if (JSON.stringify(config.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS))
+    throw new Error("production_capability_profile_invalid");
+}
+
 function parseEvidence(detail) {
   if (typeof detail !== "string") throw new Error("missing_crab_pot_evidence");
   const out = {};
@@ -125,14 +143,11 @@ function parseEvidence(detail) {
   }
   return out;
 }
-function summarize(s) {
+
+function summarize(snapshot) {
   return {
-    revision: s.revision,
-    location: s.location,
-    tile: s.tile,
-    actionable: s.actionable,
-    crabPotTargets: s.crabPotTargets?.length ?? 0,
-    crabPotResultTargets: s.crabPotResultTargets?.length ?? 0,
-    activeExecution: s.activeExecution ?? null,
+    ...summarizeSnapshot(snapshot),
+    crabPotTargets: snapshot.crabPotTargets?.length ?? 0,
+    crabPotResultTargets: snapshot.crabPotResultTargets?.length ?? 0,
   };
 }

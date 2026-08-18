@@ -2,7 +2,8 @@ import { join } from "node:path";
 
 import type { CompanionIdentity, CompanionModelConfig } from "../runtime.js";
 import { resolveRuntimePaths } from "../runtime.js";
-import type { CompanionTextExpression, CompanionTextPort, PresentationRuntime } from "../presentation.js";
+import type { CompanionTextExpression, PresentationRuntime } from "../presentation.js";
+import { createChatPresentationGate, type ChatPresentationGate } from "../tavern/chat-presentation-gate.internal.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import type { ChatRuntimeBindingExecution } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
@@ -24,16 +25,30 @@ export type ExactChatRuntimeConstruction = Readonly<{
   modelConfig: CompanionModelConfig;
   modelProfileRevision: number;
   presentation: PresentationRuntime;
+  /**
+   * Coordinator-private Chat presentation gate. It implements both the Host
+   * admission provider and the construction-owned text sink; it stays
+   * default-unbound until the coordinator binds it to the exact P4 invocation.
+   */
+  presentationGate: ChatPresentationGate;
   /** Construction-owned re-materialization for the actual Pi session. */
   materializeStableContextForPiSession(piSessionId: string): Promise<TavernStableContextSnapshot>;
+  tavernNarrativeGateNonceSha256?: string;
+  playerMemoryNextRoundEvidence?: Readonly<{
+    nonceSha256: string;
+    onSourceMarker(marker: unknown): void;
+  }>;
+  attachPresentation(listener: (expression: CompanionTextExpression) => void | Promise<void>): () => void;
 }>;
 
-/**
- * A construction-owned text sink. It deliberately has no browser, listener,
- * selector, or runtime control API: the later active-runtime owner will expose
- * a separately bounded delivery adapter only after durable terminalization.
- */
-export type ChatRuntimePresentationSink = CompanionTextPort;
+export type ChatRuntimeConstructionOptions = Readonly<{
+  tavernNarrativeGateNonceSha256?: string;
+  playerMemoryNextRoundEvidence?: Readonly<{
+    nonceSha256: string;
+    onSourceMarker(marker: unknown): void;
+  }>;
+}>;
+
 const CHAT_PRESENTATION_PROFILE = Object.freeze({ locale: "zh-CN", text: true, speech: null });
 
 /**
@@ -45,6 +60,7 @@ const CHAT_PRESENTATION_PROFILE = Object.freeze({ locale: "zh-CN", text: true, s
 export async function prepareExactChatRuntimeConstruction(
   execution: ChatRuntimeBindingExecution,
   permit: ProductionChatRuntimePermit,
+  options: ChatRuntimeConstructionOptions = {},
 ): Promise<ExactChatRuntimeConstruction> {
   assertExactPermit(execution, permit);
   const identity = Object.freeze({ ...execution.principal });
@@ -88,7 +104,14 @@ export async function prepareExactChatRuntimeConstruction(
   const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
   const modelConfig = resolveModelProfileConfig(modelProfile);
   if (modelConfig === null) throw new Error("chat_runtime_model_configuration_unavailable");
-  const presentationSink = new ConstructionOwnedChatPresentationSink();
+  // The Chat presentation tool is registered at construction through a
+  // default-unbound gate: companion_text exists in the mounted tool surface but
+  // capture fails closed until the coordinator binds the gate to the exact P4
+  // invocation, so no companion line can reach a sink outside a verified
+  // provider run. The gate is also the Chat text sink: it commits the exact P5
+  // presentation only after the durable running read-back and only then
+  // forwards to construction listeners.
+  const presentationGate = createChatPresentationGate();
   return Object.freeze({
     identity,
     runtimeRoot: execution.runtimeRoot,
@@ -99,18 +122,19 @@ export async function prepareExactChatRuntimeConstruction(
       profile: CHAT_PRESENTATION_PROFILE,
       surface: "chat",
       sessionId: permit.chatSurfaceSessionId,
-      textPort: presentationSink,
+      admissionProvider: presentationGate.admissionProvider,
+      textPort: presentationGate.textPort,
     }),
+    presentationGate,
     materializeStableContextForPiSession,
+    ...(options.tavernNarrativeGateNonceSha256 === undefined
+      ? {}
+      : { tavernNarrativeGateNonceSha256: options.tavernNarrativeGateNonceSha256 }),
+    ...(options.playerMemoryNextRoundEvidence === undefined
+      ? {}
+      : { playerMemoryNextRoundEvidence: options.playerMemoryNextRoundEvidence }),
+    attachPresentation: presentationGate.attach.bind(presentationGate),
   });
-}
-
-class ConstructionOwnedChatPresentationSink implements ChatRuntimePresentationSink {
-  async present(_expression: CompanionTextExpression): Promise<void> {
-    // Runtime construction cannot publish to a browser before the semantic
-    // owner commits its exact receipt. Delivery is added only with the later
-    // active-runtime owner, never via a caller-provided presentation port.
-  }
 }
 
 function assertExactPermit(execution: ChatRuntimeBindingExecution, permit: ProductionChatRuntimePermit): void {

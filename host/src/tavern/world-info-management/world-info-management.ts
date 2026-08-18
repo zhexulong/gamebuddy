@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { lstat, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
-import { verifySafePathBoundary, withPathLock } from "../../path-lock.js";
+import { atomicWriteFile, verifySafePathBoundary, withPathLock } from "../../path-lock.js";
+import { readStrictJsonFile } from "../../strict-json-reader.js";
 import { canonicalHash, canonicalJson } from "../artifact-store.js";
 
 const MAX_ARTIFACTS = 128;
@@ -37,27 +37,30 @@ type ManagedArtifact = Readonly<{
   summary: string;
   entries: readonly PublicWorldInfoEntry[];
 }>;
-type CatalogItem = Readonly<{ handle: string; publicTitle: string; revision: number }>;
-type Catalog = Readonly<{ schemaVersion: 1; artifacts: readonly CatalogItem[] }>;
+type CatalogItem = Readonly<{
+  handle: string;
+  publicTitle: string;
+  revision: number;
+}>;
+type Catalog = Readonly<{
+  schemaVersion: 1;
+  artifacts: readonly CatalogItem[];
+}>;
 type RevisionEnvelope = Readonly<{
   schemaVersion: 1;
   revision: number;
   canonicalHash: string;
   artifact: ManagedArtifact;
 }>;
-type TemporaryFileIdentity = Readonly<{ dev: number; ino: number }>;
-type WorldInfoManagementOptions = Readonly<{ randomUUID?: () => string }>;
-
 /**
  * Separate managed public World Info domain. It stores each revision as an
  * immutable snapshot and keeps storage handles strictly internal.
  */
-export function createWorldInfoManagementRepository(
-  runtimeRoot: string,
-  options: WorldInfoManagementOptions = {},
-): WorldInfoManagementRepository {
+export function createWorldInfoManagementRepository(runtimeRoot: string): WorldInfoManagementRepository {
   const root = resolve(runtimeRoot);
-  const makeUUID = options.randomUUID ?? randomUUID;
+  // Persistent handles use their own cryptographic UUID source and never
+  // derive from the atomic writer's private temporary-name entropy.
+  const makePersistentHandle = randomUUID;
   const directory = join(root, "world-info-management");
   const catalogPath = join(directory, "catalog.json");
 
@@ -70,21 +73,20 @@ export function createWorldInfoManagementRepository(
           catalog.artifacts.some((item) => item.publicTitle === request.publicTitle)
         )
           throw new Error("world_info_already_exists");
-        const handle = makeUUID();
+        const handle = makePersistentHandle();
         const artifact = artifactFor(1, request);
-        const readBack = await writeRevision(root, directory, handle, artifact, makeUUID);
-        await writeCatalog(
-          root,
-          catalogPath,
-          {
-            schemaVersion: 1,
-            artifacts: [
-              ...catalog.artifacts,
-              { handle, publicTitle: artifact.publicTitle, revision: artifact.revision },
-            ],
-          },
-          makeUUID,
-        );
+        const readBack = await writeRevision(root, directory, handle, artifact);
+        await writeCatalog(root, catalogPath, {
+          schemaVersion: 1,
+          artifacts: [
+            ...catalog.artifacts,
+            {
+              handle,
+              publicTitle: artifact.publicTitle,
+              revision: artifact.revision,
+            },
+          ],
+        });
         return project(readBack);
       });
     },
@@ -118,13 +120,17 @@ export function createWorldInfoManagementRepository(
         )
           throw new Error("world_info_already_exists");
         const artifact = artifactFor(current.revision + 1, request);
-        const readBack = await writeRevision(root, directory, current.handle, artifact, makeUUID);
+        const readBack = await writeRevision(root, directory, current.handle, artifact);
         const artifacts = catalog.artifacts.map((item, itemIndex) =>
           itemIndex === index
-            ? { handle: current.handle, publicTitle: artifact.publicTitle, revision: artifact.revision }
+            ? {
+                handle: current.handle,
+                publicTitle: artifact.publicTitle,
+                revision: artifact.revision,
+              }
             : item,
         );
-        await writeCatalog(root, catalogPath, { schemaVersion: 1, artifacts }, makeUUID);
+        await writeCatalog(root, catalogPath, { schemaVersion: 1, artifacts });
         return project(readBack);
       });
     },
@@ -163,7 +169,7 @@ async function readCatalog(root: string, path: string): Promise<Catalog> {
   }
   let value: unknown;
   try {
-    value = JSON.parse(await readFile(path, "utf8"));
+    value = await readStrictJsonFile(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       return Object.freeze({ schemaVersion: 1, artifacts: Object.freeze([]) });
@@ -185,24 +191,30 @@ async function readCatalog(root: string, path: string): Promise<Catalog> {
       !revision(item.revision)
     )
       throw new Error("invalid_world_info_catalog");
-    return Object.freeze({ handle: item.handle, publicTitle: item.publicTitle, revision: item.revision });
+    return Object.freeze({
+      handle: item.handle,
+      publicTitle: item.publicTitle,
+      revision: item.revision,
+    });
   });
   if (
     new Set(artifacts.map((item) => item.handle)).size !== artifacts.length ||
     new Set(artifacts.map((item) => item.publicTitle)).size !== artifacts.length
   )
     throw new Error("invalid_world_info_catalog");
-  return Object.freeze({ schemaVersion: 1, artifacts: Object.freeze(artifacts) });
+  return Object.freeze({
+    schemaVersion: 1,
+    artifacts: Object.freeze(artifacts),
+  });
 }
-async function writeCatalog(root: string, path: string, catalog: Catalog, makeUUID: () => string): Promise<void> {
-  await atomicWrite(path, canonicalJson(catalog), root, makeUUID);
+async function writeCatalog(root: string, path: string, catalog: Catalog): Promise<void> {
+  await atomicWrite(path, canonicalJson(catalog), root);
 }
 async function writeRevision(
   root: string,
   directory: string,
   handle: string,
   artifact: ManagedArtifact,
-  makeUUID: () => string,
 ): Promise<ManagedArtifact> {
   const path = revisionPath(root, directory, handle, artifact.revision);
   const envelope: RevisionEnvelope = Object.freeze({
@@ -214,7 +226,7 @@ async function writeRevision(
   await withPathLock(
     path,
     async () => {
-      await atomicWrite(path, canonicalJson(envelope), root, makeUUID);
+      await atomicWrite(path, canonicalJson(envelope), root);
     },
     { containmentRoot: root },
   );
@@ -230,7 +242,7 @@ async function readRevision(
   let value: unknown;
   try {
     await verifySafePathBoundary(path, root);
-    value = JSON.parse(await readFile(path, "utf8"));
+    value = await readStrictJsonFile(path);
   } catch {
     throw new Error("invalid_world_info_artifact");
   }
@@ -252,76 +264,8 @@ function revisionPath(root: string, directory: string, handle: string, revisionN
   if (!path.startsWith(`${root}${sep}`)) throw new Error("invalid_world_info_artifact");
   return path;
 }
-async function atomicWrite(
-  path: string,
-  content: string,
-  containmentRoot: string,
-  makeUUID: () => string,
-): Promise<void> {
-  // Parent creation is owned by the containment-aware path lock. Recursive
-  // mkdir here could follow a swapped junction before the write boundary is
-  // checked.
-  await verifySafePathBoundary(path, containmentRoot);
-  const temporary = `${path}.${process.pid}.${makeUUID()}.tmp`;
-  await verifySafePathBoundary(temporary, containmentRoot);
-  let temporaryOwner: TemporaryFileIdentity | undefined;
-  let primaryError: unknown;
-  try {
-    // wx is required here: a pre-existing temporary path is not ours to
-    // truncate, and must remain untouched if another invocation owns it.
-    await writeFile(temporary, content, { encoding: "utf8", flag: "wx" });
-    temporaryOwner = await identifyTemporary(temporary, containmentRoot);
-    // Verify both leaves directly before rename. This narrows, but cannot
-    // eliminate, hostile TOCTOU in a path-based filesystem API.
-    await verifySafePathBoundary(temporary, containmentRoot);
-    await verifySafePathBoundary(path, containmentRoot);
-    await rename(temporary, path);
-  } catch (error) {
-    primaryError = error;
-    throw error;
-  } finally {
-    if (temporaryOwner !== undefined) {
-      try {
-        await cleanupTemporary(temporary, containmentRoot, temporaryOwner);
-      } catch (cleanupError) {
-        // A failed primary operation is the useful failure boundary. Cleanup
-        // must not mask it; after success, cleanup remains observable.
-        if (primaryError === undefined) throw cleanupError;
-      }
-    }
-  }
-}
-async function identifyTemporary(path: string, containmentRoot: string): Promise<TemporaryFileIdentity> {
-  await verifySafePathBoundary(path, containmentRoot);
-  const stat = await lstat(path);
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("unsafe_path_boundary");
-  return Object.freeze({ dev: stat.dev, ino: stat.ino });
-}
-
-async function cleanupTemporary(
-  path: string,
-  containmentRoot: string,
-  owner: TemporaryFileIdentity,
-): Promise<void> {
-  await verifySafePathBoundary(path, containmentRoot);
-  let stat;
-  try {
-    stat = await lstat(path);
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return;
-    throw error;
-  }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.dev !== owner.dev || stat.ino !== owner.ino) return;
-  // Recheck the boundary and identity immediately before unlinking. This is
-  // only a best-effort ownership guard; it does not eliminate hostile TOCTOU.
-  await verifySafePathBoundary(path, containmentRoot);
-  const current = await lstat(path);
-  if (!current.isFile() || current.isSymbolicLink() || current.dev !== owner.dev || current.ino !== owner.ino) return;
-  await rm(path, { force: true });
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && typeof error.code === "string";
+async function atomicWrite(path: string, content: string, containmentRoot: string): Promise<void> {
+  await atomicWriteFile(path, content, containmentRoot);
 }
 
 function artifactFor(revisionNumber: number, request: CreateWorldInfoRequest): ManagedArtifact {
@@ -350,7 +294,11 @@ function validateUpdateRequest(value: unknown): asserts value is UpdateWorldInfo
     !revision(value.expectedRevision)
   )
     throw new Error("invalid_world_info_request");
-  validateCreateRequest({ publicTitle: value.publicTitle, summary: value.summary, entries: value.entries });
+  validateCreateRequest({
+    publicTitle: value.publicTitle,
+    summary: value.summary,
+    entries: value.entries,
+  });
 }
 function validateArtifact(value: unknown): ManagedArtifact {
   if (
@@ -372,7 +320,11 @@ function validateArtifact(value: unknown): ManagedArtifact {
       !text(entry.summary, MAX_SUMMARY)
     )
       throw new Error("invalid_world_info_request");
-    return Object.freeze({ scope: entry.scope, publicTitle: entry.publicTitle, summary: entry.summary });
+    return Object.freeze({
+      scope: entry.scope,
+      publicTitle: entry.publicTitle,
+      summary: entry.summary,
+    });
   });
   return Object.freeze({
     revision: value.revision,

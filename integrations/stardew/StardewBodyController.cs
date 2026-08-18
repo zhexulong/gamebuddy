@@ -201,5 +201,5 @@ internal sealed class StardewBodyController
         return deltaX + deltaY == 1;
     }
 
-    private static string FormatTile(Vector2 tile) => $"{tile.X:0.##},{tile.Y:0.##}";
+    private static string FormatTile(Vector2 tile) => $"{tile.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)},{tile.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}";
 }

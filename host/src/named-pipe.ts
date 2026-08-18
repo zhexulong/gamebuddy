@@ -32,6 +32,12 @@ export class NamedPipeTransport {
     return !this.#closed && this.#socket?.destroyed === false;
   }
 
+  /** Content-free signal that the underlying socket delivered an inbound chunk. */
+  public onData(listener: () => void): () => void {
+    this.#events.on("data", listener);
+    return () => this.#events.off("data", listener);
+  }
+
   public onMessage(listener: (json: string) => void): () => void {
     this.#events.on("message", listener);
     return () => this.#events.off("message", listener);
@@ -60,6 +66,7 @@ export class NamedPipeTransport {
   }
 
   private receive(chunk: Buffer): void {
+    this.#events.emit("data");
     this.#buffer = Buffer.concat([this.#buffer, chunk]);
     while (this.#buffer.byteLength >= 4) {
       const length = this.#buffer.readInt32LE(0);

@@ -49,12 +49,12 @@ test(
         const manifestPath = chatManifest(root);
         const manifest = await loadHostDeploymentManifest(manifestPath);
         const baseContent = createManifestDerivedInitialChatExactContentPort(manifest);
-        let ensureCalls = 0;
+        let createCalls = 0;
         let resumeCalls = 0;
         const content: InitialChatExactContentPort = Object.freeze({
-          async ensureExactContent(binding, request) {
-            ensureCalls++;
-            return baseContent.ensureExactContent(binding, request);
+          async createExplicit(request) {
+            createCalls++;
+            return baseContent.createExplicit(request);
           },
           async resumeExact(threadId, companionId, continuityId, surfaceId) {
             resumeCalls++;
@@ -69,64 +69,39 @@ test(
         } else {
           const registered = await fresh.registerInitialChat();
           assert.equal(registered.phase, "chat_registered");
-          if (phase === "chat_registered") {
-            assert.ok(registered.chatThreadId && registered.chatSurfaceSessionId);
-            // Materialize Tavern content, but deliberately stop before the
-            // semantic verify step. Reopen must read this exact durable content
-            // rather than treating a registered row as sufficient evidence.
-            await content.ensureExactContent(
-              {
-                chatThreadId: registered.chatThreadId,
-                chatSurfaceSessionId: registered.chatSurfaceSessionId,
-                companionId: principal.companionId,
-                continuityId: principal.continuityId,
-              },
-              {
-                chatThreadId: registered.chatThreadId,
-                chatSurfaceSessionId: registered.chatSurfaceSessionId,
-                companionId: principal.companionId,
-                continuityId: principal.continuityId,
-                opening: "blank",
-              },
-            );
-            await fresh.close();
-          } else {
-            assert.ok(registered.chatThreadId && registered.chatSurfaceSessionId);
-            const exact = await content.ensureExactContent(
-              {
-                chatThreadId: registered.chatThreadId,
-                chatSurfaceSessionId: registered.chatSurfaceSessionId,
-                companionId: principal.companionId,
-                continuityId: principal.continuityId,
-              },
-              {
-                chatThreadId: registered.chatThreadId,
-                chatSurfaceSessionId: registered.chatSurfaceSessionId,
-                companionId: principal.companionId,
-                continuityId: principal.continuityId,
-                opening: "blank",
-              },
-            );
+          assert.ok(registered.chatThreadId && registered.chatSurfaceSessionId);
+          const exact = await content.createExplicit({
+            chatThreadId: registered.chatThreadId,
+            chatSurfaceSessionId: registered.chatSurfaceSessionId,
+            companionId: principal.companionId,
+            continuityId: principal.continuityId,
+            opening: "blank",
+          });
+          if (phase === "content_verified") {
             const verified = await fresh.verifyInitialChat(exact);
             assert.equal(verified.phase, "content_verified");
-            await fresh.close();
           }
+          await fresh.close();
         }
 
         const reopened = await createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest(manifest);
         try {
-          const selected = await reopened.resumeInitialChatWithContent(content);
-          assert.equal(selected?.phase, "selected");
-          assert.ok(selected?.chatThreadId && selected.chatSurfaceSessionId && selected.receipt);
-          // Setup materializes content before the intentional close for the
-          // later two phases. Recovery create-or-reads only chat_registered;
-          // content_verified must use the exact durable-read port instead.
+          if (phase === "claimed_empty") {
+            await assert.rejects(
+              reopened.resumeInitialChatWithContent(content),
+              /initial_chat_resume_requires_explicit_creation/,
+            );
+          } else {
+            const selected = await reopened.resumeInitialChatWithContent(content);
+            assert.equal(selected?.phase, "selected");
+            assert.ok(selected?.chatThreadId && selected.chatSurfaceSessionId && selected.receipt);
+          }
           const expectedCalls = {
-            claimed_empty: { ensure: 1, resume: 0 },
-            chat_registered: { ensure: 2, resume: 0 },
-            content_verified: { ensure: 1, resume: 1 },
+            claimed_empty: { create: 0, resume: 0 },
+            chat_registered: { create: 1, resume: 1 },
+            content_verified: { create: 1, resume: 1 },
           } as const;
-          assert.equal(ensureCalls, expectedCalls[phase].ensure);
+          assert.equal(createCalls, expectedCalls[phase].create);
           assert.equal(resumeCalls, expectedCalls[phase].resume);
         } finally {
           await reopened.close();
@@ -153,21 +128,13 @@ test(
         await fresh.startInitialChat();
         registered = await fresh.registerInitialChat();
         assert.ok(registered.chatThreadId && registered.chatSurfaceSessionId);
-        const exact = await content.ensureExactContent(
-          {
-            chatThreadId: registered.chatThreadId,
-            chatSurfaceSessionId: registered.chatSurfaceSessionId,
-            companionId: principal.companionId,
-            continuityId: principal.continuityId,
-          },
-          {
-            chatThreadId: registered.chatThreadId,
-            chatSurfaceSessionId: registered.chatSurfaceSessionId,
-            companionId: principal.companionId,
-            continuityId: principal.continuityId,
-            opening: "blank",
-          },
-        );
+        const exact = await content.createExplicit({
+          chatThreadId: registered.chatThreadId,
+          chatSurfaceSessionId: registered.chatSurfaceSessionId,
+          companionId: principal.companionId,
+          continuityId: principal.continuityId,
+          opening: "blank",
+        });
         assert.equal((await fresh.verifyInitialChat(exact)).phase, "content_verified");
       } finally {
         await fresh.close();

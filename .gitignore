@@ -2,6 +2,8 @@
 /design/
 /ref/
 /docs/
+legacy/
+**/legacy/
 
 # Local Pi/subagent state and scratch analysis outputs
 /.pi/
@@ -36,8 +38,19 @@ dist/
 # immutable generation via host/scripts/production-artifact.mjs; tests own
 # host/dist-test only through host/.test-artifact.lock.
 host/dist-test/
+host/.dist-production-emitted/
 host/.memory-live-check/
+dialogue-web/.build-staging/
+# Ephemeral isolated Host/Pi runtime roots; may contain local SQLite/auth/session state.
+host/contexts/
 dist-portfolio/
+# Test and verification evidence outputs are local by default; committed fixtures
+# and source-realization dossiers live under fixtures/ and tools/ instead.
+/artifacts/
+# Contract executables and package builds are reconstructed locally.
+/integrations/stardew/tests/bin/
+/integrations/stardew/tests/obj/
+/packages/voice-protocol/dist/
 coverage/
 *.tsbuildinfo
 

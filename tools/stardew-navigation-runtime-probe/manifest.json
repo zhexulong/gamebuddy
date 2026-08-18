@@ -1,0 +1,10 @@
+{
+  "Name": "GameBuddy Navigation Runtime Probe",
+  "Author": "GameBuddy contributors",
+  "Version": "0.0.1",
+  "Description": "Probe-only, one-shot, read-only Stardew navigation attestation.",
+  "UniqueID": "zhexulong.GameBuddy.NavigationRuntimeProbe",
+  "EntryDll": "StardewNavigationRuntimeProbe.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}

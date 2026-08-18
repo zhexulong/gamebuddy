@@ -17,6 +17,7 @@ const messages = [
     greetingSource: {
       greetingSetId: "greetings",
       sourceRevision: 1,
+      canonicalHash: "a".repeat(64),
       variantId: "first",
       profileRevision: 1,
       scenarioRevision: null,

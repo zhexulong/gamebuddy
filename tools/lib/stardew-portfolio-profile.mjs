@@ -18,7 +18,7 @@ const CONTAMINATION_FILE_NAMES = new Map([
   ["stardew-fixture-readiness.json", "portfolio_contaminated_fixture_readiness"],
 ]);
 const DEFAULT_PROCESS_NAMES = Object.freeze(["StardewModdingAPI.exe", "Stardew Valley.exe", "StardewValley.exe"]);
-const PORTFOLIO_EXISTING_SAVE_ACTIONS = Object.freeze(["select_mine_elevator_floor"]);
+const PORTFOLIO_EXISTING_SAVE_ACTIONS = Object.freeze(["use_mine_ladder", "select_mine_elevator_floor"]);
 const PORTFOLIO_INNER_CONFIG_KEYS = Object.freeze([
   "Enable",
   "Topology",
@@ -84,11 +84,10 @@ export async function checkPortfolioPrerequisites(options = {}) {
   if (inspection.dataRootInspection.state !== "clean") blockers.push(...inspection.dataRootInspection.reasons);
   const game = await inspectTargetGame(options.gamePath);
   if (game.state !== "ready") blockers.push(...game.reasons);
-  // P0a intentionally has no source-backed save/start-manifest inspector or
-  // version/hash attestation. A caller that asks for a real local readiness
-  // verdict must remain BLOCKED until P0b supplies those gates.
+  // P0b remains an independent diagnostic pipeline. It is not an
+  // action-first M8 admission gate.
   if (options.requireP0bAttestation === true)
-    blockers.push("portfolio_p0b_start_manifest_inspection_required", "portfolio_p0b_target_hash_attestation_required");
+    blockers.push("portfolio_p0b_attestation_gate_retired");
   if (blockers.length === 0)
     return Object.freeze({
       state: "PASS",

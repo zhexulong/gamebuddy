@@ -18,18 +18,34 @@ function methodBody(text, methodName) {
 
 test("M8 elevator correlation is deterministic and bound to fresh semantic facts", async () => {
   const adapter = await source(adapterPath);
-  assert.doesNotMatch(adapter, /Guid\.NewGuid|Random(?:NumberGenerator)?/,
-    "M8 correlation must not use random generation");
-  assert.match(adapter, /SHA256\.HashData\(Encoding\.UTF8\.GetBytes\(canonicalFacts\)\)/,
-    "M8 correlation must be a SHA-256 digest of canonical facts");
+  assert.doesNotMatch(
+    adapter,
+    /Guid\.NewGuid|Random(?:NumberGenerator)?/,
+    "M8 correlation must not use random generation",
+  );
+  assert.match(
+    adapter,
+    /SHA256\.HashData\(Encoding\.UTF8\.GetBytes\(canonicalFacts\)\)/,
+    "M8 correlation must be a SHA-256 digest of canonical facts",
+  );
   for (const fact of [
-    "requestId=", "traceId=", "scope.integrationId=", "scope.topology=",
-    "scope.saveId=", "scope.worldId=", "scope.localPlayerId=", "scope.companionId=",
-    "scope.bindingGeneration=", "scope.bindingHash=", "revision=",
-    "selectedCheckpoint=", "currentFloor=", "lowestMineLevel=",
-  ]) assert.ok(adapter.includes(fact), `M8 correlation must bind ${fact}`);
-  assert.match(adapter, /Game1\.enterMine\(context\.SelectedCheckpoint\)/,
-    "M8 must retain the native checkpoint edge");
+    "requestId=",
+    "traceId=",
+    "scope.integrationId=",
+    "scope.topology=",
+    "scope.saveId=",
+    "scope.worldId=",
+    "scope.localPlayerId=",
+    "scope.companionId=",
+    "scope.bindingGeneration=",
+    "scope.bindingHash=",
+    "revision=",
+    "selectedCheckpoint=",
+    "currentFloor=",
+    "lowestMineLevel=",
+  ])
+    assert.ok(adapter.includes(fact), `M8 correlation must bind ${fact}`);
+  assert.match(adapter, /Game1\.enterMine\(context\.SelectedCheckpoint\)/, "M8 must retain the native checkpoint edge");
 
   const integration = await source(integrationPath);
   const handler = methodBody(integration, "HandlePortfolioMineElevator");

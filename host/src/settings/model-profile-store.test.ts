@@ -100,6 +100,33 @@ test("invalid profile updates and persisted profiles are rejected", async () => 
       }),
     );
     await assert.rejects(store.read("chat"), /invalid_model_profile_store/);
+
+    await writeFile(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high", active: true },
+        game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+      }),
+    );
+    await assert.rejects(store.read("chat"), /invalid_model_profile_store/);
+
+    await writeFile(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        root: "/legacy/root",
+        chat: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+        game: { revision: 0, modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+      }),
+    );
+    await assert.rejects(store.read("chat"), /invalid_model_profile_store/);
+
+    await writeFile(
+      path,
+      '{"schemaVersion":1,"chat":{"revision":0,"modelId":"deepseek-v4-flash","thinkingLevel":"high"},"game":{"revision":0,"modelId":"deepseek-v4-flash","thinkingLevel":"high"},"schema\\u0056ersion":1}',
+    );
+    await assert.rejects(store.read("chat"), /invalid_model_profile_store/);
   });
 });
 

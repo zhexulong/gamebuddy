@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
@@ -18,17 +19,6 @@ async function binding() {
   const root = await mkdtemp(join(tmpdir(), "chat-runtime-binding-"));
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
-  await writeFile(
-    join(root, "manifest.json"),
-    JSON.stringify({
-      schemaVersion: 2,
-      topology: "independent_chat_and_game_surfaces",
-      runtimeRoot,
-      principal,
-      bootstrapOperationId: "bootstrap_01",
-      authorityGeneration: 1,
-    }),
-  );
   return {
     root,
     runtime: createTestChatRuntimeBinding({
@@ -44,6 +34,39 @@ async function binding() {
     }),
   };
 }
+
+test("Chat binding construction has no path-based manifest loader and production composition supplies its manifest snapshot", async () => {
+  // The normal test artifact mirrors `src` as `dist-test`; keep this source
+  // seam check pinned to the production source rather than emitted output.
+  const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
+  const bindingSource = await readFile(
+    join(
+      sourceRoot,
+      "continuity-semantic-chat-runtime-binding",
+      "continuity-semantic-chat-runtime-binding.internal.ts",
+    ),
+    "utf8",
+  );
+  const publicSource = await readFile(
+    join(sourceRoot, "continuity-semantic-chat-runtime-binding", "continuity-semantic-chat-runtime-binding.ts"),
+    "utf8",
+  );
+  const coordinatorSource = await readFile(
+    join(
+      sourceRoot,
+      "continuity-semantic-production-coordinator",
+      "continuity-semantic-production-coordinator.internal.ts",
+    ),
+    "utf8",
+  );
+
+  assert.doesNotMatch(bindingSource, /loadHostDeploymentManifest|manifestPath/);
+  assert.match(bindingSource, /createChatRuntimeBinding\(manifest: HostDeploymentManifest\)/);
+  assert.match(publicSource, /createChatRuntimeBinding/);
+  assert.doesNotMatch(publicSource, /manifestPath/);
+  assert.match(coordinatorSource, /createChatRuntimeBinding\(manifest\)/);
+  assert.doesNotMatch(coordinatorSource, /createChatRuntimeBindingFromManifest/);
+});
 
 test("admits exactly one callback-owned Chat runtime reservation and exposes only minted prepare facts", async () => {
   const fixture = await binding();

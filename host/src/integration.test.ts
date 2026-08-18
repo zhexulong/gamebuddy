@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createDeterministicBridgePair } from "./bridge.js";
 import { CompanionIntegrationClient } from "./integration.js";
-import { newEnvelope, type BridgeMessage, type Scope } from "./protocol.js";
+import { newEnvelope, validateBridgeMessage, type BridgeMessage, type CancelRequestPayload, type Scope } from "./protocol.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const scope: Scope = {
@@ -25,6 +25,7 @@ function snapshot(revision = 3) {
     health: 100,
     actionable: true,
     capabilities: ["move_to_tile", "inspect_self"],
+    presentationLocale: "en-US",
     activeExecution: null,
   } as const;
 }
@@ -40,7 +41,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
         newEnvelope(
           "hello_ack",
           scope,
-          { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"] },
+          { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"], presentationLocale: "en-US" },
           message.correlationId,
           now,
         ),
@@ -89,7 +90,13 @@ test("integration client keeps the newest Mod snapshot when a delayed older snap
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
   const client = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
   modEndpoint.send(
-    newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: ["inspect_self"] }, "hello_01", now),
+    newEnvelope(
+      "hello_ack",
+      scope,
+      { sessionId: "session_01", capabilities: ["inspect_self"], presentationLocale: "en-US" },
+      "hello_01",
+      now,
+    ),
     now,
   );
   modEndpoint.send(newEnvelope("snapshot", scope, snapshot(8), "snapshot_new", now), now);
@@ -114,5 +121,67 @@ test("integration client fails closed before hello/snapshot and on disconnect", 
   assert.equal(client.state.connected, false);
   assert.equal(client.state.latestReasonCode, "bridge_lost");
   assert.equal(client.observe(now), "disconnected");
+  client.dispose();
+});
+
+test("integration client binds a typed cancel identity per request and validates it before sending", () => {
+  const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
+  const client = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
+  const cancelPayloads: CancelRequestPayload[] = [];
+  modEndpoint.onMessage((message) => {
+    if (message.type === "hello")
+      modEndpoint.send(
+        newEnvelope(
+          "hello_ack",
+          scope,
+          { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+          message.correlationId,
+          now,
+        ),
+        now,
+      );
+    if (message.type === "cancel_request") {
+      cancelPayloads.push(message.payload);
+      modEndpoint.send(
+        newEnvelope(
+          "execution_receipt",
+          scope,
+          {
+            executionId: message.payload.executionId,
+            requestId: message.payload.requestId,
+            state: "cancelled" as const,
+            reasonCode: "stop_requested",
+            revision: 4,
+            evidence: null,
+          },
+          message.correlationId,
+          now,
+        ),
+        now,
+      );
+    }
+  });
+
+  assert.equal(client.hello(token, now), null);
+  assert.equal(client.cancel("request_01", "execution_01", "stop_requested", now), null);
+  assert.equal(client.cancel("request_01", "execution_01", "stop_requested", now), null);
+  assert.equal(client.cancel("request_02", "execution_02", "stop_requested", now), null);
+  assert.equal(cancelPayloads.length, 3);
+  // One stable cancelId per request; cancelEpoch strictly increases per attempt.
+  assert.equal(cancelPayloads[0].cancelId, cancelPayloads[1].cancelId);
+  assert.equal(cancelPayloads[0].cancelEpoch, 1);
+  assert.equal(cancelPayloads[1].cancelEpoch, 2);
+  assert.notEqual(cancelPayloads[2].cancelId, cancelPayloads[0].cancelId);
+  assert.equal(cancelPayloads[2].cancelEpoch, 1);
+  // Every cancel envelope carries the full typed identity and passes the
+  // Host-side validator (the deterministic endpoint also rejects it on send).
+  for (const payload of cancelPayloads) {
+    assert.equal(
+      validateBridgeMessage(newEnvelope("cancel_request", scope, payload, undefined, now), scope, now),
+      null,
+    );
+    assert.match(payload.cancelId, /^[A-Za-z0-9_-]{1,128}$/);
+  }
+  assert.equal(client.state.latestReceipt?.state, "cancelled");
   client.dispose();
 });

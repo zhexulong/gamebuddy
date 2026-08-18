@@ -1152,10 +1152,13 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			// skips unanchored promotion.
 			const discardedLast = newCompartments.length < emittedCompartments.length;
 			const weakLookaheadFinalCompartment = forceKeepLastCompartmentForChunk;
-			// discard-last runs must also skip unanchored promotion: facts cannot be
-			// attributed to the persisted range, and a reworded re-emission next run
-			// would double-store.
-			const skipUnanchoredPromotion = discardedLast;
+			// Neither a discarded provisional tail nor an actual-final weak-lookahead
+			// tail has the durable source boundary required for promotion. The former
+			// will be re-derived; the latter is intentionally retained only so wrapup
+			// can preserve coverage. In both cases, facts/observations/primers must not
+			// become durable memory from an unanchored range.
+			const skipUnanchoredPromotion =
+				discardedLast || weakLookaheadFinalCompartment;
 			// `forceKeepLastCompartment` is a test-only terminal probe path.
 			// Unlike production's weak-lookahead preservation, it explicitly
 			// retains the final compartment as an anchored unit so the shared

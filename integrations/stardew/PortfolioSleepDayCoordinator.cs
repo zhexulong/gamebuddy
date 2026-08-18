@@ -11,6 +11,11 @@ internal sealed class PortfolioSleepDayCoordinator
     {
     }
 
+    internal bool HasActiveExecution
+    {
+        get { lock (this.gate) return this.active is not null; }
+    }
+
     // Compatibility shim for the not-yet-adapted session caller. It is deliberately
     // fail-closed: no valid scope can be inferred from a request.
     internal PortfolioSleepDayReceipt Begin(PortfolioSleepDayRequest request, long currentRevision)

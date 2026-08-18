@@ -1,66 +1,57 @@
-import { readFile } from "node:fs/promises";
-import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+import {
+  connectNativeLocalClient,
+  executeFresh,
+  observeFresh,
+  readNativeClientConfig,
+  summarizeReceipt,
+  summarizeSnapshot,
+  waitForFreshSnapshot,
+} from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const { LocalStardewBridgeClient } = await loadHostProductionModule("local-stardew-bridge.js");
+const ACTION = "equip_tool";
 
-function option(name) {
-  const index = process.argv.indexOf(name);
-  if (index < 0 || index + 1 >= process.argv.length) throw new Error(`missing_${name.slice(2)}`);
-  return process.argv[index + 1];
-}
+/** Execute the equip-tool contract against an already-connected bridge session. */
+export async function runEquipToolSmoke(client, config, { postconditionTimeoutMs = 5_000 } = {}) {
+  try {
+    const before = await observeFresh(client, { actionable: true });
+    if (!before.capabilities.includes(ACTION)) throw new Error("native_local_equip_tool_capability_missing");
+    const selected =
+      before.toolSlots?.find(
+        (entry) =>
+          Number.isInteger(entry.slot) &&
+          typeof entry.label === "string" &&
+          entry.label.length > 0 &&
+          entry.label !== before.currentTool,
+      ) ??
+      before.toolSlots?.find((entry) => Number.isInteger(entry.slot) && typeof entry.label === "string" && entry.label.length > 0);
+    if (!selected) throw new Error("no_live_eligible_tool_slot");
 
-const config = JSON.parse(await readFile(option("--client-config"), "utf8"));
-const required = ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"];
-if (required.some((key) => typeof config[key] !== "string" || config[key].length === 0))
-  throw new Error("invalid_client_config");
-const scope = {
-  integrationId: "stardew",
-  saveId: config.SaveId,
-  worldId: config.WorldId,
-  playerId: config.PlayerId,
-  companionId: config.CompanionId,
-};
-const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
-
-try {
-  const before = await client.observe();
-  if (!before.actionable || before.activeExecution != null)
-    throw new Error("native_local_equip_tool_player_not_actionable");
-  if (!before.capabilities.includes("equip_tool")) throw new Error("native_local_equip_tool_capability_missing");
-  const selected =
-    before.toolSlots?.find(
-      (entry) =>
-        Number.isInteger(entry.slot) &&
-        typeof entry.label === "string" &&
-        entry.label.length > 0 &&
-        entry.label !== before.currentTool,
-    ) ??
-    before.toolSlots?.find(
-      (entry) => Number.isInteger(entry.slot) && typeof entry.label === "string" && entry.label.length > 0,
-    );
-  if (!selected) throw new Error("no_live_eligible_tool_slot");
-  const selectedLabel = selected.label;
-  const receipt = await client.execute({
-    requestId: `native_local_equip_tool_${Date.now()}`,
-    idempotencyKey: `native_local_equip_tool_idem_${Date.now()}`,
-    action: "equip_tool",
-    args: { slot: selected.slot },
-    expectedRevision: before.revision,
-    deadlineMs: Date.now() + 30_000,
-  });
-  const evidence = parseEvidence(receipt.evidence);
-  const after = await client.observe();
-  const expectedTool = evidence.expected;
-  const passed =
-    receipt.state === "succeeded" &&
-    receipt.reasonCode === "tool_selected" &&
-    typeof expectedTool === "string" &&
-    expectedTool.length > 0 &&
-    expectedTool === selectedLabel &&
-    evidence.after === selectedLabel &&
-    after.currentTool === selectedLabel;
-  console.log(
-    JSON.stringify({
+    const requestId = `native_local_equip_tool_${Date.now()}`;
+    const receipt = await executeFresh(client, {
+      requestId,
+      idempotencyKey: `${requestId}_idem`,
+      action: ACTION,
+      args: { slot: selected.slot },
+      snapshot: before,
+      timeoutMs: 30_000,
+    });
+    const evidence = parseEvidence(receipt.evidence);
+    const after = await waitForFreshSnapshot(client, {
+      minRevision: receipt.revision,
+      timeoutMs: postconditionTimeoutMs,
+      requireActionable: true,
+      check: (snapshot) => typeof snapshot.currentTool === "string" && snapshot.currentTool.length > 0,
+    });
+    const expectedTool = evidence.expected;
+    const passed =
+      receipt.state === "succeeded" &&
+      receipt.reasonCode === "tool_selected" &&
+      typeof expectedTool === "string" &&
+      expectedTool.length > 0 &&
+      expectedTool === selected.label &&
+      evidence.after === selected.label &&
+      after.currentTool === selected.label;
+    return {
       state: passed ? "passed" : "blocked",
       reasonCode: passed ? "tool_selected" : receipt.reasonCode,
       selected: { slot: selected.slot, label: selected.label },
@@ -68,20 +59,26 @@ try {
       evidence,
       before: summarize(before),
       after: summarize(after),
-    }),
-  );
-  if (!passed) process.exitCode = 2;
-} catch (error) {
-  console.error(
-    JSON.stringify({
+    };
+  } catch (error) {
+    return {
       state: "blocked",
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
-      latestReceipt: summarizeReceipt(client.state.latestReceipt),
-    }),
-  );
-  process.exitCode = 2;
-} finally {
-  client.close();
+      latestReceipt: summarizeReceipt(client.state?.latestReceipt),
+    };
+  }
+}
+
+if (import.meta.main) {
+  const config = await readNativeClientConfig();
+  const session = await connectNativeLocalClient(config);
+  try {
+    const result = await runEquipToolSmoke(session.client, config);
+    console.log(JSON.stringify(result));
+    if (result.state !== "passed") process.exitCode = 2;
+  } finally {
+    session.close();
+  }
 }
 
 function parseEvidence(evidence) {
@@ -96,22 +93,11 @@ function parseEvidence(evidence) {
       .filter(Boolean),
   );
 }
+
 function summarize(snapshot) {
   return {
-    revision: snapshot.revision,
+    ...summarizeSnapshot(snapshot),
     currentTool: snapshot.currentTool ?? null,
     toolSlots: snapshot.toolSlots ?? [],
   };
-}
-function summarizeReceipt(receipt) {
-  return receipt
-    ? {
-        executionId: receipt.executionId,
-        requestId: receipt.requestId,
-        state: receipt.state,
-        reasonCode: receipt.reasonCode,
-        revision: receipt.revision,
-        evidence: receipt.evidence ?? null,
-      }
-    : null;
 }

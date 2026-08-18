@@ -60,6 +60,8 @@ export type Snapshot = Readonly<{
   currentTool?: string | null;
   inventorySlots?: number;
   activeExecution?: ActiveExecution | null;
+  /** Exact current Mod BCP-47 presentation locale; required on every Mod snapshot. */
+  presentationLocale: string;
   /** Live native warp targets; older Mod snapshots may omit this field. */
   warps?: readonly Readonly<{
     sourceX: number;
@@ -279,18 +281,6 @@ export type Snapshot = Readonly<{
     loadInputStack?: 5 | null;
     collectOutputReady?: boolean | null;
   }>[];
-  /** Nearby ordinary tree sources observed for read-only native shake discovery. */
-  treeShakeSourceTargets?: readonly Readonly<{
-    targetId: string;
-    location: string;
-    x: number;
-    y: number;
-    treeType: string;
-    growthStage: number;
-    health: number;
-    moss: boolean;
-    tapped: boolean;
-  }>[];
   /** Nearby live NPCs with an existing Farmhand friendship record; inspection is read-only. */
   npcRelationshipTargets?: readonly Readonly<{
     targetId: string;
@@ -366,15 +356,19 @@ export type ExecutionRequest = Readonly<{
     | "collect_animal_product"
     | "feed_animal"
     | "use_item"
-    | "tree_first_hit"
     | "chop_tree_source"
     | "break_rock_source"
     | "clear_hoedirt"
-    | "dig_artifact_spot"
-    | "inspect_self";
+    | "dig_artifact_spot";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
+}>;
+
+/** Read-only exact recovery identity for a dispatch which may have lost its first receipt. */
+export type ExecutionReceiptQuery = Readonly<{
+  requestId: string;
+  idempotencyKey: string;
 }>;
 
 export type ExecutionReceipt = Readonly<{
@@ -385,6 +379,32 @@ export type ExecutionReceipt = Readonly<{
   revision: number;
   evidence: Readonly<Record<string, unknown>> | null;
 }>;
+
+/**
+ * Typed cancel identity for one exact execution. The Mod rejects a missing,
+ * stale (older cancelEpoch), or mismatched (different cancelId/executionId)
+ * identity before its action-owned ledger converges, so a cancel can never
+ * settle a different execution than the one the Host bound.
+ */
+export type CancelRequestPayload = Readonly<{
+  requestId: string;
+  executionId: string;
+  cancelId: string;
+  cancelEpoch: number;
+  reasonCode: string;
+}>;
+
+export type CancelIdentity = Readonly<{ cancelId: string; cancelEpoch: number }>;
+
+/**
+ * Mint one stable cancelId per request and a strictly increasing cancelEpoch
+ * per distinct cancel attempt. Replays of the same attempt keep the same
+ * identity tuple; a new attempt raises only the epoch.
+ */
+export function nextCancelIdentity(previous: CancelIdentity | null): CancelIdentity {
+  if (previous === null) return { cancelId: randomUUID(), cancelEpoch: 1 };
+  return { cancelId: previous.cancelId, cancelEpoch: previous.cancelEpoch + 1 };
+}
 
 export type BodyTrace = Readonly<{
   category:
@@ -409,20 +429,76 @@ export type SemanticEvent = Readonly<{
     | "execution_state"
     | "connection_state"
     | "lifecycle"
+    | "player_input"
+    | "stop_all"
+    | "body_settled"
     | BodyTrace["category"];
   revision: number;
   activeExecution: ActiveExecution | null;
   reasonCode: string;
   bodyTrace?: BodyTrace;
+  /** Mod-authenticated Host-human chat fact, never model-generated text. */
+  playerControl?: Readonly<{
+    kind: "player_input" | "stop_all";
+    controlId: string;
+    sourceEventId: string;
+    text?: string;
+    locale: string;
+    issuerPlayerId: string;
+  }>;
+  /** Mod/game-thread observation after a typed stop control; no Host inference. */
+  stopObservation?: Readonly<{
+    kind: "body_settled";
+    stopId: string;
+    sourceEventId: string;
+    epoch: number;
+  }>;
+}>;
+
+export type CompanionPresentationRequest = Readonly<{
+  expressionId: string;
+  sourceEventId: string;
+  text: string;
+  locale: string;
+  expectedRevision: number;
+  presentationEpoch: number;
+}>;
+
+export type SystemNoticeRequest = Readonly<{
+  noticeId: string;
+  key: "system.stop.active_turn_cancelled" | "system.stop.queued_turn_cancelled" | "system.stop.no_active_turn";
+  text: string;
+  locale: string;
+}>;
+
+export type SystemNoticeReceipt = Readonly<{
+  noticeId: string;
+  revision: number;
+}>;
+
+/** Host acknowledgement only after its registered listener has synchronously received a native player-control fact. */
+export type PlayerControlReceipt = Readonly<{
+  controlId: string;
+  sourceEventId: string;
+  status: "accepted";
 }>;
 
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
-  | Envelope<"hello_ack", Readonly<{ sessionId: string; capabilities: readonly string[] }>>
+  | Envelope<"hello_ack", Readonly<{ sessionId: string; capabilities: readonly string[]; presentationLocale: string }>>
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"snapshot", Snapshot>
   | Envelope<"execution_request", ExecutionRequest>
-  | Envelope<"cancel_request", Readonly<{ requestId: string; executionId: string; reasonCode: string }>>
+  | Envelope<"execution_receipt_query", ExecutionReceiptQuery>
+  | Envelope<"cancel_request", CancelRequestPayload>
+  | Envelope<"companion_presentation_request", CompanionPresentationRequest>
+  | Envelope<"system_notice_request", SystemNoticeRequest>
+  | Envelope<"system_notice_receipt", SystemNoticeReceipt>
+  | Envelope<
+      "companion_presentation_receipt",
+      Readonly<{ expressionId: string; revision: number; presentationEpoch: number }>
+    >
+  | Envelope<"player_control_receipt", PlayerControlReceipt>
   | Envelope<"execution_receipt", ExecutionReceipt>
   | Envelope<"error", Readonly<{ reasonCode: string }>>
   | Envelope<"semantic_event", SemanticEvent>
@@ -434,12 +510,60 @@ export const BRIDGE_MESSAGE_TYPES = [
   "observe_request",
   "snapshot",
   "execution_request",
+  "execution_receipt_query",
   "cancel_request",
+  "companion_presentation_request",
+  "system_notice_request",
+  "system_notice_receipt",
+  "companion_presentation_receipt",
+  "player_control_receipt",
   "execution_receipt",
   "error",
   "semantic_event",
   "lifecycle",
 ] as const;
+
+const SNAPSHOT_KEYS = [
+  "revision", "location", "tile", "stamina", "health", "currentTool", "inventorySlots", "actionable", "capabilities",
+  "presentationLocale", "activeExecution", "warps", "doorTargets", "soilTiles", "toolSlots", "wateringCanFacts",
+  "refillWateringCanTargets", "forageTargets", "itemTargets", "cropTargets", "harvestTargets", "seedTargets",
+  "fertilizerTargets", "woodFenceTargets", "woodFenceResultTargets", "crabPotTargets", "crabPotResultTargets",
+  "baitCrabPotTargets", "baitCrabPotResultTargets", "debrisTargets", "rockSourceTargets", "clearHoeDirtTargets",
+  "artifactSpotTargets", "artifactSpotResultTargets", "artifactSpotFarmSourceCount", "machineTargets",
+  "treeChopSourceTargets", "treeChopResultTargets", "npcRelationshipTargets", "petTargets", "animalProductTargets",
+  "feedTroughTargets", "inventoryItemFacts", "foodTargets",
+] as const;
+
+const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"], readonly string[]>> = {
+  move_to_tile: ["x", "y"],
+  equip_tool: ["slot"],
+  travel: ["x", "y"],
+  enter_exit: ["x", "y"],
+  till_soil: ["x", "y"],
+  pickup_forage: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  pickup_item: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  water_crop: ["x", "y", "expectedTargetId"],
+  refill_watering_can: ["slot", "x", "y", "expectedTargetId"],
+  harvest_crop: ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  plant_seed: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  fertilize_tile: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  place_wood_fence: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  place_crab_pot: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  bait_crab_pot: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  clear_debris: ["slot", "x", "y", "expectedTargetId"],
+  machine_inspect: ["x", "y", "expectedTargetId"],
+  machine_load: ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+  machine_collect_output: ["x", "y", "expectedTargetId"],
+  npc_relationship: ["x", "y", "expectedTargetId"],
+  pet_animal: ["x", "y", "expectedTargetId"],
+  collect_animal_product: ["slot", "x", "y", "expectedTargetId"],
+  feed_animal: ["slot", "x", "y", "expectedTargetId"],
+  use_item: ["slot", "expectedQualifiedItemId"],
+  chop_tree_source: ["slot", "x", "y", "expectedTargetId"],
+  break_rock_source: ["slot", "x", "y", "expectedTargetId"],
+  clear_hoedirt: ["slot", "x", "y", "expectedTargetId"],
+  dig_artifact_spot: ["slot", "x", "y", "expectedTargetId"],
+};
 
 export function newEnvelope<TType extends BridgeMessage["type"], TPayload>(
   type: TType,
@@ -467,13 +591,14 @@ export function validateScope(expected: Scope, actual: Scope): string | null {
 }
 
 export function validateEnvelope(value: unknown, expectedScope: Scope, nowMs = Date.now()): string | null {
-  if (!isRecord(value)) return "invalid_envelope";
+  if (!isRecord(value) || !hasExactKeys(value, ["protocolVersion", "messageId", "correlationId", "timestampMs", "scope", "type", "payload"]))
+    return "invalid_envelope";
   if (value.protocolVersion !== PROTOCOL_VERSION) return "unsupported_protocol_version";
   if (typeof value.messageId !== "string" || !isOpaqueId(value.messageId)) return "invalid_message_id";
   if (typeof value.correlationId !== "string" || !isOpaqueId(value.correlationId)) return "invalid_correlation_id";
   if (
     typeof value.timestampMs !== "number" ||
-    !Number.isFinite(value.timestampMs) ||
+    !Number.isSafeInteger(value.timestampMs) ||
     Math.abs(nowMs - value.timestampMs) > 5 * 60_000
   )
     return "stale_or_invalid_timestamp";
@@ -501,27 +626,99 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
   const payload = message.payload as Record<string, unknown>;
   switch (message.type) {
     case "hello":
-      return validToken(payload.token) ? null : "invalid_hello_token";
+      return hasExactKeys(payload, ["token"]) && validToken(payload.token) ? null : "invalid_hello_token";
     case "hello_ack":
-      return isOpaqueId(payload.sessionId) && isStringArray(payload.capabilities) ? null : "invalid_hello_ack";
+      return hasExactKeys(payload, ["sessionId", "capabilities", "presentationLocale"]) &&
+        isOpaqueId(payload.sessionId) &&
+        isStringArray(payload.capabilities) &&
+        isBcp47Locale(payload.presentationLocale)
+        ? null
+        : "invalid_hello_ack";
     case "observe_request":
-      return Object.keys(payload).length === 0 ? null : "invalid_observe_request";
+      return hasExactKeys(payload, []) ? null : "invalid_observe_request";
     case "snapshot":
       return validateSnapshot(payload);
     case "execution_request":
       return validateExecutionRequestEnvelope(payload);
-    case "cancel_request":
-      return isOpaqueId(payload.requestId) && isOpaqueId(payload.executionId) && isReasonCode(payload.reasonCode)
+    case "execution_receipt_query":
+      return hasExactKeys(payload, ["requestId", "idempotencyKey"]) &&
+        isOpaqueId(payload.requestId) && isOpaqueId(payload.idempotencyKey)
+        ? null
+        : "invalid_execution_receipt_query";
+    case "cancel_request": {
+      const cancelEpoch = payload.cancelEpoch;
+      return hasExactKeys(payload, ["requestId", "executionId", "cancelId", "cancelEpoch", "reasonCode"]) &&
+        isOpaqueId(payload.requestId) &&
+        isOpaqueId(payload.executionId) &&
+        isOpaqueId(payload.cancelId) &&
+        Number.isSafeInteger(cancelEpoch) &&
+        (cancelEpoch as number) >= 1 &&
+        isReasonCode(payload.reasonCode)
         ? null
         : "invalid_cancel_request";
+    }
+    case "companion_presentation_request": {
+      const expectedRevision = payload.expectedRevision;
+      const presentationEpoch = payload.presentationEpoch;
+      if (
+        typeof expectedRevision !== "number" ||
+        !Number.isSafeInteger(expectedRevision) ||
+        expectedRevision < 0 ||
+        typeof presentationEpoch !== "number" ||
+        !Number.isSafeInteger(presentationEpoch) ||
+        presentationEpoch < 0
+      )
+        return "invalid_companion_presentation_request";
+      return hasExactKeys(payload, ["expressionId", "sourceEventId", "text", "locale", "expectedRevision", "presentationEpoch"]) &&
+        isOpaqueId(payload.expressionId) &&
+        isOpaqueId(payload.sourceEventId) &&
+        typeof payload.text === "string" &&
+        payload.text.trim().length > 0 &&
+        payload.text.length <= 4_000 &&
+        isBcp47Locale(payload.locale)
+        ? null
+        : "invalid_companion_presentation_request";
+    }
+    case "system_notice_request":
+      return hasExactKeys(payload, ["noticeId", "key", "text", "locale"]) &&
+        isOpaqueId(payload.noticeId) &&
+        (payload.key === "system.stop.active_turn_cancelled" ||
+          payload.key === "system.stop.queued_turn_cancelled" ||
+          payload.key === "system.stop.no_active_turn") &&
+        typeof payload.text === "string" &&
+        payload.text.trim().length > 0 &&
+        payload.text.length <= 256 &&
+        isBcp47Locale(payload.locale)
+        ? null
+        : "invalid_system_notice_request";
+    case "system_notice_receipt":
+      return hasExactKeys(payload, ["noticeId", "revision"]) &&
+        isOpaqueId(payload.noticeId) && Number.isSafeInteger(payload.revision) && (payload.revision as number) >= 0
+        ? null
+        : "invalid_system_notice_receipt";
+    case "companion_presentation_receipt": {
+      const presentationEpoch = payload.presentationEpoch;
+      if (typeof presentationEpoch !== "number" || !Number.isSafeInteger(presentationEpoch) || presentationEpoch < 0)
+        return "invalid_companion_presentation_receipt";
+      return hasExactKeys(payload, ["expressionId", "revision", "presentationEpoch"]) &&
+        isOpaqueId(payload.expressionId) && Number.isSafeInteger(payload.revision)
+        ? null
+        : "invalid_companion_presentation_receipt";
+    }
+    case "player_control_receipt":
+      return hasExactKeys(payload, ["controlId", "sourceEventId", "status"]) &&
+        isOpaqueId(payload.controlId) && isOpaqueId(payload.sourceEventId) && payload.status === "accepted"
+        ? null
+        : "invalid_player_control_receipt";
     case "execution_receipt":
       return validateReceipt(payload);
     case "error":
-      return isReasonCode(payload.reasonCode) ? null : "invalid_error";
+      return hasExactKeys(payload, ["reasonCode"]) && isReasonCode(payload.reasonCode) ? null : "invalid_error";
     case "semantic_event":
       return validateSemanticEvent(payload);
     case "lifecycle":
-      return (payload.state === "connected" ||
+      return hasExactKeys(payload, ["state", "reasonCode"]) &&
+        (payload.state === "connected" ||
         payload.state === "disconnected" ||
         payload.state === "world_unavailable") &&
         isReasonCode(payload.reasonCode)
@@ -531,7 +728,8 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
 }
 
 export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
-  if (!isRecord(value)) return "invalid_request";
+  if (!isRecord(value) || !hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]))
+    return "invalid_request";
   if (!isOpaqueId(value.requestId) || !isOpaqueId(value.idempotencyKey)) return "invalid_request_id";
   if (
     value.action !== "move_to_tile" &&
@@ -558,15 +756,15 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "collect_animal_product" &&
     value.action !== "feed_animal" &&
     value.action !== "use_item" &&
-    value.action !== "tree_first_hit" &&
     value.action !== "chop_tree_source" &&
     value.action !== "break_rock_source" &&
     value.action !== "clear_hoedirt" &&
-    value.action !== "dig_artifact_spot" &&
-    value.action !== "inspect_self"
+    value.action !== "dig_artifact_spot"
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
+  if (!hasExactKeys(value.args, EXECUTION_ACTION_ARGUMENT_KEYS[value.action as ExecutionRequest["action"]]))
+    return "invalid_args";
   if (!Number.isSafeInteger(value.expectedRevision) || value.expectedRevision !== snapshot.revision)
     return "stale_snapshot";
   if (
@@ -576,7 +774,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.deadlineMs > nowMs + 60_000
   )
     return "invalid_deadline";
-  if (!snapshot.actionable && value.action !== "inspect_self") return "player_not_actionable";
+  if (!snapshot.actionable) return "player_not_actionable";
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_target_tile";
@@ -641,6 +839,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       return "invalid_harvest_target";
   } else if (value.action === "plant_seed") {
     if (
+      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -653,6 +852,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       return "invalid_seed_target";
   } else if (value.action === "fertilize_tile") {
     if (
+      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
@@ -784,16 +984,6 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_clear_hoedirt_target";
-  } else if (value.action === "tree_first_hit") {
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_tree_first_hit_target";
   } else if (value.action === "chop_tree_source") {
     if (
       !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
@@ -836,6 +1026,7 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   if (!isFiniteNumber(value.stamina)) return "invalid_snapshot:stamina";
   if (!isFiniteNumber(value.health)) return "invalid_snapshot:health";
   if (typeof value.actionable !== "boolean") return "invalid_snapshot:actionable";
+  if (!isBcp47Locale(value.presentationLocale)) return "invalid_snapshot:presentationLocale";
   if (value.currentTool !== undefined && value.currentTool !== null && typeof value.currentTool !== "string")
     return "invalid_snapshot:currentTool";
   if (value.inventorySlots !== undefined && !Number.isSafeInteger(value.inventorySlots))
@@ -975,13 +1166,6 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:treeChopResultTargets";
   if (
-    value.treeShakeSourceTargets !== undefined &&
-    (!Array.isArray(value.treeShakeSourceTargets) ||
-      value.treeShakeSourceTargets.length > 64 ||
-      !value.treeShakeSourceTargets.every(isTreeShakeSourceTargetFact))
-  )
-    return "invalid_snapshot:treeShakeSourceTargets";
-  if (
     value.npcRelationshipTargets !== undefined &&
     (!Array.isArray(value.npcRelationshipTargets) ||
       value.npcRelationshipTargets.length > 64 ||
@@ -1030,9 +1214,11 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
 }
 
 function validateSnapshot(value: Record<string, unknown>): string | null {
-  return Number.isSafeInteger(value.revision) &&
+  return hasOnlyKeys(value, SNAPSHOT_KEYS) &&
+    Number.isSafeInteger(value.revision) &&
     typeof value.location === "string" &&
     isRecord(value.tile) &&
+    hasExactKeys(value.tile, ["x", "y"]) &&
     isFiniteNumber(value.tile.x) &&
     isFiniteNumber(value.tile.y) &&
     isFiniteNumber(value.stamina) &&
@@ -1040,6 +1226,7 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
     typeof value.actionable === "boolean" &&
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&
     (value.inventorySlots === undefined || Number.isSafeInteger(value.inventorySlots)) &&
+    isBcp47Locale(value.presentationLocale) &&
     (value.warps === undefined ||
       (Array.isArray(value.warps) && value.warps.length <= 512 && value.warps.every(isWarp))) &&
     (value.doorTargets === undefined ||
@@ -1141,10 +1328,6 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
       (Array.isArray(value.treeChopResultTargets) &&
         value.treeChopResultTargets.length <= 64 &&
         value.treeChopResultTargets.every(isTreeChopResultTargetFact))) &&
-    (value.treeShakeSourceTargets === undefined ||
-      (Array.isArray(value.treeShakeSourceTargets) &&
-        value.treeShakeSourceTargets.length <= 64 &&
-        value.treeShakeSourceTargets.every(isTreeShakeSourceTargetFact))) &&
     (value.npcRelationshipTargets === undefined ||
       (Array.isArray(value.npcRelationshipTargets) &&
         value.npcRelationshipTargets.length <= 64 &&
@@ -1176,7 +1359,8 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
 }
 
 function validateExecutionRequestEnvelope(value: Record<string, unknown>): string | null {
-  return isOpaqueId(value.requestId) &&
+  return hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]) &&
+    isOpaqueId(value.requestId) &&
     isOpaqueId(value.idempotencyKey) &&
     (value.action === "move_to_tile" ||
       value.action === "equip_tool" ||
@@ -1192,6 +1376,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "fertilize_tile" ||
       value.action === "place_wood_fence" ||
       value.action === "place_crab_pot" ||
+      value.action === "bait_crab_pot" ||
       value.action === "clear_debris" ||
       value.action === "machine_inspect" ||
       value.action === "machine_load" ||
@@ -1201,13 +1386,12 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "collect_animal_product" ||
       value.action === "feed_animal" ||
       value.action === "use_item" ||
-      value.action === "tree_first_hit" ||
       value.action === "chop_tree_source" ||
       value.action === "break_rock_source" ||
       value.action === "clear_hoedirt" ||
-      value.action === "dig_artifact_spot" ||
-      value.action === "inspect_self") &&
+      value.action === "dig_artifact_spot") &&
     isRecord(value.args) &&
+    hasExactKeys(value.args, EXECUTION_ACTION_ARGUMENT_KEYS[value.action as ExecutionRequest["action"]]) &&
     Number.isSafeInteger(value.expectedRevision) &&
     typeof value.deadlineMs === "number" &&
     Number.isFinite(value.deadlineMs)
@@ -1216,7 +1400,8 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
-  return isOpaqueId(value.executionId) &&
+  return hasExactKeys(value, ["executionId", "requestId", "state", "reasonCode", "revision", "evidence"]) &&
+    isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
     typeof value.state === "string" &&
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
@@ -1229,53 +1414,107 @@ function validateReceipt(value: Record<string, unknown>): string | null {
 
 function validateSemanticEvent(value: Record<string, unknown>): string | null {
   const bodyTraceKind = isBodyTraceCategory(value.kind);
-  return (value.kind === "snapshot_changed" ||
-    value.kind === "execution_state" ||
-    value.kind === "connection_state" ||
-    value.kind === "lifecycle" ||
-    bodyTraceKind) &&
+  const playerControlKind = value.kind === "player_input" || value.kind === "stop_all";
+  const stopObservationKind = value.kind === "body_settled";
+  const expectedKeys = bodyTraceKind
+    ? ["kind", "revision", "activeExecution", "reasonCode", "bodyTrace"]
+    : playerControlKind
+      ? ["kind", "revision", "activeExecution", "reasonCode", "playerControl"]
+      : stopObservationKind
+        ? ["kind", "revision", "activeExecution", "reasonCode", "stopObservation"]
+        : ["kind", "revision", "activeExecution", "reasonCode"];
+  return hasExactKeys(value, expectedKeys) &&
+    (value.kind === "snapshot_changed" ||
+      value.kind === "execution_state" ||
+      value.kind === "connection_state" ||
+      value.kind === "lifecycle" ||
+      playerControlKind ||
+      stopObservationKind ||
+      bodyTraceKind) &&
     Number.isSafeInteger(value.revision) &&
     isReasonCode(value.reasonCode) &&
     (value.activeExecution === null ||
       (isRecord(value.activeExecution) && validateActiveExecution(value.activeExecution) === null)) &&
     (bodyTraceKind
       ? isRecord(value.bodyTrace) && validateBodyTrace(value.bodyTrace) === null && value.bodyTrace.category === value.kind
-      : value.bodyTrace === undefined)
+      : playerControlKind
+        ? isRecord(value.playerControl) && validatePlayerControl(value.playerControl) === null
+        : stopObservationKind
+          ? isRecord(value.stopObservation) && validateStopObservation(value.stopObservation) === null
+          : true)
     ? null
     : "invalid_semantic_event";
 }
 
+function validatePlayerControl(value: Record<string, unknown>): string | null {
+  const isPlayerInput = value.kind === "player_input";
+  const isStopAll = value.kind === "stop_all";
+  return hasExactKeys(
+    value,
+    isPlayerInput
+      ? ["kind", "controlId", "sourceEventId", "text", "locale", "issuerPlayerId"]
+      : ["kind", "controlId", "sourceEventId", "locale", "issuerPlayerId"],
+  ) &&
+    (isPlayerInput || isStopAll) &&
+    isOpaqueId(value.controlId) &&
+    isOpaqueId(value.sourceEventId) &&
+    isOpaqueId(value.issuerPlayerId) &&
+    typeof value.locale === "string" &&
+    /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(value.locale) &&
+    (isPlayerInput
+      ? typeof value.text === "string" && value.text.trim().length > 0 && value.text.length <= 4_000
+      : true)
+    ? null
+    : "invalid_player_control";
+}
+
+function validateStopObservation(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, ["kind", "stopId", "sourceEventId", "epoch"]) &&
+    value.kind === "body_settled" &&
+    isOpaqueId(value.stopId) &&
+    isOpaqueId(value.sourceEventId) &&
+    Number.isSafeInteger(value.epoch) &&
+    (value.epoch as number) >= 1
+    ? null
+    : "invalid_stop_observation";
+}
+
 function isBodyTraceCategory(value: unknown): value is BodyTrace["category"] {
-  return value === "execution_started" ||
+  return (
+    value === "execution_started" ||
     value === "route_progress" ||
     value === "execution_settled_succeeded" ||
     value === "execution_settled_cancelled" ||
     value === "execution_settled_failed" ||
     value === "execution_invalidated" ||
-    value === "body_idle";
+    value === "body_idle"
+  );
 }
 
 function validateBodyTrace(value: Record<string, unknown>): string | null {
-  return isBodyTraceCategory(value.category) &&
+  return hasOnlyKeys(value, ["category", "executionId", "requestId", "tick", "revision", "location", "tile"]) &&
+    isBodyTraceCategory(value.category) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
     typeof value.tick === "number" &&
     Number.isSafeInteger(value.tick) &&
     value.tick >= 0 &&
     Number.isSafeInteger(value.revision) &&
-    (value.location === undefined || (typeof value.location === "string" && value.location.length >= 1 && value.location.length <= 256)) &&
-    (value.tile === undefined || (isRecord(value.tile) && isTileCoordinate(value.tile.x) && isTileCoordinate(value.tile.y)))
+    (value.location === undefined ||
+      (typeof value.location === "string" && value.location.length >= 1 && value.location.length <= 256)) &&
+    (value.tile === undefined ||
+      (isRecord(value.tile) && hasExactKeys(value.tile, ["x", "y"]) && isTileCoordinate(value.tile.x) && isTileCoordinate(value.tile.y)))
     ? null
     : "invalid_body_trace";
 }
 
 function isSoilTile(value: unknown): boolean {
-  return isRecord(value) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+  return isRecord(value) && hasExactKeys(value, ["x", "y"]) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
 }
 
 function isToolSlotFact(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isRecord(value) && hasExactKeys(value, ["slot", "label"]) &&
     isToolSlot(value.slot) &&
     typeof value.label === "string" &&
     value.label.length > 0 &&
@@ -1285,7 +1524,7 @@ function isToolSlotFact(value: unknown): boolean {
 
 function isForageTargetFact(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isRecord(value) && hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -1301,7 +1540,7 @@ function isForageTargetFact(value: unknown): boolean {
 
 function isItemTargetFact(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isRecord(value) && hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -1317,7 +1556,7 @@ function isItemTargetFact(value: unknown): boolean {
 
 function isWateringCanFact(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isRecord(value) && hasExactKeys(value, ["slot", "qualifiedItemId", "label", "water", "max"]) &&
     isToolSlot(value.slot) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
@@ -1337,12 +1576,18 @@ function isWateringCanFact(value: unknown): boolean {
   );
 }
 function isRefillWateringCanTargetFact(value: unknown): boolean {
-  return isRecord(value) && isOpaqueId(value.targetId) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y"]) &&
+    isOpaqueId(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y)
+  );
 }
 
 function isCropTargetFact(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isRecord(value) && hasExactKeys(value, ["targetId", "x", "y", "cropId"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -1354,7 +1599,7 @@ function isCropTargetFact(value: unknown): boolean {
 
 function isHarvestTargetFact(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isRecord(value) && hasExactKeys(value, ["targetId", "x", "y", "cropId", "qualifiedHarvestItemId", "regrowsAfterHarvest"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -1370,7 +1615,7 @@ function isHarvestTargetFact(value: unknown): boolean {
 
 function isWoodFenceTargetFact(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isRecord(value) && hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -1384,7 +1629,7 @@ function isWoodFenceTargetFact(value: unknown): boolean {
 
 function isWoodFenceResultTargetFact(value: unknown): boolean {
   return (
-    isRecord(value) &&
+    isRecord(value) && hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "isFence", "isGate", "health", "maxHealth"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -1405,22 +1650,18 @@ function isWoodFenceResultTargetFact(value: unknown): boolean {
 function isCrabPotTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    isOpaqueId(value.targetId) &&
-    typeof value.location === "string" &&
-    value.location.length > 0 &&
-    value.location.length <= 256 &&
-    isToolSlot(value.slot) &&
-    isTileCoordinate(value.x) &&
-    isTileCoordinate(value.y) &&
-    value.qualifiedItemId === "(O)710"
+    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId"]) &&
+    isCrabPotCore(value)
   );
 }
 function isCrabPotResultTargetFact(value: unknown): boolean {
   return (
-    isCrabPotTargetFact(value) &&
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "ownerId", "offsetX", "offsetY", "overlayTiles"]) &&
+    isCrabPotCore(value) &&
     typeof value.ownerId === "number" &&
     Number.isSafeInteger(value.ownerId) &&
+    value.ownerId >= 0 &&
     isFiniteNumber(value.offsetX) &&
     isFiniteNumber(value.offsetY) &&
     Array.isArray(value.overlayTiles) &&
@@ -1428,6 +1669,7 @@ function isCrabPotResultTargetFact(value: unknown): boolean {
     value.overlayTiles.every(
       (tile) =>
         isRecord(tile) &&
+        hasExactKeys(tile, ["x", "y", "count"]) &&
         isTileCoordinate(tile.x) &&
         isTileCoordinate(tile.y) &&
         typeof tile.count === "number" &&
@@ -1438,17 +1680,31 @@ function isCrabPotResultTargetFact(value: unknown): boolean {
 }
 function isBaitCrabPotTargetFact(value: unknown): boolean {
   return (
-    isCrabPotTargetFact(value) &&
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "slot", "x", "y", "qualifiedItemId", "baitQualifiedItemId", "ownerId", "baitStack"]) &&
+    isCrabPotCore(value) &&
     value.baitQualifiedItemId === "(O)685" &&
     typeof value.ownerId === "string" &&
     /^[0-9]{1,20}$/.test(value.ownerId) &&
     value.baitStack === 1
   );
 }
+function isCrabPotCore(value: Record<string, unknown>): boolean {
+  return (
+    isOpaqueId(value.targetId) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isToolSlot(value.slot) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    value.qualifiedItemId === "(O)710"
+  );
+}
 function isSeedTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -1462,6 +1718,7 @@ function isSeedTargetFact(value: unknown): boolean {
 function isDebrisTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "parentSheetIndex", "toolKind", "requiredUpgradeLevel", "health"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -1530,6 +1787,7 @@ function isArtifactSpotResultTargetFact(value: unknown): boolean {
 function isRockSourceTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "qualifiedItemId", "health"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -1546,6 +1804,7 @@ function isRockSourceTargetFact(value: unknown): boolean {
 function isMachineTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasOnlyKeys(value, ["targetId", "x", "y", "qualifiedItemId", "readyForHarvest", "minutesUntilReady", "heldObjectQualifiedItemId", "lastInputQualifiedItemId", "loadInputSlot", "loadInputQualifiedItemId", "loadInputStack", "collectOutputReady"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -1581,6 +1840,7 @@ function isMachineTargetFact(value: unknown): boolean {
 function isTreeChopSourceTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "treeType", "growthStage", "health", "stump", "moss", "tapped"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -1604,6 +1864,7 @@ function isTreeChopSourceTargetFact(value: unknown): boolean {
 function isTreeChopResultTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "location", "x", "y", "treeType", "health", "stump", "moss", "tapped"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -1620,33 +1881,10 @@ function isTreeChopResultTargetFact(value: unknown): boolean {
   );
 }
 
-function isTreeShakeSourceTargetFact(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    isOpaqueId(value.targetId) &&
-    typeof value.location === "string" &&
-    value.location.length > 0 &&
-    value.location.length <= 256 &&
-    isTileCoordinate(value.x) &&
-    isTileCoordinate(value.y) &&
-    typeof value.treeType === "string" &&
-    value.treeType.length > 0 &&
-    value.treeType.length <= 32 &&
-    typeof value.growthStage === "number" &&
-    Number.isSafeInteger(value.growthStage) &&
-    value.growthStage >= 0 &&
-    value.growthStage <= 20 &&
-    isFiniteNumber(value.health) &&
-    value.health >= -100 &&
-    value.health <= 100 &&
-    typeof value.moss === "boolean" &&
-    typeof value.tapped === "boolean"
-  );
-}
-
 function isNpcRelationshipTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "npcName", "friendshipPoints", "friendshipStatus", "talkedToToday", "giftsToday", "giftsThisWeek"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -1675,6 +1913,7 @@ function isNpcRelationshipTargetFact(value: unknown): boolean {
 function isPetTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "petType", "friendship", "pettedToday"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -1692,6 +1931,7 @@ function isPetTargetFact(value: unknown): boolean {
 function isAnimalProductTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "animalType", "qualifiedProduceItemId", "toolKind", "produceStack"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -1712,6 +1952,7 @@ function isAnimalProductTargetFact(value: unknown): boolean {
 function isFeedTroughTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "hayStack"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -1726,6 +1967,7 @@ function isFeedTroughTargetFact(value: unknown): boolean {
 function isInventoryItemFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["slot", "qualifiedItemId", "stack"]) &&
     isToolSlot(value.slot) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
@@ -1740,6 +1982,7 @@ function isInventoryItemFact(value: unknown): boolean {
 function isFoodTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["slot", "qualifiedItemId", "stack", "edibility", "isDrink"]) &&
     isToolSlot(value.slot) &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
@@ -1757,7 +2000,7 @@ function isFoodTargetFact(value: unknown): boolean {
 }
 
 function isWarp(value: unknown): boolean {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value) || !hasExactKeys(value, ["sourceX", "sourceY", "targetLocation", "targetX", "targetY"])) return false;
   return (
     isTileCoordinate(value.sourceX) &&
     isTileCoordinate(value.sourceY) &&
@@ -1770,7 +2013,8 @@ function isWarp(value: unknown): boolean {
 }
 
 function validateActiveExecution(value: Record<string, unknown>): string | null {
-  return isOpaqueId(value.executionId) &&
+  return hasExactKeys(value, ["executionId", "requestId", "action", "state", "reasonCode", "evidence"]) &&
+    isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
     typeof value.action === "string" &&
     value.action.length <= 128 &&
@@ -1784,6 +2028,7 @@ function validateActiveExecution(value: Record<string, unknown>): string | null 
 function isScope(value: unknown): value is Scope {
   return (
     isRecord(value) &&
+    hasExactKeys(value, ["integrationId", "saveId", "worldId", "playerId", "companionId"]) &&
     ["integrationId", "saveId", "worldId", "playerId", "companionId"].every(
       (key) => typeof value[key] === "string" && isOpaqueId(value[key]),
     )
@@ -1795,8 +2040,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: readonly string[]): boolean {
   return Object.keys(value).every((key) => allowedKeys.includes(key));
 }
+function hasExactKeys(value: Record<string, unknown>, allowedKeys: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === allowedKeys.length && keys.every((key) => allowedKeys.includes(key));
+}
 function isOpaqueId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+function isBcp47Locale(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(value);
 }
 function isReasonCode(value: unknown): value is string {
   return typeof value === "string" && /^[a-z0-9_:-]{1,128}$/.test(value);

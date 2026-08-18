@@ -53,8 +53,14 @@ function assertIndependentGameSchema(db: DatabaseSync): void {
       expectedColumns,
     );
   }
-  assert.match(tableSql(db, "production_game_session"), /check\(statein\('pending','active','ended','recovery_required'\)\)/);
-  assert.match(tableSql(db, "production_game_lease"), /check\(statein\('owned','close_pending','recovery_required'\)\)/);
+  assert.match(
+    tableSql(db, "production_game_session"),
+    /check\(statein\('pending','active','ended','recovery_required'\)\)/,
+  );
+  assert.match(
+    tableSql(db, "production_game_lease"),
+    /check\(statein\('owned','close_pending','recovery_required'\)\)/,
+  );
   assert.match(
     tableSql(db, "production_game_intent"),
     /check\(statusin\('pending','terminal','aborted','recovery_required'\)\)/,

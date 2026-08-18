@@ -17,6 +17,7 @@ import {
   createGameRuntimeBinding,
   type GameRuntimeBinding,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ProductionGamePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
@@ -132,7 +133,7 @@ async function binding(): Promise<GameRuntimeBinding> {
     }),
   );
   return createGameRuntimeBinding({
-    manifestPath,
+    manifest: await loadHostDeploymentManifest(manifestPath),
     launcher: fixture(
       () => undefined,
       () => undefined,
@@ -230,8 +231,9 @@ test("materializes only an exact enter permit and mints a permit-exact Host rece
   }
 });
 
-test("tears down only for the exact same-session close permit and mints runtime_torn_down afterwards", async () => {
+test("tears down only for the exact same-session close permit, marks the neutral connection state, and mints runtime_torn_down afterwards", async () => {
   let disposed = 0;
+  let closingMarks = 0;
   let exactClose!: ProductionGamePermit;
   const materializer = createTestGameRuntimeMaterializer(async () =>
     Object.freeze({
@@ -239,6 +241,22 @@ test("tears down only for the exact same-session close permit and mints runtime_
         dispose: () => {
           disposed += 1;
         },
+      }),
+      connected: Object.freeze({
+        host: Object.freeze({ close: () => undefined }) as never,
+        lifecycleSnapshot: () =>
+          Object.freeze({
+            availability: "available" as const,
+            surface: "active" as const,
+            freshness: "current" as const,
+            availableCapabilities: Object.freeze({ category: "none" as const, count: 0 }),
+            activeExecution: "none" as const,
+            latestAuthoritativeReceipt: "none" as const,
+          }),
+        markClosing: () => {
+          closingMarks += 1;
+        },
+        activateIngress: () => undefined,
       }),
     }),
   );
@@ -258,11 +276,47 @@ test("tears down only for the exact same-session close permit and mints runtime_
       /game_runtime_materialization_close_permit_rejected/,
     );
     assert.equal(disposed, 0);
+    assert.equal(closingMarks, 0);
     const receipt = await result.teardownClose(exactClose);
     assert.equal(receipt.kind, "runtime_torn_down");
+    assert.equal(closingMarks, 1);
     assert.equal(receipt.operationId, exactClose.operationId);
     assert.equal(disposed, 1);
     await assert.rejects(result.teardownClose(exactClose), /game_runtime_materialization_unavailable/);
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("a teardown rejection retains the exact runtime for a same-permit retry", async () => {
+  let attempts = 0;
+  let exactClose!: ProductionGamePermit;
+  const materializer = createTestGameRuntimeMaterializer(async () =>
+    Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("first_teardown_failed");
+        },
+      }),
+    }),
+  );
+  const runtimeBinding = await binding();
+  try {
+    const result = await inActiveBinding(runtimeBinding, (execution, reservation) => {
+      exactClose = permit(execution, {
+        kind: "close",
+        operationId: "close_retry_01",
+        requestId: "close_retry_request_01",
+        fenceToken: "close_retry_fence_01",
+      });
+      return materializer.materializeEnter(reservation, permit(execution));
+    });
+    await assert.rejects(result.teardownClose(exactClose), /game_runtime_materialization_close_failed/);
+    const terminal = await result.teardownClose(exactClose);
+    assert.equal(terminal.kind, "runtime_torn_down");
+    assert.equal(terminal.operationId, exactClose.operationId);
+    assert.equal(attempts, 2);
   } finally {
     await runtimeBinding.close();
   }
@@ -476,7 +530,9 @@ test("production materializer source rejects legacy lifecycle, facade, store com
   ]);
   const forbidden = [
     "integration-bootstrap",
-    "production-game-continuity",
+    "game-surface-lifecycle",
+    "GameSurfaceLifecycle",
+    "markReturning",
     "continuity.js",
     "deployment-composition",
     "-facade",
@@ -499,18 +555,58 @@ test("production materializer source rejects legacy lifecycle, facade, store com
     "S4c must keep its named Game construction helper private to the materializer",
   );
   assert.equal(
-    sources.some((source) => /import\s*\{[^}]*createCompanionRuntime/.test(source)),
+    sources.some((source) => /import\s*\{[^}]*createGameCompanionRuntime/.test(source)),
     true,
-    "S4c may use the generic runtime primitive only from its private materializer helper",
+    "S4c uses the explicit Game-only runtime constructor when the operational marker is armed",
   );
+  assert.equal(
+    sources.some((source) => source.includes("GameRuntimeBindingExecution")),
+    true,
+    "S4c materialization remains bound to S4b execution facts",
+  );
+  assert.equal(
+    sources.some((source) => source.includes("gameOperationalGateNonceSha256")),
+    true,
+    "S4c accepts the construction-owned operational marker option",
+  );
+});
+
+test("production Game presentation composition supplies session and opaque admission only inside materialization", async () => {
+  const source = await readFile(
+    join(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-game-runtime-materializer"),
+      "continuity-semantic-game-runtime-materializer.ts",
+    ),
+    "utf8",
+  );
+  assert.match(source, /gameVoicePresentation\?: GameVoicePresentationAttachment/);
+  assert.doesNotMatch(source, /gamePresentation\?:/);
+  assert.match(source, /sessionId: gameSessionId/);
+  assert.match(source, /createGamePresentationAdmissionProvider\(turnTracker, handle\.interruption\)/);
+  assert.match(source, /host\.attachVoiceStopper\(consumeGameVoicePresentationAttachment/);
+  assert.match(source, /const activateIngress/);
+  assert.doesNotMatch(source, /trace.*sink/i);
+  assert.doesNotMatch(source, /inputId.*admission/i);
 });
 
 test("Game materializer source mints origin-free receipts and exposes only close teardown", async () => {
   const source = await readFile(
-    join(dirname(fileURLToPath(import.meta.url)), "continuity-semantic-game-runtime-materializer.internal.ts"),
+    join(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-game-runtime-materializer"),
+      "continuity-semantic-game-runtime-materializer.internal.ts",
+    ),
     "utf8",
   );
-  for (const forbidden of ["teardownReturn", "returnPermit", "GameOrigin", "permit.origin", "origin:"])
+  for (const forbidden of [
+    "teardownReturn",
+    "returnPermit",
+    "GameOrigin",
+    "permit.origin",
+    "origin:",
+    "GameSurfaceLifecycle",
+    "markReturning",
+    "game-surface-lifecycle",
+  ])
     assert.equal(source.includes(forbidden), false, `forbidden Game materializer semantic: ${forbidden}`);
   assert.match(source, /teardownClose\(permit: ProductionGamePermit\)/);
 });

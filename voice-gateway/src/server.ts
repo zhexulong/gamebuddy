@@ -1,14 +1,20 @@
 import { createServer, type Server, type Socket } from "node:net";
 import {
+  createBoundedUtf8NdjsonDecoder,
+  encodeVoiceGatewayMessage,
+  isVoiceGatewayResponse,
+  MAX_NDJSON_FRAME_BYTES,
+  parseVoiceGatewayRequest,
+  VOICE_PROTOCOL_VERSION,
+  type VoiceGatewayRequest,
+  type VoiceGatewayResponse,
+} from "@gamebuddy/voice-protocol";
+import {
   type AsrProvider,
-  type GatewayEvent,
-  MAX_CAPTURE_BYTES,
   type Mixer,
-  type PcmFormat,
   REQUIRED_PCM_FORMAT,
   type SpeechJob,
   type TtsProvider,
-  VOICE_GATEWAY_PROTOCOL_VERSION,
   VoiceGatewayCore,
 } from "./gateway.js";
 
@@ -42,35 +48,8 @@ export type StartedVoiceGateway = Readonly<{
   capabilities: VoiceGatewayCore["capabilities"];
   close(): Promise<void>;
 }>;
-type Request =
-  | { type: "hello"; token: string; protocolVersion: number; requestId: string }
-  | { type: "health"; requestId: string; voiceProfile?: string }
-  | { type: "ptt_start"; requestId: string; sessionId: string; inputId?: string; locale?: string }
-  | { type: "ptt_frame"; requestId: string; pcm16Base64: string; format?: PcmFormat }
-  | { type: "ptt_stop"; requestId: string; reasonCode?: string }
-  | { type: "capture_cancel"; requestId: string; reasonCode?: string }
-  | { type: "speech_enqueue"; requestId: string; job: SpeechJob }
-  | { type: "speech_cancel"; requestId: string; jobId: string; reasonCode?: string }
-  | { type: "stop_all"; requestId: string; reasonCode?: string }
-  | { type: "events"; requestId: string; after?: number; sessionId: string };
-type Response =
-  | { type: "hello_ack"; requestId: string; protocolVersion: number }
-  | {
-      type: "health";
-      requestId: string;
-      status: "ready" | "unavailable";
-      protocolVersion: number;
-      capabilities: {
-        providerId: string;
-        modelRevision: string;
-        perUtteranceDirection: boolean;
-        ready: boolean;
-        epoch: number;
-      };
-    }
-  | { type: "accepted"; requestId: string; value?: string | boolean }
-  | { type: "events"; requestId: string; events: readonly GatewayEvent[]; next: number }
-  | { type: "error"; requestId: string | null; reasonCode: string };
+type Request = VoiceGatewayRequest;
+type Response = VoiceGatewayResponse;
 const fakeAsr: AsrProvider = {
   providerId: "fake-asr",
   modelRevision: "phase0-fake-v1",
@@ -89,6 +68,8 @@ const fakeTts: TtsProvider = {
 };
 const silentMixer: Mixer = { ready: false, play() {}, stop() {} };
 const CAPTURE_CLEANUP_TIMEOUT_MS = 250;
+/** Leaves enough envelope headroom for one valid event response. */
+const MAX_EVENTS_RESPONSE_BYTES = MAX_NDJSON_FRAME_BYTES - 1;
 /** Versioned localhost-only authenticated control/media gateway. Raw frames are transient and never persisted. */
 export async function startVoiceGateway(options: VoiceGatewayServerOptions): Promise<StartedVoiceGateway> {
   if (!/^[A-Za-z0-9_-]{16,256}$/.test(options.token)) throw new Error("invalid_voice_gateway_token");
@@ -156,22 +137,29 @@ function handleSocket(
   captureCoordinator: CaptureCoordinator,
 ): void {
   let authenticated = false;
-  let buffered = "";
+  const framer = createBoundedUtf8NdjsonDecoder({
+    maxRecordBytes: MAX_NDJSON_FRAME_BYTES,
+    maxBufferedBytes: MAX_NDJSON_FRAME_BYTES,
+  });
   let processing: Promise<void> = Promise.resolve();
   let requestSequence = 0;
   let cancellationFence = 0;
-  socket.setEncoding("utf8");
-  socket.on("data", (chunk: string) => {
-    buffered += chunk;
-    if (buffered.length > 16_384) {
+  socket.on("end", () => {
+    try {
+      framer.finish();
+    } catch {
+      socket.destroy();
+    }
+  });
+  socket.on("data", (chunk: Buffer) => {
+    let frames: readonly string[];
+    try {
+      frames = framer.push(chunk);
+    } catch {
       socket.destroy();
       return;
     }
-    for (;;) {
-      const newline = buffered.indexOf("\n");
-      if (newline < 0) return;
-      const line = buffered.slice(0, newline);
-      buffered = buffered.slice(newline + 1);
+    for (const line of frames) {
       const parsed = parseRequest(line);
       if (parsed === null) {
         send(socket, { type: "error", requestId: null, reasonCode: "malformed_request" });
@@ -185,11 +173,7 @@ function handleSocket(
       // on another peer) must be able to invalidate work already queued behind
       // that hello; waiting for the hello response would deadlock a gated
       // capture start. Invalid hellos never set this flag.
-      if (
-        parsed.type === "hello" &&
-        parsed.protocolVersion === VOICE_GATEWAY_PROTOCOL_VERSION &&
-        parsed.token === token
-      ) {
+      if (parsed.type === "hello" && parsed.protocolVersion === VOICE_PROTOCOL_VERSION && parsed.token === token) {
         authenticated = true;
       }
       const cancellable =
@@ -249,13 +233,13 @@ async function dispatch(
   authenticate: () => void,
 ): Promise<void> {
   if (request.type === "hello") {
-    if (request.protocolVersion !== VOICE_GATEWAY_PROTOCOL_VERSION || request.token !== token) {
+    if (request.protocolVersion !== VOICE_PROTOCOL_VERSION || request.token !== token) {
       send(socket, { type: "error", requestId: request.requestId, reasonCode: "authentication_failed" });
       socket.end();
       return;
     }
     authenticate();
-    send(socket, { type: "hello_ack", requestId: request.requestId, protocolVersion: VOICE_GATEWAY_PROTOCOL_VERSION });
+    send(socket, { type: "hello_ack", requestId: request.requestId, protocolVersion: VOICE_PROTOCOL_VERSION });
     return;
   }
   if (!isAuthenticated()) {
@@ -272,7 +256,7 @@ async function dispatch(
           type: "health",
           requestId: request.requestId,
           status: effective.ready ? "ready" : "unavailable",
-          protocolVersion: VOICE_GATEWAY_PROTOCOL_VERSION,
+          protocolVersion: VOICE_PROTOCOL_VERSION,
           capabilities: effective,
         });
         return;
@@ -350,7 +334,17 @@ async function dispatch(
         send(socket, { type: "accepted", requestId: request.requestId, value: true });
         return;
       case "events": {
-        const result = core.eventsAfter(request.after ?? 0, request.sessionId);
+        const result = core.eventsAfterPage(
+          request.after ?? 0,
+          request.sessionId,
+          (events) =>
+            Buffer.byteLength(
+              JSON.stringify({ type: "events", requestId: request.requestId, events, next: Number.MAX_SAFE_INTEGER }),
+              "utf8",
+            ) +
+              1 <=
+            MAX_EVENTS_RESPONSE_BYTES,
+        );
         if (result.expired) {
           send(socket, { type: "error", requestId: request.requestId, reasonCode: "voice_event_cursor_expired" });
           return;
@@ -526,108 +520,10 @@ function isStaleCaptureRequest(
   return isInvalidated() || core.epoch !== admittedEpoch || captureCoordinator.generation !== admittedCaptureGeneration;
 }
 function parseRequest(line: string): Request | null {
-  try {
-    const value: unknown = JSON.parse(line);
-    if (!isRecord(value) || !isOpaque(value.requestId) || typeof value.type !== "string") return null;
-    switch (value.type) {
-      case "hello":
-        return isOpaqueToken(value.token) && value.protocolVersion === VOICE_GATEWAY_PROTOCOL_VERSION
-          ? (value as unknown as Request)
-          : null;
-      case "health":
-        return value.voiceProfile === undefined || isOpaque(value.voiceProfile) ? (value as unknown as Request) : null;
-      case "ptt_start":
-        return isOpaque(value.sessionId) &&
-          (value.inputId === undefined || isOpaque(value.inputId)) &&
-          (value.locale === undefined || isLocale(value.locale))
-          ? (value as unknown as Request)
-          : null;
-      case "ptt_frame":
-        return isBase64(value.pcm16Base64) &&
-          value.pcm16Base64.length > 0 &&
-          value.pcm16Base64.length <= Math.ceil(MAX_CAPTURE_BYTES / 3) * 4 + 4 &&
-          (value.format === undefined || isPcmFormat(value.format))
-          ? (value as unknown as Request)
-          : null;
-      case "ptt_stop":
-        return value.reasonCode === undefined || isReasonCode(value.reasonCode) ? (value as unknown as Request) : null;
-      case "capture_cancel":
-      case "speech_cancel":
-      case "stop_all":
-        return value.reasonCode === undefined || isReasonCode(value.reasonCode)
-          ? (value.type === "speech_cancel" ? isOpaque(value.jobId) : true)
-            ? (value as unknown as Request)
-            : null
-          : null;
-      case "speech_enqueue":
-        return isSpeechJob(value.job) ? (value as unknown as Request) : null;
-      case "events":
-        return isOpaque(value.sessionId) && (value.after === undefined || isNonnegativeSafeInteger(value.after))
-          ? (value as unknown as Request)
-          : null;
-      default:
-        return null;
-    }
-  } catch {
-    return null;
-  }
+  return parseVoiceGatewayRequest(line);
 }
 function safeReason(reason: string): string {
   return /^[a-z0-9_:-]{1,96}$/i.test(reason) ? reason : "gateway_request_failed";
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function isOpaque(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(value);
-}
-function isOpaqueToken(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_-]{16,256}$/.test(value);
-}
-function isLocale(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(value);
-}
-function isReasonCode(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_:-]{1,96}$/.test(value);
-}
-function isBase64(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length % 4 === 0 &&
-    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
-  );
-}
-function isPcmFormat(value: unknown): value is PcmFormat {
-  return (
-    isRecord(value) &&
-    value.sampleRate === REQUIRED_PCM_FORMAT.sampleRate &&
-    value.channels === REQUIRED_PCM_FORMAT.channels &&
-    value.encoding === REQUIRED_PCM_FORMAT.encoding
-  );
-}
-function isSpeechJob(value: unknown): value is SpeechJob {
-  if (!isRecord(value)) return false;
-  return (
-    isOpaque(value.jobId) &&
-    isOpaque(value.sessionId) &&
-    isNonnegativeSafeInteger(value.epoch) &&
-    isOpaque(value.sourceEventId) &&
-    typeof value.text === "string" &&
-    value.text.length > 0 &&
-    value.text.length <= 4_000 &&
-    isLocale(value.locale) &&
-    isOpaque(value.voiceProfile) &&
-    isFiniteNumber(value.expiresAtMs) &&
-    typeof value.interruptible === "boolean" &&
-    (value.direction === undefined ||
-      (typeof value.direction === "string" && value.direction.length > 0 && value.direction.length <= 1_000))
-  );
-}
-function isNonnegativeSafeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
 }
 function latestSpeechFailure(core: VoiceGatewayCore, jobId: string): string {
   const event = [...core.events]
@@ -636,7 +532,11 @@ function latestSpeechFailure(core: VoiceGatewayCore, jobId: string): string {
   return event?.type === "speech_state" && event.state !== "queued" ? event.reasonCode : "speech_rejected";
 }
 function send(socket: Socket, response: Response): void {
-  socket.write(`${JSON.stringify(response)}\n`);
+  if (!isVoiceGatewayResponse(response)) {
+    socket.destroy();
+    return;
+  }
+  socket.write(encodeVoiceGatewayMessage(response));
 }
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error): Promise<T> {
   return new Promise<T>((resolvePromise, reject) => {

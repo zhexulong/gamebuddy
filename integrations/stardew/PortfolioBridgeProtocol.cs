@@ -74,7 +74,7 @@ internal static class PortfolioBridgeProtocol
         "invalid_envelope",
         "invalid_json", "stale_or_invalid_timestamp", "authentication_failed", "already_authenticated",
         "unauthenticated", "portfolio_message_type_rejected", "invalid_request", "response_serialization_failed",
-        "portfolio_sleep_day_not_armed"
+        "portfolio_sleep_day_not_armed", "invalid_portfolio_mine_ladder_request", "invalid_portfolio_enter_mine_request", "invalid_portfolio_enter_mine_probe_request", "invalid_portfolio_enter_mine_fresh_floor_request", "invalid_portfolio_enter_mine_cancel_request", "invalid_portfolio_enter_mine_fresh_floor", "invalid_portfolio_enter_mine_receipt", "invalid_portfolio_enter_mine_phase", "invalid_portfolio_enter_mine_probe", "invalid_enter_mine_request", "invalid_enter_mine_observation", "enter_mine_target_invalid", "enter_mine_transition_started", "enter_mine_floor_used", "portfolio_enter_mine_not_armed", "invalid_portfolio_bootstrap_hello", "invalid_portfolio_bootstrap_hello_ack", "portfolio_bootstrap_scope_mismatch", "portfolio_bootstrap_not_allowed", "invalid_portfolio_mine_ladder_probe_request", "invalid_portfolio_mine_ladder_fresh_floor_request", "invalid_portfolio_mine_ladder_cancel_request", "invalid_portfolio_mine_ladder_fresh_floor", "invalid_portfolio_mine_ladder_receipt", "invalid_portfolio_mine_ladder_phase", "invalid_portfolio_mine_ladder_probe", "invalid_mine_ladder_request", "invalid_mine_ladder_observation", "mine_ladder_target_invalid", "mine_ladder_transition_started", "mine_ladder_floor_used", "portfolio_mine_ladder_not_armed"
     };
 
     internal static bool IsReasonCode(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
@@ -86,6 +86,12 @@ internal static class PortfolioBridgeProtocol
 
     internal const string SleepDayAction = "single_player_sleep_and_advance_day";
     internal const string MineElevatorAction = "select_mine_elevator_floor";
+    internal const string MineLadderAction = "use_mine_ladder";
+    internal const string MineEntryAction = "enter_mine";
+    internal const int MineEntryMinimumFloor = 1;
+    internal const int MineEntryMaximumFloor = 1;
+    internal const int MineLadderMinimumFloor = 1;
+    internal const int MineLadderMaximumFloor = 120;
     internal const int MineElevatorMinimumCheckpoint = 5;
     internal const int MineElevatorMaximumCheckpoint = 120;
     internal static readonly string[] MineElevatorPhases =
@@ -103,6 +109,12 @@ internal static class PortfolioBridgeProtocol
         Encoding.UTF8.GetBytes(right));
 
     internal static bool IsSleepDayPhase(string? value) => value is not null && Array.IndexOf(SleepDayPhases, value) >= 0;
+
+    internal static string ComputeBindingHash(string saveId, string worldId, string localPlayerId, string companionId, long generation)
+    {
+        string canonical = $"{Topology}\n{saveId}\n{worldId}\n{localPlayerId}\n{companionId}\n{TargetGameVersion}\n{TargetGameBuildNumber}\n{generation}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
     internal static bool IsMineElevatorPhase(string? value) => value is not null && Array.IndexOf(MineElevatorPhases, value) >= 0;
     internal static bool IsMineElevatorPhaseTransition(string? value) => value is not null && Array.IndexOf(MineElevatorPhases, value) >= 0;
     private static readonly HashSet<string> MineElevatorUncertainReasons = new(StringComparer.Ordinal)
@@ -120,6 +132,33 @@ internal static class PortfolioBridgeProtocol
         "portfolio_binding_invalid", "portfolio_binding_generation_invalid", "execution_already_active", "adapter_unavailable",
         "irreversible_phase_reached", "portfolio_action_not_allowed", "portfolio_world_not_ready", "portfolio_single_player_required",
         "portfolio_scope_mismatch", "portfolio_mine_elevator_not_armed",
+    };
+
+    internal static bool IsMineLadderCheckpoint(int value) => value >= MineLadderMinimumFloor && value <= MineLadderMaximumFloor;
+    internal static bool IsMineEntryCheckpoint(int value) => value == MineEntryMinimumFloor;
+
+    internal static bool IsMineEntryTerminalReason(string state, string reason) => state switch
+    {
+        "succeeded" => reason == "enter_mine_floor_used",
+        "cancelled" => reason == "cancelled",
+        "expired" => reason == "deadline_expired",
+        "failed" => reason == "native_operation_failed",
+        "uncertain" => reason is "native_operation_uncertain" or "postcondition_observation_invalid" or "stale_callback_revision" or "portfolio_bridge_disconnected",
+        "rejected" => reason.StartsWith("invalid_", StringComparison.Ordinal) || reason is "revision_mismatch" or "deadline_expired" or "mine_observation_invalid" or "enter_mine_target_invalid" or "idempotency_key_reused_with_different_request" or "execution_not_active" or "cancellation_token_mismatch",
+        "blocked" => reason.StartsWith("portfolio_", StringComparison.Ordinal) || reason is "execution_already_active" or "adapter_unavailable" or "irreversible_phase_reached",
+        _ => false,
+    };
+
+    internal static bool IsMineLadderTerminalReason(string state, string reason) => state switch
+    {
+        "succeeded" => reason == "mine_ladder_floor_used",
+        "cancelled" => reason == "cancelled",
+        "expired" => reason == "deadline_expired",
+        "failed" => reason == "native_operation_failed",
+        "uncertain" => reason is "native_operation_uncertain" or "postcondition_observation_invalid" or "stale_callback_revision" or "portfolio_bridge_disconnected",
+        "rejected" => reason.StartsWith("invalid_", StringComparison.Ordinal) || reason is "revision_mismatch" or "deadline_expired" or "mine_observation_invalid" or "mine_ladder_target_invalid" or "idempotency_key_reused_with_different_request" or "execution_not_active" or "cancellation_token_mismatch",
+        "blocked" => reason.StartsWith("portfolio_", StringComparison.Ordinal) || reason is "execution_already_active" or "adapter_unavailable" or "irreversible_phase_reached",
+        _ => false,
     };
 
     internal static bool IsMineElevatorCheckpoint(int value) => value >= MineElevatorMinimumCheckpoint
@@ -298,6 +337,137 @@ internal static class PortfolioBridgeProtocol
         }
     }
 
+    internal static bool TryDeserializeMineLadderRequest(
+        string json,
+        PortfolioScope expectedScope,
+        out PortfolioEnvelope<PortfolioMineLadderActionRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryParseStrictEnvelope(json, expectedScope, "mine_ladder_request", out JsonDocument? document, out reasonCode)) return false;
+        using (JsonDocument parsedDocument = document!)
+        {
+            JsonElement payload = parsedDocument.RootElement.GetProperty("payload");
+            if (!HasExactProperties(payload, "action", "requestId", "traceId", "idempotencyKey", "expectedRevision", "deadlineMs", "cancellationToken", "scope")) { reasonCode = "invalid_portfolio_mine_ladder_request"; return false; }
+            try
+            {
+                PortfolioEnvelope<PortfolioMineLadderActionRequest>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioMineLadderActionRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                if (parsed?.Payload is null || !parsed.Payload.IsValid || parsed.Payload.DeadlineMs <= now || parsed.Payload.DeadlineMs > now + (long)TimeSpan.FromMinutes(30).TotalMilliseconds || !parsed.Payload.Scope.Equals(expectedScope)) { reasonCode = "invalid_portfolio_mine_ladder_request"; return false; }
+                envelope = parsed; reasonCode = "accepted"; return true;
+            }
+            catch (JsonException) { reasonCode = "invalid_portfolio_mine_ladder_request"; return false; }
+        }
+    }
+
+    internal static bool TryDeserializeMineLadderProbeRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineLadderActionRequest>? envelope, out string reasonCode)
+    {
+        envelope = null;
+        if (!TryParseStrictEnvelope(json, expectedScope, "mine_ladder_probe_request", out JsonDocument? document, out reasonCode)) return false;
+        using (JsonDocument parsedDocument = document!)
+        {
+            JsonElement payload = parsedDocument.RootElement.GetProperty("payload");
+            if (!HasExactProperties(payload, "action", "requestId", "traceId", "idempotencyKey", "expectedRevision", "deadlineMs", "cancellationToken", "scope")) { reasonCode = "invalid_portfolio_mine_ladder_probe_request"; return false; }
+            try { PortfolioEnvelope<PortfolioMineLadderActionRequest>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioMineLadderActionRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions); long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); if (parsed?.Payload is null || !parsed.Payload.IsValid || parsed.Payload.DeadlineMs <= now || parsed.Payload.DeadlineMs > now + (long)TimeSpan.FromMinutes(30).TotalMilliseconds || !parsed.Payload.Scope.Equals(expectedScope)) { reasonCode = "invalid_portfolio_mine_ladder_probe_request"; return false; } envelope = parsed; reasonCode = "accepted"; return true; } catch (JsonException) { reasonCode = "invalid_portfolio_mine_ladder_probe_request"; return false; }
+        }
+    }
+
+    internal static bool TryDeserializeMineLadderFreshFloorRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineLadderFreshFloorRequest>? envelope, out string reasonCode)
+    {
+        envelope = null;
+        if (!TryParseStrictEnvelope(json, expectedScope, "mine_ladder_fresh_floor_request", out JsonDocument? document, out reasonCode)) return false;
+        using (JsonDocument parsedDocument = document!)
+        {
+            JsonElement payload = parsedDocument.RootElement.GetProperty("payload");
+            if (!HasExactProperties(payload, "action", "requestId", "traceId", "executionId", "expectedRevision", "deadlineMs", "cancellationToken", "scope")) { reasonCode = "invalid_portfolio_mine_ladder_fresh_floor_request"; return false; }
+            try { PortfolioEnvelope<PortfolioMineLadderFreshFloorRequest>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioMineLadderFreshFloorRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions); long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); if (parsed?.Payload is null || !parsed.Payload.IsValid || parsed.Payload.DeadlineMs <= now || parsed.Payload.DeadlineMs > now + (long)TimeSpan.FromMinutes(30).TotalMilliseconds || !parsed.Payload.Scope.Equals(expectedScope)) { reasonCode = "invalid_portfolio_mine_ladder_fresh_floor_request"; return false; } envelope = parsed; reasonCode = "accepted"; return true; } catch (JsonException) { reasonCode = "invalid_portfolio_mine_ladder_fresh_floor_request"; return false; }
+        }
+    }
+
+    internal static bool TryDeserializeMineLadderCancelRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineLadderActionCancelRequest>? envelope, out string reasonCode)
+    {
+        envelope = null;
+        if (!TryParseStrictEnvelope(json, expectedScope, "mine_ladder_cancel_request", out JsonDocument? document, out reasonCode)) return false;
+        using (JsonDocument parsedDocument = document!)
+        {
+            JsonElement payload = parsedDocument.RootElement.GetProperty("payload");
+            if (!HasExactProperties(payload, "action", "requestId", "traceId", "executionId", "cancellationToken", "scope")) { reasonCode = "invalid_portfolio_mine_ladder_cancel_request"; return false; }
+            try { PortfolioEnvelope<PortfolioMineLadderActionCancelRequest>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioMineLadderActionCancelRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions); if (parsed?.Payload is null || !parsed.Payload.IsValid || !parsed.Payload.Scope.Equals(expectedScope)) { reasonCode = "invalid_portfolio_mine_ladder_cancel_request"; return false; } envelope = parsed; reasonCode = "accepted"; return true; } catch (JsonException) { reasonCode = "invalid_portfolio_mine_ladder_cancel_request"; return false; }
+        }
+    }
+
+    internal static bool TryDeserializeMineEntryFreshFloorRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineEntryFreshFloorRequest>? envelope, out string reasonCode)
+    {
+        envelope = null;
+        if (!TryParseStrictEnvelope(json, expectedScope, "enter_mine_fresh_floor_request", out JsonDocument? document, out reasonCode)) return false;
+        using (JsonDocument parsedDocument = document!)
+        {
+            JsonElement payload = parsedDocument.RootElement.GetProperty("payload");
+            if (!HasExactProperties(payload, "action", "requestId", "traceId", "executionId", "expectedRevision", "deadlineMs", "cancellationToken", "scope")) { reasonCode = "invalid_portfolio_enter_mine_fresh_floor_request"; return false; }
+            try { PortfolioEnvelope<PortfolioMineEntryFreshFloorRequest>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioMineEntryFreshFloorRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions); long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); if (parsed?.Payload is null || !parsed.Payload.IsValid || parsed.Payload.DeadlineMs <= now || parsed.Payload.DeadlineMs > now + (long)TimeSpan.FromMinutes(30).TotalMilliseconds || !parsed.Payload.Scope.Equals(expectedScope)) { reasonCode = "invalid_portfolio_enter_mine_fresh_floor_request"; return false; } envelope = parsed; reasonCode = "accepted"; return true; } catch (JsonException) { reasonCode = "invalid_portfolio_enter_mine_fresh_floor_request"; return false; }
+        }
+    }
+
+    internal static bool TryDeserializeMineEntryCancelRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineEntryActionCancelRequest>? envelope, out string reasonCode)
+    {
+        envelope = null;
+        if (!TryParseStrictEnvelope(json, expectedScope, "enter_mine_cancel_request", out JsonDocument? document, out reasonCode)) return false;
+        using (JsonDocument parsedDocument = document!)
+        {
+            JsonElement payload = parsedDocument.RootElement.GetProperty("payload");
+            if (!HasExactProperties(payload, "action", "requestId", "traceId", "executionId", "cancellationToken", "scope")) { reasonCode = "invalid_portfolio_enter_mine_cancel_request"; return false; }
+            try { PortfolioEnvelope<PortfolioMineEntryActionCancelRequest>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioMineEntryActionCancelRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions); if (parsed?.Payload is null || !parsed.Payload.IsValid || !parsed.Payload.Scope.Equals(expectedScope)) { reasonCode = "invalid_portfolio_enter_mine_cancel_request"; return false; } envelope = parsed; reasonCode = "accepted"; return true; } catch (JsonException) { reasonCode = "invalid_portfolio_enter_mine_cancel_request"; return false; }
+        }
+    }
+
+    internal static bool TryDeserializeMineEntryRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineEntryActionRequest>? envelope, out string reasonCode) => TryDeserializeMineEntry(json, expectedScope, "enter_mine_request", "invalid_portfolio_enter_mine_request", out envelope, out reasonCode);
+    internal static bool TryDeserializeMineEntryProbeRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineEntryActionRequest>? envelope, out string reasonCode) => TryDeserializeMineEntry(json, expectedScope, "enter_mine_probe_request", "invalid_portfolio_enter_mine_probe_request", out envelope, out reasonCode);
+    private static bool TryDeserializeMineEntry(string json, PortfolioScope scope, string type, string invalid, out PortfolioEnvelope<PortfolioMineEntryActionRequest>? envelope, out string reasonCode) { envelope=null; if(!TryParseStrictEnvelope(json,scope,type,out JsonDocument? d,out reasonCode)) return false; using(d!) { var p=d!.RootElement.GetProperty("payload"); if(!HasExactProperties(p,"action","requestId","traceId","idempotencyKey","expectedRevision","deadlineMs","cancellationToken","scope")){reasonCode=invalid;return false;} try { var x=JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioMineEntryActionRequest>>(d.RootElement.GetRawText(),JsonOptions); var now=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); if(x?.Payload is null||!x.Payload.IsValid||x.Payload.DeadlineMs<=now||x.Payload.DeadlineMs>now+1800000||!x.Payload.Scope.Equals(scope)){reasonCode=invalid;return false;} envelope=x;reasonCode="accepted";return true;}catch(JsonException){reasonCode=invalid;return false;} } }
+
+    internal static bool TryDeserializeBootstrapHello(
+        string json,
+        PortfolioLocalPlayerBinding expectedBinding,
+        string expectedToken,
+        out PortfolioEnvelope<PortfolioBootstrapHello>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !HasExactProperties(root, "protocolVersion", "messageId", "correlationId", "timestampMs", "scope", "type", "payload")
+                || root.GetProperty("protocolVersion").GetInt32() != Version
+                || root.GetProperty("type").GetString() != "bootstrap_hello"
+                || !IsOpaqueId(root.GetProperty("messageId").GetString())
+                || !IsOpaqueId(root.GetProperty("correlationId").GetString())
+                || !IsValidTimestamp(root.GetProperty("timestampMs"))
+                || !TryReadBootstrapScope(root.GetProperty("scope"), expectedBinding)
+                || !HasExactProperties(root.GetProperty("payload"), "token"))
+            { reasonCode = "invalid_portfolio_bootstrap_hello"; return false; }
+            PortfolioEnvelope<PortfolioBootstrapHello>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioBootstrapHello>>(root.GetRawText(), JsonOptions);
+            if (parsed?.Payload is null || parsed.Payload.ExtensionData is { Count: > 0 } || !IsToken(parsed.Payload.Token) || !FixedEquals(parsed.Payload.Token, expectedToken))
+            { reasonCode = "authentication_failed"; return false; }
+            envelope = parsed; reasonCode = "accepted"; return true;
+        }
+        catch (JsonException) { envelope = null; reasonCode = "invalid_json"; return false; }
+        catch (InvalidOperationException) { envelope = null; reasonCode = "invalid_portfolio_bootstrap_hello"; return false; }
+    }
+
+    private static bool TryReadBootstrapScope(JsonElement value, PortfolioLocalPlayerBinding expected)
+    {
+        if (value.ValueKind != JsonValueKind.Object || !HasExactProperties(value, "integrationId", "topology", "saveId", "worldId", "localPlayerId", "companionId", "bindingGeneration", "bindingHash")) return false;
+        try
+        {
+            PortfolioBootstrapScope? scope = JsonSerializer.Deserialize<PortfolioBootstrapScope>(value.GetRawText(), JsonOptions);
+            return scope is not null && scope.IsValid && scope.IntegrationId == IntegrationId && scope.Topology == expected.Topology
+                && scope.SaveId == expected.SaveId && scope.WorldId == expected.WorldId && scope.LocalPlayerId == expected.LocalPlayerId
+                && scope.CompanionId == expected.CompanionId && scope.BindingGeneration == 0
+                && FixedEquals(scope.BindingHash, ComputeBindingHash(scope.SaveId, scope.WorldId, scope.LocalPlayerId, scope.CompanionId, 0));
+        }
+        catch (JsonException) { return false; }
+    }
+
     internal static bool TryDeserializeSleepDayRequest(
         string json,
         PortfolioScope expectedScope,
@@ -455,6 +625,24 @@ internal static class PortfolioBridgeProtocol
     }
 }
 
+internal sealed record PortfolioBootstrapScope(
+    string IntegrationId,
+    string Topology,
+    string SaveId,
+    string WorldId,
+    string LocalPlayerId,
+    string CompanionId,
+    long BindingGeneration,
+    string BindingHash)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; init; }
+    internal bool IsValid => IntegrationId == PortfolioBridgeProtocol.IntegrationId && Topology == PortfolioBridgeProtocol.Topology
+        && PortfolioBridgeProtocol.IsOpaqueId(SaveId) && PortfolioBridgeProtocol.IsOpaqueId(WorldId)
+        && PortfolioBridgeProtocol.IsOpaqueId(LocalPlayerId) && PortfolioBridgeProtocol.IsOpaqueId(CompanionId)
+        && BindingGeneration == 0 && PortfolioBridgeProtocol.IsSha256(BindingHash) && (ExtensionData is null || ExtensionData.Count == 0);
+}
+
 internal sealed record PortfolioScope(
     string IntegrationId,
     string Topology,
@@ -487,6 +675,18 @@ internal sealed record PortfolioEnvelope<TPayload>(
     PortfolioScope Scope,
     string Type,
     TPayload Payload)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; init; }
+}
+
+internal sealed record PortfolioBootstrapHello(string Token)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; init; }
+}
+
+internal sealed record PortfolioBootstrapHelloAck(string SessionId)
 {
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; init; }

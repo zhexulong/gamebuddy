@@ -65,6 +65,46 @@ try {
   assert.notEqual(blockedResult.code, 0);
   assert.match(blockedResult.stderr, /fixture_preflight_blocked_fixture_native_ready_grab_crop_missing/);
 
+  const localeBlocked = signed({
+    ...ready,
+    state: "fixture_blocked",
+    reasonCode: "fixture_live_locale_unavailable",
+    signature: "",
+  });
+  await writeFile(join(root, "stardew-fixture-readiness.json"), JSON.stringify(localeBlocked));
+  const localeBlockedResult = await run([
+    "--session-directory",
+    root,
+    "--host-config",
+    hostConfigPath,
+    "--timeout-ms",
+    "1000",
+    "--not-before-unix-ms",
+    "0",
+  ]);
+  assert.notEqual(localeBlockedResult.code, 0);
+  assert.match(localeBlockedResult.stderr, /fixture_preflight_blocked_fixture_live_locale_unavailable/);
+
+  const invalidLocaleReady = signed({
+    ...ready,
+    state: "fixture_ready",
+    reasonCode: "fixture_live_locale_unavailable",
+    signature: "",
+  });
+  await writeFile(join(root, "stardew-fixture-readiness.json"), JSON.stringify(invalidLocaleReady));
+  const invalidLocaleReadyResult = await run([
+    "--session-directory",
+    root,
+    "--host-config",
+    hostConfigPath,
+    "--timeout-ms",
+    "200",
+    "--not-before-unix-ms",
+    "0",
+  ]);
+  assert.notEqual(invalidLocaleReadyResult.code, 0);
+  assert.match(invalidLocaleReadyResult.stderr, /fixture_readiness_invalid/);
+
   await writeFile(
     join(root, "stardew-fixture-readiness.json"),
     JSON.stringify({ ...ready, reasonCode: "tampered", signature: ready.signature }),

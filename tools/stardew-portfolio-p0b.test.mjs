@@ -253,9 +253,16 @@ test("P0b rejects a symlinked installation attestation and start manifest before
     throw error;
   }
   const result = await inspectPortfolioP0b({
-    gamePath: join(root, "missing-game"), profileRoot: join(root, "profile"), dataRoot: root,
-    saveRoot: join(root, "saves"), saveName: SAVE_NAME, observedSaveSlot: OBSERVED_SAVE_SLOT,
-    installationAttestationPath: link, startManifestPath: link, hostArtifactPath: join(root, "host.js"), signingKey: KEY,
+    gamePath: join(root, "missing-game"),
+    profileRoot: join(root, "profile"),
+    dataRoot: root,
+    saveRoot: join(root, "saves"),
+    saveName: SAVE_NAME,
+    observedSaveSlot: OBSERVED_SAVE_SLOT,
+    installationAttestationPath: link,
+    startManifestPath: link,
+    hostArtifactPath: join(root, "host.js"),
+    signingKey: KEY,
   });
   assert.ok(result.reasons.includes("portfolio_installation_attestation_symlink_or_reparse_forbidden"));
   assert.ok(result.reasons.includes("portfolio_start_manifest_symlink_or_reparse_forbidden"));
@@ -265,20 +272,32 @@ test("P0b requires an existing real data root disjoint from runtime roots", asyn
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-portfolio-p0b-data-root-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const result = await inspectPortfolioP0b({
-    gamePath: root, profileRoot: join(root, "profile"), dataRoot: join(root, "missing-data"),
-    saveRoot: join(root, "saves"), saveName: SAVE_NAME, observedSaveSlot: OBSERVED_SAVE_SLOT,
-    installationAttestationPath: join(root, "attestation.json"), startManifestPath: join(root, "start.json"),
-    hostArtifactPath: join(root, "host.js"), signingKey: KEY,
+    gamePath: root,
+    profileRoot: join(root, "profile"),
+    dataRoot: join(root, "missing-data"),
+    saveRoot: join(root, "saves"),
+    saveName: SAVE_NAME,
+    observedSaveSlot: OBSERVED_SAVE_SLOT,
+    installationAttestationPath: join(root, "attestation.json"),
+    startManifestPath: join(root, "start.json"),
+    hostArtifactPath: join(root, "host.js"),
+    signingKey: KEY,
   });
   assert.ok(result.reasons.includes("portfolio_data_root_missing"));
 
   const dataRoot = join(root, "data");
   await mkdir(dataRoot);
   const overlap = await inspectPortfolioP0b({
-    gamePath: join(dataRoot, "game"), profileRoot: join(root, "profile"), dataRoot,
-    saveRoot: join(root, "saves"), saveName: SAVE_NAME, observedSaveSlot: OBSERVED_SAVE_SLOT,
-    installationAttestationPath: join(root, "attestation.json"), startManifestPath: join(root, "start.json"),
-    hostArtifactPath: join(root, "host.js"), signingKey: KEY,
+    gamePath: join(dataRoot, "game"),
+    profileRoot: join(root, "profile"),
+    dataRoot,
+    saveRoot: join(root, "saves"),
+    saveName: SAVE_NAME,
+    observedSaveSlot: OBSERVED_SAVE_SLOT,
+    installationAttestationPath: join(root, "attestation.json"),
+    startManifestPath: join(root, "start.json"),
+    hostArtifactPath: join(root, "host.js"),
+    signingKey: KEY,
   });
   assert.ok(overlap.reasons.includes("portfolio_data_root_game_root_overlap"));
 
@@ -293,10 +312,16 @@ test("P0b requires an existing real data root disjoint from runtime roots", asyn
     throw error;
   }
   const linked = await inspectPortfolioP0b({
-    gamePath: join(root, "game"), profileRoot: join(root, "profile"), dataRoot: linkedDataRoot,
-    saveRoot: join(root, "saves"), saveName: SAVE_NAME, observedSaveSlot: OBSERVED_SAVE_SLOT,
-    installationAttestationPath: join(root, "attestation.json"), startManifestPath: join(root, "start.json"),
-    hostArtifactPath: join(root, "host.js"), signingKey: KEY,
+    gamePath: join(root, "game"),
+    profileRoot: join(root, "profile"),
+    dataRoot: linkedDataRoot,
+    saveRoot: join(root, "saves"),
+    saveName: SAVE_NAME,
+    observedSaveSlot: OBSERVED_SAVE_SLOT,
+    installationAttestationPath: join(root, "attestation.json"),
+    startManifestPath: join(root, "start.json"),
+    hostArtifactPath: join(root, "host.js"),
+    signingKey: KEY,
   });
   assert.ok(linked.reasons.includes("portfolio_data_root_symlink_or_reparse_forbidden"));
 });

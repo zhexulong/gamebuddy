@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import {
   bindIntegrationIdentity,
   type ConfigurableIntegrationLauncher,
@@ -31,7 +31,8 @@ export type { WindowsRuntimeOwnerIdentityPort } from "./continuity-semantic-game
 
 /** All authority inputs are construction-owned; no caller may inject an owner proof. */
 export type GameRuntimeBindingInput = Readonly<{
-  manifestPath: string;
+  /** The construction root's already canonicalized immutable manifest snapshot. */
+  manifest: HostDeploymentManifest;
   /** Selected adapter must derive its own validated save/world scope before launch. */
   launcher: ConfigurableIntegrationLauncher;
   /** Operator-owned config, consumed only by the selected adapter's prepare step. */
@@ -55,7 +56,8 @@ const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 export async function createGameRuntimeBinding(input: GameRuntimeBindingInput): Promise<GameRuntimeBinding> {
   assertInput(input);
   if (process.platform !== "win32") throw new Error("windows_runtime_owner_identity_required");
-  const manifest = await loadHostDeploymentManifest(input.manifestPath);
+  const manifest = input.manifest;
+  assertManifestSnapshot(manifest);
   const manifestIdentity = Object.freeze({
     continuityId: manifest.principal.continuityId,
     companionId: manifest.principal.companionId,
@@ -227,8 +229,7 @@ function exactWorldScope(
 function assertInput(value: unknown): asserts value is GameRuntimeBindingInput {
   if (
     !isRecord(value) ||
-    typeof value.manifestPath !== "string" ||
-    value.manifestPath.length === 0 ||
+    !isRecord(value.manifest) ||
     !isRecord(value.launcher) ||
     typeof value.launcher.launch !== "function" ||
     typeof value.launcher.prepare !== "function" ||
@@ -236,7 +237,7 @@ function assertInput(value: unknown): asserts value is GameRuntimeBindingInput {
     value.configDirectory.length === 0 ||
     value.configDirectory.includes("\0") ||
     Object.keys(value).length !== 4 ||
-    !Object.prototype.hasOwnProperty.call(value, "manifestPath") ||
+    !Object.prototype.hasOwnProperty.call(value, "manifest") ||
     !Object.prototype.hasOwnProperty.call(value, "launcher") ||
     !Object.prototype.hasOwnProperty.call(value, "launcherConfig") ||
     !Object.prototype.hasOwnProperty.call(value, "configDirectory")
@@ -244,6 +245,24 @@ function assertInput(value: unknown): asserts value is GameRuntimeBindingInput {
     throw new Error("invalid_game_runtime_binding_input");
   }
 }
+function assertManifestSnapshot(value: unknown): asserts value is HostDeploymentManifest {
+  if (
+    !isRecord(value) ||
+    !Object.isFrozen(value) ||
+    !isRecord(value.principal) ||
+    !Object.isFrozen(value.principal) ||
+    typeof value.runtimeRoot !== "string" ||
+    !identifier(value.bootstrapOperationId) ||
+    !Number.isSafeInteger(value.authorityGeneration) ||
+    value.authorityGeneration <= 0 ||
+    !identifier(value.principal.continuityId) ||
+    !identifier(value.principal.companionId) ||
+    !identifier(value.principal.playerId)
+  ) {
+    throw new Error("invalid_game_runtime_binding_input");
+  }
+}
+
 function assertPreparedLaunch(value: unknown): asserts value is PreparedIntegrationLaunch {
   if (
     !isRecord(value) ||

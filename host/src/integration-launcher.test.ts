@@ -6,11 +6,11 @@ import { Type } from "typebox";
 import { type WorldFact } from "./event-pump.js";
 import {
   assertReceiptBackedLaunch,
-  normalizeExecutionWake,
   RECEIPT_BACKED_INTEGRATION_AUTHORITY,
   type IntegrationLauncher,
   type IntegrationLaunchHandle,
 } from "./integration-launcher.js";
+import { normalizeExecutionWake } from "./action-execution-coordinator.internal.js";
 import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
@@ -76,10 +76,10 @@ function module(): GameIntegrationModule {
         throw new Error("integration_identity_binding_mismatch");
     },
     worldScope: () => ({ integrationId: "test-arcade", saveId: "save_01", worldId: "world_01" }),
-    createToolSet: ({ connection, dispatchAdmission }) => ({
+    createToolSet: ({ connection, dispatchAdmissionFactory }) => ({
       observation: [],
       actions:
-        dispatchAdmission !== undefined &&
+        dispatchAdmissionFactory !== undefined &&
         (connection.state as { connected: boolean }).connected &&
         connection.executionGate?.executable === true
           ? [action]
@@ -161,7 +161,13 @@ test("ExecutionWake normalization accepts only complete adapter projections", ()
     reasonCode: "pipe_closed",
   });
   assert.equal(
-    normalizeExecutionWake({ kind: "terminal", requestId: "", executionId: "x", state: "succeeded", reasonCode: "done" }),
+    normalizeExecutionWake({
+      kind: "terminal",
+      requestId: "",
+      executionId: "x",
+      state: "succeeded",
+      reasonCode: "done",
+    }),
     null,
   );
   assert.equal(normalizeExecutionWake({ kind: "invalidated", reasonCode: "" }), null);
@@ -182,9 +188,20 @@ test("Stardew launch validates catalog/live capability/policy without materializ
       return STARDEW_INTEGRATION_MODULE.createToolSet(context);
     },
   };
-  const stardewIdentity = { playerId: "player_01", companionId: "companion_01", saveId: "save_01", worldId: "world_01" };
+  const stardewIdentity = {
+    playerId: "player_01",
+    companionId: "companion_01",
+    saveId: "save_01",
+    worldId: "world_01",
+  };
   const connection: IntegrationConnection = {
-    scope: { integrationId: "stardew" },
+    scope: {
+      integrationId: "stardew",
+      saveId: stardewIdentity.saveId,
+      worldId: stardewIdentity.worldId,
+      playerId: stardewIdentity.playerId,
+      companionId: stardewIdentity.companionId,
+    } as import("./protocol.js").Scope,
     module,
     executionGate: { executable: true },
     state: {
@@ -201,7 +218,9 @@ test("Stardew launch validates catalog/live capability/policy without materializ
     events: { onFact: () => () => undefined, onLifecycle: () => () => undefined },
     authority: RECEIPT_BACKED_INTEGRATION_AUTHORITY,
     lifecycle: "ready",
-    initialFacts: [{ source: "stardew_adapter", kind: "snapshot", correlationId: "snapshot_07", revision: 7, payload: {} }],
+    initialFacts: [
+      { source: "stardew_adapter", kind: "snapshot", correlationId: "snapshot_07", revision: 7, payload: {} },
+    ],
     revoke() {},
     close() {},
   };

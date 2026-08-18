@@ -33,39 +33,9 @@ const LEGACY_ROOT_ARTIFACTS = new Set([
   "continuity-transition-lock.json",
 ]);
 
-/** Test-only deterministic seam for post-marker replacement admission coverage. */
-let freshPostMarkerHookForTest: Readonly<{ authorityRoot: string; hook: (authorityRoot: string) => void }> | undefined;
-/** Test-only seam for exercising retryable control-close failures without replacing production dependencies. */
-let provisionCloseHookForTest: Readonly<{ authorityRoot: string; hook: (authorityRoot: string) => void }> | undefined;
-/** Test-only observation of canonical admission construction; never invoked by production. */
-let canonicalAdmissionObserverForTest: ((admission: CanonicalProductionAuthorityAdmission) => void) | undefined;
-/** Test-only observation of the sole pre-lock identity derivation. */
-let authorityRootIdentityDerivationObserverForTest: (() => void) | undefined;
 const canonicalAdmissions = new WeakSet<object>();
 /** The immutable identity recorded at admission construction is the validation authority. */
 const canonicalAdmissionIdentities = new WeakMap<object, string>();
-
-/** @internal Test-only. Production code must not call this hook. */
-export function setProvisionCloseHookForTest(
-  authorityRoot: string | undefined,
-  hook?: (authorityRoot: string) => void,
-): void {
-  provisionCloseHookForTest =
-    authorityRoot === undefined || hook === undefined
-      ? undefined
-      : Object.freeze({ authorityRoot: resolve(authorityRoot), hook });
-}
-
-/** @internal Test-only. Production code must not call this hook. */
-export function setFreshPostMarkerHookForTest(
-  authorityRoot: string | undefined,
-  hook?: (authorityRoot: string) => void,
-): void {
-  freshPostMarkerHookForTest =
-    authorityRoot === undefined || hook === undefined
-      ? undefined
-      : Object.freeze({ authorityRoot: resolve(authorityRoot), hook });
-}
 
 export type FreshContinuityProvisionOptions = Readonly<{
   runtimeCwd: string;
@@ -153,7 +123,6 @@ export function provisionFreshProductionContinuityFromCanonicalAdmission(
     assertAuthorityRootContainsOnly(authorityRoot, [DATABASE_NAME]);
     inspectRuntimeAdmission(runtimeCwd);
     writeFreshAuthorityMarker(authorityRoot, options, authorityRootIdentity, metadata.storeId);
-    invokeFreshPostMarkerHookForTest(authorityRoot);
     if (fingerprintDatabase(authorityRoot) !== databaseFingerprint)
       throw failure("production_store_changed_during_open");
     inspectRuntimeAdmission(runtimeCwd);
@@ -225,14 +194,6 @@ export function openKnownProductionContinuityFromCanonicalAdmission(
     control?.close();
     throw provisionFailure(error);
   }
-}
-
-/** Consumes the test seam before invocation so even a throwing hook cannot leak into another test. */
-function invokeFreshPostMarkerHookForTest(authorityRoot: string): void {
-  const configured = freshPostMarkerHookForTest;
-  if (!configured || configured.authorityRoot !== authorityRoot) return;
-  freshPostMarkerHookForTest = undefined;
-  configured.hook(authorityRoot);
 }
 
 function openProductionStore(authorityRoot: string): ProductionContinuityStore {
@@ -380,6 +341,10 @@ function provision(
       requireOpen();
       return rawStore.recoverGame(input);
     },
+    readGameRecoveryTarget(input) {
+      requireOpen();
+      return rawStore.readGameRecoveryTarget(input);
+    },
     readGameOperation(input) {
       requireOpen();
       return rawStore.readGameOperation(input);
@@ -401,9 +366,6 @@ function provision(
       // Synchronous control closure has no concurrent in-flight window. A
       // failed attempt remains close-only and is retried at this same stage.
       closing = true;
-      const configured = provisionCloseHookForTest;
-      if (configured?.authorityRoot === authorityRoot) provisionCloseHookForTest = undefined;
-      configured?.hook(authorityRoot);
       try {
         control.close();
       } catch (error) {
@@ -624,18 +586,7 @@ export function createCanonicalProductionAuthorityAdmission(runtimeCwd: string):
   });
   canonicalAdmissions.add(admission);
   canonicalAdmissionIdentities.set(admission, admission.authorityRootIdentity);
-  canonicalAdmissionObserverForTest?.(admission);
   return admission;
-}
-/** @internal Test-only. Clears or observes canonical admission construction. */
-export function setCanonicalAdmissionObserverForTest(
-  observer?: (admission: CanonicalProductionAuthorityAdmission) => void,
-): void {
-  canonicalAdmissionObserverForTest = observer;
-}
-/** @internal Test-only. Observes identity derivation without exposing a production hook. */
-export function setAuthorityRootIdentityDerivationObserverForTest(observer?: () => void): void {
-  authorityRootIdentityDerivationObserverForTest = observer;
 }
 function validateCanonicalAdmission(value: unknown): CanonicalProductionAuthorityAdmission {
   if (
@@ -678,7 +629,6 @@ function validateCanonicalAdmission(value: unknown): CanonicalProductionAuthorit
   return Object.freeze({ runtimeCwd: root.value, authorityRootIdentity: expectedIdentity });
 }
 function deriveAuthorityRootIdentityFromCanonicalRoot(canonicalRoot: string): string {
-  authorityRootIdentityDerivationObserverForTest?.();
   return createHash("sha256")
     .update(`GameBuddy semantic authority root v1\0${canonicalRoot}\0${AUTHORITY_DIRECTORY_NAME}`, "utf8")
     .digest("hex");

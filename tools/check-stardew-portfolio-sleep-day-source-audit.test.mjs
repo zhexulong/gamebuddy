@@ -19,7 +19,8 @@ test("sleep/day audit freezes the target-version normal-player path and exact mi
     sourceIngress: "unavailable",
     state: "BLOCKED",
     code: "native_sleep_ingress_unavailable",
-    requiredSeam: "A separately approved source-owned typed semantic sleep entrypoint that preserves the complete normal-player decision and lifecycle without invoking a private confirmation continuation or raw save/day API.",
+    requiredSeam:
+      "A separately approved source-owned typed semantic sleep entrypoint that preserves the complete normal-player decision and lifecycle without invoking a private confirmation continuation or raw save/day API.",
   });
 });
 

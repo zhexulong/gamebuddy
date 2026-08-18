@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { type WorldFact } from "./event-pump.js";
+import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
 import {
   RECEIPT_BACKED_INTEGRATION_AUTHORITY,
   type IntegrationEventSource,
@@ -14,7 +15,7 @@ import {
   type LocalStardewBridgeFact,
   type LocalStardewConnectionFact,
 } from "./local-stardew-bridge.js";
-import { type Scope } from "./protocol.js";
+import { type ExecutionReceiptQuery, type Scope } from "./protocol.js";
 import { type ConfigurableIntegrationLauncher, type PreparedIntegrationLaunch } from "./integration-catalog.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
@@ -22,6 +23,8 @@ import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 export type StardewLauncherConfig = Readonly<{
   pipeName: string;
   bridgeToken: string;
+  /** Preview-only expected locale from its launcher-owned bounded config. */
+  expectedPresentationLocale?: string;
   knowledge?: KnowledgeBundle;
   gameVersion?: string;
 }>;
@@ -70,10 +73,15 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
     );
     const executionGate = { executable: true };
     let closed = false;
-    const bufferedFacts: WorldFact[] = [];
+    const bootstrapFacts: WorldFact[] = [];
+    const bufferedFacts: Array<readonly [WorldFact, LocalStardewBridgeFact]> = [];
     const bufferedLifecycle: IntegrationLifecycleEvent[] = [];
     const factListeners = new Set<(fact: WorldFact) => void>();
     const lifecycleListeners = new Set<(event: IntegrationLifecycleEvent) => void>();
+    // The preview finishes its initial `observe()` before it can mount the
+    // Host listener. A player-control fact arriving in that interval must be
+    // replayed to Host exactly once; later facts go directly to the listener.
+    let factDeliveryReady = false;
     const executionWakeListeners = new Set<(wake: ExecutionWake) => void>();
     const publishWake = (wake: ExecutionWake) => {
       for (const listener of executionWakeListeners) listener(wake);
@@ -94,6 +102,30 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
       bridge.close();
     };
     const revoke = (reasonCode: string) => disconnect(reasonCode);
+    const deliverFact = (converted: WorldFact, fact: LocalStardewBridgeFact) => {
+      try {
+        // Freeze the subscription set at delivery start. A listener added or
+        // removed by another listener belongs to a later fact, never this one.
+        for (const listener of [...factListeners]) listener(converted);
+      } catch {
+        // A partial synchronous delivery cannot honestly produce acceptance.
+        // Closing bounds the failure to this bridge generation.
+        disconnect("fact_listener_failed");
+        return;
+      }
+      if (fact.type === "semantic_event" && (fact.payload.kind === "player_input" || fact.payload.kind === "stop_all")) {
+        console.debug("GameBuddy native chat ingress stage=native_chat_adapter_fact_forwarded");
+        try {
+          // The listener has synchronously accepted the exact typed fact. The
+          // receipt confirms delivery to Host, never model completion or output.
+          bridge.acknowledgePlayerControl(fact.payload.playerControl!.controlId, fact.payload.playerControl!.sourceEventId);
+        } catch {
+          // The Host has the fact but the Mod cannot prove receipt delivery.
+          // Do not retry or claim acceptance on a possibly closed generation.
+          disconnect("player_control_receipt_write_failed");
+        }
+      }
+    };
     const removeFact = bridge.onFact((fact) => {
       const converted = toWorldFact(fact);
       if (fact.type === "execution_receipt") {
@@ -103,8 +135,7 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
           // subsequent action until a fresh launcher instance is established.
           executionGate.executable = false;
           publishWake(Object.freeze({ kind: "invalidated", reasonCode: receipt.reasonCode }));
-        }
-        else if (isTerminalReceiptState(receipt.state))
+        } else if (isTerminalExecutionState(receipt.state))
           publishWake(
             Object.freeze({
               kind: "terminal",
@@ -115,26 +146,47 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
             }),
           );
       }
-      bufferedFacts.push(converted);
-      for (const listener of factListeners) listener(converted);
+      if (!factDeliveryReady) {
+        if (fact.type === "snapshot") bootstrapFacts.push(converted);
+        else bufferedFacts.push([converted, fact]);
+        return;
+      }
+      deliverFact(converted, fact);
     });
     const removeLifecycle = bridge.onConnectionFact((fact) => revoke(fact.reasonCode));
+    const removeDiagnostic = bridge.onDiagnostic((diagnostic) => {
+      // Bounded phase/reason only; never raw bridge content or authority data.
+      console.debug(`GameBuddy native chat ingress stage=${diagnostic.stage}:${diagnostic.reasonCode}`);
+    });
     try {
       const snapshot = await bridge.observe();
       if (!executionGate.executable) throw new Error("stardew_launch_disconnected");
+      if (
+        local.expectedPresentationLocale !== undefined &&
+        snapshot.presentationLocale !== local.expectedPresentationLocale
+      )
+        throw new Error("stardew_presentation_locale_mismatch");
       // `observe()` is received through the same validated listener as later
       // bridge traffic. Hand that exact snapshot to bootstrap once, so the
       // subscription buffer cannot duplicate it after runtime creation.
-      const initialFacts = Object.freeze(bufferedFacts.splice(0));
+      const initialFacts = Object.freeze(bootstrapFacts.splice(0));
       if (!initialFacts.some((fact) => fact.kind === "snapshot" && fact.revision === snapshot.revision)) {
         throw new Error("stardew_initial_snapshot_not_observed");
       }
       const events: IntegrationEventSource = Object.freeze({
         onFact: (listener) => {
-          for (const fact of bufferedFacts) listener(fact);
-          bufferedFacts.length = 0;
+          // Register before draining so a synchronous bridge callback cannot
+          // land between the snapshot and the active listener. The delivery
+          // flag changes only after registration; each buffered fact is then
+          // drained once and later facts go directly to this listener.
           factListeners.add(listener);
-          return () => factListeners.delete(listener);
+          factDeliveryReady = true;
+          const initial = bufferedFacts.splice(0);
+          for (const [fact, rawFact] of initial) deliverFact(fact, rawFact);
+          return () => {
+            factListeners.delete(listener);
+            if (factListeners.size === 0) factDeliveryReady = false;
+          };
         },
         onLifecycle: (listener) => {
           for (const event of bufferedLifecycle) listener(event);
@@ -171,6 +223,14 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
       });
       return Object.freeze({
         connection,
+        // This adapter-owned client is deliberately not projected through the
+        // generic IntegrationConnection facade. Preview composition validates
+        // the narrow presentation surface before use.
+        presentationBridge: bridge,
+        // Narrow adapter-owned read-only recovery capability bound to this
+        // exact authenticated connection. It is not exposed on
+        // IntegrationConnection and fails closed once the bridge is closed.
+        receiptRecovery: (query: ExecutionReceiptQuery) => bridge.queryExecutionReceipt(query),
         events,
         authority: RECEIPT_BACKED_INTEGRATION_AUTHORITY,
         lifecycle: "ready" as const,
@@ -180,12 +240,14 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
           disconnect("integration_closed");
           removeFact();
           removeLifecycle();
+          removeDiagnostic();
         },
       });
     } catch (error) {
       executionGate.executable = false;
       removeFact();
       removeLifecycle();
+      removeDiagnostic();
       bridge.close();
       throw error;
     }
@@ -246,12 +308,20 @@ export function parseStardewLauncherConfig(value: unknown): StardewLauncherConfi
   if (
     !isRecord(value) ||
     Object.keys(value).some(
-      (key) => key !== "pipeName" && key !== "bridgeToken" && key !== "knowledge" && key !== "gameVersion",
+      (key) =>
+        key !== "pipeName" &&
+        key !== "bridgeToken" &&
+        key !== "expectedPresentationLocale" &&
+        key !== "knowledge" &&
+        key !== "gameVersion",
     ) ||
     typeof value.pipeName !== "string" ||
     !/^[A-Za-z0-9_-]{1,128}$/.test(value.pipeName) ||
     typeof value.bridgeToken !== "string" ||
     !/^[A-Za-z0-9_-]{16,256}$/.test(value.bridgeToken) ||
+    (value.expectedPresentationLocale !== undefined &&
+      (typeof value.expectedPresentationLocale !== "string" ||
+        !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(value.expectedPresentationLocale))) ||
     (value.knowledge !== undefined && value.gameVersion === undefined) ||
     (value.gameVersion !== undefined &&
       (typeof value.gameVersion !== "string" || !/^[A-Za-z0-9_.-]{1,64}$/.test(value.gameVersion)))
@@ -261,15 +331,14 @@ export function parseStardewLauncherConfig(value: unknown): StardewLauncherConfi
   return Object.freeze({
     pipeName: value.pipeName,
     bridgeToken: value.bridgeToken,
+    ...(value.expectedPresentationLocale === undefined
+      ? {}
+      : { expectedPresentationLocale: value.expectedPresentationLocale }),
     ...(value.knowledge === undefined
       ? {}
       : { knowledge: parseKnowledgeBundle(value.knowledge, value.gameVersion as string) }),
     ...(value.gameVersion === undefined ? {} : { gameVersion: value.gameVersion }),
   });
-}
-
-function isTerminalReceiptState(state: string): boolean {
-  return ["blocked", "invalidated", "succeeded", "partially_succeeded", "failed", "cancelled", "expired", "rejected", "uncertain"].includes(state);
 }
 
 function toWorldFact(message: LocalStardewBridgeFact): WorldFact {

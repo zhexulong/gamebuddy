@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  diagnoseBridgeMessage,
   MAX_MESSAGE_BYTES,
   newEnvelope,
+  type Scope,
+  type Snapshot,
   serializeBounded,
-  diagnoseBridgeMessage,
   validateBridgeMessage,
   validateEnvelope,
   validateExecutionRequest,
-  type Scope,
-  type Snapshot,
 } from "./protocol.js";
 
 const scope: Scope = {
@@ -27,7 +27,8 @@ const snapshot: Snapshot = {
   stamina: 270,
   health: 100,
   actionable: true,
-  capabilities: ["move_to_tile", "inspect_self"],
+  capabilities: ["move_to_tile"],
+  presentationLocale: "en-US",
   activeExecution: null,
 };
 const now = 1_700_000_000_000;
@@ -36,14 +37,20 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
   const valid = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"] },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
     "hello_01",
     now,
   );
   assert.equal(validateBridgeMessage(valid, scope, now), null);
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("hello_ack", scope, { sessionId: "invalid session", capabilities: [] }, "hello_02", now),
+      newEnvelope(
+        "hello_ack",
+        scope,
+        { sessionId: "invalid session", capabilities: [], presentationLocale: "en-US" },
+        "hello_02",
+        now,
+      ),
       scope,
       now,
     ),
@@ -51,12 +58,83 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("hello_ack", scope, { sessionId: "session_01", capabilities: [1] }, "hello_03", now),
+      newEnvelope(
+        "hello_ack",
+        scope,
+        { sessionId: "session_01", capabilities: [1], presentationLocale: "en-US" },
+        "hello_03",
+        now,
+      ),
       scope,
       now,
     ),
     "invalid_hello_ack",
   );
+});
+
+test("hello acknowledgement and snapshot reject missing or invalid presentation locales", () => {
+  const validHello = newEnvelope(
+    "hello_ack",
+    scope,
+    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+    "hello_locale_01",
+    now,
+  );
+  const { presentationLocale: _helloLocale, ...helloWithoutLocale } = validHello.payload;
+  assert.equal(validateBridgeMessage({ ...validHello, payload: helloWithoutLocale }, scope, now), "invalid_hello_ack");
+  assert.equal(
+    validateBridgeMessage({ ...validHello, payload: { ...validHello.payload, presentationLocale: "" } }, scope, now),
+    "invalid_hello_ack",
+  );
+  assert.equal(
+    validateBridgeMessage({ ...validHello, payload: { ...validHello.payload, presentationLocale: 1 } }, scope, now),
+    "invalid_hello_ack",
+  );
+
+  const validSnapshot = newEnvelope("snapshot", scope, snapshot, "snapshot_locale_01", now);
+  const { presentationLocale: _snapshotLocale, ...snapshotWithoutLocale } = validSnapshot.payload;
+  assert.equal(
+    validateBridgeMessage({ ...validSnapshot, payload: snapshotWithoutLocale }, scope, now),
+    "invalid_snapshot",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      { ...validSnapshot, payload: { ...validSnapshot.payload, presentationLocale: "not a locale" } },
+      scope,
+      now,
+    ),
+    "invalid_snapshot",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      { ...validSnapshot, payload: { ...validSnapshot.payload, presentationLocale: null } },
+      scope,
+      now,
+    ),
+    "invalid_snapshot",
+  );
+  assert.equal(
+    diagnoseBridgeMessage({ ...validSnapshot, payload: snapshotWithoutLocale }, scope, now),
+    "invalid_snapshot:presentationLocale",
+  );
+});
+
+test("execution envelope accepts published bait_crab_pot", () => {
+  const request = newEnvelope(
+    "execution_request",
+    scope,
+    {
+      requestId: "request_bait_01",
+      idempotencyKey: "idempotency_bait_01",
+      action: "bait_crab_pot",
+      args: { slot: 1, x: 4, y: 8, expectedQualifiedItemId: "(O)685", expectedTargetId: "bait_target_01" },
+      expectedRevision: 4,
+      deadlineMs: now + 10_000,
+    },
+    "execution_bait_01",
+    now,
+  );
+  assert.equal(validateBridgeMessage(request, scope, now), null);
 });
 
 test("protocol envelope rejects mismatched identity, version, stale timestamps, and unknown types", () => {
@@ -73,10 +151,37 @@ test("protocol envelope rejects mismatched identity, version, stale timestamps, 
   assert.equal(validateBridgeMessage({ ...valid, payload: { extra: true } }, scope, now), "invalid_observe_request");
 });
 
+test("player-control receipts accept only the fixed acknowledged payload", () => {
+  const receipt = newEnvelope(
+    "player_control_receipt",
+    scope,
+    { controlId: "control_01", sourceEventId: "source_01", status: "accepted" },
+    "control_01",
+    now,
+  );
+  assert.equal(validateBridgeMessage(receipt, scope, now), null);
+  assert.equal(
+    validateBridgeMessage({ ...receipt, payload: { ...receipt.payload, status: "rejected" } }, scope, now),
+    "invalid_player_control_receipt",
+  );
+  assert.equal(
+    validateBridgeMessage({ ...receipt, payload: { controlId: "control_01", sourceEventId: "source_01" } }, scope, now),
+    "invalid_player_control_receipt",
+  );
+});
+
 test("bridge message payloads fail closed", () => {
   const hello = newEnvelope("hello", scope, { token: "a".repeat(16) }, "hello_01", now);
   assert.equal(validateBridgeMessage(hello, scope, now), null);
   assert.equal(validateBridgeMessage({ ...hello, payload: { token: "short" } }, scope, now), "invalid_hello_token");
+  const snapshotWithPresentationLocale = newEnvelope(
+    "snapshot",
+    scope,
+    { ...snapshot, presentationLocale: "en-US" },
+    "snapshot_locale_01",
+    now,
+  );
+  assert.equal(validateBridgeMessage(snapshotWithPresentationLocale, scope, now), null);
   const receipt = newEnvelope(
     "execution_receipt",
     scope,
@@ -147,9 +252,136 @@ test("bridge message payloads fail closed", () => {
     now,
   );
   assert.equal(validateBridgeMessage(validBodyTrace, scope, now), null);
+  const validPlayerInput = newEnvelope(
+    "semantic_event",
+    scope,
+    {
+      kind: "player_input",
+      revision: 8,
+      activeExecution: null,
+      reasonCode: "player_control",
+      playerControl: {
+        kind: "player_input",
+        controlId: "control_01",
+        sourceEventId: "source_01",
+        text: "Go mine.",
+        locale: "en-US",
+        issuerPlayerId: "host_01",
+      },
+    },
+    "semantic_player_input_01",
+    now,
+  );
+  assert.equal(validateBridgeMessage(validPlayerInput, scope, now), null);
   assert.equal(
     validateBridgeMessage(
-      { ...validBodyTrace, payload: { ...validBodyTrace.payload, bodyTrace: { ...validBodyTrace.payload.bodyTrace, category: "body_idle" } } },
+      {
+        ...validPlayerInput,
+        payload: {
+          ...validPlayerInput.payload,
+          playerControl: { ...validPlayerInput.payload.playerControl, issuerPlayerId: "" },
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_semantic_event",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      {
+        ...validPlayerInput,
+        payload: {
+          ...validPlayerInput.payload,
+          playerControl: { ...validPlayerInput.payload.playerControl, text: "/stop" },
+        },
+      },
+      scope,
+      now,
+    ),
+    null,
+  );
+  const validStop = newEnvelope(
+    "semantic_event",
+    scope,
+    {
+      kind: "stop_all",
+      revision: 9,
+      activeExecution: null,
+      reasonCode: "player_control",
+      playerControl: {
+        kind: "stop_all",
+        controlId: "control_02",
+        sourceEventId: "source_02",
+        locale: "en-US",
+        issuerPlayerId: "host_01",
+      },
+    },
+    "semantic_stop_01",
+    now,
+  );
+  assert.equal(validateBridgeMessage(validStop, scope, now), null);
+  const validBodySettled = newEnvelope(
+    "semantic_event",
+    scope,
+    {
+      kind: "body_settled",
+      revision: 10,
+      activeExecution: null,
+      reasonCode: "stop_body_settled",
+      stopObservation: {
+        kind: "body_settled",
+        stopId: "stop_01",
+        sourceEventId: "source_03",
+        epoch: 1,
+      },
+    },
+    "semantic_body_settled_01",
+    now,
+  );
+  assert.equal(validateBridgeMessage(validBodySettled, scope, now), null);
+  assert.equal(
+    validateBridgeMessage(
+      { ...validBodySettled, payload: { ...validBodySettled.payload, stopObservation: undefined } },
+      scope,
+      now,
+    ),
+    "invalid_semantic_event",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      {
+        ...validBodySettled,
+        payload: {
+          ...validBodySettled.payload,
+          stopObservation: { ...validBodySettled.payload.stopObservation, epoch: 0 },
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_semantic_event",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      {
+        ...validStop,
+        payload: { ...validStop.payload, playerControl: { ...validStop.payload.playerControl, text: "not_allowed" } },
+      },
+      scope,
+      now,
+    ),
+    "invalid_semantic_event",
+  );
+  assert.equal(
+    validateBridgeMessage(
+      {
+        ...validBodyTrace,
+        payload: {
+          ...validBodyTrace.payload,
+          bodyTrace: { ...validBodyTrace.payload.bodyTrace, category: "body_idle" },
+        },
+      },
       scope,
       now,
     ),
@@ -174,6 +406,7 @@ test("bridge message payloads fail closed", () => {
       health: 1,
       actionable: true,
       capabilities: [],
+      presentationLocale: "en-US",
       activeExecution: null,
     },
     "snapshot_01",
@@ -249,19 +482,6 @@ test("bridge message payloads fail closed", () => {
           toolKind: "axe",
           requiredUpgradeLevel: 1,
           health: 10,
-        },
-      ],
-      treeShakeSourceTargets: [
-        {
-          targetId: "tree_shake_source_deadbeef",
-          location: "Farm",
-          x: 10,
-          y: 12,
-          treeType: "Oak",
-          growthStage: 5,
-          health: 10,
-          moss: false,
-          tapped: false,
         },
       ],
       npcRelationshipTargets: [
@@ -426,34 +646,58 @@ test("bridge message payloads fail closed", () => {
     ),
     "invalid_snapshot",
   );
-  assert.equal(
-    validateBridgeMessage(
-      newEnvelope(
-        "snapshot",
+});
+
+test("snapshot target facts reject schema-forbidden extra keys before Host consumers use them", () => {
+  const crabPot = {
+    targetId: "crab_pot_deadbeef",
+    location: "Farm",
+    slot: 4,
+    x: 10,
+    y: 12,
+    qualifiedItemId: "(O)710",
+  };
+  const families: readonly [string, Record<string, unknown>][] = [
+    ["toolSlots", { slot: 4, label: "Axe" }],
+    ["wateringCanFacts", { slot: 4, qualifiedItemId: "(T)WateringCan", label: "Watering Can", water: 40, max: 40 }],
+    ["refillWateringCanTargets", { targetId: "refill_deadbeef", x: 10, y: 12 }],
+    ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", stack: 1 }],
+    ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", stack: 1 }],
+    ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24" }],
+    ["harvestTargets", { targetId: "harvest_deadbeef", x: 10, y: 12, cropId: "24", qualifiedHarvestItemId: "(O)24", regrowsAfterHarvest: false }],
+    ["woodFenceTargets", { targetId: "fence_deadbeef", location: "Farm", slot: 4, x: 10, y: 12, qualifiedItemId: "(O)322" }],
+    ["woodFenceResultTargets", { targetId: "fence_deadbeef", location: "Farm", slot: 4, x: 10, y: 12, qualifiedItemId: "(O)322", isFence: true, isGate: false, health: 10, maxHealth: 10 }],
+    ["crabPotTargets", crabPot],
+    ["crabPotResultTargets", { ...crabPot, ownerId: 1, offsetX: 0, offsetY: 0, overlayTiles: [] }],
+    ["baitCrabPotTargets", { ...crabPot, baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
+    ["baitCrabPotResultTargets", { ...crabPot, baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
+    ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472" }],
+    ["debrisTargets", { targetId: "debris_deadbeef", slot: 4, x: 10, y: 12, parentSheetIndex: 752, toolKind: "pickaxe", requiredUpgradeLevel: 0, health: 8 }],
+    ["rockSourceTargets", { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", health: 1 }],
+    ["clearHoeDirtTargets", { targetId: "dirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
+    ["artifactSpotTargets", { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" }],
+    ["artifactSpotResultTargets", { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
+    ["machineTargets", { targetId: "machine_deadbeef", x: 10, y: 12, qualifiedItemId: "(BC)12", readyForHarvest: false, minutesUntilReady: 10 }],
+    ["treeChopSourceTargets", { targetId: "tree_deadbeef", location: "Farm", x: 10, y: 12, treeType: "Oak", growthStage: 5, health: 1, stump: false, moss: false, tapped: false }],
+    ["treeChopResultTargets", { targetId: "tree_deadbeef", location: "Farm", x: 10, y: 12, treeType: "Oak", health: 5, stump: true, moss: false, tapped: false }],
+    ["npcRelationshipTargets", { targetId: "npc_deadbeef", x: 10, y: 12, npcName: "Abigail", friendshipPoints: 0, friendshipStatus: "Neutral", talkedToToday: false, giftsToday: 0, giftsThisWeek: 0 }],
+    ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false }],
+    ["animalProductTargets", { targetId: "animal_deadbeef", slot: 4, x: 10, y: 12, animalType: "Cow", qualifiedProduceItemId: "(O)184", toolKind: "milk_pail", produceStack: 1 }],
+    ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 4, x: 10, y: 12, hayStack: 1 }],
+    ["inventoryItemFacts", { slot: 4, qualifiedItemId: "(O)184", stack: 1 }],
+    ["foodTargets", { slot: 4, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
+  ];
+  for (const [field, target] of families) {
+    assert.equal(
+      validateBridgeMessage(
+        newEnvelope("snapshot", scope, { ...snapshot, [field]: [{ ...target, unexpected: true }] }, `snapshot_${field}_extra`, now),
         scope,
-        {
-          ...snapshot,
-          treeShakeSourceTargets: [
-            {
-              targetId: "tree_shake_source_deadbeef",
-              location: "Farm",
-              x: 10,
-              y: 12,
-              treeType: "Oak",
-              growthStage: 5,
-              health: 10,
-              moss: false,
-            },
-          ],
-        },
-        "snapshot_tree_shake_01",
         now,
       ),
-      scope,
-      now,
-    ),
-    "invalid_snapshot",
-  );
+      "invalid_snapshot",
+      field,
+    );
+  }
 });
 
 test("execution validation fails closed for stale, unknown, malformed, and unactionable requests", () => {
@@ -466,6 +710,10 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     deadlineMs: now + 10_000,
   };
   assert.equal(validateExecutionRequest(valid, snapshot, now), null);
+  assert.equal(
+    validateExecutionRequest({ ...valid, args: { ...valid.args, unexpected: true } }, snapshot, now),
+    "invalid_args",
+  );
   assert.equal(validateExecutionRequest({ ...valid, expectedRevision: 3 }, snapshot, now), "stale_snapshot");
   assert.equal(validateExecutionRequest({ ...valid, action: "sell_item" }, snapshot, now), "unknown_action");
   const travel = { ...valid, action: "travel", args: { x: 10, y: 10 } };
@@ -546,11 +794,27 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     validateExecutionRequest(plantSeed, { ...snapshot, capabilities: [...snapshot.capabilities, "plant_seed"] }, now),
     null,
   );
+  assert.equal(
+    validateExecutionRequest(
+      { ...plantSeed, args: { ...plantSeed.args, unexpected: true } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "plant_seed"] },
+      now,
+    ),
+    "invalid_args",
+  );
   const fertilizeTile = {
     ...valid,
     action: "fertilize_tile",
     args: { slot: 3, x: 10, y: 12, expectedQualifiedItemId: "(O)368", expectedTargetId: "fertilizer_deadbeef" },
   };
+  assert.equal(
+    validateExecutionRequest(
+      { ...fertilizeTile, args: { ...fertilizeTile.args, unexpected: true } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "fertilize_tile"] },
+      now,
+    ),
+    "invalid_args",
+  );
   const clearDebris = {
     ...valid,
     action: "clear_debris",
@@ -602,7 +866,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "break_rock_source"] },
       now,
     ),
-    "invalid_break_rock_source_target",
+    "invalid_args",
   );
   const digArtifactSpot = {
     ...valid,
@@ -623,7 +887,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "dig_artifact_spot"] },
       now,
     ),
-    "invalid_dig_artifact_spot_target",
+    "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(
@@ -737,7 +1001,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "clear_hoedirt"] },
       now,
     ),
-    "invalid_clear_hoedirt_target",
+    "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(
@@ -812,7 +1076,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "chop_tree_source"] },
       now,
     ),
-    "invalid_chop_tree_source_target",
+    "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(
@@ -828,39 +1092,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "tree_first_hit"] },
       now,
     ),
-    null,
-  );
-  assert.equal(
-    validateExecutionRequest(
-      { ...treeFirstHit, args: { ...treeFirstHit.args, slot: 37 } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "tree_first_hit"] },
-      now,
-    ),
-    "invalid_tree_first_hit_target",
-  );
-  assert.equal(
-    validateExecutionRequest(
-      { ...treeFirstHit, args: { ...treeFirstHit.args, x: 10.5 } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "tree_first_hit"] },
-      now,
-    ),
-    "invalid_tree_first_hit_target",
-  );
-  assert.equal(
-    validateExecutionRequest(
-      { ...treeFirstHit, args: { ...treeFirstHit.args, expectedTargetId: "bad target" } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "tree_first_hit"] },
-      now,
-    ),
-    "invalid_tree_first_hit_target",
-  );
-  assert.equal(
-    validateExecutionRequest(
-      { ...treeFirstHit, args: { ...treeFirstHit.args, unexpected: true } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "tree_first_hit"] },
-      now,
-    ),
-    "invalid_tree_first_hit_target",
+    "unknown_action",
   );
   assert.equal(
     validateExecutionRequest(
@@ -956,7 +1188,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "machine_load"] },
       now,
     ),
-    "invalid_machine_load_target",
+    "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(
@@ -1068,7 +1300,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_item"] },
       now,
     ),
-    "invalid_item_target",
+    "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(
@@ -1084,7 +1316,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_forage"] },
       now,
     ),
-    "invalid_forage_target",
+    "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(tillSoil, { ...snapshot, capabilities: [...snapshot.capabilities, "till_soil"] }, now),
@@ -1242,7 +1474,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "refill_watering_can"] },
       now,
     ),
-    "invalid_refill_watering_can_target",
+    "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(
@@ -1250,7 +1482,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "water_crop"] },
       now,
     ),
-    "invalid_crop_target",
+    "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(

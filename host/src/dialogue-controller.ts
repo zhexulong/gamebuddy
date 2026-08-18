@@ -49,6 +49,7 @@ export class DialogueController {
     private readonly session: DialogueSession,
     private readonly now: () => number = Date.now,
     private readonly hasVisiblePresentation: () => boolean = () => true,
+    private readonly beforePrompt?: (input: DialogueInput) => Promise<() => void>,
   ) {}
 
   public subscribe(listener: (event: DialogueControllerEvent) => void): () => void {
@@ -84,6 +85,11 @@ export class DialogueController {
     return this.#active?.input.clientMessageId;
   }
 
+  /** True throughout the actual prompt drain, including its finally handoff. */
+  public hasActiveOrDrainingTurn(): boolean {
+    return this.#active !== undefined || this.#draining;
+  }
+
   public async stop(): Promise<void> {
     this.#assertOpen();
     const activeId = this.#active?.input.clientMessageId ?? null;
@@ -110,7 +116,11 @@ export class DialogueController {
         const pending = this.#queue.shift()!;
         this.#active = pending;
         this.#emit({ type: "turn_started", clientMessageId: pending.input.clientMessageId });
+        let releasePromptAdmission: (() => void) | undefined;
         try {
+          // The Host admission provider is invoked at the exact provider
+          // boundary rather than merely during HTTP submission.
+          releasePromptAdmission = await this.beforePrompt?.(pending.input);
           await this.session.prompt(canonicalPrompt(pending), { expandPromptTemplates: false, source: "rpc" });
           if (!this.hasVisiblePresentation()) {
             // Ordinary assistant text is intentionally private. Do not report
@@ -124,6 +134,7 @@ export class DialogueController {
           if (!this.#closed) this.#emit({ type: "turn_failed", clientMessageId: pending.input.clientMessageId });
           void error;
         } finally {
+          releasePromptAdmission?.();
           this.#active = undefined;
         }
       }

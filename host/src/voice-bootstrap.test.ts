@@ -72,10 +72,7 @@ test("Voice bootstrap probes the configured voice profile before accepting the c
     },
     close: () => undefined,
   };
-  assert.equal(
-    await connectHealthyVoiceGatewayWith(config, async () => voice, "companion.default"),
-    voice,
-  );
+  assert.equal(await connectHealthyVoiceGatewayWith(config, async () => voice, "companion.default"), voice);
   assert.equal(probedProfile, "companion.default");
 });
 

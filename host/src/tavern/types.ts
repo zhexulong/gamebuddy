@@ -116,8 +116,22 @@ export function validateTavernArtifact(value: unknown): TavernArtifact {
   return fail();
 }
 function candidate(v: Record<string, unknown>): CharacterCandidate {
+  if (
+    !only(v, [
+      "schemaVersion",
+      "revision",
+      "candidateId",
+      "sourceFormat",
+      "sourceVersion",
+      "sourceHash",
+      "name",
+      "reviewState",
+      "fields",
+    ])
+  )
+    fail();
   const fields = array(v.fields, 32).map((x) => {
-    if (!record(x)) fail();
+    if (!record(x) || !only(x, ["field", "text", "eligibility"])) fail();
     return freeze({
       field: requiredId(x.field),
       text: requiredText(x.text, 8_192),
@@ -143,6 +157,19 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
   });
 }
 function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {
+  if (
+    !only(v, [
+      "schemaVersion",
+      "revision",
+      "importId",
+      "candidateId",
+      "candidateRevision",
+      "sourceHash",
+      "reviewedFields",
+      "approvedAtMs",
+    ])
+  )
+    fail();
   const fields = array(v.reviewedFields, 32).map(requiredId);
   if (fields.length === 0 || new Set(fields).size !== fields.length) fail();
   const importId = requiredId(v.importId);
@@ -162,8 +189,10 @@ function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {
   });
 }
 function importRecord(v: Record<string, unknown>): StCardImportRecord {
+  if (!only(v, ["schemaVersion", "revision", "importId", "source", "sourceFormat", "sourceHash", "dispositions"]))
+    fail();
   const dispositions = array(v.dispositions, 256).map((x) => {
-    if (!record(x)) fail();
+    if (!record(x) || !only(x, ["field", "classification", "reason"])) fail();
     return freeze({
       field: requiredId(x.field),
       classification: requiredClassification(x.classification),
@@ -185,6 +214,19 @@ function importRecord(v: Record<string, unknown>): StCardImportRecord {
   });
 }
 function companion(v: Record<string, unknown>): TavernCompanion {
+  if (
+    !only(v, [
+      "schemaVersion",
+      "revision",
+      "companionId",
+      "continuityId",
+      "name",
+      "profileId",
+      "profileRevision",
+      "profileHash",
+    ])
+  )
+    fail();
   return freeze({
     schemaVersion: TAVERN_SCHEMA_VERSION,
     revision: requiredRevision(v.revision),
@@ -197,6 +239,7 @@ function companion(v: Record<string, unknown>): TavernCompanion {
   });
 }
 function persona(v: Record<string, unknown>): UserPersona {
+  if (!only(v, ["schemaVersion", "revision", "personaId", "name", "description"])) fail();
   const description = optionalText(v.description, 4_096);
   return freeze({
     schemaVersion: TAVERN_SCHEMA_VERSION,
@@ -207,23 +250,21 @@ function persona(v: Record<string, unknown>): UserPersona {
   });
 }
 function scenario(v: Record<string, unknown>): Scenario {
-  if (!only(v, ["schemaVersion", "revision", "scenarioId", "name", "description", "text", "provenance", "owner"])) fail();
-  const name = optionalText(v.name, 128);
-  const description = optionalText(v.description, 8_192);
-  const provenance = requiredProvenance(v.provenance);
-  const owner = requiredOwner(v.owner);
+  if (!only(v, ["schemaVersion", "revision", "scenarioId", "name", "description", "text", "provenance", "owner"]))
+    fail();
   return freeze({
     schemaVersion: TAVERN_SCHEMA_VERSION,
     revision: requiredRevision(v.revision),
     scenarioId: requiredId(v.scenarioId),
-    ...(name === undefined ? {} : { name }),
-    ...(description === undefined ? {} : { description }),
+    name: requiredText(v.name, 128),
+    description: requiredText(v.description, 8_192),
     text: requiredText(v.text, 8_192),
-    provenance,
-    owner,
+    provenance: requiredProvenance(v.provenance),
+    owner: requiredOwner(v.owner),
   });
 }
 function examples(v: Record<string, unknown>): DialogueExamples {
+  if (!only(v, ["schemaVersion", "revision", "examplesId", "blocks"])) fail();
   const blocks = array(v.blocks, 32).map((x) => requiredText(x, 8_192));
   return freeze({
     schemaVersion: TAVERN_SCHEMA_VERSION,
@@ -254,15 +295,29 @@ function greetings(v: Record<string, unknown>): GreetingSet {
   });
 }
 function thread(v: Record<string, unknown>): ChatThread {
-  if (!record(v.openingSelection)) fail();
+  if (
+    !only(v, [
+      "schemaVersion",
+      "revision",
+      "chatThreadId",
+      "companionId",
+      "continuityId",
+      "personaId",
+      "scenarioId",
+      "openingSelection",
+      "openingLockedAtEventId",
+    ]) ||
+    !record(v.openingSelection)
+  )
+    fail();
   const personaId = optionalId(v.personaId);
   const scenarioId = optionalId(v.scenarioId);
   const openingLockedAtEventId = optionalId(v.openingLockedAtEventId);
   const selection = v.openingSelection;
   const opening =
-    selection.kind === "blank"
+    selection.kind === "blank" && only(selection, ["kind"])
       ? freeze({ kind: "blank" as const })
-      : selection.kind === "greeting"
+      : selection.kind === "greeting" && only(selection, ["kind", "sourceRevision", "variantId", "messageId"])
         ? freeze({
             kind: "greeting" as const,
             sourceRevision: requiredRevision(selection.sourceRevision),

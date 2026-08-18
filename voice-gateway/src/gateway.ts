@@ -1,65 +1,21 @@
 import { randomUUID } from "node:crypto";
+import {
+  REQUIRED_PCM_FORMAT,
+  type PcmFormat,
+  type VoiceGatewayCapabilities,
+  type VoiceGatewayEvent,
+  type VoiceSpeechJob,
+} from "@gamebuddy/voice-protocol";
 
-export const VOICE_GATEWAY_PROTOCOL_VERSION = 1;
-export const REQUIRED_PCM_FORMAT = Object.freeze({ sampleRate: 16_000, channels: 1, encoding: "pcm_s16le" as const });
+export { REQUIRED_PCM_FORMAT } from "@gamebuddy/voice-protocol";
+export type { PcmFormat, VoiceGatewayCapabilities, VoiceGatewayEvent, VoiceSpeechJob } from "@gamebuddy/voice-protocol";
 export const MAX_CAPTURE_BYTES = 960_000;
 export const MAX_SPEECH_QUEUE = 3;
 export const MAX_SPEECH_AUDIO_BYTES = 1_920_000;
 export const MAX_EVENT_HISTORY = 2_048;
 
-export type PcmFormat = typeof REQUIRED_PCM_FORMAT;
-export type GatewayEvent =
-  | Readonly<{
-      type: "capture_state";
-      sessionId: string;
-      inputId: string;
-      state: "capturing" | "finalizing" | "cancelled" | "failed";
-      reasonCode: string;
-      actualFormat?: PcmFormat;
-    }>
-  | Readonly<{ type: "partial_transcript"; sessionId: string; inputId: string; text: string }>
-  | Readonly<{
-      type: "final_transcript";
-      sessionId: string;
-      inputId: string;
-      text: string;
-      locale: string;
-      providerId: string;
-      modelRevision: string;
-      timestampMs: number;
-      actualFormat: PcmFormat;
-    }>
-  | Readonly<{
-      type: "asr_failure";
-      sessionId: string;
-      inputId: string;
-      locale: string;
-      providerId: string;
-      modelRevision: string;
-      reasonCode: string;
-      timestampMs: number;
-    }>
-  | Readonly<{
-      type: "speech_state";
-      sessionId: string;
-      jobId: string;
-      epoch: number;
-      state: "queued" | "started" | "first_audio" | "completed" | "cancelled" | "failed";
-      reasonCode: string;
-    }>;
-
-export type SpeechJob = Readonly<{
-  jobId: string;
-  sessionId: string;
-  epoch: number;
-  sourceEventId: string;
-  text: string;
-  locale: string;
-  voiceProfile: string;
-  expiresAtMs: number;
-  interruptible: boolean;
-  direction?: string;
-}>;
+export type GatewayEvent = VoiceGatewayEvent;
+export type SpeechJob = VoiceSpeechJob;
 export interface AsrProvider {
   readonly providerId: string;
   readonly modelRevision: string;
@@ -85,6 +41,7 @@ export interface Mixer {
 type Capture = {
   sessionId: string;
   inputId: string;
+  sourceEventId: string;
   locale: string;
   chunks: Uint8Array[];
   bytes: number;
@@ -99,14 +56,6 @@ type ActiveSpeech = { job: SpeechJob; controller: AbortController; cancelled: bo
  * cancellation epochs only; no raw audio is persisted and it has no Pi/game
  * imports. All providers receive an AbortSignal and stale callbacks are ignored.
  */
-export type VoiceGatewayCapabilities = Readonly<{
-  providerId: string;
-  modelRevision: string;
-  perUtteranceDirection: boolean;
-  ready: boolean;
-  epoch: number;
-}>;
-
 export class VoiceGatewayCore {
   #capture: Capture | undefined;
   #finalizing = new Map<string, Capture>();
@@ -145,6 +94,32 @@ export class VoiceGatewayCore {
         : this.#events.slice(start).filter((event) => event.sessionId === sessionId);
     return { events, next, base: this.#eventBase, expired: false };
   }
+  /**
+   * Returns a session-filtered page without advancing beyond an event that the
+   * caller cannot encode. The accepted predicate receives the complete next
+   * page, so the transport can enforce its frame bound exactly.
+   */
+  public eventsAfterPage(
+    after: number,
+    sessionId: string,
+    accept: (events: readonly GatewayEvent[]) => boolean,
+  ): Readonly<{ events: readonly GatewayEvent[]; next: number; base: number; expired: boolean }> {
+    const next = this.#eventBase + this.#events.length;
+    if (!Number.isSafeInteger(after) || after < this.#eventBase)
+      return { events: [], next, base: this.#eventBase, expired: true };
+    const page: GatewayEvent[] = [];
+    for (let index = Math.max(0, after - this.#eventBase); index < this.#events.length; index += 1) {
+      const event = this.#events[index]!;
+      if (event.sessionId !== sessionId) continue;
+      const candidate = [...page, event];
+      if (!accept(candidate)) {
+        if (page.length === 0) throw new Error("voice_event_too_large");
+        return { events: page, next: this.#eventBase + index, base: this.#eventBase, expired: false };
+      }
+      page.push(event);
+    }
+    return { events: page, next, base: this.#eventBase, expired: false };
+  }
   public supportsVoiceProfile(voiceProfile: string): boolean {
     return (
       voiceProfile.length > 0 &&
@@ -170,6 +145,7 @@ export class VoiceGatewayCore {
     const capture: Capture = {
       sessionId,
       inputId,
+      sourceEventId: randomUUID(),
       locale,
       chunks: [],
       bytes: 0,
@@ -228,6 +204,7 @@ export class VoiceGatewayCore {
       this.event({
         type: "final_transcript",
         sessionId: capture.sessionId,
+        sourceEventId: capture.sourceEventId,
         inputId: capture.inputId,
         text,
         locale: capture.locale,
@@ -414,10 +391,6 @@ function concat(parts: readonly Uint8Array[]): Uint8Array {
 function asrFailureReason(error: unknown): string {
   if (!(error instanceof Error)) return "asr_failed";
   if (error.message === "sensevoice_no_speech") return "asr_no_speech";
-  if (!error.message.startsWith("sensevoice_runtime_failed:")) return "asr_failed";
-  const detail = error.message
-    .slice("sensevoice_runtime_failed:".length)
-    .replace(/[^A-Za-z0-9_.:-]/g, "_")
-    .slice(0, 160);
-  return detail.length === 0 ? "asr_failed" : `asr_runtime_${detail}`;
+  if (error.message.startsWith("sensevoice_runtime_failed:")) return "asr_runtime_failed";
+  return "asr_failed";
 }

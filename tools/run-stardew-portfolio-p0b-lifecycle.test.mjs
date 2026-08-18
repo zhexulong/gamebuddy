@@ -101,7 +101,15 @@ test("P0b runner fails preflight without spawning when the process-local key is 
   await prepareGameTarget(input);
   let spawnCount = 0;
   await assert.rejects(
-    () => runPortfolioP0bLifecycle({ ...input, processList: noStardewProcesses, prepare: async () => assert.fail("prepare must not run"), spawnProcess: () => { spawnCount += 1; } }),
+    () =>
+      runPortfolioP0bLifecycle({
+        ...input,
+        processList: noStardewProcesses,
+        prepare: async () => assert.fail("prepare must not run"),
+        spawnProcess: () => {
+          spawnCount += 1;
+        },
+      }),
     /portfolio_p0b_signing_key_environment_value_missing/,
   );
   assert.equal(spawnCount, 0);
@@ -114,20 +122,21 @@ test("P0b runner blocks a pre-existing Stardew process before prepare and spawn"
   const events = [];
   let spawnCount = 0;
   await assert.rejects(
-    () => runPortfolioP0bLifecycle({
-      ...input,
-      processList: async (names) => {
-        events.push(["process-list", names]);
-        return ["StardewModdingAPI.exe"];
-      },
-      prepare: async () => {
-        events.push(["prepare"]);
-        assert.fail("prepare must not run");
-      },
-      spawnProcess: () => {
-        spawnCount += 1;
-      },
-    }),
+    () =>
+      runPortfolioP0bLifecycle({
+        ...input,
+        processList: async (names) => {
+          events.push(["process-list", names]);
+          return ["StardewModdingAPI.exe"];
+        },
+        prepare: async () => {
+          events.push(["prepare"]);
+          assert.fail("prepare must not run");
+        },
+        spawnProcess: () => {
+          spawnCount += 1;
+        },
+      }),
     /portfolio_p0b_stardew_process_running:StardewModdingAPI\.exe/,
   );
   assert.deepEqual(events, [["process-list", ["StardewModdingAPI.exe", "Stardew Valley.exe"]]]);
@@ -141,18 +150,19 @@ test("P0b runner blocks a process-query error before prepare and spawn", async (
   let prepareCount = 0;
   let spawnCount = 0;
   await assert.rejects(
-    () => runPortfolioP0bLifecycle({
-      ...input,
-      processList: async () => {
-        throw new Error("tasklist unavailable");
-      },
-      prepare: async () => {
-        prepareCount += 1;
-      },
-      spawnProcess: () => {
-        spawnCount += 1;
-      },
-    }),
+    () =>
+      runPortfolioP0bLifecycle({
+        ...input,
+        processList: async () => {
+          throw new Error("tasklist unavailable");
+        },
+        prepare: async () => {
+          prepareCount += 1;
+        },
+        spawnProcess: () => {
+          spawnCount += 1;
+        },
+      }),
     /portfolio_p0b_process_query_failed/,
   );
   assert.equal(prepareCount, 0);
@@ -169,23 +179,24 @@ test("P0b runner kills the complete child tree on timeout and retains transactio
   const calls = [];
   const processChecks = [];
   await assert.rejects(
-    () => runPortfolioP0bLifecycle({
-      ...input,
-      processList: noStardewProcesses,
-      prepare: async () => ({ state: "p0b_lifecycle_producer_prepared" }),
-      spawnProcess: (executable, args, spawnOptions) => {
-        calls.push({ executable, args, spawnOptions });
-        const child = fakeProcess(calls.length === 1 ? 8123 : 8124);
-        if (executable === "taskkill") queueMicrotask(() => child.emit("close", 0, null));
-        return child;
-      },
-      wait: () => Promise.resolve(),
-      processExists: async (pid) => {
-        processChecks.push(pid);
-        return false;
-      },
-      timeoutMs: 1,
-    }),
+    () =>
+      runPortfolioP0bLifecycle({
+        ...input,
+        processList: noStardewProcesses,
+        prepare: async () => ({ state: "p0b_lifecycle_producer_prepared" }),
+        spawnProcess: (executable, args, spawnOptions) => {
+          calls.push({ executable, args, spawnOptions });
+          const child = fakeProcess(calls.length === 1 ? 8123 : 8124);
+          if (executable === "taskkill") queueMicrotask(() => child.emit("close", 0, null));
+          return child;
+        },
+        wait: () => Promise.resolve(),
+        processExists: async (pid) => {
+          processChecks.push(pid);
+          return false;
+        },
+        timeoutMs: 1,
+      }),
     /portfolio_p0b_launch_timeout/,
   );
   assert.equal(calls.length, 2);

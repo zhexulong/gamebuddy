@@ -1,6 +1,7 @@
 import type { Database } from "../../../shared/sqlite";
 import { queueMemoryMutation } from "../storage-memory-mutation-log";
 import { computeNormalizedHash } from "./normalize-hash";
+import { excludeMemorySource, validateMemorySourceRef } from "./source-exclusion";
 import {
     archiveMemory,
     deleteMemory,
@@ -41,9 +42,20 @@ export interface MemoryCommandMergeInput extends MemoryCommandMutationInput {
     targetStateToken: string;
 }
 
+export interface MemoryCommandExcludeSourceInput extends MemoryCommandMutationInput {
+    /** Validated opaque provenance references to exclude atomically with the receipt. */
+    sourceRefs: readonly string[];
+}
+
 export interface MemoryCommandResult {
     memory: Memory;
     stateToken: string;
+}
+
+/** Internal transaction receipt for callers that need to bind one mutation to its log row. */
+export interface MemoryCommandCommitResult<T> {
+    value: T;
+    committedMemoryMutationId: number;
 }
 
 interface MemoryGovernance {
@@ -166,6 +178,10 @@ export class MemoryCommandFacade {
     }
 
     create(input: MemoryCommandCreateInput): MemoryCommandResult {
+        return this.createWithCommitReceipt(input).value;
+    }
+
+    createWithCommitReceipt(input: MemoryCommandCreateInput): MemoryCommandCommitResult<MemoryCommandResult> {
         requireProjectPath(input.projectPath);
         return runMutation(this.db, () => {
             const { memory } = insertMemoryIdempotent(this.db, {
@@ -175,21 +191,19 @@ export class MemoryCommandFacade {
                         ? playerGovernedMetadata(input.metadataJson ?? null)
                         : (input.metadataJson ?? null),
             });
-            // Creation must be visible to sessions whose cached m[1] predates
-            // this row. Queue inside the same transaction as the insert so a
-            // cross-surface cursor can never observe only half the mutation.
-            queueMemoryMutation(this.db, {
-                projectPath: memory.projectPath,
-                mutationType: "update",
-                targetMemoryId: memory.id,
-                category: memory.category,
-                newContent: memory.content,
+            const mutation = queueMemoryMutation(this.db, {
+                projectPath: memory.projectPath, mutationType: "update", targetMemoryId: memory.id,
+                category: memory.category, newContent: memory.content,
             });
-            return result(this.db, input.projectPath, memory.id);
+            return { value: result(this.db, input.projectPath, memory.id), committedMemoryMutationId: mutation.id };
         });
     }
 
     update(input: MemoryCommandUpdateInput): MemoryCommandResult {
+        return this.updateWithCommitReceipt(input).value;
+    }
+
+    updateWithCommitReceipt(input: MemoryCommandUpdateInput): MemoryCommandCommitResult<MemoryCommandResult> {
         const content = input.content.trim();
         if (!content) throw new Error("Memory content must not be empty");
         return runMutation(this.db, () => {
@@ -200,46 +214,57 @@ export class MemoryCommandFacade {
                 if (!updated) throw new Error(`Memory ${memory.id} was not found after update`);
                 setMetadata(this.db, updated.id, playerGovernedMetadata(updated.metadataJson));
             }
-            queueMemoryMutation(this.db, {
+            const mutation = queueMemoryMutation(this.db, {
+                projectPath: memory.projectPath, mutationType: "update", targetMemoryId: memory.id,
+                category: memory.category, newContent: content,
+            });
+            return { value: result(this.db, input.projectPath, memory.id), committedMemoryMutationId: mutation.id };
+        });
+    }
+
+    archive(input: MemoryCommandMutationInput, reason?: string): MemoryCommandResult { return this.archiveWithCommitReceipt(input, reason).value; }
+    archiveWithCommitReceipt(input: MemoryCommandMutationInput, reason?: string): MemoryCommandCommitResult<MemoryCommandResult> { return this.transitionWithCommitReceipt(input, "archived", "archive", reason); }
+    restore(input: MemoryCommandMutationInput): MemoryCommandResult { return this.restoreWithCommitReceipt(input).value; }
+    restoreWithCommitReceipt(input: MemoryCommandMutationInput): MemoryCommandCommitResult<MemoryCommandResult> { return this.transitionWithCommitReceipt(input, "active"); }
+    pin(input: MemoryCommandMutationInput): MemoryCommandResult { return this.pinWithCommitReceipt(input).value; }
+    pinWithCommitReceipt(input: MemoryCommandMutationInput): MemoryCommandCommitResult<MemoryCommandResult> { return this.transitionWithCommitReceipt(input, "permanent"); }
+    unpin(input: MemoryCommandMutationInput): MemoryCommandResult { return this.unpinWithCommitReceipt(input).value; }
+    unpinWithCommitReceipt(input: MemoryCommandMutationInput): MemoryCommandCommitResult<MemoryCommandResult> { return this.transitionWithCommitReceipt(input, "active"); }
+
+    deleteEntry(input: MemoryCommandMutationInput): void { this.deleteEntryWithCommitReceipt(input); }
+    deleteEntryWithCommitReceipt(input: MemoryCommandMutationInput): MemoryCommandCommitResult<void> {
+        return runMutation(this.db, () => {
+            const memory = requireCurrentMutableMemory(this.db, input);
+            deleteMemory(this.db, memory.id);
+            const mutation = queueMemoryMutation(this.db, { projectPath: memory.projectPath, mutationType: "delete", targetMemoryId: memory.id });
+            return { value: undefined, committedMemoryMutationId: mutation.id };
+        });
+    }
+
+    excludeSourcesWithCommitReceipt(input: MemoryCommandExcludeSourceInput): MemoryCommandCommitResult<void> {
+        return runMutation(this.db, () => {
+            const memory = requireCurrentMutableMemory(this.db, input);
+            if (input.sourceRefs.length === 0) throw new Error("Memory source reference is required");
+            for (const sourceRef of input.sourceRefs) {
+                validateMemorySourceRef(sourceRef);
+                excludeMemorySource(this.db, { projectPath: memory.projectPath, sourceRef });
+            }
+            // The source policy changes the effective Memory context. Emit a normal
+            // revision-bound update row so the exact selected entry can prove the
+            // evidence-bound exclusion at the next provider round.
+            const mutation = queueMemoryMutation(this.db, {
                 projectPath: memory.projectPath,
                 mutationType: "update",
                 targetMemoryId: memory.id,
                 category: memory.category,
-                newContent: content,
+                newContent: memory.content,
             });
-            return result(this.db, input.projectPath, memory.id);
+            return { value: undefined, committedMemoryMutationId: mutation.id };
         });
     }
 
-    archive(input: MemoryCommandMutationInput, reason?: string): MemoryCommandResult {
-        return this.transition(input, "archived", "archive", reason);
-    }
-
-    restore(input: MemoryCommandMutationInput): MemoryCommandResult {
-        return this.transition(input, "active");
-    }
-
-    pin(input: MemoryCommandMutationInput): MemoryCommandResult {
-        return this.transition(input, "permanent");
-    }
-
-    unpin(input: MemoryCommandMutationInput): MemoryCommandResult {
-        return this.transition(input, "active");
-    }
-
-    deleteEntry(input: MemoryCommandMutationInput): void {
-        runMutation(this.db, () => {
-            const memory = requireCurrentMutableMemory(this.db, input);
-            deleteMemory(this.db, memory.id);
-            queueMemoryMutation(this.db, {
-                projectPath: memory.projectPath,
-                mutationType: "delete",
-                targetMemoryId: memory.id,
-            });
-        });
-    }
-
-    merge(input: MemoryCommandMergeInput): MemoryCommandResult {
+    merge(input: MemoryCommandMergeInput): MemoryCommandResult { return this.mergeWithCommitReceipt(input).value; }
+    mergeWithCommitReceipt(input: MemoryCommandMergeInput): MemoryCommandCommitResult<MemoryCommandResult> {
         return runMutation(this.db, () => {
             const source = requireCurrentMutableMemory(this.db, input);
             const target = getMemoriesByProject(this.db, source.projectPath, ["active", "permanent", "archived"])
@@ -247,35 +272,26 @@ export class MemoryCommandFacade {
             if (!target || target.id === source.id) throw new Error("Memory merge target was not found");
             assertMutationAuthorized(target, input.actor);
             supersededMemory(this.db, source.id, target.id);
-            queueMemoryMutation(this.db, {
-                projectPath: source.projectPath,
-                mutationType: "superseded",
-                targetMemoryId: source.id,
-                supersededById: target.id,
-            });
-            return result(this.db, source.projectPath, target.id);
+            const mutation = queueMemoryMutation(this.db, { projectPath: source.projectPath, mutationType: "superseded", targetMemoryId: source.id, supersededById: target.id });
+            return { value: result(this.db, source.projectPath, target.id), committedMemoryMutationId: mutation.id };
         });
     }
 
-    private transition(
+    private transitionWithCommitReceipt(
         input: MemoryCommandMutationInput,
         status: MemoryStatus,
         mutationType?: "archive",
         reason?: string,
-    ): MemoryCommandResult {
+    ): MemoryCommandCommitResult<MemoryCommandResult> {
         return runMutation(this.db, () => {
             const memory = requireCurrentMutableMemory(this.db, input);
             if (mutationType === "archive") archiveMemory(this.db, memory.id, reason);
             else updateMemoryStatus(this.db, memory.id, status);
-            queueMemoryMutation(this.db, {
-                projectPath: memory.projectPath,
-                mutationType: mutationType ?? "update",
-                targetMemoryId: memory.id,
-                // Existing visibility-marked updates make a cached render reload
-                // memories that move into or out of its visible set.
+            const mutation = queueMemoryMutation(this.db, {
+                projectPath: memory.projectPath, mutationType: mutationType ?? "update", targetMemoryId: memory.id,
                 category: mutationType ? undefined : "__mc_visibility__",
             });
-            return result(this.db, input.projectPath, memory.id);
+            return { value: result(this.db, input.projectPath, memory.id), committedMemoryMutationId: mutation.id };
         });
     }
 }

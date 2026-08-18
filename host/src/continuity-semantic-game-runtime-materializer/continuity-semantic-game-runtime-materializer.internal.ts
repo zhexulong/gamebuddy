@@ -8,14 +8,43 @@ import type {
   ProductionGamePermit,
   ProductionGameTerminalReceipt,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
+import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
+import type { CompanionHostService } from "../host-service.js";
+import type {
+  GameOperationalGateEvidence,
+  GameOperationalGateEvidenceProjection,
+} from "../game-operational-gate-evidence.js";
+
+/**
+ * The connected Host surface retained by the exact Game runtime. It deliberately
+ * excludes binding, permit, coordinator, and runtime-session authority.
+ */
+export type ConnectedGameRuntime = Readonly<{
+  host: CompanionHostService;
+  lifecycleSnapshot(): HostGameLifecycleSnapshot;
+  /** Present only when the source-owned operational gate was explicitly armed. */
+  nextOperationalGateEvidence?: () => Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">>;
+  markClosing(): void;
+  /** Internal-only commit gate for launch-owned ingress after durable enter. */
+  activateIngress(): void;
+}>;
 
 export type RuntimeDisposal = Readonly<{
   session: Readonly<{ dispose(): void }>;
+  /** Host-observed Pi identity; production connected ingress requires it. */
+  piSessionId?: string;
   gameplaySubagent?: Readonly<{ dispose(): void }>;
+  clearGameOperationalGateMarker?: () => void;
+  operationalGateEvidence?: GameOperationalGateEvidenceProjection;
+  /** Test-only factories may omit this; production admission rejects it. */
+  connected?: ConnectedGameRuntime;
 }>;
 
 export type MaterializedGameRuntime = Readonly<{
   receipt: ProductionGameTerminalReceipt;
+  /** Present only for the production connected-ingress materializer. */
+  piSessionId?: string;
+  connected?: ConnectedGameRuntime;
   /**
    * The private S4d close-effect half. A caller must first durably prepare an
    * exact close permit; only then can this live runtime dispose and mint its
@@ -87,9 +116,12 @@ export function finalizeMaterializedGameRuntime(
   };
   return Object.freeze({
     receipt,
+    ...(runtime.piSessionId === undefined ? {} : { piSessionId: runtime.piSessionId }),
+    ...(runtime.connected === undefined ? {} : { connected: runtime.connected }),
     async teardownClose(closePermit) {
       if (state !== "live") throw new Error("game_runtime_materialization_unavailable");
       assertExactClosePermit(enterPermit, closePermit);
+      runtime.connected?.markClosing();
       state = "tearing_down";
       closePromise = closeMaterializedRuntime(runtime);
       try {
@@ -98,7 +130,11 @@ export function finalizeMaterializedGameRuntime(
         state = "closed";
         return terminal;
       } catch (error) {
-        state = "closed";
+        // The facade retains this exact runtime and close permit for a
+        // same-owner retry. Do not falsely retire the object after a failed
+        // teardown: the underlying runtime may still be live.
+        state = "live";
+        closePromise = undefined;
         throw error;
       }
     },
@@ -149,7 +185,10 @@ export async function closeMaterializedRuntime(runtime: RuntimeDisposal): Promis
       errors.push(error);
     }
   };
+  attempt(() => runtime.connected?.host.close());
   attempt(() => runtime.gameplaySubagent?.dispose());
+  attempt(() => runtime.operationalGateEvidence?.close());
+  attempt(() => runtime.clearGameOperationalGateMarker?.());
   attempt(() => runtime.session.dispose());
   if (errors.length > 0) throw new AggregateError(errors, "game_runtime_materialization_close_failed");
 }
@@ -160,9 +199,21 @@ export function assertRuntimeDisposal(value: unknown): asserts value is RuntimeD
     typeof value !== "object" ||
     !isObject((value as RuntimeDisposal).session) ||
     typeof (value as RuntimeDisposal).session.dispose !== "function" ||
+    ((value as RuntimeDisposal).connected !== undefined &&
+      (!isObject((value as RuntimeDisposal).connected) ||
+        !((value as RuntimeDisposal).connected!.host instanceof Object) ||
+        typeof (value as RuntimeDisposal).connected!.host.close !== "function" ||
+        typeof (value as RuntimeDisposal).connected!.lifecycleSnapshot !== "function" ||
+        typeof (value as RuntimeDisposal).connected!.markClosing !== "function")) ||
     ((value as RuntimeDisposal).gameplaySubagent !== undefined &&
       (!isObject((value as RuntimeDisposal).gameplaySubagent) ||
-        typeof (value as RuntimeDisposal).gameplaySubagent!.dispose !== "function"))
+        typeof (value as RuntimeDisposal).gameplaySubagent!.dispose !== "function")) ||
+    ((value as RuntimeDisposal).clearGameOperationalGateMarker !== undefined &&
+      typeof (value as RuntimeDisposal).clearGameOperationalGateMarker !== "function") ||
+    ((value as RuntimeDisposal).operationalGateEvidence !== undefined &&
+      (typeof (value as RuntimeDisposal).operationalGateEvidence !== "object" ||
+        typeof (value as RuntimeDisposal).operationalGateEvidence!.next !== "function" ||
+        typeof (value as RuntimeDisposal).operationalGateEvidence!.close !== "function"))
   ) {
     throw new Error("invalid_game_runtime_materialization_result");
   }
@@ -296,7 +347,6 @@ function isGameVector(value: unknown): boolean {
     isSafeNonNegativeInteger(value.partitionRevision) &&
     isSafeNonNegativeInteger(value.gameRevision) &&
     isSafeNonNegativeInteger(value.leaseRevision) &&
-    isSafeNonNegativeInteger(value.selectionRevision) &&
     isSafeNonNegativeInteger(value.fenceEpoch)
   );
 }

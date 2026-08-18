@@ -82,8 +82,8 @@ export type IntegrationDispatchAdmission = Readonly<{
 
 export type IntegrationToolContext = Readonly<{
   connection: IntegrationConnection;
-  /** Required for action tools; absent admission fail-closes the action surface. */
-  dispatchAdmission?: IntegrationDispatchAdmission;
+  /** Required for executable action tools. It mints a fresh runtime-owned admission for each execution invocation. */
+  dispatchAdmissionFactory?: () => IntegrationDispatchAdmission;
   /** Advisory data is opaque to Host core and interpreted only by the module. */
   knowledge?: unknown;
   gameVersion?: string;

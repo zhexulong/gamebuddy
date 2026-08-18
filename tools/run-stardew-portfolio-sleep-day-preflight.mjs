@@ -18,27 +18,48 @@ const ACTION = "single_player_sleep_and_advance_day";
 const TOPOLOGY = "single_player_native_companion";
 const SOURCE_AUDIT_PATH = new URL("./stardew-portfolio-sleep-day-source-audit.json", import.meta.url);
 const SCOPE_KEYS = Object.freeze([
-  "integrationId", "topology", "saveId", "worldId", "localPlayerId",
-  "companionId", "bindingGeneration", "bindingHash",
+  "integrationId",
+  "topology",
+  "saveId",
+  "worldId",
+  "localPlayerId",
+  "companionId",
+  "bindingGeneration",
+  "bindingHash",
 ]);
 const SOURCE_BLOCKER = Object.freeze({
   code: "native_sleep_ingress_unavailable",
   targetVersion: "1.6.15.24356",
-  sourceFact: "TouchAction Sleep reaches private GameLocation.startSleep/doSleep confirmation continuations before direct Game1.NewDay; no approved non-UI typed semantic ingress exists.",
+  sourceFact:
+    "TouchAction Sleep reaches private GameLocation.startSleep/doSleep confirmation continuations before direct Game1.NewDay; no approved non-UI typed semantic ingress exists.",
   prohibitedAlternatives: Object.freeze([
-    "Game1.NewDay", "SaveGame.Save", "GameLocation.startSleep", "GameLocation.doSleep",
-    "answerDialogueAction", "UI/input", "reflection", "generic dispatcher", "save edit",
+    "Game1.NewDay",
+    "SaveGame.Save",
+    "GameLocation.startSleep",
+    "GameLocation.doSleep",
+    "answerDialogueAction",
+    "UI/input",
+    "reflection",
+    "generic dispatcher",
+    "save edit",
   ]),
-  requiredSharedIntegrationSeam: "PortfolioBridgeSession/PortfolioIntegration/PortfolioLocalPlayerBinding must durably record the exact old-binding execution before invalidation, and only an authenticated exact new-binding reclaim may correlate Saving, Saved, DayStarted, close, and reopen into one terminal receipt.",
+  requiredSharedIntegrationSeam:
+    "PortfolioBridgeSession/PortfolioIntegration/PortfolioLocalPlayerBinding must durably record the exact old-binding execution before invalidation, and only an authenticated exact new-binding reclaim may correlate Saving, Saved, DayStarted, close, and reopen into one terminal receipt.",
 });
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 function sameExactScope(actual, expected) {
-  return isRecord(actual) && isRecord(expected) &&
-    Object.keys(actual).length === SCOPE_KEYS.length && Object.keys(expected).length === SCOPE_KEYS.length &&
-    SCOPE_KEYS.every((key) => Object.hasOwn(actual, key) && Object.hasOwn(expected, key) && actual[key] === expected[key]);
+  return (
+    isRecord(actual) &&
+    isRecord(expected) &&
+    Object.keys(actual).length === SCOPE_KEYS.length &&
+    Object.keys(expected).length === SCOPE_KEYS.length &&
+    SCOPE_KEYS.every(
+      (key) => Object.hasOwn(actual, key) && Object.hasOwn(expected, key) && actual[key] === expected[key],
+    )
+  );
 }
 function blocked(code, details = {}) {
   return Object.freeze({ state: "BLOCKED", action: ACTION, topology: TOPOLOGY, code, ...details });
@@ -53,11 +74,22 @@ export async function readSleepDayGiven({ observeNative, expectedScope } = {}) {
   } catch {
     return blocked("sleep_day_native_probe_failed");
   }
-  if (!isRecord(facts) || facts.source !== "target_version_native_sleep_probe" || facts.readOnly !== true ||
-      facts.saveMutationObserved !== false || facts.gameplayMutationObserved !== false ||
-      facts.topology !== TOPOLOGY || facts.singlePlayer !== true || facts.currentNativeLocalPlayer !== true ||
-      facts.sleepEligible !== true || facts.activeMenu !== false || facts.activeEvent !== false ||
-      facts.activeMinigame !== false || facts.terminalOutcomePresent !== false || !sameExactScope(facts.scope, expectedScope))
+  if (
+    !isRecord(facts) ||
+    facts.source !== "target_version_native_sleep_probe" ||
+    facts.readOnly !== true ||
+    facts.saveMutationObserved !== false ||
+    facts.gameplayMutationObserved !== false ||
+    facts.topology !== TOPOLOGY ||
+    facts.singlePlayer !== true ||
+    facts.currentNativeLocalPlayer !== true ||
+    facts.sleepEligible !== true ||
+    facts.activeMenu !== false ||
+    facts.activeEvent !== false ||
+    facts.activeMinigame !== false ||
+    facts.terminalOutcomePresent !== false ||
+    !sameExactScope(facts.scope, expectedScope)
+  )
     return blocked("sleep_day_given_invalid");
   return Object.freeze({ state: "READY", kind: "sleep_day_given", facts: Object.freeze({ ...facts }) });
 }

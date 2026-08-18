@@ -3,7 +3,6 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 
-import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 
 /**
@@ -63,10 +62,12 @@ const reservationRecords = new WeakMap<object, LeaseRecord>();
 const activeExecutionScope = new AsyncLocalStorage<ChatRuntimeBindingExecution>();
 
 /** Test construction is intentionally not exported from the public Chat binding module. */
-export function createTestChatRuntimeBinding(input: Readonly<{
-  manifest: HostDeploymentManifest;
-  ownerProof: Readonly<{ processId: number; creationTime100ns: string }>;
-}>): ChatRuntimeBinding {
+export function createTestChatRuntimeBinding(
+  input: Readonly<{
+    manifest: HostDeploymentManifest;
+    ownerProof: Readonly<{ processId: number; creationTime100ns: string }>;
+  }>,
+): ChatRuntimeBinding {
   assertManifest(input.manifest);
   assertOwnerProof(input.ownerProof);
   const ownerIdentity = Object.freeze(Object.create(null));
@@ -76,20 +77,11 @@ export function createTestChatRuntimeBinding(input: Readonly<{
 }
 
 /**
- * Creates the production binding from the exact deployment manifest and the
- * OS-owned immutable creation-time proof for this Node process.
+ * Production composition-only constructor. The deployment boundary supplies
+ * its exact immutable manifest snapshot; this binding never loads or re-reads
+ * deployment state itself.
  */
-export async function createChatRuntimeBinding(input: Readonly<{ manifestPath: string }>): Promise<ChatRuntimeBinding> {
-  if (!input || typeof input !== "object" || Object.keys(input).length !== 1 || typeof input.manifestPath !== "string")
-    throw new Error("invalid_chat_runtime_binding_input");
-  const manifest = await loadHostDeploymentManifest(input.manifestPath);
-  return createChatRuntimeBindingFromManifest(manifest);
-}
-
-/** Production composition-only constructor after the deployment boundary has loaded the exact manifest. */
-export async function createChatRuntimeBindingFromManifest(
-  manifest: HostDeploymentManifest,
-): Promise<ChatRuntimeBinding> {
+export async function createChatRuntimeBinding(manifest: HostDeploymentManifest): Promise<ChatRuntimeBinding> {
   assertManifest(manifest);
   if (process.platform !== "win32") throw new Error("windows_runtime_owner_identity_required");
   const proof = await queryCurrentOwnerProof();
@@ -188,9 +180,7 @@ function createBoundChatRuntime(manifest: HostDeploymentManifest, ownerIdentity:
     ownerProcessStartIdentity: proof.creationTime100ns,
   });
   const principal = Object.freeze({ ...manifest.principal });
-  const runtimeBindingDigest = createHash("sha256")
-    .update(JSON.stringify({ principal, owner }), "utf8")
-    .digest("hex");
+  const runtimeBindingDigest = createHash("sha256").update(JSON.stringify({ principal, owner }), "utf8").digest("hex");
   const execution: ChatRuntimeBindingExecution = Object.freeze({
     principal,
     runtimeRoot: manifest.runtimeRoot,
@@ -227,8 +217,11 @@ function createBoundChatRuntime(manifest: HostDeploymentManifest, ownerIdentity:
     closePromise = attempt;
     return attempt;
   };
-  const executeWithBinding = async <T>(callback: (token: OpaqueChatRuntimeBindingToken) => Promise<T> | T): Promise<T> => {
-    if (invoked || !record.active || !record.acceptingMaterialization) throw new Error("chat_runtime_binding_unavailable");
+  const executeWithBinding = async <T>(
+    callback: (token: OpaqueChatRuntimeBindingToken) => Promise<T> | T,
+  ): Promise<T> => {
+    if (invoked || !record.active || !record.acceptingMaterialization)
+      throw new Error("chat_runtime_binding_unavailable");
     if (typeof callback !== "function") throw new Error("invalid_chat_runtime_binding_callback");
     invoked = true;
     try {
@@ -274,8 +267,18 @@ function isExecution(value: unknown): value is ChatRuntimeBindingExecution {
   return typeof value === "object" && value !== null && executionLifetimeRecords.has(value);
 }
 function assertManifest(value: unknown): asserts value is HostDeploymentManifest {
-  if (!value || typeof value !== "object" || !("principal" in value) || !("runtimeRoot" in value))
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !Object.isFrozen(value) ||
+    !("principal" in value) ||
+    !value.principal ||
+    typeof value.principal !== "object" ||
+    !Object.isFrozen(value.principal) ||
+    !("runtimeRoot" in value)
+  ) {
     throw new Error("invalid_host_deployment_manifest");
+  }
 }
 function assertOwnerProof(value: unknown): asserts value is Readonly<{ processId: number; creationTime100ns: string }> {
   if (
@@ -286,7 +289,8 @@ function assertOwnerProof(value: unknown): asserts value is Readonly<{ processId
     typeof (value as { creationTime100ns?: unknown }).creationTime100ns !== "string" ||
     !/^[0-9]{1,20}$/.test((value as { creationTime100ns: string }).creationTime100ns) ||
     BigInt((value as { creationTime100ns: string }).creationTime100ns) <= 0n
-  ) throw new Error("invalid_windows_process_owner_identity");
+  )
+    throw new Error("invalid_windows_process_owner_identity");
 }
 async function queryCurrentOwnerProof(): Promise<OwnerProofRecord> {
   const run = promisify(execFile);

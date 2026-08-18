@@ -46,12 +46,21 @@ function Read-Profile([string]$Name, [string]$Path, [string]$ParameterName) {
 }
 $hostConfig = Read-Profile "host_profile_config" $HostModConfigPath "HostModConfigPath"
 $clientConfig = Read-Profile "ai_client_profile_config" $AiClientModConfigPath "AiClientModConfigPath"
+function Test-ProvisioningEnabled([object]$ProvisioningProperty) {
+    if ($null -eq $ProvisioningProperty -or $null -eq $ProvisioningProperty.Value) {
+        return $false
+    }
+
+    $enableProperty = $ProvisioningProperty.Value.PSObject.Properties["Enable"]
+    return $null -ne $enableProperty -and $enableProperty.Value -eq $true
+}
+
 $hostPlayerIdProperty = if ($null -ne $hostConfig) { $hostConfig.PSObject.Properties["PlayerId"] } else { $null }
 $hostProvisioningProperty = if ($null -ne $hostConfig) { $hostConfig.PSObject.Properties["HostFarmhandProvisioning"] } else { $null }
 $clientProvisioningProperty = if ($null -ne $clientConfig) { $clientConfig.PSObject.Properties["FarmhandProvisioner"] } else { $null }
 if ($null -ne $hostPlayerIdProperty -and [string]$hostPlayerIdProperty.Value -match "^[0-9]{1,20}$") { $legacyPlayerIdFound = $true }
-$hostProfileConfigured = $null -ne $hostProvisioningProperty -and $hostProvisioningProperty.Value.Enable -eq $true
-$clientProfileConfigured = $null -ne $clientProvisioningProperty -and $clientProvisioningProperty.Value.Enable -eq $true
+$hostProfileConfigured = Test-ProvisioningEnabled $hostProvisioningProperty
+$clientProfileConfigured = Test-ProvisioningEnabled $clientProvisioningProperty
 Add-Check "host_profile" $hostProfileConfigured $(if ($hostProfileConfigured) { "HostFarmhandProvisioning is enabled in the host profile." } else { "HostFarmhandProvisioning is not enabled in the host profile." })
 Add-Check "ai_client_profile" $clientProfileConfigured $(if ($clientProfileConfigured) { "FarmhandProvisioner is enabled in the AI-client profile." } else { "FarmhandProvisioner is not enabled in the AI-client profile." })
 Add-Check "role_separation" ($hostProfileConfigured -and $clientProfileConfigured -and $HostModConfigPath -ne $AiClientModConfigPath) "Host and AI-client roles must be enabled in separate Mod profiles."

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { createConnection } from "node:net";
+import { VoiceGatewayProbeClient } from "./lib/voice-gateway-probe-client.mjs";
 
 const outputDevice = option("--device", "default");
 const voice = option("--voice");
@@ -37,11 +37,17 @@ child.stderr.on("data", (chunk) => {
 });
 try {
   await waitFor(() => stdout.includes("listening on"), 20_000, "gateway_start_timeout");
-  const health = await exchange(port, token, {
-    type: "health",
-    requestId: "health_01",
-    voiceProfile: "companion.default",
-  });
+  const client = await VoiceGatewayProbeClient.connect(port, token, { timeoutMs: 8_000 });
+  let health;
+  try {
+    health = await client.request({
+      type: "health",
+      requestId: "health_01",
+      voiceProfile: "companion.default",
+    });
+  } finally {
+    client.close();
+  }
   const passed = health.type === "health" && health.status === "ready" && health.capabilities?.ready === true;
   console.log(
     JSON.stringify(
@@ -72,50 +78,6 @@ function option(name, fallback) {
   }
   if (i + 1 >= process.argv.length) throw new Error(`missing_${name.slice(2)}`);
   return process.argv[i + 1];
-}
-async function exchange(port, token, request) {
-  const socket = createConnection({ host: "127.0.0.1", port });
-  socket.setEncoding("utf8");
-  let buffer = "";
-  const queue = [];
-  const waiters = [];
-  socket.on("data", (chunk) => {
-    buffer += chunk;
-    for (;;) {
-      const index = buffer.indexOf("\n");
-      if (index < 0) return;
-      const line = buffer.slice(0, index);
-      buffer = buffer.slice(index + 1);
-      try {
-        const value = JSON.parse(line);
-        const waiter = waiters.shift();
-        if (waiter) waiter.resolve(value);
-        else queue.push(value);
-      } catch {
-        socket.destroy(new Error("invalid_gateway_response"));
-      }
-    }
-  });
-  const next = () =>
-    queue.length > 0
-      ? Promise.resolve(queue.shift())
-      : new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error("gateway_health_timeout")), 8_000);
-          waiters.push({
-            resolve: (value) => {
-              clearTimeout(timer);
-              resolve(value);
-            },
-          });
-        });
-  await once(socket, "connect");
-  socket.write(`${JSON.stringify({ type: "hello", token, protocolVersion: 1, requestId: "hello_01" })}\n`);
-  const hello = await next();
-  if (hello.type !== "hello_ack") throw new Error("voice_gateway_authentication_failed");
-  socket.write(`${JSON.stringify(request)}\n`);
-  const health = await next();
-  socket.destroy();
-  return health;
 }
 async function waitFor(predicate, timeoutMs, reason) {
   const deadline = Date.now() + timeoutMs;

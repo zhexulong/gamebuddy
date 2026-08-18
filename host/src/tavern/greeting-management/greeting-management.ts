@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import { TavernArtifactStore, TavernRevisionConflict } from "../artifact-store.js";
-import { readSafeDirectory } from "../../path-lock.js";
+import { TavernArtifactStore } from "../artifact-store.js";
 import { validateTavernArtifact, type GreetingSet } from "../types.js";
 
 export type GreetingVariantProjection = Readonly<{ label?: string; text: string }>;
@@ -27,88 +26,49 @@ export function createGreetingManagementService(
   playerRoot: string,
 ): GreetingManagementService {
   const root = resolve(playerRoot);
-  const legacyPath = join(root, "greeting-management", "greetings.json");
   const greetingSetId = `greeting-set-${digest(root)}`;
-  const directory = join(root, "greetings", greetingSetId);
-  const path = (revision: number) => join(directory, "revisions", `${revision}.json`);
+  const repository = store.openRevisionRepository({
+    root: join(root, "greetings", greetingSetId),
+    artifactKind: "greeting",
+    id: greetingSetId,
+    validateArtifact: validateTavernArtifact,
+    matchesId: (artifact, id) => isGreetingSet(artifact) && artifact.greetingSetId === id,
+    project,
+    invalidArtifact: () => new Error("invalid_greeting_artifact"),
+    conflict: () => new Error("greeting_revision_conflict"),
+  });
   return Object.freeze({
     async create(request) {
       validateRequest(request);
-      const artifact: GreetingSet = Object.freeze({
-        schemaVersion: 1,
-        revision: 1,
-        greetingSetId,
-        label: request.label,
-        variants: Object.freeze(
-          request.variants.map((variant, index) =>
-            Object.freeze({ variantId: `greeting-${index + 1}`, label: variant.label, text: variant.text }),
-          ),
-        ),
-      });
       try {
-        return project((await store.write(path(1), artifact, validateTavernArtifact)).artifact);
+        return await repository.create(() => greeting(greetingSetId, 1, request));
       } catch (error) {
-        if (error instanceof TavernRevisionConflict) throw new Error("greeting_already_exists");
+        if (error instanceof Error && error.message === "greeting_revision_conflict")
+          throw new Error("greeting_already_exists");
         throw error;
       }
     },
     async read() {
-      const canonical = await latest(store, directory, greetingSetId);
-      if (canonical !== undefined) return project(canonical);
-      try {
-        return project((await store.read(legacyPath, validateTavernArtifact)).artifact);
-      } catch (error) {
-        if (error instanceof Error && error.message === "tavern_artifact_unreadable") return null;
-        throw error;
-      }
+      return (await repository.readLatest()) ?? null;
     },
     async update(request) {
       validateUpdateRequest(request);
-      const previous = await latest(store, directory, greetingSetId);
-      if (previous === undefined || previous.revision !== request.expectedRevision)
-        throw new Error("greeting_revision_conflict");
-      const artifact: GreetingSet = Object.freeze({
-        schemaVersion: 1,
-        revision: request.expectedRevision + 1,
-        greetingSetId,
-        label: request.label,
-        variants: Object.freeze(
-          request.variants.map((variant, index) =>
-            Object.freeze({ variantId: `greeting-${index + 1}`, label: variant.label, text: variant.text }),
-          ),
-        ),
-      });
-      return project((await store.write(path(artifact.revision), artifact, validateTavernArtifact)).artifact);
+      return repository.update(request.expectedRevision, (revision) => greeting(greetingSetId, revision, request));
     },
   });
 }
-
-async function latest(store: TavernArtifactStore, directory: string, id: string): Promise<GreetingSet | undefined> {
-  let names: readonly string[];
-  try {
-    names = await readSafeDirectory(join(directory, "revisions"), directory);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-    throw error;
-  }
-  let corrupt = false;
-  for (const revision of names
-    .map((name) => /^(\d+)\.json$/u.exec(name)?.[1])
-    .filter((value): value is string => value !== undefined)
-    .map(Number)
-    .filter(Number.isSafeInteger)
-    .sort((a, b) => b - a)) {
-    try {
-      const artifact = (await store.read(join(directory, "revisions", `${revision}.json`), validateTavernArtifact))
-        .artifact;
-      if (isGreetingSet(artifact) && artifact.greetingSetId === id && artifact.revision === revision) return artifact;
-      corrupt = true;
-    } catch {
-      corrupt = true;
-    }
-  }
-  if (corrupt) throw new Error("invalid_greeting_artifact");
-  return undefined;
+function greeting(greetingSetId: string, revision: number, request: CreateGreetingSetRequest): GreetingSet {
+  return Object.freeze({
+    schemaVersion: 1,
+    revision,
+    greetingSetId,
+    label: request.label,
+    variants: Object.freeze(
+      request.variants.map((variant, index) =>
+        Object.freeze({ variantId: `greeting-${index + 1}`, label: variant.label, text: variant.text }),
+      ),
+    ),
+  });
 }
 function project(artifact: unknown): GreetingSetProjection {
   if (!isGreetingSet(artifact)) throw new Error("invalid_greeting_artifact");

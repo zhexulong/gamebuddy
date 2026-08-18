@@ -231,16 +231,15 @@ test("Portfolio prerequisite gate reports missing local environment as BLOCKED",
   assert.ok(result.reasons.includes("portfolio_game_file_missing:Stardew Valley.dll"));
 });
 
-test("Portfolio local readiness remains BLOCKED until P0b attestation exists", async (t) => {
+test("Portfolio action-first readiness does not require the retired P0b attestation gate", async (t) => {
   const context = await createContext(t);
   const result = await checkPortfolioPrerequisites({
     ...context,
     gamePath: context.gamePath,
-    requireP0bAttestation: true,
   });
-  assert.equal(result.state, "BLOCKED");
-  assert.ok(result.reasons.includes("portfolio_p0b_start_manifest_inspection_required"));
-  assert.ok(result.reasons.includes("portfolio_p0b_target_hash_attestation_required"));
+  assert.equal(result.state, "PASS", JSON.stringify(result));
+  assert.ok(!result.reasons?.includes("portfolio_p0b_start_manifest_inspection_required"));
+  assert.ok(!result.reasons?.includes("portfolio_p0b_target_hash_attestation_required"));
 });
 
 test("Portfolio prerequisite gate blocks a profile config whose data root differs from the checked root", async (t) => {

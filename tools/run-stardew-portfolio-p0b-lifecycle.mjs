@@ -63,15 +63,17 @@ export async function runPortfolioP0bLifecycle(options = {}) {
   // never allow profile mutation or launch.
   await assertNoStardewProcesses(options.processList ?? defaultProcessList);
   await validateLaunchTarget(input.gamePath, input.gameExecutable, options.stat ?? lstat, options.realpath ?? realpath);
-  if (typeof env[input.signingKeyEnvironmentVariableName] !== "string" || env[input.signingKeyEnvironmentVariableName].length === 0)
+  if (
+    typeof env[input.signingKeyEnvironmentVariableName] !== "string" ||
+    env[input.signingKeyEnvironmentVariableName].length === 0
+  )
     throw new Error("portfolio_p0b_signing_key_environment_value_missing");
 
   const prepared = await prepare({
     ...input,
     processNames: options.processNames,
   });
-  if (prepared?.state !== "p0b_lifecycle_producer_prepared")
-    throw new Error("portfolio_p0b_prepare_state_invalid");
+  if (prepared?.state !== "p0b_lifecycle_producer_prepared") throw new Error("portfolio_p0b_prepare_state_invalid");
   await verifyArmedConfig(input);
 
   const childEnvironment = { ...env };
@@ -146,20 +148,25 @@ function validateInputs(options, env) {
   const dataRoot = requireAbsolute(get("dataRoot", "GAMEBUDDY_PORTFOLIO_DATA_ROOT"));
   const saveRoot = requireAbsolute(get("saveRoot", "GAMEBUDDY_PORTFOLIO_SAVE_ROOT"));
   const releaseDir = requireAbsolute(get("releaseDir", "GAMEBUDDY_PORTFOLIO_RELEASE_DIR"));
-  const logicalSaveName = requireValue(get("logicalSaveName", "GAMEBUDDY_PORTFOLIO_SAVE_NAME"), "portfolio_p0b_save_name_missing");
+  const logicalSaveName = requireValue(
+    get("logicalSaveName", "GAMEBUDDY_PORTFOLIO_SAVE_NAME"),
+    "portfolio_p0b_save_name_missing",
+  );
   const observedSaveSlot = requireValue(
     get("observedSaveSlot", "GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT"),
     "portfolio_p0b_observed_save_slot_missing",
   );
-  const backupName = requireValue(get("backupName", "GAMEBUDDY_PORTFOLIO_BACKUP_NAME"), "portfolio_p0b_backup_name_missing");
+  const backupName = requireValue(
+    get("backupName", "GAMEBUDDY_PORTFOLIO_BACKUP_NAME"),
+    "portfolio_p0b_backup_name_missing",
+  );
   const startManifestPath = requireAbsolute(
     get("startManifestPath", "GAMEBUDDY_PORTFOLIO_START_MANIFEST"),
     "portfolio_p0b_start_manifest_path_missing",
   );
-  const signingKeyEnvironmentVariableName = get(
-    "signingKeyEnvironmentVariableName",
-    "GAMEBUDDY_PORTFOLIO_SIGNING_KEY_ENVIRONMENT_VARIABLE_NAME",
-  ) ?? DEFAULT_KEY_ENVIRONMENT_NAME;
+  const signingKeyEnvironmentVariableName =
+    get("signingKeyEnvironmentVariableName", "GAMEBUDDY_PORTFOLIO_SIGNING_KEY_ENVIRONMENT_VARIABLE_NAME") ??
+    DEFAULT_KEY_ENVIRONMENT_NAME;
   const timeoutSeconds = Number(get("timeoutSeconds", "GAMEBUDDY_PORTFOLIO_P0B_TIMEOUT_SECONDS") ?? 180);
   if (!ENVIRONMENT_NAME.test(signingKeyEnvironmentVariableName))
     throw new Error("portfolio_p0b_signing_key_environment_name_invalid");
@@ -236,11 +243,9 @@ async function defaultProcessList(processNames) {
   const found = [];
   for (const imageName of requested) {
     try {
-      const result = await execFileAsync(
-        "tasklist.exe",
-        ["/FI", `IMAGENAME eq ${imageName}`, "/NH", "/FO", "CSV"],
-        { windowsHide: true },
-      );
+      const result = await execFileAsync("tasklist.exe", ["/FI", `IMAGENAME eq ${imageName}`, "/NH", "/FO", "CSV"], {
+        windowsHide: true,
+      });
       const lines = String(result.stdout ?? "")
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -328,13 +333,16 @@ function waitForChild(child, timeoutMs, wait) {
     child.once("close", (code, signal) => finish(resolveResult, { code, signal }));
     // The injectable wait is the timeout clock so tests can prove teardown
     // without sleeping. It carries no secret or process details.
-    void wait(timeoutMs, undefined, { signal: controller.signal }).then(() => {
-      const error = new Error("portfolio_p0b_launch_timeout");
-      error.code = "portfolio_p0b_launch_timeout";
-      finish(rejectResult, error);
-    }, (error) => {
-      if (!settled && error?.name !== "AbortError") finish(rejectResult, error);
-    });
+    void wait(timeoutMs, undefined, { signal: controller.signal }).then(
+      () => {
+        const error = new Error("portfolio_p0b_launch_timeout");
+        error.code = "portfolio_p0b_launch_timeout";
+        finish(rejectResult, error);
+      },
+      (error) => {
+        if (!settled && error?.name !== "AbortError") finish(rejectResult, error);
+      },
+    );
   });
 }
 
@@ -361,10 +369,18 @@ function environmentOptions(env = process.env) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    const result = await runPortfolioP0bLifecycle({ ...environmentOptions(), ...parsePortfolioP0bCliArgs(process.argv.slice(2)) });
+    const result = await runPortfolioP0bLifecycle({
+      ...environmentOptions(),
+      ...parsePortfolioP0bCliArgs(process.argv.slice(2)),
+    });
     emit({ ...result });
   } catch (error) {
-    emit({ state: "BLOCKED", phase: PHASE, topology: PORTFOLIO_TOPOLOGY, reasons: [error?.message ?? "portfolio_p0b_launch_failed"] });
+    emit({
+      state: "BLOCKED",
+      phase: PHASE,
+      topology: PORTFOLIO_TOPOLOGY,
+      reasons: [error?.message ?? "portfolio_p0b_launch_failed"],
+    });
     process.exitCode = 2;
   }
 }

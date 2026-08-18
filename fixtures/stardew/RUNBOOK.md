@@ -21,6 +21,51 @@ single-player fixture safe. Neither lane permits save-XML editing, a
 hand-written receipt, an in-memory `Farmer`, UI automation, or raw native-call
 fallback.
 
+## Farmhand Companion Preview entry (preview-only)
+
+The formal Preview entry is a separate, short-lived Host-first attachment surface. It is not semantic authority, a Portfolio entry, a local bootstrap, or a publication/release gate. The trusted launcher must create an absolute JSON config with exactly this shape and must never source any field from model output:
+
+```json
+{"schemaVersion":1,"runtimeRoot":"<absolute Host-owned GameBuddy root>","runtimeInstanceId":"<opaque per-launch id>","requiredPresentationLocale":"zh-CN","identity":{"playerId":"<opaque>","companionId":"<opaque>","saveId":"<opaque>","worldId":"<opaque>"},"bridge":{"pipeName":"<short-lived pipe>","bridgeToken":"<short-lived token>"},"evidence":{"path":"<new absolute JSONL path>","manifestSha256":"<64 lowercase hex>"}}
+```
+
+The only supported Preview orchestration is `tools/start-farmhand-launcher.ps1`. It is Windows-only and requires the native Stardew `startup_preferences` language setting to be `zh` before starting either title. The launcher embeds required `zh-CN` in its private Preview config, and Preview passes that bounded expectation to the authenticated bridge launch: the observed Farmhand snapshot must exactly match it or the run fails closed before Pi construction. Any missing, non-Chinese, or mismatched locale fails closed rather than rendering CJK input/output with an English font. It then starts the Host first under the reversible A-host/A-ai-client transaction using the existing `native_pickup_item_v1` fixture semantics; Preview introduces no action setup. After authenticated fixture/native readiness, it obtains a **fresh** signed attachment manifest while the expected Farmhand remains offline and validates it against the fresh Host advertisement. It writes the manifest's exact identity plus one run's short-lived pipe/token credentials into the transaction-owned AI config. The attachment manifest and launcher startup deadline bound pre-ready admission only; after receipt-backed Preview readiness, bridge authority remains bound to the authenticated token, exact scope, live generation, game-thread policy, and launcher-owned teardown rather than a fixed wall-clock lease. It launches the AI title next, then immediately starts immutable Preview. Preview's successful receipt-backed exact bridge snapshot admission is both the external AI-ready proof and Preview start; there is no separate log-derived ready state.
+
+The required launcher input `-HostRuntimeRoot` is an existing absolute Host-owned root. Its optional `settings/model-profiles.json` is read only when present; when absent, the Host-owned `ModelProfileStore` uses its fixed game default. The launcher never creates, copies, deletes, restores, or treats a model profile as a caller-supplied bridge credential. The root is passed only as Preview's current immutable entry dependency. The separate run-owned root contains only short-lived preview config/evidence/session exchange files and is deleted at teardown. No CLI/env accepts pipe, token, manifest, policy, capability, control endpoint, or credentials. The launcher owns Host, AI, and Preview children; it tears down Preview → AI → Host, deletes known attachment exchange artifacts, and restores the transaction only after all children exit. Failed restore deliberately retains backup and lock for recovery.
+
+For the immutable entry, the launcher uses:
+
+```powershell
+cd host
+pnpm start:farmhand-preview --config '<absolute-preview-config.json>'
+```
+
+The entry validates the entire config before bridge I/O; connects through `STARDEW_INTEGRATION_LAUNCHER`; requires the adapter-observed exact initial snapshot before Pi construction; then installs the current runtime, native chat/player-control Host path, STOP/ledger/worker bindings and optional read-only hash-only evidence artifact before releasing initial facts. `Ctrl+C` first revokes bridge execution and then closes Host/runtime/bridge. It neither accepts capabilities, policies, credentials nor action authority from a model, configures a control endpoint, or performs attachment itself. Delete the short-lived config and bridge token after close.
+
+## Native ordinary-chat and `/stop` live observation (read-only)
+
+The Farmhand companion preview may observe the already-implemented native ordinary
+chat and bare `/stop` ingress without adding a control port or injecting UI/input.
+Start only the official production Host, AI Farmhand, Mod bridge and the existing
+`native_ai_farmhand_multiplayer` runbook profile. Configure the Host process with
+both `GAMEBUDDY_COMPANION_LIVE_EVIDENCE_ARTIFACT=<new absolute JSONL path>` and
+`GAMEBUDDY_COMPANION_LIVE_EVIDENCE_MANIFEST_SHA256=<64 lowercase hex manifest digest>`.
+The path must be a new run-owned file; the Host appends only redacted records.
+
+After the attached Farmhand is ready, a human opens Stardew's native chat and
+submits one ordinary chat line, waits for the corresponding real Pi turn, then
+submits bare `/stop` during an active execution or provider/tool wait. The observer
+stores hashes only: native ingress kind/source/control identity, authenticated
+Farmhand bridge lineage, Pi accepted/settled disposition, and STOP epoch seal/settle.
+It never stores ordinary-chat text, prompt, token, audio, receipt bodies or hidden
+reasoning. After the typed STOP settles, the production observer requires a fresh
+Mod/game-thread `body_settled` observation with its authoritative revision and the
+same hashed stop/source/epoch lineage. It records `old_epoch_quiet` only after that
+observation and the already-settled old-epoch ledger, Pi, worker, presentation, and
+voice cancellation fence; this is a state proof, not a timed quiet-window inference.
+If either exact proof is absent or mismatched, the runner remains `blocked`. Do not
+hand-write, edit, or treat a fixture artifact as live evidence.
+
 ## Farmhand promotion standard (Farmhand lane only)
 
 An action is eligible for `published` only when all of the following are true:
@@ -320,23 +365,7 @@ an alternate action runtime.
    Production returned same-execution `succeeded/item_used` for `(O)216` in
    slot `5`; invariant-culture stamina/health evidence matched fresh before/after state and the food target
    disappeared after native animation. This is only `native_local_player_fixture`
-   shared mechanics evidence.
-14. `native_tree_first_hit_v1` has met this lane's target-version live mechanics
-   closure. Before bridge attachment, fixture setup uses target-version native
-   world/inventory APIs only in the disposable Farm working save to place one
-   mature ordinary tree (`health=10`, non-moss, untapped) with a legal approach
-   tile and supply exactly one Axe. It does not invoke Axe/`tree_first_hit`,
-   damage the tree, create a terminal state, or emit a receipt. Its exact
-   legacy allowlist is `move_to_tile`, `travel`, `equip_tool`,
-   `tree_first_hit`. The production runner separately receipts travel and
-   movement, equips `(T)Axe` in slot `4`, then targets the fresh opaque
-   `tree_shake_source_af99b95b5acdd092` at Farm `(64,17)`. The same execution
-   returned `succeeded/tree_first_hit` with native evidence `before=10`,
-   `after=9`, and `delta=-1`; the following fresh snapshot retained the same
-   tree source with health `9`. This is only
-   `native_local_player_fixture` shared mechanics evidence, never Portfolio or
-   Farmhand publication evidence.
-15. `native_feed_animal_v1` is a native-local-only disposable-working-save
+   shared mechanics evidence.15. `native_feed_animal_v1` is a native-local-only disposable-working-save
     slice with exact legacy profile `move_to_tile`, `travel`, `enter_exit`,
     `feed_animal`. Before bridge attachment, it may call target-version
     `SetupBigFarm` only to create and verify one native `AnimalHouse`, its
@@ -375,7 +404,7 @@ an alternate action runtime.
    no backup, lock, SMAPI/Stardew process, or working save remains.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
-`harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `tree_first_hit`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
+`harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
 receipt-plus-fresh-postcondition standard. `water_crop` has also met this lane's live
 receipt-plus-fresh-postcondition standard. Its scenario first uses the exact
 pre-attachment native setup `SpreadDirt → SpreadSeeds 472` to make dry crops;

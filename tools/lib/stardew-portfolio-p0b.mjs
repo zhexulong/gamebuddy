@@ -73,9 +73,10 @@ export async function inspectPortfolioP0b(options = {}) {
   reasons.push(...save.reasons);
   const startManifestBoundary = inspectStartManifestPathBoundary(context);
   reasons.push(...startManifestBoundary.reasons);
-  const startManifest = startManifestBoundary.state === "ready"
-    ? await inspectStartManifest(context, { save, installation })
-    : Object.freeze({ state: "blocked", reasons: Object.freeze([]), manifest: null });
+  const startManifest =
+    startManifestBoundary.state === "ready"
+      ? await inspectStartManifest(context, { save, installation })
+      : Object.freeze({ state: "blocked", reasons: Object.freeze([]), manifest: null });
   reasons.push(...startManifest.reasons);
   const uniqueReasons = Object.freeze([...new Set(reasons)].sort());
   return Object.freeze({
@@ -645,12 +646,20 @@ async function hashAndVersion(filePath, readVersion) {
     const after = await handle.stat();
     const afterPath = await lstat(filePath);
     if (
-      !afterPath.isFile() || afterPath.isSymbolicLink() || !(await isRealPath(filePath)) ||
-      !sameFileIdentity(beforePath, fileIdentity(after)) || !sameFileIdentity(beforePath, fileIdentity(afterPath))
-    ) throw new Error("changed");
+      !afterPath.isFile() ||
+      afterPath.isSymbolicLink() ||
+      !(await isRealPath(filePath)) ||
+      !sameFileIdentity(beforePath, fileIdentity(after)) ||
+      !sameFileIdentity(beforePath, fileIdentity(afterPath))
+    )
+      throw new Error("changed");
     const fileVersion = readVersion ? await windowsFileVersion(filePath) : null;
     const finalPath = await lstat(filePath);
-    if (!sameFileIdentity(beforePath, fileIdentity(finalPath)) || finalPath.isSymbolicLink() || !(await isRealPath(filePath)))
+    if (
+      !sameFileIdentity(beforePath, fileIdentity(finalPath)) ||
+      finalPath.isSymbolicLink() ||
+      !(await isRealPath(filePath))
+    )
       throw new Error("changed");
     return Object.freeze({
       fileName,
@@ -662,7 +671,15 @@ async function hashAndVersion(filePath, readVersion) {
       fileVersion,
     });
   } catch {
-    return Object.freeze({ fileName, path: filePath, exists: false, symlink: false, reparse: false, sha256: null, fileVersion: null });
+    return Object.freeze({
+      fileName,
+      path: filePath,
+      exists: false,
+      symlink: false,
+      reparse: false,
+      sha256: null,
+      fileVersion: null,
+    });
   } finally {
     await handle?.close().catch(() => {});
   }
@@ -767,7 +784,9 @@ function isPathWithin(candidate, root) {
   if (typeof candidate !== "string" || typeof root !== "string" || !isAbsolute(candidate) || !isAbsolute(root))
     return false;
   const suffix = relative(resolve(root), resolve(candidate));
-  return suffix === "" || (!isAbsolute(suffix) && suffix !== ".." && !suffix.startsWith("../") && !suffix.startsWith("..\\"));
+  return (
+    suffix === "" || (!isAbsolute(suffix) && suffix !== ".." && !suffix.startsWith("../") && !suffix.startsWith("..\\"))
+  );
 }
 
 function samePath(first, second) {
@@ -818,7 +837,12 @@ function fileIdentity(info) {
   return { dev: info.dev, ino: info.ino, size: info.size, mtimeNs: info.mtimeNs };
 }
 function sameFileIdentity(first, second) {
-  return first.dev === second.dev && first.ino === second.ino && first.size === second.size && first.mtimeNs === second.mtimeNs;
+  return (
+    first.dev === second.dev &&
+    first.ino === second.ino &&
+    first.size === second.size &&
+    first.mtimeNs === second.mtimeNs
+  );
 }
 async function isRealPath(filePath) {
   const canonical = await realpath(filePath).catch(() => null);
@@ -839,8 +863,10 @@ async function readStableFile(filePath) {
     if (
       !sameFileIdentity(identity, fileIdentity(after)) ||
       !sameFileIdentity(identity, fileIdentity(afterPath)) ||
-      afterPath.isSymbolicLink() || !(await isRealPath(filePath))
-    ) return null;
+      afterPath.isSymbolicLink() ||
+      !(await isRealPath(filePath))
+    )
+      return null;
     return bytes;
   } catch {
     return null;
@@ -863,8 +889,10 @@ async function readStableJsonFile(filePath) {
     if (
       !sameFileIdentity(identity, fileIdentity(after)) ||
       !sameFileIdentity(identity, fileIdentity(afterPath)) ||
-      afterPath.isSymbolicLink() || !(await isRealPath(filePath))
-    ) return null;
+      afterPath.isSymbolicLink() ||
+      !(await isRealPath(filePath))
+    )
+      return null;
     return JSON.parse(text);
   } catch {
     return null;
@@ -916,7 +944,10 @@ async function inspectDirectory(path, reasonPrefix) {
   try {
     const info = await lstat(path);
     if (info.isSymbolicLink() || !(await isRealPath(path)))
-      return Object.freeze({ state: "blocked", reasons: Object.freeze([`${reasonPrefix}_symlink_or_reparse_forbidden`]) });
+      return Object.freeze({
+        state: "blocked",
+        reasons: Object.freeze([`${reasonPrefix}_symlink_or_reparse_forbidden`]),
+      });
     if (!info.isDirectory())
       return Object.freeze({ state: "blocked", reasons: Object.freeze([`${reasonPrefix}_not_directory`]) });
     return Object.freeze({ state: "ready", reasons: Object.freeze([]) });

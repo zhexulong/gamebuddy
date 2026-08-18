@@ -47,7 +47,7 @@ test("persona management creates canonical revision trees and updates exact revi
   }
 });
 
-test("persona management reads the latest valid canonical revision and fails closed when every canonical revision is corrupt", async () => {
+test("persona management fails closed when its highest numeric revision is corrupt", async () => {
   const root = await mkdtemp(join(tmpdir(), "persona-management-"));
   try {
     const store = new TavernArtifactStore(root);
@@ -57,8 +57,19 @@ test("persona management reads the latest valid canonical revision and fails clo
     assert.deepEqual(await service.read(), { revision: 2, name: "Alex", description: "Second" });
     const personaId = `player-persona-${createHash("sha256").update(resolve(root), "utf8").digest("hex").slice(0, 32)}`;
     await writeFile(join(resolve(root), "personas", personaId, "revisions", "2.json"), "{ corrupt", "utf8");
-    assert.deepEqual(await service.read(), { revision: 1, name: "Alex", description: "First" });
-    await writeFile(join(resolve(root), "personas", personaId, "revisions", "1.json"), "{ corrupt", "utf8");
+    await assert.rejects(service.read(), /invalid_persona_artifact/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("persona management rejects nonnumeric revision-directory entries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "persona-management-"));
+  try {
+    const service = createPersonaManagementService(new TavernArtifactStore(root), root);
+    await service.create({ name: "Alex" });
+    const personaId = `player-persona-${createHash("sha256").update(resolve(root), "utf8").digest("hex").slice(0, 32)}`;
+    await writeFile(join(resolve(root), "personas", personaId, "revisions", "notes.txt"), "junk", "utf8");
     await assert.rejects(service.read(), /invalid_persona_artifact/);
   } finally {
     await rm(root, { recursive: true, force: true });

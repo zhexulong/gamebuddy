@@ -1,8 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { withPathLock } from "../path-lock.js";
+import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import type { CompanionModelConfig } from "../runtime.js";
+import { readStrictJsonFile } from "../strict-json-reader.js";
 
 export const MODEL_PROFILE_MODEL_ID = "deepseek-v4-flash" as const;
 export type ModelProfileSurface = "chat" | "game";
@@ -53,11 +51,6 @@ export class ModelProfileStore {
     }));
   }
 
-  /** @deprecated Activation is not a model preference and cannot be changed. */
-  async setActive(_surface: ModelProfileSurface, _expectedRevision: number, _active: boolean): Promise<never> {
-    throw new Error("model_profile_activation_removed");
-  }
-
   private async mutate(
     surface: ModelProfileSurface,
     expectedRevision: number,
@@ -78,7 +71,7 @@ export class ModelProfileStore {
 
   private async load(): Promise<StoredProfiles> {
     try {
-      return validateStored(JSON.parse(await readFile(this.path, "utf8")) as unknown);
+      return validateStored(await readStrictJsonFile(this.path));
     } catch (error) {
       if (isNotFound(error)) return DEFAULT_PROFILES;
       throw new Error("invalid_model_profile_store");
@@ -115,7 +108,13 @@ function project(surface: ModelProfileSurface, profile: StoredProfile): ModelPro
   });
 }
 function validateStored(value: unknown): StoredProfiles {
-  if (!record(value) || value.schemaVersion !== 1 || !validProfile(value.chat) || !validProfile(value.game))
+  if (
+    !record(value) ||
+    value.schemaVersion !== 1 ||
+    !validProfile(value.chat) ||
+    !validProfile(value.game) ||
+    !hasExactKeys(value, ["schemaVersion", "chat", "game"])
+  )
     throw new Error("invalid_model_profile_store");
   return Object.freeze({ schemaVersion: 1, chat: freezeProfile(value.chat), game: freezeProfile(value.game) });
 }
@@ -132,7 +131,7 @@ function validProfile(value: unknown): value is Record<string, unknown> {
     isRevision(value.revision) &&
     value.modelId === MODEL_PROFILE_MODEL_ID &&
     value.thinkingLevel === "high" &&
-    (Object.keys(value).length === 3 || (Object.keys(value).length === 4 && typeof value.active === "boolean"))
+    hasExactKeys(value, ["revision", "modelId", "thinkingLevel"])
   );
 }
 function validPublicProfile(value: unknown): value is ModelProfile {
@@ -159,6 +158,10 @@ function isSurface(value: unknown): value is ModelProfileSurface {
 function isRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -166,12 +169,5 @@ function isNotFound(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 async function writeAtomically(path: string, value: StoredProfiles): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(temporary, JSON.stringify(value), "utf8");
-    await rename(temporary, path);
-  } finally {
-    await rm(temporary, { force: true });
-  }
+  await atomicWriteFile(path, JSON.stringify(value));
 }

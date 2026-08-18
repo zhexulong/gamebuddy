@@ -18,9 +18,11 @@ export async function runM4BreakRockSourcePreflight() {
     consumer: contract.consumer,
     verifier: contract.verifier,
     blocker: M4_BREAK_ROCK_SOURCE_BLOCKER,
-    sourceFact: "The audit aid identifies ResourceClump health/destroy and separate Debris creation, but blocks target-version decompilation correlation, signed source-class selection, semantic ingress, and fresh-drop partition realization.",
+    sourceFact:
+      "The audit aid identifies ResourceClump health/destroy and separate Debris creation, but blocks target-version decompilation correlation, signed source-class selection, semantic ingress, and fresh-drop partition realization.",
     pickup: "not invoked; distinct existing/future action",
     liveClosure: "none",
   });
 }
-if (process.argv[1]?.endsWith("run-stardew-portfolio-m4-break-rock-source-preflight.mjs")) console.log(JSON.stringify(await runM4BreakRockSourcePreflight(), null, 2));
+if (process.argv[1]?.endsWith("run-stardew-portfolio-m4-break-rock-source-preflight.mjs"))
+  console.log(JSON.stringify(await runM4BreakRockSourcePreflight(), null, 2));

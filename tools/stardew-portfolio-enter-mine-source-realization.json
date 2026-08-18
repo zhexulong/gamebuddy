@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 2,
+  "artifactKind": "portfolio_primitive_exact_target_source_map_realization",
+  "realizationId": "portfolio_enter_mine_source_realization_v2",
+  "actionId": "enter_mine",
+  "topology": "single_player_native_companion",
+  "target": {
+    "relativeFileName": "Stardew Valley.dll",
+    "fileVersion": "1.6.15.24356",
+    "productVersion": "1.6.15.24356",
+    "length": 6268416,
+    "sha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee"
+  },
+  "sourceManifest": {
+    "csharpFileCount": 948,
+    "canonicalSha256": "23494d610a1cf21461e73957b96047a344ca561adece547fcdc25adcb405c892"
+  },
+  "mapRealization": {
+    "asset": "Maps/Mine",
+    "relativeFileName": "Content/Maps/Mine.xnb",
+    "sha256": "a8669be89fd338360bbe637df3c383f3dc5f0d50b1028ad7385aeb39f6e700ff",
+    "layer": "Buildings",
+    "ordinaryProducer": {
+      "x": 23,
+      "y": 9,
+      "action": "Mine",
+      "boundFloor": 1,
+      "defaulted": true
+    },
+    "excludedProducer": {
+      "x": 67,
+      "y": 9,
+      "action": "Mine 77377",
+      "boundFloor": 77377,
+      "defaulted": false
+    },
+    "probeState": "probed"
+  },
+  "anchors": [
+    {
+      "anchorId": "game_location_mine_dispatch",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "declaration": "public virtual bool performAction(string[] action, Farmer who, Location tileLocation)",
+      "needle": "case \"Mine\":",
+      "semanticRole": "Mine_dispatch_optional_floor_default_and_native_commit",
+      "startByte": 419620,
+      "endByte": 486792,
+      "fileSha256": "dac2ef650d97a4445fe18f0eb22282c246c4bed9a31c999c965ef9b3a7b9fff7",
+      "sliceSha256": "ddef0b822a725a1a07face758452bc07f418a7b2b7a0abd7b410b149b9d118a4"
+    },
+    {
+      "anchorId": "game1_enter_mine_boundary",
+      "relativePath": "StardewValley/Game1.cs",
+      "declaration": "public static void enterMine(int whatLevel, int? forceLayout = null)",
+      "needle": "warpFarmer(MineShaft.GetLevelName(whatLevel, forceLayout), 6, 6, 2);",
+      "semanticRole": "native_mine_warp_boundary",
+      "startByte": 380767,
+      "endByte": 381111,
+      "fileSha256": "532c935733e36c23084fcde3fef217e8c70a67f93295069e532530072e695265",
+      "sliceSha256": "ffb93ca420b3804e8c86e52938ad22b1d1559242d945162a685537ce1c3e17e6"
+    }
+  ],
+  "semanticBoundary": {
+    "actionInput": "Initial enter_mine consumes only the unique fresh opaque ordinary Mine producer; its native omitted floor defaults to 1. No caller, DSM, or request selects a floor.",
+    "ordinaryProducer": "Maps/Mine Buildings Action Mine at (23,9) is the sole in-scope producer, but source/map realization does not claim its reachability.",
+    "excludedProducer": "Maps/Mine Buildings Action Mine 77377 at (67,9) is recorded as an excluded out-of-scope producer, never an enter_mine option.",
+    "nativeChain": "GameLocation.performAction Mine → ArgUtility.TryGetOptionalInt(action, 1, ..., 1) → playSound( stairsdown ) → Game1.enterMine(1) → warpFarmer(MineShaft.GetLevelName(...), 6, 6, 2)",
+    "excluded": [
+      "UI/input",
+      "raw coordinates",
+      "caller-selected floor",
+      "DSM-selected floor",
+      "Mine 77377",
+      "MineElevator",
+      "ladder progression",
+      "combat",
+      "persistence",
+      "publication",
+      "live closure"
+    ]
+  },
+  "bdd": {
+    "scenario": "enter_mine enters the native default floor",
+    "given": "Required runtime Given: a fresh native observation proves the local player can reach the opaque ordinary Mine producer; source/map realization alone makes no reachability claim.",
+    "when": "One typed enter_mine request consumes that opaque producer without a floor parameter.",
+    "then": "The native chain enters default floor 1 and yields a terminal receipt plus fresh floor/location observation.",
+    "verifier": "The connected runner correlates the receipt and fresh native location/floor observation; this realization neither supplies nor replaces reachability evidence."
+  },
+  "conclusion": {
+    "sourceMapStatus": "realized",
+    "projectionState": "eligible_for_connected_implementation_review",
+    "liveState": "not_performed",
+    "nonClaim": "This source+map realization does not claim producer reachability, connected implementation, publication, receipt evidence, persistence, or live closure."
+  }
+}

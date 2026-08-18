@@ -110,12 +110,12 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   const spec = typeof value.spec === "string" ? value.spec : typeof data.spec === "string" ? data.spec : undefined;
   const format = spec === "chara_card_v3" ? "st-v3" : "st-v2";
   const name = boundedText(data.name, ST_CARD_DECODER_LIMITS_V1.nameBytes) ?? "Imported Companion";
-  const description = boundedText(data.description, ST_CARD_DECODER_LIMITS_V1.textBytes);
-  const personality = boundedText(data.personality, ST_CARD_DECODER_LIMITS_V1.textBytes);
-  const scenario = boundedText(data.scenario, ST_CARD_DECODER_LIMITS_V1.textBytes);
+  const description = boundedMultilineText(data.description, ST_CARD_DECODER_LIMITS_V1.textBytes);
+  const personality = boundedMultilineText(data.personality, ST_CARD_DECODER_LIMITS_V1.textBytes);
+  const scenario = boundedMultilineText(data.scenario, ST_CARD_DECODER_LIMITS_V1.textBytes);
   const greeting =
-    boundedText(data.first_mes, ST_CARD_DECODER_LIMITS_V1.textBytes) ??
-    boundedText(data.first_message, ST_CARD_DECODER_LIMITS_V1.textBytes);
+    boundedMultilineText(data.first_mes, ST_CARD_DECODER_LIMITS_V1.textBytes) ??
+    boundedMultilineText(data.first_message, ST_CARD_DECODER_LIMITS_V1.textBytes);
   const examples = parseExamples(boundedMultilineText(data.mes_example, ST_CARD_DECODER_LIMITS_V1.examplesBytes));
   const persona =
     description === undefined && personality === undefined
@@ -155,22 +155,46 @@ function extractPngCardJson(bytes: Uint8Array): string | undefined {
     if (length > MAX_INPUT_BYTES || offset + length + 4 > bytes.length) return undefined;
     const chunk = bytes.subarray(offset, offset + length);
     offset += length + 4;
-    const text = type === "tEXt" ? pngText(chunk) : type === "iTXt" ? pngInternationalText(chunk) : undefined;
-    if (text !== undefined && text.keyword.toLowerCase() === "chara") return decodeCharaValue(text.value);
+    const text =
+      type === "tEXt"
+        ? pngText(chunk)
+        : type === "zTXt"
+          ? pngCompressedText(chunk)
+          : type === "iTXt"
+            ? pngInternationalText(chunk)
+            : undefined;
+    if (text !== undefined) {
+      const kw = text.keyword.toLowerCase();
+      if (kw === "chara" || kw === "ccv3" || kw === "character") return decodeCharaValue(text.value);
+    }
     if (type === "IEND") break;
   }
   return undefined;
 }
 function decodeCharaValue(value: string): string | undefined {
-  if (value.trimStart().startsWith("{") || value.trimStart().startsWith("[")) return value;
-  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(value) || value.length % 4 !== 0) return undefined;
-  return decodeUtf8(Buffer.from(value, "base64"));
+  const trimmed = value.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return trimmed;
+  const cleaned = trimmed.replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(cleaned) || cleaned.length % 4 !== 0) return undefined;
+  return decodeUtf8(Buffer.from(cleaned, "base64"));
 }
 function pngText(chunk: Uint8Array): { keyword: string; value: string } | undefined {
   const split = chunk.indexOf(0);
   return split < 1
     ? undefined
     : { keyword: ascii(chunk.subarray(0, split)), value: decodeUtf8(chunk.subarray(split + 1)) ?? "" };
+}
+function pngCompressedText(chunk: Uint8Array): { keyword: string; value: string } | undefined {
+  const split = chunk.indexOf(0);
+  if (split < 1 || split + 2 > chunk.length) return undefined;
+  const compressionMethod = chunk[split + 1];
+  if (compressionMethod !== 0) return undefined;
+  try {
+    const payload = inflateSync(chunk.subarray(split + 2), { maxOutputLength: MAX_INPUT_BYTES });
+    return { keyword: ascii(chunk.subarray(0, split)), value: decodeUtf8(payload) ?? "" };
+  } catch {
+    return undefined;
+  }
 }
 function pngInternationalText(chunk: Uint8Array): { keyword: string; value: string } | undefined {
   const first = chunk.indexOf(0);
@@ -233,7 +257,7 @@ function extractCharacterBook(value: unknown, format: "st-v2" | "st-v3"): WorldB
     return [];
   return value.entries.slice(0, ST_CARD_DECODER_LIMITS_V1.characterBookEntries).flatMap((raw, index) => {
     if (!isRecord(raw)) return [];
-    const content = boundedText(raw.content, ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes);
+    const content = boundedMultilineText(raw.content, ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes);
     if (content === undefined) return [];
     const title =
       boundedText(raw.comment, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
@@ -293,7 +317,7 @@ function boundedMultilineText(value: unknown, max: number): string | undefined {
   return typeof value === "string" &&
     utf8Bytes(value) > 0 &&
     utf8Bytes(value) <= max &&
-    !/[\u0000-\u0009\u000b-\u001f\u007f]/u.test(value)
+    !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
     ? value
     : undefined;
 }

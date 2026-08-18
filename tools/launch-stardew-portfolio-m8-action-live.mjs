@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
  * Starts exactly one target-version SMAPI process for the already prepared M8
- * Portfolio transaction, attaches the M8 action runner after the Mod has had
- * time to publish its native pipe binding, and always tears the owned profile
- * transaction back down. It does not select a save, use UI/input, write save
- * data, call raw save APIs, or perform any game mutation outside the typed M8
- * bridge request made by run-stardew-portfolio-m8-action.mjs.
+ * Portfolio transaction. SMAPI owns the target game child; this launcher must
+ * never start a second Stardew executable. It attaches the M8 action runner
+ * after the Mod has had time to publish its native pipe binding, and always
+ * tears the owned profile transaction back down. It does not select a save,
+ * use UI/input, write save data, call raw save APIs, or perform any game
+ * mutation outside the typed M8 bridge request made by the action runner.
  */
 import { execFile, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -14,9 +15,16 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { restorePortfolioProfile } from "./lib/stardew-portfolio-profile.mjs";
+import { terminatePortfolioProcessTree } from "./run-stardew-portfolio-p0b-lifecycle.mjs";
 
 const execFileAsync = promisify(execFile);
 const PHASE = "m8_target_version_live_action";
+const ELEVATOR_ACTION = "select_mine_elevator_floor";
+const LADDER_ACTION = "use_mine_ladder";
+const ACTION_RUNNERS = Object.freeze({
+  [ELEVATOR_ACTION]: "tools/run-stardew-portfolio-m8-action.mjs",
+  [LADDER_ACTION]: "tools/run-stardew-portfolio-m8-ladder-action.mjs",
+});
 const REQUIRED = Object.freeze([
   "GAMEBUDDY_STARDEW_GAME_PATH",
   "GAMEBUDDY_PORTFOLIO_PROFILE_ROOT",
@@ -29,7 +37,6 @@ const REQUIRED = Object.freeze([
   "GAMEBUDDY_PORTFOLIO_LOCAL_PLAYER_ID",
   "GAMEBUDDY_PORTFOLIO_COMPANION_ID",
   "GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT",
-  "GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT",
 ]);
 const SAFE_NAME = /^[A-Za-z0-9_-]{1,128}$/;
 const OPAQUE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -55,7 +62,7 @@ export async function runM8TargetVersionLiveAction(options = {}) {
   const restore = options.restore ?? restorePortfolioProfile;
   const processExists = options.processExists ?? defaultProcessExists;
   const timeoutMs = options.timeoutMs ?? 90_000;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 30_000 || timeoutMs > 300_000)
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 30_000 || timeoutMs > 1_800_000)
     throw new Error("m8_live_timeout_invalid");
 
   await assertNoStardewProcesses(processList);
@@ -65,19 +72,22 @@ export async function runM8TargetVersionLiveAction(options = {}) {
   // generation 1; do not accept a caller's stale prior-process generation.
   const runtimeEnv = materializeInitialBindingEnvironment(env);
 
-  const child = spawnProcess(input.smapiExecutable, ["--mods-path", input.profileRoot], {
-    cwd: input.gamePath,
-    env: runtimeEnv,
-    shell: false,
-    windowsHide: true,
-    stdio: options.stdio ?? "ignore",
-  });
-  if (!child || !Number.isInteger(child.pid) || child.pid <= 0)
-    throw new Error("m8_live_child_identity_invalid");
-
+  let smapiChild = null;
   let actionResult = null;
   let primaryError = null;
   try {
+    smapiChild = spawnProcess(input.smapiExecutable, ["--mods-path", input.profileRoot], {
+      cwd: input.gamePath,
+      env: runtimeEnv,
+      shell: false,
+      windowsHide: false,
+      stdio: options.stdio ?? "ignore",
+    });
+    if (!smapiChild || !Number.isInteger(smapiChild.pid) || smapiChild.pid <= 0)
+      throw new Error("m8_live_smapi_identity_invalid");
+
+    // SMAPI is the sole launch owner. It starts and supervises the target
+    // Stardew process; spawning the game executable here creates duplicates.
     await wait(input.startupDelayMs);
     actionResult = await runAction(runtimeEnv, input.actionRunnerPath, timeoutMs, wait);
     if (actionResult?.state !== "M8_ACTION_TERMINAL") {
@@ -90,16 +100,27 @@ export async function runM8TargetVersionLiveAction(options = {}) {
         : "missing_action_verdict";
       throw new Error(`m8_live_action_not_terminal:${code}`);
     }
-    return Object.freeze({ state: "M8_ACTION_LIVE_TERMINAL", phase: PHASE, processId: child.pid, action: actionResult });
+    return Object.freeze({
+      state: "M8_ACTION_LIVE_TERMINAL",
+      phase: PHASE,
+      processId: smapiChild.pid,
+      action: actionResult,
+    });
   } catch (error) {
     primaryError = error;
     throw error;
   } finally {
     const cleanupErrors = [];
     try {
-      await terminateProcessTree(child, { spawnProcess, wait, processExists });
+      await terminatePortfolioProcessTree(smapiChild, {
+        platform,
+        spawnProcess,
+        wait,
+        processExists,
+      });
+      await assertNoStardewProcesses(processList);
     } catch (error) {
-      cleanupErrors.push(`process_cleanup:${message(error)}`);
+      cleanupErrors.push(`smapi_process_cleanup:${message(error)}`);
     }
     try {
       await restore({
@@ -122,7 +143,11 @@ function materializeInitialBindingEnvironment(env) {
 }
 
 function validate(env, options) {
+  const action = env.GAMEBUDDY_PORTFOLIO_M8_ACTION ?? ELEVATOR_ACTION;
+  if (!Object.hasOwn(ACTION_RUNNERS, action)) throw new Error("m8_live_action_invalid");
   const missing = REQUIRED.filter((key) => typeof env[key] !== "string" || env[key].length === 0);
+  if (action === ELEVATOR_ACTION && (!env.GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT || typeof env.GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT !== "string"))
+    missing.push("GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT");
   if (missing.length > 0) throw new Error(`m8_live_environment_missing:${missing.join(",")}`);
   const gamePath = absolute(env.GAMEBUDDY_STARDEW_GAME_PATH, "m8_live_game_path_invalid");
   const profileRoot = absolute(env.GAMEBUDDY_PORTFOLIO_PROFILE_ROOT, "m8_live_profile_root_invalid");
@@ -134,8 +159,10 @@ function validate(env, options) {
   if ([env.GAMEBUDDY_PORTFOLIO_SAVE_ID, env.GAMEBUDDY_PORTFOLIO_WORLD_ID, env.GAMEBUDDY_PORTFOLIO_LOCAL_PLAYER_ID, env.GAMEBUDDY_PORTFOLIO_COMPANION_ID]
     .some((value) => !OPAQUE_ID.test(value)) || !isObservedPortfolioSlot(env.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT))
     throw new Error("m8_live_scope_invalid");
-  const checkpoint = Number(env.GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT);
-  if (!Number.isSafeInteger(checkpoint) || checkpoint < 5 || checkpoint > 120 || checkpoint % 5 !== 0)
+  const checkpoint = env.GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT === undefined
+    ? null
+    : Number(env.GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT);
+  if (action === ELEVATOR_ACTION && (!Number.isSafeInteger(checkpoint) || checkpoint < 5 || checkpoint > 120 || checkpoint % 5 !== 0))
     throw new Error("m8_live_checkpoint_invalid");
   const startupDelayMs = Number(options.startupDelayMs ?? env.GAMEBUDDY_PORTFOLIO_M8_STARTUP_DELAY_MS ?? 10_000);
   if (!Number.isInteger(startupDelayMs) || startupDelayMs < 1_000 || startupDelayMs > 60_000)
@@ -151,10 +178,13 @@ function validate(env, options) {
     worldId: env.GAMEBUDDY_PORTFOLIO_WORLD_ID,
     localPlayerId: env.GAMEBUDDY_PORTFOLIO_LOCAL_PLAYER_ID,
     companionId: env.GAMEBUDDY_PORTFOLIO_COMPANION_ID,
+    action,
+    checkpoint,
     observedSaveSlot: env.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT,
     saveName: env.GAMEBUDDY_PORTFOLIO_SAVE_NAME ?? "GameBuddyPortfolioNative02",
     smapiExecutable: join(gamePath, "StardewModdingAPI.exe"),
-    actionRunnerPath: options.actionRunnerPath ?? resolve("tools/run-stardew-portfolio-m8-action.mjs"),
+    gameExecutable: join(gamePath, "Stardew Valley.exe"),
+    actionRunnerPath: options.actionRunnerPath ?? resolve(ACTION_RUNNERS[action]),
     startupDelayMs,
   });
 }
@@ -167,7 +197,7 @@ async function verifyPreparedM8Profile(input, readConfig) {
     throw new Error("m8_live_prepared_config_missing");
   }
   const portfolio = config?.Portfolio;
-  const expected = ["select_mine_elevator_floor"];
+  const expected = [input.action];
   const exact = [
     [portfolio?.PipeName, input.pipeName],
     [portfolio?.BridgeToken, input.bridgeToken],
@@ -260,27 +290,6 @@ async function defaultProcessList(names) {
     }
   }
   return Object.freeze(found);
-}
-
-async function terminateProcessTree(child, { spawnProcess, wait, processExists }) {
-  if (!child?.pid) return;
-  const killer = spawnProcess("taskkill", ["/PID", String(child.pid), "/T", "/F"], { shell: false, windowsHide: true, stdio: "ignore" });
-  await waitForClose(killer, 5_000, wait).catch(() => undefined);
-  const started = Date.now();
-  while (await processExists(child.pid)) {
-    if (Date.now() - started > 5_000) throw new Error("m8_live_child_remains_after_cleanup");
-    await wait(50);
-  }
-}
-
-function waitForClose(child, timeoutMs, wait) {
-  return new Promise((resolveResult, rejectResult) => {
-    let done = false;
-    const finish = (fn, value) => { if (!done) { done = true; fn(value); } };
-    child?.once?.("error", (error) => finish(rejectResult, error));
-    child?.once?.("close", (code, signal) => finish(resolveResult, { code, signal }));
-    void wait(timeoutMs).then(() => finish(rejectResult, new Error("m8_live_process_cleanup_timeout")));
-  });
 }
 
 function defaultProcessExists(pid) {

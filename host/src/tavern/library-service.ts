@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { readSafeDirectory } from "../path-lock.js";
 import { TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
 import type {
   ChatThread,
@@ -11,7 +10,7 @@ import type {
   TavernStableArtifactBinding,
   TavernStableWorldBookBinding,
 } from "./chat-thread-store.js";
-import { tavernRevisionPath, tavernRootForPath, type TavernPaths } from "./tavern-paths.js";
+import { tavernRevisionPath, type TavernPaths } from "./tavern-paths.js";
 import {
   validateTavernArtifact,
   type DialogueExamples,
@@ -75,30 +74,12 @@ export function createTavernLibraryService(
   return Object.freeze({
     async listCompanions(): Promise<readonly TavernCompanion[]> {
       const root = join(paths.root, "companions");
-      let entries: readonly string[];
-      try {
-        entries = await readSafeDirectory(root, paths.root);
-      } catch (error) {
-        if (nodeError(error, "ENOENT")) return Object.freeze([]);
-        throw error;
-      }
-      // A companion namespace also owns Tavern catalog artifacts (Scenario,
-      // Greeting, examples). It is not a Library companion until direct or
-      // reviewed provisioning wrote its own companion.json. Skip namespaces
-      // without that exact record rather than treating normal catalog folders
-      // as corrupt Library entries.
-      const companions = await Promise.all(
-        [...entries].sort().map(async (entry) => {
-          try {
-            const artifact = await store.read(join(root, entry, "companion.json"), validateTavernArtifact);
-            return isCompanion(artifact.artifact) ? artifact.artifact : undefined;
-          } catch (error) {
-            if (error instanceof Error && error.message === "tavern_artifact_unreadable") return undefined;
-            throw error;
-          }
-        }),
+      // Catalog-only namespaces have no exact companion artifact and are not
+      // Library companions. Any extant companion artifact is authoritative:
+      // unreadable or invalid data fails closed rather than being omitted.
+      return store.listArtifactRepositories(root, (entry) =>
+        companionRepository(store, join(root, entry, "companion.json")),
       );
-      return Object.freeze(companions.filter((companion): companion is TavernCompanion => companion !== undefined));
     },
 
     async createNewCompanion(input): Promise<TavernCompanion> {
@@ -217,9 +198,18 @@ export function createTavernLibraryService(
 }
 
 async function currentCompanion(store: TavernArtifactStore, path: string): Promise<TavernCompanion> {
-  const artifact = (await store.read(path, validateTavernArtifact)).artifact;
-  if (!isCompanion(artifact)) throw new Error("invalid_tavern_companion");
-  return artifact;
+  return companionRepository(store, path).read();
+}
+function companionRepository(store: TavernArtifactStore, path: string) {
+  return store.openArtifactRepository<TavernCompanion, TavernCompanion>({
+    path,
+    validateArtifact: (value) => {
+      const artifact = validateTavernArtifact(value);
+      if (!isCompanion(artifact)) throw new Error("invalid_tavern_companion");
+      return artifact;
+    },
+    project: (artifact) => artifact,
+  });
 }
 async function latestExact<T extends UserPersona | Scenario | DialogueExamples>(
   store: TavernArtifactStore,
@@ -227,34 +217,15 @@ async function latestExact<T extends UserPersona | Scenario | DialogueExamples>(
   key: "personaId" | "scenarioId" | "examplesId",
   id: string,
 ): Promise<T> {
-  let names: readonly string[];
-  try {
-    names = await readSafeDirectory(join(directory, "revisions"), tavernRootForPath(directory));
-  } catch {
-    throw new Error("invalid_tavern_selection");
-  }
-  const revisions = names
-    .map((name) => /^(\d+)\.json$/u.exec(name)?.[1])
-    .filter((value): value is string => value !== undefined)
-    .map(Number)
-    .filter(Number.isSafeInteger)
-    .sort((a, b) => b - a);
-  for (const revision of revisions) {
-    try {
-      const envelope = await store.read(tavernRevisionPath(directory, revision), validateTavernArtifact);
-      const artifact = envelope.artifact;
-      if (
-        envelope.revision === revision &&
-        key in artifact &&
-        (artifact as Record<string, unknown>)[key] === id &&
-        artifact.revision === revision
-      )
-        return artifact as T;
-    } catch {
-      /* never select invalid revision files */
-    }
-  }
-  throw new Error("invalid_tavern_selection");
+  const envelope = await selectionRepository<T>(
+    store,
+    directory,
+    id,
+    "invalid_tavern_selection",
+    (artifact) => key in artifact && (artifact as Record<string, unknown>)[key] === id,
+  ).readLatestArtifact();
+  if (envelope === undefined) throw new Error("invalid_tavern_selection");
+  return envelope.artifact;
 }
 async function stableBinding(
   store: TavernArtifactStore,
@@ -291,40 +262,37 @@ async function latestGreeting(
   id: string,
   directory: string,
 ): Promise<Readonly<{ artifact: GreetingSet; canonicalHash: string }>> {
-  let names: readonly string[];
-  try {
-    names = await readSafeDirectory(join(directory, "revisions"), tavernRootForPath(directory));
-  } catch {
-    throw new Error("invalid_tavern_greeting");
-  }
-  const revisions = names
-    .map((name) => /^(\d+)\.json$/u.exec(name)?.[1])
-    .filter((value): value is string => value !== undefined)
-    .map(Number)
-    .filter(Number.isSafeInteger)
-    .sort((a, b) => b - a);
-  for (const revision of revisions) {
-    try {
-      const envelope = await store.read(tavernRevisionPath(directory, revision), validateTavernArtifact);
-      if (
-        isGreetingSet(envelope.artifact) &&
-        envelope.artifact.greetingSetId === id &&
-        envelope.revision === revision &&
-        envelope.artifact.revision === revision
-      )
-        return envelope as Readonly<{ artifact: GreetingSet; canonicalHash: string }>;
-    } catch {
-      /* invalid revisions are never selected */
-    }
-  }
-  throw new Error("invalid_tavern_greeting");
+  const envelope = await selectionRepository<GreetingSet>(
+    store,
+    directory,
+    id,
+    "invalid_tavern_greeting",
+    (artifact) => isGreetingSet(artifact) && artifact.greetingSetId === id,
+  ).readLatestArtifact();
+  if (envelope === undefined) throw new Error("invalid_tavern_greeting");
+  return envelope;
+}
+function selectionRepository<T extends UserPersona | Scenario | DialogueExamples | GreetingSet>(
+  store: TavernArtifactStore,
+  root: string,
+  id: string,
+  invalidMessage: string,
+  matchesId: (artifact: T) => boolean,
+) {
+  return store.openRevisionRepository<T, T>({
+    root,
+    artifactKind: "library_selection",
+    id,
+    validateArtifact: (value) => validateTavernArtifact(value) as T,
+    matchesId: (artifact) => matchesId(artifact),
+    project: (artifact) => artifact,
+    invalidArtifact: () => new Error(invalidMessage),
+    conflict: () => new Error("invalid_tavern_selection"),
+  });
 }
 function isCompanion(value: unknown): value is TavernCompanion {
   return typeof value === "object" && value !== null && "profileId" in value && "companionId" in value;
 }
 function isGreetingSet(value: unknown): value is GreetingSet {
   return typeof value === "object" && value !== null && "greetingSetId" in value && "variants" in value;
-}
-function nodeError(error: unknown, code: string): boolean {
-  return error instanceof Error && "code" in error && error.code === code;
 }

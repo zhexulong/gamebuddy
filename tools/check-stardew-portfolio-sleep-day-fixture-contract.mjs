@@ -68,13 +68,7 @@ const STARTING_FACT_FIELDS = Object.freeze([
   "fixtureMustNotMutateGameplayState",
   "fixtureMustNotWriteReceiptOrPostcondition",
 ]);
-const CROP_FIELDS = Object.freeze([
-  "present",
-  "planted",
-  "watered",
-  "readyForHarvest",
-  "terminalHarvestResult",
-]);
+const CROP_FIELDS = Object.freeze(["present", "planted", "watered", "readyForHarvest", "terminalHarvestResult"]);
 const ANIMAL_FIELDS = Object.freeze([
   "present",
   "adult",
@@ -162,14 +156,7 @@ const REQUIRED_TRACE_FIELDS = Object.freeze([
   "terminalRevision",
   "targetGameVersion",
 ]);
-const REQUIRED_STABLE_IDENTITY_PHASES = Object.freeze([
-  "request",
-  "Saving",
-  "Saved",
-  "DayStarted",
-  "close",
-  "reopen",
-]);
+const REQUIRED_STABLE_IDENTITY_PHASES = Object.freeze(["request", "Saving", "Saved", "DayStarted", "close", "reopen"]);
 const REQUIRED_DAY_STARTED_FACTS = Object.freeze([
   "newDayIdentity",
   "currentLocalPlayerId",
@@ -324,13 +311,19 @@ export function validateStardewPortfolioSleepDayFixtureContract(contract) {
   exactValue(contract?.purpose, PURPOSE, "contract.purpose", errors);
 
   hasExactFields(contract?.target, TARGET_FIELDS, "target", errors);
-  for (const field of TARGET_FIELDS) exactValue(contract?.target?.[field], APPROVED_TARGET[field], `target.${field}`, errors);
+  for (const field of TARGET_FIELDS)
+    exactValue(contract?.target?.[field], APPROVED_TARGET[field], `target.${field}`, errors);
 
   hasExactFields(contract?.fixtureStatus, STATUS_FIELDS, "fixtureStatus", errors);
   exactValue(contract?.fixtureStatus?.state, "fixture_needed", "fixtureStatus.state", errors);
   exactValue(contract?.fixtureStatus?.liveClosure, "none", "fixtureStatus.liveClosure", errors);
   exactValue(contract?.fixtureStatus?.templateState, "unprovisioned", "fixtureStatus.templateState", errors);
-  exactValue(contract?.fixtureStatus?.productionAdapterState, "not_implemented", "fixtureStatus.productionAdapterState", errors);
+  exactValue(
+    contract?.fixtureStatus?.productionAdapterState,
+    "not_implemented",
+    "fixtureStatus.productionAdapterState",
+    errors,
+  );
   exactValue(contract?.fixtureStatus?.successClaimAllowed, false, "fixtureStatus.successClaimAllowed", errors);
 
   hasExactFields(contract?.startingFacts, STARTING_FACT_FIELDS, "startingFacts", errors);
@@ -354,35 +347,150 @@ export function validateStardewPortfolioSleepDayFixtureContract(contract) {
     errors,
   );
   exactValue(contract?.startingFacts?.requiresTopology, TOPOLOGY, "startingFacts.requiresTopology", errors);
-  hasExactFields(contract?.startingFacts?.nonterminalCropPrecondition, CROP_FIELDS, "startingFacts.nonterminalCropPrecondition", errors);
-  exactBooleanFields(contract?.startingFacts?.nonterminalCropPrecondition, ["present", "planted", "watered"], "startingFacts.nonterminalCropPrecondition", errors);
-  exactValue(contract?.startingFacts?.nonterminalCropPrecondition?.readyForHarvest, false, "startingFacts.nonterminalCropPrecondition.readyForHarvest", errors);
-  exactValue(contract?.startingFacts?.nonterminalCropPrecondition?.terminalHarvestResult, false, "startingFacts.nonterminalCropPrecondition.terminalHarvestResult", errors);
-  hasExactFields(contract?.startingFacts?.nonterminalAnimalPrecondition, ANIMAL_FIELDS, "startingFacts.nonterminalAnimalPrecondition", errors);
-  exactBooleanFields(contract?.startingFacts?.nonterminalAnimalPrecondition, ["present", "adult", "ownedByCurrentPlayer", "fedToday"], "startingFacts.nonterminalAnimalPrecondition", errors);
-  exactValue(contract?.startingFacts?.nonterminalAnimalPrecondition?.currentProduce, null, "startingFacts.nonterminalAnimalPrecondition.currentProduce", errors);
-  exactValue(contract?.startingFacts?.nonterminalAnimalPrecondition?.terminalProductResult, false, "startingFacts.nonterminalAnimalPrecondition.terminalProductResult", errors);
-  hasExactFields(contract?.startingFacts?.nonterminalMachinePrecondition, MACHINE_FIELDS, "startingFacts.nonterminalMachinePrecondition", errors);
-  exactBooleanFields(contract?.startingFacts?.nonterminalMachinePrecondition, ["present", "ownedByCurrentPlayer", "loaded"], "startingFacts.nonterminalMachinePrecondition", errors);
-  exactValue(contract?.startingFacts?.nonterminalMachinePrecondition?.readyForHarvest, false, "startingFacts.nonterminalMachinePrecondition.readyForHarvest", errors);
-  exactValue(contract?.startingFacts?.nonterminalMachinePrecondition?.heldOutput, null, "startingFacts.nonterminalMachinePrecondition.heldOutput", errors);
-  exactValue(contract?.startingFacts?.nonterminalMachinePrecondition?.terminalOutputResult, false, "startingFacts.nonterminalMachinePrecondition.terminalOutputResult", errors);
+  hasExactFields(
+    contract?.startingFacts?.nonterminalCropPrecondition,
+    CROP_FIELDS,
+    "startingFacts.nonterminalCropPrecondition",
+    errors,
+  );
+  exactBooleanFields(
+    contract?.startingFacts?.nonterminalCropPrecondition,
+    ["present", "planted", "watered"],
+    "startingFacts.nonterminalCropPrecondition",
+    errors,
+  );
+  exactValue(
+    contract?.startingFacts?.nonterminalCropPrecondition?.readyForHarvest,
+    false,
+    "startingFacts.nonterminalCropPrecondition.readyForHarvest",
+    errors,
+  );
+  exactValue(
+    contract?.startingFacts?.nonterminalCropPrecondition?.terminalHarvestResult,
+    false,
+    "startingFacts.nonterminalCropPrecondition.terminalHarvestResult",
+    errors,
+  );
+  hasExactFields(
+    contract?.startingFacts?.nonterminalAnimalPrecondition,
+    ANIMAL_FIELDS,
+    "startingFacts.nonterminalAnimalPrecondition",
+    errors,
+  );
+  exactBooleanFields(
+    contract?.startingFacts?.nonterminalAnimalPrecondition,
+    ["present", "adult", "ownedByCurrentPlayer", "fedToday"],
+    "startingFacts.nonterminalAnimalPrecondition",
+    errors,
+  );
+  exactValue(
+    contract?.startingFacts?.nonterminalAnimalPrecondition?.currentProduce,
+    null,
+    "startingFacts.nonterminalAnimalPrecondition.currentProduce",
+    errors,
+  );
+  exactValue(
+    contract?.startingFacts?.nonterminalAnimalPrecondition?.terminalProductResult,
+    false,
+    "startingFacts.nonterminalAnimalPrecondition.terminalProductResult",
+    errors,
+  );
+  hasExactFields(
+    contract?.startingFacts?.nonterminalMachinePrecondition,
+    MACHINE_FIELDS,
+    "startingFacts.nonterminalMachinePrecondition",
+    errors,
+  );
+  exactBooleanFields(
+    contract?.startingFacts?.nonterminalMachinePrecondition,
+    ["present", "ownedByCurrentPlayer", "loaded"],
+    "startingFacts.nonterminalMachinePrecondition",
+    errors,
+  );
+  exactValue(
+    contract?.startingFacts?.nonterminalMachinePrecondition?.readyForHarvest,
+    false,
+    "startingFacts.nonterminalMachinePrecondition.readyForHarvest",
+    errors,
+  );
+  exactValue(
+    contract?.startingFacts?.nonterminalMachinePrecondition?.heldOutput,
+    null,
+    "startingFacts.nonterminalMachinePrecondition.heldOutput",
+    errors,
+  );
+  exactValue(
+    contract?.startingFacts?.nonterminalMachinePrecondition?.terminalOutputResult,
+    false,
+    "startingFacts.nonterminalMachinePrecondition.terminalOutputResult",
+    errors,
+  );
 
   hasExactFields(contract?.productionOutcomeOnly, PRODUCTION_FIELDS, "productionOutcomeOnly", errors);
-  exactArray(contract?.productionOutcomeOnly?.requiredLifecycle, REQUIRED_PRODUCTION_LIFECYCLE, "productionOutcomeOnly.requiredLifecycle", errors);
-  exactValue(contract?.productionOutcomeOnly?.dateDayAdvanceOwnedBy, "production_native_game_lifecycle_only", "productionOutcomeOnly.dateDayAdvanceOwnedBy", errors);
-  exactValue(contract?.productionOutcomeOnly?.fixtureDateDayAdvance, "none", "productionOutcomeOnly.fixtureDateDayAdvance", errors);
-  exactValue(contract?.productionOutcomeOnly?.fixtureStateAdvance, "none", "productionOutcomeOnly.fixtureStateAdvance", errors);
-  exactValue(contract?.productionOutcomeOnly?.directNewDayAllowed, false, "productionOutcomeOnly.directNewDayAllowed", errors);
-  exactValue(contract?.productionOutcomeOnly?.productionSuccessRequiresRunnableLawfulAdapter, true, "productionOutcomeOnly.productionSuccessRequiresRunnableLawfulAdapter", errors);
+  exactArray(
+    contract?.productionOutcomeOnly?.requiredLifecycle,
+    REQUIRED_PRODUCTION_LIFECYCLE,
+    "productionOutcomeOnly.requiredLifecycle",
+    errors,
+  );
+  exactValue(
+    contract?.productionOutcomeOnly?.dateDayAdvanceOwnedBy,
+    "production_native_game_lifecycle_only",
+    "productionOutcomeOnly.dateDayAdvanceOwnedBy",
+    errors,
+  );
+  exactValue(
+    contract?.productionOutcomeOnly?.fixtureDateDayAdvance,
+    "none",
+    "productionOutcomeOnly.fixtureDateDayAdvance",
+    errors,
+  );
+  exactValue(
+    contract?.productionOutcomeOnly?.fixtureStateAdvance,
+    "none",
+    "productionOutcomeOnly.fixtureStateAdvance",
+    errors,
+  );
+  exactValue(
+    contract?.productionOutcomeOnly?.directNewDayAllowed,
+    false,
+    "productionOutcomeOnly.directNewDayAllowed",
+    errors,
+  );
+  exactValue(
+    contract?.productionOutcomeOnly?.productionSuccessRequiresRunnableLawfulAdapter,
+    true,
+    "productionOutcomeOnly.productionSuccessRequiresRunnableLawfulAdapter",
+    errors,
+  );
 
   hasExactFields(contract?.traceIdentity, TRACE_FIELDS, "traceIdentity", errors);
   exactArray(contract?.traceIdentity?.requiredFields, REQUIRED_TRACE_FIELDS, "traceIdentity.requiredFields", errors);
   exactValue(contract?.traceIdentity?.fixedTopology, TOPOLOGY, "traceIdentity.fixedTopology", errors);
-  exactArray(contract?.traceIdentity?.identityMustRemainStableThrough, REQUIRED_STABLE_IDENTITY_PHASES, "traceIdentity.identityMustRemainStableThrough", errors);
-  exactValue(contract?.traceIdentity?.reopenRequiresNewBindingGeneration, true, "traceIdentity.reopenRequiresNewBindingGeneration", errors);
-  exactValue(contract?.traceIdentity?.oldRequestCannotSucceedAfterReopen, true, "traceIdentity.oldRequestCannotSucceedAfterReopen", errors);
-  exactValue(contract?.traceIdentity?.opaqueTargetIdsMustComeFromFreshObservation, true, "traceIdentity.opaqueTargetIdsMustComeFromFreshObservation", errors);
+  exactArray(
+    contract?.traceIdentity?.identityMustRemainStableThrough,
+    REQUIRED_STABLE_IDENTITY_PHASES,
+    "traceIdentity.identityMustRemainStableThrough",
+    errors,
+  );
+  exactValue(
+    contract?.traceIdentity?.reopenRequiresNewBindingGeneration,
+    true,
+    "traceIdentity.reopenRequiresNewBindingGeneration",
+    errors,
+  );
+  exactValue(
+    contract?.traceIdentity?.oldRequestCannotSucceedAfterReopen,
+    true,
+    "traceIdentity.oldRequestCannotSucceedAfterReopen",
+    errors,
+  );
+  exactValue(
+    contract?.traceIdentity?.opaqueTargetIdsMustComeFromFreshObservation,
+    true,
+    "traceIdentity.opaqueTargetIdsMustComeFromFreshObservation",
+    errors,
+  );
 
   exactArray(contract?.phaseSequence, PHASE_SEQUENCE, "phaseSequence", errors);
   exactValue(
@@ -395,28 +503,98 @@ export function validateStardewPortfolioSleepDayFixtureContract(contract) {
   hasExactFields(contract?.receiptPredicate, RECEIPT_FIELDS, "receiptPredicate", errors);
   exactValue(contract?.receiptPredicate?.sameExecutionRequired, true, "receiptPredicate.sameExecutionRequired", errors);
   exactValue(contract?.receiptPredicate?.requiredState, "succeeded", "receiptPredicate.requiredState", errors);
-  exactValue(contract?.receiptPredicate?.requiredReasonCode, "single_player_sleep_and_advance_day_completed", "receiptPredicate.requiredReasonCode", errors);
-  exactValue(contract?.receiptPredicate?.requiresNonEmptyEvidence, true, "receiptPredicate.requiresNonEmptyEvidence", errors);
-  exactArray(contract?.receiptPredicate?.requiredIdentityMatches, REQUIRED_RECEIPT_IDENTITIES, "receiptPredicate.requiredIdentityMatches", errors);
-  exactArray(contract?.receiptPredicate?.requiredEvidence, REQUIRED_RECEIPT_EVIDENCE, "receiptPredicate.requiredEvidence", errors);
-  exactArray(contract?.receiptPredicate?.authoritativelyCompletedOnlyWhen, REQUIRED_COMPLETION_CONDITIONS, "receiptPredicate.authoritativelyCompletedOnlyWhen", errors);
-  exactValue(contract?.receiptPredicate?.fixtureReceiptForbidden, true, "receiptPredicate.fixtureReceiptForbidden", errors);
+  exactValue(
+    contract?.receiptPredicate?.requiredReasonCode,
+    "single_player_sleep_and_advance_day_completed",
+    "receiptPredicate.requiredReasonCode",
+    errors,
+  );
+  exactValue(
+    contract?.receiptPredicate?.requiresNonEmptyEvidence,
+    true,
+    "receiptPredicate.requiresNonEmptyEvidence",
+    errors,
+  );
+  exactArray(
+    contract?.receiptPredicate?.requiredIdentityMatches,
+    REQUIRED_RECEIPT_IDENTITIES,
+    "receiptPredicate.requiredIdentityMatches",
+    errors,
+  );
+  exactArray(
+    contract?.receiptPredicate?.requiredEvidence,
+    REQUIRED_RECEIPT_EVIDENCE,
+    "receiptPredicate.requiredEvidence",
+    errors,
+  );
+  exactArray(
+    contract?.receiptPredicate?.authoritativelyCompletedOnlyWhen,
+    REQUIRED_COMPLETION_CONDITIONS,
+    "receiptPredicate.authoritativelyCompletedOnlyWhen",
+    errors,
+  );
+  exactValue(
+    contract?.receiptPredicate?.fixtureReceiptForbidden,
+    true,
+    "receiptPredicate.fixtureReceiptForbidden",
+    errors,
+  );
 
   hasExactFields(contract?.freshObservations, ["dayStarted", "reopen"], "freshObservations", errors);
   hasExactFields(contract?.freshObservations?.dayStarted, OBSERVATION_FIELDS, "freshObservations.dayStarted", errors);
-  exactValue(contract?.freshObservations?.dayStarted?.mustBeFreshAfterReceipt, true, "freshObservations.dayStarted.mustBeFreshAfterReceipt", errors);
-  exactArray(contract?.freshObservations?.dayStarted?.requiredFacts, REQUIRED_DAY_STARTED_FACTS, "freshObservations.dayStarted.requiredFacts", errors);
-  exactValue(contract?.freshObservations?.dayStarted?.mustNotBeFixtureWritten, true, "freshObservations.dayStarted.mustNotBeFixtureWritten", errors);
+  exactValue(
+    contract?.freshObservations?.dayStarted?.mustBeFreshAfterReceipt,
+    true,
+    "freshObservations.dayStarted.mustBeFreshAfterReceipt",
+    errors,
+  );
+  exactArray(
+    contract?.freshObservations?.dayStarted?.requiredFacts,
+    REQUIRED_DAY_STARTED_FACTS,
+    "freshObservations.dayStarted.requiredFacts",
+    errors,
+  );
+  exactValue(
+    contract?.freshObservations?.dayStarted?.mustNotBeFixtureWritten,
+    true,
+    "freshObservations.dayStarted.mustNotBeFixtureWritten",
+    errors,
+  );
   hasExactFields(contract?.freshObservations?.reopen, REOPEN_OBSERVATION_FIELDS, "freshObservations.reopen", errors);
-  exactValue(contract?.freshObservations?.reopen?.mustBeFreshAfterClose, true, "freshObservations.reopen.mustBeFreshAfterClose", errors);
-  exactArray(contract?.freshObservations?.reopen?.requiredFacts, REQUIRED_REOPEN_FACTS, "freshObservations.reopen.requiredFacts", errors);
-  exactValue(contract?.freshObservations?.reopen?.oldBindingGenerationMustBeRejected, true, "freshObservations.reopen.oldBindingGenerationMustBeRejected", errors);
-  exactValue(contract?.freshObservations?.reopen?.mustNotBeFixtureWritten, true, "freshObservations.reopen.mustNotBeFixtureWritten", errors);
+  exactValue(
+    contract?.freshObservations?.reopen?.mustBeFreshAfterClose,
+    true,
+    "freshObservations.reopen.mustBeFreshAfterClose",
+    errors,
+  );
+  exactArray(
+    contract?.freshObservations?.reopen?.requiredFacts,
+    REQUIRED_REOPEN_FACTS,
+    "freshObservations.reopen.requiredFacts",
+    errors,
+  );
+  exactValue(
+    contract?.freshObservations?.reopen?.oldBindingGenerationMustBeRejected,
+    true,
+    "freshObservations.reopen.oldBindingGenerationMustBeRejected",
+    errors,
+  );
+  exactValue(
+    contract?.freshObservations?.reopen?.mustNotBeFixtureWritten,
+    true,
+    "freshObservations.reopen.mustNotBeFixtureWritten",
+    errors,
+  );
 
   hasExactFields(contract?.teardownRestore, TEARDOWN_FIELDS, "teardownRestore", errors);
   exactValue(contract?.teardownRestore?.required, true, "teardownRestore.required", errors);
   exactArray(contract?.teardownRestore?.steps, REQUIRED_TEARDOWN_STEPS, "teardownRestore.steps", errors);
-  exactArray(contract?.teardownRestore?.restoreMustNot, REQUIRED_TEARDOWN_PROHIBITIONS, "teardownRestore.restoreMustNot", errors);
+  exactArray(
+    contract?.teardownRestore?.restoreMustNot,
+    REQUIRED_TEARDOWN_PROHIBITIONS,
+    "teardownRestore.restoreMustNot",
+    errors,
+  );
   exactArray(contract?.fixtureCreationRules, REQUIRED_FIXTURE_RULES, "fixtureCreationRules", errors);
   exactArray(contract?.prohibitedOperations, REQUIRED_PROHIBITED_OPERATIONS, "prohibitedOperations", errors);
   exactArray(contract?.nonClaims, REQUIRED_NON_CLAIMS, "nonClaims", errors);
@@ -426,7 +604,11 @@ export function validateStardewPortfolioSleepDayFixtureContract(contract) {
   // extra key scan makes the claim boundary explicit for future schema edits.
   if (contract && typeof contract === "object") {
     const serialized = JSON.stringify(contract);
-    if (/"?(?:successClaimAllowed|liveClosure|templateState|productionAdapterState)"?\s*[:=]\s*(?:true|"(?:succeeded|completed|published|live|provisioned)")/i.test(serialized)) {
+    if (
+      /"?(?:successClaimAllowed|liveClosure|templateState|productionAdapterState)"?\s*[:=]\s*(?:true|"(?:succeeded|completed|published|live|provisioned)")/i.test(
+        serialized,
+      )
+    ) {
       errors.push("contract contains a forbidden success, publication, or provisioned-template claim.");
     }
   }

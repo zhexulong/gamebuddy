@@ -1,0 +1,4846 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_m10_donate_museum_source_boundary",
+  "boundaryId": "portfolio_m10_donate_museum_source_boundary_v1",
+  "primitive": "donate_museum_item",
+  "extractedAtUtc": "2026-08-13T01:30:20.644Z",
+  "target": {
+    "gameVersion": "1.6.15.24356",
+    "assembly": "Stardew Valley.dll",
+    "lengthBytes": 6268416,
+    "sha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee"
+  },
+  "decompilation": {
+    "tool": "ilspycmd",
+    "toolVersion": "ilspycmd: 9.1.0.7988",
+    "launcherInstallRelativePath": ".dotnet/tools/ilspycmd.exe",
+    "launcherSha256": "5da34ef8b7a3d7e2057d27a0a84ec8e1ccdddb35d6d519058fce1e2f374c4c7f",
+    "payloadInstallRelativePath": ".dotnet/tools/.store/ilspycmd/9.1.0.7988/ilspycmd/9.1.0.7988/tools/net8.0/any",
+    "closureSha256": "660c68db0da4f412c3294728453654fe9714c0ee19748bea94031bf57fd0c166",
+    "options": [
+      "--disable-updatecheck",
+      "-p",
+      "--nested-directories"
+    ],
+    "configurationDigest": "29b6b644d1a90eb400eb7e89bdd849717479f10067a02206120989f05f15b22c"
+  },
+  "primitiveContract": {
+    "path": "tools/stardew-portfolio-m10-museum-action-contract.json",
+    "actionAuthoritySha256": "a53d409de15f6c26c1f4a1cb15e26931e043995476882f75699d68ce737e8cd6"
+  },
+  "sourceManifest": {
+    "fileCount": 948,
+    "sha256": "16b881ca57142e2d9097356818d450773ca5c6bb8325394ece4b08f9545860c0",
+    "files": [
+      {
+        "relativePath": "ContentManifest/CHJsonParser.cs",
+        "lengthBytes": 326,
+        "sha256": "ee1a7a352dfc4417fb4a5103cfe49844af7a79e7ece4330fffa7ed8da90e3e2e"
+      },
+      {
+        "relativePath": "ContentManifest/ContentHashParser.cs",
+        "lengthBytes": 311,
+        "sha256": "89fab754266eaf63d4321daca8557eee0a987db9bf7c68f660477c64879c96e1"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHArray.cs",
+        "lengthBytes": 1083,
+        "sha256": "7888a5801258dd0f15eb15975a78efb778d6d4f91911151c3e637e75ba961491"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHBoolean.cs",
+        "lengthBytes": 1053,
+        "sha256": "3712811af60a725d7aca709cf77ea85e4f61816ae9dc022fcccd66a13500458f"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHElement.cs",
+        "lengthBytes": 276,
+        "sha256": "c069fdf72fde9eac6a2277da176e32cbe0f82966c9c2629703757caa6e156d2c"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHJson.cs",
+        "lengthBytes": 225,
+        "sha256": "3775a2ab4ceefc229ff2c504f0a0908e204e14f0e0296ce2ad8564157595dce1"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHJsonParserContext.cs",
+        "lengthBytes": 633,
+        "sha256": "a624862ae4dfc09ece7b2abae8d962046f07eb3ce119890b4b39b3dd5b00b87d"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHNumber.cs",
+        "lengthBytes": 2501,
+        "sha256": "9de36af22f377be4b5c7d509816a6e534139f0f5875e9f94ba614f50d51d90e1"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHObject.cs",
+        "lengthBytes": 1426,
+        "sha256": "50f9513a727185adf70622eae7e788e4d09a1a9bf6cd876b00ab76269a5aa7f2"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHParsable.cs",
+        "lengthBytes": 119,
+        "sha256": "056468d68fed98e000e5cf6a9454fd8f74d58a906f9e83eba1f718153ddcb1a8"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHString.cs",
+        "lengthBytes": 2194,
+        "sha256": "f94932f271a61b7e764f1795585bd36fac52b1314a5524a2febb1ee24ecf4008"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHValue.cs",
+        "lengthBytes": 2100,
+        "sha256": "84a898d9c707c3ffc84756c4d144e92c7adb4be49c699cb0340b912571d1d1da"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHValueEnum.cs",
+        "lengthBytes": 140,
+        "sha256": "c91b792409159b61a6fc73bd679d834f60e3669e329886f901c71abde1b0ba03"
+      },
+      {
+        "relativePath": "ContentManifest/Internal/CHValueUnion.cs",
+        "lengthBytes": 459,
+        "sha256": "0d8aa8aaeb690005017d3602d3877316cd18cc4bd777e0677b57bf4f6b275f0f"
+      },
+      {
+        "relativePath": "DontLoadDefaultSetting.cs",
+        "lengthBytes": 142,
+        "sha256": "432369840317640da251b45e5f755f793959b88f392a1905dcc8dc07d20156b8"
+      },
+      {
+        "relativePath": "Force/DeepCloner/DeepClonerExtensions.cs",
+        "lengthBytes": 1188,
+        "sha256": "c5671a897c945e7862dafd42e5abbfd1332e3457a542c908f117d0134b0974aa"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/ClonerToExprGenerator.cs",
+        "lengthBytes": 9894,
+        "sha256": "6b67c63ad67ece64554cce4efb1712fa4f951b9329f8d7eccc6d9d4d03e70fc4"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/DeepCloneState.cs",
+        "lengthBytes": 4441,
+        "sha256": "c7f3ad33e1136a1145a349738b5157bcc0eb89efb0185b935d83141c56f421a2"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/DeepClonerCache.cs",
+        "lengthBytes": 2270,
+        "sha256": "ee72c217bf5fabd251cb2799204cad2661875eae91401af653ac6fe93b02b1d6"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/DeepClonerExprGenerator.cs",
+        "lengthBytes": 7482,
+        "sha256": "10a5e3048ace6f3ccb28b9df4bae9bb55a9af65bac827dbfb13520a937919e9c"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/DeepClonerGenerator.cs",
+        "lengthBytes": 5903,
+        "sha256": "887b8f96388c0c2dae774b7097e844d97309cb797f816d14c39eea5fb7e4f577"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/DeepClonerSafeTypes.cs",
+        "lengthBytes": 2893,
+        "sha256": "2ce58fd2bbc0caecebd1b7946da14bab43a926d845397fe8f4c813a830f9690d"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/ReflectionHelper.cs",
+        "lengthBytes": 2365,
+        "sha256": "6c36ee3f5b35e6fab4cf25f5edacfaaaa5f05a91e81bf5ae202d2847ae5609e9"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/ShallowClonerGenerator.cs",
+        "lengthBytes": 506,
+        "sha256": "44cac34a5b03275d4850a09f762d10bf9c5163823fb077dee9ca491ecb78094d"
+      },
+      {
+        "relativePath": "Force/DeepCloner/Helpers/ShallowObjectCloner.cs",
+        "lengthBytes": 1472,
+        "sha256": "041119c9085488e8b26f7beac5e6d38ca27c19908cab06d56b2c287c1b67f221"
+      },
+      {
+        "relativePath": "FrameRateCounter.cs",
+        "lengthBytes": 2005,
+        "sha256": "3d3288d6e7d1dbcb254981baed3936db875ea83bddf8bb07fcdbd088141c48a5"
+      },
+      {
+        "relativePath": "Ionic/Crc/CRC32.cs",
+        "lengthBytes": 5122,
+        "sha256": "eca9519c9012cb6c3894dab0debd74b48cf29ee3ac4cc0f9935555791c99c5a5"
+      },
+      {
+        "relativePath": "Ionic/Crc/CrcCalculatorStream.cs",
+        "lengthBytes": 3151,
+        "sha256": "c0dd5bc03f9698aeeb35f1bb2068de4d2d78d5b8606e6218f3b8e51423a8fdff"
+      },
+      {
+        "relativePath": "Ionic/Zlib/Adler.cs",
+        "lengthBytes": 1382,
+        "sha256": "6fee99e5b7902df2c2caa40c6e7f993d901816720cc30fedf78f18f5793d6f3a"
+      },
+      {
+        "relativePath": "Ionic/Zlib/BlockState.cs",
+        "lengthBytes": 112,
+        "sha256": "afe7369ecbd9325272163727d23df10d1cf786bc6e05be18d36bd89da72388bd"
+      },
+      {
+        "relativePath": "Ionic/Zlib/CompressionLevel.cs",
+        "lengthBytes": 267,
+        "sha256": "d2d36f797965fa5c20cc96c57dd0d4eab9b8bd4b27b82e434eba67378669ff71"
+      },
+      {
+        "relativePath": "Ionic/Zlib/CompressionMode.cs",
+        "lengthBytes": 85,
+        "sha256": "75c2efa5cb14c5630651640c5aa5000d566b48c71c7cebff92cb6d89009e707c"
+      },
+      {
+        "relativePath": "Ionic/Zlib/CompressionStrategy.cs",
+        "lengthBytes": 101,
+        "sha256": "6ab64b6a461180871c8759b2e19d93059eaac34a93f6739b97b8c8038e23ad1a"
+      },
+      {
+        "relativePath": "Ionic/Zlib/DeflateFlavor.cs",
+        "lengthBytes": 84,
+        "sha256": "6e3140af3956a27e73696caba5a35f4f67eec005a9357f708e1be792058e3cab"
+      },
+      {
+        "relativePath": "Ionic/Zlib/DeflateManager.cs",
+        "lengthBytes": 31103,
+        "sha256": "fe650b224b4fbdfd4c50b1c6355837a5b77ad2da15d6292e09e4328224fb8ba5"
+      },
+      {
+        "relativePath": "Ionic/Zlib/FlushType.cs",
+        "lengthBytes": 98,
+        "sha256": "c06345252ab846d9c93bc6946c6615ec239822c23ac066881d4517a204aa2a82"
+      },
+      {
+        "relativePath": "Ionic/Zlib/GZipStream.cs",
+        "lengthBytes": 7526,
+        "sha256": "8b242cb5669e61720ccc0bc9d073f32fd5a35e54e9300e92bac527ec7f729431"
+      },
+      {
+        "relativePath": "Ionic/Zlib/InfTree.cs",
+        "lengthBytes": 12933,
+        "sha256": "55fe215b55dbfc887497bf9804e8bdf384ec13c6de3cfa31632e4818631e9755"
+      },
+      {
+        "relativePath": "Ionic/Zlib/InflateBlocks.cs",
+        "lengthBytes": 13920,
+        "sha256": "f945284988cedf937f94a576321dda29cd0482facf95462324b8c023e41967d9"
+      },
+      {
+        "relativePath": "Ionic/Zlib/InflateCodes.cs",
+        "lengthBytes": 15144,
+        "sha256": "40e492b0c36cd5f78757b88e834de099407c918e08af2a12081706b96fdd7c6a"
+      },
+      {
+        "relativePath": "Ionic/Zlib/InflateManager.cs",
+        "lengthBytes": 8287,
+        "sha256": "6689f2dec229ab551c357296e813055ab280a5d08b7b03b5b2ed2503bee646f8"
+      },
+      {
+        "relativePath": "Ionic/Zlib/InternalConstants.cs",
+        "lengthBytes": 583,
+        "sha256": "e3bff4f8296e3d096d66f4fe46567e78100512fd8527d3beaaef8297766b128e"
+      },
+      {
+        "relativePath": "Ionic/Zlib/InternalInflateConstants.cs",
+        "lengthBytes": 236,
+        "sha256": "09704b9d808efd2161e662d176cb3bd94e1a51d4b9afeceec4748d7903f801e4"
+      },
+      {
+        "relativePath": "Ionic/Zlib/SharedUtils.cs",
+        "lengthBytes": 811,
+        "sha256": "ac95eebfa56e8d8f95cf9256d29d410038a2c3cf1d5a27799d9114b4875ffb7c"
+      },
+      {
+        "relativePath": "Ionic/Zlib/StaticTree.cs",
+        "lengthBytes": 3926,
+        "sha256": "a7eb13a03ea0239d32d29e36ef3a3f2cadca22257706990888f8c555d736c3e3"
+      },
+      {
+        "relativePath": "Ionic/Zlib/Tree.cs",
+        "lengthBytes": 8572,
+        "sha256": "1a959e37e7c4d3f12d19858920f4e628d2d2d192bd9d59b19462e2ac66669b6c"
+      },
+      {
+        "relativePath": "Ionic/Zlib/ZlibBaseStream.cs",
+        "lengthBytes": 12258,
+        "sha256": "5584ed4ac859d8360f131f18105a8db96c23a43fc2e5db6195a6d3e95f8b733c"
+      },
+      {
+        "relativePath": "Ionic/Zlib/ZlibCodec.cs",
+        "lengthBytes": 5846,
+        "sha256": "7dcfbc18225b0ac35045a94b2a94deef42139ce09a6e56fdcddb1e4d1de6aa8e"
+      },
+      {
+        "relativePath": "Ionic/Zlib/ZlibConstants.cs",
+        "lengthBytes": 484,
+        "sha256": "2fba272063078c825b67894b912509da4edad79b4c6802525879220378a524e8"
+      },
+      {
+        "relativePath": "Ionic/Zlib/ZlibException.cs",
+        "lengthBytes": 264,
+        "sha256": "4bcb6eaf97d4ce2223d0b30eacbd69cf2b2907d032c46980b72df7d727fb7c61"
+      },
+      {
+        "relativePath": "Ionic/Zlib/ZlibStream.cs",
+        "lengthBytes": 4719,
+        "sha256": "a7abbc7b1837748b7839bd9866bb614f4975d3e446a852ac60b21057e62f3f8a"
+      },
+      {
+        "relativePath": "Ionic/Zlib/ZlibStreamFlavor.cs",
+        "lengthBytes": 96,
+        "sha256": "cb7a1ad806ebb3113d2954e8d5bc0e3526fdf20c5ec97554dba72120323608cc"
+      },
+      {
+        "relativePath": "LWJGL/LZ4.cs",
+        "lengthBytes": 1416,
+        "sha256": "edae8d7b3665a9c81514a3e142e9c6390bc9217b33bcc90d4dfda30be53ca9d6"
+      },
+      {
+        "relativePath": "Netcode/AbstractNetEvent1.cs",
+        "lengthBytes": 2917,
+        "sha256": "68dabd4b2b13143e7eecfc08eef72503e2c614e11cf51de7566b927abda9ffec"
+      },
+      {
+        "relativePath": "Netcode/AbstractNetSerializable.cs",
+        "lengthBytes": 4978,
+        "sha256": "9e5b7f1e05f6c9b3388851ff5216a001cc4551219c0dba35f6f7f0403cc94840"
+      },
+      {
+        "relativePath": "Netcode/BinaryReaderWriterExtensions.cs",
+        "lengthBytes": 6253,
+        "sha256": "798b34b96c045826447939e25a3cc5169b4bdb26ddb0a101bf29d70c4b47e0d3"
+      },
+      {
+        "relativePath": "Netcode/FieldChange.cs",
+        "lengthBytes": 125,
+        "sha256": "195eaeec1b5e036414fd820762d936b3280efe9d55c95d2fa686c6870010ad7d"
+      },
+      {
+        "relativePath": "Netcode/ILoggingWriter.cs",
+        "lengthBytes": 103,
+        "sha256": "667aeaa473bb537ab3fb354241de1834b0377207deb3f534823ecc306d530b4c"
+      },
+      {
+        "relativePath": "Netcode/INetObject.cs",
+        "lengthBytes": 114,
+        "sha256": "28430c42bf5b7c11b85c151c67f46982b007f56e354c298606acf0a28b321120"
+      },
+      {
+        "relativePath": "Netcode/INetRoot.cs",
+        "lengthBytes": 140,
+        "sha256": "45a9ab350593df93b794cb801e1a6bef4dada763325a8fe78e5179219a0ed014"
+      },
+      {
+        "relativePath": "Netcode/INetSerializable.cs",
+        "lengthBytes": 563,
+        "sha256": "21bad3a11642063cc34c61c3be186ef2f0e535e60299ffbb66a17698c968a8af"
+      },
+      {
+        "relativePath": "Netcode/InterpolationCancellable.cs",
+        "lengthBytes": 101,
+        "sha256": "ae117671b94e1700179e86a33e1c39cd107f8707907ba6dc67115310a0d0bef6"
+      },
+      {
+        "relativePath": "Netcode/NetArray.cs",
+        "lengthBytes": 5494,
+        "sha256": "7fa287036705b64bcf0877d66a1cb2db6a4f38ab67e0a5940119bf35831cff11"
+      },
+      {
+        "relativePath": "Netcode/NetBool.cs",
+        "lengthBytes": 713,
+        "sha256": "ad87b013644df430ff75929132520124863734d6edb6bdcaa21f78a22968f561"
+      },
+      {
+        "relativePath": "Netcode/NetByte.cs",
+        "lengthBytes": 715,
+        "sha256": "23bee0f0ac5b805a21a72e673267d7f4b883f2235b376bfeca499333199a9171"
+      },
+      {
+        "relativePath": "Netcode/NetClock.cs",
+        "lengthBytes": 1173,
+        "sha256": "980408a33d1f6114e316fead534685a61fd9bbdca5adc189a2afd57dcd402836"
+      },
+      {
+        "relativePath": "Netcode/NetCollection.cs",
+        "lengthBytes": 4970,
+        "sha256": "28c05d5b2b5f4d0a6025c1d7507c7fdb9afa0a501a433827fbe0a29070734276"
+      },
+      {
+        "relativePath": "Netcode/NetColor.cs",
+        "lengthBytes": 3710,
+        "sha256": "e67c415db9ab80bb46a74761b86768bcf2fcad65f42d95305db81f11a84b2a08"
+      },
+      {
+        "relativePath": "Netcode/NetDictionary.cs",
+        "lengthBytes": 22966,
+        "sha256": "95fd3947cd1e6b953fff6fdd3639e4a8520b428b5148f4ecf9590134dac4d322"
+      },
+      {
+        "relativePath": "Netcode/NetDouble.cs",
+        "lengthBytes": 893,
+        "sha256": "c6ef415dac25ec11549a054ba451c56ec6f276d61cca0813c3857df10331b274"
+      },
+      {
+        "relativePath": "Netcode/NetEnum.cs",
+        "lengthBytes": 1387,
+        "sha256": "75a317bf67799c6cb576f78aae39794bde83efb78044d51378b474f9847b4a07"
+      },
+      {
+        "relativePath": "Netcode/NetEvent0.cs",
+        "lengthBytes": 1298,
+        "sha256": "e2cc5e1e2dd261553efa14491657147656f1906dfa366a7919c0938402ca0783"
+      },
+      {
+        "relativePath": "Netcode/NetEvent1.cs",
+        "lengthBytes": 387,
+        "sha256": "637870e306edf9989cb5dace52eefb671079bc289f0a9f81720ce63bc444970b"
+      },
+      {
+        "relativePath": "Netcode/NetEvent1Field.cs",
+        "lengthBytes": 487,
+        "sha256": "7979801ff3ff4737408cddf1aaa0d936a6dad2313e26a685de966a07a914ed45"
+      },
+      {
+        "relativePath": "Netcode/NetEventArg.cs",
+        "lengthBytes": 149,
+        "sha256": "dcb809f08e3ab62d13b820a7df310ab508accf2d0fb48c03fd8ce749883f1467"
+      },
+      {
+        "relativePath": "Netcode/NetEventBinary.cs",
+        "lengthBytes": 1095,
+        "sha256": "77f856364ad2ed7f4bf9d80d9eea684f8c044af99aafb82c92e864c480d48763"
+      },
+      {
+        "relativePath": "Netcode/NetExtendableRef.cs",
+        "lengthBytes": 2367,
+        "sha256": "1b842677c885bdb141c4afd2ee8a42942856f7a569c95a345466a1db4a5c3c26"
+      },
+      {
+        "relativePath": "Netcode/NetField.cs",
+        "lengthBytes": 788,
+        "sha256": "b905b012029cd293617c3efc08470a3256a99193b4d4e543b1effb0d5853167d"
+      },
+      {
+        "relativePath": "Netcode/NetFieldBase.cs",
+        "lengthBytes": 6898,
+        "sha256": "4204ffc2adca04787264e413b593c024483378464d3c4e4000b4a3bb45bec47c"
+      },
+      {
+        "relativePath": "Netcode/NetFieldDictionary.cs",
+        "lengthBytes": 819,
+        "sha256": "a202c00969f84cf0276e548f6c04d632be1c895b3c216a52926d009d6239af7b"
+      },
+      {
+        "relativePath": "Netcode/NetFields.cs",
+        "lengthBytes": 5821,
+        "sha256": "aa4308d3b1ff4f25a972bc3f8e9fdf74d74d68fb37ef8189b381a19cde52d169"
+      },
+      {
+        "relativePath": "Netcode/NetFloat.cs",
+        "lengthBytes": 867,
+        "sha256": "3b759c8ed4806323c3dbdbd8814b234cb7f4914dff6bb8cb645c473c66bd401a"
+      },
+      {
+        "relativePath": "Netcode/NetGuid.cs",
+        "lengthBytes": 729,
+        "sha256": "b51f8e81d84fbb401ea270528e6fd3ec0b6c8abfabe3e07f3e7d89ae8993983e"
+      },
+      {
+        "relativePath": "Netcode/NetGuidDictionary.cs",
+        "lengthBytes": 601,
+        "sha256": "d41f3d8a18162cef24530f49e94ff6653f5ade3f15ba4b96e6c9ece0915c9bf2"
+      },
+      {
+        "relativePath": "Netcode/NetHashSet.cs",
+        "lengthBytes": 6483,
+        "sha256": "01f23675c47307bdfc6145f476af146f765ad62a724f2e475923cf779ab76b64"
+      },
+      {
+        "relativePath": "Netcode/NetHelper.cs",
+        "lengthBytes": 258,
+        "sha256": "0502698a632b5a5c52fe2be2b4d1a4b6bead58ea4ca6e1e048697a7e630e9e2e"
+      },
+      {
+        "relativePath": "Netcode/NetInt.cs",
+        "lengthBytes": 1014,
+        "sha256": "5a37d3e53c9ba2a148fe6dc9d7b4c2b9614da598baa17b5fc1922cc195fbf5ba"
+      },
+      {
+        "relativePath": "Netcode/NetIntDelta.cs",
+        "lengthBytes": 1740,
+        "sha256": "cd06fc2f42e994d49b81cbcc62c381cc70dc8ae896b79c6b1054863c5301f1fb"
+      },
+      {
+        "relativePath": "Netcode/NetIntHashSet.cs",
+        "lengthBytes": 285,
+        "sha256": "c7c576a7b8a0f11f3af743c436c258c3547f3479c5008a618d6f37c551c1e0ec"
+      },
+      {
+        "relativePath": "Netcode/NetIntList.cs",
+        "lengthBytes": 734,
+        "sha256": "ba0c3bc62286a842abde8299a9be91d3c6ee70d0eec0cff68e532ff1085c32f0"
+      },
+      {
+        "relativePath": "Netcode/NetList.cs",
+        "lengthBytes": 8440,
+        "sha256": "506530887a274b84cbab31aa0ec7a5d408c457eacb2b6be20b56821cd01ab486"
+      },
+      {
+        "relativePath": "Netcode/NetLong.cs",
+        "lengthBytes": 877,
+        "sha256": "23f928e9992bf7a4aef96312f24ed253059f2657711971e6723a9b5da1594ec8"
+      },
+      {
+        "relativePath": "Netcode/NetLongList.cs",
+        "lengthBytes": 743,
+        "sha256": "e49956253173c9c6c7cb3f2d7085858b3ee2b11f1e631d52008701f3d9658922"
+      },
+      {
+        "relativePath": "Netcode/NetNullableEnum.cs",
+        "lengthBytes": 1824,
+        "sha256": "6b80a9e0b3c716e7e4610d41cf85858a2581a93b27c49a07525e7df1eeb4f443"
+      },
+      {
+        "relativePath": "Netcode/NetObjectArray.cs",
+        "lengthBytes": 337,
+        "sha256": "fc015ed0f37df2511c7dfc6dc7c9e5fc4ab2d4067518d4ec6a6850a1b2dba88b"
+      },
+      {
+        "relativePath": "Netcode/NetObjectList.cs",
+        "lengthBytes": 340,
+        "sha256": "fe3ee98cae58c9f2a88d956381b95e55acea4a570c8dbc7b383ad18d41b76b46"
+      },
+      {
+        "relativePath": "Netcode/NetObjectShrinkList.cs",
+        "lengthBytes": 6157,
+        "sha256": "acb5e5990e4f6bc02ac5f24010cd667faf6327af7ef509d53daba2a6a58524e7"
+      },
+      {
+        "relativePath": "Netcode/NetPoint.cs",
+        "lengthBytes": 5128,
+        "sha256": "111b9fdf4bec8c290535adc1a6967c3b5fff0add4bf220034f3f1565d252ac72"
+      },
+      {
+        "relativePath": "Netcode/NetRectangle.cs",
+        "lengthBytes": 7118,
+        "sha256": "fd8216e4e85c6fa75bbf3c188f0f0294230b9dba0b0fc574bda4d13afc630e6d"
+      },
+      {
+        "relativePath": "Netcode/NetRef.cs",
+        "lengthBytes": 209,
+        "sha256": "09fd63c5078417947c7863ac69f7737cd4181ccd6f63f4e615bca0e307f82c33"
+      },
+      {
+        "relativePath": "Netcode/NetRefBase.cs",
+        "lengthBytes": 5415,
+        "sha256": "a3f5e8e20e8b37ae014a7138ea3b9d4b9e2eb07c569cb1a98299c15137bba37e"
+      },
+      {
+        "relativePath": "Netcode/NetRefTypes.cs",
+        "lengthBytes": 2140,
+        "sha256": "9516b9e491271e9972f3b4f2b0ca4310ef8f04ca7b4d7954a5937b2775f55357"
+      },
+      {
+        "relativePath": "Netcode/NetRoot.cs",
+        "lengthBytes": 2781,
+        "sha256": "4916fa0fc950fb76820bdc1caa632f47369ce94e8e893ae7c3a589a99a7a6267"
+      },
+      {
+        "relativePath": "Netcode/NetRootDictionary.cs",
+        "lengthBytes": 4269,
+        "sha256": "4dbe93e97e243fbe304c2e333f0fb4d357ab209f718f6aa29a92b986a3a609c0"
+      },
+      {
+        "relativePath": "Netcode/NetRotation.cs",
+        "lengthBytes": 1129,
+        "sha256": "2fbf7e334bb4ba6e03095473561b898adfd1471faaa798a141fa8fd5462165ec"
+      },
+      {
+        "relativePath": "Netcode/NetString.cs",
+        "lengthBytes": 1223,
+        "sha256": "e7b4a4a90411b5b9b70f416812c2c2cd97c81d7ecff9f0561e105342199823d1"
+      },
+      {
+        "relativePath": "Netcode/NetStringHashSet.cs",
+        "lengthBytes": 420,
+        "sha256": "0c740656d9d70abb34b0425d4b35e9b958cfd93532e71cac723dc73446056dd5"
+      },
+      {
+        "relativePath": "Netcode/NetStringList.cs",
+        "lengthBytes": 308,
+        "sha256": "1c36cad4dcb0aaf8493b012fd35e3287d006e7c6646aabcdb79eaf27824be2b7"
+      },
+      {
+        "relativePath": "Netcode/NetVector2.cs",
+        "lengthBytes": 16196,
+        "sha256": "8aa67cf01abeb269a108be99a979ef4cd866a49a54c48f3b6cc96844bc1a32bf"
+      },
+      {
+        "relativePath": "Netcode/NetVector2HashSet.cs",
+        "lengthBytes": 693,
+        "sha256": "d00ceb62553e8d24fe97dba8f000b184b55eeef35a15689b058f9d392a1576d2"
+      },
+      {
+        "relativePath": "Netcode/NetVersion.cs",
+        "lengthBytes": 3073,
+        "sha256": "b421c09022831149dcf9ce7722227e955d173a76bf8ffb34748c7e807100645d"
+      },
+      {
+        "relativePath": "Netcode/SerializationCollectionFacade.cs",
+        "lengthBytes": 545,
+        "sha256": "a63f5598ee85252ca872b7db4c9ad557a8558a56603a4e67f649f33eb3bea4e0"
+      },
+      {
+        "relativePath": "Netcode/SerializationFacade.cs",
+        "lengthBytes": 566,
+        "sha256": "2945881c0c970eb69aa64f14d0b92e6ba341a14248d409c0744af93b176702fd"
+      },
+      {
+        "relativePath": "Netcode/Validation/NetFieldValidator.cs",
+        "lengthBytes": 2082,
+        "sha256": "a3527e4664df9f8eec08a3797c334ed53007c52dd3fdf460ff155e781cd98b69"
+      },
+      {
+        "relativePath": "Netcode/Validation/NetFieldValidatorEntry.cs",
+        "lengthBytes": 1541,
+        "sha256": "ce185bb27c741d42f8ca7ddf789229b2dc1aa91c2e1c480b9b978fbcbb0aca95"
+      },
+      {
+        "relativePath": "Netcode/Validation/NotImplicitNetFieldAttribute.cs",
+        "lengthBytes": 153,
+        "sha256": "655ba01558ab136a880a3a283b9e096bf0716372ce6599ea8bf38c021434dafd"
+      },
+      {
+        "relativePath": "Netcode/Validation/NotNetFieldAttribute.cs",
+        "lengthBytes": 145,
+        "sha256": "9df1bfe10d5d5bb0b81f59049e31117b880a84d21e3909d1c8fc2cae887080db"
+      },
+      {
+        "relativePath": "ObjToStr.cs",
+        "lengthBytes": 4054,
+        "sha256": "28c7af9fc43c9aa4303045eeb3d35d4d9639f917df08b127d6fc406be89e648e"
+      },
+      {
+        "relativePath": "Properties/AssemblyInfo.cs",
+        "lengthBytes": 647,
+        "sha256": "87c34bd90fd1cd2d9632da060944315c540245500d7af09e1e056aef87bec453"
+      },
+      {
+        "relativePath": "Sickhead/Engine/Util/MemberInfoExtensions.cs",
+        "lengthBytes": 2949,
+        "sha256": "3ce499c52223027002bb45fd55ec870b0633a5ee7f4f801fc3caafb34142ea0c"
+      },
+      {
+        "relativePath": "StardewValley/AbortNetSynchronizerException.cs",
+        "lengthBytes": 107,
+        "sha256": "90a95a798f50693404d268caa8aeec23bee7239a34cd5cd8ff5ac6df21881548"
+      },
+      {
+        "relativePath": "StardewValley/AnimalHouse.cs",
+        "lengthBytes": 8225,
+        "sha256": "e5c552a878744cd6fca037936b25c3b990c70c470633dfc64a844ce7e889efec"
+      },
+      {
+        "relativePath": "StardewValley/AnimatedSprite.cs",
+        "lengthBytes": 18881,
+        "sha256": "06fa303e750f4722bebf0e96c7c458f5ab0fefb339e2675ec0bf3223fab83473"
+      },
+      {
+        "relativePath": "StardewValley/ArgUtility.cs",
+        "lengthBytes": 19582,
+        "sha256": "dbd6ec6cc6a423049df51645b1f221bed8489a8abd012b436e9b3cb54756a5e3"
+      },
+      {
+        "relativePath": "StardewValley/Audio/AudioCategoryWrapper.cs",
+        "lengthBytes": 348,
+        "sha256": "ba00efc0ea795ae240c3d115d1420f3430ea992faa5fd77e4fd66a26e488ed18"
+      },
+      {
+        "relativePath": "StardewValley/Audio/AudioCueModificationManager.cs",
+        "lengthBytes": 2935,
+        "sha256": "8f04b42af4d2516a402a924a7d00fc47dc02bd62595e70908065072866b17ca5"
+      },
+      {
+        "relativePath": "StardewValley/Audio/AudioEngineWrapper.cs",
+        "lengthBytes": 719,
+        "sha256": "a1243abcefef51dc65d8938b5c994f45d92dea65e971cd792e03b0b362e2e42b"
+      },
+      {
+        "relativePath": "StardewValley/Audio/DummyAudioCategory.cs",
+        "lengthBytes": 136,
+        "sha256": "c1328cdfadf7ad483f27c4f35a63b530106344f4ac64fe993ac32c135201862b"
+      },
+      {
+        "relativePath": "StardewValley/Audio/DummyAudioEngine.cs",
+        "lengthBytes": 514,
+        "sha256": "49963a1bec6e188029dd76d5797f53f09879455f8f9719aa7f1546da8ef5dff8"
+      },
+      {
+        "relativePath": "StardewValley/Audio/IAudioCategory.cs",
+        "lengthBytes": 105,
+        "sha256": "6d2234331c79208e2ab42e65ee8825930a22aa41242ec34d91abb2548955b401"
+      },
+      {
+        "relativePath": "StardewValley/Audio/IAudioEngine.cs",
+        "lengthBytes": 302,
+        "sha256": "d3996dcf739d8aa44aba69c8c13022ebd75c47e666b8f52ce6ca5f596dbb8e56"
+      },
+      {
+        "relativePath": "StardewValley/Audio/ISoundsHelper.cs",
+        "lengthBytes": 561,
+        "sha256": "002c0d2353c28c6ddeab3093c180ce9caeee7c6131eb702fc9422014061f90f8"
+      },
+      {
+        "relativePath": "StardewValley/Audio/LoopingCueManager.cs",
+        "lengthBytes": 1231,
+        "sha256": "39eeba0706067480eb25dadd04aee8107f8f2ff455dac3410ad28e591ec63d53"
+      },
+      {
+        "relativePath": "StardewValley/Audio/SoundContext.cs",
+        "lengthBytes": 83,
+        "sha256": "af4c272ecabe16adcec8a307ce5c2e95d006b25dd1f4c40cb8d47f52c2a04cda"
+      },
+      {
+        "relativePath": "StardewValley/Audio/SoundsHelper.cs",
+        "lengthBytes": 5909,
+        "sha256": "b7b6240d0a421c8218a2224b3e646b24e21cecb176cc1b80405b52069fbc8df3"
+      },
+      {
+        "relativePath": "StardewValley/Background.cs",
+        "lengthBytes": 22379,
+        "sha256": "54187ba7e00491eb5cfc3823a11667773e49e5d183ed497202ba979ff8f707cf"
+      },
+      {
+        "relativePath": "StardewValley/BatTemporarySprite.cs",
+        "lengthBytes": 2626,
+        "sha256": "498b8b698a3aad4163c26c8ccf985803bcb9e1a07d4e554fc8370dde8e941523"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/AmbientLocationSounds.cs",
+        "lengthBytes": 6796,
+        "sha256": "03e52b548de25d2d507ba57a0652d2d16ce743ead8d10da6b965a52bc1194389"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Bird.cs",
+        "lengthBytes": 10300,
+        "sha256": "3181fce82ec34c991270a7491d6b80684df2c1ef1640a23c392cc7dbd66ccc30"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Birdie.cs",
+        "lengthBytes": 8355,
+        "sha256": "c9c15dc54a5965d48e69d419dfee9526c51c765c9e55bcab83498ffbc0050d56"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Butterfly.cs",
+        "lengthBytes": 13673,
+        "sha256": "232c23cd217f7c424ecf4513b3bcb7641f5bfc33899ac18271ecc8d66ad19275"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/CalderaMonkey.cs",
+        "lengthBytes": 10208,
+        "sha256": "79634aefdd1a4813d6c23dfa49f2bc2904f01cdc829bdef5f939e1c1d5e693a7"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Cloud.cs",
+        "lengthBytes": 2496,
+        "sha256": "b97f3b27b8cb04318bdf8636314d80baaaad8b83d6a5ac9c81818bd57fd12e92"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/CrabCritter.cs",
+        "lengthBytes": 11028,
+        "sha256": "a5c882549d63d139f8fe0d569061f6bcacd894410aecc884af60e61d93469cda"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Critter.cs",
+        "lengthBytes": 4761,
+        "sha256": "da98274a08ea35fc4fa3c158bd0aac8058159fa3d8f0b24219c3d030dff6c592"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Crow.cs",
+        "lengthBytes": 6609,
+        "sha256": "b1e331da4aac91f9b7a103f9eed4eef863d5f4996f82bb3196f36f475d188644"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/EmilysParrot.cs",
+        "lengthBytes": 3900,
+        "sha256": "40cac8eb387d788396099c380b3b14b17ccdbe7275cd335562e3abaf5e182d6c"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Firefly.cs",
+        "lengthBytes": 3892,
+        "sha256": "77c8c9ab08bb4624a02c6279b2d9473cdd91e4fd869a57dcba63b25727f9e4eb"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Frog.cs",
+        "lengthBytes": 7571,
+        "sha256": "48bed292d98ec657022650b8d43839bef360c64232d350b6709bfbf3ff9b97e3"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Lexicon.cs",
+        "lengthBytes": 7717,
+        "sha256": "0e7a3bbf2594d1d5a00f2ac0375af3948ed142e0dee92cf046b83510a6ba53f4"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/MoneyDial.cs",
+        "lengthBytes": 5952,
+        "sha256": "7854189a490bc4fb473902650521b3a8823373a9bf87942f8568f260cdfe66ea"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Opossum.cs",
+        "lengthBytes": 4197,
+        "sha256": "baaa9a97ccfd6e604280a38132ab73f40f05a6cd00a459420084e0dae79f72f8"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/OverheadParrot.cs",
+        "lengthBytes": 7945,
+        "sha256": "6e9c067ae3e29ef6bd8d4a4a3630b6aae059cfff2e17d9dba5b37264489a3405"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Owl.cs",
+        "lengthBytes": 2939,
+        "sha256": "f45ddc7684deb701136c90ae2707208a3af35f337976ef0c1525c6d781ed2c71"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/ParrotPlatform.cs",
+        "lengthBytes": 28970,
+        "sha256": "6bc260052d9977804ed3e958788df84c7ffbe0b463d910f40945896280bf6a8c"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/ParrotUpgradePerch.cs",
+        "lengthBytes": 48317,
+        "sha256": "67b523714458d983181794f857e32f9f33c7336d957ec2cff42f36bf3c48b534"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/PerchingBirds.cs",
+        "lengthBytes": 5737,
+        "sha256": "16b6b0a01eb65180ee750cba559139cd388543e4762f25156cab20d9274e5de9"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/PlayerStatusList.cs",
+        "lengthBytes": 9652,
+        "sha256": "ac16eb01d0e79ae74da2b5d75dc65d8a7432095d85d8c487bb37c84a7211bca6"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Rabbit.cs",
+        "lengthBytes": 3002,
+        "sha256": "0c2c48490e197c278f501c728ddd4a4b7fdf6bd586a10ad48fbec58f99198340"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/SandDuggy.cs",
+        "lengthBytes": 12129,
+        "sha256": "6911549a219cbca964ffd4d0ab4d6f9f59f0bec97905c66db95901563ceb0fd3"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/ScreenFade.cs",
+        "lengthBytes": 3924,
+        "sha256": "1eb0b7ab620067897cf46c4e13361bbc7655fbb0e07dd61229a1372ad8139835"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/ScreenSwipe.cs",
+        "lengthBytes": 13331,
+        "sha256": "d0af55727c5bed379516a9537dc8e6f9b84c8e34a554ddd7b5182ec1ec32d5f1"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Seagull.cs",
+        "lengthBytes": 6379,
+        "sha256": "94e04f43f78e65576963230756606438b26ef02337e0f4b737f5b982c8475f59"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/SebsFrogs.cs",
+        "lengthBytes": 2215,
+        "sha256": "3e056f50505ebdcb557cfc24aa6171e492fbed89c615d86317a8e0fcbb1044f0"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/SparklingText.cs",
+        "lengthBytes": 11521,
+        "sha256": "3ac794e134abc5708608ca4d75d7aabb5f423f4e43de338bb400844423f74fb4"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/SpriteText.cs",
+        "lengthBytes": 51764,
+        "sha256": "c2b4ef541c3d0f5bfb5da30c2eebc9fbdc5602ffca2160846c1ebd9c7e6f8ec0"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Squirrel.cs",
+        "lengthBytes": 7015,
+        "sha256": "ff99576a54bb37f5f2eafc0114b8a5b2ccb117e5a5bf221bbba0b4eb7a1e7712"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/SuspensionBridge.cs",
+        "lengthBytes": 7142,
+        "sha256": "218ce5efad854e0a494e88b986a3f64a4c88abc13edf22b2e6be0d43dacc5375"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Train.cs",
+        "lengthBytes": 7882,
+        "sha256": "e824ac54c0c4309801f58fb9f0e0c8e78845f4cc6d53ccb1c3854ea9334ea52a"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/TrainCar.cs",
+        "lengthBytes": 18204,
+        "sha256": "5a213028f20ae5b63270f4fa7ced272974c7014e1c5fe064297ca25adcd8905c"
+      },
+      {
+        "relativePath": "StardewValley/BellsAndWhistles/Woodpecker.cs",
+        "lengthBytes": 7392,
+        "sha256": "2b5758f02c6feab16460768444be62207bb090892abf22bac7e641d641d9eab8"
+      },
+      {
+        "relativePath": "StardewValley/Buff.cs",
+        "lengthBytes": 6657,
+        "sha256": "3351c9dfc99478d3ca9c3975bcb96ed77c3a8437e2578c1553e071c5e016f4cf"
+      },
+      {
+        "relativePath": "StardewValley/Buffs/BuffAttributeDisplay.cs",
+        "lengthBytes": 1357,
+        "sha256": "245cbdd74a51b36048fb508c5233870b1c3ea119095ba264415793bc592a973d"
+      },
+      {
+        "relativePath": "StardewValley/Buffs/BuffEffects.cs",
+        "lengthBytes": 5341,
+        "sha256": "1b74aa4ac25c809a181d780ca4ed1934586dab074b0c3150ec5ec3555f3a0819"
+      },
+      {
+        "relativePath": "StardewValley/Buffs/BuffManager.cs",
+        "lengthBytes": 5725,
+        "sha256": "b4da19c1385bcf2c87e69035cf5592a8c1c665547e5a8cabc1a0861a689a6940"
+      },
+      {
+        "relativePath": "StardewValley/BuildingPaintColor.cs",
+        "lengthBytes": 3628,
+        "sha256": "adae31dd55227503be08c51df35e687ed805d85ea37add9c962fc8b1fd39e1db"
+      },
+      {
+        "relativePath": "StardewValley/BuildingPainter.cs",
+        "lengthBytes": 4636,
+        "sha256": "440e2016fb611dff94dcfc6e1f58f17e5acb961dfb8358b731f8efca068e2fc3"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/Barn.cs",
+        "lengthBytes": 265,
+        "sha256": "6ad9692ab8bc5797d6290981dfcf77a8a37c8231fa17cfaec703bcbc561279f5"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/Building.cs",
+        "lengthBytes": 147017,
+        "sha256": "13e06cfc6c11443ada0fb991ae21c79a7f241f0fd5e6de46a3f64afd678c035a"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/Coop.cs",
+        "lengthBytes": 265,
+        "sha256": "e4f792abe8c1d6e291d9a3cc3eea2871f7343be26a929bdd121b9718e5d1475d"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/FishPond.cs",
+        "lengthBytes": 74649,
+        "sha256": "119e4f38508163e522c2b4b666788d1503a8956db3b7d7eca8918b99958eb55f"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/GreenhouseBuilding.cs",
+        "lengthBytes": 7613,
+        "sha256": "e51fdfc6349404234367e80709f96c3b6a477831041e416569f9979ee1d4a925"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/IndoorsType.cs",
+        "lengthBytes": 99,
+        "sha256": "a0ddfe2ff9f59a1cdd6d27d24a84cb288712e2ec7a7e9649d05e10de3b7f6944"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/JumpingFish.cs",
+        "lengthBytes": 5564,
+        "sha256": "7b33e7e6edcb358a3db06c75f5438ebd63fce34bca5097835dbc57fa5383f78b"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/JunimoHut.cs",
+        "lengthBytes": 17503,
+        "sha256": "0297fa6bbbc2c352af16af519d9811ac0b00a09eb608a56f54974fab6588febb"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/Mill.cs",
+        "lengthBytes": 1830,
+        "sha256": "ea2623ee3756ed0906bad8e0608408f2d1221246a4221f8effc5823ef785eded"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/PetBowl.cs",
+        "lengthBytes": 5549,
+        "sha256": "dec9b060886c46268c3706cb268a856adef3e413666846874e1113068e478fc6"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/PondFishSilhouette.cs",
+        "lengthBytes": 7614,
+        "sha256": "65ccbf4bc180256ced1307dc6711031042b0b23d330b428d6b37917bb30a3396"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/ShippingBin.cs",
+        "lengthBytes": 14878,
+        "sha256": "5d7eaba589b72851228d87511668966452fb3534c442e429573c4efa0bfef6f7"
+      },
+      {
+        "relativePath": "StardewValley/Buildings/Stable.cs",
+        "lengthBytes": 3275,
+        "sha256": "d5d3fcacad813b697ddf7feb312a366ab08fead5eb8e9c08f1c85f279681d984"
+      },
+      {
+        "relativePath": "StardewValley/BundleGenerator.cs",
+        "lengthBytes": 6336,
+        "sha256": "2212d90a677e44ca29d9040b5c0daeabde72356a81ac43cd1273fb88edd44a72"
+      },
+      {
+        "relativePath": "StardewValley/ButtonCollection.cs",
+        "lengthBytes": 20363,
+        "sha256": "824e98eb6e7c74f6f3eef0bce198677a490707f7cc00fe4bcb2b52a12d162ef7"
+      },
+      {
+        "relativePath": "StardewValley/CachedMultiplayerMap.cs",
+        "lengthBytes": 246,
+        "sha256": "7101b72c15b368f91179f99b0d5995f4cb3627ea6332ddd717e21240102cf60f"
+      },
+      {
+        "relativePath": "StardewValley/ChangeType.cs",
+        "lengthBytes": 83,
+        "sha256": "3cedcc49ce251e0bbf213ed8b74a73612e2bf7c2a67dcd4c5ac304764578e478"
+      },
+      {
+        "relativePath": "StardewValley/CharEnteredHandler.cs",
+        "lengthBytes": 107,
+        "sha256": "e99498313a5a10d7acd691eb7705e8b4a1d19ffac570b28a25d07eebc1556e3a"
+      },
+      {
+        "relativePath": "StardewValley/Character.cs",
+        "lengthBytes": 68792,
+        "sha256": "7ae71eefc6220f76420445ba262ae3ce9efe83084aab9f5704cec3fd1c7dd5dd"
+      },
+      {
+        "relativePath": "StardewValley/CharacterEventArgs.cs",
+        "lengthBytes": 529,
+        "sha256": "202996e187bb0da482510130b07d6b238de0285c3ee25c45e3c556d6f18f17f3"
+      },
+      {
+        "relativePath": "StardewValley/Characters/Cat.cs",
+        "lengthBytes": 318,
+        "sha256": "37927b536b2caae3ab40326f36fbfbd7379190cd8ffe60e9726418cc1dc1d8a7"
+      },
+      {
+        "relativePath": "StardewValley/Characters/Child.cs",
+        "lengthBytes": 45776,
+        "sha256": "24854f4d94a8cc82f33c9cfde991c219a63ab6d5e2d4caf5d1dc53e7ce895948"
+      },
+      {
+        "relativePath": "StardewValley/Characters/Dog.cs",
+        "lengthBytes": 318,
+        "sha256": "434861b3b4678963690bea0e84f3b7fff8a6dd9034014e3ab68096e7c537615d"
+      },
+      {
+        "relativePath": "StardewValley/Characters/Horse.cs",
+        "lengthBytes": 53662,
+        "sha256": "a0975f2cc93daead113d47fc47238cb2912977c67b78a210d67f96a1f1813b9f"
+      },
+      {
+        "relativePath": "StardewValley/Characters/Junimo.cs",
+        "lengthBytes": 35560,
+        "sha256": "1490c8c358cb3daf675ff91967fca5590b08d4ca672d0dcc9af3d5c2eb80d0f9"
+      },
+      {
+        "relativePath": "StardewValley/Characters/JunimoHarvester.cs",
+        "lengthBytes": 33804,
+        "sha256": "c899cdb7e1be90c79b3d02ad7716b44aef8260f75559b6683ea4dbcd3bdb231e"
+      },
+      {
+        "relativePath": "StardewValley/Characters/Pet.cs",
+        "lengthBytes": 52876,
+        "sha256": "7feace4a5a7ec03b1d3a6f8d545de0d8c7f4c154231bbf11cdf1c69791239572"
+      },
+      {
+        "relativePath": "StardewValley/Characters/Raccoon.cs",
+        "lengthBytes": 14498,
+        "sha256": "39569179686cd02e6dea3dc147194a81eff2b41e74ee84907386dd3eb6fa2dc7"
+      },
+      {
+        "relativePath": "StardewValley/Characters/TrashBear.cs",
+        "lengthBytes": 14553,
+        "sha256": "91b64956b696cc4c0b5a55e17f398cb65b341b9762413c41774e8854f00de28a"
+      },
+      {
+        "relativePath": "StardewValley/ChatCommands.cs",
+        "lengthBytes": 22890,
+        "sha256": "aa17575a96ad501866e8ecc5a025555c89a67f443f12850e46777916751babe7"
+      },
+      {
+        "relativePath": "StardewValley/Chunk.cs",
+        "lengthBytes": 3319,
+        "sha256": "6b52ecd2b611d21735d29f83ace67cd9cb6fe4ce20f69bf68c99261a06f19454"
+      },
+      {
+        "relativePath": "StardewValley/CollisionMask.cs",
+        "lengthBytes": 285,
+        "sha256": "8bb1517f0210c5962843059109795d5ad80a43cf0a9047ebf87409666af9f2cf"
+      },
+      {
+        "relativePath": "StardewValley/Companions/Companion.cs",
+        "lengthBytes": 6884,
+        "sha256": "636e681754b4557d8659fcbf48cbabee059a5a0253dcda7eadfcd962458367a7"
+      },
+      {
+        "relativePath": "StardewValley/Companions/FlyingCompanion.cs",
+        "lengthBytes": 16733,
+        "sha256": "d47af2e6f608a20cc8d93b2872d8c8b599f1b048117fd95a01644945848bc625"
+      },
+      {
+        "relativePath": "StardewValley/Companions/HoppingCompanion.cs",
+        "lengthBytes": 7481,
+        "sha256": "86ac018ad1d21873f0982b516e866e3376055ca9e79272a9a9397a4148eaacea"
+      },
+      {
+        "relativePath": "StardewValley/Companions/HungryFrogCompanion.cs",
+        "lengthBytes": 23027,
+        "sha256": "e62b2fa0e69e7053ec0116fe3df3a608f66bfe5b149ed59e50247fc709ed9026"
+      },
+      {
+        "relativePath": "StardewValley/ConsoleAsync/AsyncOperationManager.cs",
+        "lengthBytes": 2609,
+        "sha256": "4a145315972b25a2a27f08db3e80e363e61ac5f1d1cd1eb88e757510bc057aec"
+      },
+      {
+        "relativePath": "StardewValley/ConsoleAsync/AsyncTaskOperation.cs",
+        "lengthBytes": 499,
+        "sha256": "56b23c5239efb2a7a8e13eb84869cb021ed2086b4a8a554d40a7d2e157ad4ea2"
+      },
+      {
+        "relativePath": "StardewValley/ConsoleAsync/GenericOp.cs",
+        "lengthBytes": 728,
+        "sha256": "f0d3c9cf3abf914c2be604098a4c9280f766187de78f91a0558bd2695374948d"
+      },
+      {
+        "relativePath": "StardewValley/ConsoleAsync/GenericResult.cs",
+        "lengthBytes": 165,
+        "sha256": "35db6422bec48a442ed824f2f4e6b001adba43744cb3eadebfefe1dc729d09a7"
+      },
+      {
+        "relativePath": "StardewValley/ConsoleAsync/IAsyncOperation.cs",
+        "lengthBytes": 167,
+        "sha256": "51a87a02132dbcc1d0bc9ca82f24f3e9aedf2f964bc9c273b9219be52ee96a07"
+      },
+      {
+        "relativePath": "StardewValley/Constants/AchievementIds.cs",
+        "lengthBytes": 1549,
+        "sha256": "d2632f3c4c748dffcfdf74453a9cf287834a24fa09dbecbf1057bf413cf46acb"
+      },
+      {
+        "relativePath": "StardewValley/Constants/EventIds.cs",
+        "lengthBytes": 549,
+        "sha256": "84bfb89575f23692e9c411eeae1732fbb2d6f6b0a07e26a7ed5e6ceeaa1bba5e"
+      },
+      {
+        "relativePath": "StardewValley/Constants/StatKeys.cs",
+        "lengthBytes": 5450,
+        "sha256": "0b71d465aa9e08c412dc421b75783b4967ca9d9e259b4f047c1428c6e072a107"
+      },
+      {
+        "relativePath": "StardewValley/CosmeticDebris.cs",
+        "lengthBytes": 4263,
+        "sha256": "7f9d92b680a74edf38c28386f1fd94a143fa74c7e5f38681e67bc41788d5c967"
+      },
+      {
+        "relativePath": "StardewValley/CraftingRecipe.cs",
+        "lengthBytes": 23842,
+        "sha256": "9e3c0ecd2f7dd84ea64e140f82645b8a5f5ee84b0872bf1b5dc0d545ac707a36"
+      },
+      {
+        "relativePath": "StardewValley/Crop.cs",
+        "lengthBytes": 54044,
+        "sha256": "90626b45dbfa3309c6d28583d455b80a5cfa4684ee34a2629d0a5849225b1acd"
+      },
+      {
+        "relativePath": "StardewValley/CueWrapper.cs",
+        "lengthBytes": 1885,
+        "sha256": "9a905a26bc4f8913973119b51c3793712ceb839d1a9bc7866c8914f4c7496a58"
+      },
+      {
+        "relativePath": "StardewValley/DataLoader.cs",
+        "lengthBytes": 14417,
+        "sha256": "586b3c2d194ce18eb1afdec9ef2add56d5301aa0bde9d708f535d2cfd612ba8b"
+      },
+      {
+        "relativePath": "StardewValley/Debris.cs",
+        "lengthBytes": 39155,
+        "sha256": "c6e2671cb02a0d99c4ac163f93fa29058639f915869fee355f5607a1ba8666a2"
+      },
+      {
+        "relativePath": "StardewValley/DebugCommands.cs",
+        "lengthBytes": 203915,
+        "sha256": "9e62a1f344149b06a81a301afaf3fa16ba05e164b1943141022f3151868f7eb9"
+      },
+      {
+        "relativePath": "StardewValley/DebugMetricsComponent.cs",
+        "lengthBytes": 8733,
+        "sha256": "b9ce78a8fa51fe88b371c629d093ecd49096aa407f5943f33e8a552c30dfd2c0"
+      },
+      {
+        "relativePath": "StardewValley/DebugTimings.cs",
+        "lengthBytes": 2745,
+        "sha256": "f056fef9caeb48db2e22ea8621c8c9143c81975ca21a4442a767654d5ce977db"
+      },
+      {
+        "relativePath": "StardewValley/DebugTools.cs",
+        "lengthBytes": 3485,
+        "sha256": "8cee32d078c85355ae242c67d3272cda302c7ce3610917f0e9a5d621cd904a09"
+      },
+      {
+        "relativePath": "StardewValley/DelayedAction.cs",
+        "lengthBytes": 9274,
+        "sha256": "58dc2705b4391582cfe0861bf918b345b9922438231c02bcba04aad514b848fa"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/ChatCommandHandlerDelegate.cs",
+        "lengthBytes": 150,
+        "sha256": "2fc6cf2ae9bcd43161e92bc0404c794f3f0da85a6ff661723546e69af3475f6f"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/DebugCommandHandlerDelegate.cs",
+        "lengthBytes": 156,
+        "sha256": "67787af7b560e907b973c87b6b58654dfc547388332b7df995e6b2901ee1653c"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/EventCommandDelegate.cs",
+        "lengthBytes": 133,
+        "sha256": "cc8c7ab9b8e819229a9711f5ab77975f3d190c6d9900467fbcf3c44b6ece0f48"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/EventPreconditionDelegate.cs",
+        "lengthBytes": 141,
+        "sha256": "83655af0f3255c23d889a1b23d273cd609a24b076ff11347a18151a604bd983c"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/FestivalCleanupDelegate.cs",
+        "lengthBytes": 87,
+        "sha256": "5a3a836a6259fc6abde3d911e87806f9e8e8a14305bf8c5fd3a50ecb979c73d0"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/FestivalDailySetupDelegate.cs",
+        "lengthBytes": 90,
+        "sha256": "a0e7981f92d96b65e7770b90630a0a9cc27acb875bb55d27af84fb13690aaf15"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/ForEachItemDelegate.cs",
+        "lengthBytes": 145,
+        "sha256": "055c4c75cc27cb8feef1fcbaac44ffca35d941a1b591c3e3bd025f9619d9acfd"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/GameStateQueryContext.cs",
+        "lengthBytes": 1022,
+        "sha256": "73df9b3d90f0b5b026e80b45d0048fe2443a4531fc23686b33f60f20f6ef5d9e"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/GameStateQueryDelegate.cs",
+        "lengthBytes": 131,
+        "sha256": "8d90d98b915722760cef2b35391a9c36ef57ee8a6b5c28de83794946c348681b"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/GetForEachItemPathDelegate.cs",
+        "lengthBytes": 136,
+        "sha256": "bec9b844d960b58954e10fcfde4f0701c66e238dd5651ed5d47e5e6c3401a023"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/MachineInteractDelegate.cs",
+        "lengthBytes": 139,
+        "sha256": "4298915ebb4fc29dd3ab569c543513318b07ef89d4ce0e711aea3fff08397d53"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/MachineOutputDelegate.cs",
+        "lengthBytes": 250,
+        "sha256": "51509b7714a684b6066580b8d062d792a9ba3152464392c8b682e034ac207c4e"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/ResolveItemQueryDelegate.cs",
+        "lengthBytes": 330,
+        "sha256": "49c90984e14a01aba58b05db4a621d256457af2706a8fedd77652864a5f30be3"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/TriggerActionContext.cs",
+        "lengthBytes": 588,
+        "sha256": "04cba0c4866bcf85442b72480cd30054e72abfc4fa8d4e59e62f880486710519"
+      },
+      {
+        "relativePath": "StardewValley/Delegates/TriggerActionDelegate.cs",
+        "lengthBytes": 146,
+        "sha256": "7676ea830ccc59a72ec73d257865c947c9fee7103b972f76c8d19f769e17e12d"
+      },
+      {
+        "relativePath": "StardewValley/DesktopClipboard.cs",
+        "lengthBytes": 2204,
+        "sha256": "32b7516c85565300af1ea41ddd1909979341cbeced553933acbeb7a0dc806001"
+      },
+      {
+        "relativePath": "StardewValley/Dialogue.cs",
+        "lengthBytes": 53287,
+        "sha256": "8b1b2842456ebe5bb43cea81fd91c118d956ff2e0b19c8475f6d804a4b029b5d"
+      },
+      {
+        "relativePath": "StardewValley/DialogueLine.cs",
+        "lengthBytes": 396,
+        "sha256": "0a90947c1b35ab0d9cb9b8e295d984b72059fa266813650fa356b06e0239df53"
+      },
+      {
+        "relativePath": "StardewValley/DisposableList.cs",
+        "lengthBytes": 1108,
+        "sha256": "f4f3887c89631ec2ae210154e2388d3eb05d90d7012d82e51865724e36fcbb79"
+      },
+      {
+        "relativePath": "StardewValley/DummyCue.cs",
+        "lengthBytes": 881,
+        "sha256": "5499baf764f745c4356f15ff2e0eae677af16c3e233b913c55188be34ba939ab"
+      },
+      {
+        "relativePath": "StardewValley/DummySoundBank.cs",
+        "lengthBytes": 703,
+        "sha256": "8169cc9a97f52420212674abe343d38d019f1e672423c00b1b73148926b938bc"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/AmethystEnchantment.cs",
+        "lengthBytes": 620,
+        "sha256": "6264b99fbfc9c4f264b44dac8b92cc0956766487af04bf1f5591489098694445"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/AquamarineEnchantment.cs",
+        "lengthBytes": 656,
+        "sha256": "644b5b4286d1d0a611d237e52fb0c343bb62d9185ad3b0b5a06423038a2df2d4"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/ArchaeologistEnchantment.cs",
+        "lengthBytes": 384,
+        "sha256": "e22ef5cb00a8c849610d00a1d7ff792473000d7afa3a346d1088af888054492a"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/ArtfulEnchantment.cs",
+        "lengthBytes": 166,
+        "sha256": "923a84564baf84bc9c9bff6d87df0ecb5b8299f01523defe79d2c5c86f41c01f"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/AttackEnchantment.cs",
+        "lengthBytes": 615,
+        "sha256": "bf315104583d232f6e2fb400f5c5fa73c43c8e99689a58d96fd6e83c2ae6ae93"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/AutoHookEnchantment.cs",
+        "lengthBytes": 171,
+        "sha256": "40e5116e22bd816dd78b4e7d0b3b5bec54bbba1c1b239d074669f26beb631ac3"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/AxeEnchantment.cs",
+        "lengthBytes": 241,
+        "sha256": "4fc3a4011d58155d1930d6fe705f14a4a30b93afb83b978dd33e404f83763a8e"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/BaseEnchantment.cs",
+        "lengthBytes": 8851,
+        "sha256": "688c4b22c8ee9d6a2ab9854f91d1885581eadcf8ccdbc661effe13a277881235"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/BaseWeaponEnchantment.cs",
+        "lengthBytes": 462,
+        "sha256": "7a3c55a9b181d944569b0685a8552865faeb589d38f686acf34de4451317c953"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/BottomlessEnchantment.cs",
+        "lengthBytes": 597,
+        "sha256": "e6b3e491f86342baf1bb4864fdc16150816f59b39f6cabfee58d562ecc40073f"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/BugKillerEnchantment.cs",
+        "lengthBytes": 582,
+        "sha256": "01e7a34918e8cd0ecaa9d89fc04e08c76c809de8033f46c5174b3d160d2b6ba5"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/CritEnchantment.cs",
+        "lengthBytes": 644,
+        "sha256": "22ab44b3acb7f79fb19f27f8a5cfa246883f5a7284f5a971b2258d494d906eb2"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/CritPowerEnchantment.cs",
+        "lengthBytes": 655,
+        "sha256": "bea54604bad7899abdbe7e4ea351fda5e8a399ff0a604132e058accff342e971"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/CrusaderEnchantment.cs",
+        "lengthBytes": 669,
+        "sha256": "3b68a1423e81bc948af37c8ef12cbf016dfaf0673499f5dd136382b928dc1d2d"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/DefenseEnchantment.cs",
+        "lengthBytes": 618,
+        "sha256": "775c191cc7dc1de415ebbf72a3d777dc9cb105cb708103b5e64a55f6e22469c9"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/DiamondEnchantment.cs",
+        "lengthBytes": 231,
+        "sha256": "54622d42f5b2e48e43a908195aa62ffc705745088339e9b589776df47d84a83a"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/EfficientToolEnchantment.cs",
+        "lengthBytes": 738,
+        "sha256": "35f542f14c3501f9375fe3a94c14e8158dff682df92c16ef2b570ed07843d557"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/EmeraldEnchantment.cs",
+        "lengthBytes": 619,
+        "sha256": "67f270e00732c78d12dfe35ed17cd195edf6eab6ed4fdb42ddd2762b720f00db"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/FisherEnchantment.cs",
+        "lengthBytes": 317,
+        "sha256": "b4b73fa51b5aa297b1e79280da683e64f123b43b6fbc4a88655e5eb8605bf143"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/FishingRodEnchantment.cs",
+        "lengthBytes": 333,
+        "sha256": "5eef03b7c6db39216cd50aba9edbbeacf2c26f0adbc2a4950aeb6c7099153d67"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/GalaxySoulEnchantment.cs",
+        "lengthBytes": 372,
+        "sha256": "516ce55c963a7bfdf8c388154824f953d1ad1e9e7b49879deb3a7c1fc0d827e0"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/GenerousEnchantment.cs",
+        "lengthBytes": 374,
+        "sha256": "1cb0df910291d27e54b2a945a88df98233d7f519886a519b42bf94215e1281fa"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/HaymakerEnchantment.cs",
+        "lengthBytes": 2669,
+        "sha256": "42db897ec0716b12a5a09d44308398b8b6bbb25b55add11f64af00d593cde41b"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/HoeEnchantment.cs",
+        "lengthBytes": 241,
+        "sha256": "f101538751c3125b8236f81d0f7cb9e2d97ce40aa89fd9e92a0c63c81b6f7f32"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/JadeEnchantment.cs",
+        "lengthBytes": 654,
+        "sha256": "3123b32a5e10eae18f35f08a95cef3d4872cf4368eef1c394b6a67b676c4758b"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/LightweightEnchantment.cs",
+        "lengthBytes": 652,
+        "sha256": "7fe1cc7dfccffb5859811ca7967ff069c0dcaacd572f6d1316e2afa7806a9e17"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/MagicEnchantment.cs",
+        "lengthBytes": 2220,
+        "sha256": "a68c4eb21156f2a70a5fed5b929c300a849de93f2dacc570ee83a63aa5a10e1d"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/MasterEnchantment.cs",
+        "lengthBytes": 166,
+        "sha256": "d6e97f673bdf1ec3f3ad3a048ad947aa758817e639fc688f0b9fcb1e65315d09"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/MilkPailEnchantment.cs",
+        "lengthBytes": 251,
+        "sha256": "8b9da5a7b2d6539e2e1385429d30411729ffdf9b306e602fc59288600adda3c3"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/PanEnchantment.cs",
+        "lengthBytes": 241,
+        "sha256": "a70eabefbcb8e1404bd20e58c91fd7e763eea350256e90de0ac94a8edde4ea31"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/PickaxeEnchantment.cs",
+        "lengthBytes": 249,
+        "sha256": "7020593ce697f52b07047b49bf1a100666d213e6a91ebb7065831e7fc8832005"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/PowerfulEnchantment.cs",
+        "lengthBytes": 941,
+        "sha256": "d143d7062f942936ed8237e2d94bbe5102aaceaace9bc0424e3e7efe6ffbb7d0"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/PreservingEnchantment.cs",
+        "lengthBytes": 174,
+        "sha256": "d262cb0afe82ec7850bd972db84011abf3b97910f19ab7e94412f429e99e4e95"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/ReachingToolEnchantment.cs",
+        "lengthBytes": 397,
+        "sha256": "9347fbdddbcdb25ba3465d185a7b0cede3e8534672de34d9f8a7d998ff318b24"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/RubyEnchantment.cs",
+        "lengthBytes": 1258,
+        "sha256": "90f1998d21e98cd28685641aadfeee3cded78e151fe4df061c8a9b6043119c15"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/ShavingEnchantment.cs",
+        "lengthBytes": 161,
+        "sha256": "fbffee4af66cc53e6e05c25f2d71a6af7ed94966df0c6d42767cff64db670b2a"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/ShearsEnchantment.cs",
+        "lengthBytes": 247,
+        "sha256": "e5fa2b4ae87090c209bb4bc9b8e982fe026826d2ba3b34d9f1a74daafb00978d"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/SlimeGathererEnchantment.cs",
+        "lengthBytes": 1031,
+        "sha256": "dfb8c68c3e7c3f4e4c067c1adff3a6c063f19dda16a256ace492f97d48c02054"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/SlimeSlayerEnchantment.cs",
+        "lengthBytes": 772,
+        "sha256": "347cf2730f771ee312ed82a6130e648843265230d8d66554e6a71261e729e495"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/SwiftToolEnchantment.cs",
+        "lengthBytes": 801,
+        "sha256": "e533e841d38d8daef0cd46b6c32e8410f957f3b800fe96c9bd8490626057c155"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/TopazEnchantment.cs",
+        "lengthBytes": 623,
+        "sha256": "94527822bd0e4e333a4f3015c8fec03e994fcc1d3b3124f748be3b30d5db9d53"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/VampiricEnchantment.cs",
+        "lengthBytes": 1005,
+        "sha256": "ff6d7d828034c8f7cdf03f7b16a99acd91c99a588ef2dd1227bc818f793e3db7"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/WateringCanEnchantment.cs",
+        "lengthBytes": 257,
+        "sha256": "079268513f04039ed22e08033d0edfcbc69bfd0b9c293358c5a14f3f2f0871e8"
+      },
+      {
+        "relativePath": "StardewValley/Enchantments/WeaponSpeedEnchantment.cs",
+        "lengthBytes": 648,
+        "sha256": "06ade8b610717196586badeefce18c873f8bed3c5d43b74178be386185b5883a"
+      },
+      {
+        "relativePath": "StardewValley/Event.cs",
+        "lengthBytes": 777970,
+        "sha256": "fe82a9c406188692fdf9a9130ee7af206403105952b2fd5ea95844accc147e89"
+      },
+      {
+        "relativePath": "StardewValley/EventContext.cs",
+        "lengthBytes": 663,
+        "sha256": "d1e524738b90b41f0a8d313d42a82799b6e1725225e623aeb5c6b42feb2a0496"
+      },
+      {
+        "relativePath": "StardewValley/EventScript_GreenTea.cs",
+        "lengthBytes": 91782,
+        "sha256": "79d4bac34454093d87133d94d08ff97caefbe45fb83a0c98a5ec87d5eb05288f"
+      },
+      {
+        "relativePath": "StardewValley/Events/BaseFarmEvent.cs",
+        "lengthBytes": 815,
+        "sha256": "08d98e0016c012e6868e43ef16d0defee6ac779dda47e96c976df6d1c168d3c1"
+      },
+      {
+        "relativePath": "StardewValley/Events/BirthingEvent.cs",
+        "lengthBytes": 5716,
+        "sha256": "c70295549dd01ef410b803c8a7f23812d7e2d16f8b9257a5f8227ffb752b22ec"
+      },
+      {
+        "relativePath": "StardewValley/Events/DiaryEvent.cs",
+        "lengthBytes": 1986,
+        "sha256": "49f55e5995e14418da3e017d440c2a55e8d89f0cfd15b156acc2a7ace9b89b1e"
+      },
+      {
+        "relativePath": "StardewValley/Events/FairyEvent.cs",
+        "lengthBytes": 8853,
+        "sha256": "e2a3721e785eed30b3c0ea4b02a7519dcd87781942a842887d6e72534916a0cb"
+      },
+      {
+        "relativePath": "StardewValley/Events/FarmEvent.cs",
+        "lengthBytes": 345,
+        "sha256": "3adf35a88a42b46e252c7faa160b8a92079ec80cf1bcd50d050c479507a82de9"
+      },
+      {
+        "relativePath": "StardewValley/Events/MovieTheaterScreeningEvent.cs",
+        "lengthBytes": 34346,
+        "sha256": "b1979143b4f3eeb6c9dc92039fa499cbed85b026b27e75ab92060b5c6931eb76"
+      },
+      {
+        "relativePath": "StardewValley/Events/PlayerCoupleBirthingEvent.cs",
+        "lengthBytes": 5864,
+        "sha256": "946a7133eda0ada0ce0a69ddbad6d48abd30d0af7eb8a10c8c4d73c4fae45f77"
+      },
+      {
+        "relativePath": "StardewValley/Events/QiPlaneEvent.cs",
+        "lengthBytes": 16640,
+        "sha256": "26d09d583d1f2976cf5193af0391232494e4b27df74a9a4f86f172f7f3e85ad4"
+      },
+      {
+        "relativePath": "StardewValley/Events/QuestionEvent.cs",
+        "lengthBytes": 4255,
+        "sha256": "e8f90f98ed3e13c500dab9a08fbcdc4ba173271b58f1388069694c6dad9a7e11"
+      },
+      {
+        "relativePath": "StardewValley/Events/SoundInTheNightEvent.cs",
+        "lengthBytes": 11151,
+        "sha256": "f9f30463b89637b16d950d332faa125265880d0db867e8b1f314cb0fb6d7e649"
+      },
+      {
+        "relativePath": "StardewValley/Events/WitchEvent.cs",
+        "lengthBytes": 10444,
+        "sha256": "911b4a54ece95be9be291c9272ea688627665530c3647dc6d4eba67c7e6417e2"
+      },
+      {
+        "relativePath": "StardewValley/Events/WorldChangeEvent.cs",
+        "lengthBytes": 67703,
+        "sha256": "f9ce435e7ac60990e501aea7a4f3b3f106b43811f70bd8bc57366581f25db9ab"
+      },
+      {
+        "relativePath": "StardewValley/Extensions/CollectionExtensions.cs",
+        "lengthBytes": 2210,
+        "sha256": "a43353a72e1c8416dedd24b89aab1c4de0f1a7e4caac10740f792cad8ee75363"
+      },
+      {
+        "relativePath": "StardewValley/Extensions/FrameworkExtensions.cs",
+        "lengthBytes": 7189,
+        "sha256": "7b379421229574d94bb72183b9419bcee0e367ffa73e2e1c0ce3d71f0de6ef50"
+      },
+      {
+        "relativePath": "StardewValley/Extensions/GameExtensions.cs",
+        "lengthBytes": 1010,
+        "sha256": "792d6196b9ec6231ad7c10a99fd39640d6bbf1c61ac8913db05b7ad1f257d8cf"
+      },
+      {
+        "relativePath": "StardewValley/Extensions/ItemExtensions.cs",
+        "lengthBytes": 566,
+        "sha256": "6fd3b16fa4172738e46ac60dc2881622e13ccad241ed1fab3bffc20c8377bc2c"
+      },
+      {
+        "relativePath": "StardewValley/Extensions/ItemRegistryExtensions.cs",
+        "lengthBytes": 411,
+        "sha256": "46d3092318189995a943c619fbd53461a95e8f83b4d89be2da12706150d2beaa"
+      },
+      {
+        "relativePath": "StardewValley/Extensions/RandomExtensions.cs",
+        "lengthBytes": 1560,
+        "sha256": "bcf601c523b9c5f905539fe6187bb7221fc3c43241333aecb67677ef81a24656"
+      },
+      {
+        "relativePath": "StardewValley/Extensions/ReflectionExtensions.cs",
+        "lengthBytes": 1202,
+        "sha256": "5d9bf00f10b0368832bddacad460a5e025c64fa6509c07ddfe129a4a90e2d884"
+      },
+      {
+        "relativePath": "StardewValley/Extensions/StringExtensions.cs",
+        "lengthBytes": 882,
+        "sha256": "28a1f30ee7cda5483aec8ec3396b77c245c0b17dd673fa52d32c8eb601d8b2d9"
+      },
+      {
+        "relativePath": "StardewValley/Farm.cs",
+        "lengthBytes": 85586,
+        "sha256": "e9ec90f811de618daa4c70771ce3fd2654d9f53695e6ae4301ed75df6973f3f8"
+      },
+      {
+        "relativePath": "StardewValley/FarmAnimal.cs",
+        "lengthBytes": 97048,
+        "sha256": "effb298a3082583e8f5f67f965d660f8ea828ca38c6839d803a8b8fa23e26111"
+      },
+      {
+        "relativePath": "StardewValley/Farmer.cs",
+        "lengthBytes": 339140,
+        "sha256": "714ad380b076427dbb52b59b0f9642846b938e6d326c8cc14fdab99cffd80a33"
+      },
+      {
+        "relativePath": "StardewValley/FarmerPair.cs",
+        "lengthBytes": 906,
+        "sha256": "eb6050ca03d50d3a50a26c7416f2bb77e47b666f648b22307d94c34dadfda95c"
+      },
+      {
+        "relativePath": "StardewValley/FarmerRenderer.cs",
+        "lengthBytes": 84853,
+        "sha256": "28ce93df3223ba14606149093040c1060cae8dd2edf8177f0e11f2eef39d2234"
+      },
+      {
+        "relativePath": "StardewValley/FarmerSprite.cs",
+        "lengthBytes": 63198,
+        "sha256": "f5c268cbdeaa21a044e9ba5a9f19bf3aca99d2f2011a282d87c1e4ff3d8f4e28"
+      },
+      {
+        "relativePath": "StardewValley/FarmerTeam.cs",
+        "lengthBytes": 55612,
+        "sha256": "e91b4e7cc5a545b3971f10ab437a519d8a8f7c294c43f75ffffb3ad55edf93e7"
+      },
+      {
+        "relativePath": "StardewValley/Fence.cs",
+        "lengthBytes": 43462,
+        "sha256": "068494c76296ce2a34ca5a238212fa3b53dd98398347b9acd9986358af3aaad3"
+      },
+      {
+        "relativePath": "StardewValley/Friendship.cs",
+        "lengthBytes": 4654,
+        "sha256": "70acc34743db7c7fb5d4622e6939833a2e50c66526f39d6ce0ac6cdf3396effd"
+      },
+      {
+        "relativePath": "StardewValley/FriendshipStatus.cs",
+        "lengthBytes": 119,
+        "sha256": "387137731b3123783858fe5394ef4a06e526e9667d39f3cbb1c301c27f91c753"
+      },
+      {
+        "relativePath": "StardewValley/Game1.cs",
+        "lengthBytes": 763450,
+        "sha256": "532c935733e36c23084fcde3fef217e8c70a67f93295069e532530072e695265"
+      },
+      {
+        "relativePath": "StardewValley/GameLocation.cs",
+        "lengthBytes": 825805,
+        "sha256": "dac2ef650d97a4445fe18f0eb22282c246c4bed9a31c999c965ef9b3a7b9fff7"
+      },
+      {
+        "relativePath": "StardewValley/GameRunner.cs",
+        "lengthBytes": 15404,
+        "sha256": "a0965aa65780ce35a072232434d3f7ad75b8b6bdd4ca8acd304f058de35f45b4"
+      },
+      {
+        "relativePath": "StardewValley/GameStateQuery.cs",
+        "lengthBytes": 74541,
+        "sha256": "70358801546d61cb8900674943d2dd7e5c7f40f7a40b423e2d04d72173a66478"
+      },
+      {
+        "relativePath": "StardewValley/HUDMessage.cs",
+        "lengthBytes": 15241,
+        "sha256": "763f1e27923ac80ea2f15a4a3730c16a33c23fb94499f00901015ef024d63a4b"
+      },
+      {
+        "relativePath": "StardewValley/HairStyleMetadata.cs",
+        "lengthBytes": 282,
+        "sha256": "35e590365a23eed8a10b1ee6ce7827267a13ba65874427e9302c4b505853bcfa"
+      },
+      {
+        "relativePath": "StardewValley/Hashing/HashUtility.cs",
+        "lengthBytes": 724,
+        "sha256": "46ac3c37f22d68c7d9dede6ab2fe198b7ecb6a7cbbfd6ed3c9b1755aa77c6a9d"
+      },
+      {
+        "relativePath": "StardewValley/Hashing/IHashUtility.cs",
+        "lengthBytes": 174,
+        "sha256": "ec819cbf5c1147a6cb406fc319b63cce395b1cf8f77ddd13130ca6275d9a651c"
+      },
+      {
+        "relativePath": "StardewValley/HouseRenovation.cs",
+        "lengthBytes": 13008,
+        "sha256": "9726177a16701109bdc01e3d15626a44302c198b055d15f8c5211f2fe35edacd"
+      },
+      {
+        "relativePath": "StardewValley/IAnimalLocation.cs",
+        "lengthBytes": 560,
+        "sha256": "3364724b1cbea9a5136fce32db0145b01685a7cb4074d9f34e6e5e8a59a9abdf"
+      },
+      {
+        "relativePath": "StardewValley/ICue.cs",
+        "lengthBytes": 586,
+        "sha256": "055471ef2cbd98d6c2766de6a63f6a0192d4d4003132866d57c2dac0665a26b8"
+      },
+      {
+        "relativePath": "StardewValley/ICustomEventScript.cs",
+        "lengthBytes": 261,
+        "sha256": "5fd654e002ae8982ac014d16d123b1a4a2d699a194b2a4958b440f03596eb76d"
+      },
+      {
+        "relativePath": "StardewValley/IHaveModData.cs",
+        "lengthBytes": 191,
+        "sha256": "bd36f9f4d0fb4150e80cb14877bb1a9c1d104cb8661c6a062ffa102d07f67eaa"
+      },
+      {
+        "relativePath": "StardewValley/IKeyboardSubscriber.cs",
+        "lengthBytes": 309,
+        "sha256": "d084e7d2abe1360f65f6d3766a94b0f3ede3159a3430fad1d21ef3209af2cd52"
+      },
+      {
+        "relativePath": "StardewValley/ISalable.cs",
+        "lengthBytes": 1082,
+        "sha256": "8b5733bbb2313f7441e2938949dcf425323f712fe899206d31bb89a885c394ad"
+      },
+      {
+        "relativePath": "StardewValley/ISittable.cs",
+        "lengthBytes": 561,
+        "sha256": "4e0044686b1612bad6ec39104933c321ace99c036da29576343dc805d3f549b8"
+      },
+      {
+        "relativePath": "StardewValley/ISoundBank.cs",
+        "lengthBytes": 445,
+        "sha256": "20f5d6aceba9d5a3f8c8d3571c18975c35dbc3b48ad984017e23cd7709d20c81"
+      },
+      {
+        "relativePath": "StardewValley/InputButton.cs",
+        "lengthBytes": 2340,
+        "sha256": "e90dd5ceaeafdae22918bffa4593329e01b83ee8cf854e276b01983ea8566af1"
+      },
+      {
+        "relativePath": "StardewValley/InputState.cs",
+        "lengthBytes": 5313,
+        "sha256": "cf7eaaa29520eb96bcd006bf8d525c782938d91a675d9e3f7dfb0cd45b307b2a"
+      },
+      {
+        "relativePath": "StardewValley/InstanceGame.cs",
+        "lengthBytes": 1884,
+        "sha256": "bec349be2a2d1f254a7544de85fc82a01538189c5b8540577f9803dd6262474f"
+      },
+      {
+        "relativePath": "StardewValley/InstanceStatics.cs",
+        "lengthBytes": 135,
+        "sha256": "a056ceba7f10d02efc0860e76dc83ab44d783732a409fc151c039f5831ad38b2"
+      },
+      {
+        "relativePath": "StardewValley/InstancedStatic.cs",
+        "lengthBytes": 135,
+        "sha256": "f3ed63b908eb0e12fc72cf88a385f11a361838fe6935175856c8a11b015b86d9"
+      },
+      {
+        "relativePath": "StardewValley/InteriorDoor.cs",
+        "lengthBytes": 6094,
+        "sha256": "25ad31d3d15d9a66a8468748f67a03d77818ebd4bbd38a45385e37893ea70729"
+      },
+      {
+        "relativePath": "StardewValley/InteriorDoorDictionary.cs",
+        "lengthBytes": 5058,
+        "sha256": "00937d730a469971ee3aac0d4db710ae24ca13334e3f546743a9a81b035c2118"
+      },
+      {
+        "relativePath": "StardewValley/Internal/ForEachItemContext.cs",
+        "lengthBytes": 2874,
+        "sha256": "7c3a660faf0e499744b96f3885d498695d3b736e4d35e7066972ed343a01e6dc"
+      },
+      {
+        "relativePath": "StardewValley/Internal/ForEachItemHelper.cs",
+        "lengthBytes": 9380,
+        "sha256": "1ebaa669a6afdcdcdb1a7a684c4005a0bbd20ac7a148bd59ac8af05a7160cf51"
+      },
+      {
+        "relativePath": "StardewValley/Internal/ItemQueryContext.cs",
+        "lengthBytes": 1195,
+        "sha256": "b97462905a3ee88f62b886fd37040f896b3b38cf45ba874f680561547618f752"
+      },
+      {
+        "relativePath": "StardewValley/Internal/ItemQueryResolver.cs",
+        "lengthBytes": 33751,
+        "sha256": "feb1020535ce1316b34c7f6df8efe13b949f316c43bcd46448c88cda65786226"
+      },
+      {
+        "relativePath": "StardewValley/Internal/ItemQueryResult.cs",
+        "lengthBytes": 389,
+        "sha256": "97cff317b4960954268d70c3f3916e260771f00f0326239215e4fb19b553e1c8"
+      },
+      {
+        "relativePath": "StardewValley/Internal/ItemQuerySearchMode.cs",
+        "lengthBytes": 138,
+        "sha256": "6838835c490229068975f6405d8aab441db67e80aec6ce1b1bd0af71dc1ab6e4"
+      },
+      {
+        "relativePath": "StardewValley/Internal/LogBuilder.cs",
+        "lengthBytes": 758,
+        "sha256": "e6c3e38eec437384052bc0331a95af8735a8c009d799820e6cab0ff758fc1e96"
+      },
+      {
+        "relativePath": "StardewValley/Internal/OtherNamesAttribute.cs",
+        "lengthBytes": 270,
+        "sha256": "59d53586f83959bab68dce15c4eb5ecd706bf3f2444137994e416bdf6b40b34a"
+      },
+      {
+        "relativePath": "StardewValley/Internal/ShopBuilder.cs",
+        "lengthBytes": 8702,
+        "sha256": "4b534a17b3cd6dee7bcf26a3f197e391feb6547e0abcc68166586131d8846b5e"
+      },
+      {
+        "relativePath": "StardewValley/Internal/StaticDelegateBuilder.cs",
+        "lengthBytes": 3100,
+        "sha256": "b186287629212681b66501f683b0702c4427c8cb98ae80a6a516119e0e3e4c11"
+      },
+      {
+        "relativePath": "StardewValley/Inventories/IInventory.cs",
+        "lengthBytes": 902,
+        "sha256": "0ebb34894cb2612c52e5ca91d5b778f1da3391efafe09de3a7d1c8fc730c09ca"
+      },
+      {
+        "relativePath": "StardewValley/Inventories/Inventory.cs",
+        "lengthBytes": 8123,
+        "sha256": "c5b9d5f19e95c2a505abcf461ae6c1079e44aca00338755e8adc1624a770f575"
+      },
+      {
+        "relativePath": "StardewValley/Inventories/InventoryIndex.cs",
+        "lengthBytes": 2610,
+        "sha256": "a6c1adb8959666aa099e6b608344cada151ccb7b2b436d6762e1658365d2f5ac"
+      },
+      {
+        "relativePath": "StardewValley/Inventories/OnInventoryReplacedDelegate.cs",
+        "lengthBytes": 188,
+        "sha256": "98ee7621bfc282a69db7333aca2b4803539a117d1e077b7a22d72619fd9e305c"
+      },
+      {
+        "relativePath": "StardewValley/Inventories/OnSlotChangedDelegate.cs",
+        "lengthBytes": 142,
+        "sha256": "3dab9b888fa133d69c4252836d0bf9b18a23e19ae67dc79d563cc78fb7599159"
+      },
+      {
+        "relativePath": "StardewValley/IslandGemBird.cs",
+        "lengthBytes": 11590,
+        "sha256": "0776faf6fd1cd7b0160b045104159949750bae583a979405144988cd1562dbc7"
+      },
+      {
+        "relativePath": "StardewValley/Item.cs",
+        "lengthBytes": 26177,
+        "sha256": "28810e247391cc133a203ab4bdc946e010f901d76fc1bad4a71e997ec0b206f4"
+      },
+      {
+        "relativePath": "StardewValley/ItemContextTagManager.cs",
+        "lengthBytes": 14705,
+        "sha256": "45398e8cdf6f8b122109b8586649821b83b6be39373a7d196102eec5964d7a30"
+      },
+      {
+        "relativePath": "StardewValley/ItemRegistry.cs",
+        "lengthBytes": 9634,
+        "sha256": "a8dbc346f9dab5c128a1db99e3e3dcae070a5a8ebfc0458b69cb031047e26bd3"
+      },
+      {
+        "relativePath": "StardewValley/ItemStockInformation.cs",
+        "lengthBytes": 1182,
+        "sha256": "6b824b03c82924298d78816adb4d98f54c65e43e68ce799ca5a4720416e4c7c1"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/BaseItemDataDefinition.cs",
+        "lengthBytes": 1345,
+        "sha256": "c26ab7b14c2d6996a0940297cd761360d07647675ae89b3e315649361f418153"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/BigCraftableDataDefinition.cs",
+        "lengthBytes": 2324,
+        "sha256": "37f43122384d95ab1e191b20ae50737cc08d7ffa834ba41d4ea075a19e875df2"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/BootsDataDefinition.cs",
+        "lengthBytes": 2159,
+        "sha256": "0e6d7e9c34d23c82d35d33d3160f9d9c7ac9a551c166436440acf0778828e831"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/FlooringDataDefinition.cs",
+        "lengthBytes": 3536,
+        "sha256": "e89da6df623aa1a78cff6cbaa29cdf2850f3a1ffd011fbef462f834c577b417c"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/FurnitureDataDefinition.cs",
+        "lengthBytes": 2382,
+        "sha256": "b512c1932d65c100a4664ed1ab0d4e26b67d347a0b9ad54c3819cd1389c9ee7a"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/HatDataDefinition.cs",
+        "lengthBytes": 2188,
+        "sha256": "8d15930e43231b84091adc406881a99e32d578bbe694709a2a563aa849e9bb0e"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/IHaveItemTypeId.cs",
+        "lengthBytes": 114,
+        "sha256": "3f8aa1189447582e42f56835593b96704fedadd7cee6c9c84a46cf20d73e20dc"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/IItemDataDefinition.cs",
+        "lengthBytes": 661,
+        "sha256": "e7a2bb4ef0a2c0cfbe66734891b858cb8741700bd974d88ca738796a58af31e2"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/ItemMetadata.cs",
+        "lengthBytes": 2489,
+        "sha256": "a89cae338b71eb3431782f3e8397d34d3b89e0d110864d63998d4b0e5d00d355"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/MannequinDataDefinition.cs",
+        "lengthBytes": 1471,
+        "sha256": "df4e90f99831aa22fe8269a5789d72c0182aa6dc65ef0adfb70571f53e1f0d0b"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/ObjectDataDefinition.cs",
+        "lengthBytes": 16917,
+        "sha256": "d20955fb204a544e6c52827b1bb42a00a462e98095039458c9e3a475b3a8763d"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/PantsDataDefinition.cs",
+        "lengthBytes": 1708,
+        "sha256": "f3a187d3a09fd26251afc81a7fc7cb257eece6673cc90aa9fc8d797b0c961a1e"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/ParsedItemData.cs",
+        "lengthBytes": 4498,
+        "sha256": "5c2cc20cc1688f9a6bc812c2ec7ae34c70cd2a1c1509430c20cea3b02971fed9"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/ShirtDataDefinition.cs",
+        "lengthBytes": 1694,
+        "sha256": "a341dde0a2411ff41eb772b147899e0e10878dff19dfdf2bf4a26ffd94a92775"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/ToolDataDefinition.cs",
+        "lengthBytes": 4016,
+        "sha256": "4566573502e5cf0f7dc9b9f4cb772bfa1ab27ee1782a2c44aa64ef749ad1baae"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/TrinketDataDefinition.cs",
+        "lengthBytes": 1488,
+        "sha256": "712a0bf75a89488e0bcc3830ebb601dda7c030d2aaed143220b9b8526f21aec8"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/WallpaperDataDefinition.cs",
+        "lengthBytes": 3538,
+        "sha256": "bf1dfafaf8041d79a58a257e5214e65fc57276cf215c552821231d61013e6e9c"
+      },
+      {
+        "relativePath": "StardewValley/ItemTypeDefinitions/WeaponDataDefinition.cs",
+        "lengthBytes": 2301,
+        "sha256": "7055b86909731b550d1e728da03b69e8275723769c28f705c0e3aa6d778b0272"
+      },
+      {
+        "relativePath": "StardewValley/KeyEventArgs.cs",
+        "lengthBytes": 431,
+        "sha256": "2fe714e94afbd3a6cf1b05da04be15b1b89e7c059b726da0d4c79a1b44581686"
+      },
+      {
+        "relativePath": "StardewValley/KeyEventHandler.cs",
+        "lengthBytes": 98,
+        "sha256": "25fed11cbaae93828b513ae030001faa718584522e5863bd1bdec6f370a76352"
+      },
+      {
+        "relativePath": "StardewValley/KeyboardDispatcher.cs",
+        "lengthBytes": 7416,
+        "sha256": "435e8ea0b0a0b4d871287e726fb7e1819d879382ea0f4d99781e41fcc59412e3"
+      },
+      {
+        "relativePath": "StardewValley/KeyboardInput.cs",
+        "lengthBytes": 2700,
+        "sha256": "8576cbcf1d46faaa5f744d0939e113477e2c1e719e8388f79f6bed4f15e06f6e"
+      },
+      {
+        "relativePath": "StardewValley/LegacyShims.cs",
+        "lengthBytes": 744,
+        "sha256": "bf19722d2e7b509857d28a87cb89fa100c9497b22a0a9c00d06d761cc44bf07b"
+      },
+      {
+        "relativePath": "StardewValley/LightSource.cs",
+        "lengthBytes": 7331,
+        "sha256": "6caa24fbecbc6122a0a5f693fd577b0c1cb21f31bc7154d47f323469d97432ca"
+      },
+      {
+        "relativePath": "StardewValley/LocalMultiplayer.cs",
+        "lengthBytes": 6319,
+        "sha256": "f4e0e96cf9e0ea368339c6bfc20f7e5925a34019512f21bb3c0d2370800d5fbf"
+      },
+      {
+        "relativePath": "StardewValley/LocalizedContentManager.cs",
+        "lengthBytes": 15806,
+        "sha256": "fd2aeae3bcf6f527644d949086d22c6f7cf92ee4f0b3dfc7734b9bb96e7d7df3"
+      },
+      {
+        "relativePath": "StardewValley/LocationContexts.cs",
+        "lengthBytes": 716,
+        "sha256": "452f2aa616a78d7ec30c778c9ab42c3d49b1728ddf753fb0d1bef676520356d5"
+      },
+      {
+        "relativePath": "StardewValley/LocationRequest.cs",
+        "lengthBytes": 1100,
+        "sha256": "96a246d5387bba4c4722033e1b52176279538883d50c12e1730ecc6d0910cf0c"
+      },
+      {
+        "relativePath": "StardewValley/Locations/AbandonedJojaMart.cs",
+        "lengthBytes": 2628,
+        "sha256": "c6d185566d172dfcc96704cfd29098afee9a9f44038040ba70f170fc33b6f982"
+      },
+      {
+        "relativePath": "StardewValley/Locations/AdventureGuild.cs",
+        "lengthBytes": 9607,
+        "sha256": "8699c0879ea6e365237228354a1b5b15458c08be52a83a4adbd6c2334cc09fdf"
+      },
+      {
+        "relativePath": "StardewValley/Locations/BathHousePool.cs",
+        "lengthBytes": 7071,
+        "sha256": "e758c164db4182a3e3f0f5ab49527ba062851b2f6e1fe2c51243063e9f3da451"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Beach.cs",
+        "lengthBytes": 40886,
+        "sha256": "b35e844f2d040c153eae54268c17a4b9cfa3e97d1973c41fb5777d8132a42aa4"
+      },
+      {
+        "relativePath": "StardewValley/Locations/BeachNightMarket.cs",
+        "lengthBytes": 17196,
+        "sha256": "1b69abbf4136f69e652692e0d33e42916d72c2d51725cfb94a1b46eda8e9b9eb"
+      },
+      {
+        "relativePath": "StardewValley/Locations/BoatTunnel.cs",
+        "lengthBytes": 31553,
+        "sha256": "d6bdd2d8f00a3a61a157cd76d6321ba4e31f663d083a415fc41706e5418e6a82"
+      },
+      {
+        "relativePath": "StardewValley/Locations/BugLand.cs",
+        "lengthBytes": 3543,
+        "sha256": "2d583e5da0e7feb412ecca850f16b51ad6bd893671c22f83bd794faf09d66d3f"
+      },
+      {
+        "relativePath": "StardewValley/Locations/BusStop.cs",
+        "lengthBytes": 23983,
+        "sha256": "6b72d12317db30ce0ff989e8b262d4734822b39274ffc2c2edbad3f2f7e4e25c"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Cabin.cs",
+        "lengthBytes": 6557,
+        "sha256": "34a69ad775064adc746a8ecc21e77ce762f59f76b88ffe6b77cfe323fda57a7a"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Caldera.cs",
+        "lengthBytes": 11459,
+        "sha256": "337ddb956ef13b7c3a7b0a15490c6196173c84176dd12810ed5fa2f1dfe7cefb"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Cellar.cs",
+        "lengthBytes": 2530,
+        "sha256": "24e1386440a122326535f6a63e7c5c28c2f93eebecd30854ebc4706845b3f3bf"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Club.cs",
+        "lengthBytes": 1514,
+        "sha256": "f140fe7ffbd662246d8d6cde2e3709aab4a29a79a625bd075635e40907be3532"
+      },
+      {
+        "relativePath": "StardewValley/Locations/CommunityCenter.cs",
+        "lengthBytes": 61017,
+        "sha256": "4db9e2249d80ff7548334d6884eeee96baa157435c04746b7d81afc8e853c08b"
+      },
+      {
+        "relativePath": "StardewValley/Locations/DecoratableLocation.cs",
+        "lengthBytes": 25637,
+        "sha256": "506ab289a5d60e867742e409ffe8ac9667429b5cd75aa787c8d5a0e83731f2be"
+      },
+      {
+        "relativePath": "StardewValley/Locations/DecorationFacade.cs",
+        "lengthBytes": 2496,
+        "sha256": "62bee88533904a647ee1a5bd50e4e720c5212a4eab304bbe979ae95179a7ae28"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Desert.cs",
+        "lengthBytes": 35964,
+        "sha256": "3403e611d0a95f6a45b0ae3eccd7b09af578c1fdf96bac1dc82a291420acf6c5"
+      },
+      {
+        "relativePath": "StardewValley/Locations/DesertFestival.cs",
+        "lengthBytes": 97744,
+        "sha256": "019be5265a50a6385451409c6c9e359cfe088bc5e92c6c9c2a9f9e24f23ab1b2"
+      },
+      {
+        "relativePath": "StardewValley/Locations/DwarfGate.cs",
+        "lengthBytes": 8746,
+        "sha256": "04ba6de1d4b19f02a85280a1dbc2697f3a603c8e533966da628efcca804e39c0"
+      },
+      {
+        "relativePath": "StardewValley/Locations/FarmCave.cs",
+        "lengthBytes": 13635,
+        "sha256": "63cb9de0dffb195cbef0d55aa9dd7faa27f58dbc45afccaf108c06af9579d586"
+      },
+      {
+        "relativePath": "StardewValley/Locations/FarmHouse.cs",
+        "lengthBytes": 112373,
+        "sha256": "f594177a03772a76cc08b4342c681b16deb111a6013e69e2e1f62f4859e6abf3"
+      },
+      {
+        "relativePath": "StardewValley/Locations/FishShop.cs",
+        "lengthBytes": 3810,
+        "sha256": "74ab89f3956bb80075c849daccadad90497c8e89f176ad79eed36bb6cd3b63bd"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Forest.cs",
+        "lengthBytes": 70933,
+        "sha256": "65e72208521c391c4b7f1df8dfc6adf6cdcdb8ed5ba50622d766e84071a01d4e"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandEast.cs",
+        "lengthBytes": 28539,
+        "sha256": "a435c86f965b32a3ef74a8d9e91457fb21818c3a795c3fba97ae1fce4a675770"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandFarmCave.cs",
+        "lengthBytes": 23457,
+        "sha256": "645fd0a4cef7ecdee2383a6c0a249b34a4847a1c7eb35450c76fb7ce09ec7cb6"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandFarmHouse.cs",
+        "lengthBytes": 9848,
+        "sha256": "337f81957c464f1c18eafe775c6aba7cbde9851a30508fa0a20d5e61d903414e"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandFieldOffice.cs",
+        "lengthBytes": 42156,
+        "sha256": "89c2b6f28640623d1a3de60583617c10b86d159133010f67883a6aeaffd76aa9"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandForestLocation.cs",
+        "lengthBytes": 8114,
+        "sha256": "f870327e7d8967cee2aec2b8cdb1a27ea53a86187dc376821717987d43696ba6"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandHut.cs",
+        "lengthBytes": 22003,
+        "sha256": "3375a8af625d71591f0b11d4139b06cc01e2cfcdc83b4ed086e234e527d9e296"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandLocation.cs",
+        "lengthBytes": 24877,
+        "sha256": "962c10e97de68352ec09b4807e49fc4502be6882b6f2754c72d55e3cae182c5b"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandNorth.cs",
+        "lengthBytes": 50427,
+        "sha256": "516efae4cdb7eb8f319d84874f0b7e044129a6deeea28014fda7d861869f4edf"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandSecret.cs",
+        "lengthBytes": 19202,
+        "sha256": "c9dfb7e042a246ed21ee79a32d48bfdc88bda7a4b2ce67b8702e46786162bf4b"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandShrine.cs",
+        "lengthBytes": 6812,
+        "sha256": "77a8d0ed8e430edd248b64016af7e2084d54926af28045b34f60c7f4d5062157"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandSouth.cs",
+        "lengthBytes": 50325,
+        "sha256": "13c79cde4cfe3e71f10cd607d4763e07c4d20fbae20a67343246f2d1de5e45b2"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandSouthEast.cs",
+        "lengthBytes": 13626,
+        "sha256": "e1683b084c304297ed931507d6f907afa8a482f803dd1ab6a9efbd101a804731"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandSouthEastCave.cs",
+        "lengthBytes": 11477,
+        "sha256": "5740f4273fe5c069504e85c14646f6b73bf5a7b3f0964c180b74f2ae25cea574"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandWest.cs",
+        "lengthBytes": 45070,
+        "sha256": "110a63bf8a71833af8a5ec37b3da673735c387c03cf3a702311bfc725fb3b31e"
+      },
+      {
+        "relativePath": "StardewValley/Locations/IslandWestCave1.cs",
+        "lengthBytes": 19293,
+        "sha256": "2fc8d2ae7d19919cdcf374e82568fa919d6c456183a7a792666d1cb7cf744570"
+      },
+      {
+        "relativePath": "StardewValley/Locations/JojaMart.cs",
+        "lengthBytes": 6658,
+        "sha256": "fbfbcefa70d89d25ea94ed33dd1352bb23e503fd99c564825b54ae2bbb494022"
+      },
+      {
+        "relativePath": "StardewValley/Locations/LibraryMuseum.cs",
+        "lengthBytes": 23694,
+        "sha256": "deb57def5798408b9284e260e85b03937d95f4a3562bf1b809b60778efc0c8d1"
+      },
+      {
+        "relativePath": "StardewValley/Locations/ManorHouse.cs",
+        "lengthBytes": 17331,
+        "sha256": "79ab6e6c5b227d93e13ebe83a37d2062296ec5ffc1126362d8ffb0df2c24342b"
+      },
+      {
+        "relativePath": "StardewValley/Locations/MermaidHouse.cs",
+        "lengthBytes": 58463,
+        "sha256": "f810364b1df2cd9435d6b61d49e75cb1de91ca6b5549db91a4090d396d033529"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Mine.cs",
+        "lengthBytes": 971,
+        "sha256": "a9c562337e2facf0f836e0bc38264fe1ac3d419b2038ba24738a09bac2a96a3b"
+      },
+      {
+        "relativePath": "StardewValley/Locations/MineInfo.cs",
+        "lengthBytes": 194,
+        "sha256": "261a2eb9f51ac902be55bc85efa0ae5cea64730e87fb1d7eed4ffd90bbcd2cd7"
+      },
+      {
+        "relativePath": "StardewValley/Locations/MineShaft.cs",
+        "lengthBytes": 203586,
+        "sha256": "698a43e93ef609ccfa6afdced93121ac6ce5d09222aeed9cd60aa20f326442c2"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Mountain.cs",
+        "lengthBytes": 25629,
+        "sha256": "62d23e6b0df0057d754d3c34ec9c8e590c317f01a3413e58276c7e3a5e7d21a2"
+      },
+      {
+        "relativePath": "StardewValley/Locations/MovieTheater.cs",
+        "lengthBytes": 63365,
+        "sha256": "243acd8837f485b934eb5ad155d2a84f05bd56465c2be079cd499f077d76be11"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Racer.cs",
+        "lengthBytes": 21113,
+        "sha256": "726689d8e171f4bd5a05dea4d457d007acb1cd9a0b9adc9783bd2bf9c3fcf73a"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Railroad.cs",
+        "lengthBytes": 13114,
+        "sha256": "6a9f2b1d156ab79418f7cc26955dd1071108f9d2e2e2fae7086b723a801e357c"
+      },
+      {
+        "relativePath": "StardewValley/Locations/SeedShop.cs",
+        "lengthBytes": 2395,
+        "sha256": "eabf55cf82b11ae38af13d56297c7653a479fe8eec32fd79924422ac09e9e7af"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Sewer.cs",
+        "lengthBytes": 5228,
+        "sha256": "5e9aea9ee7bdb3c599711badde10b2c00f5360c9a442fe466be6e2222876d9ad"
+      },
+      {
+        "relativePath": "StardewValley/Locations/ShopLocation.cs",
+        "lengthBytes": 6589,
+        "sha256": "3453f9662cf82b66b1399cae6e6fba8b506b402249fe36462498f7d09ccc1959"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Submarine.cs",
+        "lengthBytes": 30403,
+        "sha256": "399967e2a15f7ef4dad948d3a79b87a16eb9c74dde418fda88a34d31d5cb3f59"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Summit.cs",
+        "lengthBytes": 125636,
+        "sha256": "934e2edffac30f88719f64b17fb8a0504b5842d98dfab96b6e2e85168e9891d9"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Town.cs",
+        "lengthBytes": 101793,
+        "sha256": "ffbebb66fb6f8d0a66a15ee1c04ae2b5b1d5795eeaa77b9679cf3c8273761355"
+      },
+      {
+        "relativePath": "StardewValley/Locations/VolcanoDungeon.cs",
+        "lengthBytes": 143099,
+        "sha256": "eca1dd9a445c2a5b33da2af5dc6ca7f49c15e9db84c4f4e02c734ec5c6785b54"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Wisp.cs",
+        "lengthBytes": 5953,
+        "sha256": "1f0eff7ca9e118228790917e699e0d147277ac0e17e1a09c9a15bb7d5bd21bd8"
+      },
+      {
+        "relativePath": "StardewValley/Locations/WizardHouse.cs",
+        "lengthBytes": 5758,
+        "sha256": "dd8544508a5096c08056476b3b48e68608fc4e4e0de9cb993882c87b0789e4aa"
+      },
+      {
+        "relativePath": "StardewValley/Locations/Woods.cs",
+        "lengthBytes": 26084,
+        "sha256": "253857aa71cccd56b9fd094e436d7df7c76c270553fe0ccbd33cf972012b9de8"
+      },
+      {
+        "relativePath": "StardewValley/Logging/CheatCommandChatLogger.cs",
+        "lengthBytes": 1062,
+        "sha256": "94f4e91dd7291c402ee8720fa0219d90d341d3544edf7ed0831af9360e105a7d"
+      },
+      {
+        "relativePath": "StardewValley/Logging/DefaultLogger.cs",
+        "lengthBytes": 2983,
+        "sha256": "76bf2ea4517223fe03172e09ffe5fade0d755ba260084c8f5ab103936649bf63"
+      },
+      {
+        "relativePath": "StardewValley/Logging/IGameLogger.cs",
+        "lengthBytes": 273,
+        "sha256": "0241390dc4d5faaba97a3654c072433d42f1024f834391f70d9dca8d12164116"
+      },
+      {
+        "relativePath": "StardewValley/LoggingBinaryWriter.cs",
+        "lengthBytes": 2697,
+        "sha256": "a7b6b64cbcc3be032b431a0bc15907736982598a69083dab25d0033fe104f973"
+      },
+      {
+        "relativePath": "StardewValley/MachineDataUtility.cs",
+        "lengthBytes": 13269,
+        "sha256": "65deb490bb9d887ba08a4a7e7e87caaaa0e32f82c4dc859238d221ecdfa93132"
+      },
+      {
+        "relativePath": "StardewValley/MapSeat.cs",
+        "lengthBytes": 18849,
+        "sha256": "7614b1361a2923e6cf5b50e47257edf9dac64383d1cb6c584661c38720586944"
+      },
+      {
+        "relativePath": "StardewValley/MarriageDialogueReference.cs",
+        "lengthBytes": 3890,
+        "sha256": "19408002b46f8584d6234f7c21e5450a8d4625d8962a3449795ebaeb34d30a9b"
+      },
+      {
+        "relativePath": "StardewValley/Menus/AboutMenu.cs",
+        "lengthBytes": 11381,
+        "sha256": "e4088418c0968e52dbd1ec59a179641714f8592e6798949cb26a26b3a8576394"
+      },
+      {
+        "relativePath": "StardewValley/Menus/AdvancedGameOptions.cs",
+        "lengthBytes": 25287,
+        "sha256": "f58afb8215cab7bd0ac6cf5ab10196bf57e246ce4fff398ba780c35ecec88d3a"
+      },
+      {
+        "relativePath": "StardewValley/Menus/AnimalPage.cs",
+        "lengthBytes": 25122,
+        "sha256": "7702b9ded19ad0dd811a32b2438ea7c58d9d0c077a37def9c3b2d839ab268dc2"
+      },
+      {
+        "relativePath": "StardewValley/Menus/AnimalQueryMenu.cs",
+        "lengthBytes": 28040,
+        "sha256": "20683dca34c7b00000ebdd43c296a02a3db4e078730f7efcac531326086cc36a"
+      },
+      {
+        "relativePath": "StardewValley/Menus/AnimationPreviewTool.cs",
+        "lengthBytes": 18913,
+        "sha256": "d120fd9dc01f30726828ceb80eef884793439fef522f9aa1b718c7703f7e77bb"
+      },
+      {
+        "relativePath": "StardewValley/Menus/Billboard.cs",
+        "lengthBytes": 29410,
+        "sha256": "db7214e9068685d67f0738bc4dd226a92e23e1a0334f8aef36abb2e12fc69d4f"
+      },
+      {
+        "relativePath": "StardewValley/Menus/BobberBar.cs",
+        "lengthBytes": 38067,
+        "sha256": "9628404d4b02ca754ba9671ab68d0b680551f955dfd7e2513451895ea6cb92d6"
+      },
+      {
+        "relativePath": "StardewValley/Menus/BuffsDisplay.cs",
+        "lengthBytes": 10569,
+        "sha256": "286b6ebf91a2627b88334df571dba0c36549395aa2b7f99d773e386c1e272f6d"
+      },
+      {
+        "relativePath": "StardewValley/Menus/BuildingPaintMenu.cs",
+        "lengthBytes": 37114,
+        "sha256": "be9eeed875c734adbd40bcf0efc4add41cba6a6e8791cf025cc5b2414784534e"
+      },
+      {
+        "relativePath": "StardewValley/Menus/BuildingSkinMenu.cs",
+        "lengthBytes": 10628,
+        "sha256": "ea962107ab4aab4f230e2bc4519d108f684e18ba463998eb4b6c6680c5bd8ce3"
+      },
+      {
+        "relativePath": "StardewValley/Menus/Bundle.cs",
+        "lengthBytes": 16336,
+        "sha256": "248fa219509ccff1617ad57725b365abec5655fb43b290973b1d91d7bfba1a7a"
+      },
+      {
+        "relativePath": "StardewValley/Menus/BundleIngredientDescription.cs",
+        "lengthBytes": 960,
+        "sha256": "4f4bd6362ebf63176d6eff03babbeec72cf84ce1890344fe52fcf2a7f87e39b9"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ButtonTutorialMenu.cs",
+        "lengthBytes": 2693,
+        "sha256": "20f196898ea0adca9388427afdf6527f2258963ace78c3ddb165f1e4ccf4b56b"
+      },
+      {
+        "relativePath": "StardewValley/Menus/CarpenterMenu.cs",
+        "lengthBytes": 76953,
+        "sha256": "49046f79cf85c2eac412b34e936856c9accfbf16cb8b82d0ad05bd311a0e173b"
+      },
+      {
+        "relativePath": "StardewValley/Menus/CharacterCustomization.cs",
+        "lengthBytes": 150692,
+        "sha256": "58aaae7d3a35e88fd9c9a012872664a7482893fa647b3e7c220ccb1983503393"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ChatBox.cs",
+        "lengthBytes": 22988,
+        "sha256": "919db498349d2a37060355e02edc4b0a20d31a5a25119dae3d7651be236938fa"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ChatMessage.cs",
+        "lengthBytes": 8317,
+        "sha256": "4098b71829b9188da2674fc0e9efea3f9b10b5509e61be361302a15a3d24fcef"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ChatSnippet.cs",
+        "lengthBytes": 525,
+        "sha256": "353d0c2ac6013702a4fea52f49ae6d276473e4afc1b3fec3b41c9ec7d761eb10"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ChatTextBox.cs",
+        "lengthBytes": 6394,
+        "sha256": "e5ff7d5827d285cbd844b2c7f3f5af7a9b992ad62ed6fa6e0ebaf7a237b35554"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ChooseFromIconsMenu.cs",
+        "lengthBytes": 19353,
+        "sha256": "941669ddc00e96f8d16cf515682a077e1543ed6fd394b50376a6b9baaf92b633"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ChooseFromListMenu.cs",
+        "lengthBytes": 8122,
+        "sha256": "8a77d3989ead9771c8cd9c2a50daa419213984bc5aadd7d37e9bf88cd1b3f2f2"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ClickableAnimatedComponent.cs",
+        "lengthBytes": 1837,
+        "sha256": "8b08ae045aa87f6876ccfe706215dba7339b0d7c4abaffdb548a0e8765fce52a"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ClickableComponent.cs",
+        "lengthBytes": 4326,
+        "sha256": "a8c35177d9788b3783bfab189294dd23e9c2ae7907fe929584282f61ea90278d"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ClickableTextureComponent.cs",
+        "lengthBytes": 6597,
+        "sha256": "30a6e55a69a9ac1989e9cd0b69baf09e46a5520ccc3011e2f082b39d8adedf71"
+      },
+      {
+        "relativePath": "StardewValley/Menus/CollectionsPage.cs",
+        "lengthBytes": 34229,
+        "sha256": "a635d695927aaa6d6038ff51d3d542aeb657c1c7a13a978e97bafc9e70e06b39"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ColorPicker.cs",
+        "lengthBytes": 11582,
+        "sha256": "513157d0e1b9a9199267fea36bce0686ac7650cbb6582a2472c0bd440d84c3f2"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ConfirmationDialog.cs",
+        "lengthBytes": 8097,
+        "sha256": "e03fed7fd050fa47f57a7bb54198c6699bf8a07ca64aa1fb5aaee745bbdfcb00"
+      },
+      {
+        "relativePath": "StardewValley/Menus/CoopMenu.cs",
+        "lengthBytes": 38387,
+        "sha256": "61d9fd9afbfa66e53093f22efa8968154de6e7861f999d92f34fa1583e470bc9"
+      },
+      {
+        "relativePath": "StardewValley/Menus/CraftingPage.cs",
+        "lengthBytes": 25894,
+        "sha256": "2df6a3144ea765404dc40b08ac41e7cd0d8b6b7aeba78a356dc7578b29ada5d8"
+      },
+      {
+        "relativePath": "StardewValley/Menus/DayTimeMoneyBox.cs",
+        "lengthBytes": 33544,
+        "sha256": "c5cb42707563ad3444d72dd04e3fdc00e830c0f0ffc0db851c1cc221ae83aac1"
+      },
+      {
+        "relativePath": "StardewValley/Menus/DialogueBox.cs",
+        "lengthBytes": 41445,
+        "sha256": "5746ac9667eefbbfac02829c4f1a455d031b7b246d33fd226bdf099c9d0827b9"
+      },
+      {
+        "relativePath": "StardewValley/Menus/DigitEntryMenu.cs",
+        "lengthBytes": 7348,
+        "sha256": "ecaa7f9a61e30af479427ca9a22a77db8355b56f86dfdf6dfad5beab86ed3cc7"
+      },
+      {
+        "relativePath": "StardewValley/Menus/DiscreteColorPicker.cs",
+        "lengthBytes": 7619,
+        "sha256": "0c4e28f3f25c27957a42c2b21ffcbe4718a026a921b5259a87e6d406f380136e"
+      },
+      {
+        "relativePath": "StardewValley/Menus/DyeMenu.cs",
+        "lengthBytes": 24448,
+        "sha256": "40fb4711ff1dec046e64aee50e6ab53d5823d6ebae93420756449ccc2e385218"
+      },
+      {
+        "relativePath": "StardewValley/Menus/EmojiMenu.cs",
+        "lengthBytes": 6938,
+        "sha256": "de901d41921a8813a2e19071af420cc85f37814ecab95a905db71075d29db3a6"
+      },
+      {
+        "relativePath": "StardewValley/Menus/EmoteMenu.cs",
+        "lengthBytes": 18302,
+        "sha256": "b1892fe83c505d2ee291a7d90a801480c2245e44c776b00bd533bd00ced62da9"
+      },
+      {
+        "relativePath": "StardewValley/Menus/EmoteSelector.cs",
+        "lengthBytes": 11242,
+        "sha256": "84b76c324a6b440d406397640dafe37576a456053dbbf40d83f0b0346d711f71"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ExitPage.cs",
+        "lengthBytes": 6765,
+        "sha256": "9bca6d3262fbe144537848b57db90a9d1084c406c496e8600de40106ebae5add"
+      },
+      {
+        "relativePath": "StardewValley/Menus/FarmerBoxButton.cs",
+        "lengthBytes": 315,
+        "sha256": "93a54730c52a35cd161e0e35bf6c2c23a3894eff21df0270065e5d583ece2f20"
+      },
+      {
+        "relativePath": "StardewValley/Menus/FarmersBox.cs",
+        "lengthBytes": 4764,
+        "sha256": "3e3db7ae1c4dc2e3ccdb5ea86896cdd260b66234874248b545a33f74b2f1ca89"
+      },
+      {
+        "relativePath": "StardewValley/Menus/FarmhandMenu.cs",
+        "lengthBytes": 8491,
+        "sha256": "cdc37ef847b2c28117e5b38c97317454ed2a253922a33bc28e60c8a09d7f6759"
+      },
+      {
+        "relativePath": "StardewValley/Menus/FieldOfficeMenu.cs",
+        "lengthBytes": 20689,
+        "sha256": "49c7a9e7a3b39c3e4a1c4bb2361a86db4ae4c5393ec001b94c53561aeb1e14a8"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ForgeMenu.cs",
+        "lengthBytes": 51877,
+        "sha256": "7b238ea2aae108bf7c0e1de71c772beb1a2fcdfa4ff690bb29f10363dffb32a1"
+      },
+      {
+        "relativePath": "StardewValley/Menus/GameMenu.cs",
+        "lengthBytes": 21125,
+        "sha256": "611e02a2048ab5a61378cb975c58e199d5a54c3b7ef96ac4d8344333e65cf370"
+      },
+      {
+        "relativePath": "StardewValley/Menus/GeodeMenu.cs",
+        "lengthBytes": 24475,
+        "sha256": "1a7d0edd13ee1ef546a1674a36d658876e86c90e49202b54a702c18319d8137b"
+      },
+      {
+        "relativePath": "StardewValley/Menus/IClickableMenu.cs",
+        "lengthBytes": 101560,
+        "sha256": "6c1b84e71f698be6a421dd931c8e1fa07646c79d7b0c6ecf2ba04d4864bd0eab"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ICreditsBlock.cs",
+        "lengthBytes": 369,
+        "sha256": "fb0c2c269202ff147b35c19f9ba08029dee63c35a97ac0544b1b6fc27fbd8553"
+      },
+      {
+        "relativePath": "StardewValley/Menus/IScreenReadable.cs",
+        "lengthBytes": 190,
+        "sha256": "bf13bf1589a0d59a15a05d90c172918b61b1de083f937a945309262e6d3d954e"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ImageCreditsBlock.cs",
+        "lengthBytes": 1898,
+        "sha256": "7c0769732f865899b3e0fb076db342efac2effcfde5bfb7668f9ebfa9dd6da87"
+      },
+      {
+        "relativePath": "StardewValley/Menus/InventoryMenu.cs",
+        "lengthBytes": 21696,
+        "sha256": "711ee40b10c75bcf13cad633395afe810508ea1cfc3807aa67d6acfc454fa96d"
+      },
+      {
+        "relativePath": "StardewValley/Menus/InventoryPage.cs",
+        "lengthBytes": 43095,
+        "sha256": "98b0dfc980525895134724074dd1458d3cb1ab073ccc652c3475a7eb3889dd66"
+      },
+      {
+        "relativePath": "StardewValley/Menus/InviteCodeDialog.cs",
+        "lengthBytes": 1413,
+        "sha256": "dc87ca8256f8c73f37de4a738ef6974071f22e3fa91f9f6820fc17e27c159b5d"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ItemExitBehavior.cs",
+        "lengthBytes": 122,
+        "sha256": "240214f63d03949aca851109e1bcccb85170d7f3b436efeaef8aa92fa4415e59"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ItemGrabMenu.cs",
+        "lengthBytes": 57284,
+        "sha256": "f4b9d5047e1bb2614680da3048e0f6d8fe98ef80f93296dd3f5a0faa90412adf"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ItemListMenu.cs",
+        "lengthBytes": 7957,
+        "sha256": "fae676e989a98cfcbb7be9a9d12e79597750c782301912632d6cec88bc78e14b"
+      },
+      {
+        "relativePath": "StardewValley/Menus/JojaCDMenu.cs",
+        "lengthBytes": 8623,
+        "sha256": "9ee59d81dff5d33f79f7be25a723e2e985ea8d354ed6731f322d92a8db79694a"
+      },
+      {
+        "relativePath": "StardewValley/Menus/JunimoNoteMenu.cs",
+        "lengthBytes": 71326,
+        "sha256": "fb09b738a1458cd516357aac85d9d4e0ef09b8b28d53e6ca05ea9c395f2ff653"
+      },
+      {
+        "relativePath": "StardewValley/Menus/LanguageSelectionMenu.cs",
+        "lengthBytes": 11141,
+        "sha256": "3d8e224bcb5fc8545cd622634d05df04919cf5c124fbd8818659af06fde786b2"
+      },
+      {
+        "relativePath": "StardewValley/Menus/LetterViewerMenu.cs",
+        "lengthBytes": 39606,
+        "sha256": "5028c22b9183ba0b6baa0fac232e0d0bf7eed72093065b1eaa025121d4f23784"
+      },
+      {
+        "relativePath": "StardewValley/Menus/LevelUpMenu.cs",
+        "lengthBytes": 41281,
+        "sha256": "adcb73098494cd9c6b4cdb172576a4de251b0ce154105ee3b9c8a4885b961792"
+      },
+      {
+        "relativePath": "StardewValley/Menus/LinkCreditsBlock.cs",
+        "lengthBytes": 1476,
+        "sha256": "492be9a0bfa1bfed5a38d7508bb68c1d2716110ec188e4c02e307af4dab37875"
+      },
+      {
+        "relativePath": "StardewValley/Menus/LoadGameMenu.cs",
+        "lengthBytes": 46021,
+        "sha256": "7b3d568edd62cb39b58523aa609211ff640e7ec7891bdafafaac95361ddb2331"
+      },
+      {
+        "relativePath": "StardewValley/Menus/LocalCoopJoinMenu.cs",
+        "lengthBytes": 12085,
+        "sha256": "ecb1b30a945d87760d1ae7c2159777b7e70a11dd6c419cadc75a5f221f9f8e19"
+      },
+      {
+        "relativePath": "StardewValley/Menus/MapPage.cs",
+        "lengthBytes": 17569,
+        "sha256": "e01336640655875f58c679c2ee8a5fd90c23426eda5ce9280d21c579e864ce0d"
+      },
+      {
+        "relativePath": "StardewValley/Menus/MasteryTrackerMenu.cs",
+        "lengthBytes": 38706,
+        "sha256": "d9ba95897764d83c6ef8d9aeaa6a9196c64f444cc3b82af0827bbeb2ba9a1d67"
+      },
+      {
+        "relativePath": "StardewValley/Menus/MenuWithInventory.cs",
+        "lengthBytes": 13334,
+        "sha256": "ab80f845c407340ea4ddedf990a1270647baec747b1577bfaaf7bf492c165971"
+      },
+      {
+        "relativePath": "StardewValley/Menus/MineElevatorMenu.cs",
+        "lengthBytes": 6878,
+        "sha256": "d712f558610d3f8e5e751e23a297e5b93eb7969d3ba659c4022906409296e328"
+      },
+      {
+        "relativePath": "StardewValley/Menus/MuseumMenu.cs",
+        "lengthBytes": 27957,
+        "sha256": "56ceeccff5dd96c2129210f56d3e82766b6e58b38ebd7b92e75526b39dcc69b2"
+      },
+      {
+        "relativePath": "StardewValley/Menus/NamingMenu.cs",
+        "lengthBytes": 8039,
+        "sha256": "aa65db52c540bbb0785c15fbc73dcd041a9d23fb66bbac32cd95ceeed569bd4a"
+      },
+      {
+        "relativePath": "StardewValley/Menus/NumberSelectionMenu.cs",
+        "lengthBytes": 11928,
+        "sha256": "aa748cd58f8df3ce76f16789a144a329cf87947d0c4bcdf222b3d0723c1dd224"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsButton.cs",
+        "lengthBytes": 2939,
+        "sha256": "e83c299b5a907339c73ba096b4677c89188e951cce71e42758fb97ae396c01a0"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsCheckbox.cs",
+        "lengthBytes": 1811,
+        "sha256": "e4bf39a1b5e8c339eacd138a15490ef80a378b87bd67483db095a343ec6128a1"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsDropDown.cs",
+        "lengthBytes": 9287,
+        "sha256": "afc39b8064bfb69b3288121ce7c0e6e333e6e14ed1afc19d18b0b6c3ace8460d"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsElement.cs",
+        "lengthBytes": 4932,
+        "sha256": "ee7819ea8ff060fa0d153eb48a1e305de7cd69245a3dc71300c8d635bc58d28f"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsInputListener.cs",
+        "lengthBytes": 5856,
+        "sha256": "d2b1516cca950bfbced1a4d892db701c63ef0f72e48b19ade367a687ffdeb6fa"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsPage.cs",
+        "lengthBytes": 27760,
+        "sha256": "feed4797a112661a02e4880483573c1cb8e044c9046a10c30fc0bc049ca9ffec"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsPlusMinus.cs",
+        "lengthBytes": 7101,
+        "sha256": "b628a40190e90696822a093b66c19f77501c2c7241f90da5b6353b47601d8de0"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsPlusMinusButton.cs",
+        "lengthBytes": 2750,
+        "sha256": "c3dba1a70a44d73482133ee219be707aed8250773f8e02ce0a22902abe9be465"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsSlider.cs",
+        "lengthBytes": 3184,
+        "sha256": "fa9d0455fd4c501646c49579e9e0d22928b5f0c39909ef0f8ee62c324d8a6efb"
+      },
+      {
+        "relativePath": "StardewValley/Menus/OptionsTextEntry.cs",
+        "lengthBytes": 1140,
+        "sha256": "e7a71ede4bf14c15cd990d4d68a5fd86955a290b30c401900f8458dc4465db19"
+      },
+      {
+        "relativePath": "StardewValley/Menus/PI_ItemList.cs",
+        "lengthBytes": 8095,
+        "sha256": "2f072bdf7e59302b9e1815e7210deab47dc26689907ddd50cd983479fa3aac90"
+      },
+      {
+        "relativePath": "StardewValley/Menus/PendingProposalDialog.cs",
+        "lengthBytes": 2504,
+        "sha256": "1c51142029d07fcd0a5845ca5b3c997a2802b18c145042bbd47ee62e569b898e"
+      },
+      {
+        "relativePath": "StardewValley/Menus/PondQueryMenu.cs",
+        "lengthBytes": 25340,
+        "sha256": "53711cc4428639f14b9b4ffaefdfed054100b23ddc26f5b182076913f9f230bb"
+      },
+      {
+        "relativePath": "StardewValley/Menus/PowersTab.cs",
+        "lengthBytes": 6571,
+        "sha256": "7e7bed8c689c6631115b77673fd2b2c8d440bb537ba3e1e0e911f2889e600acc"
+      },
+      {
+        "relativePath": "StardewValley/Menus/PrizeTicketMenu.cs",
+        "lengthBytes": 12560,
+        "sha256": "6223da32a9c2495ee2ed5f38b31a037622aa534f712f9880b67a657d3efb2764"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ProfileItem.cs",
+        "lengthBytes": 1732,
+        "sha256": "baacaffa840f09dd7721e0aabf0d255d708ad1641f9557feef2a079bf89d4828"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ProfileMenu.cs",
+        "lengthBytes": 49533,
+        "sha256": "54778bf98987f61c49202605c027ce5611532bd9e5292e8b0d5352907ce3ea04"
+      },
+      {
+        "relativePath": "StardewValley/Menus/PurchaseAnimalsMenu.cs",
+        "lengthBytes": 33568,
+        "sha256": "3aa75a951e70fd2e54d5a417273b2fe1120116af7d92ff9e40842fd70dcd95c2"
+      },
+      {
+        "relativePath": "StardewValley/Menus/QuestContainerMenu.cs",
+        "lengthBytes": 7336,
+        "sha256": "e4e1b49857c72e83ecfaf28c727071084f846dabad67b2876437d00155e9f3f6"
+      },
+      {
+        "relativePath": "StardewValley/Menus/QuestLog.cs",
+        "lengthBytes": 41624,
+        "sha256": "ad1fcd5dc17c23871fd2d2dd683aadbdaa314037b8869d5a66336bb8820774cd"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ReadyCheckDialog.cs",
+        "lengthBytes": 1802,
+        "sha256": "8dd78734f790ed6c7fec3f6c5a24bd5b42c777a8e1b8b761e967c58886e26f02"
+      },
+      {
+        "relativePath": "StardewValley/Menus/RenovateMenu.cs",
+        "lengthBytes": 17973,
+        "sha256": "814f79e170ccd0b88dcc982e80e04eccdb7e243a3850ee6a6f62d5a7929b330d"
+      },
+      {
+        "relativePath": "StardewValley/Menus/SaveGameMenu.cs",
+        "lengthBytes": 7333,
+        "sha256": "69125b3a61b93d1c057402f86a0c36d62e2eff648c6bf95e85bdf9d343a2ff62"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ServerConnectionDialog.cs",
+        "lengthBytes": 626,
+        "sha256": "11b8244659dbcd592edb7932d47cc8414233c53506ab9a911efbefc5e0ea35f6"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ShippingMenu.cs",
+        "lengthBytes": 54969,
+        "sha256": "8e7ee16bff55a1e517d4cfd6642f976f9acd7cc8c511ea5e32d93d830145e1d8"
+      },
+      {
+        "relativePath": "StardewValley/Menus/ShopMenu.cs",
+        "lengthBytes": 86007,
+        "sha256": "25e995349eea5e567fdeda4343d2f68e73275daaf71b7e536a2274838b54ce09"
+      },
+      {
+        "relativePath": "StardewValley/Menus/SkillsPage.cs",
+        "lengthBytes": 53147,
+        "sha256": "11938d2e6cbbff0f16ebf14a2f280d6fc5f03262ad22964c6626ecd55b4ad415"
+      },
+      {
+        "relativePath": "StardewValley/Menus/SkipForClickableAggregation.cs",
+        "lengthBytes": 153,
+        "sha256": "c74f8b9df165bb3ddc06bc7e670e713cd2c77ac9d8b4ee0cdf936ebba94ee04e"
+      },
+      {
+        "relativePath": "StardewValley/Menus/SliderBar.cs",
+        "lengthBytes": 2076,
+        "sha256": "fefacec73cadde1cfbcb74eaad5b4027ea3fd8d2f708ae9869f8700e337de317"
+      },
+      {
+        "relativePath": "StardewValley/Menus/SocialPage.cs",
+        "lengthBytes": 43288,
+        "sha256": "21dd96f84cf79aea2ca73176dc58b535ebf872876b80858e56c2249f9312bf77"
+      },
+      {
+        "relativePath": "StardewValley/Menus/SpecialCurrencyDisplay.cs",
+        "lengthBytes": 14489,
+        "sha256": "1c75e135468360b1564166e78636aaad06681f2ecbd75bc11e8e2d1858f3f777"
+      },
+      {
+        "relativePath": "StardewValley/Menus/SpecialOrdersBoard.cs",
+        "lengthBytes": 24198,
+        "sha256": "e74d12cef912141e2e1e7e75b77ab696536d3103d96bc8a3bc9129da8ab7d6f5"
+      },
+      {
+        "relativePath": "StardewValley/Menus/StorageContainer.cs",
+        "lengthBytes": 9986,
+        "sha256": "937d74f88e5d81f78f87ad096ec9b6e9160fc6cc2e483c3353ad45a33ffae24e"
+      },
+      {
+        "relativePath": "StardewValley/Menus/StrengthGame.cs",
+        "lengthBytes": 12295,
+        "sha256": "fc8dd545115f2eec1090aef7f675e4fd6aaf4dacb47be16238257887d3d8dc6f"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TailorRecipeListTool.cs",
+        "lengthBytes": 13677,
+        "sha256": "2742deb6507dba4f9515fdf63cc0c8adc36b7fcefc0f69b7f2048b38c4dea546"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TailoringMenu.cs",
+        "lengthBytes": 54649,
+        "sha256": "1f3819c9b6020c84422439a3e1c2ac94e6e3f0d60362bdd51a3fd36e659ee9b6"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TextBox.cs",
+        "lengthBytes": 8409,
+        "sha256": "ccee193c2eef82c46b8dc8f075a790398408d835c594f992cba37f5ac8078c23"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TextBoxEvent.cs",
+        "lengthBytes": 86,
+        "sha256": "04140804f032c2c922ce915a9ea5fc9b1cfe7fbbed32608379daf0c9eef43a93"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TextCreditsBlock.cs",
+        "lengthBytes": 2646,
+        "sha256": "6544ad1bfc4ecd1bbfb75a0bec90ef0a015fd727318d6a61a9ff8ac2300b7721"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TextEntryMenu.cs",
+        "lengthBytes": 16279,
+        "sha256": "2a077bd62e94551d143d0e7f2f14f82cace3cba6b5cc240aba414afcd5caccdf"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TitleMenu.cs",
+        "lengthBytes": 118311,
+        "sha256": "cc885220a45c0590cd6f7a0fdb9a6dd734f50a8f8682df872519f16e9f6b99f5"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TitleTextInputMenu.cs",
+        "lengthBytes": 2823,
+        "sha256": "8ee68445bf08004845fa82aefd1c3783e73b8ae234b532e8242a9e2fb0c87b48"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TooManyFarmsMenu.cs",
+        "lengthBytes": 6870,
+        "sha256": "d6f4d326900e7b1549e46466b165ef15f9d5db58f12f9b31e8c07583c2aeeb24"
+      },
+      {
+        "relativePath": "StardewValley/Menus/Toolbar.cs",
+        "lengthBytes": 10348,
+        "sha256": "4aaf212cf3e694686dc11b53edc6627052f0cf71659e6b3915b020f0cb4d2ef4"
+      },
+      {
+        "relativePath": "StardewValley/Menus/TutorialMenu.cs",
+        "lengthBytes": 12419,
+        "sha256": "a72fa2ea25b2558d990a039f3ee86d43db17809ad173c4bbdea281a5e6150790"
+      },
+      {
+        "relativePath": "StardewValley/Menus/WheelSpinGame.cs",
+        "lengthBytes": 6111,
+        "sha256": "ed6513e08b4abb19c54b46f8dd1fd41b4401750289dd4ccef7366b7ca57ce0ec"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/AbigailGame.cs",
+        "lengthBytes": 303402,
+        "sha256": "4510302ee8d774b9e5df60e5a0a170f6946c267b84b167cc43a8c06f9d857425"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/BoatJourney.cs",
+        "lengthBytes": 43231,
+        "sha256": "5291da12fc4f5c31b7f1fcd3577f59e652bfa7c493177155749665ff39de4ced"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/CalicoJack.cs",
+        "lengthBytes": 35368,
+        "sha256": "f57b72fbfefbe601c0e2f8d8455a5787fb00e4ff4d39c3f6103d280177ba5aec"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/CraneGame.cs",
+        "lengthBytes": 74764,
+        "sha256": "ce20ca6445992edd2e6ccb8ada8eb09de0273bd9243c541ea0e52622e519934d"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/Darts.cs",
+        "lengthBytes": 32672,
+        "sha256": "aad70d26128e012e722b6803056eeb4bffbd85b916974edd297a2177027d5027"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/FantasyBoardGame.cs",
+        "lengthBytes": 8250,
+        "sha256": "8d18562def45dda2c1a86c6e5dd47805b0a5087a6a46c45be6731f60415649e9"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/FishingGame.cs",
+        "lengthBytes": 25924,
+        "sha256": "42d99d71a4be1bf6a31ffb1ad75115720593c6c4a3feb6e68b412d6079ab71d5"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/GrandpaStory.cs",
+        "lengthBytes": 44930,
+        "sha256": "2993b5e051b17be6a26cf005f0a48425b74a02bf4a3447a23ea8b3a227a5f5d6"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/HaleyCowPictures.cs",
+        "lengthBytes": 19524,
+        "sha256": "afce10ab5bdd2a3877d48e2ac50aed6c01b7668eff6c75a071d76c04404bb53f"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/IMinigame.cs",
+        "lengthBytes": 763,
+        "sha256": "ea4d5cb0d2ffba08af71fa7693b79724a39a4929ce88eb26e0064621e04dcc76"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/Intro.cs",
+        "lengthBytes": 38130,
+        "sha256": "096b7304cde299f8f23ab28aadb5e97b202735e28e176e3aded5dc8e9a5ff7dd"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/MaruComet.cs",
+        "lengthBytes": 19942,
+        "sha256": "d0959063522db762ed9c0a1a0238e58a1e21716d82d87d0cac6e3c8bb731387c"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/MineCart.cs",
+        "lengthBytes": 322585,
+        "sha256": "c0966787d2a739fd3fd2b040b2b4cbd33378bf67d105160f1ede0aebfa3409a5"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/NetLeaderboards.cs",
+        "lengthBytes": 1606,
+        "sha256": "293e2ca4e94ad14e89c8f1894b9e5a75723cfd4b4fe9e863b9161be88ea1ec1b"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/NetLeaderboardsEntry.cs",
+        "lengthBytes": 631,
+        "sha256": "417cc12e83637a9fa224eac0e2f5f2cc6a6958222f3589351cd14809344454c9"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/PlaneFlyBy.cs",
+        "lengthBytes": 7884,
+        "sha256": "e68359a9896684ea466feb3525dfe6e8cfbf2e6ba4ce8572fc1b3cf6e194dc3a"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/RobotBlastoff.cs",
+        "lengthBytes": 10096,
+        "sha256": "6dc5c7975f3871d14316e8d1bf4a48e8d817a11369b279ff153f5a96a6c48563"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/Slots.cs",
+        "lengthBytes": 32453,
+        "sha256": "15c024758bbac6bf3aaea6d041143a9ee297e411091460dee37d9018f6f6535b"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/TargetGame.cs",
+        "lengthBytes": 34605,
+        "sha256": "94496892453c22d48fd1971acc60c0c10a27b61ba031ba0f260edecb4bdacb5a"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/TelescopeScene.cs",
+        "lengthBytes": 5138,
+        "sha256": "b0e3f543f9483011fbe3febd8d263210f1f8cbbcfa1c3767eccf40448eb0c027"
+      },
+      {
+        "relativePath": "StardewValley/Minigames/Test.cs",
+        "lengthBytes": 2555,
+        "sha256": "5ce55b77568526e3c70090704354773c5fc3f005cd2033d2b53a4ff4ed0ca919"
+      },
+      {
+        "relativePath": "StardewValley/Mods/ModDataDictionary.cs",
+        "lengthBytes": 697,
+        "sha256": "4584548ee271df2b1db1090fb46e988d949106857f06ab0b2f9adf00fc9af8e9"
+      },
+      {
+        "relativePath": "StardewValley/Mods/ModHooks.cs",
+        "lengthBytes": 1928,
+        "sha256": "be8d6286cdc6539fe961d862d20493ffe9d1de2c620bc663133efb4ef582997b"
+      },
+      {
+        "relativePath": "StardewValley/Mods/RenderSteps.cs",
+        "lengthBytes": 416,
+        "sha256": "b757afc7b96546850bf1c4612721b9bf6c90a8a538c929f509cae7c15fb08f54"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/AngryRoger.cs",
+        "lengthBytes": 12932,
+        "sha256": "fb7903b1a9430841b24cce39e05fb1f273747aac5a407d12429c3ff64cc9aacf"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Bat.cs",
+        "lengthBytes": 55217,
+        "sha256": "0ae7540f4cefccf8ed715b96b3f3cc9ec326ad6f63e82de4de216c2d4b22f2bf"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/BigSlime.cs",
+        "lengthBytes": 11884,
+        "sha256": "6f410389e571f049f2086516396f678ea5ff258cf7a8b0b8bead03e92919c613"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/BlueSquid.cs",
+        "lengthBytes": 18734,
+        "sha256": "b5a1d2fea212f947428094dd4ab30aa09e106fb4ba80a08c9c23042b862ae78a"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Bug.cs",
+        "lengthBytes": 9569,
+        "sha256": "a52c830b8dc073f769f411bbc742304f3c8a8cdbf33cc6cb9d0cb3a3040a0c01"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/DinoMonster.cs",
+        "lengthBytes": 20987,
+        "sha256": "033c5bac5f70ecf5158053e574ce362ea7b7dea71c9869febf4c130a4eb75e6a"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Duggy.cs",
+        "lengthBytes": 9566,
+        "sha256": "143ded0bc0f1ed1ef9c86cacab83f5afa630b82ae6ad3007ee807c47a5fefb66"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/DustSpirit.cs",
+        "lengthBytes": 14461,
+        "sha256": "6adf93254f36e8b33d2547fcf002d59fbfaa02a01157ac18579d60924e8fe035"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/DwarvishSentry.cs",
+        "lengthBytes": 9331,
+        "sha256": "aef06dc309edb2c7f0472fc4c8f6e85f8737d92c84dac1b74190b09b3edb5ca9"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Fly.cs",
+        "lengthBytes": 11772,
+        "sha256": "4db2b26626be40e6c7f75d3da123bc11657377837e140ee447e01d575f9ffef4"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Ghost.cs",
+        "lengthBytes": 23038,
+        "sha256": "993756e15142e5b165ceaddda7cc0f96bc188053fdbcbc2de95c003d6dc0a09a"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/GreenSlime.cs",
+        "lengthBytes": 52019,
+        "sha256": "ba87004ecc42974b9bbd9c47836fcc711300ae961800e07f930d3a00d5bf0028"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Grub.cs",
+        "lengthBytes": 11789,
+        "sha256": "1526a3d0f34089be1cad717bbe022150c4055cc80aafe3405936cf1a9d222506"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/HotHead.cs",
+        "lengthBytes": 8797,
+        "sha256": "0d03f91f34398a875f80a70ab59f564ffabde202d1fee1eb65a58427597e0d08"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/LavaLurk.cs",
+        "lengthBytes": 16391,
+        "sha256": "7b821122b2b0b3e57e6a1f852aa250fffbfdb566409ed1456e5398d82c82798e"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Leaper.cs",
+        "lengthBytes": 11685,
+        "sha256": "2fa5c1e971336083b03c6f3fad4e40ffbc3515e036c909ae368cf01c6b5a0f51"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/MetalHead.cs",
+        "lengthBytes": 8630,
+        "sha256": "71efcea27d71a6e718e9360153e68116192ce9d840eac5cb02ad6a195dd3ebed"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Monster.cs",
+        "lengthBytes": 51131,
+        "sha256": "54630fe26396fd14ab781e40263c617ac7faf73fb8438fcf24c758490c0450e1"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Mummy.cs",
+        "lengthBytes": 7201,
+        "sha256": "e7cfd7d89e8a783c01887a6e6c3528bec74f3b178a0656cb818fc8f4a8ff0bb8"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/ParryEventArgs.cs",
+        "lengthBytes": 695,
+        "sha256": "e6b744b702d5b5fa31cb23f6b3be37a583d4aba2b44ea8980acd9fdebcff7e10"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/RockCrab.cs",
+        "lengthBytes": 9275,
+        "sha256": "063cf3ae9e950f10cd123919549ceaeac6a9630395a28d59fd92d1b4e9953a3f"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/RockGolem.cs",
+        "lengthBytes": 9126,
+        "sha256": "f0b0c046b5b6a816b5c96f663a65cac1c482437fcb8a0cf663ee93562b55b119"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Serpent.cs",
+        "lengthBytes": 42844,
+        "sha256": "0e2b5f75d3a72527a008cca977463891c3aa65876c0cfcf456bd57dc77696345"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/ShadowBrute.cs",
+        "lengthBytes": 6810,
+        "sha256": "d603a3c6f91ddb4aadfcc0d9c22f0d3735528765e2ce40c60ac123768b19a3f2"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/ShadowGirl.cs",
+        "lengthBytes": 6555,
+        "sha256": "8df7c338e76a98575424f231ff928d6d5b578b30222eabb394e4d819ab7991ff"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/ShadowGuy.cs",
+        "lengthBytes": 17366,
+        "sha256": "78c84747d6deddc7ed465b41e03b406d00ffe86cce73c263a5a17684a3163de6"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/ShadowShaman.cs",
+        "lengthBytes": 17276,
+        "sha256": "e5d8a00548ac84bfb3fedf24334b26f2df23db86606d0f5ee8e7dc1241d7fbfb"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Shooter.cs",
+        "lengthBytes": 14283,
+        "sha256": "26f7b9a973d729f9c20e5544bd4f70873284c8423f7c2681ca776a334a413aa7"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Skeleton.cs",
+        "lengthBytes": 11796,
+        "sha256": "7912df487a0658f4af67bd843b59fc6bf374be60f72998c4ed2083369846294b"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/Spiker.cs",
+        "lengthBytes": 5807,
+        "sha256": "75c5636326d4eda1f5b99239895a1dc152eca8b9a1a2df53a3e914c39660116b"
+      },
+      {
+        "relativePath": "StardewValley/Monsters/SquidKid.cs",
+        "lengthBytes": 15526,
+        "sha256": "56ec95d4a7e41d99ffc01f091a73ab9ef5ce940255857208069d8fd6ee66f430"
+      },
+      {
+        "relativePath": "StardewValley/MovieConcession.cs",
+        "lengthBytes": 5162,
+        "sha256": "756543e051c59cb2f07f01a5797ff6b41c38887ec07240545635c86064c11f9c"
+      },
+      {
+        "relativePath": "StardewValley/MovieInvitation.cs",
+        "lengthBytes": 1092,
+        "sha256": "f62d082a7354d6a5e6cce605f4dec3563e859fda362f96f2890fa696bd4a4818"
+      },
+      {
+        "relativePath": "StardewValley/MovieViewerLockEvent.cs",
+        "lengthBytes": 983,
+        "sha256": "542f393e68ae11535758b9f6a3c0139740c0d14859ccec7e5db40a0ff0ad532c"
+      },
+      {
+        "relativePath": "StardewValley/Multiplayer.cs",
+        "lengthBytes": 52105,
+        "sha256": "1aeca7574f899d614aae2a5b2fdf1a4dd8a013836ecacac734a2150a1d9337a3"
+      },
+      {
+        "relativePath": "StardewValley/MultipleMutexRequest.cs",
+        "lengthBytes": 2310,
+        "sha256": "8ca50debd089f4f349bfbd22305f933d9476b514d4de289977dbaff2cf82bc7a"
+      },
+      {
+        "relativePath": "StardewValley/NPC.cs",
+        "lengthBytes": 268507,
+        "sha256": "53ef677bdd9438407261339517773e37958456bf5bd1456ec45884dfc70de718"
+      },
+      {
+        "relativePath": "StardewValley/NPCController.cs",
+        "lengthBytes": 5103,
+        "sha256": "f341f7d5703568ae66f2b183db982787ee2eaa0a5738e620f1041c5fb8ac4a6b"
+      },
+      {
+        "relativePath": "StardewValley/NPCDialogueResponse.cs",
+        "lengthBytes": 865,
+        "sha256": "1c68e8a7d6da7e2538e7320960f59849fd0a9c36fb2c367a22706db6dd4277b6"
+      },
+      {
+        "relativePath": "StardewValley/NativeClipboard/ClipboardPlatformType.cs",
+        "lengthBytes": 124,
+        "sha256": "7c9459d3ba94566d61f62d5388d5d4490388612aee846951324bf9fba622e7b5"
+      },
+      {
+        "relativePath": "StardewValley/NativeClipboard/LinuxSdlClipboard.cs",
+        "lengthBytes": 170,
+        "sha256": "48bd6dee3ee2b954a48864eebd7af5f3e5a1a6cb765a0a25610bffaadd307fe1"
+      },
+      {
+        "relativePath": "StardewValley/NativeClipboard/OsxSdlClipboard.cs",
+        "lengthBytes": 164,
+        "sha256": "edd2892b3258da48d596e1feddbdc52be5779ebd9350645121c46c72d4c18ee9"
+      },
+      {
+        "relativePath": "StardewValley/NativeClipboard/SdlClipboard.cs",
+        "lengthBytes": 2729,
+        "sha256": "4677665b0bc125aeba1745b42ce007176c5e0c06cbb6a269e7a8af66467d70fa"
+      },
+      {
+        "relativePath": "StardewValley/NativeClipboard/WindowsSdlClipboard.cs",
+        "lengthBytes": 680,
+        "sha256": "a5c014497a6f08b6fe04a41eea53c248b0fe447abe631348eb9ddb9f3cbb384b"
+      },
+      {
+        "relativePath": "StardewValley/NetFarmerPairDictionary.cs",
+        "lengthBytes": 780,
+        "sha256": "5007de56b3cdd71ec1af4a606ebd965847a37cb4b0b05584ec4dca125f180981"
+      },
+      {
+        "relativePath": "StardewValley/NetIntIntArrayDictionary.cs",
+        "lengthBytes": 773,
+        "sha256": "c744ac5fc0e7f6618bec4c9dbf863369ba225035550236937d5e0dff4e4e046d"
+      },
+      {
+        "relativePath": "StardewValley/NetLogRecord.cs",
+        "lengthBytes": 131,
+        "sha256": "7732057158d344d66f6ad1ac8c1662182844ec7d9e0c9218eed6e403070b06b3"
+      },
+      {
+        "relativePath": "StardewValley/NetLogger.cs",
+        "lengthBytes": 1865,
+        "sha256": "b452ebe42a84ee7bb222b96ed6aeb2b62b3f9622358e4e8360f7ce359cb3b923"
+      },
+      {
+        "relativePath": "StardewValley/NetStringIntArrayDictionary.cs",
+        "lengthBytes": 795,
+        "sha256": "d78ec34de3c0a69550d4871752a8646499575cb495a109b67c60d6e8698cdff1"
+      },
+      {
+        "relativePath": "StardewValley/NetSynchronizer.cs",
+        "lengthBytes": 3570,
+        "sha256": "101911d2f07bd1793c3729c61aaaf2ab5fcfa451780e5582970fe2641cad3929"
+      },
+      {
+        "relativePath": "StardewValley/Network/BandwidthLogger.cs",
+        "lengthBytes": 2464,
+        "sha256": "af22e332a6947bbed0ea239b6202445129fa9d6d6f12095ccb11e701ca766117"
+      },
+      {
+        "relativePath": "StardewValley/Network/BarGraph.cs",
+        "lengthBytes": 2426,
+        "sha256": "6781024c70fa58a47ac24aca6a4ec13a5cc793735ecae4a4aed4dfcb5c4eabcf"
+      },
+      {
+        "relativePath": "StardewValley/Network/Bimap.cs",
+        "lengthBytes": 2240,
+        "sha256": "5c2465ea6bc4a0a668e119d9ed8afed8d84fba286f0794469961017579126976"
+      },
+      {
+        "relativePath": "StardewValley/Network/BuilderData.cs",
+        "lengthBytes": 1155,
+        "sha256": "2e879eab71a22249501f43c14153086f899ca3d033f64aee76a385f94bcdc550"
+      },
+      {
+        "relativePath": "StardewValley/Network/ChestHit/ChestHitArgs.cs",
+        "lengthBytes": 358,
+        "sha256": "6ae8925fb897f49216f20c41ebf2fbdc1a07642844eca2975d782d803a968436"
+      },
+      {
+        "relativePath": "StardewValley/Network/ChestHit/ChestHitSynchronizer.cs",
+        "lengthBytes": 6198,
+        "sha256": "c0c59bddc4e8687fb2cc5f1f3948dc436bc3f68acc00e43cee62e4d832913ff6"
+      },
+      {
+        "relativePath": "StardewValley/Network/ChestHit/ChestHitTimer.cs",
+        "lengthBytes": 324,
+        "sha256": "347c666a5f8d48e64862e57ac705befb3128249b53c3a7b58aefe1d77661285f"
+      },
+      {
+        "relativePath": "StardewValley/Network/ChestHit/Internal/ChestHitMessageType.cs",
+        "lengthBytes": 127,
+        "sha256": "24f09d078a7a314b19347ee902075973814d378b4e386ce55716b385de93bc30"
+      },
+      {
+        "relativePath": "StardewValley/Network/Client.cs",
+        "lengthBytes": 8408,
+        "sha256": "6c66a9906a68ea3108a45f6c6a212956930291f5b3591eccc36510a50307ba06"
+      },
+      {
+        "relativePath": "StardewValley/Network/Compress/INetCompression.cs",
+        "lengthBytes": 286,
+        "sha256": "bae5e56fb01644c5f61f825351f9f3796046f04678a2718589252a00ba785ab4"
+      },
+      {
+        "relativePath": "StardewValley/Network/Compress/LZ4NetCompression.cs",
+        "lengthBytes": 1912,
+        "sha256": "cf432f9b892c50b6ca471254e3f83abe4b9f565edf8fd0202a17a60dc80e9fa3"
+      },
+      {
+        "relativePath": "StardewValley/Network/Compress/NullNetCompression.cs",
+        "lengthBytes": 420,
+        "sha256": "bae1f20dc96c928280fbd4e8384a64137f6fcbb99a03f911a9ba55668546c5e2"
+      },
+      {
+        "relativePath": "StardewValley/Network/Dedicated/DedicatedServer.cs",
+        "lengthBytes": 13920,
+        "sha256": "32cf4a9f792b05ce44870a7aa6de438607b95ce48117e2bcd4e1af0f063da6cc"
+      },
+      {
+        "relativePath": "StardewValley/Network/Dedicated/DedicatedServerMessageType.cs",
+        "lengthBytes": 125,
+        "sha256": "97d9a92d99920f6981c480aeae0213ed089b7e933af53498d4587fe3d6fdbe77"
+      },
+      {
+        "relativePath": "StardewValley/Network/FarmerCollection.cs",
+        "lengthBytes": 2825,
+        "sha256": "ba3bb42f5b9cc9f18554679302ae29eec762b2e2698a36702b995400c25878cd"
+      },
+      {
+        "relativePath": "StardewValley/Network/GameServer.cs",
+        "lengthBytes": 21406,
+        "sha256": "9d8e2ec876777b5d3419a916fcfcdb53873f7238d8fc8204ac2735bc39cb7bd4"
+      },
+      {
+        "relativePath": "StardewValley/Network/HookableClient.cs",
+        "lengthBytes": 735,
+        "sha256": "ff18879d803d94f82fa968714bf076d30ceca2b0a0f92d9decbb90a2380d47d2"
+      },
+      {
+        "relativePath": "StardewValley/Network/HookableServer.cs",
+        "lengthBytes": 496,
+        "sha256": "0348e105f98522f9274228aa5f90828105414a9e6dbbbcd0e6ee6d6d1cd7e798"
+      },
+      {
+        "relativePath": "StardewValley/Network/IBandwidthMonitor.cs",
+        "lengthBytes": 157,
+        "sha256": "ef681a3a03d2d4d2cf9b29c45435c7dc1bc76608a587f9cd0b6cf509bdb3269b"
+      },
+      {
+        "relativePath": "StardewValley/Network/IGameServer.cs",
+        "lengthBytes": 1455,
+        "sha256": "807cf1207544bc45e6a24646875a3691ead7515d0b423e7875e7f43abf0eb174"
+      },
+      {
+        "relativePath": "StardewValley/Network/IHookableClient.cs",
+        "lengthBytes": 278,
+        "sha256": "0791136975040eb51dd2e9a706611bae01d7b1c1b56d5e5597cd040f16c64845"
+      },
+      {
+        "relativePath": "StardewValley/Network/IHookableServer.cs",
+        "lengthBytes": 186,
+        "sha256": "cdbc63a6fa2e54aeb57c57872a5d61e785c8846a161762a307630e815b901b03"
+      },
+      {
+        "relativePath": "StardewValley/Network/IncomingMessage.cs",
+        "lengthBytes": 888,
+        "sha256": "71472ccc25be82ff01374acd6c0a27c08a61686ba01bc69ac140089bdd227522"
+      },
+      {
+        "relativePath": "StardewValley/Network/LidgrenClient.cs",
+        "lengthBytes": 9182,
+        "sha256": "cf175ecaf39178c70c33a82ef782e661b2bfca759101bd07a1e753e4bface868"
+      },
+      {
+        "relativePath": "StardewValley/Network/LidgrenMessageUtils.cs",
+        "lengthBytes": 1014,
+        "sha256": "1131397b0f067f40340e7d63d6a52153e4c43112b2749bd42847ae12aa787f66"
+      },
+      {
+        "relativePath": "StardewValley/Network/LidgrenServer.cs",
+        "lengthBytes": 11460,
+        "sha256": "7cf146ea71416aef9d65f3c3a4b322a2068c789464774cde78c6e6ea8a3c977f"
+      },
+      {
+        "relativePath": "StardewValley/Network/LocationWeather.cs",
+        "lengthBytes": 4363,
+        "sha256": "49df38b82daedab568526008026a82453d812c818bc780fd1a7fee4e53808ac1"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetAudio.cs",
+        "lengthBytes": 2586,
+        "sha256": "bef5b9a90ff5d3905887e9609ca7423a18d5522a9151ff5157bed6a73d080dc4"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetBufferReadStream.cs",
+        "lengthBytes": 1354,
+        "sha256": "129c23c0775c65a1371d0ef7ba5cd04b2054e5caed15f39b2fb02b13fe3e5d2c"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetBufferWriteStream.cs",
+        "lengthBytes": 1370,
+        "sha256": "88dbe59bb372f75ce5b5be6658c8a30f09f51a44ba6c6ed9ee6c56228eebc72e"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetBundles.cs",
+        "lengthBytes": 937,
+        "sha256": "5f6757a5b60d37fb7a96cd2d5335d1a8ffd236e6d06e9c0dc5016dd3d69f993e"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetCharacterRef.cs",
+        "lengthBytes": 1018,
+        "sha256": "3828e12b936d0ffeab33d2d7a61664287f8c62936b4d2c2034a2d0c3a361ede8"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetDancePartner.cs",
+        "lengthBytes": 2357,
+        "sha256": "e9c64e2fbcffe0a319a6c96c4569a970cf19865c1a6793a1f94b09be5cb0d330"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetDirection.cs",
+        "lengthBytes": 3412,
+        "sha256": "8cea484fc16cb8b7994b02cb159e0cccaacdcc4c366d0e2b6a31856e7fdd372a"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetEvents/BasePlayerActionRequest.cs",
+        "lengthBytes": 2022,
+        "sha256": "7e3cc331c88582df2ab92a2a2d91c3ee34fe88b860625520c5bf614e8a167676"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetEvents/BaseSetFlagRequest.cs",
+        "lengthBytes": 760,
+        "sha256": "0e79aeee78a99275b89c3fd6e1e08839f6c334ccff01125ca2abad45e1d4e2ca"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetEvents/MailType.cs",
+        "lengthBytes": 118,
+        "sha256": "2aa9c4d7bd918416b0f68a7e9656807d52be860181b3740a0283d2c5a49833cb"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetEvents/NutDropRequest.cs",
+        "lengthBytes": 1469,
+        "sha256": "faffe3f551a768e103653cab0c3e4b50dad25b577e9d17db6eb69e412bd92acf"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetEvents/PlayerActionTarget.cs",
+        "lengthBytes": 116,
+        "sha256": "eb152ce8bbce0c0ad9168463986765dabc0d9d707cbc1770e13f9b72dbafba58"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetEvents/SetMailRequest.cs",
+        "lengthBytes": 1692,
+        "sha256": "14e0937cfa702783448cc2d19646ca5cb77cc6942a8be88b596931eb5d45896f"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetEvents/SetSimpleFlagRequest.cs",
+        "lengthBytes": 1874,
+        "sha256": "3e68a5e54655896e5d6ce5bd4b791289d249a31bff5690868cdd742b772b6850"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetEvents/SimpleFlagType.cs",
+        "lengthBytes": 212,
+        "sha256": "cf66bd53304676fa909226776b87d2b420d1e0c821e96d651e8412b0805485f4"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetFarmerCollection.cs",
+        "lengthBytes": 3210,
+        "sha256": "757620beb2e2108287776e795b337a7c8042dce4eb61caeeed453334578f62fc"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetFarmerRef.cs",
+        "lengthBytes": 1845,
+        "sha256": "46fdf8a1894c1af873081327dee096d45a5acfc9ba99036c297be7a89a60ae77"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetFarmerRoot.cs",
+        "lengthBytes": 611,
+        "sha256": "abf72baf57efe39767dd93e90327de2a09603e43476e0a7847f59aed7d8f3575"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetIntDictionary.cs",
+        "lengthBytes": 614,
+        "sha256": "73bc3904a23bfb2f4204d11b3550f904ea2438de20c2dd22a946c7ab8d69b148"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetLocationRef.cs",
+        "lengthBytes": 2756,
+        "sha256": "6b9dfcc52cbfe45fa2f4f74e68477799ea35d3009d010a655e357a68891da6f8"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetLongDictionary.cs",
+        "lengthBytes": 623,
+        "sha256": "f6644efcc64b0f34f7f938813d75abff25cbe9994fe7cffe9843ad3562133e50"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetMutex.cs",
+        "lengthBytes": 2311,
+        "sha256": "441441e3f24606b8c35eee753c9ed3dfbbeee42e0eb1c2993add0175cbea8fb1"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetMutexQueue.cs",
+        "lengthBytes": 1965,
+        "sha256": "7f701bb5e1e5d9ffbe5b6edc7c348b64583ad398dee60f12e44d71d06a1668b4"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetNPCRef.cs",
+        "lengthBytes": 881,
+        "sha256": "752f7781fe178c8bc1f01fdb762c12125a38e88210b69c3c65409c961cf32f23"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetPausableField.cs",
+        "lengthBytes": 1505,
+        "sha256": "752792f24a6ab92097cde418967c30d595262450dd4d6d1b68a435e86065fe9d"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetPointDictionary.cs",
+        "lengthBytes": 1014,
+        "sha256": "b2c92467defc345748c38f3cd1b52f3c73f4185945e7e0cb9287e01199b7581f"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetPosition.cs",
+        "lengthBytes": 3670,
+        "sha256": "980893a2fd39cb8ee16f2b598327dfd4c646e80eae112967d103ec951a485b94"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetReady/Internal/BaseReadyCheck.cs",
+        "lengthBytes": 1522,
+        "sha256": "500abf673a65a766654db26a1e2133aadb65cded0ee7cf1d03e8d00dec8352a2"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetReady/Internal/ClientReadyCheck.cs",
+        "lengthBytes": 2798,
+        "sha256": "657a9071a2095fad50ac689425ce45d6c28e6f20905289a7263ebc0499d1b8e6"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetReady/Internal/ReadyCheckMessageType.cs",
+        "lengthBytes": 214,
+        "sha256": "2488fe4b895bca58bb81fa3880e54da34ee242dfb513a7cc964a4008cb5d0288"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetReady/Internal/ReadyState.cs",
+        "lengthBytes": 123,
+        "sha256": "4eed0e6546584dd6cf5c4376a75bf4956d8af0cdbb6ca05beab2f6fb6612e721"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetReady/Internal/ServerReadyCheck.cs",
+        "lengthBytes": 5394,
+        "sha256": "cca681bccb32cf7f3822936887a1ff3e6bc224e907fce90368e989d73628fa53"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetReady/ReadySynchronizer.cs",
+        "lengthBytes": 1962,
+        "sha256": "28a23f23e1bfe0b911f9b727686e40a9a909d46af9ae6da867a5b52be615b207"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetStringDictionary.cs",
+        "lengthBytes": 642,
+        "sha256": "eb8eb0ea438c26674b56fca1fe571d33d95af0e4524678d2f646cb22f48b4bc4"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetVector2Dictionary.cs",
+        "lengthBytes": 1047,
+        "sha256": "e24757fa03628620c5ff2171427e42d23879eb9500bd444222cdb768e0b6de22"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetWitnessedLock.cs",
+        "lengthBytes": 1475,
+        "sha256": "10f0bb536907f43b630784cfb3706e274a0c3a2275f0658caab718c0644070a6"
+      },
+      {
+        "relativePath": "StardewValley/Network/NetWorldState.cs",
+        "lengthBytes": 25185,
+        "sha256": "bd4a875076ce6072b84bed6dd47b4a331322e307b53f533b28f13535f4424b9f"
+      },
+      {
+        "relativePath": "StardewValley/Network/OutgoingMessage.cs",
+        "lengthBytes": 3548,
+        "sha256": "1f9e0e68ef83d5b3e0068af676803b35d2d19ad437d74cca635bff5e00b9502e"
+      },
+      {
+        "relativePath": "StardewValley/Network/OverlaidDictionary.cs",
+        "lengthBytes": 9186,
+        "sha256": "5d5f105d822f9b879c9fa5fe0f239ac76fcf7f5d416b27e04f4078c6140ddb38"
+      },
+      {
+        "relativePath": "StardewValley/Network/OverlayDictionary.cs",
+        "lengthBytes": 3126,
+        "sha256": "7dc16664d082491f6de8b2c1dd064190dbc169fa322f7dc4e642ff13790e9374"
+      },
+      {
+        "relativePath": "StardewValley/Network/Server.cs",
+        "lengthBytes": 2093,
+        "sha256": "a0597e2a1fee68704e63b80b178857f2ab9b395cbd5cd9c6bdbb9fc30ae3e0a5"
+      },
+      {
+        "relativePath": "StardewValley/NewDaySynchronizer.cs",
+        "lengthBytes": 2909,
+        "sha256": "8d813f052a98e3c87070b496fba71a1206c4063c05732fbacd09ff0ba25cae6e"
+      },
+      {
+        "relativePath": "StardewValley/Noise.cs",
+        "lengthBytes": 5777,
+        "sha256": "15255384a6c55ab79633d6a36a552a6aa0addc424f9359a2e219d88c19b47863"
+      },
+      {
+        "relativePath": "StardewValley/NoiseGenerator.cs",
+        "lengthBytes": 1708,
+        "sha256": "6cd8d1a386c9efb5715ea3747aefb4f7f4eeca67fdf957c6418a4fa05d437d3f"
+      },
+      {
+        "relativePath": "StardewValley/NonInstancedStatic.cs",
+        "lengthBytes": 138,
+        "sha256": "fd3ae5682a0ab0c6a8081dd8ec8cdc667c4d568ec6d4d5fc299e21164021c189"
+      },
+      {
+        "relativePath": "StardewValley/NumberSprite.cs",
+        "lengthBytes": 2140,
+        "sha256": "63d46c397bc656af870b9c726bb5388007384d5a8e0b2b70394bb82b7ee968df"
+      },
+      {
+        "relativePath": "StardewValley/Object.cs",
+        "lengthBytes": 341050,
+        "sha256": "ce970a4801ec6dcb7be41f4894ad94a7cab7ca99f93f5850bd998b929cf7a377"
+      },
+      {
+        "relativePath": "StardewValley/Objects/BedFurniture.cs",
+        "lengthBytes": 20119,
+        "sha256": "b0a1873a87afa623456bbcd87501e511893e980eb3a4947f356222cf03e1d5b1"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Boots.cs",
+        "lengthBytes": 11890,
+        "sha256": "fc4be5520e34e1d280dba59668dcac7b75d159ea437c78574b2c1cd4632d2136"
+      },
+      {
+        "relativePath": "StardewValley/Objects/BreakableContainer.cs",
+        "lengthBytes": 30342,
+        "sha256": "6f39889a656f4875a2aefb23eb0258754f91d2e3620a083e9966ec4d1800f4be"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Cask.cs",
+        "lengthBytes": 7497,
+        "sha256": "6f58c9b113010dd67250eb9190dae3b40196cf642bc15c0741d33db52c86433b"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Chest.cs",
+        "lengthBytes": 76503,
+        "sha256": "171ee2bbe58442c19554d0011610c63e685d778b890c67bf6b836c9438b1f6ed"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Clothing.cs",
+        "lengthBytes": 12107,
+        "sha256": "01e54ef584b439b4412d4f21162e15766460fc1753fc1c231743c70dd5063878"
+      },
+      {
+        "relativePath": "StardewValley/Objects/ColoredObject.cs",
+        "lengthBytes": 28370,
+        "sha256": "e6125c663eb45f774b9782885cf1467da85ed4dae4a3f85da56322ccc6e3aac7"
+      },
+      {
+        "relativePath": "StardewValley/Objects/CombinedRing.cs",
+        "lengthBytes": 16593,
+        "sha256": "5d308382ff6f0d6aacafca9610588fd06a2adebd4b18d0b2517b6e36fbb27227"
+      },
+      {
+        "relativePath": "StardewValley/Objects/CrabPot.cs",
+        "lengthBytes": 25718,
+        "sha256": "304f581924ced599e09e53ce1b9bedd0b9f416ab2d6b15f1949ef19f0aad3e3e"
+      },
+      {
+        "relativePath": "StardewValley/Objects/DefaultPhoneHandler.cs",
+        "lengthBytes": 15967,
+        "sha256": "e5e7560e56e26c38ca3ef0a2cf5a57f8b5b419d690660a60723904cb453a832b"
+      },
+      {
+        "relativePath": "StardewValley/Objects/FishTankFurniture.cs",
+        "lengthBytes": 28128,
+        "sha256": "c63a11686b7b858b109888fd434e554445decd8d3065efec77027e465ade3ced"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Furniture.cs",
+        "lengthBytes": 88752,
+        "sha256": "6e5cfab5f846dbd0357c1a46f7f0011bdd30522a80d40700b3480499c79c0035"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Hat.cs",
+        "lengthBytes": 9137,
+        "sha256": "b9e89c56a91977b6f2af70e1b1ebe5fcd95295392e3b9fb56663a9c604be6998"
+      },
+      {
+        "relativePath": "StardewValley/Objects/IPhoneHandler.cs",
+        "lengthBytes": 359,
+        "sha256": "eabb634fe9f6df2b4d9b49dd6b62431446ab22ba51dcb696f791dcce5d85d05b"
+      },
+      {
+        "relativePath": "StardewValley/Objects/IndoorPot.cs",
+        "lengthBytes": 11967,
+        "sha256": "b1739e9cb45da52e0dad92cd8ed008d03aef94db78207c277cb3d383b56729a8"
+      },
+      {
+        "relativePath": "StardewValley/Objects/ItemPedestal.cs",
+        "lengthBytes": 8152,
+        "sha256": "e164275dafb77850f4abac831f7256c549550b751453c9eda6167b9fc012dd41"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Mannequin.cs",
+        "lengthBytes": 26037,
+        "sha256": "877325b7d97732452db0048bdb73999d6579bdc18e265225f0af197951aaa6f6"
+      },
+      {
+        "relativePath": "StardewValley/Objects/MiniJukebox.cs",
+        "lengthBytes": 3907,
+        "sha256": "4040149416cc0163af3400018faebd2f8fe6cdede00025eb9a6753866a828a81"
+      },
+      {
+        "relativePath": "StardewValley/Objects/PetLicense.cs",
+        "lengthBytes": 6088,
+        "sha256": "bcaf0a574cb5636112991ad8f462bf2070dfd69fcfc2a28256ea7d4d03a03088"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Phone.cs",
+        "lengthBytes": 6528,
+        "sha256": "26793c0aa2b8bf25220fbce0673762b0411c2c2efedb33f2682d367986f6c66d"
+      },
+      {
+        "relativePath": "StardewValley/Objects/RandomizedPlantFurniture.cs",
+        "lengthBytes": 8280,
+        "sha256": "9a9677c7f699296b8aedca9bb165272ce83c38d33f967544b99eeb559ba1a4cd"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Ring.cs",
+        "lengthBytes": 20170,
+        "sha256": "9fbcc828ade79200343f2290a5ce1a9fb82b319cee3ca5c85f7db133d065237e"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Sign.cs",
+        "lengthBytes": 8262,
+        "sha256": "579b37a18c635d40217fa5e458aa3450a04df6f505647c5c46776203c48f5761"
+      },
+      {
+        "relativePath": "StardewValley/Objects/SpecialItem.cs",
+        "lengthBytes": 8500,
+        "sha256": "5e92dd69c9175450cbf0ecd2da23873f0c1d4a03625df6f43b63a86b6610395c"
+      },
+      {
+        "relativePath": "StardewValley/Objects/StorageFurniture.cs",
+        "lengthBytes": 6646,
+        "sha256": "535a38214f4437f5207a9f8dc427f045097761242e0f8d3ec568855e76b554ec"
+      },
+      {
+        "relativePath": "StardewValley/Objects/TV.cs",
+        "lengthBytes": 41156,
+        "sha256": "5874f873c14497658a0fb120f0e1a2ebfaec94c710bd6af435cbc9f497f04627"
+      },
+      {
+        "relativePath": "StardewValley/Objects/TankFish.cs",
+        "lengthBytes": 34057,
+        "sha256": "4fefedc1e55af5f076c10035bad3c351d0649d28952510e344545c5f9b88530f"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Trinkets/CompanionTrinketEffect.cs",
+        "lengthBytes": 1145,
+        "sha256": "f25544297eaa7a4fd80d6bdd8b6c6b2450eb8b1b2c8db236c123859d7a157d15"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Trinkets/FairyBoxTrinketEffect.cs",
+        "lengthBytes": 2819,
+        "sha256": "ffc50e9ba539d4fd084138719563e9577c06f08cf986b314a0c47a1d1bc4e607"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Trinkets/IceOrbTrinketEffect.cs",
+        "lengthBytes": 3828,
+        "sha256": "f433be85cb4788c37359dd70554a19baaaf1a14d1ca3951424ac75d04d117fee"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Trinkets/MagicQuiverTrinketEffect.cs",
+        "lengthBytes": 6062,
+        "sha256": "c6652aaceb8abf73dc9cb48a26823d4de53e97c39e518865873d599da3144176"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Trinkets/RainbowHairTrinketEffect.cs",
+        "lengthBytes": 371,
+        "sha256": "546ccf6437dc2e9790e1b163a32c9561cf7430873f236de8ecc6e6579e756e70"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Trinkets/Trinket.cs",
+        "lengthBytes": 8367,
+        "sha256": "ad4718d1a7793534ef34602812e69b729b356d31da9d97a4a07bf7d84256391c"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Trinkets/TrinketEffect.cs",
+        "lengthBytes": 2343,
+        "sha256": "d6e2b6690646c4b7087e1d02897df2d581b8c618a408ce92b7ca5493b7ee4699"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Wallpaper.cs",
+        "lengthBytes": 11185,
+        "sha256": "ccf6f3a268fe6f91d4190e3d935d486b4f511c47a2a54b1e34ee2a2214c4d26e"
+      },
+      {
+        "relativePath": "StardewValley/Objects/WoodChipper.cs",
+        "lengthBytes": 17268,
+        "sha256": "5e63b7a8d84e8e669239a092cec1fe656686ce26bb4443fef751a8fab708a0f4"
+      },
+      {
+        "relativePath": "StardewValley/Objects/Workbench.cs",
+        "lengthBytes": 5400,
+        "sha256": "cfe1ac14b3eb9681be1a640c14ee7cb42956e9f88d132c06bb810271f233f22e"
+      },
+      {
+        "relativePath": "StardewValley/Options.cs",
+        "lengthBytes": 54865,
+        "sha256": "5e1ba03fbaefb339d457a245b6945ab8ade6718f59ffa05b1ee0e92a01605e95"
+      },
+      {
+        "relativePath": "StardewValley/Pathfinding/LocationWarpRoute.cs",
+        "lengthBytes": 303,
+        "sha256": "ceec8cd82e20b1eb200d501ca43d684b31d23984ca26e55d63f563917b8e6c64"
+      },
+      {
+        "relativePath": "StardewValley/Pathfinding/PathFindController.cs",
+        "lengthBytes": 26306,
+        "sha256": "4de48da3117246ba85c721a9e33025fa86c7868f8e66a7e49a3c9e324e52061d"
+      },
+      {
+        "relativePath": "StardewValley/Pathfinding/PathNode.cs",
+        "lengthBytes": 1004,
+        "sha256": "a4370a53f3dfd39294e74d8fc961549385521552f098039fe03d0cd9791fc8fe"
+      },
+      {
+        "relativePath": "StardewValley/Pathfinding/PriorityQueue.cs",
+        "lengthBytes": 1491,
+        "sha256": "3c063d0b3dc338847a34f61cb50b65045d4074ed060740b947c56474472dc740"
+      },
+      {
+        "relativePath": "StardewValley/Pathfinding/SchedulePathDescription.cs",
+        "lengthBytes": 935,
+        "sha256": "e3ab44cc09ec75a5c99a3f92e67589a776882e53f8373832160167a4b73c5585"
+      },
+      {
+        "relativePath": "StardewValley/Pathfinding/WarpPathfindingCache.cs",
+        "lengthBytes": 4434,
+        "sha256": "00e51545ed009b3888698776452d609497954b7e5d35a6e2b8877de5863bcc2b"
+      },
+      {
+        "relativePath": "StardewValley/Preconditions.cs",
+        "lengthBytes": 22218,
+        "sha256": "584d2f5f5ba3ef8b27cccdd5a0024627ed828b4c558db1d331e0d27d609068ed"
+      },
+      {
+        "relativePath": "StardewValley/Program.cs",
+        "lengthBytes": 6931,
+        "sha256": "1e4dc51845ab42015071d3c18b1cb9ea270706343e6d6612e18c3bbef979ff41"
+      },
+      {
+        "relativePath": "StardewValley/Projectiles/BasicProjectile.cs",
+        "lengthBytes": 10473,
+        "sha256": "26981d727243f86afafaa8f31e92e98c11b0e085a71b4bba4c18cf8ea1e8f08e"
+      },
+      {
+        "relativePath": "StardewValley/Projectiles/DebuffingProjectile.cs",
+        "lengthBytes": 5943,
+        "sha256": "5e89432530085fa9deb2d73d62cd6ba7e4bfd78c884ef7a94c184054a1c2907b"
+      },
+      {
+        "relativePath": "StardewValley/Projectiles/Projectile.cs",
+        "lengthBytes": 23083,
+        "sha256": "5655bd208d8e7b8f258d32ba1e9457911a95c645faa39330f99a9c8ec546654b"
+      },
+      {
+        "relativePath": "StardewValley/Prop.cs",
+        "lengthBytes": 2371,
+        "sha256": "eaf02008f71ec568947985b73502adcc3e6b07741ea21fcb25b186f3420a52e3"
+      },
+      {
+        "relativePath": "StardewValley/Proposal.cs",
+        "lengthBytes": 1186,
+        "sha256": "28b3c299979ed0b2279fb49622ed93c9be13e58d7291d2aa2966e3f872289a10"
+      },
+      {
+        "relativePath": "StardewValley/ProposalResponse.cs",
+        "lengthBytes": 95,
+        "sha256": "bcf9c5b7ece73d01242ace0681959ce8ec302400b6d00a0105545ce4653e22c6"
+      },
+      {
+        "relativePath": "StardewValley/ProposalType.cs",
+        "lengthBytes": 96,
+        "sha256": "b4ea13e141dddacd01d94efa5a0238c7d56f26d103be49b9ff7a2126a4885348"
+      },
+      {
+        "relativePath": "StardewValley/PurchaseableKeyItem.cs",
+        "lengthBytes": 3514,
+        "sha256": "97c34298133370000feda9f8008e4af697a8dd78610d291c5034b1cb139ae25f"
+      },
+      {
+        "relativePath": "StardewValley/Quests/CraftingQuest.cs",
+        "lengthBytes": 861,
+        "sha256": "f0deb01d6f267e502ad24fe2c553c42e5856d6ff2d5116e026eea8f968fb662f"
+      },
+      {
+        "relativePath": "StardewValley/Quests/DescriptionElement.cs",
+        "lengthBytes": 3027,
+        "sha256": "303234c56da6142a9a768e166b3a55e3982ed1715450840b0adf9813fbef6aad"
+      },
+      {
+        "relativePath": "StardewValley/Quests/FishingQuest.cs",
+        "lengthBytes": 9917,
+        "sha256": "9cb4fb62a7d5f68b654833ffc75ae93889cefb596ed1b8e6cae6a2caa0e6f51a"
+      },
+      {
+        "relativePath": "StardewValley/Quests/GoSomewhereQuest.cs",
+        "lengthBytes": 744,
+        "sha256": "e630459b7d7a95c6d3d6a1202fec156bb7337722e4168d15858e12616f26e862"
+      },
+      {
+        "relativePath": "StardewValley/Quests/HaveBuildingQuest.cs",
+        "lengthBytes": 829,
+        "sha256": "62d360874fe4958d217fc929d3d26d3f008253d71013efadf79f4ea415006fe9"
+      },
+      {
+        "relativePath": "StardewValley/Quests/IQuest.cs",
+        "lengthBytes": 522,
+        "sha256": "18201e256dfc12dc9bd1244a6179af8f0f40e7384199875943fe71cdf5b083b7"
+      },
+      {
+        "relativePath": "StardewValley/Quests/ItemDeliveryQuest.cs",
+        "lengthBytes": 25387,
+        "sha256": "42fc084337ad4bbfb2d052dc6ebecf432c46bc4bd467ea4c8acd03c86e6623d1"
+      },
+      {
+        "relativePath": "StardewValley/Quests/ItemHarvestQuest.cs",
+        "lengthBytes": 1180,
+        "sha256": "6f1e516f480d45e46fc85a25339230922ec12c5086ae1426670bffa49649d961"
+      },
+      {
+        "relativePath": "StardewValley/Quests/LostItemQuest.cs",
+        "lengthBytes": 4438,
+        "sha256": "96984000cb15a5df72c7b8a8926ad33d86f13bc8f00348018e684729fe38e2fb"
+      },
+      {
+        "relativePath": "StardewValley/Quests/NetDescriptionElementList.cs",
+        "lengthBytes": 494,
+        "sha256": "ab0c64af0afc64c636de35fc107f70f94bbd2a0cd2db77b8c9c3b181050c81d2"
+      },
+      {
+        "relativePath": "StardewValley/Quests/NetDescriptionElementRef.cs",
+        "lengthBytes": 388,
+        "sha256": "409eeb294d3dd00bee5b4ae5faa0bc22b76e97ee048515ea8e5a237f63a0077a"
+      },
+      {
+        "relativePath": "StardewValley/Quests/Quest.cs",
+        "lengthBytes": 21531,
+        "sha256": "83ef90a38c11a3d11db4fbd575763a68bbe88d81944e19389886d711f64e8a34"
+      },
+      {
+        "relativePath": "StardewValley/Quests/ResourceCollectionQuest.cs",
+        "lengthBytes": 8432,
+        "sha256": "c343adb504962eb68735171c4d71e34ba0da16db916a82f0a34e670b9a64979e"
+      },
+      {
+        "relativePath": "StardewValley/Quests/SecretLostItemQuest.cs",
+        "lengthBytes": 2843,
+        "sha256": "e58c93a56286c9fb59e045bfbbbe7c24801a87aada232d4706ec4ced9a58e8f4"
+      },
+      {
+        "relativePath": "StardewValley/Quests/SlayMonsterQuest.cs",
+        "lengthBytes": 11781,
+        "sha256": "c6cd6be2bdea8dab9d43f03e28ba8fcd382a4e3d2b80d9aee73c4d4b4e067dee"
+      },
+      {
+        "relativePath": "StardewValley/Quests/SocializeQuest.cs",
+        "lengthBytes": 4487,
+        "sha256": "7e34fb7adbf3e8930f2ea9405e7503623371811a49f1fccabc66271f82688e1f"
+      },
+      {
+        "relativePath": "StardewValley/RainDrop.cs",
+        "lengthBytes": 514,
+        "sha256": "3bf3585af3acaf770cc8e8553be80c24fc84cd3cf3c44254d36ff93710e5fcfe"
+      },
+      {
+        "relativePath": "StardewValley/ReportHasRoomAnotherFarmDelegate.cs",
+        "lengthBytes": 94,
+        "sha256": "7e1f7b77c84d597ac0e2e98bf8b84f10804d97d0373e4df61c96e275e2c9ef9e"
+      },
+      {
+        "relativePath": "StardewValley/Response.cs",
+        "lengthBytes": 574,
+        "sha256": "93f9b2a2368e4b0a7db074b09b82653f122a2e3ea106a39226fd281533894a69"
+      },
+      {
+        "relativePath": "StardewValley/Rumble.cs",
+        "lengthBytes": 2305,
+        "sha256": "c214ee6eb9c6871c81763939a00b761e059748da2e48d19359e11c7826f37a75"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/GalaxyHelper.cs",
+        "lengthBytes": 3080,
+        "sha256": "9f7322608c59cf32bc9ef6328763ccaf8ecce3604995ce04e3bccb09f5a8ce43"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/GalaxyNetClient.cs",
+        "lengthBytes": 4895,
+        "sha256": "45bee18f7ca89292eebe4abdd1a7af3b0de5a149a3c48fb7bc00c1519a8d9af0"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/GalaxyNetHelper.cs",
+        "lengthBytes": 6628,
+        "sha256": "92e4c4dd7f0e18aa84345b33d8afa4cf36bd28c1a418b9771f37cde0a5e9cffd"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/GalaxyNetServer.cs",
+        "lengthBytes": 8097,
+        "sha256": "9c8caafcf19dbd9d6a4ddb85888628bdcdbc905aac65e62964fab87432fee9c0"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/GalaxySocket.cs",
+        "lengthBytes": 16858,
+        "sha256": "6d1410303e561cf0415855e6a6f6e8e014d4e94e4774ded78f72378ea7d7a7fd"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Internal/Base36.cs",
+        "lengthBytes": 854,
+        "sha256": "9cc514b107a58fffe4c11086de8317309c3c1f0ce8f155b37b71d5cabebcd700"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyAuthListener.cs",
+        "lengthBytes": 1271,
+        "sha256": "2cc10c77719d9f7a4416d1d5f738c774890d53981a69b70a8ef5e747f51018b6"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyGameJoinRequestedListener.cs",
+        "lengthBytes": 1009,
+        "sha256": "3465da5ecd4be3d6b7a00ed42412bc4e7ffae954b1fa84393d4cd1e9352201c2"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyLobbyCreatedListener.cs",
+        "lengthBytes": 1092,
+        "sha256": "05cafd3d8b148f24c0a8534de39930ed7f283093c6bb33a5bcab7c027b10da1a"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyLobbyDataListener.cs",
+        "lengthBytes": 970,
+        "sha256": "88139f79b9c1099018328489491aa0ffc68a39e18bf0adc14c4569e5b0adb28e"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyLobbyDataRetrieveListener.cs",
+        "lengthBytes": 803,
+        "sha256": "476cb35aedf459c2cea05359b3f228d8a5508ce14695dcc99542e7f6bec48c4a"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyLobbyEnteredListener.cs",
+        "lengthBytes": 1089,
+        "sha256": "a23c37376b3c28661864e77bd52cf5d5f38a947ddc4b1420bbfacaccc7195a56"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyLobbyLeftListener.cs",
+        "lengthBytes": 1078,
+        "sha256": "263b5d9238e1b0aaf341ad7330e55df47338223ff85a6edd2a0bf43f211964af"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyLobbyMemberStateListener.cs",
+        "lengthBytes": 1213,
+        "sha256": "6bac18a0922cc8f79714a91a5589d417e926b4009a5f578969c459c1e8b5da53"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyOperationalStateChangeListener.cs",
+        "lengthBytes": 1012,
+        "sha256": "8eacd4ff1dbd83eb9debde169fe7c5c7c86e9632be60c2325c9549c54f32eb23"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxyRichPresenceListener.cs",
+        "lengthBytes": 940,
+        "sha256": "7a3f7a8c6a7325dcf22f72ad3ecd809e48761dd36fcc668caea553c26ad066bb"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/GogGalaxy/Listeners/GalaxySpecificUserDataListener.cs",
+        "lengthBytes": 968,
+        "sha256": "7acd4d83ee0a49a6fc32b37640a3f44c7d55121d1ed3c56fc5a6db19deb349c5"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/LobbyUpdateListener.cs",
+        "lengthBytes": 113,
+        "sha256": "30adc2e6f31dcbbab8881cbde138d3e2971b9e5cae5ce78b2fa2ba327ca6068c"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/NullSDKHelper.cs",
+        "lengthBytes": 836,
+        "sha256": "0554a81c2e0273e038c1d6130439724d4c6af10333fff52f74191d83e72cf070"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/SDKHelper.cs",
+        "lengthBytes": 590,
+        "sha256": "678f6f47454df8122cdafad3eaa6e0e5c15f17652d12f2ac2bb0f3f8f13adf2d"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/SDKNetHelper.cs",
+        "lengthBytes": 754,
+        "sha256": "936e027e27954b40722f07bca600dc75c7e43179cbcf16ec16152de616f9f6e5"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/Steam/Internal/ConnectionData.cs",
+        "lengthBytes": 804,
+        "sha256": "24d6379632af1003ca02e32a51b6f9999440a5137470a9ccf3f3dcbac660a3f1"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/Steam/Internal/HybridLobby.cs",
+        "lengthBytes": 1257,
+        "sha256": "bfb4a88c75bce4f0ef4655bff8f391ed8e1889a55bb65ff2b5a98a02637620c2"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/Steam/Internal/LobbyConnectionType.cs",
+        "lengthBytes": 128,
+        "sha256": "a7b8d8942fe6af17774a64cb36a254ce297b69d0206b3b3049542dc23f4ee419"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/Steam/Internal/SteamSocketUtils.cs",
+        "lengthBytes": 4843,
+        "sha256": "36b9e0d9a90b30a9ec33685ee7056f3b58a44f358d5d1d84268b48fa0b06d6db"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/Steam/SteamHelper.cs",
+        "lengthBytes": 8902,
+        "sha256": "6fda031db6f80797c521079c91a62b312bead063e9df73591704b7b5e8ad4212"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/Steam/SteamNetClient.cs",
+        "lengthBytes": 16755,
+        "sha256": "68921f5ddb8fb3f2278f15b23a1e9798621113fce0a035703aea621f2246a746"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/Steam/SteamNetHelper.cs",
+        "lengthBytes": 10415,
+        "sha256": "4d9d608bf9f01fc8e5428d3dd7749dfefbcb9117b0b16492956c1b712b8039f4"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/Steam/SteamNetServer.cs",
+        "lengthBytes": 31824,
+        "sha256": "29fea7ae0845d7372f54fd355201771e0a814472676e638a34fbedbd3baa1893"
+      },
+      {
+        "relativePath": "StardewValley/SDKs/WeGameRail/RailHelper.cs",
+        "lengthBytes": 142,
+        "sha256": "2023660497ad7ceee802c8c1f9546f3ab963cea1db91320d853285d00568a2c4"
+      },
+      {
+        "relativePath": "StardewValley/SaveGame.cs",
+        "lengthBytes": 58099,
+        "sha256": "a3f3781a3c5679ad9a6282662b0a89533da52353ae7d61314a0eb47fb6b75ebf"
+      },
+      {
+        "relativePath": "StardewValley/SaveMigrations/ISaveMigrator.cs",
+        "lengthBytes": 171,
+        "sha256": "df08e5eb7a3725fe9e524199c5b30de0bba9b09a5a612dd78f06a324c1b185ac"
+      },
+      {
+        "relativePath": "StardewValley/SaveMigrations/SaveFixes.cs",
+        "lengthBytes": 2334,
+        "sha256": "0bf2409a640961b6c9b41be9e72159c918175050db7ac7a8bc2e849b34d7a586"
+      },
+      {
+        "relativePath": "StardewValley/SaveMigrations/SaveMigrator.cs",
+        "lengthBytes": 2119,
+        "sha256": "477a377f23fc3da5fe3bd87f2aed799cbf8e85c52b0a3991a82eb71feebc6076"
+      },
+      {
+        "relativePath": "StardewValley/SaveMigrations/SaveMigrator_1_3.cs",
+        "lengthBytes": 5640,
+        "sha256": "bda2054a7b2a64271f5d1914006153d401bc70756a0735c1eeb34b0111c0762b"
+      },
+      {
+        "relativePath": "StardewValley/SaveMigrations/SaveMigrator_1_4.cs",
+        "lengthBytes": 9132,
+        "sha256": "9f35e877480af506cf909ba64cc2724b81d0ac42aa54d09e82f4131bd80bc283"
+      },
+      {
+        "relativePath": "StardewValley/SaveMigrations/SaveMigrator_1_5.cs",
+        "lengthBytes": 7474,
+        "sha256": "c7e7c393f103b4abb683c20e7ccb579377c796ffddfb7f79a7322e1c970c797a"
+      },
+      {
+        "relativePath": "StardewValley/SaveMigrations/SaveMigrator_1_6.cs",
+        "lengthBytes": 85929,
+        "sha256": "c7ade8543f0f0217162d6da8eda00759ce6e82abd45b97ebda218ac399fec3a6"
+      },
+      {
+        "relativePath": "StardewValley/SaveSerialization/SaveSerializer.cs",
+        "lengthBytes": 2062,
+        "sha256": "26adda0b4afa375d9cf476e81ba3fa445ac36273084b3d8b6bc6f326591a2fac"
+      },
+      {
+        "relativePath": "StardewValley/SaveSerialization/Vector2Reader.cs",
+        "lengthBytes": 760,
+        "sha256": "c7ae28670919ca10278bccb6f532042da95b74b54235f8ff86b9e4751fae82c8"
+      },
+      {
+        "relativePath": "StardewValley/SaveSerialization/Vector2Serializer.cs",
+        "lengthBytes": 1064,
+        "sha256": "80ba81917752360d65f05c602fbc3511fd25c6367662156f37fa4914b327fbf6"
+      },
+      {
+        "relativePath": "StardewValley/SaveSerialization/Vector2Writer.cs",
+        "lengthBytes": 749,
+        "sha256": "bbf980b91fabafca0cb30539c5548f091f7de0e7a7022e3a91d97eb4600285f0"
+      },
+      {
+        "relativePath": "StardewValley/SeaMonsterTemporarySprite.cs",
+        "lengthBytes": 2160,
+        "sha256": "d9d065573d749c61b0be150c3fd852e46149e2713f1399f34749e742bb38a58a"
+      },
+      {
+        "relativePath": "StardewValley/SerializableDictionary.cs",
+        "lengthBytes": 5033,
+        "sha256": "aae6ead5484beef22c714a79a120fa160292f2de4b592b9259d8dcab510dc66d"
+      },
+      {
+        "relativePath": "StardewValley/SerializableDictionaryWithCaseInsensitiveKeys.cs",
+        "lengthBytes": 507,
+        "sha256": "c7fc420927f36392a0adcf0c04a6905d315f7e69222024d3ecddd391fede0c19"
+      },
+      {
+        "relativePath": "StardewValley/ServerPrivacy.cs",
+        "lengthBytes": 99,
+        "sha256": "0c56957abd43f246de62c1f300d1b864b0eea596be61291bffd387aebfdbfa8a"
+      },
+      {
+        "relativePath": "StardewValley/Shed.cs",
+        "lengthBytes": 2279,
+        "sha256": "381fdd5d310f168e8a8bd7552cec3e0c8e73044b733d690f84e87dbf466aeb91"
+      },
+      {
+        "relativePath": "StardewValley/SlimeHutch.cs",
+        "lengthBytes": 6222,
+        "sha256": "a0411e1ee65ae224d02c238e86a15a477993ce84efede9a34f794be6b0ecdd2f"
+      },
+      {
+        "relativePath": "StardewValley/SoundBankWrapper.cs",
+        "lengthBytes": 1334,
+        "sha256": "dce4d1e10317f45a08a1abd67ef716de6cc2f5f38f95fb53b1bab313b79671ab"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/CollectObjective.cs",
+        "lengthBytes": 1674,
+        "sha256": "b850762fe818467c6285e8227a059cfeffeeba6468b4c5be37e6f38f8847562c"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/DeliverObjective.cs",
+        "lengthBytes": 2984,
+        "sha256": "55936e2c72b220f1c73277aa8a78b7619d31893df0e6a238b7b8a328edbf115b"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/DonateObjective.cs",
+        "lengthBytes": 4287,
+        "sha256": "eeb43045c81ca0a774048adca4bdd1293d4de3f7e24e5c82b87a2d860a935138"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/FishObjective.cs",
+        "lengthBytes": 1671,
+        "sha256": "1409b27a76cfc8d0fd2570110d47add409dc47e25447bf7864a5a1ea93795b67"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/GiftObjective.cs",
+        "lengthBytes": 2772,
+        "sha256": "653b2b832ec79d6fec91e2ccffee9c0b2115401c3a9f02c1459cb0c0eb212f66"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/JKScoreObjective.cs",
+        "lengthBytes": 736,
+        "sha256": "c565e07c2cabdacfb735a9cb3c2e067b61661df6412a2a13929269179be8b5a2"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/OrderObjective.cs",
+        "lengthBytes": 3664,
+        "sha256": "1f31af7c51d4e07220ab9b7b27897f4af8f52005b5132c6384c876043d72e4b0"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/ReachMineFloorObjective.cs",
+        "lengthBytes": 1410,
+        "sha256": "545dce6dc2ca0c623f1badf1b031b5768e400bb13e0d53da137ba1c8bdce621a"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/ShipObjective.cs",
+        "lengthBytes": 2108,
+        "sha256": "f6d3f510e24706077fadbec1d27ea03af4bdaa48f008e466a92fc9a87266d49b"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Objectives/SlayObjective.cs",
+        "lengthBytes": 2051,
+        "sha256": "fbefd2ba728afec3748c4fd03d23e154fa211247b1d35af1494acfc6213ed58e"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Rewards/FriendshipReward.cs",
+        "lengthBytes": 1137,
+        "sha256": "4c8dcd131c830e65a4a6f582c400c6ee95a705acf3c0b154049618635f5101d7"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Rewards/GemsReward.cs",
+        "lengthBytes": 550,
+        "sha256": "d641c37d34e082fc9999139d1ea452721d6f771c44c81d24de5d6922d56ac514"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Rewards/MailReward.cs",
+        "lengthBytes": 2036,
+        "sha256": "f853c3af8112370956433dc5648814423d3165c77286f066c692276bdd261328"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Rewards/MoneyReward.cs",
+        "lengthBytes": 787,
+        "sha256": "656958ef86a26c543e5eb8352548eb87df846d2597f826e49bb3dd2dbfe5d49f"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Rewards/ObjectReward.cs",
+        "lengthBytes": 1157,
+        "sha256": "c2a0da0b1c46c34fff60ca113f1aa491f3129db99b553c3bced4a1d03d6cd692"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Rewards/OrderReward.cs",
+        "lengthBytes": 767,
+        "sha256": "85fc4ce90735efbea3d7f0cccc77f4ddcc9e023f87ba42c91f70a9a3ab31b18f"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/Rewards/ResetEventReward.cs",
+        "lengthBytes": 756,
+        "sha256": "01b94ae4cd1f63cb811d2e3f99dadf84640379612b5b93c1de86599bc06c4d32"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/SpecialOrder.cs",
+        "lengthBytes": 32462,
+        "sha256": "5715976dc44a4856b918ac3b00de3979fb0876014ec4e6688b79a729c1d06cc3"
+      },
+      {
+        "relativePath": "StardewValley/SpecialOrders/SpecialOrderStatus.cs",
+        "lengthBytes": 115,
+        "sha256": "23e516d28a3bec1d71b464026859c0f68574c194fc17182bab786d9ae85d2f4a"
+      },
+      {
+        "relativePath": "StardewValley/StackDrawType.cs",
+        "lengthBytes": 119,
+        "sha256": "ab74bdbc0f69ee0ee49201e2e0b9b862ca9e25ab7abbbf48cd581a07cd0fd8d3"
+      },
+      {
+        "relativePath": "StardewValley/StartMovieEvent.cs",
+        "lengthBytes": 1910,
+        "sha256": "91f7effde67d1459732c5821ac47b5d1d49a076ca1e96ed7faf8c551c716d313"
+      },
+      {
+        "relativePath": "StardewValley/StartupPreferences.cs",
+        "lengthBytes": 7415,
+        "sha256": "2fb7472037ed540b5daa3f95b140310cebdb57b9fd672394b25a2e656f2b9484"
+      },
+      {
+        "relativePath": "StardewValley/Stats.cs",
+        "lengthBytes": 26302,
+        "sha256": "4d6c60b1ad6f58b99d0707f0e2ea0845ccdb0323a79c606097a779c0ac07f8c5"
+      },
+      {
+        "relativePath": "StardewValley/StatsDictionary.cs",
+        "lengthBytes": 655,
+        "sha256": "a04116ede30a1eb8fb87a58f55c15095871f7ee809268b446d8854f5aacd7c3c"
+      },
+      {
+        "relativePath": "StardewValley/StringBuilderFormatEx.cs",
+        "lengthBytes": 13580,
+        "sha256": "80119d8a0dcd69ef0a3793facd5aa4fb9638ca06076b3debeacaa61c4739181b"
+      },
+      {
+        "relativePath": "StardewValley/TemporaryAnimatedSprite.cs",
+        "lengthBytes": 96252,
+        "sha256": "1fdedc004f06853a1ce6baf58c9a41a1881a0fd001980e305f7413d68bc07f94"
+      },
+      {
+        "relativePath": "StardewValley/TemporaryAnimatedSpriteList.cs",
+        "lengthBytes": 2083,
+        "sha256": "8b392a18a5d987209d86998163ffa061c32dad5fc286f0114396d3823236c0b7"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/Bush.cs",
+        "lengthBytes": 40224,
+        "sha256": "d84b5c9337b63f84f4daa05c59493ca1bbe4bb77eb84715ccc838a1fdfa952dc"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/CosmeticPlant.cs",
+        "lengthBytes": 5710,
+        "sha256": "4e32baaf1150e501545ef67e882110624d22ac07c160c3b3b06db22bc973d385"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/Flooring.cs",
+        "lengthBytes": 30233,
+        "sha256": "c63536da4226e4a914d127962807e0859f2e1a21479336904ac009d8a585c655"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/FruitTree.cs",
+        "lengthBytes": 60630,
+        "sha256": "462d798687f657fa780469dc58cccccd9e607d0a89ac9ab3741655f26d64c975"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/GiantCrop.cs",
+        "lengthBytes": 15153,
+        "sha256": "467857ba8c49100415b782c82a594c2971f56cff760a1f697fdc320d0746fc4a"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/Grass.cs",
+        "lengthBytes": 27435,
+        "sha256": "67e22c0bd25a8a92d0e83bfd4b1e8d3b9346e727621d3124ecee6ed1d91692f7"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/HoeDirt.cs",
+        "lengthBytes": 47413,
+        "sha256": "119550ca232f462e9ae12322a595b8957df2becfe86a527a8fd281d507e5e003"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/HoeDirtFertilizerApplyStatus.cs",
+        "lengthBytes": 167,
+        "sha256": "4f9a7861f26b4537350c9e92b80ade2f9fbff71bcdc95376c386fe906e61efce"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/LargeTerrainFeature.cs",
+        "lengthBytes": 949,
+        "sha256": "ff8666b0b43d5b3d439402a925920376e4c19f527ae2fe9682fc23c5c7c09b6b"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/Leaf.cs",
+        "lengthBytes": 614,
+        "sha256": "cbec53b3050421e39e3d5e23d9aa184fbffe49bbbe5470fd6adec3549ed0531a"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/ResourceClump.cs",
+        "lengthBytes": 35141,
+        "sha256": "d52584099e614ef058355a9e5e36a47780d1e3ac1f5d3e44b208933403f94b50"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/Tent.cs",
+        "lengthBytes": 8721,
+        "sha256": "a1389076c4b018daa268e7e5e26cc015b692a00b1a87f3af0f87905641578ef5"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/TerrainFeature.cs",
+        "lengthBytes": 3689,
+        "sha256": "5cd03430862cf477d1379b1c3873e70ee7da93eb3da9cc85fc726debe136ba30"
+      },
+      {
+        "relativePath": "StardewValley/TerrainFeatures/Tree.cs",
+        "lengthBytes": 88576,
+        "sha256": "514628bf07e169b93efe4b18578461d21c2fdaffdc7042b8dd1f561899d6498a"
+      },
+      {
+        "relativePath": "StardewValley/Tests/ExtractSyntaxDelegate.cs",
+        "lengthBytes": 163,
+        "sha256": "04174ea63bdcfc888e3fae3761a2647e122be7b79b025498cbec5e1e4f61d652"
+      },
+      {
+        "relativePath": "StardewValley/Tests/SyntaxAbstractor.cs",
+        "lengthBytes": 25725,
+        "sha256": "571e1f49e09ddecbe2f4f7aba2c40f77808aab67790229db269c9c0de56c17a1"
+      },
+      {
+        "relativePath": "StardewValley/Tests/TranslationValidator.cs",
+        "lengthBytes": 5064,
+        "sha256": "d07777f444c124f47a7b20b682e9a9d74f577b3c40088d51d175d13f9519151b"
+      },
+      {
+        "relativePath": "StardewValley/Tests/TranslationValidatorIssue.cs",
+        "lengthBytes": 143,
+        "sha256": "903c23131bebfe9283e851ea5de93291d9d68176c6a991ca39e05198fdfaf438"
+      },
+      {
+        "relativePath": "StardewValley/Tests/TranslationValidatorResult.cs",
+        "lengthBytes": 766,
+        "sha256": "8cb2561dde354c52c1fb2542df814a11a9fe445c42772aae90d02aa49c5223ea"
+      },
+      {
+        "relativePath": "StardewValley/TilePositionComparer.cs",
+        "lengthBytes": 604,
+        "sha256": "8fbf9eb199ecbe7accbf23f07ef53959adebaa733ee4f9f462c2a1cf1882f800"
+      },
+      {
+        "relativePath": "StardewValley/TokenizableStrings/TokenParser.cs",
+        "lengthBytes": 17505,
+        "sha256": "67a1484c6394df05793a1ec0a0078817bb8635e8caa634fb196d424c8f35a731"
+      },
+      {
+        "relativePath": "StardewValley/TokenizableStrings/TokenParserDelegate.cs",
+        "lengthBytes": 177,
+        "sha256": "d55b66801b5a5910e3ce361daf8e89ffa2817e1dbec403cd84b8e69236dd2e26"
+      },
+      {
+        "relativePath": "StardewValley/TokenizableStrings/TokenStringBuilder.cs",
+        "lengthBytes": 3491,
+        "sha256": "5a8a8ae4426076a326b6b01e3f7b810c7c67e87156f158b1b7a439054e01f965"
+      },
+      {
+        "relativePath": "StardewValley/Tool.cs",
+        "lengthBytes": 53044,
+        "sha256": "ae0445fbe1a8092b53dd9bbb67bf9b289a98ad5e4b16c335ff9cdad4f0ce18f6"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Axe.cs",
+        "lengthBytes": 4355,
+        "sha256": "2b90dd86b962199fcfbc093806fbc4fe5087aa7e99df251d3cc7b48fb1ea7554"
+      },
+      {
+        "relativePath": "StardewValley/Tools/ErrorTool.cs",
+        "lengthBytes": 801,
+        "sha256": "285c3d0d25952aaa2b6b42c431f3a8fb23d2c5e560623b469cab5a7655f808b9"
+      },
+      {
+        "relativePath": "StardewValley/Tools/FishingRod.cs",
+        "lengthBytes": 166130,
+        "sha256": "ebeee006160dc793cf0bf1ca7b88f6a6558507be565cfcc09b03629072aae432"
+      },
+      {
+        "relativePath": "StardewValley/Tools/GenericTool.cs",
+        "lengthBytes": 148,
+        "sha256": "c2cb5386d1b1bfae5c53d6bca8d2c17fe9e4e86e55fc054ae6345f449b73a938"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Hoe.cs",
+        "lengthBytes": 7681,
+        "sha256": "9551c03d3dd3d3b2e39cd1f4a2b85b25eff12a0981d3ecaa8aa048a5dfa40d56"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Lantern.cs",
+        "lengthBytes": 2771,
+        "sha256": "c5329123a4818d479782cb641bdf69de651190bb1cfd53901228e8d0f5edb669"
+      },
+      {
+        "relativePath": "StardewValley/Tools/MeleeWeapon.cs",
+        "lengthBytes": 124361,
+        "sha256": "36e53b11a314f48a81c29845b22e631d0eb924c6d56131a916a41d7fb0728624"
+      },
+      {
+        "relativePath": "StardewValley/Tools/MilkPail.cs",
+        "lengthBytes": 4516,
+        "sha256": "0998ba2a8f4bfb88b5c2298f3cd8b612313539d07dbff76aaacd241f65a7e390"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Pan.cs",
+        "lengthBytes": 9941,
+        "sha256": "efb103de0e751d04ad8e619dbca906d56d68667cdb35104d5cadb2d9b13a9557"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Pickaxe.cs",
+        "lengthBytes": 13585,
+        "sha256": "a3a4f2ad374e4898a13fc21ccad0fc953506864f6c2981780b26f5711b611353"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Raft.cs",
+        "lengthBytes": 1815,
+        "sha256": "5867b972682e91d8ac61e0b753dc9d19fb7e26ad17a4c0c2f7c056941429f18d"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Shears.cs",
+        "lengthBytes": 3515,
+        "sha256": "17114814a012a1fbc6a167f911122059fa150b6f625fce880bbee5cd8c874751"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Slingshot.cs",
+        "lengthBytes": 25756,
+        "sha256": "b658248594d86b8ec9ba91457356533936b44aa6fd263a123298b65137d51cf3"
+      },
+      {
+        "relativePath": "StardewValley/Tools/Wand.cs",
+        "lengthBytes": 4455,
+        "sha256": "79c38473b6b622f756b7d26f2db1b113a260f73daa58b1729e4df1bc60517852"
+      },
+      {
+        "relativePath": "StardewValley/Tools/WateringCan.cs",
+        "lengthBytes": 12152,
+        "sha256": "6b8b7fbe20bbcbe7d316bc4aff14b9a8d4d45769de7a1e266a6c9d3c763ab414"
+      },
+      {
+        "relativePath": "StardewValley/Torch.cs",
+        "lengthBytes": 25552,
+        "sha256": "114a61b22742391ddc5e481ee6b41f8b5dd76ffe5da45703ca9738d67ee4fbc5"
+      },
+      {
+        "relativePath": "StardewValley/Triggers/CachedAction.cs",
+        "lengthBytes": 460,
+        "sha256": "b1f01f00a527daaaf6002ff023ac3172842142b8eafee3c1080f4876b093ca29"
+      },
+      {
+        "relativePath": "StardewValley/Triggers/CachedTriggerAction.cs",
+        "lengthBytes": 625,
+        "sha256": "107ae90d341b4525f68e910830ef85620c180e0fd19c274b6a19ce30e46fb28c"
+      },
+      {
+        "relativePath": "StardewValley/Triggers/TriggerActionManager.cs",
+        "lengthBytes": 23830,
+        "sha256": "0d52acb56da5d3d6f3e9347820d18f1c92c22d991a42bcc34dd0c61a61827925"
+      },
+      {
+        "relativePath": "StardewValley/Util/BoundingBoxGroup.cs",
+        "lengthBytes": 2632,
+        "sha256": "975890e4b228b4b67123a036758b2da6c51d60c83d9e3f0bcb04cb9edd9bb57c"
+      },
+      {
+        "relativePath": "StardewValley/Util/DictionarySaver.cs",
+        "lengthBytes": 1531,
+        "sha256": "8adbc408a0f2ed6636396f856674e98ab286682fbfc09d724596922d83327312"
+      },
+      {
+        "relativePath": "StardewValley/Util/EventTest.cs",
+        "lengthBytes": 4968,
+        "sha256": "9780c2b75f0a277419ae8ad80b054b62b39d37d25fedf1337b2440d4252773b8"
+      },
+      {
+        "relativePath": "StardewValley/Util/GuidHelper.cs",
+        "lengthBytes": 155,
+        "sha256": "f0f1c55719d7b0d3896b0d9e2cf819952518d7329521aea304127110f1184327"
+      },
+      {
+        "relativePath": "StardewValley/Util/IInputSimulator.cs",
+        "lengthBytes": 595,
+        "sha256": "a823026bec5e9f1486b23823e8fa7c0c84905853ac4ab53d04140875a76a9e0c"
+      },
+      {
+        "relativePath": "StardewValley/Util/LeftRightClickSpamInputSimulator.cs",
+        "lengthBytes": 862,
+        "sha256": "1bc717d0d6310760e7f7adcfbc0b90a0da6b0d61df59a240ef0e73b0ed131791"
+      },
+      {
+        "relativePath": "StardewValley/Util/ProfanityFilter.cs",
+        "lengthBytes": 1382,
+        "sha256": "5242ff9db03148f3269f429da65223d9e3fc4a3e32ccf6e905e6aae7fe0f6219"
+      },
+      {
+        "relativePath": "StardewValley/Util/SaveablePair.cs",
+        "lengthBytes": 392,
+        "sha256": "0f0a28b1477fdeec012648fc45aff11523231baa1c6281b29f98be933603fc42"
+      },
+      {
+        "relativePath": "StardewValley/Util/SaveablePairExtensions.cs",
+        "lengthBytes": 711,
+        "sha256": "be01e3a0e069f73438332fb0ae3c8df5e3f70e6c937f3cf93fe3815f3513a5fc"
+      },
+      {
+        "relativePath": "StardewValley/Util/StackTraceHelper.cs",
+        "lengthBytes": 788,
+        "sha256": "f6970495dac3043a142e958c3340c9cb07fcef6f7e4e2a545b3be9b15bc75d80"
+      },
+      {
+        "relativePath": "StardewValley/Util/SynchronizedShopStock.cs",
+        "lengthBytes": 3064,
+        "sha256": "4fa2616f88c388d62741b6d1f3516dc511e547e107deb459216e1914f25337fa"
+      },
+      {
+        "relativePath": "StardewValley/Util/ToolSpamInputSimulator.cs",
+        "lengthBytes": 796,
+        "sha256": "59d52cdeb93f49f0c5b5af3ec6e0303391133e4bd8fb7cc75592476d9e9f375f"
+      },
+      {
+        "relativePath": "StardewValley/Utility.cs",
+        "lengthBytes": 320031,
+        "sha256": "d73906708ae3ae5710a45d9b06ffe28e16d7881111deb260be540322eed7613c"
+      },
+      {
+        "relativePath": "StardewValley/Warp.cs",
+        "lengthBytes": 1830,
+        "sha256": "6500e2152b0a28b1cf32be444337ab9e643f6028686441c41a350474ee9b1d22"
+      },
+      {
+        "relativePath": "StardewValley/WaterTiles.cs",
+        "lengthBytes": 1109,
+        "sha256": "0d3aa66729daf10fcbb3450ce5ca3e44884167880524932f7a7a922e1636f45d"
+      },
+      {
+        "relativePath": "StardewValley/WeatherDebris.cs",
+        "lengthBytes": 5132,
+        "sha256": "50a7d5e20ff7596d4d7247562bbafb51e13613b7907188871a8a7f77cd86acbb"
+      },
+      {
+        "relativePath": "StardewValley/WorldDate.cs",
+        "lengthBytes": 5843,
+        "sha256": "d816b2ea2da35e22b292fb0ebe30614f2cd23f2b6443e852e11d46f865a88d61"
+      },
+      {
+        "relativePath": "StardewValley/WorldMaps/MapArea.cs",
+        "lengthBytes": 6036,
+        "sha256": "fcb6c4d1b93f586947dfa2c5a006c2d2e5e2755d82e0698924c5a0afd149b155"
+      },
+      {
+        "relativePath": "StardewValley/WorldMaps/MapAreaPosition.cs",
+        "lengthBytes": 10684,
+        "sha256": "fc9ec54d57e34ce62023ebb1a1be9c2687e628de371be46d1c962d64ba8ae172"
+      },
+      {
+        "relativePath": "StardewValley/WorldMaps/MapAreaPositionWithContext.cs",
+        "lengthBytes": 1199,
+        "sha256": "dbda5b51d556d2c9167a838d8fbbceda8fb9dd615fe547c623ccbd3cff881cd8"
+      },
+      {
+        "relativePath": "StardewValley/WorldMaps/MapAreaTexture.cs",
+        "lengthBytes": 1385,
+        "sha256": "af3ad87f48d014b9a2cd41c0089b7b906335ec596f08fc280edb3a32dbd3aade"
+      },
+      {
+        "relativePath": "StardewValley/WorldMaps/MapAreaTooltip.cs",
+        "lengthBytes": 1797,
+        "sha256": "6e000968f25a4b3c0293e57387675f7543bea89f291abc638b088b2ce53725c9"
+      },
+      {
+        "relativePath": "StardewValley/WorldMaps/MapRegion.cs",
+        "lengthBytes": 7089,
+        "sha256": "f93e9dde0de641f80d3fcb9c4a0045639fda5cf52e20525eb22dcb5d51490956"
+      },
+      {
+        "relativePath": "StardewValley/WorldMaps/WorldMapManager.cs",
+        "lengthBytes": 4123,
+        "sha256": "c5fc57e054f6411e060ec92957f85f141b2bd114224b5d8b8cd517df6d3c986b"
+      }
+    ]
+  },
+  "anchors": [
+    {
+      "anchorId": "library_museum_item_eligibility_helper",
+      "relativePath": "StardewValley/Locations/LibraryMuseum.cs",
+      "startByte": 2505,
+      "endByte": 2558,
+      "fileSha256": "deb57def5798408b9284e260e85b03937d95f4a3562bf1b809b60778efc0c8d1",
+      "sliceSha256": "7c3ab4c31ec6ef818d84e51811f520a6ecb883ac955f4bac36d9f856041cf463",
+      "needle": "return IsItemSuitableForDonation(i?.QualifiedItemId);",
+      "semanticRole": "non_ui_item_eligibility_helper_only"
+    },
+    {
+      "anchorId": "library_museum_placement_helper",
+      "relativePath": "StardewValley/Locations/LibraryMuseum.cs",
+      "startByte": 14623,
+      "endByte": 14677,
+      "fileSha256": "deb57def5798408b9284e260e85b03937d95f4a3562bf1b809b60778efc0c8d1",
+      "sliceSha256": "7fc59af47ae39b10da4fcd1e4f81327b53ba9accca5c845c82ddebb2fda8c628",
+      "needle": "public bool isTileSuitableForMuseumPiece(int x, int y)",
+      "semanticRole": "non_ui_placement_eligibility_helper_only"
+    },
+    {
+      "anchorId": "museum_menu_callback_eligibility_and_placement",
+      "relativePath": "StardewValley/Menus/MuseumMenu.cs",
+      "startByte": 12112,
+      "endByte": 12206,
+      "fileSha256": "56ceeccff5dd96c2129210f56d3e82766b6e58b38ebd7b92e75526b39dcc69b2",
+      "sliceSha256": "ac71ffd087739985e0fd98fcc83678a3660bac80e9aad9306b72593d99c4b446",
+      "needle": "if (museum.isTileSuitableForMuseumPiece(num, num2) && museum.isItemSuitableForDonation(item3))",
+      "semanticRole": "forbidden_menu_callback_validates_item_and_placement"
+    },
+    {
+      "anchorId": "museum_menu_callback_collection_insertion",
+      "relativePath": "StardewValley/Menus/MuseumMenu.cs",
+      "startByte": 12283,
+      "endByte": 12359,
+      "fileSha256": "56ceeccff5dd96c2129210f56d3e82766b6e58b38ebd7b92e75526b39dcc69b2",
+      "sliceSha256": "d970900c01567ebf6e49513d5bce0bc5f3595c751bbbc353d3860d42a818c721",
+      "needle": "museum.museumPieces.Add(new Vector2((float)num, (float)num2), item3.ItemId);",
+      "semanticRole": "forbidden_menu_callback_inserts_collection_piece"
+    },
+    {
+      "anchorId": "museum_menu_callback_exact_one_consumption",
+      "relativePath": "StardewValley/Menus/MuseumMenu.cs",
+      "startByte": 12933,
+      "endByte": 12971,
+      "fileSha256": "56ceeccff5dd96c2129210f56d3e82766b6e58b38ebd7b92e75526b39dcc69b2",
+      "sliceSha256": "438cf40db7b08c5d62d036e47a02966564c4ee33177d28c38f6cb18d745b7cbc",
+      "needle": "base.heldItem = item3.ConsumeStack(1);",
+      "semanticRole": "forbidden_menu_callback_consumes_exactly_one_item"
+    }
+  ],
+  "exclusions": [
+    "Museum UI/menu/callback invocation",
+    "museum reward claim",
+    "M10 aggregate",
+    "adapter",
+    "bridge",
+    "fixture",
+    "live execution",
+    "publication"
+  ],
+  "conclusion": {
+    "primitiveSourceRealizationStatus": "blocked",
+    "projectionState": "blocked",
+    "liveState": "not_performed",
+    "blockerCode": "m10_donate_museum_method_scoped_forbidden_ui_transaction_global_ingress_unproven",
+    "nonClaim": "Exact-target bounded source evidence only: MuseumMenu method-scoped anchors demonstrate one forbidden UI transaction containing eligibility and placement validation, collection insertion, and exact-one consumption; LibraryMuseum anchors are helpers. This checker does not establish uniqueness over the global ingress universe, source realization, authorization, publication, live execution, or release evidence. MuseumMenu UI callback invocation remains forbidden and unapproved."
+  }
+}

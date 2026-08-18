@@ -24,7 +24,6 @@ if (missing.length > 0) {
     dataRoot: process.env.GAMEBUDDY_PORTFOLIO_DATA_ROOT,
     saveName: process.env.GAMEBUDDY_PORTFOLIO_SAVE_NAME,
     gamePath: process.env.GAMEBUDDY_STARDEW_GAME_PATH,
-    requireP0bAttestation: true,
   });
   console.log(JSON.stringify(result));
   process.exitCode = result.state === "PASS" ? 0 : 2;

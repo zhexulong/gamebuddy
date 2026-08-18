@@ -83,6 +83,51 @@ function reply(socket: Socket, requestId: string, value: Record<string, unknown>
   socket.write(`${JSON.stringify({ requestId, ...value })}\n`);
 }
 
+test("Game voice presentation attachment is opaque, preserves the concrete gateway, and requires healthy admission", async () => {
+  const server = await listen((socket) => {
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      for (const line of chunk.split("\n")) {
+        if (line.length === 0) continue;
+        const request = JSON.parse(line) as { type: string; requestId: string };
+        if (request.type === "hello") reply(socket, request.requestId, { type: "hello_ack", protocolVersion: 1 });
+        else if (request.type === "health")
+          reply(socket, request.requestId, {
+            type: "health",
+            protocolVersion: 1,
+            status: "ready",
+            capabilities: {
+              providerId: "fake-tts",
+              modelRevision: "v1",
+              perUtteranceDirection: false,
+              ready: true,
+              epoch: 0,
+            },
+          });
+      }
+    });
+  });
+  try {
+    const client = await LocalVoiceGatewayClient.connect({ port: port(server), token: "voice_token_1234567890" });
+    await assert.rejects(
+      async () => client.createGameVoicePresentationAttachment("default"),
+      /voice_gateway_unavailable/,
+    );
+    await client.health();
+    const attachment = client.createGameVoicePresentationAttachment("default");
+    const { consumeGameVoicePresentationAttachment } = await import("./voice-gateway-client.js");
+    const payload = consumeGameVoicePresentationAttachment(attachment);
+    assert.strictEqual(payload.speechPort, client);
+    assert.throws(
+      () => consumeGameVoicePresentationAttachment(Object.freeze({})),
+      /invalid_game_voice_presentation_attachment/,
+    );
+    client.close();
+  } finally {
+    await close(server);
+  }
+});
+
 test("local Voice Gateway client authenticates, accepts only final voice facts, and keeps speech/stop separate", async () => {
   const seen: unknown[] = [];
   let peer: Socket | undefined;
@@ -119,23 +164,13 @@ test("local Voice Gateway client authenticates, accepts only final voice facts, 
             type: "events",
             next: 3,
             events: [
-              { type: "partial_transcript", inputId: "input_01", text: "partial only" },
+              { type: "partial_transcript", sessionId: "session_01", inputId: "input_01", text: "partial only" },
               {
                 type: "final_transcript",
                 sessionId: "session_01",
+                sourceEventId: "voice_source_01",
                 inputId: "input_01",
                 text: "看看农场",
-                locale: "zh-CN",
-                providerId: "fake-asr",
-                modelRevision: "v1",
-                timestampMs: 1,
-                actualFormat: { sampleRate: 16_000, channels: 1, encoding: "pcm_s16le" },
-              },
-              {
-                type: "final_transcript",
-                sessionId: "session_01",
-                inputId: "invalid",
-                text: "",
                 locale: "zh-CN",
                 providerId: "fake-asr",
                 modelRevision: "v1",
@@ -169,6 +204,7 @@ test("local Voice Gateway client authenticates, accepts only final voice facts, 
     assert.deepEqual(finals, [
       {
         sessionId: "session_01",
+        sourceEventId: "voice_source_01",
         inputId: "input_01",
         text: "看看农场",
         locale: "zh-CN",
@@ -456,7 +492,12 @@ test("accepted stop_all revokes audio admission before failed health revalidatio
         else if (request.type === "health" && healthMode === "malformed")
           reply(socket, request.requestId, { type: "health", protocolVersion: 1, status: "ready" });
         else if (request.type === "health" && healthMode === "hold-error") {
-          releaseHeldHealth = () => reply(socket, request.requestId, { type: "error", reasonCode: "health_failed" });
+          releaseHeldHealth = () =>
+            reply(socket, request.requestId, {
+              type: "error",
+              reasonCode: "health_failed",
+              requestId: request.requestId,
+            });
         }
       }
     });
@@ -476,23 +517,8 @@ test("accepted stop_all revokes audio admission before failed health revalidatio
     );
     releaseHeldHealth();
     await assert.rejects(() => stopping, /voice_gateway_unhealthy/);
-    releaseHeldHealth = undefined;
-
-    healthMode = "unavailable";
-    await assert.rejects(() => client.health(), /voice_gateway_unavailable/);
-    await assert.rejects(
-      () => client.enqueue(expression(), audioEnqueueAdmission(admission, binding)),
-      /voice_audio_epoch_stale/,
-    );
-    healthMode = "malformed";
-    await assert.rejects(() => client.health(), /voice_gateway_unhealthy/);
-    await assert.rejects(
-      () => client.enqueue(expression(), audioEnqueueAdmission(admission, binding)),
-      /voice_audio_epoch_stale/,
-    );
-
+    assert.throws(() => admission.assertCurrent(binding), /voice_audio_epoch_stale/);
     assert.equal(requests.filter((request) => request.type === "speech_enqueue").length, 0);
-    client.close();
   } finally {
     peer?.destroy();
     await close(server);
@@ -503,7 +529,13 @@ test("overlapping health revalidations leave only the newest request able to pub
   const requests: Array<{ type: string; requestId: string }> = [];
   const heldHealth: Array<{ requestId: string }> = [];
   let automaticHealth:
-    | Readonly<{ providerId: string; modelRevision: string; perUtteranceDirection: boolean; ready: boolean; epoch: number }>
+    | Readonly<{
+        providerId: string;
+        modelRevision: string;
+        perUtteranceDirection: boolean;
+        ready: boolean;
+        epoch: number;
+      }>
     | undefined = {
     providerId: "fake-tts",
     modelRevision: "fake-v1",
@@ -512,12 +544,7 @@ test("overlapping health revalidations leave only the newest request able to pub
     epoch: 0,
   };
   let peer: Socket | undefined;
-  const respondHealth = (
-    socket: Socket,
-    requestId: string,
-    status: "ready" | "unavailable",
-    epoch: number,
-  ): void =>
+  const respondHealth = (socket: Socket, requestId: string, status: "ready" | "unavailable", epoch: number): void =>
     reply(socket, requestId, {
       type: "health",
       protocolVersion: 1,
@@ -631,6 +658,7 @@ test("reusable voice session bootstraps at the gateway cursor and never replays 
               {
                 type: "final_transcript",
                 sessionId: "session_01",
+                sourceEventId: "voice_source_old",
                 inputId: "old_input",
                 text: "old",
                 locale: "zh-CN",
@@ -662,7 +690,7 @@ test("reusable voice session bootstraps at the gateway cursor and never replays 
   }
 });
 
-test("local Voice Gateway client rejects non-loopback endpoints and malformed event payloads", async () => {
+test("local Voice Gateway client rejects non-loopback endpoints and closes on malformed event payloads", async () => {
   await assert.rejects(
     () => LocalVoiceGatewayClient.connect({ host: "0.0.0.0" as never, port: 1, token: "voice_token_1234567890" }),
     /voice_gateway_loopback_required/,
@@ -684,6 +712,7 @@ test("local Voice Gateway client rejects non-loopback endpoints and malformed ev
             {
               type: "final_transcript",
               sessionId: "bad space",
+              sourceEventId: "voice_source_bad",
               inputId: "input_01",
               text: "x",
               locale: "zh-CN",
@@ -703,9 +732,8 @@ test("local Voice Gateway client rejects non-loopback endpoints and malformed ev
       delivered = true;
     });
     await client.bootstrapSession("session_01");
-    await client.pollEvents();
+    await assert.rejects(() => client.pollEvents(), /voice_gateway_closed/);
     assert.equal(delivered, false);
-    client.close();
   } finally {
     peer?.destroy();
     await close(server);

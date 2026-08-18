@@ -41,7 +41,9 @@ export type SemanticChatRuntimeCoordinatorOptions = Readonly<{
   materializer: ChatRuntimeMaterializer;
   locked<T>(work: () => T): Promise<T>;
   store: Readonly<{
-    prepare(facts: Readonly<{ runtimeBindingDigest: string; owner: ChatRuntimeBindingFacts["owner"] }>): ProductionChatRuntimePrepareOutcome;
+    prepare(
+      facts: Readonly<{ runtimeBindingDigest: string; owner: ChatRuntimeBindingFacts["owner"] }>,
+    ): ProductionChatRuntimePrepareOutcome;
     commit(permit: ProductionChatRuntimePermit, receipt: ProductionChatRuntimeReceipt): ProductionChatRuntimeReadback;
     fail(permit: ProductionChatRuntimePermit): ProductionChatRuntimeReadback;
     prepareTeardown?(request: ProductionChatRuntimeTeardownRequest): Readonly<{
@@ -49,7 +51,10 @@ export type SemanticChatRuntimeCoordinatorOptions = Readonly<{
       permit: ProductionChatRuntimeTeardownPermit | null;
       readback: ProductionChatRuntimeTeardownReadback;
     }>;
-    commitTeardown?(permit: ProductionChatRuntimeTeardownPermit, receipt: ProductionChatRuntimeTeardownReceipt): ProductionChatRuntimeTeardownReadback;
+    commitTeardown?(
+      permit: ProductionChatRuntimeTeardownPermit,
+      receipt: ProductionChatRuntimeTeardownReceipt,
+    ): ProductionChatRuntimeTeardownReadback;
   }>;
   closeDependencies?: () => Promise<void>;
 }>;
@@ -77,9 +82,11 @@ export function createTestSemanticChatRuntimeCoordinator(
   let mountedStartPromise: Promise<TestMountedChatRuntimeLease> | undefined;
   const mountedLeases = new WeakMap<object, Readonly<{ close(): Promise<void> }>>();
   const drainWaiters = new Set<() => void>();
-  const waitForDrain = (): Promise<void> => pending === 0 ? Promise.resolve() : new Promise((resolve) => drainWaiters.add(resolve));
+  const waitForDrain = (): Promise<void> =>
+    pending === 0 ? Promise.resolve() : new Promise((resolve) => drainWaiters.add(resolve));
   const begin = <T>(work: () => Promise<T>): Promise<T> => {
-    if (closing || closed) return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_coordinator_closed"));
+    if (closing || closed)
+      return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_coordinator_closed"));
     pending++;
     return work().finally(() => {
       pending--;
@@ -155,11 +162,16 @@ export function createTestSemanticChatRuntimeCoordinator(
       mountedStartPromise = start().then((readback) => {
         const runtimeSession = live?.runtime.runtimeSession;
         if (
-          !live || !runtimeSession || readback.status !== "terminal" || readback.runtimeState !== "active" ||
-          readback.operationId !== live.bootstrapPermit.operationId || readback.requestId !== live.bootstrapPermit.requestId ||
+          !live ||
+          !runtimeSession ||
+          readback.status !== "terminal" ||
+          readback.runtimeState !== "active" ||
+          readback.operationId !== live.bootstrapPermit.operationId ||
+          readback.requestId !== live.bootstrapPermit.requestId ||
           readback.chatThreadId !== live.runtime.receipt.chatThreadId ||
           readback.chatSurfaceSessionId !== live.runtime.receipt.chatSurfaceSessionId
-        ) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_mount_readback_rejected");
+        )
+          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_mount_readback_rejected");
         let lease!: TestMountedChatRuntimeLease;
         lease = Object.freeze({
           runtimeSession,
@@ -229,18 +241,28 @@ export function createTestSemanticChatRuntimeCoordinator(
                 occurredAtMs: Date.now(),
               });
             }
-            const terminal = await options.locked(() => options.store.commitTeardown!(record.teardownPermit!, record.teardownReceipt!));
+            const terminal = await options.locked(() =>
+              options.store.commitTeardown!(record.teardownPermit!, record.teardownReceipt!),
+            );
             if (terminal.status !== "terminal" || terminal.runtimeState !== "closed")
               throw new SemanticProductionCoordinatorError("semantic_chat_runtime_teardown_not_terminal");
           }
         }
         if (live) live = undefined;
-        if (!bindingClosed) { await options.binding.close(); bindingClosed = true; }
-        if (!dependenciesClosed) { await options.closeDependencies?.(); dependenciesClosed = true; }
+        if (!bindingClosed) {
+          await options.binding.close();
+          bindingClosed = true;
+        }
+        if (!dependenciesClosed) {
+          await options.closeDependencies?.();
+          dependenciesClosed = true;
+        }
         closed = true;
       })();
       closePromise = attempt;
-      void attempt.catch(() => { if (!closed) closePromise = undefined; });
+      void attempt.catch(() => {
+        if (!closed) closePromise = undefined;
+      });
       return attempt;
     },
   });

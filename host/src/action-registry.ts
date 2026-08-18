@@ -5,6 +5,7 @@ export type ActionLifecycle = "published" | "experimental" | "diagnostic" | "pla
 export type PublishedAction = Readonly<{
   actionId: string;
   familyId: string;
+  identityVersion: number;
   actionClass: ActionClass;
   lifecycle: ActionLifecycle;
   label: string;
@@ -13,25 +14,39 @@ export type PublishedAction = Readonly<{
   requiredCapability: string;
 }>;
 
+type ActionDefinition<
+  TActionId extends string,
+  TActionClass extends ActionClass,
+  TLifecycle extends ActionLifecycle,
+> = PublishedAction &
+  Readonly<{
+    actionId: TActionId;
+    actionClass: TActionClass;
+    lifecycle: TLifecycle;
+    requiredCapability: TActionId;
+  }>;
+
 /**
  * The registry is deliberately broader than the currently published surface.
  * Planned entries document the product roadmap but are never materialized into
  * an Agent tool or interaction catalog.
  */
-export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze([
+export const STARDEW_ACTION_REGISTRY = Object.freeze([
   publishedAction(
     "move_to_tile",
     "movement_navigation",
+    1,
     "Move to a Stardew tile",
     "Move the Farmhand to a live, structured target tile.",
     ["tile"],
   ),
-  publishedAction("equip_tool", "body_tools", "Equip a tool", "Select a Tool already owned by the Farmhand.", [
+  publishedAction("equip_tool", "body_tools", 1, "Equip a tool", "Select a Tool already owned by the Farmhand.", [
     "inventory_slot",
   ]),
   publishedAction(
     "travel",
     "transport_warps",
+    1,
     "Travel through a discovered warp",
     "Use a live native warp from the current Stardew location.",
     ["warp"],
@@ -39,16 +54,18 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "enter_exit",
     "movement_navigation",
+    1,
     "Enter or exit through a discovered door",
     "Use a live native door transition from the current Stardew location.",
     ["door", "building_entrance"],
   ),
-  publishedAction("till_soil", "farming_crops", "Till a soil tile", "Use a native Hoe on a live soil target.", [
+  publishedAction("till_soil", "farming_crops", 1, "Till a soil tile", "Use a native Hoe on a live soil target.", [
     "soil_tile",
   ]),
   publishedAction(
     "pickup_forage",
     "resource_gathering",
+    1,
     "Pick up a forage target",
     "Use the native forage interaction on a live target and verify the item enters the Farmhand inventory.",
     ["forage"],
@@ -56,6 +73,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "pickup_item",
     "inventory_items",
+    1,
     "Pick up a live item drop",
     "Approach a live native Debris target and verify its native magnetic collection enters the Farmhand inventory.",
     ["item_drop"],
@@ -63,6 +81,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "water_crop",
     "farming_crops",
+    1,
     "Water a live crop",
     "Use the native Watering Can on a live unwatered crop.",
     ["crop"],
@@ -70,6 +89,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "refill_watering_can",
     "farming_crops",
+    1,
     "Refill a Watering Can",
     "Refill one selected, partially filled Watering Can from a live adjacent native water source.",
     ["watering_can", "water_source", "inventory_slot"],
@@ -77,6 +97,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "plant_seed",
     "farming_crops",
+    1,
     "Plant a live seed",
     "Use the native seed placement path on a live empty HoeDirt target.",
     ["soil_tile", "inventory_slot"],
@@ -84,6 +105,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "fertilize_tile",
     "farming_crops",
+    1,
     "Apply fertilizer to a live soil tile",
     "Use the native fertilizer placement path on a live ground HoeDirt target.",
     ["soil_tile", "inventory_slot"],
@@ -91,6 +113,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "place_wood_fence",
     "buildings_farm_management",
+    1,
     "Place a Wood Fence",
     "Place only one qualified (O)322 non-gate Fence on a fresh empty Farm tile through the native placement path.",
     ["farm_tile", "inventory_slot"],
@@ -98,6 +121,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "place_crab_pot",
     "buildings_farm_management",
+    1,
     "Place a Crab Pot",
     "Place only one qualified (O)710 Crab Pot on a fresh valid water tile in the Farm through the native placement path.",
     ["farm_tile", "inventory_slot"],
@@ -105,6 +129,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "bait_crab_pot",
     "buildings_farm_management",
+    1,
     "Bait a Crab Pot",
     "Attach exactly one owned (O)685 Bait to one adjacent, current-player-owned unbaited (O)710 Crab Pot through its normal native interaction.",
     ["crab_pot", "inventory_slot"],
@@ -112,6 +137,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   experimentalAction(
     "clear_debris",
     "resource_gathering",
+    1,
     "Clear a resource clump",
     "Use a native tool on a live ResourceClump target.",
     ["debris"],
@@ -119,6 +145,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "machine_inspect",
     "machines_processing",
+    1,
     "Inspect a machine",
     "Read a live native machine state without opening a menu or changing the machine.",
     ["machine"],
@@ -126,6 +153,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "machine_load",
     "machines_processing",
+    1,
     "Load Coffee Beans into a Keg",
     "Use the normal native machine interaction to load exactly five Coffee Beans into one idle Keg and begin Coffee processing.",
     ["machine", "inventory_slot"],
@@ -133,6 +161,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "machine_collect_output",
     "machines_processing",
+    1,
     "Collect Coffee from a Keg",
     "Use the normal native machine interaction to collect ready Coffee from the exact Keg after its native processing lifecycle completes.",
     ["machine", "inventory"],
@@ -140,6 +169,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   experimentalAction(
     "npc_relationship",
     "npc_social",
+    1,
     "Inspect NPC relationship facts",
     "Read live Farmhand relationship facts for a nearby NPC without opening dialogue or changing relationship state.",
     ["npc"],
@@ -147,6 +177,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   experimentalAction(
     "pet_animal",
     "animals_pets",
+    1,
     "Pet an animal",
     "Use native Pet.checkAction on a live unpetted Pet while the Farmhand has empty hands.",
     ["animal", "pet"],
@@ -154,6 +185,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "collect_animal_product",
     "animals_pets",
+    1,
     "Collect a ready animal product",
     "Use native MilkPail or Shears animation on a live adult animal with compatible produce.",
     ["animal", "animal_product", "tool", "inventory"],
@@ -161,6 +193,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "feed_animal",
     "animals_pets",
+    1,
     "Place Hay in a feed trough",
     "Place one owned Hay item in a live empty AnimalHouse trough; placement does not claim an animal has eaten.",
     ["feed_trough", "inventory_slot"],
@@ -168,6 +201,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "use_item",
     "inventory_items",
+    1,
     "Use or consume an owned food item",
     "Use the native Farmer eat path on a live ordinary edible inventory item.",
     ["inventory_slot", "food"],
@@ -175,6 +209,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "harvest_crop",
     "farming_crops",
+    1,
     "Harvest a ready crop",
     "Use native Crop.harvest on a live ready ordinary crop.",
     ["crop", "inventory"],
@@ -182,6 +217,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "break_rock_source",
     "resource_gathering",
+    1,
     "Break a one-hit rock source",
     "Use one equipped basic Pickaxe hit on a live ordinary one-hit stone; drops and pickup are separate.",
     ["rock_source", "tool"],
@@ -189,6 +225,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "clear_hoedirt",
     "farming_crops",
+    1,
     "Clear empty HoeDirt",
     "Use one equipped Basic Pickaxe hit on live adjacent empty ground HoeDirt; crops, pots, drops, and pickup are excluded.",
     ["soil_tile", "tool"],
@@ -196,6 +233,7 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "dig_artifact_spot",
     "resource_gathering",
+    1,
     "Dig an artifact spot",
     "Use one equipped Basic Hoe on a fresh adjacent (O)590 artifact spot; source removal and native HoeDirt creation are the completion boundary.",
     ["artifact_spot", "tool"],
@@ -203,14 +241,57 @@ export const STARDEW_ACTION_REGISTRY: readonly PublishedAction[] = Object.freeze
   publishedAction(
     "chop_tree_source",
     "resource_gathering",
+    1,
     "Chop a one-hit tree source",
     "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree; source transformation is the completion boundary.",
     ["tree_source", "tool"],
   ),
-]);
+]) satisfies readonly PublishedAction[];
+
+export type StardewActionId = (typeof STARDEW_ACTION_REGISTRY)[number]["actionId"];
+type PublishedPrimitiveAction = Extract<
+  (typeof STARDEW_ACTION_REGISTRY)[number],
+  Readonly<{ actionClass: "primitive"; lifecycle: "published" }>
+>;
 
 /** Only published primitive contracts are materializable Agent actions. */
-export const PUBLISHED_STARDEW_ACTIONS = Object.freeze(STARDEW_ACTION_REGISTRY.filter(isMaterializablePublishedAction));
+export const PUBLISHED_STARDEW_ACTIONS = Object.freeze(
+  STARDEW_ACTION_REGISTRY.filter((entry): entry is PublishedPrimitiveAction => isMaterializablePublishedAction(entry)),
+);
+
+export type PublishedPrimitiveActionId = PublishedPrimitiveAction["actionId"];
+
+/**
+ * Tool construction remains action-specific, but this closed projection forces
+ * every Mod-published primitive identity to have one Host tool adapter name.
+ */
+export const PUBLISHED_PRIMITIVE_TOOL_NAMES = {
+  move_to_tile: "stardew_move_to_tile",
+  equip_tool: "stardew_equip_tool",
+  travel: "stardew_travel",
+  enter_exit: "stardew_enter_exit",
+  till_soil: "stardew_till_soil",
+  pickup_forage: "stardew_pickup_forage",
+  pickup_item: "stardew_pickup_item",
+  water_crop: "stardew_water_crop",
+  refill_watering_can: "stardew_refill_watering_can",
+  plant_seed: "stardew_plant_seed",
+  fertilize_tile: "stardew_fertilize_tile",
+  place_wood_fence: "stardew_place_wood_fence",
+  place_crab_pot: "stardew_place_crab_pot",
+  bait_crab_pot: "stardew_bait_crab_pot",
+  machine_inspect: "stardew_machine_inspect",
+  machine_load: "stardew_machine_load",
+  machine_collect_output: "stardew_machine_collect_output",
+  collect_animal_product: "stardew_collect_animal_product",
+  feed_animal: "stardew_feed_animal",
+  use_item: "stardew_use_item",
+  harvest_crop: "stardew_harvest_crop",
+  break_rock_source: "stardew_break_rock_source",
+  clear_hoedirt: "stardew_clear_hoedirt",
+  dig_artifact_spot: "stardew_dig_artifact_spot",
+  chop_tree_source: "stardew_chop_tree_source",
+} as const satisfies Record<PublishedPrimitiveActionId, `stardew_${string}`>;
 
 /**
  * Removed roadmap labels are not registry/policy identifiers. They intentionally
@@ -270,7 +351,7 @@ export function parseActionPolicy(value: unknown): ActionPolicy {
   ) {
     throw new Error("invalid_action_policy");
   }
-  const actionIds = new Set(STARDEW_ACTION_REGISTRY.map((entry) => entry.actionId));
+  const actionIds: ReadonlySet<string> = new Set(STARDEW_ACTION_REGISTRY.map((entry) => entry.actionId));
   const familyIds = new Set(STARDEW_ACTION_REGISTRY.map((entry) => entry.familyId));
   const deniedActions = [...(value.deniedActions as string[])];
   const deniedFamilies = [...(value.deniedFamilies as string[])];
@@ -331,38 +412,46 @@ export function isMaterializablePublishedAction(entry: PublishedAction): boolean
   return entry.actionClass === "primitive" && entry.lifecycle === "published";
 }
 
-function publishedAction(
-  actionId: string,
+function publishedAction<const TActionId extends string>(
+  actionId: TActionId,
   familyId: string,
+  identityVersion: number,
   label: string,
   description: string,
   targetKinds: readonly string[],
-): PublishedAction {
-  return action(actionId, familyId, "primitive", "published", label, description, targetKinds);
+): ActionDefinition<TActionId, "primitive", "published"> {
+  return action(actionId, familyId, identityVersion, "primitive", "published", label, description, targetKinds);
 }
 
-function experimentalAction(
-  actionId: string,
+function experimentalAction<const TActionId extends string>(
+  actionId: TActionId,
   familyId: string,
+  identityVersion: number,
   label: string,
   description: string,
   targetKinds: readonly string[],
-): PublishedAction {
-  return action(actionId, familyId, "primitive", "experimental", label, description, targetKinds);
+): ActionDefinition<TActionId, "primitive", "experimental"> {
+  return action(actionId, familyId, identityVersion, "primitive", "experimental", label, description, targetKinds);
 }
 
-function action(
-  actionId: string,
+function action<
+  const TActionId extends string,
+  const TActionClass extends ActionClass,
+  const TLifecycle extends ActionLifecycle,
+>(
+  actionId: TActionId,
   familyId: string,
-  actionClass: ActionClass,
-  lifecycle: ActionLifecycle,
+  identityVersion: number,
+  actionClass: TActionClass,
+  lifecycle: TLifecycle,
   label: string,
   description: string,
   targetKinds: readonly string[],
-): PublishedAction {
+): ActionDefinition<TActionId, TActionClass, TLifecycle> {
   return Object.freeze({
     actionId,
     familyId,
+    identityVersion,
     actionClass,
     lifecycle,
     label,
