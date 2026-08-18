@@ -162,7 +162,8 @@ export function ReferenceApp() {
         if (snapshot.chat === null || draft.revision !== snapshot.chat.draft.revision || (draft.text !== null) !== snapshot.chat.draft.present) {
           throw new ReferencePipelineSessionError("state_reconciliation_required");
         }
-        cursor = snapshot.eventStream?.cursor ?? cursor;
+        // Keep the last received SSE cursor during recovery. Advancing it from
+        // /state would skip events published between disconnect and reconnect.
         commit({ kind: "ready", session: next, draft, locale: current.locale });
       } catch (error) {
         if (!disposed) commit(problemView(error, messages(localeRef.current)));
