@@ -28,6 +28,8 @@ export interface CompanionInterruption {
   stop(stopId: string, sourceEventId: string, reasonCode: string): StopAdmission;
   /** Explicitly admits work in the current, previously closed epoch. */
   open(): InterruptionSnapshot;
+  /** Atomically reopen only the still-current closed control epoch. */
+  openIfCurrentEpoch(epoch: number): InterruptionSnapshot | undefined;
   /** Synchronously invalidate current admission without performing work. */
   close(reasonCode: string): void;
 }
@@ -41,9 +43,7 @@ const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
  * owns neither cancellation work nor durable state: callers must fence their
  * own work with a captured snapshot and schedule any returned STOP work.
  */
-export function createCompanionInterruption(
-  options: CompanionInterruptionOptions = {},
-): CompanionInterruption {
+export function createCompanionInterruption(options: CompanionInterruptionOptions = {}): CompanionInterruption {
   const maxRememberedStops = options.maxRememberedStops ?? DEFAULT_MAX_REMEMBERED_STOPS;
   if (!Number.isSafeInteger(maxRememberedStops) || maxRememberedStops < 1)
     throw new Error("invalid_interruption_dedupe_bound");
@@ -62,20 +62,10 @@ export function createCompanionInterruption(
   return Object.freeze({
     capture: snapshot,
     isCurrent(binding: InterruptionSnapshot): boolean {
-      return (
-        isCapturedSnapshot(binding, capturedSnapshots) &&
-        binding.open &&
-        open &&
-        binding.epoch === epoch
-      );
+      return isCapturedSnapshot(binding, capturedSnapshots) && binding.open && open && binding.epoch === epoch;
     },
     assertCurrent(binding: InterruptionSnapshot): void {
-      if (
-        !isCapturedSnapshot(binding, capturedSnapshots) ||
-        !binding.open ||
-        !open ||
-        binding.epoch !== epoch
-      ) {
+      if (!isCapturedSnapshot(binding, capturedSnapshots) || !binding.open || !open || binding.epoch !== epoch) {
         throw new Error("stale_interruption_admission");
       }
     },
@@ -111,6 +101,12 @@ export function createCompanionInterruption(
       open = true;
       return snapshot();
     },
+    openIfCurrentEpoch(expectedEpoch: number): InterruptionSnapshot | undefined {
+      if (!Number.isSafeInteger(expectedEpoch) || expectedEpoch < 0) throw new Error("invalid_interruption_epoch");
+      if (open || epoch !== expectedEpoch) return undefined;
+      open = true;
+      return snapshot();
+    },
     close(reasonCode: string): void {
       validateIdentifier(reasonCode, "reason_code");
       epoch += 1;
@@ -127,11 +123,7 @@ function isCapturedSnapshot(
 }
 
 function validateIdentifier(value: string, name: string): void {
-  if (
-    typeof value !== "string" ||
-    value.length > MAX_IDENTIFIER_LENGTH ||
-    !IDENTIFIER_PATTERN.test(value)
-  ) {
+  if (typeof value !== "string" || value.length > MAX_IDENTIFIER_LENGTH || !IDENTIFIER_PATTERN.test(value)) {
     throw new Error(`invalid_interruption_${name}`);
   }
 }

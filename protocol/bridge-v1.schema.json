@@ -36,7 +36,13 @@
         "observe_request",
         "snapshot",
         "execution_request",
+        "execution_receipt_query",
         "cancel_request",
+        "companion_presentation_request",
+        "system_notice_request",
+        "system_notice_receipt",
+        "companion_presentation_receipt",
+        "player_control_receipt",
         "execution_receipt",
         "error",
         "semantic_event",
@@ -132,6 +138,22 @@
       "if": {
         "properties": {
           "type": {
+            "const": "execution_receipt_query"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/executionReceiptQuery"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
             "const": "cancel_request"
           }
         }
@@ -140,6 +162,86 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/cancelRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "companion_presentation_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/companionPresentationRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "system_notice_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/systemNoticeRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "system_notice_receipt"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/systemNoticeReceipt"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "companion_presentation_receipt"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/companionPresentationReceipt"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "player_control_receipt"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/playerControlReceipt"
           }
         }
       }
@@ -222,6 +324,10 @@
       "type": "string",
       "pattern": "^[a-z0-9_:-]{1,128}$"
     },
+    "bcp47Locale": {
+      "type": "string",
+      "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$"
+    },
     "tile": {
       "type": "integer",
       "minimum": 0,
@@ -276,7 +382,8 @@
       "additionalProperties": false,
       "required": [
         "sessionId",
-        "capabilities"
+        "capabilities",
+        "presentationLocale"
       ],
       "properties": {
         "sessionId": {
@@ -289,6 +396,9 @@
             "maxLength": 128
           },
           "maxItems": 128
+        },
+        "presentationLocale": {
+          "$ref": "#/$defs/bcp47Locale"
         }
       }
     },
@@ -732,58 +842,6 @@
         "tapped": { "const": false }
       }
     },
-    "treeShakeSourceTarget": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "targetId",
-        "location",
-        "x",
-        "y",
-        "treeType",
-        "growthStage",
-        "health",
-        "moss",
-        "tapped"
-      ],
-      "properties": {
-        "targetId": {
-          "$ref": "#/$defs/opaqueId"
-        },
-        "location": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "x": {
-          "$ref": "#/$defs/tile"
-        },
-        "y": {
-          "$ref": "#/$defs/tile"
-        },
-        "treeType": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32
-        },
-        "growthStage": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 20
-        },
-        "health": {
-          "type": "number",
-          "minimum": -100,
-          "maximum": 100
-        },
-        "moss": {
-          "type": "boolean"
-        },
-        "tapped": {
-          "type": "boolean"
-        }
-      }
-    },
     "npcRelationshipTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -1030,7 +1088,8 @@
         "stamina",
         "health",
         "actionable",
-        "capabilities"
+        "capabilities",
+        "presentationLocale"
       ],
       "properties": {
         "revision": {
@@ -1082,6 +1141,9 @@
             "maxLength": 128
           },
           "maxItems": 128
+        },
+        "presentationLocale": {
+          "$ref": "#/$defs/bcp47Locale"
         },
         "activeExecution": {
           "anyOf": [
@@ -1192,13 +1254,6 @@
         },
         "wateringCanFacts": { "type": "array", "items": { "$ref": "#/$defs/wateringCanFact" }, "maxItems": 36 },
         "refillWateringCanTargets": { "type": "array", "items": { "$ref": "#/$defs/refillWateringCanTarget" }, "maxItems": 8 },
-        "treeShakeSourceTargets": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/treeShakeSourceTarget"
-          },
-          "maxItems": 64
-        },
         "npcRelationshipTargets": {
           "type": "array",
           "items": {
@@ -1276,7 +1331,7 @@
     "breakRockSourceArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "clearHoeDirtArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "digArtifactSpotArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
-    "treeFirstHitArgs": {
+    "treeChopSourceArgs": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -1302,6 +1357,14 @@
         }
       }
     },
+    "xyArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" } } },
+    "slotArgs": { "type": "object", "additionalProperties": false, "required": ["slot"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 } } },
+    "xyTargetArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedTargetId"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "xyQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "slotXYTargetArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "slotXYQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "slotQualifiedArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "expectedQualifiedItemId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
+    "machineLoadArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)433" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "executionRequest": {
       "type": "object",
       "additionalProperties": false,
@@ -1335,24 +1398,15 @@
         { "if": { "required": ["action"], "properties": { "action": { "const": "break_rock_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/breakRockSourceArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "clear_hoedirt" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/clearHoeDirtArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "dig_artifact_spot" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/digArtifactSpotArgs" } } } },
-        { "if": { "required": ["action"], "properties": { "action": { "const": "chop_tree_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/treeFirstHitArgs" } } } },
-        {
-          "if": {
-            "required": ["action"],
-            "properties": {
-              "action": {
-                "const": "tree_first_hit"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "args": {
-                "$ref": "#/$defs/treeFirstHitArgs"
-              }
-            }
-          }
-        }
+        { "if": { "required": ["action"], "properties": { "action": { "const": "chop_tree_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/treeChopSourceArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "enum": ["move_to_tile", "travel", "enter_exit", "till_soil"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "equip_tool" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "enum": ["pickup_forage", "pickup_item", "harvest_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyQualifiedTargetArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "enum": ["water_crop", "machine_inspect", "machine_collect_output", "npc_relationship", "pet_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "enum": ["clear_debris", "collect_animal_product", "feed_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYTargetArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "enum": ["plant_seed", "fertilize_tile"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotXYQualifiedTargetArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "machine_load" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/machineLoadArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "use_item" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotQualifiedArgs" } } } }
       ],
       "properties": {
         "requestId": {
@@ -1386,13 +1440,11 @@
             "collect_animal_product",
             "feed_animal",
             "use_item",
-            "tree_first_hit",
             "chop_tree_source",
             "break_rock_source",
             "clear_hoedirt",
             "dig_artifact_spot",
-            "refill_watering_can",
-            "inspect_self"
+            "refill_watering_can"
           ]
         },
         "args": {
@@ -1406,12 +1458,30 @@
         }
       }
     },
+    "executionReceiptQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "idempotencyKey"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "idempotencyKey": {
+          "$ref": "#/$defs/opaqueId"
+        }
+      }
+    },
     "cancelRequest": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "requestId",
         "executionId",
+        "cancelId",
+        "cancelEpoch",
         "reasonCode"
       ],
       "properties": {
@@ -1420,6 +1490,13 @@
         },
         "executionId": {
           "$ref": "#/$defs/opaqueId"
+        },
+        "cancelId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "cancelEpoch": {
+          "type": "integer",
+          "minimum": 1
         },
         "reasonCode": {
           "$ref": "#/$defs/reasonCode"
@@ -1477,6 +1554,59 @@
         }
       }
     },
+    "companionPresentationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expressionId", "sourceEventId", "text", "locale", "expectedRevision", "presentationEpoch"],
+      "properties": {
+        "expressionId": { "$ref": "#/$defs/opaqueId" },
+        "sourceEventId": { "$ref": "#/$defs/opaqueId" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "locale": { "$ref": "#/$defs/bcp47Locale" },
+        "expectedRevision": { "type": "integer", "minimum": 0 },
+        "presentationEpoch": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "companionPresentationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expressionId", "revision", "presentationEpoch"],
+      "properties": {
+        "expressionId": { "$ref": "#/$defs/opaqueId" },
+        "revision": { "type": "integer" },
+        "presentationEpoch": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "systemNoticeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["noticeId", "key", "text", "locale"],
+      "properties": {
+        "noticeId": { "$ref": "#/$defs/opaqueId" },
+        "key": { "enum": ["system.stop.active_turn_cancelled", "system.stop.no_active_turn"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "locale": { "$ref": "#/$defs/bcp47Locale" }
+      }
+    },
+    "systemNoticeReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["noticeId", "revision"],
+      "properties": {
+        "noticeId": { "$ref": "#/$defs/opaqueId" },
+        "revision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "playerControlReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlId", "sourceEventId", "status"],
+      "properties": {
+        "controlId": { "$ref": "#/$defs/opaqueId" },
+        "sourceEventId": { "$ref": "#/$defs/opaqueId" },
+        "status": { "const": "accepted" }
+      }
+    },
     "error": {
       "type": "object",
       "additionalProperties": false,
@@ -1514,28 +1644,62 @@
       "required": ["kind", "revision", "activeExecution", "reasonCode"],
       "properties": {
         "kind": {
-          "enum": ["snapshot_changed", "execution_state", "connection_state", "lifecycle", "execution_started", "route_progress", "execution_settled_succeeded", "execution_settled_cancelled", "execution_settled_failed", "execution_invalidated", "body_idle"]
+          "enum": ["snapshot_changed", "execution_state", "connection_state", "lifecycle", "player_input", "stop_all", "body_settled", "execution_started", "route_progress", "execution_settled_succeeded", "execution_settled_cancelled", "execution_settled_failed", "execution_invalidated", "body_idle"]
         },
         "revision": { "type": "integer" },
         "activeExecution": {
           "anyOf": [{ "$ref": "#/$defs/activeExecution" }, { "type": "null" }]
         },
         "reasonCode": { "$ref": "#/$defs/reasonCode" },
-        "bodyTrace": { "$ref": "#/$defs/bodyTrace" }
+        "bodyTrace": { "$ref": "#/$defs/bodyTrace" },
+        "playerControl": { "$ref": "#/$defs/playerControl" },
+        "stopObservation": { "$ref": "#/$defs/stopObservation" }
       },
       "oneOf": [
         {
           "properties": { "kind": { "enum": ["snapshot_changed", "execution_state", "connection_state", "lifecycle"] } },
-          "required": ["kind"]
+          "required": ["kind"],
+          "not": { "anyOf": [{ "properties": { "bodyTrace": {} }, "required": ["bodyTrace"] }, { "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] }
         },
-        { "properties": { "kind": { "const": "execution_started" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_started" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"] },
-        { "properties": { "kind": { "const": "route_progress" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "route_progress" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"] },
-        { "properties": { "kind": { "const": "execution_settled_succeeded" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_succeeded" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"] },
-        { "properties": { "kind": { "const": "execution_settled_cancelled" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_cancelled" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"] },
-        { "properties": { "kind": { "const": "execution_settled_failed" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_failed" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"] },
-        { "properties": { "kind": { "const": "execution_invalidated" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_invalidated" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"] },
-        { "properties": { "kind": { "const": "body_idle" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "body_idle" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"] }
+        { "properties": { "kind": { "const": "execution_started" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_started" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "route_progress" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "route_progress" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "execution_settled_succeeded" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_succeeded" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "execution_settled_cancelled" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_cancelled" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "execution_settled_failed" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_settled_failed" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "execution_invalidated" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "execution_invalidated" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "body_idle" }, "bodyTrace": { "type": "object", "properties": { "category": { "const": "body_idle" } }, "required": ["category"] } }, "required": ["kind", "bodyTrace"], "not": { "anyOf": [{ "properties": { "playerControl": {} }, "required": ["playerControl"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "player_input" }, "playerControl": { "type": "object", "properties": { "kind": { "const": "player_input" } }, "required": ["kind"] } }, "required": ["kind", "playerControl"], "not": { "anyOf": [{ "properties": { "bodyTrace": {} }, "required": ["bodyTrace"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "stop_all" }, "playerControl": { "type": "object", "properties": { "kind": { "const": "stop_all" } }, "required": ["kind"] } }, "required": ["kind", "playerControl"], "not": { "anyOf": [{ "properties": { "bodyTrace": {} }, "required": ["bodyTrace"] }, { "properties": { "stopObservation": {} }, "required": ["stopObservation"] }] } },
+        { "properties": { "kind": { "const": "body_settled" }, "stopObservation": { "type": "object", "properties": { "kind": { "const": "body_settled" } }, "required": ["kind"] } }, "required": ["kind", "stopObservation"], "not": { "anyOf": [{ "properties": { "bodyTrace": {} }, "required": ["bodyTrace"] }, { "properties": { "playerControl": {} }, "required": ["playerControl"] }] } }
       ]
+    },
+    "playerControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "controlId", "sourceEventId", "locale", "issuerPlayerId"],
+      "properties": {
+        "kind": { "enum": ["player_input", "stop_all"] },
+        "controlId": { "$ref": "#/$defs/opaqueId" },
+        "sourceEventId": { "$ref": "#/$defs/opaqueId" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "locale": { "$ref": "#/$defs/bcp47Locale" },
+        "issuerPlayerId": { "$ref": "#/$defs/opaqueId" }
+      },
+      "allOf": [
+        { "if": { "required": ["kind"], "properties": { "kind": { "const": "player_input" } } }, "then": { "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000 } }, "required": ["text"] } },
+        { "if": { "required": ["kind"], "properties": { "kind": { "const": "stop_all" } } }, "then": { "not": { "required": ["text"] } } }
+      ]
+    },
+    "stopObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "stopId", "sourceEventId", "epoch"],
+      "properties": {
+        "kind": { "const": "body_settled" },
+        "stopId": { "$ref": "#/$defs/opaqueId" },
+        "sourceEventId": { "$ref": "#/$defs/opaqueId" },
+        "epoch": { "type": "integer", "minimum": 1 }
+      }
     },
     "lifecycle": {
       "type": "object",

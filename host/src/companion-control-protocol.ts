@@ -29,8 +29,6 @@ export type StopAllControlRequest = Readonly<{
   runtimeInstanceId: string;
   stopId: string;
   sourceEventId: string;
-  playerText?: string;
-  locale?: string;
 }>;
 
 export type ControlRequest = HelloControlRequest | PlayerInputControlRequest | StopAllControlRequest;
@@ -110,7 +108,8 @@ export class ControlRequestFramer {
 }
 
 export function validateControlRequest(value: unknown): ControlRequest {
-  if (!isPlainRecord(value) || typeof value.type !== "string") throw new ControlProtocolError("invalid_control_request");
+  if (!isPlainRecord(value) || typeof value.type !== "string")
+    throw new ControlProtocolError("invalid_control_request");
 
   switch (value.type) {
     case "hello":
@@ -118,7 +117,11 @@ export function validateControlRequest(value: unknown): ControlRequest {
       if (value.protocolVersion !== CONTROL_PROTOCOL_VERSION || !isLaunchToken(value.launchToken)) {
         throw new ControlProtocolError("invalid_control_request");
       }
-      return Object.freeze({ type: "hello", protocolVersion: CONTROL_PROTOCOL_VERSION, launchToken: value.launchToken });
+      return Object.freeze({
+        type: "hello",
+        protocolVersion: CONTROL_PROTOCOL_VERSION,
+        launchToken: value.launchToken,
+      });
     case "player_input":
       assertExactKeys(value, ["type", "requestId", "runtimeInstanceId", "sourceEventId", "text", "locale"]);
       if (
@@ -138,15 +141,13 @@ export function validateControlRequest(value: unknown): ControlRequest {
         text: value.text,
         locale: value.locale,
       });
-    case "stop_all": {
-      assertExactKeys(value, ["type", "requestId", "runtimeInstanceId", "stopId", "sourceEventId"], ["playerText", "locale"]);
+    case "stop_all":
+      assertExactKeys(value, ["type", "requestId", "runtimeInstanceId", "stopId", "sourceEventId"]);
       if (
         !isIdentifier(value.requestId) ||
         !isIdentifier(value.runtimeInstanceId) ||
         !isIdentifier(value.stopId) ||
-        !isIdentifier(value.sourceEventId) ||
-        (value.playerText !== undefined && !isPlayerText(value.playerText)) ||
-        (value.locale !== undefined && !isLocale(value.locale))
+        !isIdentifier(value.sourceEventId)
       ) {
         throw new ControlProtocolError("invalid_control_request");
       }
@@ -156,16 +157,17 @@ export function validateControlRequest(value: unknown): ControlRequest {
         runtimeInstanceId: value.runtimeInstanceId,
         stopId: value.stopId,
         sourceEventId: value.sourceEventId,
-        ...(value.playerText === undefined ? {} : { playerText: value.playerText }),
-        ...(value.locale === undefined ? {} : { locale: value.locale }),
       });
-    }
     default:
       throw new ControlProtocolError("invalid_control_request");
   }
 }
 
-function assertExactKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): void {
+function assertExactKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): void {
   const keys = Object.keys(value);
   if (
     keys.length < required.length ||
@@ -194,7 +196,11 @@ function isLaunchToken(value: unknown): value is string {
 }
 
 function isPlayerText(value: unknown): value is string {
-  return typeof value === "string" && UTF8.encode(value).byteLength > 0 && UTF8.encode(value).byteLength <= MAX_CONTROL_TEXT_BYTES;
+  return (
+    typeof value === "string" &&
+    UTF8.encode(value).byteLength > 0 &&
+    UTF8.encode(value).byteLength <= MAX_CONTROL_TEXT_BYTES
+  );
 }
 
 function isLocale(value: unknown): value is string {
@@ -206,7 +212,12 @@ function isLocale(value: unknown): value is string {
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -307,7 +318,17 @@ class DuplicateKeyScanner {
         this.#position += 1;
         const escape = this.text[this.#position];
         if (escape === "u") this.#position += 5;
-        else if (escape === '"' || escape === "\\" || escape === "/" || escape === "b" || escape === "f" || escape === "n" || escape === "r" || escape === "t") this.#position += 1;
+        else if (
+          escape === '"' ||
+          escape === "\\" ||
+          escape === "/" ||
+          escape === "b" ||
+          escape === "f" ||
+          escape === "n" ||
+          escape === "r" ||
+          escape === "t"
+        )
+          this.#position += 1;
         else throw new SyntaxError("invalid string escape");
       } else {
         if (character.charCodeAt(0) < 0x20) throw new SyntaxError("control character in string");

@@ -29,16 +29,13 @@ const validStop = {
   runtimeInstanceId: "runtime_01",
   stopId: "stop_01",
   sourceEventId: "source_02",
-  playerText: "Stop, I will take it from here.",
-  locale: "en-US",
 } as const;
-
 function expectCode(action: () => unknown, code: string): void {
   assert.throws(action, (error: unknown) => error instanceof ControlProtocolError && error.code === code);
 }
 
 test("control codec round-trips exactly the three v1 request variants", () => {
-  for (const request of [validHello, validInput, validStop, { ...validStop, playerText: undefined, locale: undefined }]) {
+  for (const request of [validHello, validInput, validStop]) {
     const encoded = encodeControlRequest(request);
     assert.ok(encoded.endsWith("\n"));
     assert.deepEqual(decodeControlRequestLine(encoded.slice(0, -1)), validateControlRequest(request));
@@ -86,7 +83,10 @@ test("control codec rejects malformed JSON, duplicate keys, nested duplicates, a
     "duplicate_control_json_key",
   );
   expectCode(
-    () => decodeControlRequestLine('{"type":"hello","protocolVersion":1,"launchToken":"aaaaaaaaaaaaaaaa","metadata":{"x":1,"x":2}}'),
+    () =>
+      decodeControlRequestLine(
+        '{"type":"hello","protocolVersion":1,"launchToken":"aaaaaaaaaaaaaaaa","metadata":{"x":1,"x":2}}',
+      ),
     "duplicate_control_json_key",
   );
 });
