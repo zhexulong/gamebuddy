@@ -361,6 +361,75 @@ and Apache-2.0 licensed. Passing this model/runtime baseline does not establish
 microphone accuracy; user speech must never be matched, hashed, scored, or
 reported by a validation runner.
 
+## Windows TTS output gate
+
+The Gateway can use the current Windows default render device only when both a
+bounded MiMo provider probe and a real `waveOut` open/write/completion check
+succeed. `default` means Windows resolves its current default device on every
+open; an explicit `waveout:N` selection never silently falls back.
+
+```powershell
+$env:MIMO_API_KEY = '<process-local key>'
+node tools/run-windows-voice-output-gate.mjs `
+  --device default --voice Chloe --port 49739 `
+  --token '<16+ opaque local token>'
+```
+
+The runner starts a temporary Gateway, obtains authenticated health, and exits
+zero only if the MiMo probe returned PCM and the selected Windows device
+accepted/completed the write. It never records provider audio, text, or the
+credential.
+
+## Windows PTT input gate
+
+```powershell
+node tools/run-windows-voice-input-gate.mjs --device default --duration-ms 1000
+```
+
+The input gate opens the current Windows default capture device (or a strict
+`wavein:N` selection), starts a bounded 16 kHz mono PCM16 recording and checks
+that the driver returns a non-empty frame. It does not save PCM or invoke ASR.
+In the real Gateway this adapter is mountable only after the operator-provided
+Fun-ASR asset manifest passes SHA-256 audit; local PCM is pulled inside the
+Gateway at PTT stop and never sent through Host protocol. A full speech-input
+pass requires the separately audited Fun-ASR native runtime, encoder, decoder,
+and VAD assets plus a real final transcript gate.
+
+## Windows PTT → final transcript gate
+
+```powershell
+node tools/run-windows-sensevoice-final-transcript-gate.mjs `
+  --manifest "$env:LOCALAPPDATA\GameBuddy\voice-assets\funasr-llamacpp\sensevoice-assets.manifest.json" `
+  --device default `
+  --port 49741 `
+  --token '<16+ opaque local token>' `
+  --duration-ms 4000
+```
+
+This one-shot, loopback-only gate verifies local asset hashes, opens the selected
+PTT device, invokes native Fun-ASR, and accepts only a sanitized
+`final_transcript` event from authenticated Gateway polling. It never prints raw
+audio or transcript text. Silence/no-speech remains `blocked`, never success.
+The runner has no option to display, compare, hash, persist, or otherwise derive
+a correctness metric from user speech; users assess any local transcription only
+in their own product UI.
+
+## Fun-ASR offline regression baseline
+
+```powershell
+node tools/run-funasr-offline-baseline.mjs `
+  --manifest "$env:LOCALAPPDATA\GameBuddy\voice-assets\funasr-llamacpp\sensevoice-assets.manifest.json"
+```
+
+This gate uses the vendored, Apache-2.0 `FunAudioLLM/Fun-ASR` fixed 6-second
+Chinese regression clip and its frozen upstream reference text. It SHA-256 audits
+both source fixture files and requires an exact normalized text match. It exposes
+lengths and match state only, never transcript content. This exact comparison is
+permitted only because the fixture and reference are public, upstream-provided,
+and Apache-2.0 licensed. Passing this model/runtime baseline does not establish
+microphone accuracy; user speech must never be matched, hashed, scored, or
+reported by a validation runner.
+
 For the currently verified bridge/ledger guards, run:
 
 ```powershell
@@ -369,6 +438,35 @@ node tools/run-stardew-bridge-ledger-smoke.mjs `
 ```
 
 This checks a stale revision rejection, idempotency-key conflict rejection, and a final Tool restore through the formal named-pipe bridge.
+
+
+## Version-locked native architecture input accounting
+
+```powershell
+pnpm derive:stardew-native-action-architecture-map -- `
+  --game-path $env:GAMEBUDDY_STARDEW_GAME_PATH `
+  --out .worktree/stardew-native-action-architecture-map.json
+pnpm test:stardew-native-architecture-accounting
+```
+
+The derivation requires Windows, the exact target `Stardew Valley.dll` (`1.6.15.24356`, SHA-256 `7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee`), the exact `Content/ContentHashes.json` (SHA-256 `8143aa3110810e0039282ab8e9989417092388edb84c8c3b6c0b6f23840a4349`), and `ILSPYCMD_PATH` set to the audited per-user .NET tool shim `~/.dotnet/tools/ilspycmd.exe` (`9.1.0.7988`, executable SHA-256 `5da34ef8b7a3d7e2057d27a0a84ec8e1ccdddb35d6d519058fce1e2f374c4c7f`, package SHA-512 `52af105a73cbca189fe10af74f36d4a709761879b02a96c9a084ba43bd70b45f1c4f22d9eb327864395042b947ccecc1bc9f0c45041bcef2732be78fb41ce481`). It snapshots those inputs and the verified decompiler shim before inspection, verifies every declared content file against its manifest MD5, then produces a fresh decompilation and hashes every emitted C# source file. It fails closed if either path universe has unsafe or case-colliding entries, or a registered architecture root/handoff anchor is absent from the exact source.
+
+`--out` must name a new ordinary file below this repository's `.worktree/` directory; the tool rejects traversal, symlink/reparse-point escapes, existing targets, and paths outside that local evidence root.
+
+A passing report proves only `inputAccountingState: source_and_content_input_accounting_complete`. It deliberately reports `architectureAccountingState: incomplete_pending_exhaustive_root_and_handoff_review`: the checked-in root/handoff register is a conservative reviewed seed, not an exhaustive operation graph. It does **not** infer source semantics, primitive actions, player-action completeness, contracts, capability policy, receipts, live behavior, or GameBuddy public API projection. The generated report remains local under `.worktree/`; this checked-in section is the complete normative boundary for the tool.
+
+## Version-locked C# syntax structural canary
+
+```powershell
+pnpm test:stardew-csharp-syntax-structural-canary
+pnpm derive:stardew-csharp-syntax-structural-canary -- `
+  --game-path $env:GAMEBUDDY_STARDEW_GAME_PATH `
+  --out .worktree/stardew-csharp-syntax-structural-canary.json
+```
+
+This local Windows-only tool requires the exact target `Stardew Valley.dll` version `1.6.15.24356` (SHA-256 `7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee`) and `ilspycmd: 9.1.0.7988`. It re-decompiles three fixed source canaries and uses the checked-in Tree-sitter C# grammar to produce source-attested syntax facts: declarations, control syntax, invocation syntax, assignment syntax, parse gaps, and UTF-8 byte locators. It rejects mismatched target/decompiler/source bytes and parse errors. Reports must use a new direct filename beneath repository `.worktree/`; the tool refuses existing paths, nested paths, and all paths outside that root.
+
+A passing report is a static parser and syntax-input compatibility check only. It does **not** infer source semantics, operation ownership, primitive actions, player reachability, contracts, capabilities, gameplay behavior, receipts, live evidence, or release readiness. The generated report is local evidence and should be written beneath `.worktree/`.
 
 
 ## Ongoing-interaction Historian authoring gate
