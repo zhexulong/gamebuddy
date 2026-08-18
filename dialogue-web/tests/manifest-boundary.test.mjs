@@ -4,8 +4,9 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
-import test from "node:test";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
+import test, { after, before } from "node:test";
 import {
   ARTIFACT_MANIFEST_FILE,
   BROWSER_CONTRACT,
@@ -21,6 +22,12 @@ const lockfilePath = resolve(packageRoot, "..", "pnpm-lock.yaml");
 const privateStagingParent = resolve(packageRoot, ".build-staging");
 const viteCliPath = resolve(packageRoot, "node_modules", "vite", "bin", "vite.js");
 const viteConfigPath = resolve(packageRoot, "vite.config.ts");
+const hostRoot = resolve(packageRoot, "..", "host");
+const emittedHostRoot = resolve(hostRoot, ".dist-production-emitted");
+const hostTypeScriptCli = resolve(hostRoot, "node_modules", "typescript", "lib", "tsc.js");
+const hostProductionProject = resolve(hostRoot, "tsconfig.production.json");
+const buildWindowsReparseInspector = resolve(hostRoot, "scripts", "build-windows-reparse-inspector.mjs");
+const execFileAsync = promisify(execFile);
 
 const readPackageManifest = async () => JSON.parse(await readFile(packageManifestPath, "utf8"));
 const readWorkspaceLockfile = async () => readFile(lockfilePath, "utf8");
@@ -40,6 +47,18 @@ function runViteBuild(outputDirectory, cwd = packageRoot) {
     child.once("close", (code) => resolveRun({ code, output }));
   });
 }
+
+before(async () => {
+  await rm(emittedHostRoot, { recursive: true, force: true });
+  await execFileAsync(process.execPath, [hostTypeScriptCli, "--project", hostProductionProject, "--outDir", emittedHostRoot], {
+    cwd: resolve(packageRoot, ".."),
+  });
+  await execFileAsync(process.execPath, [buildWindowsReparseInspector], { cwd: resolve(packageRoot, "..") });
+});
+
+after(async () => {
+  await rm(emittedHostRoot, { recursive: true, force: true });
+});
 
 async function expectPrivateBuildRejection(outputDirectory, expression) {
   const result = await runViteBuild(outputDirectory);
@@ -133,20 +152,28 @@ test("production artifact manifest APIs reject cwd-relative roots", async () => 
 });
 
 test("production browser artifact manifest has a fixed identity and an exact hashed asset boundary", async () => {
-  const artifactRoot = resolve(packageRoot, "dist");
-  const manifest = await verifyProductionArtifactManifest(artifactRoot, nodeDefensePolicy);
+  const artifactRoot = resolve(privateStagingParent, opaqueStagingLeaf());
+  try {
+    await mkdir(privateStagingParent, { recursive: true });
+    await mkdir(artifactRoot);
+    const result = await runViteBuild(artifactRoot, resolve(packageRoot, ".."));
+    assert.equal(result.code, 0, result.output);
+    const manifest = await verifyProductionArtifactManifest(artifactRoot, nodeDefensePolicy);
 
-  assert.equal(ARTIFACT_MANIFEST_FILE, "tavern-browser-artifact-manifest.json");
-  assert.deepEqual(Object.keys(manifest), ["schemaVersion", "browserContract", "profileId", "entryHtml", "assets"]);
-  assert.equal(manifest.schemaVersion, 1);
-  assert.equal(manifest.browserContract, BROWSER_CONTRACT);
-  assert.equal(manifest.profileId, PROFILE_ID);
-  assert.equal(manifest.entryHtml, "index.html");
-  assert.ok(manifest.assets.length > 0);
-  for (const asset of manifest.assets) {
-    assert.match(asset.path, /^assets\/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|webp|woff2)$/);
-    assert.match(asset.sha256, /^[a-f0-9]{64}$/);
-    assert.ok(Number.isSafeInteger(asset.bytes) && asset.bytes > 0);
+    assert.equal(ARTIFACT_MANIFEST_FILE, "tavern-browser-artifact-manifest.json");
+    assert.deepEqual(Object.keys(manifest), ["schemaVersion", "browserContract", "profileId", "entryHtml", "assets"]);
+    assert.equal(manifest.schemaVersion, 1);
+    assert.equal(manifest.browserContract, BROWSER_CONTRACT);
+    assert.equal(manifest.profileId, PROFILE_ID);
+    assert.equal(manifest.entryHtml, "index.html");
+    assert.ok(manifest.assets.length > 0);
+    for (const asset of manifest.assets) {
+      assert.match(asset.path, /^assets\/[A-Za-z0-9_-]+-[A-Za-z0-9_-]{8,}\.(?:js|css|svg|png|webp|woff2)$/);
+      assert.match(asset.sha256, /^[a-f0-9]{64}$/);
+      assert.ok(Number.isSafeInteger(asset.bytes) && asset.bytes > 0);
+    }
+  } finally {
+    await rm(artifactRoot, { recursive: true, force: true });
   }
 });
 
