@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createCompanionInterruption,
-  type InterruptionSnapshot,
-} from "./companion-interruption.js";
+import { createCompanionInterruption, type InterruptionSnapshot } from "./companion-interruption.js";
 
 test("captures immutable open admission and advances epochs monotonically", () => {
   const interruption = createCompanionInterruption();
@@ -56,6 +53,18 @@ test("rejects stale, forged, closed, and replayed admissions fail closed", () =>
   assert.throws(() => interruption.assertCurrent(current), /stale_interruption_admission/);
 });
 
+test("reopens only a still-current closed epoch", () => {
+  const interruption = createCompanionInterruption();
+  const first = interruption.stop("redirect-a", "event-a", "redirect");
+  const second = interruption.stop("stop-b", "event-b", "stop");
+  assert.equal(interruption.openIfCurrentEpoch(first.epoch), undefined);
+  assert.deepEqual(interruption.capture(), { epoch: second.epoch, open: false });
+  const reopened = interruption.openIfCurrentEpoch(second.epoch);
+  assert.deepEqual(reopened, { epoch: second.epoch, open: true });
+  assert.equal(interruption.openIfCurrentEpoch(second.epoch), undefined);
+  assert.throws(() => interruption.openIfCurrentEpoch(-1), /invalid_interruption_epoch/);
+});
+
 test("deduplicates stop IDs without changing the epoch or reopening admission", () => {
   const interruption = createCompanionInterruption();
   const first = interruption.stop("repeat", "event-1", "player_stop");
@@ -95,14 +104,8 @@ test("stop synchronously closes old admission before returning any work descript
 });
 
 test("rejects invalid options and stop fields without changing admission", () => {
-  assert.throws(
-    () => createCompanionInterruption({ maxRememberedStops: 0 }),
-    /invalid_interruption_dedupe_bound/,
-  );
-  assert.throws(
-    () => createCompanionInterruption({ maxRememberedStops: 1.5 }),
-    /invalid_interruption_dedupe_bound/,
-  );
+  assert.throws(() => createCompanionInterruption({ maxRememberedStops: 0 }), /invalid_interruption_dedupe_bound/);
+  assert.throws(() => createCompanionInterruption({ maxRememberedStops: 1.5 }), /invalid_interruption_dedupe_bound/);
 
   const interruption = createCompanionInterruption();
   const initial = interruption.capture();

@@ -48,6 +48,207 @@ internal static class BridgeProtocol
 
     internal static bool IsReasonCode(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
         (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or ':' or '-');
+
+    internal static bool TryDeserializeInbound<TPayload>(
+        string json,
+        string expectedType,
+        out BridgeEnvelope<TPayload>? envelope,
+        out string reasonCode,
+        params string[] payloadProperties)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, expectedType, out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound payload parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!HasExactProperties(payload, payloadProperties))
+            {
+                reasonCode = "invalid_envelope";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<TPayload>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_envelope";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
+    internal static bool TryDeserializeExecutionRequest(
+        string json,
+        out BridgeEnvelope<BridgeExecutionRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "execution_request", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound execution parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!HasExactProperties(payload, "requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs")
+                || !payload.TryGetProperty("action", out JsonElement action)
+                || action.ValueKind != JsonValueKind.String
+                || !payload.TryGetProperty("args", out JsonElement args)
+                || ExecutionArgumentProperties(action.GetString()) is not { } argumentProperties
+                || !HasExactProperties(args, argumentProperties))
+            {
+                reasonCode = "invalid_envelope";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeExecutionRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_envelope";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
+    internal static bool TryDeserializeExecutionReceiptQuery(
+        string json,
+        out BridgeEnvelope<BridgeExecutionReceiptQuery>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "execution_receipt_query", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound execution query parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!HasExactProperties(payload, "requestId", "idempotencyKey")
+                || !payload.TryGetProperty("requestId", out JsonElement requestId)
+                || requestId.ValueKind != JsonValueKind.String
+                || !IsOpaqueId(requestId.GetString())
+                || !payload.TryGetProperty("idempotencyKey", out JsonElement idempotencyKey)
+                || idempotencyKey.ValueKind != JsonValueKind.String
+                || !IsOpaqueId(idempotencyKey.GetString()))
+            {
+                reasonCode = "invalid_execution_receipt_query";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeExecutionReceiptQuery>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_envelope";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
+    private static bool TryReadInboundPayload(
+        string json,
+        string expectedType,
+        out JsonDocument? document,
+        out JsonElement payload,
+        out string reasonCode)
+    {
+        document = null;
+        payload = default;
+        try
+        {
+            document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !HasExactProperties(root, "protocolVersion", "messageId", "correlationId", "timestampMs", "scope", "type", "payload")
+                || root.GetProperty("protocolVersion").ValueKind != JsonValueKind.Number
+                || !root.GetProperty("protocolVersion").TryGetInt32(out int version)
+                || version != Version
+                || root.GetProperty("messageId").ValueKind != JsonValueKind.String
+                || !IsOpaqueId(root.GetProperty("messageId").GetString())
+                || root.GetProperty("correlationId").ValueKind != JsonValueKind.String
+                || !IsOpaqueId(root.GetProperty("correlationId").GetString())
+                || root.GetProperty("timestampMs").ValueKind != JsonValueKind.Number
+                || !root.GetProperty("timestampMs").TryGetInt64(out _)
+                || root.GetProperty("type").ValueKind != JsonValueKind.String
+                || root.GetProperty("type").GetString() != expectedType
+                || !HasExactProperties(root.GetProperty("scope"), "integrationId", "saveId", "worldId", "playerId", "companionId"))
+            {
+                document.Dispose();
+                document = null;
+                reasonCode = "invalid_envelope";
+                return false;
+            }
+            payload = root.GetProperty("payload");
+            reasonCode = "accepted";
+            return true;
+        }
+        catch (JsonException)
+        {
+            document?.Dispose();
+            document = null;
+            reasonCode = "invalid_json";
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            document?.Dispose();
+            document = null;
+            reasonCode = "invalid_envelope";
+            return false;
+        }
+    }
+
+    private static bool HasExactProperties(JsonElement value, params string[] names)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+            return false;
+        HashSet<string> expected = new(names, StringComparer.Ordinal);
+        HashSet<string> actual = new(StringComparer.Ordinal);
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            if (!expected.Contains(property.Name) || !actual.Add(property.Name))
+                return false;
+        }
+        return actual.SetEquals(expected);
+    }
+
+    private static string[]? ExecutionArgumentProperties(string? action) => action switch
+    {
+        "move_to_tile" or "enter_exit" or "travel" or "till_soil" => new[] { "x", "y" },
+        "equip_tool" => new[] { "slot" },
+        "pickup_forage" or "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
+        "water_crop" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" => new[] { "x", "y", "expectedTargetId" },
+        "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
+        "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
+        "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" => new[] { "x", "y", "slot", "expectedTargetId" },
+        "use_item" => new[] { "slot", "expectedQualifiedItemId" },
+        _ => null,
+    };
 }
 
 internal sealed record BridgeScope(string IntegrationId, string SaveId, string WorldId, string PlayerId, string CompanionId)
@@ -134,9 +335,6 @@ internal sealed record BridgeClearHoeDirtTarget(string TargetId, string Location
 
 internal sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady);
 
-/// <summary>Read-only nearby ordinary tree source eligible for a future native shake contract.</summary>
-internal sealed record BridgeTreeShakeSourceTarget(string TargetId, string Location, int X, int Y, string TreeType, int GrowthStage, float Health, bool Moss, bool Tapped);
-
 /// <summary>Ordinary mature tree at the bounded native terminal-fell starting state for chop_tree_source.</summary>
 internal sealed record BridgeTreeChopSourceTarget(string TargetId, string Location, int X, int Y, string TreeType, int GrowthStage, float Health, bool Stump, bool Moss, bool Tapped);
 
@@ -194,7 +392,6 @@ internal sealed record BridgeSnapshot(
     IReadOnlyList<BridgeArtifactSpotResultTarget>? ArtifactSpotResultTargets,
     int? ArtifactSpotFarmSourceCount,
     IReadOnlyList<BridgeMachineTarget>? MachineTargets,
-    IReadOnlyList<BridgeTreeShakeSourceTarget>? TreeShakeSourceTargets,
     IReadOnlyList<BridgeTreeChopSourceTarget>? TreeChopSourceTargets,
     IReadOnlyList<BridgeTreeChopResultTarget>? TreeChopResultTargets,
     IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
@@ -202,7 +399,8 @@ internal sealed record BridgeSnapshot(
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
     IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,
     IReadOnlyList<BridgeInventoryItemFact>? InventoryItemFacts,
-    IReadOnlyList<BridgeFoodTarget>? FoodTargets);
+    IReadOnlyList<BridgeFoodTarget>? FoodTargets,
+    string PresentationLocale);
 
 internal sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -227,9 +425,26 @@ internal sealed record BridgeSemanticEvent(
     long Revision,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeActiveExecution? ActiveExecution,
     string ReasonCode,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeBodyTrace? BodyTrace = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeBodyTrace? BodyTrace = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgePlayerControlFact? PlayerControl = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeStopObservation? StopObservation = null);
+
+/// <summary>Authenticated player command fact; Host maps it to existing control semantics.</summary>
+internal sealed record BridgePlayerControlFact(
+    string Kind,
+    string ControlId,
+    string SourceEventId,
+    string? Text,
+    string Locale,
+    string IssuerPlayerId);
 
 /// <summary>Bounded P5 body trace published through the existing semantic-event path.</summary>
+internal sealed record BridgeStopObservation(
+    string Kind,
+    string StopId,
+    string SourceEventId,
+    long Epoch);
+
 internal sealed record BridgeBodyTrace(
     string Category,
     string ExecutionId,
@@ -248,7 +463,6 @@ internal sealed class BridgeExecutionArgs
     public string? ExpectedTargetId { get; init; }
 
     // This is scoped to execution arguments. Existing actions retain their
-    // established permissive decoding; tree_first_hit rejects this collection.
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
@@ -260,3 +474,6 @@ internal sealed record BridgeExecutionRequest(
     BridgeExecutionArgs Args,
     long ExpectedRevision,
     long DeadlineMs);
+
+/// <summary>Exact read-only receipt recovery identity; proves only the original dispatch tuple.</summary>
+internal sealed record BridgeExecutionReceiptQuery(string RequestId, string IdempotencyKey);
