@@ -48,3 +48,38 @@ test("event stream drops events from a foreign selection generation", () => {
   assert.equal(result.kind, "resync");
   assert.equal(result.reason, "epoch_changed");
 });
+
+test("event stream delivers live publications and removes listeners on close", () => {
+  const stream = createChatEventStream();
+  const received: number[] = [];
+  const connection = stream.listen(
+    { epoch: stream.epoch, after: 0, generation: 1 },
+    (event) => received.push(event.sequence),
+  );
+  assert.equal(connection.result.kind, "replay");
+  assert.deepEqual(connection.result.events, []);
+  stream.publish(event());
+  stream.publish({ ...event(), payload: { revision: 2, present: false } });
+  assert.deepEqual(received, [1, 2]);
+  connection.close();
+  connection.close();
+  stream.publish({ ...event(), payload: { revision: 3, present: true } });
+  assert.deepEqual(received, [1, 2]);
+});
+
+test("event stream never binds a listener for a resync subscription", () => {
+  const stream = createChatEventStream();
+  let received = 0;
+  const connection = stream.listen(
+    { epoch: stream.epoch, after: 1, generation: 1 },
+    () => {
+      received += 1;
+    },
+  );
+  assert.equal(connection.result.kind, "resync");
+  assert.equal(connection.result.reason, "ambiguous_cursor");
+  connection.close();
+  connection.close();
+  stream.publish(event());
+  assert.equal(received, 0);
+});

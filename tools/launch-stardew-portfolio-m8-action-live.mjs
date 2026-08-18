@@ -3,6 +3,7 @@
  * Starts exactly one target-version SMAPI process for the already prepared M8
  * Portfolio transaction. SMAPI owns the target game child; this launcher must
  * never start a second Stardew executable. It attaches the M8 action runner
+ * (elevator, ladder, or the one-generation enter_mine → use_mine_ladder route)
  * after the Mod has had time to publish its native pipe binding, and always
  * tears the owned profile transaction back down. It does not select a save,
  * use UI/input, write save data, call raw save APIs, or perform any game
@@ -21,9 +22,20 @@ const execFileAsync = promisify(execFile);
 const PHASE = "m8_target_version_live_action";
 const ELEVATOR_ACTION = "select_mine_elevator_floor";
 const LADDER_ACTION = "use_mine_ladder";
+const MINE_ROUTE_ACTION = "enter_mine";
 const ACTION_RUNNERS = Object.freeze({
   [ELEVATOR_ACTION]: "tools/run-stardew-portfolio-m8-action.mjs",
   [LADDER_ACTION]: "tools/run-stardew-portfolio-m8-ladder-action.mjs",
+  [MINE_ROUTE_ACTION]: "tools/run-stardew-portfolio-m8-mine-route-action.mjs",
+});
+// The prepared one-shot profile must carry exactly this EnabledActions list:
+// the route sends both the independent entry and ladder typed requests over
+// one bridge generation, and the Mod rechecks its own allowlist for each
+// action at every game-thread admission.
+const ACTION_ENABLED_SETS = Object.freeze({
+  [ELEVATOR_ACTION]: Object.freeze([ELEVATOR_ACTION]),
+  [LADDER_ACTION]: Object.freeze([LADDER_ACTION]),
+  [MINE_ROUTE_ACTION]: Object.freeze([MINE_ROUTE_ACTION, LADDER_ACTION]),
 });
 const REQUIRED = Object.freeze([
   "GAMEBUDDY_STARDEW_GAME_PATH",
@@ -197,7 +209,7 @@ async function verifyPreparedM8Profile(input, readConfig) {
     throw new Error("m8_live_prepared_config_missing");
   }
   const portfolio = config?.Portfolio;
-  const expected = [input.action];
+  const expected = ACTION_ENABLED_SETS[input.action];
   const exact = [
     [portfolio?.PipeName, input.pipeName],
     [portfolio?.BridgeToken, input.bridgeToken],
