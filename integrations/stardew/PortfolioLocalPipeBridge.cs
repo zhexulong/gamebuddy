@@ -14,6 +14,7 @@ internal sealed class PortfolioLocalPipeBridge : IDisposable
     private const int MaximumInboundRequestsPerSecond = 16;
     private readonly string pipeName;
     private readonly CancellationTokenSource cancellation = new();
+    private readonly Func<long, CancellationToken, Task>? preWriteObserver;
     private readonly ConcurrentQueue<PortfolioPipeInbound> inbound = new();
     private readonly ConcurrentQueue<PortfolioPipeOutbound> outbound = new();
     private readonly SemaphoreSlim outboundSignal = new(0);
@@ -26,18 +27,36 @@ internal sealed class PortfolioLocalPipeBridge : IDisposable
     private long connectedGeneration;
     private long disconnectedGeneration;
 
-    internal PortfolioLocalPipeBridge(string pipeName)
+    /// <summary>
+    /// Test-only seam: an optional internal pre-write observer invoked only
+    /// after the writer has dequeued and generation-validated a message and
+    /// strictly before WriteFrameAsync. Production constructs the bridge with
+    /// no observer (default null, no config/protocol/env-var/reflection path);
+    /// the observer receives only the generation and the connection
+    /// cancellation token. Cancellation or an exception raised by the observer
+    /// resolves the dequeued message completion false exactly once and lets the
+    /// current connection cancellation terminate the worker normally.
+    /// </summary>
+    internal PortfolioLocalPipeBridge(string pipeName, Func<long, CancellationToken, Task>? preWriteObserver = null)
     {
         this.pipeName = pipeName;
+        this.preWriteObserver = preWriteObserver;
         this.worker = Task.Run(this.RunAsync);
     }
 
     internal long CurrentGeneration => Interlocked.Read(ref this.connectedGeneration);
 
-    internal bool TryConsumeDisconnect(out long generation)
+    /// <summary>Consumes the single background-worker disconnect record on the game thread.</summary>
+    internal bool TryConsumeDisconnect(out PortfolioPipeDisconnect? disconnect)
     {
-        generation = Interlocked.Exchange(ref this.disconnectedGeneration, 0);
-        return generation > 0;
+        long generation = Interlocked.Exchange(ref this.disconnectedGeneration, 0);
+        if (generation <= 0)
+        {
+            disconnect = null;
+            return false;
+        }
+        disconnect = new PortfolioPipeDisconnect(generation, "pipe_disconnected");
+        return true;
     }
 
     internal bool TryDequeueInbound(out PortfolioPipeInbound message)
@@ -196,6 +215,8 @@ internal sealed class PortfolioLocalPipeBridge : IDisposable
             }
             try
             {
+                if (this.preWriteObserver is not null)
+                    await this.preWriteObserver(generation, cancellationToken).ConfigureAwait(false);
                 await WriteFrameAsync(stream, message.Json, cancellationToken).ConfigureAwait(false);
                 message.Completion?.Resolve(generation == Interlocked.Read(ref this.connectedGeneration)
                     && !cancellationToken.IsCancellationRequested);
@@ -282,6 +303,7 @@ internal sealed class PortfolioLocalPipeBridge : IDisposable
     }
 }
 
+internal sealed record PortfolioPipeDisconnect(long Generation, string ReasonCode);
 internal sealed record PortfolioPipeInbound(long Generation, string Json);
 internal sealed record PortfolioPipeOutbound(long Generation, string Json, bool CloseAfterWrite, PortfolioPipeOutboundCompletion? Completion);
 

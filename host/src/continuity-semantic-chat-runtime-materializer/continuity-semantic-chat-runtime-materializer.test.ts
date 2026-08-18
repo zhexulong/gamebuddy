@@ -83,12 +83,17 @@ async function inActiveBinding<T>(
   callback: (execution: ChatRuntimeBindingExecution, reservation: ReservedChatRuntimeMaterialization) => Promise<T> | T,
 ): Promise<T> {
   return binding.executeWithBinding((token) =>
-    withConsumedChatRuntimeBinding(token, (execution) => callback(execution, reserveChatRuntimeMaterialization(execution))),
+    withConsumedChatRuntimeBinding(token, (execution) =>
+      callback(execution, reserveChatRuntimeMaterialization(execution)),
+    ),
   );
 }
 
 test("Chat materializer source graph has the sole production Chat runtime owner and no caller factory seam", async () => {
-  const folder = resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-chat-runtime-materializer");
+  const folder = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "../../src/continuity-semantic-chat-runtime-materializer",
+  );
   const publicSource = await (await import("node:fs/promises")).readFile(
     join(folder, "continuity-semantic-chat-runtime-materializer.ts"),
     "utf8",
@@ -101,6 +106,59 @@ test("Chat materializer source graph has the sole production Chat runtime owner 
   assert.equal(publicSource.includes("factory:") || publicSource.includes("factory("), false);
   assert.equal(internalSource.includes("createCompanionRuntime"), false);
   assert.equal(publicSource.includes("tavernStableContextSnapshot"), false);
+  assert.equal(publicSource.includes("gameOperationalGateNonceSha256"), false);
+  assert.equal(publicSource.includes("clearGameOperationalGateMarker"), false);
+  assert.match(publicSource, /tavernNarrativeGateNonceSha256/);
+  assert.equal(internalSource.includes("clearGameOperationalGateMarker"), false);
+});
+
+test("materialized runtime retains only its construction-owned presentation attach capability", async () => {
+  const listeners = new Set<(expression: { text: string }) => void>();
+  const attachPresentation = (listener: (expression: { text: string }) => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const materializer = createTestChatRuntimeMaterializer(async () =>
+    Object.freeze({
+      session: Object.freeze({ dispose: () => undefined }),
+      attachPresentation,
+    }),
+  );
+  const fixture = await binding();
+  try {
+    const result = await inActiveBinding(fixture.binding, (execution, reservation) =>
+      materializer.materialize(reservation, permit(execution)),
+    );
+    assert.equal(typeof result.attachPresentation, "function");
+    let delivered = "";
+    const detach = result.attachPresentation!((expression) => {
+      delivered = expression.text;
+    });
+    for (const listener of listeners) listener({ text: "delivered" });
+    assert.equal(delivered, "delivered");
+    detach();
+    await result.close();
+  } finally {
+    await fixture.binding.close();
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("materialized runtime omits missing presentation attachment fail-closed", async () => {
+  const materializer = createTestChatRuntimeMaterializer(async () =>
+    Object.freeze({ session: Object.freeze({ dispose: () => undefined }) }),
+  );
+  const fixture = await binding();
+  try {
+    const result = await inActiveBinding(fixture.binding, (execution, reservation) =>
+      materializer.materialize(reservation, permit(execution)),
+    );
+    assert.equal(result.attachPresentation, undefined);
+    await result.close();
+  } finally {
+    await fixture.binding.close();
+    await rm(fixture.root, { recursive: true, force: true });
+  }
 });
 
 test("materializes only an exact Chat permit and mints permit-exact Host lifecycle evidence", async () => {
@@ -108,7 +166,13 @@ test("materializes only an exact Chat permit and mints permit-exact Host lifecyc
   let disposed = 0;
   const materializer = createTestChatRuntimeMaterializer(async () => {
     factoryCalls += 1;
-    return Object.freeze({ session: Object.freeze({ dispose: () => { disposed += 1; } }) });
+    return Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          disposed += 1;
+        },
+      }),
+    });
   });
   const fixture = await binding();
   try {
@@ -132,9 +196,14 @@ test("materializes only an exact Chat permit and mints permit-exact Host lifecyc
 test("rejects stable context publication before publisher invocation when clear is unavailable", () => {
   let published = false;
   assert.throws(
-    () => assertChatStableContextLifecycle(Object.freeze({
-      publishTavernStableContext: async () => { published = true; },
-    })),
+    () =>
+      assertChatStableContextLifecycle(
+        Object.freeze({
+          publishTavernStableContext: async () => {
+            published = true;
+          },
+        }),
+      ),
     /chat_runtime_stable_context_lifecycle_unavailable/,
   );
   assert.equal(published, false);
@@ -148,17 +217,27 @@ test("complete test materialization clears captured context after runtime mutati
     session: Readonly<{ dispose(): void }>;
   };
   runtime = {
-    clearTavernStableContext: async () => { events.push("clear"); },
+    clearTavernStableContext: async () => {
+      events.push("clear");
+    },
     publishTavernStableContext: async () => {
-      runtime.clearTavernStableContext = async () => { events.push("replacement-clear"); };
+      runtime.clearTavernStableContext = async () => {
+        events.push("replacement-clear");
+      };
       throw new Error("publication_failed");
     },
-    session: Object.freeze({ dispose: () => { events.push("dispose"); } }),
+    session: Object.freeze({
+      dispose: () => {
+        events.push("dispose");
+      },
+    }),
   };
-  const materializer = createTestChatStableContextMaterializer(async () => Object.freeze({
-    runtime,
-    materializeStableContext: async () => Object.freeze({ snapshot: true }),
-  }));
+  const materializer = createTestChatStableContextMaterializer(async () =>
+    Object.freeze({
+      runtime,
+      materializeStableContext: async () => Object.freeze({ snapshot: true }),
+    }),
+  );
   const fixture = await binding();
   try {
     let receipt = false;
@@ -201,7 +280,12 @@ test("captured stable context clear survives runtime mutation after lifecycle as
     },
   };
   let disposed = 0;
-  const session = Object.freeze({ dispose: () => { disposed += 1; events.push("dispose"); } });
+  const session = Object.freeze({
+    dispose: () => {
+      disposed += 1;
+      events.push("dispose");
+    },
+  });
 
   await assert.rejects(
     materializeAndPublishChatStableContext(runtime, session, async () => Object.freeze({ snapshot: true })),
@@ -218,8 +302,14 @@ test("captured stable context clear survives runtime mutation after lifecycle as
 test("published stable context cleanup clears before disposing Pi", async () => {
   const events: string[] = [];
   const runtime = Object.freeze({
-    clearPublishedStableContext: async () => { events.push("clear"); },
-    session: Object.freeze({ dispose: () => { events.push("dispose"); } }),
+    clearPublishedStableContext: async () => {
+      events.push("clear");
+    },
+    session: Object.freeze({
+      dispose: () => {
+        events.push("dispose");
+      },
+    }),
   });
   events.push("publish");
   await closeMaterializedChatRuntime(runtime);
@@ -229,17 +319,19 @@ test("published stable context cleanup clears before disposing Pi", async () => 
 test("materialized Chat close caches fulfillment but retries captured disposal after rejection", async () => {
   let disposeCalls = 0;
   let first = true;
-  const materializer = createTestChatRuntimeMaterializer(async () => Object.freeze({
-    session: Object.freeze({
-      dispose: () => {
-        disposeCalls += 1;
-        if (first) {
-          first = false;
-          throw new Error("dispose_transient");
-        }
-      },
+  const materializer = createTestChatRuntimeMaterializer(async () =>
+    Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          disposeCalls += 1;
+          if (first) {
+            first = false;
+            throw new Error("dispose_transient");
+          }
+        },
+      }),
     }),
-  }));
+  );
   const fixture = await binding();
   try {
     const result = await inActiveBinding(fixture.binding, (execution, reservation) =>
@@ -247,7 +339,7 @@ test("materialized Chat close caches fulfillment but retries captured disposal a
     );
     await assert.rejects(result.close(), (error: unknown) => {
       assert.ok(error instanceof AggregateError);
-      assert.equal(error.errors[0], (error.errors[0] as Error));
+      assert.equal(error.errors[0], error.errors[0] as Error);
       assert.match(String(error.errors[0]), /dispose_transient/);
       return true;
     });
@@ -265,10 +357,20 @@ test("reverse disposal disposes and aggregates when stable context clear fails",
   const clearError = new Error("clear_failed");
   const disposeError = new Error("dispose_failed");
   await assert.rejects(
-    closeMaterializedChatRuntime(Object.freeze({
-      clearPublishedStableContext: async () => { events.push("clear"); throw clearError; },
-      session: Object.freeze({ dispose: () => { events.push("dispose"); throw disposeError; } }),
-    })),
+    closeMaterializedChatRuntime(
+      Object.freeze({
+        clearPublishedStableContext: async () => {
+          events.push("clear");
+          throw clearError;
+        },
+        session: Object.freeze({
+          dispose: () => {
+            events.push("dispose");
+            throw disposeError;
+          },
+        }),
+      }),
+    ),
     (error: unknown) => {
       assert.ok(error instanceof AggregateError);
       assert.deepEqual(error.errors, [clearError, disposeError]);
@@ -326,7 +428,13 @@ test("deadline expiry after factory reverse-disposes the runtime and emits no re
   let disposed = 0;
   const materializer = createTestChatRuntimeMaterializer(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
-    return Object.freeze({ session: Object.freeze({ dispose: () => { disposed += 1; } }) });
+    return Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          disposed += 1;
+        },
+      }),
+    });
   });
   const fixture = await binding();
   try {
@@ -350,8 +458,14 @@ test("post-factory permit failure preserves primary and reverse cleanup failures
   const materializer = createTestChatRuntimeMaterializer(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     return Object.freeze({
-      clearPublishedStableContext: async () => { throw clearError; },
-      session: Object.freeze({ dispose: () => { throw disposeError; } }),
+      clearPublishedStableContext: async () => {
+        throw clearError;
+      },
+      session: Object.freeze({
+        dispose: () => {
+          throw disposeError;
+        },
+      }),
     });
   });
   const fixture = await binding();

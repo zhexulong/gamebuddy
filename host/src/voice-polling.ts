@@ -40,6 +40,9 @@ type ClearInterval = (handle: TimerHandle) => void;
 
 export type VoicePollingSupervisorOptions = Readonly<{
   intervalMs?: number;
+  minBackoffMs?: number;
+  maxBackoffMs?: number;
+  reconnectPolicy?: "exponential_backoff" | "fail_fast";
   now?: () => number;
   setInterval?: SetInterval;
   clearInterval?: ClearInterval;
@@ -55,6 +58,10 @@ const ALLOWED_ERROR_CODES = new Set<string>([
   "voice_session_required",
   "voice_gateway_protocol_error",
 ]);
+
+function isTerminalVoiceError(code: VoicePollingErrorCode): boolean {
+  return code === "voice_event_cursor_expired" || code === "voice_session_required" || code === "voice_gateway_closed";
+}
 
 function redactedErrorCode(error: unknown): VoicePollingErrorCode {
   // Only an exact, allowlisted string can cross into the diagnostic state. In
@@ -82,13 +89,16 @@ function initialState(): VoicePollingState {
 }
 
 /**
- * Owns the Host voice-event polling timer. Poll requests are serialized, and
- * the first transport/protocol/cursor failure terminally stops this poller.
- * There is intentionally no reconnect or cursor reset policy here.
+ * Owns the Host voice-event polling timer. Poll requests are serialized.
+ * Terminal cursor or session failures stop polling; transient network/transport
+ * disconnects retry with replay-safe exponential backoff.
  */
 export class VoicePollingSupervisor {
   readonly #port: VoicePollingPort;
   readonly #intervalMs: number;
+  readonly #minBackoffMs: number;
+  readonly #maxBackoffMs: number;
+  readonly #reconnectPolicy: "exponential_backoff" | "fail_fast";
   readonly #now: () => number;
   readonly #setInterval: SetInterval;
   readonly #clearInterval: ClearInterval;
@@ -96,10 +106,14 @@ export class VoicePollingSupervisor {
   #pollInFlight: Promise<void> | undefined;
   #closePromise: Promise<void> | undefined;
   #state: VoicePollingState = initialState();
+  #consecutiveFailures = 0;
 
   public constructor(port: VoicePollingPort, options: VoicePollingSupervisorOptions = {}) {
     this.#port = port;
     this.#intervalMs = options.intervalMs ?? 200;
+    this.#minBackoffMs = options.minBackoffMs ?? 1000;
+    this.#maxBackoffMs = options.maxBackoffMs ?? 30000;
+    this.#reconnectPolicy = options.reconnectPolicy ?? "exponential_backoff";
     this.#now = options.now ?? Date.now;
     this.#setInterval = options.setInterval ?? ((callback, delayMs) => setInterval(callback, delayMs));
     this.#clearInterval = options.clearInterval ?? ((timer) => clearInterval(timer));
@@ -117,9 +131,15 @@ export class VoicePollingSupervisor {
   public start(): void {
     if (this.#timer !== undefined || this.#state.status !== "stopped") return;
     this.#state = { ...this.#state, status: "running" };
+    this.#scheduleNext(this.#intervalMs);
+  }
+
+  #scheduleNext(delayMs: number): void {
+    this.#disposeTimer();
+    if (this.#state.status !== "running") return;
     this.#timer = this.#setInterval(() => {
       void this.pollNow();
-    }, this.#intervalMs);
+    }, delayMs);
   }
 
   /** Run one poll barrier immediately; useful for deterministic callers/tests. */
@@ -135,27 +155,42 @@ export class VoicePollingSupervisor {
     const poll = request
       .then(
         () => {
+          this.#consecutiveFailures = 0;
           this.#state = {
             ...this.#state,
             successCount: this.#state.successCount + 1,
             pollCount: this.#state.pollCount + 1,
             lastSuccessAtMs: this.#now(),
           };
+          if (this.#state.status === "running") {
+            this.#scheduleNext(this.#intervalMs);
+          }
         },
         (error: unknown) => {
           const failureCount = this.#state.failureCount + 1;
+          this.#consecutiveFailures += 1;
+          const code = redactedErrorCode(error);
+          const isTerminal = isTerminalVoiceError(code) || this.#reconnectPolicy === "fail_fast";
           this.#state = {
             ...this.#state,
-            status: this.#state.status === "closed" ? "closed" : "stopped",
+            status: this.#state.status === "closed" ? "closed" : isTerminal ? "stopped" : "running",
             pollCount: this.#state.pollCount + 1,
             failureCount,
             lastError: {
-              code: redactedErrorCode(error),
+              code,
               timestampMs: this.#now(),
               count: failureCount,
             },
           };
-          this.#disposeTimer();
+          if (isTerminal || this.#state.status === "closed") {
+            this.#disposeTimer();
+          } else {
+            const backoff = Math.min(
+              this.#maxBackoffMs,
+              Math.max(this.#minBackoffMs, this.#intervalMs * Math.pow(2, Math.min(10, this.#consecutiveFailures - 1))),
+            );
+            this.#scheduleNext(backoff);
+          }
         },
       )
       .finally(() => {
@@ -191,6 +226,8 @@ export function createVoicePollingSupervisor(
 type ShutdownOperation = () => void | Promise<void>;
 
 type HostShutdownLifecycleOptions = Readonly<{
+  /** Product control server is always sealed before any voice or facade teardown. */
+  closeControlIngress?: ShutdownOperation;
   stopPolling?: ShutdownOperation;
   detachVoice?: ShutdownOperation;
   closeVoice?: ShutdownOperation;
@@ -209,7 +246,9 @@ export type HostShutdownLifecycle = Readonly<{
 }>;
 
 export function createHostShutdownLifecycle(options: HostShutdownLifecycleOptions): HostShutdownLifecycle {
+  const hasControlIngress = options.closeControlIngress !== undefined;
   const operations: ShutdownOperation[] = [
+    ...(hasControlIngress ? [options.closeControlIngress!] : []),
     options.stopPolling ?? (() => undefined),
     options.detachVoice ?? (() => undefined),
     options.closeVoice ?? (() => undefined),
@@ -236,10 +275,13 @@ export function createHostShutdownLifecycle(options: HostShutdownLifecycleOption
     if (preparation !== undefined) return preparation;
     preparation = (async () => {
       const errors: unknown[] = [];
+      const offset = hasControlIngress ? 1 : 0;
+      // Seal external control ingress before any voice callback can be detached.
+      if (hasControlIngress) await attempt(0, errors);
       // Polling must be stopped and an in-flight poll drained before the voice
       // source is detached, and both must finish before returnToChat starts.
-      await attempt(0, errors);
-      await attempt(1, errors);
+      await attempt(offset, errors);
+      await attempt(offset + 1, errors);
       return errors;
     })();
     return preparation;
@@ -249,8 +291,9 @@ export function createHostShutdownLifecycle(options: HostShutdownLifecycleOption
     cleanup = (async () => {
       const errors: unknown[] = [];
       await prepareForReturn();
-      await attempt(2, errors);
-      await attempt(3, errors);
+      const offset = hasControlIngress ? 1 : 0;
+      await attempt(offset + 2, errors);
+      await attempt(offset + 3, errors);
       return errors;
     })();
     return cleanup;

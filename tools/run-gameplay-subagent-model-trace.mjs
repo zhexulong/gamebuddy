@@ -3,10 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  loadSelectedHostProductionModule,
-  selectHostProductionArtifact,
-} from "./lib/host-production-module.mjs";
+import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
 
 const selectedProductionArtifact = await selectHostProductionArtifact();
 const [

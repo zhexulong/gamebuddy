@@ -66,6 +66,26 @@ test("DialogueController serializes canonical browser envelopes and deduplicates
   assert.deepEqual(fake.prompts[0]!.options, { expandPromptTemplates: false, source: "rpc" });
 });
 
+test("DialogueController waits at the actual prompt boundary for an evidence mutation", async () => {
+  const fake = fakeSession();
+  let releaseAdmission!: () => void;
+  const controller = new DialogueController(
+    fake.session,
+    Date.now,
+    () => true,
+    async () =>
+      new Promise<() => void>((resolve) => {
+        releaseAdmission = () => resolve(() => undefined);
+      }),
+  );
+  await controller.submit({ clientMessageId: "wait_01", text: "hello", locale: "en-US" });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(fake.prompts.length, 0);
+  releaseAdmission();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(fake.prompts.length, 1);
+});
+
 test("DialogueController does not queue a player turn when its durable boundary fails", async () => {
   const fake = fakeSession();
   const controller = new DialogueController(fake.session);

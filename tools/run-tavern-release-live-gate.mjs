@@ -1,28 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import {
-  REQUIRED_MUST_FLOWS,
-  checkTavernReleasePrerequisites,
-  repositoryRoot,
-} from "./check-tavern-release-prerequisites.mjs";
+import { checkTavernReleasePrerequisites } from "./check-tavern-release-prerequisites.mjs";
 
 export const TAVERN_LIVE_RECORD_SCHEMA_VERSION = 1;
 export const TAVERN_LIVE_GATE = "tavern_release_live_gate/v1";
 
-const FLOW_STEPS = Object.freeze({
-  "companion-library": "TVL-00",
-  "manage-chats": "TVL-00",
-  "new-companion": "TVL-02",
-  "new-chat": "TVL-03",
-  "persona-scenario-greeting-selection": "TVL-03",
-  "effect-aware-causal-guard": "TVL-06",
-  "worldbook-catalog-binding": "TVL-03",
-  "character-worldbook-chat-import-export": "TVL-01",
-  "authenticated-reconnect": "TVL-05",
-  "memory-management": "TVL-09",
-});
-const BASELINE_STEPS = Object.freeze(["TVL-04", "TVL-07"]);
 const OUTCOMES = new Set(["pass", "fail", "blocked", "inconclusive", "not_applicable"]);
 const REASONS = new Set([
   "observed",
@@ -47,27 +30,23 @@ function opaque(value) {
   return typeof value === "string" && OPAQUE_ID.test(value);
 }
 
-function expectedSteps(mustFlows) {
-  return [...new Set([...mustFlows.map((flow) => FLOW_STEPS[flow]), ...BASELINE_STEPS])].sort();
-}
-
 /**
  * Validates a deliberately minimal, non-content Tavern operator observation record.
- * This checker cannot infer UI behavior: a pass requires direct operator observations
- * for every required step and a separately passed automated prerequisite gate.
+ * This checker cannot infer UI behavior. Until a mounted ComposedTavernProfile-derived,
+ * independently verified operation-to-evidence mapping exists, it always fails closed.
  */
-export async function runTavernReleaseLiveGate({
-  record,
-  prerequisites = checkTavernReleasePrerequisites,
-  mustFlows = REQUIRED_MUST_FLOWS,
-} = {}) {
+export async function runTavernReleaseLiveGate({ record, prerequisites = checkTavernReleasePrerequisites } = {}) {
   const checks = [];
+  const mappingBlocker = {
+    id: "mounted_profile_operation_evidence",
+    status: "blocked",
+    detail: "mounted_composed_tavern_profile_operation_to_evidence_mapping_not_implemented",
+  };
   if (!record || typeof record !== "object" || Array.isArray(record)) {
     return {
       gate: TAVERN_LIVE_GATE,
       verdict: "inconclusive",
-      checks: [{ id: "operator_record", status: "blocked", detail: "operator_evidence_missing" }],
-      requiredSteps: expectedSteps(mustFlows),
+      checks: [{ id: "operator_record", status: "blocked", detail: "operator_evidence_missing" }, mappingBlocker],
     };
   }
 
@@ -148,7 +127,6 @@ export async function runTavernReleaseLiveGate({
     }
   }
 
-  const requiredSteps = expectedSteps(mustFlows);
   const observations = record.observations;
   check(
     Array.isArray(observations) && observations.length > 0,
@@ -168,12 +146,7 @@ export async function runTavernReleaseLiveGate({
         );
       check(validShape, "observation_shape", "observation_contains_unsupported_or_content_field", checks);
       if (!validShape) continue;
-      check(
-        typeof observation.step_id === "string" && requiredSteps.includes(observation.step_id),
-        "observation_step",
-        "observation_step_unknown_or_not_required",
-        checks,
-      );
+      check(opaque(observation.step_id), "observation_step", "observation_step_must_be_opaque_id", checks);
       check(OUTCOMES.has(observation.outcome), "observation_outcome", "observation_outcome_invalid", checks);
       check(
         REASONS.has(observation.reason_category),
@@ -205,18 +178,15 @@ export async function runTavernReleaseLiveGate({
         );
       if (observation.outcome === "not_applicable")
         check(
-          observation.step_id === "TVL-06" && observation.reason_category === "operation_not_declared",
+          observation.reason_category === "operation_not_declared",
           "not_applicable_observation",
-          "not_applicable_only_allowed_for_tvl_06_without_declared_operation",
+          "not_applicable_requires_undeclared_operation",
           checks,
         );
       if (seen.has(observation.step_id)) check(false, "observation_duplicate", "duplicate_step_observation", checks);
       seen.set(observation.step_id, observation);
     }
   }
-  for (const step of requiredSteps)
-    check(seen.has(step), "must_flow_coverage", `required_step_missing:${step}`, checks);
-
   let prerequisiteReport;
   try {
     prerequisiteReport = await prerequisites();
@@ -230,37 +200,11 @@ export async function runTavernReleaseLiveGate({
     check(false, "prerequisite_verdict", "automated_prerequisite_unavailable", checks);
   }
 
-  const nonPassing = [...seen.values()].filter(
-    (entry) => entry.outcome !== "pass" && entry.outcome !== "not_applicable",
-  );
-  if (checks.length > 0)
-    return {
-      gate: TAVERN_LIVE_GATE,
-      verdict: "inconclusive",
-      checks,
-      requiredSteps,
-      prerequisite: prerequisiteReport?.verdict ?? "unavailable",
-    };
-  if (nonPassing.length > 0)
-    return {
-      gate: TAVERN_LIVE_GATE,
-      verdict: nonPassing.some((entry) => entry.outcome === "fail") ? "fail" : "inconclusive",
-      checks: [{ id: "operator_outcome", status: "blocked", detail: "required_step_not_passed" }],
-      requiredSteps,
-      prerequisite: "passed",
-    };
   return {
     gate: TAVERN_LIVE_GATE,
-    verdict: "passed",
-    checks: [
-      {
-        id: "operator_observations",
-        status: "passed",
-        detail: "direct_operator_observations_cover_every_required_step",
-      },
-    ],
-    requiredSteps,
-    prerequisite: "passed",
+    verdict: "inconclusive",
+    checks: [...checks, mappingBlocker],
+    prerequisite: prerequisiteReport?.verdict ?? "unavailable",
   };
 }
 

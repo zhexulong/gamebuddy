@@ -25,7 +25,7 @@ function assertInvalid(manifest, expected) {
 
 test("versioned seed manifest is strict and truthful", async () => {
   assert.equal(sourceManifest.schema, MANIFEST_SCHEMA);
-  assert.equal(sourceManifest.entries.length, 3);
+  assert.equal(sourceManifest.entries.length, 4);
   const result = await readAndValidateTestPortfolioManifest();
   assert.deepEqual(result, { valid: true, errors: [] });
   for (const entry of sourceManifest.entries) {
@@ -65,7 +65,7 @@ test("rejects duplicate ids, unknown dependencies, and cycles", () => {
 
 test("rejects duplicate trigger paths", () => {
   const manifest = clone();
-  manifest.entries[1].triggerPaths = [manifest.entries[0].triggerPaths[0]];
+  manifest.entries[2].triggerPaths = [manifest.entries[0].triggerPaths[0]];
   assertInvalid(manifest, "duplicate_trigger_path:");
 });
 
@@ -103,17 +103,17 @@ test("rejects unsafe commands and path traversal", () => {
 
 test("rejects invalid evidence combinations and manual diagnostics pretending to automate", () => {
   const staticLive = clone();
-  staticLive.entries[1].liveGate = "required";
+  staticLive.entries[2].liveGate = "required";
   assertInvalid(staticLive, "static_or_fixture_cannot_be_live");
   const fixtureLive = clone();
-  fixtureLive.entries[1].evidenceKind = "fixture";
-  fixtureLive.entries[1].liveGate = "required";
+  fixtureLive.entries[2].evidenceKind = "fixture";
+  fixtureLive.entries[2].liveGate = "required";
   assertInvalid(fixtureLive, "static_or_fixture_cannot_be_live");
   const liveNotGated = clone();
   liveNotGated.entries[0].evidenceKind = "live";
   assertInvalid(liveNotGated, "live_evidence_requires_live_gate");
   const manualRequired = clone();
-  manualRequired.entries[2].requiredOn = ["main"];
+  manualRequired.entries[3].requiredOn = ["main"];
   assertInvalid(manualRequired, "manual_diagnostic_requires_manual_trigger");
 });
 
@@ -133,9 +133,9 @@ test("rejects zero, fractional, and unbounded required automated timeouts and re
 
 test("rejects non-automated entries that claim automated or PR/main gating", () => {
   for (const [entryIndex, evidenceKind] of [
-    [1, "static"],
-    [1, "fixture"],
-    [2, "manual-diagnostic"],
+    [2, "static"],
+    [2, "fixture"],
+    [3, "manual-diagnostic"],
   ]) {
     for (const requiredOn of [["pull_request"], ["main"], ["pull_request", "manual"], ["main", "manual"]]) {
       const manifest = clone();
@@ -198,7 +198,7 @@ test("rejects trigger files escaping through a parent symlink or junction", asyn
 test("rejects command, timeout, and retry metadata on diagnostics/static evidence", () => {
   for (const field of ["command", "timeoutSeconds", "retryPolicy"]) {
     const manifest = clone();
-    manifest.entries[1][field] = field === "command" ? "node test.mjs" : field === "timeoutSeconds" ? 1 : {};
+    manifest.entries[2][field] = field === "command" ? "node test.mjs" : field === "timeoutSeconds" ? 1 : {};
     assertInvalid(
       manifest,
       `${field === "timeoutSeconds" ? "timeout_must_be_null" : `${field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_must_be_null`}_for_non_automated`,

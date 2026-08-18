@@ -28,8 +28,16 @@ jobs:
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
       - run: pnpm install --frozen-lockfile
+      # Source-only Farmhand projection checks; no licensed Stardew/SMAPI assemblies required.
+      - run: pnpm test:stardew-action-projection
+      - run: pnpm check:stardew-action-surface
+      # P2C additionally requires GAMEBUDDY_STARDEW_GAME_PATH and licensed
+      # target-version Stardew/SMAPI assemblies, so it is intentionally local-only.
       - run: pnpm typecheck
       - run: pnpm build
+      # Requires the freshly assembled Host production generation: it launches
+      # the shipped browser artifact against the one-listener P3 composition.
+      - run: pnpm test:dialogue-web
       - run: pnpm test
       - run: node tools/verify-phase0b-host.mjs
       - run: pnpm dependency-audit
@@ -47,6 +55,10 @@ jobs:
           node-version: 24.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The gateway must consume an independently compiled and tested protocol.
+      - run: pnpm --filter @gamebuddy/voice-protocol typecheck
+      - run: pnpm --filter @gamebuddy/voice-protocol build
+      - run: pnpm --filter @gamebuddy/voice-protocol test
       - run: pnpm --filter @gamebuddy/voice-gateway typecheck
       - run: pnpm --filter @gamebuddy/voice-gateway build
       - run: pnpm --filter @gamebuddy/voice-gateway test
@@ -55,9 +67,17 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.1.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.0
+          cache: pnpm
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      - run: pnpm install --frozen-lockfile
       - run: dotnet restore GameBuddy.sln --locked-mode
       # GitHub-hosted runners do not have the licensed, target-version Stardew
       # and SMAPI assemblies required by ModBuildConfig. Do not substitute fake
@@ -65,3 +85,6 @@ jobs:
       # gate via tools/build-stardew.ps1 before deployment or publication.
       - shell: pwsh
         run: ./tools/verify-stardew-scaffold.ps1
+      # Static leaves run only source/policy assertions and never mutate the game or invoke action scripts.
+      - run: pnpm test:stardew:static
+      - run: pnpm verify:stardew:static

@@ -13,13 +13,17 @@ export type TestChatStableContextRuntime = ChatRuntimeDisposal & ChatRuntimeStab
 
 /** Complete test-only path for publication/reverse-disposal behavior. */
 export function createTestChatStableContextMaterializer(
-  factory: (input: Readonly<{
-    execution: ChatRuntimeBindingExecution;
-    permit: ProductionChatRuntimePermit;
-  }>) => Promise<Readonly<{
-    runtime: TestChatStableContextRuntime;
-    materializeStableContext: () => Promise<unknown>;
-  }>>,
+  factory: (
+    input: Readonly<{
+      execution: ChatRuntimeBindingExecution;
+      permit: ProductionChatRuntimePermit;
+    }>,
+  ) => Promise<
+    Readonly<{
+      runtime: TestChatStableContextRuntime;
+      materializeStableContext: () => Promise<unknown>;
+    }>
+  >,
 ): ChatRuntimeMaterializer {
   if (typeof factory !== "function") throw new Error("invalid_chat_runtime_materializer_factory");
   return Object.freeze({
@@ -37,10 +41,12 @@ export function createTestChatStableContextMaterializer(
 }
 
 export function createTestChatRuntimeMaterializer(
-  factory: (input: Readonly<{
-    execution: ChatRuntimeBindingExecution;
-    permit: ProductionChatRuntimePermit;
-  }>) => Promise<ChatRuntimeDisposal>,
+  factory: (
+    input: Readonly<{
+      execution: ChatRuntimeBindingExecution;
+      permit: ProductionChatRuntimePermit;
+    }>,
+  ) => Promise<ChatRuntimeDisposal>,
 ): ChatRuntimeMaterializer {
   if (typeof factory !== "function") throw new Error("invalid_chat_runtime_materializer_factory");
   return Object.freeze({

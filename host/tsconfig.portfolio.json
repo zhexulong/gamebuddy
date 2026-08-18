@@ -8,8 +8,10 @@
   },
   "include": [
     "src/portfolio-protocol.ts",
+    "src/portfolio-transport.ts",
     "src/portfolio-stardew-bridge.ts",
     "src/portfolio-protocol.test.ts",
+    "src/portfolio-transport.test.ts",
     "src/portfolio-stardew-bridge.test.ts"
   ],
   "exclude": []

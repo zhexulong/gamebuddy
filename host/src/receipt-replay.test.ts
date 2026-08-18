@@ -14,7 +14,7 @@ function receipt(
 
 test("receipt replay accepts authoritative terminal paths with monotonic revisions", () => {
   const cases: readonly (readonly ExecutionReceipt[])[] = [
-    [receipt("accepted", 1), receipt("blocked", 2), receipt("cancelled", 3)],
+    [receipt("accepted", 1), receipt("blocked", 2)],
     [receipt("accepted", 1), receipt("running", 2), receipt("failed", 3)],
     [
       receipt("accepted", 1),

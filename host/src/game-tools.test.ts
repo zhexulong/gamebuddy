@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createDeterministicBridgePair } from "./bridge.js";
+import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import { CompanionIntegrationClient } from "./integration.js";
-import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import { newEnvelope, type Scope } from "./protocol.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const scope: Scope = {
   integrationId: "stardew",
@@ -47,7 +47,7 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
         newEnvelope(
           "hello_ack",
           scope,
-          { sessionId: "session_01", capabilities: ["move_to_tile"] },
+          { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
           message.correlationId,
           now,
         ),
@@ -66,6 +66,7 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
             health: 100,
             actionable: true,
             capabilities: ["move_to_tile"],
+            presentationLocale: "en-US",
             activeExecution: null,
           },
           message.correlationId,
@@ -102,6 +103,7 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
           health: 100,
           actionable: true,
           capabilities: enabled ? ["move_to_tile"] : [],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -116,12 +118,109 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
       throw new Error("must_not_cancel");
     },
   };
-  const [move] = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const [move] = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.ok(move);
   enabled = false;
   const result = await move.execute("test", { x: 3, y: 4 }, new AbortController().signal, () => {}, {} as never);
   assert.equal(executeCalls, 0);
   assert.equal((result.details as { reasonCode?: string }).reasonCode, "capability_not_declared");
+});
+
+test("a materialized tool does not call integration.execute after subtractive policy denial at execute time", async () => {
+  let executeCalls = 0;
+  // Mutable policy fixture: the shared wrapper rereads the current restrictive
+  // policy at execute time, so a post-mount deny must stop the pre-write gate.
+  const mutablePolicy = {
+    policyVersion: 1 as const,
+    deniedActions: [] as string[],
+    deniedFamilies: [] as string[],
+  };
+  const integration: MoveCapableIntegration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    get state() {
+      return {
+        connected: true,
+        sessionId: "session_01",
+        capabilities: ["move_to_tile"],
+        snapshot: {
+          revision: 3,
+          location: "Farm",
+          tile: { x: 1, y: 2 },
+          stamina: 100,
+          health: 100,
+          actionable: true,
+          capabilities: ["move_to_tile"],
+          presentationLocale: "en-US",
+          activeExecution: null,
+        },
+        latestReceipt: null,
+        latestReasonCode: null,
+      };
+    },
+    async execute() {
+      executeCalls++;
+      throw new Error("must_not_execute");
+    },
+    async cancel() {
+      throw new Error("must_not_cancel");
+    },
+  };
+  const [move] = createStardewActionTools(integration, mutablePolicy, () => testAdmission(integration));
+  assert.ok(move);
+  mutablePolicy.deniedActions.push("move_to_tile");
+  const result = await move.execute("test", { x: 3, y: 4 }, new AbortController().signal, () => {}, {} as never);
+  assert.equal(executeCalls, 0);
+  assert.equal((result.details as { reasonCode?: string }).reasonCode, "action_policy_denied");
+  assert.equal((result.details as { receiptJson?: string | null }).receiptJson, null);
+});
+
+test("the shared wrapper surfaces bridge execute errors as fail-closed receipt reasons", async () => {
+  let executeCalls = 0;
+  const integration: MoveCapableIntegration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    get state() {
+      return {
+        connected: true,
+        sessionId: "session_01",
+        capabilities: ["move_to_tile"],
+        snapshot: {
+          revision: 3,
+          location: "Farm",
+          tile: { x: 1, y: 2 },
+          stamina: 100,
+          health: 100,
+          actionable: true,
+          capabilities: ["move_to_tile"],
+          presentationLocale: "en-US",
+          activeExecution: null,
+        },
+        latestReceipt: null,
+        latestReasonCode: null,
+      };
+    },
+    async execute() {
+      executeCalls++;
+      throw new Error("bridge_rejected:native_denied");
+    },
+    async cancel() {
+      throw new Error("must_not_cancel");
+    },
+  };
+  const [move] = createStardewActionTools(integration, undefined, () => ({
+    owner: { ownerId: "test_owner", epoch: 1 },
+    observer: { beforeWrite: () => undefined, bindReceipt: () => undefined, markUncertain: () => undefined },
+    cancelExact: async () => {
+      throw new Error("unused");
+    },
+  }));
+  assert.ok(move);
+  const result = await move.execute("test", { x: 3, y: 4 }, new AbortController().signal, () => {}, {} as never);
+  assert.equal(executeCalls, 1);
+  assert.equal((result.details as { reasonCode?: string | null }).reasonCode, "native_denied");
+  assert.equal((result.details as { receiptJson?: string | null }).receiptJson, null);
+  assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /Game action was not created/);
 });
 
 test("equip_tool mounts only from a live capability and forwards the selected slot", async () => {
@@ -142,6 +241,7 @@ test("equip_tool mounts only from a live capability and forwards the selected sl
           health: 100,
           actionable: true,
           capabilities: ["equip_tool"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -163,7 +263,7 @@ test("equip_tool mounts only from a live capability and forwards the selected sl
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_equip_tool");
   const result = await tools[0]!.execute(
@@ -196,6 +296,7 @@ test("enter_exit mounts from a live capability and forwards the door tile", asyn
           health: 100,
           actionable: true,
           capabilities: ["enter_exit"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -217,7 +318,7 @@ test("enter_exit mounts from a live capability and forwards the door tile", asyn
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_enter_exit");
   await tools[0]!.execute(
@@ -249,6 +350,7 @@ test("published pickup_item mounts only from a live capability and forwards the 
           health: 100,
           actionable: true,
           capabilities: ["pickup_item"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -273,7 +375,7 @@ test("published pickup_item mounts only from a live capability and forwards the 
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_pickup_item");
   await tools[0]!.execute(
@@ -318,6 +420,7 @@ test("published refill_watering_can mounts only from a live capability and forwa
           health: 100,
           actionable: true,
           capabilities: ["refill_watering_can"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -341,7 +444,7 @@ test("published refill_watering_can mounts only from a live capability and forwa
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_refill_watering_can");
   await tools[0]!.execute(
@@ -374,7 +477,9 @@ test("published refill_watering_can mounts only from a live capability and forwa
     },
   };
   assert.equal(
-    createStardewActionTools(unavailable, undefined, testAdmission(unavailable)).some((tool) => tool.name === "stardew_refill_watering_can"),
+    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+      (tool) => tool.name === "stardew_refill_watering_can",
+    ),
     false,
   );
 });
@@ -397,6 +502,7 @@ test("published plant_seed mounts only from a live capability and forwards the o
           health: 100,
           actionable: true,
           capabilities: ["plant_seed"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -418,7 +524,7 @@ test("published plant_seed mounts only from a live capability and forwards the o
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_plant_seed");
   await tools[0]!.execute(
@@ -465,6 +571,7 @@ test("published clear_hoedirt mounts only from a live capability and forwards ex
           health: 100,
           actionable: true,
           capabilities: ["clear_hoedirt"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -489,7 +596,7 @@ test("published clear_hoedirt mounts only from a live capability and forwards ex
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_clear_hoedirt");
   await tools[0]!.execute(
@@ -534,6 +641,7 @@ test("published use_item mounts only from a live capability and forwards the foo
           health: 100,
           actionable: true,
           capabilities: ["use_item"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -555,7 +663,7 @@ test("published use_item mounts only from a live capability and forwards the foo
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_use_item");
   await tools[0]!.execute(
@@ -593,6 +701,7 @@ test("published harvest_crop mounts only from a live capability and forwards the
           health: 100,
           actionable: true,
           capabilities: ["harvest_crop"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -614,7 +723,7 @@ test("published harvest_crop mounts only from a live capability and forwards the
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_harvest_crop");
   await tools[0]!.execute(
@@ -659,6 +768,7 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
           health: 100,
           actionable: true,
           capabilities: ["chop_tree_source"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -683,7 +793,7 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_chop_tree_source");
   await tools[0]!.execute(
@@ -716,7 +826,9 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
     },
   };
   assert.equal(
-    createStardewActionTools(unavailable, undefined, testAdmission(unavailable)).some((tool) => tool.name === "stardew_chop_tree_source"),
+    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+      (tool) => tool.name === "stardew_chop_tree_source",
+    ),
     false,
   );
 });
@@ -739,6 +851,7 @@ test("published break_rock_source mounts only from a live Mod capability and for
           health: 100,
           actionable: true,
           capabilities: ["break_rock_source"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -763,7 +876,7 @@ test("published break_rock_source mounts only from a live Mod capability and for
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_break_rock_source");
   await tools[0]!.execute(
@@ -796,7 +909,9 @@ test("published break_rock_source mounts only from a live Mod capability and for
     },
   };
   assert.equal(
-    createStardewActionTools(unavailable, undefined, testAdmission(unavailable)).some((tool) => tool.name === "stardew_break_rock_source"),
+    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+      (tool) => tool.name === "stardew_break_rock_source",
+    ),
     false,
   );
 });
@@ -819,6 +934,7 @@ test("published machine_inspect mounts only from a live capability and forwards 
           health: 100,
           actionable: true,
           capabilities: ["machine_inspect"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -840,7 +956,7 @@ test("published machine_inspect mounts only from a live capability and forwards 
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_machine_inspect");
   await tools[0]!.execute(
@@ -884,6 +1000,7 @@ test("published machine_load mounts only from a live capability and forwards the
           health: 100,
           actionable: true,
           capabilities: ["machine_load"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -905,7 +1022,7 @@ test("published machine_load mounts only from a live capability and forwards the
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_machine_load");
   await tools[0]!.execute(
@@ -951,6 +1068,7 @@ test("published machine_collect_output mounts only from a live capability and fo
           health: 100,
           actionable: true,
           capabilities: ["machine_collect_output"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -972,7 +1090,7 @@ test("published machine_collect_output mounts only from a live capability and fo
       throw new Error("must_not_cancel");
     },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_machine_collect_output");
   await tools[0]!.execute(
@@ -1004,7 +1122,9 @@ test("published machine_collect_output mounts only from a live capability and fo
     },
   };
   assert.equal(
-    createStardewActionTools(unavailable, undefined, testAdmission(unavailable)).some((tool) => tool.name === "stardew_machine_collect_output"),
+    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+      (tool) => tool.name === "stardew_machine_collect_output",
+    ),
     false,
   );
 });
@@ -1016,28 +1136,77 @@ test("published bait_crab_pot mounts only from a live capability and forwards th
     module: STARDEW_INTEGRATION_MODULE,
     get state() {
       return {
-        connected: true, sessionId: "session_01", capabilities: ["bait_crab_pot"],
-        snapshot: { revision: 3, location: "Farm", tile: { x: 1, y: 2 }, stamina: 100, health: 100, actionable: true, capabilities: ["bait_crab_pot"], activeExecution: null },
-        latestReceipt: null, latestReasonCode: null,
+        connected: true,
+        sessionId: "session_01",
+        capabilities: ["bait_crab_pot"],
+        snapshot: {
+          revision: 3,
+          location: "Farm",
+          tile: { x: 1, y: 2 },
+          stamina: 100,
+          health: 100,
+          actionable: true,
+          capabilities: ["bait_crab_pot"],
+          presentationLocale: "en-US",
+          activeExecution: null,
+        },
+        latestReceipt: null,
+        latestReasonCode: null,
       };
     },
     async execute(request) {
       received = request;
-      return { executionId: "execution_bait_01", requestId: request.requestId, state: "succeeded", reasonCode: "crab_pot_baited", revision: 4, evidence: { detail: "bait=(O)685" } };
+      return {
+        executionId: "execution_bait_01",
+        requestId: request.requestId,
+        state: "succeeded",
+        reasonCode: "crab_pot_baited",
+        revision: 4,
+        evidence: { detail: "bait=(O)685" },
+      };
     },
-    async cancel() { throw new Error("must_not_cancel"); },
+    async cancel() {
+      throw new Error("must_not_cancel");
+    },
   };
-  const tools = createStardewActionTools(integration, undefined, testAdmission(integration));
+  const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "stardew_bait_crab_pot");
-  await tools[0]!.execute("test", { slot: 5, x: 14, y: 37, expectedQualifiedItemId: "(O)685", expectedTargetId: "bait_crab_pot_01", requestId: "request_bait_01", idempotencyKey: "idempotency_bait_01" }, new AbortController().signal, () => {}, {} as never);
+  await tools[0]!.execute(
+    "test",
+    {
+      slot: 5,
+      x: 14,
+      y: 37,
+      expectedQualifiedItemId: "(O)685",
+      expectedTargetId: "bait_crab_pot_01",
+      requestId: "request_bait_01",
+      idempotencyKey: "idempotency_bait_01",
+    },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
   assert.deepEqual(received, {
-    requestId: "request_bait_01", idempotencyKey: "idempotency_bait_01", action: "bait_crab_pot",
-    args: { slot: 5, x: 14, y: 37, expectedQualifiedItemId: "(O)685", expectedTargetId: "bait_crab_pot_01" }, expectedRevision: 3,
+    requestId: "request_bait_01",
+    idempotencyKey: "idempotency_bait_01",
+    action: "bait_crab_pot",
+    args: { slot: 5, x: 14, y: 37, expectedQualifiedItemId: "(O)685", expectedTargetId: "bait_crab_pot_01" },
+    expectedRevision: 3,
     deadlineMs: (received as { deadlineMs: number }).deadlineMs,
   });
-  const unavailable: MoveCapableIntegration = { ...integration, get state() { return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } }; } };
-  assert.equal(createStardewActionTools(unavailable, undefined, testAdmission(unavailable)).some((tool) => tool.name === "stardew_bait_crab_pot"), false);
+  const unavailable: MoveCapableIntegration = {
+    ...integration,
+    get state() {
+      return { ...integration.state, capabilities: [], snapshot: { ...integration.state.snapshot!, capabilities: [] } };
+    },
+  };
+  assert.equal(
+    createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
+      (tool) => tool.name === "stardew_bait_crab_pot",
+    ),
+    false,
+  );
 });
 
 test("mounted Game Actions return authoritative Mod receipts without inventing completion", async () => {
@@ -1065,6 +1234,7 @@ test("mounted Game Actions return authoritative Mod receipts without inventing c
           health: 100,
           actionable: true,
           capabilities: ["move_to_tile", "cancel_active_execution"],
+          presentationLocale: "en-US",
           activeExecution: null,
         },
         latestReceipt: null,
@@ -1081,9 +1251,8 @@ test("mounted Game Actions return authoritative Mod receipts without inventing c
     },
   };
   const admission = testAdmission(integration);
-  const [move, cancel] = createStardewActionTools(integration, undefined, admission);
+  const [move] = createStardewActionTools(integration, undefined, () => admission);
   assert.ok(move);
-  assert.ok(cancel);
   const result = await move.execute(
     "test",
     { x: 3, y: 4, requestId: "request_01", idempotencyKey: "idempotency_01" },
@@ -1093,23 +1262,111 @@ test("mounted Game Actions return authoritative Mod receipts without inventing c
   );
   assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /"state":"accepted"/);
   assert.doesNotMatch(result.content[0]?.type === "text" ? result.content[0].text : "", /succeeded/);
-  const cancelled = await cancel.execute(
-    "test",
-    { requestId: "request_01", executionId: "execution_01" },
-    new AbortController().signal,
-    () => {},
-    {} as never,
+});
+
+test("each executable action obtains a fresh runtime admission immediately before the bridge write", async () => {
+  const admittedOwners: string[] = [];
+  const integration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    state: {
+      connected: true,
+      sessionId: "session",
+      capabilities: ["move_to_tile"],
+      snapshot: {
+        revision: 1,
+        location: "Farm",
+        tile: { x: 0, y: 0 },
+        stamina: 1,
+        health: 1,
+        actionable: true,
+        capabilities: ["move_to_tile"],
+        presentationLocale: "en-US",
+        activeExecution: null,
+      },
+      latestReceipt: null,
+      latestReasonCode: null,
+    },
+    async execute(request: { requestId: string }) {
+      return {
+        requestId: request.requestId,
+        executionId: "execution_01",
+        state: "accepted",
+        reasonCode: "accepted",
+        revision: 1,
+        evidence: {},
+      };
+    },
+    async cancel() {
+      throw new Error("must_not_cancel");
+    },
+  } as MoveCapableIntegration;
+  let count = 0;
+  const tools = createStardewActionTools(integration, undefined, () => {
+    const ownerId = `owner_${++count}`;
+    return {
+      owner: { ownerId, epoch: 0 },
+      observer: {
+        beforeWrite: () => admittedOwners.push(ownerId),
+        bindReceipt: () => undefined,
+        markUncertain: () => undefined,
+      },
+      cancelExact: async () => {
+        throw new Error("unused");
+      },
+    };
+  });
+  await tools[0]!.execute("one", { x: 1, y: 1 }, new AbortController().signal, () => undefined, {} as never);
+  await tools[0]!.execute("two", { x: 2, y: 2 }, new AbortController().signal, () => undefined, {} as never);
+  assert.deepEqual(admittedOwners, ["owner_1", "owner_2"]);
+});
+
+test("model-facing tools never expose active-execution cancellation", () => {
+  const integration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    state: {
+      connected: true,
+      sessionId: "session",
+      capabilities: ["cancel_active_execution"],
+      snapshot: null,
+      latestReceipt: null,
+      latestReasonCode: null,
+    },
+    async execute() {
+      throw new Error("unused");
+    },
+    async cancel() {
+      throw new Error("must_not_cancel");
+    },
+  } as MoveCapableIntegration;
+  const tools = createStardewActionTools(integration, undefined, () => {
+    throw new Error("must_not_admit");
+  });
+  assert.equal(
+    tools.some((tool) => tool.name === "stardew_cancel_active_execution"),
+    false,
   );
-  assert.match(cancelled.content[0]?.type === "text" ? cancelled.content[0].text : "", /"state":"accepted"/);
 });
 
 test("action tools fail closed without runtime-owned dispatch admission", () => {
   const integration = {
     scope,
     module: STARDEW_INTEGRATION_MODULE,
-    state: { connected: true, sessionId: "session", capabilities: ["move_to_tile"], snapshot: null, latestReceipt: null, latestReasonCode: null },
-    async execute() { throw new Error("must_not_execute"); },
-    async cancel() { throw new Error("must_not_cancel"); },
+    state: {
+      connected: true,
+      sessionId: "session",
+      capabilities: ["move_to_tile"],
+      snapshot: null,
+      latestReceipt: null,
+      latestReasonCode: null,
+    },
+    async execute() {
+      throw new Error("must_not_execute");
+    },
+    async cancel() {
+      throw new Error("must_not_cancel");
+    },
   } as MoveCapableIntegration;
   assert.deepEqual(createStardewActionTools(integration, undefined), []);
 });

@@ -5,7 +5,6 @@ import {
   TavernExactContentError,
   createTavernConversation,
   createTavernSemanticChatContentPort,
-  openTavernConversation,
   resumeExactTavernConversation,
 } from "./conversation.js";
 import type { ChatThreadStore } from "./chat-thread-store.js";
@@ -23,6 +22,9 @@ const state = Object.freeze({
     openingLockedAtEventId: null,
   }),
   messages: Object.freeze([]),
+  draft: Object.freeze({ revision: 0, text: null }),
+  turnLedger: null,
+  idempotency: Object.freeze([]),
 });
 const binding = {
   chatThreadId: "thread_01",
@@ -31,6 +33,9 @@ const binding = {
   chatSurfaceSessionId: "surface_01",
 } as const;
 const selectionMethods = {
+  async acceptPlayerMessage() {
+    return Object.freeze({ turnId: "turn_01", status: "accepted_queued" as const, idempotencyKey: "abcdefghijklmnopqrstuv", messageId: "player_01", acceptedAtMs: 1 });
+  },
   async readActiveThreadSelection() {
     return null;
   },
@@ -39,13 +44,13 @@ const selectionMethods = {
   },
 };
 
-test("Tavern conversation creates a blank exact-surface thread and durably orders player then response", async () => {
+test("Tavern conversation explicitly creates a blank exact-surface thread and durably orders player then response", async () => {
   const calls: string[] = [];
   const store: ChatThreadStore = {
     ...selectionMethods,
     async resumeThread() {
       calls.push("resume");
-      throw new Error("chat_thread_not_found");
+      throw new Error("must_not_resume");
     },
     async createThread(request) {
       calls.push(`create:${request.opening}`);
@@ -63,14 +68,14 @@ test("Tavern conversation creates a blank exact-surface thread and durably order
       return state;
     },
   };
-  const conversation = await openTavernConversation(store, binding);
+  const conversation = await createTavernConversation(store, binding);
   await conversation.appendPlayer({ messageId: "player_01", text: "Hello", occurredAtMs: 2 });
   await conversation.commitResponse(
-    { expressionId: "response_01", sessionId: "surface_01", sourceEventId: "tool_01", text: "Hi", locale: "en-US" },
+    { surface: "chat", expressionId: "response_01", sessionId: "surface_01", text: "Hi", locale: "en-US" },
     3,
   );
   assert.deepEqual(conversation.bootstrapTranscript(), []);
-  assert.deepEqual(calls, ["resume", "create:blank", "player:player_01", "response:response_01"]);
+  assert.deepEqual(calls, ["create:blank", "player:player_01", "response:response_01"]);
 });
 
 test("Tavern retry reads the exact durable binding and permits only a safe no-effect response retry", async () => {
@@ -107,7 +112,7 @@ test("Tavern retry reads the exact durable binding and permits only a safe no-ef
       return responseState;
     },
   };
-  const conversation = await openTavernConversation(store, binding);
+  const conversation = await resumeExactTavernConversation(store, binding);
   const intent = {
     chatThreadId: binding.chatThreadId,
     chatSurfaceSessionId: binding.chatSurfaceSessionId,
@@ -155,7 +160,7 @@ test("Tavern conversation fails closed for resume and append errors", async () =
       return state;
     },
   };
-  await assert.rejects(() => openTavernConversation(failingResume, binding), /chat_thread_surface_mismatch/);
+  await assert.rejects(() => resumeExactTavernConversation(failingResume, binding), /chat_thread_surface_mismatch/);
 
   const failingAppend: ChatThreadStore = {
     ...selectionMethods,
@@ -175,7 +180,7 @@ test("Tavern conversation fails closed for resume and append errors", async () =
       return state;
     },
   };
-  const conversation = await openTavernConversation(failingAppend, binding);
+  const conversation = await resumeExactTavernConversation(failingAppend, binding);
   await assert.rejects(
     () => conversation.appendPlayer({ messageId: "player_01", text: "Hello", occurredAtMs: 2 }),
     /storage_unavailable/,

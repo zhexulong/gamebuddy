@@ -194,22 +194,6 @@ function isErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && error.message === code;
 }
 
-/** Legacy compatibility adapter retaining resume-or-create behavior for existing callers. */
-export async function openTavernConversation(
-  store: ChatThreadStore,
-  binding: TavernConversationBinding,
-): Promise<TavernConversation> {
-  let state: ChatThreadState;
-  try {
-    state = await store.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId);
-  } catch (error) {
-    if (!(error instanceof Error) || error.message !== "chat_thread_not_found") throw error;
-    state = await store.createThread({ ...binding, opening: "blank" });
-  }
-
-  return createConversation(store, binding, state);
-}
-
 function createConversation(
   store: ChatThreadStore,
   binding: TavernConversationBinding,

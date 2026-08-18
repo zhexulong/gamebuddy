@@ -4,9 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  prepareExactChatRuntimeConstruction,
-} from "./continuity-semantic-chat-runtime-construction.internal.js";
+import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 import {
   withConsumedChatRuntimeBinding,
   type ChatRuntimeBindingExecution,
@@ -15,8 +13,18 @@ import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtim
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import { identityKey } from "../runtime.js";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 function permit(execution: ChatRuntimeBindingExecution): ProductionChatRuntimePermit {
   return Object.freeze({
@@ -66,7 +74,9 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
   const value = await fixture();
   try {
     const prepared = await value.binding.executeWithBinding((token) =>
-      withConsumedChatRuntimeBinding(token, (execution) => prepareExactChatRuntimeConstruction(execution, permit(execution))),
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
     );
     assert.deepEqual(prepared.identity, principal);
     assert.equal(prepared.runtimeRoot, value.runtimeRoot);
@@ -74,9 +84,13 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.equal(prepared.modelConfig.provider, "cpa-oai");
     assert.equal(prepared.modelConfig.modelId, "deepseek-v4-flash");
     assert.equal(prepared.modelProfileRevision, 0);
-    // Construction has no active semantic turn or terminal receipt yet; it
-    // must not invent a source event/admission for browser publication.
-    assert.equal(prepared.presentation.admissionProvider, undefined);
+    // Construction registers the Chat tool surface but keeps its coordinator
+    // admission unbound until the exact P4 invocation activates it.
+    assert.equal(typeof prepared.presentation.admissionProvider?.capture, "function");
+    assert.throws(
+      () => prepared.presentation.admissionProvider!.capture(),
+      /presentation_admission_unbound/,
+    );
     const stableContext = await prepared.materializeStableContextForPiSession("pi_session_genuine");
     assert.equal(stableContext.continuityId, principal.continuityId);
     assert.equal(stableContext.sessionId, "pi_session_genuine");
@@ -93,7 +107,9 @@ test("Chat construction regenerates the canonical hash for each actual Pi sessio
   const value = await fixture();
   try {
     const prepared = await value.binding.executeWithBinding((token) =>
-      withConsumedChatRuntimeBinding(token, (execution) => prepareExactChatRuntimeConstruction(execution, permit(execution))),
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
     );
     const first = await prepared.materializeStableContextForPiSession("pi_session_one");
     const second = await prepared.materializeStableContextForPiSession("pi_session_two");
@@ -112,7 +128,10 @@ test("Chat construction rejects a missing exact Tavern thread rather than creati
     await assert.rejects(
       value.binding.executeWithBinding((token) =>
         withConsumedChatRuntimeBinding(token, (execution) =>
-          prepareExactChatRuntimeConstruction(execution, Object.freeze({ ...permit(execution), chatThreadId: "thread_missing" })),
+          prepareExactChatRuntimeConstruction(
+            execution,
+            Object.freeze({ ...permit(execution), chatThreadId: "thread_missing" }),
+          ),
         ),
       ),
       /chat_runtime_exact_content_unavailable/,

@@ -231,3 +231,58 @@ test("polling is non-overlapping and close is idempotent", async () => {
   await close1;
   assert.equal(supervisor.state.status, "closed");
 });
+
+test("transient network failures retry with exponential backoff and recover on success", async () => {
+  let scheduledDelay = 0;
+  let scheduledCallback: (() => void) | undefined;
+  let pollAttempts = 0;
+  let shouldFail = true;
+
+  const port: VoicePollingPort = {
+    pollEvents: async () => {
+      pollAttempts += 1;
+      if (shouldFail) {
+        throw new Error("voice_gateway_disconnected");
+      }
+    },
+  };
+
+  const supervisor = createVoicePollingSupervisor(port, {
+    intervalMs: 200,
+    minBackoffMs: 1000,
+    maxBackoffMs: 10000,
+    now: () => 500,
+    setInterval: (callback, delay) => {
+      scheduledCallback = callback;
+      scheduledDelay = delay;
+      return {} as ReturnType<typeof setInterval>;
+    },
+    clearInterval: () => undefined,
+  });
+
+  supervisor.start();
+  assert.equal(scheduledDelay, 200);
+
+  // First poll fails: transient network error
+  await supervisor.pollNow();
+  assert.equal(pollAttempts, 1);
+  assert.equal(supervisor.state.status, "running"); // still running, not terminally stopped
+  assert.equal(supervisor.state.failureCount, 1);
+  assert.equal(supervisor.state.lastError?.code, "voice_gateway_disconnected");
+  assert.equal(scheduledDelay, 1000); // backed off to minBackoffMs
+
+  // Second poll fails: further backoff
+  await supervisor.pollNow();
+  assert.equal(pollAttempts, 2);
+  assert.equal(supervisor.state.failureCount, 2);
+  assert.equal(scheduledDelay, 1000); // 200 * 2^1 = 400 < minBackoff 1000 -> 1000
+
+  // Recovery: network returns
+  shouldFail = false;
+  await supervisor.pollNow();
+  assert.equal(pollAttempts, 3);
+  assert.equal(supervisor.state.successCount, 1);
+  assert.equal(scheduledDelay, 200); // resumed normal interval!
+
+  await supervisor.close();
+});

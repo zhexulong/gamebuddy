@@ -98,6 +98,7 @@ internal sealed record PortfolioMineElevatorProbe(
     int CurrentFloor,
     int LowestMineLevel,
     bool TargetUnlocked,
+    bool ElevatorInteractionAvailable,
     int SelectedCheckpoint)
 {
     [JsonExtensionData]
@@ -118,6 +119,7 @@ internal sealed record PortfolioMineElevatorFreshObservation(
     int LowestMineLevel,
     bool UnlockedLevelObserved,
     bool TargetUnlocked,
+    bool ElevatorInteractionAvailable,
     string OpaqueElevatorTarget)
 {
     [JsonExtensionData]
@@ -253,20 +255,51 @@ internal sealed record PortfolioMineElevatorActionReceipt(
         && PortfolioBridgeProtocol.IsOpaqueId(TraceId)
         && PortfolioBridgeProtocol.IsOpaqueId(ExecutionId)
         && State is "succeeded" or "blocked" or "failed" or "cancelled" or "expired" or "rejected" or "uncertain"
-        && Evidence is not null && Evidence.PhaseTrace is not null && Evidence.PhaseTrace.Count > 0
-        && Evidence.PhaseTrace[^1].Phase == "terminal"
-        && Evidence.PhaseTrace[^1].ReasonCode != "execution_armed"
-        && (Evidence.OpaqueElevatorTarget is null || IsOpaqueTarget(Evidence.OpaqueElevatorTarget))
-        && Postcondition is not null
-        && (Postcondition.SelectedCheckpoint is null || PortfolioBridgeProtocol.IsMineElevatorCheckpoint(Postcondition.SelectedCheckpoint.Value))
-        && (Postcondition.OpaqueElevatorTarget is null || IsOpaqueTarget(Postcondition.OpaqueElevatorTarget))
-        && (State != "succeeded" || Evidence.OpaqueElevatorTarget is not null
-            && Postcondition.SelectedCheckpoint is not null && Postcondition.OpaqueElevatorTarget is not null
-            && PortfolioBridgeProtocol.IsMineElevatorCheckpoint(Postcondition.SelectedCheckpoint.Value)
-            && IsOpaqueTarget(Postcondition.OpaqueElevatorTarget))
+        && Evidence is not null && IsEvidenceStructurallyValid(Evidence)
+        && Postcondition is not null && IsPostconditionStructurallyValid(Postcondition)
         && PortfolioBridgeProtocol.IsReasonCode(ReasonCode)
         && PortfolioBridgeProtocol.IsMineElevatorTerminalReason(State, ReasonCode)
+        && (State != "succeeded" || IsSucceededStructurallyValid(Evidence, Postcondition))
         && (ExtensionData is null || ExtensionData.Count == 0);
+
+    private bool IsEvidenceStructurallyValid(PortfolioMineElevatorActionEvidence evidence)
+    {
+        if (evidence.Scope is null || !evidence.Scope.IsValid || evidence.PhaseTrace is null || evidence.PhaseTrace.Count < 2
+            || evidence.CurrentFloorBefore < 0 || evidence.LowestMineLevelBefore < 0
+            || evidence.CurrentFloorAfter < 0 || evidence.LowestMineLevelAfter < 0
+            || (evidence.OpaqueElevatorTarget is not null && !IsOpaqueTarget(evidence.OpaqueElevatorTarget)))
+            return false;
+        int priorPhase = -1;
+        long priorRevision = -1;
+        foreach (PortfolioMineElevatorActionPhase phase in evidence.PhaseTrace)
+        {
+            int index = Array.IndexOf(new[] { "fresh_observed", "accepted", "transition_started", "postcondition", "terminal" }, phase.Phase);
+            if (index <= priorPhase || phase.Revision < priorRevision || !PortfolioBridgeProtocol.IsOpaqueId(phase.RequestId)
+                || !PortfolioBridgeProtocol.IsOpaqueId(phase.TraceId) || !PortfolioBridgeProtocol.IsOpaqueId(phase.ExecutionId)
+                || !PortfolioBridgeProtocol.IsReasonCode(phase.ReasonCode)
+                || phase.RequestId != RequestId || phase.TraceId != TraceId || phase.ExecutionId != ExecutionId)
+                return false;
+            priorPhase = index;
+            priorRevision = phase.Revision;
+        }
+        PortfolioMineElevatorActionPhase terminal = evidence.PhaseTrace[^1];
+        return evidence.PhaseTrace[0].Phase == "fresh_observed" && terminal.Phase == "terminal"
+            && terminal.Revision == Revision && terminal.ReasonCode == ReasonCode;
+    }
+
+    private static bool IsPostconditionStructurallyValid(PortfolioMineElevatorActionPostcondition postcondition)
+        => postcondition.ActualCurrentFloor >= 0 && postcondition.ObservedLowestMineLevel >= 0
+            && (postcondition.SelectedCheckpoint is null || PortfolioBridgeProtocol.IsMineElevatorCheckpoint(postcondition.SelectedCheckpoint.Value))
+            && (postcondition.OpaqueElevatorTarget is null || IsOpaqueTarget(postcondition.OpaqueElevatorTarget));
+
+    private static bool IsSucceededStructurallyValid(PortfolioMineElevatorActionEvidence evidence,
+        PortfolioMineElevatorActionPostcondition postcondition)
+        => evidence.OpaqueElevatorTarget is not null && evidence.EntryObserved && evidence.NativeElevatorTransitionObserved
+            && evidence.LowestMineLevelObserved && postcondition.SelectedCheckpoint is not null
+            && postcondition.OpaqueElevatorTarget is not null && IsOpaqueTarget(postcondition.OpaqueElevatorTarget)
+            && postcondition.FreshObservation && postcondition.SameExecution
+            && postcondition.ActualCurrentFloor == postcondition.SelectedCheckpoint
+            && postcondition.ObservedLowestMineLevel >= postcondition.SelectedCheckpoint;
 
     private static bool IsOpaqueTarget(string value)
         => PortfolioBridgeProtocol.IsOpaqueId(value)

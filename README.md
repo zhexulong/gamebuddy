@@ -17,7 +17,7 @@ Phase 0 Host runtime、SMAPI lifecycle、独立 fake Voice Gateway 与本机真�
 - Windows 10 (`win-x64`)
 - Stardew Valley `1.6.15` (build `24356`) / SMAPI `4.5.2`
 - Node.js `24.13.0` / pnpm `11.1.3`
-- .NET SDK `8.0.422`
+- .NET SDK `8.0.424`
 - Git `2.45.1.windows.1`
 - Voice Gateway：16 kHz PCM PTT、bounded queue、epoch cancellation、text fallback、token-authenticated localhost protocol；MiMo `mimo-v2.5-tts` SSE/PCM16 adapter 与经过脱敏的真实 contract fixture。真实 SenseVoiceSmall CPU ASR asset/runtime 仍未安装或验收。
 

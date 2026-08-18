@@ -8,60 +8,105 @@ declare module "@cortexkit/pi-magic-context" {
     status: GameBuddyMemoryStatus;
     sourceRefs?: readonly string[];
   }>;
-  export type GameBuddyMemoryFacade = Readonly<{
-    /** Only the Host's current-turn delegation adapter may call this. */
-    createDelegatedInferredSemanticMemory(
-      input: Readonly<{
-        continuityId: string;
-        operationId: string;
-        content: string;
-        sourceRefs?: readonly string[];
-      }>,
-    ): Promise<GameBuddyMemoryView>;
+  export type GameBuddyPlayerMemoryReadProjection = Readonly<{
     listMemories(input: Readonly<{ continuityId: string }>): Promise<readonly GameBuddyMemoryView[]>;
     getMemory(input: Readonly<{ continuityId: string; stateToken: string }>): Promise<GameBuddyMemoryView>;
+  }>;
+  export function createGameBuddyPlayerMemoryReadProjection(
+    args: Readonly<{ continuityId: string; runtimeCwd: string }>,
+  ): GameBuddyPlayerMemoryReadProjection;
+  export type GameBuddyPlayerMemoryEvidence = Readonly<{ operationCorrelation: string }>;
+  export type GameBuddyPlayerMemoryCommitReceipt = Readonly<{
+    operationCorrelation: string;
+    committedMemoryMutationId: number;
+  }>;
+  export type GameBuddyPlayerMemoryMutationResult<T> = Readonly<{
+    value: T;
+    commitReceipt: GameBuddyPlayerMemoryCommitReceipt;
+  }>;
+  export type GameBuddyPlayerMemoryEvidenceFacade = Readonly<{
     createMemory(
       input: Readonly<{
         continuityId: string;
         content: string;
         category: GameBuddyMemoryCategory;
-        sourceRefs?: readonly string[];
+        evidence: GameBuddyPlayerMemoryEvidence;
       }>,
-    ): Promise<GameBuddyMemoryView>;
+    ): Promise<GameBuddyPlayerMemoryMutationResult<GameBuddyMemoryView>>;
     updateMemory(
-      input: Readonly<{ continuityId: string; stateToken: string; expectedStateToken: string; content: string }>,
-    ): Promise<GameBuddyMemoryView>;
+      input: Readonly<{
+        continuityId: string;
+        stateToken: string;
+        expectedStateToken: string;
+        content: string;
+        evidence: GameBuddyPlayerMemoryEvidence;
+      }>,
+    ): Promise<GameBuddyPlayerMemoryMutationResult<GameBuddyMemoryView>>;
     archiveMemory(
-      input: Readonly<{ continuityId: string; stateToken: string; expectedStateToken: string }>,
-    ): Promise<GameBuddyMemoryView>;
+      input: Readonly<{
+        continuityId: string;
+        stateToken: string;
+        expectedStateToken: string;
+        evidence: GameBuddyPlayerMemoryEvidence;
+      }>,
+    ): Promise<GameBuddyPlayerMemoryMutationResult<GameBuddyMemoryView>>;
     restoreMemory(
-      input: Readonly<{ continuityId: string; stateToken: string; expectedStateToken: string }>,
-    ): Promise<GameBuddyMemoryView>;
+      input: Readonly<{
+        continuityId: string;
+        stateToken: string;
+        expectedStateToken: string;
+        evidence: GameBuddyPlayerMemoryEvidence;
+      }>,
+    ): Promise<GameBuddyPlayerMemoryMutationResult<GameBuddyMemoryView>>;
     pinMemory(
-      input: Readonly<{ continuityId: string; stateToken: string; expectedStateToken: string }>,
-    ): Promise<GameBuddyMemoryView>;
+      input: Readonly<{
+        continuityId: string;
+        stateToken: string;
+        expectedStateToken: string;
+        evidence: GameBuddyPlayerMemoryEvidence;
+      }>,
+    ): Promise<GameBuddyPlayerMemoryMutationResult<GameBuddyMemoryView>>;
     unpinMemory(
-      input: Readonly<{ continuityId: string; stateToken: string; expectedStateToken: string }>,
-    ): Promise<GameBuddyMemoryView>;
+      input: Readonly<{
+        continuityId: string;
+        stateToken: string;
+        expectedStateToken: string;
+        evidence: GameBuddyPlayerMemoryEvidence;
+      }>,
+    ): Promise<GameBuddyPlayerMemoryMutationResult<GameBuddyMemoryView>>;
     mergeMemory(
       input: Readonly<{
         continuityId: string;
         stateToken: string;
         expectedStateToken: string;
         targetStateToken: string;
+        evidence: GameBuddyPlayerMemoryEvidence;
       }>,
-    ): Promise<GameBuddyMemoryView>;
+    ): Promise<GameBuddyPlayerMemoryMutationResult<GameBuddyMemoryView>>;
     deleteEntry(
-      input: Readonly<{ continuityId: string; stateToken: string; expectedStateToken: string }>,
-    ): Promise<void>;
+      input: Readonly<{
+        continuityId: string;
+        stateToken: string;
+        expectedStateToken: string;
+        evidence: GameBuddyPlayerMemoryEvidence;
+      }>,
+    ): Promise<GameBuddyPlayerMemoryMutationResult<void>>;
     excludeSource(
-      input: Readonly<{ continuityId: string; stateToken: string; expectedStateToken: string; sourceRef?: string }>,
-    ): Promise<void>;
+      input: Readonly<{
+        continuityId: string;
+        stateToken: string;
+        expectedStateToken: string;
+        sourceRef?: string;
+        evidence: GameBuddyPlayerMemoryEvidence;
+      }>,
+    ): Promise<GameBuddyPlayerMemoryMutationResult<void>>;
+    close(): void;
   }>;
-  export function createGameBuddyMemoryFacade(
+  export function createGameBuddyPlayerMemoryEvidenceFacade(
     args: Readonly<{
       continuityId: string;
       runtimeCwd: string;
+      providerBinding: Readonly<{ sessionId: string; surface: "chat"; nonceSha256: string }>;
     }>,
-  ): GameBuddyMemoryFacade;
+  ): GameBuddyPlayerMemoryEvidenceFacade;
 }

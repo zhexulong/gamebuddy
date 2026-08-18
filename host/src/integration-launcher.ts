@@ -47,13 +47,6 @@ export type WakeCapableIntegrationConnection = Readonly<{
   executionWakeSource?: ExecutionWakeSource;
 }>;
 
-/** Adapter-owned optional capability lookup; absent adapters keep polling. */
-export function executionWakeSourceFor(connection: unknown): ExecutionWakeSource | undefined {
-  if (!isRecord(connection) || !isRecord(connection.executionWakeSource)) return undefined;
-  const source = connection.executionWakeSource;
-  return typeof source.onExecutionWake === "function" ? (source as ExecutionWakeSource) : undefined;
-}
-
 export type IntegrationEventSource = Readonly<{
   onFact(listener: (fact: WorldFact) => void): () => void;
   onLifecycle(listener: (event: IntegrationLifecycleEvent) => void): () => void;
@@ -61,34 +54,23 @@ export type IntegrationEventSource = Readonly<{
   onExecutionWake?: ExecutionWakeSource["onExecutionWake"];
 }>;
 
-/** Reject malformed adapter values before they can wake a task-owned waiter. */
-export function normalizeExecutionWake(value: unknown): ExecutionWake | null {
-  if (!isRecord(value) || typeof value.kind !== "string" || typeof value.reasonCode !== "string" || value.reasonCode.length === 0)
-    return null;
-  if (value.kind === "invalidated" || value.kind === "disconnected")
-    return Object.freeze({ kind: value.kind, reasonCode: value.reasonCode });
-  if (
-    value.kind !== "terminal" ||
-    typeof value.requestId !== "string" ||
-    value.requestId.length === 0 ||
-    typeof value.executionId !== "string" ||
-    value.executionId.length === 0 ||
-    typeof value.state !== "string" ||
-    value.state.length === 0
-  )
-    return null;
-  return Object.freeze({
-    kind: "terminal",
-    requestId: value.requestId,
-    executionId: value.executionId,
-    state: value.state,
-    reasonCode: value.reasonCode,
-  });
-}
-
 /** The result of one explicit user-requested integration launch. */
 export type IntegrationLaunchHandle = Readonly<{
   connection: IntegrationConnection;
+  /**
+   * Adapter-owned optional presentation capability. Generic Host code treats
+   * this as opaque; an integration-specific composition must validate it
+   * before mounting a presentation port.
+   */
+  presentationBridge?: unknown;
+  /**
+   * Adapter-owned optional narrow read-only recovery capability bound to this
+   * exact authenticated launch. It is deliberately NOT exposed on
+   * IntegrationConnection; an integration-specific composition must validate
+   * it before running one bounded exact-receipt recovery pass. It never
+   * reissues an action request.
+   */
+  receiptRecovery?: unknown;
   events: IntegrationEventSource;
   authority: ReceiptBackedIntegrationAuthority;
   lifecycle: "ready";

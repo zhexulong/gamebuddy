@@ -44,7 +44,9 @@ export function parseArguments(argv) {
     const flag = argv[index];
     const value = argv[index + 1];
     if (!flag?.startsWith("--") || value === undefined || value.startsWith("--") || values.has(flag))
-      throw new Error("usage: --game-path <path> --profile-root <path> --host-artifact <path> --host-build-id <id> --out <path>");
+      throw new Error(
+        "usage: --game-path <path> --profile-root <path> --host-artifact <path> --host-build-id <id> --out <path>",
+      );
     values.set(flag.slice(2), value);
     index += 1;
   }
@@ -56,7 +58,9 @@ export function parseArguments(argv) {
     outputPath: values.get("out") ?? values.get("output"),
   });
   if (Object.values(result).some((value) => value === undefined))
-    throw new Error("usage: --game-path <path> --profile-root <path> --host-artifact <path> --host-build-id <id> --out <path>");
+    throw new Error(
+      "usage: --game-path <path> --profile-root <path> --host-artifact <path> --host-build-id <id> --out <path>",
+    );
   return result;
 }
 
@@ -114,7 +118,8 @@ export async function createPortfolioInstallationAttestation(options) {
   const reparsedSchema = validatePortfolioInstallationAttestation(reparsed, {
     modDllSha256: mod.files.dllSha256,
   });
-  if (!reparsedSchema.valid) throw codedError("portfolio_installation_attestation_reparse_invalid", reparsedSchema.errors.join(","));
+  if (!reparsedSchema.valid)
+    throw codedError("portfolio_installation_attestation_reparse_invalid", reparsedSchema.errors.join(","));
   return Object.freeze({ state: "written", artifactKind: attestation.artifactKind, outputPath: publishedPath });
 }
 
@@ -124,15 +129,16 @@ export async function observeTarget(gamePath, readVersion) {
     const file = await observeRegularFile(join(gamePath, fileName), `portfolio_target_file_invalid:${fileName}`);
     observed[key] = Object.freeze({
       sha256: file.sha256,
-      fileVersion: fileName === "Stardew Valley.dll"
-        ? await readVersion(file.path, fileName)
-        : normalizeSmapiVersion(await readVersion(file.path, fileName)),
-
+      fileVersion:
+        fileName === "Stardew Valley.dll"
+          ? await readVersion(file.path, fileName)
+          : normalizeSmapiVersion(await readVersion(file.path, fileName)),
     });
   }
   if (observed.game.sha256 !== PORTFOLIO_TARGET_GAME_SHA256) throw new Error("portfolio_target_game_hash_mismatch");
   if (observed.game.fileVersion !== PORTFOLIO_TARGET_VERSION) throw new Error("portfolio_target_game_version_mismatch");
-  if (observed.smapi.fileVersion !== PORTFOLIO_TARGET_SMAPI_VERSION) throw new Error("portfolio_target_smapi_version_mismatch");
+  if (observed.smapi.fileVersion !== PORTFOLIO_TARGET_SMAPI_VERSION)
+    throw new Error("portfolio_target_smapi_version_mismatch");
   if (observed.smapiExe.fileVersion !== PORTFOLIO_TARGET_SMAPI_VERSION)
     throw new Error("portfolio_target_smapi_exe_version_mismatch");
   return Object.freeze(observed);
@@ -158,10 +164,15 @@ export async function observeMod(profileRoot) {
     throw new Error("portfolio_mod_manifest_invalid_json");
   }
   if (
-    !manifest || typeof manifest !== "object" || Array.isArray(manifest) ||
-    manifest.UniqueID !== "zhexulong.GameBuddy" || manifest.EntryDll !== "GameBuddy.Stardew.dll" ||
-    typeof manifest.Version !== "string" || manifest.Version.length === 0
-  ) throw new Error("portfolio_mod_manifest_identity_invalid");
+    !manifest ||
+    typeof manifest !== "object" ||
+    Array.isArray(manifest) ||
+    manifest.UniqueID !== "zhexulong.GameBuddy" ||
+    manifest.EntryDll !== "GameBuddy.Stardew.dll" ||
+    typeof manifest.Version !== "string" ||
+    manifest.Version.length === 0
+  )
+    throw new Error("portfolio_mod_manifest_identity_invalid");
   return Object.freeze({ version: manifest.Version, files: Object.freeze(files) });
 }
 
@@ -188,8 +199,10 @@ async function observeRegularFile(path, reason) {
     if (
       !sameFileIdentity(identity, fileIdentity(after)) ||
       !sameFileIdentity(identity, fileIdentity(finalPath)) ||
-      finalPath.isSymbolicLink() || !(await isRealPath(path))
-    ) throw new Error(`${reason}:changed_during_read`);
+      finalPath.isSymbolicLink() ||
+      !(await isRealPath(path))
+    )
+      throw new Error(`${reason}:changed_during_read`);
     return Object.freeze({ path, bytes, sha256: createHash("sha256").update(bytes).digest("hex") });
   } catch (error) {
     if (error?.message === reason || error?.message?.startsWith(`${reason}:`)) throw error;
@@ -210,7 +223,12 @@ function fileIdentity(info) {
   return { dev: info.dev, ino: info.ino, size: info.size, mtimeNs: info.mtimeNs };
 }
 function sameFileIdentity(first, second) {
-  return first.dev === second.dev && first.ino === second.ino && first.size === second.size && first.mtimeNs === second.mtimeNs;
+  return (
+    first.dev === second.dev &&
+    first.ino === second.ino &&
+    first.size === second.size &&
+    first.mtimeNs === second.mtimeNs
+  );
 }
 async function isRealPath(filePath) {
   const canonical = await realpath(filePath).catch(() => null);

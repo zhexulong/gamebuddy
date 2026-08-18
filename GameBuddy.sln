@@ -1,9 +1,18 @@
-
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GameBuddy.Stardew", "integrations\stardew\GameBuddy.Stardew.csproj", "{2DF4E8F5-9168-42D9-8B29-7CE7C4C9EEB7}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "integrations", "integrations", "{0B703BBF-D8F1-4C5A-850A-D12B8C9B703A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "stardew", "stardew", "{BC640070-1C52-4E1E-918D-B27AFC1A964C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarmhandActionCapabilityProjection.Contract", "integrations\stardew\tests\FarmhandActionCapabilityProjection.Contract.csproj", "{A7DD6C09-241E-4BE1-ABEB-BC044D51E422}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PortfolioMineElevatorProjection.Contract", "integrations\stardew\tests\PortfolioMineElevatorProjection.Contract.csproj", "{888E8D4F-DC2A-4CF4-9B14-57D66336958D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FarmhandBridgeInterop.Contract", "integrations\stardew\tests\FarmhandBridgeInterop.Contract.csproj", "{D8B88C65-4A1C-4D68-ABDE-B7E2D6028D54}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,5 +24,23 @@ Global
 		{2DF4E8F5-9168-42D9-8B29-7CE7C4C9EEB7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2DF4E8F5-9168-42D9-8B29-7CE7C4C9EEB7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2DF4E8F5-9168-42D9-8B29-7CE7C4C9EEB7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A7DD6C09-241E-4BE1-ABEB-BC044D51E422}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A7DD6C09-241E-4BE1-ABEB-BC044D51E422}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A7DD6C09-241E-4BE1-ABEB-BC044D51E422}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A7DD6C09-241E-4BE1-ABEB-BC044D51E422}.Release|Any CPU.Build.0 = Release|Any CPU
+		{888E8D4F-DC2A-4CF4-9B14-57D66336958D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{888E8D4F-DC2A-4CF4-9B14-57D66336958D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{888E8D4F-DC2A-4CF4-9B14-57D66336958D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{888E8D4F-DC2A-4CF4-9B14-57D66336958D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D8B88C65-4A1C-4D68-ABDE-B7E2D6028D54}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D8B88C65-4A1C-4D68-ABDE-B7E2D6028D54}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D8B88C65-4A1C-4D68-ABDE-B7E2D6028D54}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D8B88C65-4A1C-4D68-ABDE-B7E2D6028D54}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{BC640070-1C52-4E1E-918D-B27AFC1A964C} = {0B703BBF-D8F1-4C5A-850A-D12B8C9B703A}
+		{A7DD6C09-241E-4BE1-ABEB-BC044D51E422} = {BC640070-1C52-4E1E-918D-B27AFC1A964C}
+		{888E8D4F-DC2A-4CF4-9B14-57D66336958D} = {BC640070-1C52-4E1E-918D-B27AFC1A964C}
+		{D8B88C65-4A1C-4D68-ABDE-B7E2D6028D54} = {BC640070-1C52-4E1E-918D-B27AFC1A964C}
 	EndGlobalSection
 EndGlobal

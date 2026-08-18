@@ -1,11 +1,10 @@
-import { readFile } from "node:fs/promises";
-import { loadHostProductionModule } from "./lib/host-production-module.mjs";
 import {
   assertExactCapabilities,
   assertPostTerminalRevision,
-  createNativeScope,
+  connectNativeLocalClient,
   executeFresh,
   observeFresh,
+  readNativeClientConfig,
   summarizeReceipt,
   summarizeSnapshot,
   waitForTerminal,
@@ -14,7 +13,7 @@ import {
 const EXPECTED_CAPABILITIES = ["inspect_self", "cancel_active_execution", "move_to_tile"];
 
 /** Execute the move contract against an already-connected bridge client. */
-export async function runMoveSmoke(client, config) {
+export async function runMoveSmoke(client, receipts, config) {
   if (config.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
   if (
     config.Portfolio?.Enable === true ||
@@ -23,12 +22,7 @@ export async function runMoveSmoke(client, config) {
     config.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  const receipts = [];
-  const unsubscribe = client.onFact((fact) => {
-    if (fact.type === "execution_receipt") receipts.push(fact.payload);
-  });
-  try {
-    const before = await observeFresh(client, { actionable: true });
+  const before = await observeFresh(client, { actionable: true });
     assertExactCapabilities(before, EXPECTED_CAPABILITIES);
     const attempts = [];
     let success = null;
@@ -65,37 +59,27 @@ export async function runMoveSmoke(client, config) {
         break;
       }
     }
-    return {
-      state: success ? "passed" : "blocked",
-      topology: "native_local_player_fixture",
-      initial: summarizeSnapshot(before),
-      success,
-      attempts,
-    };
-  } finally {
-    unsubscribe();
-  }
+  return {
+    state: success ? "passed" : "blocked",
+    topology: "native_local_player_fixture",
+    initial: summarizeSnapshot(before),
+    success,
+    attempts,
+  };
 }
 
 if (import.meta.main) {
-  const config = JSON.parse(await readFile(required("--client-config"), "utf8"));
-  const { LocalStardewBridgeClient } = await loadHostProductionModule("local-stardew-bridge.js");
-  const scope = createNativeScope(config);
-  const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
+  const config = await readNativeClientConfig();
+  const session = await connectNativeLocalClient(config);
   try {
-    const result = await runMoveSmoke(client, config);
+    const result = await runMoveSmoke(session.client, session.receipts, config);
     console.log(JSON.stringify(result));
     if (result.state !== "passed") process.exitCode = 2;
   } finally {
-    client.close();
+    session.close();
   }
 }
 
-function required(name) {
-  const index = process.argv.indexOf(name);
-  if (index < 0 || !process.argv[index + 1]) throw new Error(`missing_${name.slice(2)}`);
-  return process.argv[index + 1];
-}
 function adjacentCandidates(tile) {
   if (!Number.isInteger(tile?.x) || !Number.isInteger(tile?.y) || tile.x < 0 || tile.y < 0)
     throw new Error("native_local_fixture_invalid_current_tile");

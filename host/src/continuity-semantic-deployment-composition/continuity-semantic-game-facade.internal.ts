@@ -12,12 +12,49 @@ import type {
 import type {
   LiveSemanticGame,
   SemanticGameProductionAuthority,
-} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
+import type { CompanionHostService } from "../host-service.js";
+import type { GameOperationalGateEvidence } from "../game-operational-gate-evidence.js";
+
+/**
+ * Commit-gated connected ingress. Its brand and backing live authority remain
+ * private to this construction module; consumers receive neither a binding,
+ * permit, store, mutex, nor a teardown operation.
+ */
+export type ConnectedSemanticGameLease = Readonly<{
+  readonly __connectedSemanticGameLease: unique symbol;
+  /** Host-observed Pi identity, exposed only for one-shot operational-gate IPC correlation. */
+  piSessionId: string;
+  /** Exact durable Game session from the committed enter permit. */
+  gameSessionId: string;
+  host: CompanionHostService;
+  lifecycleSnapshot(): HostGameLifecycleSnapshot;
+  /**
+   * Entry-owned one-shot post-commit ingress release. The Host remains sealed
+   * until the entry has bootstrapped the receipt-owned voice session and bound
+   * STOP authority.
+   */
+  activateCommittedIngress(): void;
+  /** Source-owned, content-free operational-gate evidence; absent unless armed at construction. */
+  nextOperationalGateEvidence?(): Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">>;
+}>;
 
 /** Internal construction product; the public module narrows it to its facade type. */
+export type RecoverDeadOwnerRequest = Readonly<{
+  request: "recover_dead_owner";
+  operationId: string;
+}>;
+
+/**
+ * The entry-facing semantic Game surface. Recovery is intentionally a narrow
+ * operator request: construction retains every owner, proof, permit, binding,
+ * mutex, path, and store authority fact.
+ */
 export type ConstructedUnmountedGameSemanticFacade = Readonly<{
   authority: "SEMANTIC";
-  runEnter(): Promise<Readonly<{ state: "active" }>>;
+  runEnter(): Promise<ConnectedSemanticGameLease>;
+  recoverDeadOwner(input: RecoverDeadOwnerRequest): Promise<void>;
   close(): Promise<void>;
 }>;
 
@@ -34,8 +71,19 @@ export function constructKnownUnmountedGameSemanticFacade(
   let closing = false;
   let active = false;
   let recoveryRequired = false;
-  let live: Readonly<{ runtime: MaterializedGameRuntime; durable: LiveSemanticGame }> | undefined;
+  let live:
+    | {
+        runtime: MaterializedGameRuntime;
+        durable: LiveSemanticGame;
+        closeCheckpoint?: {
+          permit: Awaited<ReturnType<typeof game.prepareClose>>;
+          receipt?: Awaited<ReturnType<MaterializedGameRuntime["teardownClose"]>>;
+        };
+      }
+    | undefined;
   let closePromise: Promise<void> | undefined;
+  let connectedLease: ConnectedSemanticGameLease | undefined;
+  let ingressActivated = false;
   let drainResolve: (() => void) | undefined;
   const drain = (): Promise<void> =>
     active
@@ -44,7 +92,7 @@ export function constructKnownUnmountedGameSemanticFacade(
         })
       : Promise.resolve();
 
-  const runEnter = async (): Promise<Readonly<{ state: "active" }>> => {
+  const runEnter = async (): Promise<ConnectedSemanticGameLease> => {
     if (closing || active || live || recoveryRequired) throw new Error("semantic_game_facade_unavailable");
     active = true;
     try {
@@ -57,8 +105,9 @@ export function constructKnownUnmountedGameSemanticFacade(
           try {
             permit = await game.prepareEnter(facts);
             runtime = await materializer.materializeEnter(reservation, permit);
+            if (runtime.connected === undefined) throw new Error("semantic_game_connected_ingress_unavailable");
             const durable = await game.commitEnter(permit, runtime.receipt);
-            return Object.freeze({ runtime, durable });
+            return { runtime, durable };
           } catch (error) {
             if (runtime) {
               try {
@@ -90,7 +139,39 @@ export function constructKnownUnmountedGameSemanticFacade(
         }),
       );
       live = completed;
-      return Object.freeze({ state: "active" as const });
+      const connected = completed.runtime.connected!;
+      if (typeof completed.runtime.piSessionId !== "string" || completed.runtime.piSessionId.length === 0)
+        throw new Error("semantic_game_pi_session_unavailable");
+      // Materialization constructs the loop/Host and admits the launch-owned
+      // initial facts before minting its receipt. Only the exact durable
+      // commit above may publish this deliberately narrow connected ingress.
+      connectedLease = Object.freeze({
+        piSessionId: completed.runtime.piSessionId,
+        gameSessionId: completed.runtime.receipt.gameSessionId,
+        host: connected.host,
+        lifecycleSnapshot: connected.lifecycleSnapshot,
+        activateCommittedIngress: () => {
+          if (ingressActivated) return;
+          ingressActivated = true;
+          connected.activateIngress();
+        },
+        ...(connected.nextOperationalGateEvidence === undefined
+          ? {}
+          : { nextOperationalGateEvidence: connected.nextOperationalGateEvidence }),
+      }) as ConnectedSemanticGameLease;
+      return connectedLease;
+    } finally {
+      active = false;
+      drainResolve?.();
+      drainResolve = undefined;
+    }
+  };
+
+  const recoverDeadOwner = async (input: RecoverDeadOwnerRequest): Promise<void> => {
+    if (closing || active || live || recoveryRequired) throw new Error("semantic_game_facade_unavailable");
+    active = true;
+    try {
+      await game.recoverDeadOwner(input);
     } finally {
       active = false;
       drainResolve?.();
@@ -111,22 +192,22 @@ export function constructKnownUnmountedGameSemanticFacade(
       if (live) {
         const current = live;
         try {
-          const permit = await game.prepareClose(current.durable);
-          try {
-            const receipt = await current.runtime.teardownClose(permit);
-            await game.commitClose(current.durable, permit, receipt);
-            live = undefined;
-          } catch (error) {
-            try {
-              await game.failClose(current.durable, permit);
-              live = undefined;
-              recoveryRequired = true;
-            } catch {
-              /* preserve teardown failure and retain live capability */
-            }
-            throw error;
-          }
+          // The checkpoint is an opaque record of the sole close operation
+          // admitted for this live runtime. A physical teardown failure keeps
+          // its permit for retry; a durable commit failure additionally keeps
+          // the exact successful teardown receipt, so retry cannot teardown a
+          // runtime that has already been closed.
+          const checkpoint =
+            current.closeCheckpoint ?? (current.closeCheckpoint = { permit: await game.prepareClose(current.durable) });
+          checkpoint.receipt ??= await current.runtime.teardownClose(checkpoint.permit);
+          await game.commitClose(current.durable, checkpoint.permit, checkpoint.receipt);
+          live = undefined;
+          connectedLease = undefined;
         } catch (error) {
+          // `live`, its binding-backed runtime, store/coordinator authority,
+          // and close checkpoint deliberately remain intact. In particular, do
+          // not call failClose here: it would durably retire an owner while
+          // the physical runtime could still survive.
           failure = error;
         }
       }
@@ -155,5 +236,5 @@ export function constructKnownUnmountedGameSemanticFacade(
       }
     })());
 
-  return Object.freeze({ authority: "SEMANTIC" as const, runEnter, close });
+  return Object.freeze({ authority: "SEMANTIC" as const, runEnter, recoverDeadOwner, close });
 }

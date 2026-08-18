@@ -189,9 +189,6 @@ function assertBackupName(value) {
 export function fixtureActions(action) {
   if (action === undefined || action === "move_to_tile") return ["move_to_tile"];
   if (action === "equip_tool") return ["equip_tool"];
-  // Tree discovery is a read-only snapshot probe. inspect_self is intrinsic to
-  // BridgeSession and must not be configured as an enabled fixture action.
-  if (action === "tree_discovery") return [];
   if (action === "travel") return ["move_to_tile", "travel"];
   // The fixture supplies one intact target-version ResourceClump and a basic
   // Pickaxe before attachment. Travel/movement/equipment and each hit remain
@@ -237,7 +234,6 @@ export function fixtureActions(action) {
   // A bait fixture creates a current-player-owned unbaited pot and exactly one
   // Bait pre-attachment; production alone performs the native interaction.
   if (action === "bait_crab_pot") return ["bait_crab_pot"];
-  if (action === "tree_first_hit") return ["move_to_tile", "travel", "equip_tool", "tree_first_hit"];
   if (action === "chop_tree_source") return ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
   if (action === "break_rock_source") return ["move_to_tile", "travel", "equip_tool", "break_rock_source"];
   if (action === "clear_hoedirt") return ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"];
@@ -270,7 +266,6 @@ export function fixtureScenario(actions) {
   if (actions.includes("place_wood_fence")) return "native_place_wood_fence_v1";
   if (actions.includes("bait_crab_pot")) return "native_bait_crab_pot_v1";
   if (actions.includes("place_crab_pot")) return "native_place_crab_pot_v1";
-  if (actions.includes("tree_first_hit")) return "native_tree_first_hit_v1";
   if (actions.includes("chop_tree_source")) return "native_chop_tree_source_v1";
   if (actions.includes("break_rock_source")) return "native_break_rock_source_v1";
   if (actions.includes("clear_hoedirt")) return "native_clear_hoedirt_v1";

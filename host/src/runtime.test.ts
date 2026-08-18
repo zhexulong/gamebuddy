@@ -3,35 +3,46 @@ import { createHash } from "node:crypto";
 import { access, mkdtemp, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { before } from "node:test";
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createDeterministicBridgePair } from "./bridge.js";
+import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
+import { CompanionIntegrationClient } from "./integration.js";
+import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
+import { type KnowledgeBundle } from "./knowledge.js";
+import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
+import { type Scope } from "./protocol.js";
+import { actionRegistryRevision, type CompanionRunManifest } from "./run-manifest.js";
 import {
+  type CompanionMemoryCommand,
+  type CompanionMemoryFacade,
   companionStatusTool,
-  DEFAULT_COMPANION_MODEL_CONFIG,
-  createCompanionStatusTool,
   createCompanionRuntime,
+  createCompanionStatusTool,
+  createGameCompanionRuntime,
+  DEFAULT_COMPANION_MODEL_CONFIG,
   identityKey,
   MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED,
+  MAGIC_CONTEXT_HISTORIAN_ENABLED,
   MAGIC_CONTEXT_MEMORY_DOMAIN,
   MAGIC_CONTEXT_MEMORY_ENABLED,
-  MAGIC_CONTEXT_HISTORIAN_ENABLED,
   MAGIC_CONTEXT_RECALL_ENABLED,
   PHASE_0B_ALLOWED_TOOL_NAMES,
   resolveMagicContextExtensionEntry,
   resolveRuntimePaths,
-  type CompanionMemoryCommand,
-  type CompanionMemoryFacade,
 } from "./runtime.js";
-import { createDeterministicBridgePair } from "./bridge.js";
-import { CompanionIntegrationClient } from "./integration.js";
-import { type Scope } from "./protocol.js";
-import { type KnowledgeBundle } from "./knowledge.js";
-import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
-import { actionRegistryRevision, type CompanionRunManifest } from "./run-manifest.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
-import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
+import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
+
+// The compiled test artifact is deliberately not a production artifact, so
+// path-lock's default resolver rejects repository helpers. Every runtime
+// bootstrap writes an identity profile through the durable path lock, so mint
+// the build-only reclaimer capability once before any test runs.
+before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
 
 function canonicalStableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalStableJson).join(",")}]`;
@@ -152,6 +163,11 @@ test("chat runtime mounts an injected read-only GameBuddy companion memory facad
       { operation: "get", stateToken: "memory_state_01" },
       { operation: "create_inferred_semantic", content: "Likes rain." },
     ]);
+    assert.equal(
+      runtime.recoverStardewExecutionReceipts,
+      undefined,
+      "a chat runtime must never expose the game recovery closure",
+    );
     assert.deepEqual(
       (tool.parameters as { anyOf?: unknown[] }).anyOf?.map(
         (entry) => (entry as { properties?: { operation?: { const?: string } } }).properties?.operation?.const,
@@ -185,6 +201,7 @@ test("mounted Companion status reports live integration facts without inferring 
         health: 100,
         actionable: true,
         capabilities: ["equip_tool"],
+        presentationLocale: "en-US",
         activeExecution: null,
       },
       latestReceipt: {
@@ -263,10 +280,10 @@ test("runtime mounts a fake integration through the module port", async () => {
         throw new Error("integration_identity_binding_mismatch");
     },
     worldScope: () => null,
-    createToolSet: ({ connection, policy, dispatchAdmission }) => ({
+    createToolSet: ({ connection, policy, dispatchAdmissionFactory }) => ({
       observation: [],
       actions:
-        dispatchAdmission !== undefined &&
+        dispatchAdmissionFactory !== undefined &&
         catalog
           .visibleActions((connection.state as { capabilities: readonly string[] }).capabilities, policy)
           .some((entry) => entry.actionId === "activate_console")
@@ -287,6 +304,7 @@ test("runtime mounts a fake integration through the module port", async () => {
       sessionId: "arcade_session_01",
       capabilities: (connection.state as { capabilities: readonly string[] }).capabilities,
       snapshotRevision: 1,
+      presentationLocale: "en-US",
       activeExecution: null,
       latestReceipt: null,
       latestReasonCode: null,
@@ -298,6 +316,7 @@ test("runtime mounts a fake integration through the module port", async () => {
   };
   const integration = {
     scope: { integrationId: "test-arcade" },
+    executionGate: { executable: true },
     module: fake,
     state: { capabilities: ["activate_console"] },
   } as never;
@@ -371,6 +390,105 @@ test("generic runtime keeps an explicit game surface when the Host construction 
   }
 });
 
+test("formal Preview Game composition does not load Magic Context", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-preview-no-magic-context-"));
+  const scope: Scope = {
+    integrationId: "stardew",
+    saveId: identity.saveId,
+    worldId: identity.worldId,
+    playerId: identity.playerId,
+    companionId: identity.companionId,
+  };
+  const [hostEndpoint] = createDeterministicBridgePair(scope);
+  const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
+  const runtime = await createGameCompanionRuntime(
+    identity,
+    root,
+    integration,
+    "preview_session_01",
+    undefined,
+    undefined,
+    {
+      modelConfig: DEFAULT_COMPANION_MODEL_CONFIG,
+      gameplaySubagentEnabled: false,
+      disableMagicContextMemory: true,
+      hostBindingFactory: () => undefined,
+    },
+  );
+  try {
+    assert.deepEqual(runtime.extensions, []);
+    await assert.rejects(
+      access(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc")),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT",
+    );
+    const manifest = JSON.parse(
+      await readFile(runtime.paths.runManifestPath, "utf8"),
+    ) as CompanionRunManifest;
+    assert.equal(manifest.featureFlags.magicContextMemoryEnabled, false);
+    assert.equal(
+      typeof runtime.recoverStardewExecutionReceipts,
+      "function",
+      "the game runtime must expose the explicit relaunch-only recovery closure",
+    );
+  } finally {
+    runtime.session.dispose();
+    integration.dispose();
+  }
+});
+
+test("Stardew action tools fail closed when a connection lacks the launcher execution gate", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-no-execution-gate-"));
+  const scope: Scope = {
+    integrationId: "stardew",
+    saveId: identity.saveId,
+    worldId: identity.worldId,
+    playerId: identity.playerId,
+    companionId: identity.companionId,
+  };
+  const integration = {
+    scope,
+    module: STARDEW_INTEGRATION_MODULE,
+    state: {
+      connected: true,
+      sessionId: "session_01",
+      capabilities: ["equip_tool"],
+      snapshot: {
+        revision: 1,
+        location: "Farm",
+        tile: { x: 1, y: 2 },
+        stamina: 100,
+        health: 100,
+        actionable: true,
+        capabilities: ["equip_tool"],
+        presentationLocale: "en-US",
+        activeExecution: null,
+      },
+      latestReceipt: null,
+      latestReasonCode: null,
+    },
+    async execute() {
+      throw new Error("must_not_execute");
+    },
+  };
+  const runtime = await createCompanionRuntime(identity, root, integration);
+  try {
+    assert.equal(
+      runtime.session.agent.state.tools.some((tool) => tool.name === "stardew_equip_tool"),
+      false,
+    );
+    assert.equal(
+      runtime.session.agent.state.tools.some((tool) => tool.name === "stardew_observe"),
+      true,
+    );
+  } finally {
+    runtime.session.dispose();
+  }
+});
+
 test("runtime composes a ledger admission before mounting and executing a live Stardew action", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-admission-"));
   const scope: Scope = {
@@ -381,10 +499,10 @@ test("runtime composes a ledger admission before mounting and executing a live S
     companionId: identity.companionId,
   };
   let executeWrites = 0;
-  let cancelWrites = 0;
   const integration = {
     scope,
     module: STARDEW_INTEGRATION_MODULE,
+    executionGate: { executable: true },
     state: {
       connected: true,
       sessionId: "session_01",
@@ -397,6 +515,7 @@ test("runtime composes a ledger admission before mounting and executing a live S
         health: 100,
         actionable: true,
         capabilities: ["equip_tool", "cancel_active_execution"],
+        presentationLocale: "en-US",
         activeExecution: null,
       },
       latestReceipt: null,
@@ -414,7 +533,6 @@ test("runtime composes a ledger admission before mounting and executing a live S
       };
     },
     async cancel() {
-      cancelWrites++;
       throw new Error("direct_adapter_cancel_must_not_be_reached");
     },
   };
@@ -429,15 +547,10 @@ test("runtime composes a ledger admission before mounting and executing a live S
     );
     assert.equal(executeWrites, 1);
     assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /execution_equip_01/);
-    const cancel = runtime.session.agent.state.tools.find((tool) => tool.name === "stardew_cancel_active_execution");
-    assert.ok(cancel);
-    const rejected = await cancel.execute(
-      "runtime-admission-cancel",
-      { requestId: "other_request", executionId: "other_execution" },
-      new AbortController().signal,
+    assert.equal(
+      runtime.session.agent.state.tools.some((tool) => tool.name === "stardew_cancel_active_execution"),
+      false,
     );
-    assert.match(rejected.content[0]?.type === "text" ? rejected.content[0].text : "", /unknown_execution_correlation/);
-    assert.equal(cancelWrites, 0);
   } finally {
     runtime.interruptIntegrationExecutions?.("runtime_test_end");
     runtime.session.dispose();
@@ -795,6 +908,40 @@ test("Tavern stable context is available only through the exact live chat Pi bin
   }
 });
 
+test("Game operational marker is absent from the generic Chat-callable runtime API and isolated to Game construction", async () => {
+  const source = await readFile(new URL("../src/runtime.ts", import.meta.url), "utf8");
+  const genericApi = source.slice(
+    source.indexOf("export async function createCompanionRuntime"),
+    source.indexOf("export async function createGameCompanionRuntime"),
+  );
+  const gameApi = source.slice(
+    source.indexOf("export async function createGameCompanionRuntime"),
+    source.indexOf("async function createRuntime"),
+  );
+  assert.equal(genericApi.includes("GameOperationalGate"), false);
+  assert.equal(genericApi.includes("gameOperational"), false);
+  assert.match(gameApi, /gameOperationalGate: GameOperationalGateConfig/);
+  assert.match(gameApi, /"game"/);
+  assert.match(source, /game_operational_marker_requires_game_surface/);
+});
+
+test("Game operational marker registration is Game-only and initialization cleanup clears it", async () => {
+  const source = await readFile(new URL("../src/runtime.ts", import.meta.url), "utf8");
+  const registration = source.slice(
+    source.indexOf("if (gameOperationalGate !== undefined)"),
+    source.indexOf("if (tavernStableContextSnapshot !== undefined)"),
+  );
+  assert.match(registration, /registerGameOperationalGateMarker/);
+  assert.match(registration, /sessionId: piSessionId/);
+  assert.match(registration, /surface: "game"/);
+  assert.match(source, /clearOperationalGateMarker\?\.\(\)/);
+  const manifestBlock = source.slice(
+    source.indexOf("await writeOrVerifyRunManifest"),
+    source.indexOf("return {", source.indexOf("await writeOrVerifyRunManifest")),
+  );
+  assert.equal(manifestBlock.includes("gameOperationalGate"), false);
+});
+
 test("runtime construction failure disposes the Pi session and clears stable publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-cleanup-"));
   const chatIdentity = { ...identity, continuityId: "cleanup_continuity_01" };
@@ -824,11 +971,36 @@ test("runtime construction failure disposes the Pi session and clears stable pub
   }
 
   await assert.rejects(
-    () => createCompanionRuntime(chatIdentity, root, undefined, undefined, undefined, undefined, false, undefined, "cleanup_chat_01", undefined, "chat"),
+    () =>
+      createCompanionRuntime(
+        chatIdentity,
+        root,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        "cleanup_chat_01",
+        undefined,
+        "chat",
+      ),
     /run_manifest_mismatch/,
   );
-  assert.equal(await stat(sessionFile).then(() => true, () => false), false);
-  assert.equal(await stat(first.paths.identityProfileBindingPath).then(() => true, () => false), true);
+  assert.equal(
+    await stat(sessionFile).then(
+      () => true,
+      () => false,
+    ),
+    false,
+  );
+  assert.equal(
+    await stat(first.paths.identityProfileBindingPath).then(
+      () => true,
+      () => false,
+    ),
+    true,
+  );
 });
 
 test("runtime binds the Host-owned IdentityProfile to Pi system prompt and fails closed on mismatch", async () => {

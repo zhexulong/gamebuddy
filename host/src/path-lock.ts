@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
+
+import { readStrictJsonFile } from "./strict-json-reader.js";
+import {
+  reclaimStaleLock as nativeReclaimStaleLock,
+  releaseOwnedLock as nativeReleaseOwnedLock,
+  requestWindowsStaleLockReclaimer,
+  type WindowsStaleLockReclaimerCapability,
+  type WindowsStaleLockReclaimCategory,
+  type WindowsStaleLockReclaimPolicy,
+  type WindowsStaleLockReleaseCategory,
+} from "./windows-stale-lock-reclaimer/index.js";
 
 /**
  * Serializes small durable artifacts both within this Host process and across
@@ -13,6 +24,12 @@ import { dirname, relative, resolve, sep } from "node:path";
  * boundary verification, lock acquisition, and the final verification are one
  * operation. This narrows (but cannot eliminate without openat-style handles)
  * the filesystem replacement window around a durable write.
+ *
+ * Lock deletion is handle-bound: both stale reclaim and ordinary owner release
+ * run fixed operations in the Windows-only `GameBuddy.WindowsStaleLockReclaimer`
+ * helper through an opaque capability. This module never pathname-deletes a
+ * lock file, never falls back to `rm`, and fails closed whenever the capability
+ * is unavailable (including every non-Windows runtime).
  */
 const tails = new Map<string, Promise<void>>();
 const LOCK_TIMEOUT_MS = 10_000;
@@ -22,47 +39,174 @@ const STALE_LOCK_MS = 5 * 60_000;
 type LockOwner = Readonly<{ token: string; pid: number; createdAtMs: number }>;
 export type PathLockOptions = Readonly<{ containmentRoot?: string; timeoutMs?: number }>;
 
-type OwnedFile = Readonly<{ dev: number; ino: number }>;
+/**
+ * Explicit binding for the opaque Windows stale-lock reclaimer capability.
+ * Production does not call this: the default fixed request policy lazily mints
+ * the capability from the verified published/build helper pair. Tests bind a
+ * test-only fake capability here, and pass `undefined` to force the
+ * fail-closed unavailable behavior regardless of the runtime platform.
+ */
+export function bindWindowsStaleLockReclaimer(capability: WindowsStaleLockReclaimerCapability | undefined): void {
+  windowsReclaimerBinding = capability === undefined ? { kind: "disabled" } : { kind: "capability", capability };
+  defaultWindowsReclaimerRequest = undefined;
+}
+
+type WindowsReclaimerBinding = Readonly<
+  | { kind: "unbound" }
+  | { kind: "capability"; capability: WindowsStaleLockReclaimerCapability }
+  | { kind: "disabled" }
+>;
+let windowsReclaimerBinding: WindowsReclaimerBinding = { kind: "unbound" };
+let defaultWindowsReclaimerRequest: Promise<WindowsStaleLockReclaimerCapability | undefined> | undefined;
+
+async function requestWindowsReclaimer(): Promise<WindowsStaleLockReclaimerCapability | undefined> {
+  if (windowsReclaimerBinding.kind === "capability") return windowsReclaimerBinding.capability;
+  if (windowsReclaimerBinding.kind === "disabled") return undefined;
+  defaultWindowsReclaimerRequest ??= requestWindowsStaleLockReclaimer();
+  return await defaultWindowsReclaimerRequest;
+}
 
 /**
- * Writes a single file through a caller-held path lock. The temporary is
- * created exclusively and is removed only while it still has the inode that
- * this invocation created. Callers must hold withPathLock for the target.
+ * Typed result of one stale-lock recovery attempt. The reclaim decision is
+ * evidence-based: `reclaimed` only ever reports that the fixed Windows helper
+ * deleted exactly the object it opened (a regular non-reparse file whose
+ * identity, size, mtime and ctime stayed stable across a bounded observation
+ * window on the same retained HANDLE), for a locally-dead valid owner or stale
+ * malformed crash residue. `unsafe` means a link/reparse or non-regular entry
+ * was observed and must never be deleted; the caller fails closed.
  */
-export async function atomicWriteFile(path: string, content: string, containmentRoot?: string): Promise<void> {
-  const target = resolve(path);
-  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-  let owner: OwnedFile | undefined;
-  let primaryError: unknown;
-  try {
-    await verifySafePathBoundary(target, containmentRoot);
-    await writeFile(temporary, content, { encoding: "utf8", flag: "wx" });
-    owner = await identifyOwnedFile(temporary, containmentRoot);
-    await verifySafePathBoundary(temporary, containmentRoot);
-    await verifySafePathBoundary(target, containmentRoot);
-    await rename(temporary, target);
-  } catch (error) {
-    primaryError = error;
-    throw error;
-  } finally {
-    if (owner !== undefined) {
+export type PathLockRecoveryResult = Readonly<{
+  outcome: "reclaimed" | "kept" | "unsafe";
+  reason:
+    | "valid_owner_stale_and_dead"
+    | "malformed_stale_identity_stable"
+    | "valid_owner_fresh"
+    | "valid_owner_live"
+    | "malformed_fresh"
+    | "identity_changed_during_observation"
+    | "reparse_or_link"
+    | "lock_disappeared"
+    | "windows_reclaimer_unavailable";
+}>;
+
+/**
+ * Typed result of one normal owner release. Release is handle-bound too: the
+ * helper re-reads the owner bytes through its own opened HANDLE and deletes
+ * only when the exact UUID token is still proven there.
+ */
+export type PathLockReleaseResult = Readonly<{
+  outcome: "released" | "kept" | "unavailable";
+  reason: "exact_token_released" | "lock_already_missing" | "token_mismatch" | "not_regular" | "windows_reclaimer_unavailable";
+}>;
+
+export type SafeFileIdentity = Readonly<{ dev: number; ino: number }>;
+type OwnedFile = SafeFileIdentity;
+
+/** Dependencies of the atomic-write algorithm. Kept explicit so the durable
+ * ownership protocol can be exercised against deterministic filesystem faults
+ * without changing Node's module loader or production process flags. */
+export type AtomicWriteFileDependencies = Readonly<{
+  randomUUID: () => string;
+  writeFile: typeof writeFile;
+  rename: typeof rename;
+  verifySafePathBoundary: typeof verifySafePathBoundary;
+  captureSafeFileIdentity: typeof captureSafeFileIdentity;
+  removeOwnedSafeFile: typeof removeOwnedSafeFile;
+}>;
+
+/**
+ * Creates a single-file atomic writer through a caller-held path lock. The
+ * temporary is created exclusively and removed only when its captured identity
+ * still proves ownership. Callers must hold withPathLock for the target.
+ */
+export function createAtomicWriteFile(dependencies: AtomicWriteFileDependencies) {
+  return async (path: string, content: string, containmentRoot?: string): Promise<void> => {
+    const target = resolve(path);
+    const temporary = `${target}.${process.pid}.${dependencies.randomUUID()}.tmp`;
+    let owner: OwnedFile | undefined;
+    let primaryError: unknown;
+    try {
+      await dependencies.verifySafePathBoundary(target, containmentRoot);
       try {
-        await cleanupOwnedFile(temporary, containmentRoot, owner);
-      } catch (cleanupError) {
-        if (primaryError === undefined) throw cleanupError;
+        await dependencies.writeFile(temporary, content, { encoding: "utf8", flag: "wx" });
+      } catch (error) {
+        // An exclusive-create collision proves this invocation never owned the
+        // pre-existing temporary. Other write failures may occur after creation,
+        // so capture that regular file before cleanup while preserving the
+        // original write failure.
+        if (!isNodeError(error) || error.code !== "EEXIST") {
+          owner = await identifyOwnedFileAfterWriteFailure(
+            temporary,
+            containmentRoot,
+            dependencies.captureSafeFileIdentity,
+          );
+        }
+        throw error;
+      }
+      owner = await dependencies.captureSafeFileIdentity(temporary, containmentRoot);
+      if (owner === undefined) throw new Error("unsafe_path_boundary");
+      await dependencies.verifySafePathBoundary(temporary, containmentRoot);
+      await dependencies.verifySafePathBoundary(target, containmentRoot);
+      await dependencies.rename(temporary, target);
+    } catch (error) {
+      primaryError = error;
+      throw error;
+    } finally {
+      if (owner !== undefined) {
+        try {
+          await dependencies.removeOwnedSafeFile(temporary, owner, containmentRoot);
+        } catch (cleanupError) {
+          if (primaryError === undefined) throw cleanupError;
+        }
       }
     }
+  };
+}
+
+export const atomicWriteFile = createAtomicWriteFile({
+  randomUUID,
+  writeFile,
+  rename,
+  verifySafePathBoundary,
+  captureSafeFileIdentity,
+  removeOwnedSafeFile,
+});
+
+async function identifyOwnedFileAfterWriteFailure(
+  path: string,
+  containmentRoot: string | undefined,
+  captureIdentity: typeof captureSafeFileIdentity,
+): Promise<OwnedFile | undefined> {
+  try {
+    return await captureIdentity(path, containmentRoot);
+  } catch {
+    return undefined;
   }
 }
 
-export async function removeSafeFile(path: string, containmentRoot?: string): Promise<void> {
-  const target = resolve(path);
-  await verifySafePathBoundary(target, containmentRoot);
+export async function captureSafeFileIdentity(
+  path: string,
+  containmentRoot?: string,
+): Promise<SafeFileIdentity | undefined> {
   try {
-    await rm(target, { force: true });
+    return await identifyOwnedFile(resolve(path), containmentRoot);
   } catch (error) {
-    if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+    if (isNodeError(error) && error.code === "ENOENT") return undefined;
+    throw error;
   }
+}
+
+export async function removeOwnedSafeFile(
+  path: string,
+  identity: SafeFileIdentity,
+  containmentRoot?: string,
+): Promise<void> {
+  await cleanupOwnedFile(resolve(path), containmentRoot, identity);
+}
+
+export async function removeSafeFile(path: string, containmentRoot?: string): Promise<void> {
+  const identity = await captureSafeFileIdentity(path, containmentRoot);
+  if (identity !== undefined) await removeOwnedSafeFile(path, identity, containmentRoot);
 }
 
 async function identifyOwnedFile(path: string, containmentRoot?: string): Promise<OwnedFile> {
@@ -87,7 +231,6 @@ async function cleanupOwnedFile(path: string, containmentRoot: string | undefine
   if (!current.isFile() || current.isSymbolicLink() || current.dev !== owner.dev || current.ino !== owner.ino) return;
   await rm(path, { force: true });
 }
-
 
 export function pathLockPath(path: string): string {
   return `${path}.lock`;
@@ -131,11 +274,7 @@ export async function readSafeDirectory(path: string, containmentRoot?: string):
   return Object.freeze(entries);
 }
 
-export async function withPathLock<T>(
-  path: string,
-  work: () => Promise<T>,
-  options: PathLockOptions = {},
-): Promise<T> {
+export async function withPathLock<T>(path: string, work: () => Promise<T>, options: PathLockOptions = {}): Promise<T> {
   const target = resolve(path);
   const root = options.containmentRoot === undefined ? undefined : resolve(options.containmentRoot);
   assertContained(target, root);
@@ -169,7 +308,11 @@ export async function withPathLock<T>(
   }
 }
 
-async function acquireFileLock(path: string, root: string | undefined, timeoutMs?: number): Promise<() => Promise<void>> {
+async function acquireFileLock(
+  path: string,
+  root: string | undefined,
+  timeoutMs?: number,
+): Promise<() => Promise<void>> {
   const lockPath = pathLockPath(path);
   const owner: LockOwner = Object.freeze({ token: randomUUID(), pid: process.pid, createdAtMs: Date.now() });
   const deadline = Date.now() + (timeoutMs ?? LOCK_TIMEOUT_MS);
@@ -186,22 +329,22 @@ async function acquireFileLock(path: string, root: string | undefined, timeoutMs
         await handle.close();
       }
       return async () => {
-        // Do not unlink a lock replaced by another owner after a crash/stale
-        // recovery race. The owner token is the minimum local proof.
-        try {
-          const current = parseOwner(await readFile(lockPath, "utf8"));
-          if (current?.token === owner.token) await rm(lockPath, { force: true });
-        } catch (error) {
-          if (!isNodeError(error) || error.code !== "ENOENT") throw error;
-        }
+        // Normal owner release is handle-bound: the helper opens the leaf
+        // once, re-reads its owner bytes through that same HANDLE, and deletes
+        // only when the exact token is still proven there. There is no
+        // token-read -> pathname rm path anywhere in this module.
+        const release = await releaseOwnedPathLock(lockPath, owner.token);
+        if (release.outcome !== "released") throw new Error(`durable_path_lock_release_failed:${release.reason}`);
       };
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
       // Never parse or reclaim a lock through a link/reparse point. A
-      // malformed regular owner remains a barrier; only an owned stale file
-      // can reach reclaimStaleLock.
+      // malformed regular owner remains a barrier while fresh; only a stale,
+      // identity-stable regular file or an old locally-dead valid owner can be
+      // reclaimed, and only by reclaimStaleLock's evidence-based decision.
       await verifyLeaf(lockPath);
-      await reclaimStaleLock(lockPath);
+      const recovery = await reclaimStaleLock(lockPath);
+      if (recovery.outcome === "unsafe") throw new Error("unsafe_path_boundary");
       if (Date.now() >= deadline) throw new Error("durable_path_lock_timeout");
       await delay(LOCK_POLL_MS);
     }
@@ -309,16 +452,141 @@ function assertContained(path: string, root: string | undefined): void {
   if (outside) throw new Error("unsafe_tavern_artifact_path");
 }
 
-async function reclaimStaleLock(lockPath: string): Promise<void> {
+/**
+ * Reclaims a stale lock file only through the fixed handle-bound Windows
+ * helper, and only when the Host-side evidence proves it is a candidate. This
+ * is a deep-module behavior, not a per-store cleanup: no durable Chat mutation
+ * may rm a lock path itself.
+ *
+ * - A malformed/zero-byte owner record is a barrier while the file is fresh.
+ * - After the frozen stale interval, the helper receives only the frozen
+ *   `stale_malformed` selector; it independently opens the leaf no-follow,
+ *   classifies the owner bytes through its retained HANDLE, waits the bounded
+ *   frozen observation interval on that same HANDLE, re-queries file ID, size,
+ *   mtime and ctime, re-reads the owner bytes, re-checks that the path still
+ *   names the opened object, and only then applies a handle-bound disposition.
+ * - A valid owner record keeps the existing rule: only old plus locally dead
+ *   owners are candidates, selected as `stale_valid_dead`. The local dead-proof
+ *   is only a policy predicate for choosing that selector, never identity
+ *   evidence; the helper's opened-handle facts must agree with the selector.
+ * - On non-Windows, when no capability is bound, or on any unavailable,
+ *   unsupported or ambiguous helper outcome, the lock is kept and the caller
+ *   fails closed. There is no POSIX stale reclaim.
+ */
+export async function reclaimStaleLock(lockPath: string): Promise<PathLockRecoveryResult> {
+  const first = await observeLockFile(lockPath);
+  if (first === undefined) return recoveryResult("kept", "lock_disappeared");
+  if (!first.isRegularFile) return recoveryResult("unsafe", "reparse_or_link");
+  const owner = await readLockOwnerIfPresent(lockPath);
+  if (owner === "disappeared") return recoveryResult("kept", "lock_disappeared");
+  let policy: WindowsStaleLockReclaimPolicy;
+  if (owner !== null) {
+    if (Date.now() - owner.createdAtMs < STALE_LOCK_MS) return recoveryResult("kept", "valid_owner_fresh");
+    if (processAlive(owner.pid)) return recoveryResult("kept", "valid_owner_live");
+    if (!staleByMtime(first)) return recoveryResult("kept", "valid_owner_fresh");
+    policy = "stale_valid_dead";
+  } else {
+    // Malformed or zero-byte ownership: never infer an owner PID from the
+    // bytes. Only a stale, unchanged regular file may even be presented to the
+    // helper; a fresh residue stays a barrier.
+    if (!staleByMtime(first)) return recoveryResult("kept", "malformed_fresh");
+    policy = "stale_malformed";
+  }
+  const capability = await requestWindowsReclaimer();
+  if (capability === undefined) return recoveryResult("kept", "windows_reclaimer_unavailable");
+  let category: WindowsStaleLockReclaimCategory;
   try {
-    const owner = parseOwner(await readFile(lockPath, "utf8"));
-    if (owner === null || Date.now() - owner.createdAtMs < STALE_LOCK_MS || processAlive(owner.pid)) return;
-    // A stale owner can only be reclaimed after it is both old and locally
-    // dead; malformed/ambiguous ownership stays fail-closed until timeout.
-    const current = parseOwner(await readFile(lockPath, "utf8"));
-    if (current?.token === owner.token) await rm(lockPath, { force: true });
+    category = await nativeReclaimStaleLock(capability, resolve(lockPath), policy);
+  } catch {
+    return recoveryResult("kept", "windows_reclaimer_unavailable");
+  }
+  return mapReclaimCategory(category, policy);
+}
+
+/**
+ * Releases the current successful owner record through the fixed handle-bound
+ * helper with exact token validation. `missing` is a vacuous success (there is
+ * no lock left to release); every other non-released outcome fails closed so
+ * the caller never believes a lock was released when it was not.
+ */
+export async function releaseOwnedPathLock(lockPath: string, token: string): Promise<PathLockReleaseResult> {
+  const capability = await requestWindowsReclaimer();
+  if (capability === undefined) return releaseResult("unavailable", "windows_reclaimer_unavailable");
+  let category: WindowsStaleLockReleaseCategory;
+  try {
+    category = await nativeReleaseOwnedLock(capability, resolve(lockPath), token);
+  } catch {
+    return releaseResult("unavailable", "windows_reclaimer_unavailable");
+  }
+  switch (category) {
+    case "released": return releaseResult("released", "exact_token_released");
+    case "missing": return releaseResult("released", "lock_already_missing");
+    case "kept_token_mismatch": return releaseResult("kept", "token_mismatch");
+    case "kept_not_regular": return releaseResult("kept", "not_regular");
+    case "indeterminate": return releaseResult("unavailable", "windows_reclaimer_unavailable");
+  }
+}
+
+function mapReclaimCategory(category: WindowsStaleLockReclaimCategory, policy: WindowsStaleLockReclaimPolicy): PathLockRecoveryResult {
+  switch (category) {
+    case "reclaimed":
+      return recoveryResult("reclaimed", policy === "stale_valid_dead" ? "valid_owner_stale_and_dead" : "malformed_stale_identity_stable");
+    case "missing": return recoveryResult("kept", "lock_disappeared");
+    case "kept_malformed_fresh": return recoveryResult("kept", "malformed_fresh");
+    case "kept_valid_fresh": return recoveryResult("kept", "valid_owner_fresh");
+    case "kept_policy_mismatch": return recoveryResult("kept", "identity_changed_during_observation");
+    case "kept_identity_changed": return recoveryResult("kept", "identity_changed_during_observation");
+    case "kept_path_replaced": return recoveryResult("kept", "identity_changed_during_observation");
+    case "kept_not_regular": return recoveryResult("unsafe", "reparse_or_link");
+    case "indeterminate": return recoveryResult("kept", "windows_reclaimer_unavailable");
+  }
+}
+
+type LockFileObservation = Readonly<{
+  dev: bigint;
+  ino: bigint;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  isRegularFile: boolean;
+}>;
+
+async function observeLockFile(lockPath: string): Promise<LockFileObservation | undefined> {
+  try {
+    const stat = await lstat(lockPath, { bigint: true });
+    return Object.freeze({
+      dev: stat.dev,
+      ino: stat.ino,
+      size: stat.size,
+      mtimeNs: stat.mtimeNs,
+      ctimeNs: stat.ctimeNs,
+      isRegularFile: stat.isFile() && !stat.isSymbolicLink(),
+    });
   } catch (error) {
-    if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+    if (isNodeError(error) && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+function staleByMtime(observation: LockFileObservation): boolean {
+  return Date.now() - Number(observation.mtimeNs / 1_000_000n) >= STALE_LOCK_MS;
+}
+
+function recoveryResult(outcome: PathLockRecoveryResult["outcome"], reason: PathLockRecoveryResult["reason"]): PathLockRecoveryResult {
+  return Object.freeze({ outcome, reason });
+}
+
+function releaseResult(outcome: PathLockReleaseResult["outcome"], reason: PathLockReleaseResult["reason"]): PathLockReleaseResult {
+  return Object.freeze({ outcome, reason });
+}
+
+/** ENOENT is a retryable disappearance, not malformed ownership. */
+async function readLockOwnerIfPresent(lockPath: string): Promise<LockOwner | "disappeared" | null> {
+  try {
+    return await readLockOwner(lockPath);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return "disappeared";
+    throw error;
   }
 }
 
@@ -332,22 +600,29 @@ function processAlive(pid: number): boolean {
   }
 }
 
-function parseOwner(raw: string): LockOwner | null {
+async function readLockOwner(lockPath: string): Promise<LockOwner | null> {
   try {
-    const value = JSON.parse(raw) as unknown;
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-    const record = value as Record<string, unknown>;
-    return typeof record.token === "string" &&
-      /^[0-9a-f-]{36}$/i.test(record.token) &&
-      typeof record.pid === "number" &&
-      Number.isSafeInteger(record.pid) &&
-      typeof record.createdAtMs === "number" &&
-      Number.isSafeInteger(record.createdAtMs)
-      ? Object.freeze({ token: record.token, pid: record.pid, createdAtMs: record.createdAtMs })
-      : null;
-  } catch {
+    return parseOwner(await readStrictJsonFile(lockPath));
+  } catch (error) {
+    // Lock-owner contents are untrusted coordination state. A malformed,
+    // duplicate-key, or unstable read is a barrier rather than a parser error
+    // exposed to the caller; only disappearance permits another retry.
+    if (isNodeError(error) && error.code === "ENOENT") throw error;
     return null;
   }
+}
+
+function parseOwner(value: unknown): LockOwner | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  return typeof record.token === "string" &&
+    /^[0-9a-f-]{36}$/i.test(record.token) &&
+    typeof record.pid === "number" &&
+    Number.isSafeInteger(record.pid) &&
+    typeof record.createdAtMs === "number" &&
+    Number.isSafeInteger(record.createdAtMs)
+    ? Object.freeze({ token: record.token, pid: record.pid, createdAtMs: record.createdAtMs })
+    : null;
 }
 
 function delay(ms: number): Promise<void> {

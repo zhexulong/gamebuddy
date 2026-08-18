@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import { TavernArtifactStore, TavernRevisionConflict } from "../artifact-store.js";
-import { readSafeDirectory } from "../../path-lock.js";
+import { TavernArtifactStore } from "../artifact-store.js";
 import { validateTavernArtifact, type Scenario } from "../types.js";
 
 export type PlayerScenarioProjection = Readonly<{
@@ -37,78 +36,36 @@ export function createScenarioManagementService(
   playerRoot: string,
 ): ScenarioManagementService {
   const root = resolve(playerRoot);
-  const legacyPath = join(root, "scenario-management", "scenario.json");
   const scenarioId = `player-scenario-${digest(root)}`;
-  const directory = join(root, "scenarios", scenarioId);
-  const path = (revision: number) => join(directory, "revisions", `${revision}.json`);
-
+  const repository = store.openRevisionRepository({
+    root: join(root, "scenarios", scenarioId),
+    artifactKind: "scenario",
+    id: scenarioId,
+    validateArtifact: validateTavernArtifact,
+    matchesId: (artifact, id) => isScenario(artifact) && artifact.scenarioId === id,
+    project,
+    invalidArtifact: () => new Error("invalid_scenario_artifact"),
+    conflict: () => new Error("scenario_revision_conflict"),
+  });
   return Object.freeze({
     async create(request) {
       validateCreateRequest(request);
-      const artifact = scenario(scenarioId, 1, request);
       try {
-        return project((await store.write(path(1), artifact, validateTavernArtifact)).artifact);
+        return await repository.create(() => scenario(scenarioId, 1, request));
       } catch (error) {
-        if (error instanceof TavernRevisionConflict) throw new Error("scenario_already_exists");
+        if (error instanceof Error && error.message === "scenario_revision_conflict")
+          throw new Error("scenario_already_exists");
         throw error;
       }
     },
     async read() {
-      const canonical = await latest(store, directory, scenarioId);
-      if (canonical !== undefined) return project(canonical);
-      try {
-        return project((await store.read(legacyPath, validateTavernArtifact)).artifact);
-      } catch (error) {
-        if (error instanceof Error && error.message === "tavern_artifact_unreadable") return null;
-        throw error;
-      }
+      return (await repository.readLatest()) ?? null;
     },
     async update(request) {
       validateUpdateRequest(request);
-      const previous = await latest(store, directory, scenarioId);
-      if (previous === undefined || previous.revision !== request.expectedRevision)
-        throw new Error("scenario_revision_conflict");
-      const artifact = scenario(scenarioId, request.expectedRevision + 1, request);
-      try {
-        return project((await store.write(path(artifact.revision), artifact, validateTavernArtifact)).artifact);
-      } catch (error) {
-        if (error instanceof TavernRevisionConflict) throw new Error("scenario_revision_conflict");
-        throw error;
-      }
+      return repository.update(request.expectedRevision, (revision) => scenario(scenarioId, revision, request));
     },
   });
-}
-
-async function latest(
-  store: TavernArtifactStore,
-  directory: string,
-  scenarioId: string,
-): Promise<Scenario | undefined> {
-  let names: readonly string[];
-  try {
-    names = await readSafeDirectory(join(directory, "revisions"), directory);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-    throw error;
-  }
-  let corrupt = false;
-  for (const revision of names
-    .map((name) => /^(\d+)\.json$/u.exec(name)?.[1])
-    .filter((value): value is string => value !== undefined)
-    .map(Number)
-    .filter(Number.isSafeInteger)
-    .sort((a, b) => b - a)) {
-    try {
-      const artifact = (await store.read(join(directory, "revisions", `${revision}.json`), validateTavernArtifact))
-        .artifact;
-      if (isScenario(artifact) && artifact.scenarioId === scenarioId && artifact.revision === revision) return artifact;
-      corrupt = true;
-    } catch {
-      corrupt = true;
-    }
-  }
-  if (corrupt) throw new Error("invalid_scenario_artifact");
-  return undefined;
 }
 function scenario(scenarioId: string, revision: number, request: CreatePlayerScenarioRequest): Scenario {
   return Object.freeze({
@@ -124,12 +81,14 @@ function scenario(scenarioId: string, revision: number, request: CreatePlayerSce
 }
 
 function project(artifact: unknown): PlayerScenarioProjection {
-  if (!isScenario(artifact)) throw new Error("invalid_scenario_artifact");
-  // Text-only artifacts predate durable player metadata. Preserve their
-  // readable content without treating missing metadata as corruption.
-  const description = artifact.description ?? artifact.text;
-  const name = artifact.name ?? "Scenario";
-  return Object.freeze({ revision: artifact.revision, name, description, preview: preview(description) });
+  if (!isScenario(artifact) || artifact.name === undefined || artifact.description === undefined)
+    throw new Error("invalid_scenario_artifact");
+  return Object.freeze({
+    revision: artifact.revision,
+    name: artifact.name,
+    description: artifact.description,
+    preview: preview(artifact.description),
+  });
 }
 
 function validateCreateRequest(value: unknown): asserts value is CreatePlayerScenarioRequest {
@@ -156,6 +115,8 @@ function isScenario(value: unknown): value is Scenario {
   return (
     record(value) &&
     typeof value.scenarioId === "string" &&
+    typeof value.name === "string" &&
+    typeof value.description === "string" &&
     typeof value.text === "string" &&
     Number.isSafeInteger(value.revision)
   );

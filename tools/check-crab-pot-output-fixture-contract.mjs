@@ -128,7 +128,8 @@ function exactArray(actual, expected, label, errors) {
     errors.push(`${label} must be an array.`);
     return;
   }
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) errors.push(`${label} must match the approved bounded policy.`);
+  if (JSON.stringify(actual) !== JSON.stringify(expected))
+    errors.push(`${label} must match the approved bounded policy.`);
 }
 
 function nonEmptyString(value, label, errors) {
@@ -165,33 +166,45 @@ export function validateCrabPotOutputFixtureContract(contract) {
   }
   const expectedPurpose =
     "Read-only, pre-attachment native ready-CrabPot starting-state provenance contract; it is not a production request, receipt, result, or live-action evidence artifact.";
-  if (contract?.purpose !== expectedPurpose) errors.push("contract.purpose must remain fixture-only and non-production.");
+  if (contract?.purpose !== expectedPurpose)
+    errors.push("contract.purpose must remain fixture-only and non-production.");
 
   hasExactFields(contract?.target, EXPECTED_TARGET_FIELDS, "target", errors);
   for (const field of EXPECTED_TARGET_FIELDS) {
-    if (contract?.target?.[field] !== APPROVED_TARGET[field]) errors.push(`target.${field} is not the approved target-version value.`);
+    if (contract?.target?.[field] !== APPROVED_TARGET[field])
+      errors.push(`target.${field} is not the approved target-version value.`);
   }
   hasExactFields(contract?.save, EXPECTED_SAVE_FIELDS, "save", errors);
   if (contract?.save?.templateName !== "GameBuddyFixture_CrabPotOutput_1_6_15") {
     errors.push("save.templateName must match the fixture identity.");
   }
-  exactArray(contract?.save?.requiredNativeFiles, ["GameBuddyFixture_CrabPotOutput_1_6_15", "SaveGameInfo"], "save.requiredNativeFiles", errors);
+  exactArray(
+    contract?.save?.requiredNativeFiles,
+    ["GameBuddyFixture_CrabPotOutput_1_6_15", "SaveGameInfo"],
+    "save.requiredNativeFiles",
+    errors,
+  );
   if (!["unprovisioned", "provisioned"].includes(contract?.save?.provisioningState)) {
     errors.push("save.provisioningState must be unprovisioned or provisioned.");
   }
   const payloadHash = contract?.save?.templatePayloadSha256;
   const attestation = contract?.save?.provisioningAttestation;
   if (contract?.save?.provisioningState === "unprovisioned") {
-    if (payloadHash !== null) errors.push("unprovisioned save must use templatePayloadSha256=null and makes no template claim.");
-    if (attestation !== null) errors.push("unprovisioned save must use provisioningAttestation=null and makes no reload-attestation claim.");
+    if (payloadHash !== null)
+      errors.push("unprovisioned save must use templatePayloadSha256=null and makes no template claim.");
+    if (attestation !== null)
+      errors.push("unprovisioned save must use provisioningAttestation=null and makes no reload-attestation claim.");
   } else {
-    hasExactFields(attestation, ["nativeSaveReloadAttested", "attestationReference"], "save.provisioningAttestation", errors);
-    if (
-      typeof payloadHash !== "string" ||
-      !/^[a-f0-9]{64}$/i.test(payloadHash) ||
-      /^<.*>$/.test(payloadHash)
-    ) {
-      errors.push("provisioned save.templatePayloadSha256 must be a real operator-recorded 64-hex SHA-256, not a placeholder.");
+    hasExactFields(
+      attestation,
+      ["nativeSaveReloadAttested", "attestationReference"],
+      "save.provisioningAttestation",
+      errors,
+    );
+    if (typeof payloadHash !== "string" || !/^[a-f0-9]{64}$/i.test(payloadHash) || /^<.*>$/.test(payloadHash)) {
+      errors.push(
+        "provisioned save.templatePayloadSha256 must be a real operator-recorded 64-hex SHA-256, not a placeholder.",
+      );
     }
     if (
       !attestation ||
@@ -207,19 +220,40 @@ export function validateCrabPotOutputFixtureContract(contract) {
 
   hasExactFields(contract?.nativeOrigin, EXPECTED_ORIGIN_FIELDS, "nativeOrigin", errors);
   exactArray(contract?.nativeOrigin?.requiredLifecycle, REQUIRED_LIFECYCLE, "nativeOrigin.requiredLifecycle", errors);
-  exactArray(contract?.nativeOrigin?.prohibitedOrigins, REQUIRED_PROHIBITED_ORIGINS, "nativeOrigin.prohibitedOrigins", errors);
+  exactArray(
+    contract?.nativeOrigin?.prohibitedOrigins,
+    REQUIRED_PROHIBITED_ORIGINS,
+    "nativeOrigin.prohibitedOrigins",
+    errors,
+  );
 
   hasExactFields(contract?.requiredLiveFacts, EXPECTED_LIVE_FACT_FIELDS, "requiredLiveFacts", errors);
   if (contract?.requiredLiveFacts?.locationKind !== "Farm") errors.push("requiredLiveFacts.locationKind must be Farm.");
-  if (contract?.requiredLiveFacts?.qualifiedItemId !== "(O)710") errors.push("requiredLiveFacts.qualifiedItemId must be (O)710.");
+  if (contract?.requiredLiveFacts?.qualifiedItemId !== "(O)710")
+    errors.push("requiredLiveFacts.qualifiedItemId must be (O)710.");
   for (const field of EXPECTED_LIVE_FACT_FIELDS.slice(2)) {
     if (contract?.requiredLiveFacts?.[field] !== true) errors.push(`requiredLiveFacts.${field} must be true.`);
   }
 
   exactArray(contract?.antiFinalStepAssertions, REQUIRED_ANTI_FINAL_STEP_ASSERTIONS, "antiFinalStepAssertions", errors);
-  exactArray(contract?.fixtureCreationChecklist, REQUIRED_FIXTURE_CREATION_CHECKLIST, "fixtureCreationChecklist", errors);
-  exactArray(contract?.futureProductionSuccessPostconditions, REQUIRED_SUCCESS_POSTCONDITIONS, "futureProductionSuccessPostconditions", errors);
-  exactArray(contract?.futureProductionCapacityFailurePostconditions, REQUIRED_CAPACITY_FAILURE_POSTCONDITIONS, "futureProductionCapacityFailurePostconditions", errors);
+  exactArray(
+    contract?.fixtureCreationChecklist,
+    REQUIRED_FIXTURE_CREATION_CHECKLIST,
+    "fixtureCreationChecklist",
+    errors,
+  );
+  exactArray(
+    contract?.futureProductionSuccessPostconditions,
+    REQUIRED_SUCCESS_POSTCONDITIONS,
+    "futureProductionSuccessPostconditions",
+    errors,
+  );
+  exactArray(
+    contract?.futureProductionCapacityFailurePostconditions,
+    REQUIRED_CAPACITY_FAILURE_POSTCONDITIONS,
+    "futureProductionCapacityFailurePostconditions",
+    errors,
+  );
   exactArray(contract?.forbiddenFixtureBehavior, REQUIRED_FORBIDDEN_BEHAVIOR, "forbiddenFixtureBehavior", errors);
   exactArray(contract?.nonClaims, REQUIRED_NON_CLAIMS, "nonClaims", errors);
 

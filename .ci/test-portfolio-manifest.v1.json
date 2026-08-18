@@ -16,6 +16,19 @@
       "liveGate": "none"
     },
     {
+      "id": "p7-p9-stardew-static-portfolio",
+      "riskId": "P7-P9-R1",
+      "owner": "gamebuddy-stardew-static-portfolio",
+      "evidenceKind": "automated",
+      "command": "node tools/verify-stardew-static.mjs",
+      "triggerPaths": ["tools/verify-stardew-static.mjs", "tools/verify-stardew-static.test.mjs", "tools/stardew-static-portfolio.v1.json", "package.json"],
+      "timeoutSeconds": 120,
+      "retryPolicy": { "maxAttempts": 1, "backoffSeconds": 0 },
+      "requiredOn": ["pull_request", "main"],
+      "requires": [],
+      "liveGate": "none"
+    },
+    {
       "id": "p1.8-portfolio-isolation-static",
       "riskId": "P1.8-R2",
       "owner": "gamebuddy-ci",

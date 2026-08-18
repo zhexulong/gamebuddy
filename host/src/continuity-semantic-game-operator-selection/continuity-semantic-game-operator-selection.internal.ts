@@ -1,18 +1,21 @@
-import { open, realpath, stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
 import { createGameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import { createHostGameRuntimeMaterializer } from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
-import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+import {
+  createHostGameRuntimeMaterializer,
+  type HostGameRuntimeMaterializerOptions,
+} from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
+import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import { readStrictJsonFile } from "../strict-json-reader.js";
 import {
   constructKnownUnmountedGameSemanticFacade,
   type ConstructedUnmountedGameSemanticFacade,
 } from "../continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 
-const MAX_BYTES = 65_536;
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const TOP_LEVEL_KEYS = ["schemaVersion", "manifestPath", "integrationId", "integration"] as const;
 
@@ -29,6 +32,8 @@ type HostSemanticGameOperatorConfig = Readonly<{
 }>;
 
 /** Construction-owned adapter selection. Its opaque config has no consumer export. */
+export type HostGameRuntimeConstructionOptions = HostGameRuntimeMaterializerOptions;
+
 type HostOwnedGameIntegrationSelection = Readonly<{
   manifestPath: string;
   launcher: ConfigurableIntegrationLauncher;
@@ -61,12 +66,13 @@ async function selectHostOwnedGameIntegration(operatorConfigPath: string): Promi
  */
 export async function createKnownSemanticGameFacadeFromOperatorConfig(
   operatorConfigPath: string,
+  options: HostGameRuntimeConstructionOptions = {},
 ): Promise<ConstructedUnmountedGameSemanticFacade> {
   const selected = await selectHostOwnedGameIntegration(operatorConfigPath);
   const manifest = await loadHostDeploymentManifest(selected.manifestPath);
   const binding = await createGameRuntimeBinding(
     Object.freeze({
-      manifestPath: selected.manifestPath,
+      manifest,
       launcher: selected.launcher,
       launcherConfig: selected.launcherConfig,
       configDirectory: selected.configDirectory,
@@ -74,7 +80,7 @@ export async function createKnownSemanticGameFacadeFromOperatorConfig(
   );
   try {
     const game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
-    return constructKnownUnmountedGameSemanticFacade(binding, game, createHostGameRuntimeMaterializer());
+    return constructKnownUnmountedGameSemanticFacade(binding, game, createHostGameRuntimeMaterializer(options));
   } catch (error) {
     try {
       await binding.close();
@@ -83,6 +89,34 @@ export async function createKnownSemanticGameFacadeFromOperatorConfig(
     }
     throw error;
   }
+}
+
+/**
+ * Recovery composition deliberately owns only the durable Game authority. It
+ * parses the identical operator and deployment inputs as normal composition,
+ * but never selects an adapter or creates a runtime binding. Consequently old
+ * owner proof and durable recovery complete before any launcher side effect
+ * could be introduced.
+ */
+export type SemanticGameDeadOwnerRecoveryFacade = Readonly<{
+  recoverDeadOwner(input: Readonly<{ request: "recover_dead_owner"; operationId: string }>): Promise<void>;
+  close(): Promise<void>;
+}>;
+
+export async function createKnownSemanticGameDeadOwnerRecoveryFacadeFromOperatorConfig(
+  operatorConfigPath: string,
+): Promise<SemanticGameDeadOwnerRecoveryFacade> {
+  const loaded = await loadHostSemanticGameOperatorConfig(operatorConfigPath);
+  const manifest = await loadHostDeploymentManifest(loaded.config.manifestPath);
+  const game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
+  return Object.freeze({
+    recoverDeadOwner: async (input) => {
+      await game.recoverDeadOwner(input);
+    },
+    close: async () => {
+      await game.close();
+    },
+  });
 }
 
 /** Strict bounded operator-file parser; adapter configuration remains opaque. */
@@ -101,12 +135,9 @@ async function loadHostSemanticGameOperatorConfig(operatorConfigPath: string): P
     throw new Error("invalid_semantic_game_operator_config");
   }
   const canonicalPath = await canonicalRegularFile(operatorConfigPath);
-  // JSON.parse must not get an opportunity to collapse duplicate decoded keys.
-  const raw = await readBounded(canonicalPath);
   let parsed: unknown;
-  if (hasDuplicateKeysOrInvalidJson(raw)) throw new Error("invalid_semantic_game_operator_config");
   try {
-    parsed = JSON.parse(raw);
+    parsed = await readStrictJsonFile(canonicalPath);
   } catch {
     throw new Error("invalid_semantic_game_operator_config");
   }
@@ -143,27 +174,6 @@ async function canonicalRegularFile(value: unknown): Promise<string> {
   }
 }
 
-async function readBounded(path: string): Promise<string> {
-  const handle = await open(path, "r");
-  try {
-    const before = await handle.stat();
-    if (!before.isFile() || !Number.isSafeInteger(before.size) || before.size > MAX_BYTES) throw new Error("invalid");
-    const bytes = Buffer.alloc(MAX_BYTES + 1);
-    let bytesRead = 0;
-    while (bytesRead < bytes.length) {
-      const result = await handle.read(bytes, bytesRead, bytes.length - bytesRead, bytesRead);
-      if (result.bytesRead === 0) break;
-      bytesRead += result.bytesRead;
-    }
-    const after = await handle.stat();
-    if (!after.isFile() || bytesRead > MAX_BYTES || bytesRead !== before.size || after.size !== before.size)
-      throw new Error("invalid");
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, bytesRead));
-  } finally {
-    await handle.close();
-  }
-}
-
 function exactObject(value: unknown, allowed: readonly string[]): Record<string, unknown> | null {
   if (
     !value ||
@@ -179,108 +189,4 @@ function exactObject(value: unknown, allowed: readonly string[]): Record<string,
 }
 function identifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER.test(value);
-}
-
-/** Parses JSON while rejecting duplicate decoded object keys before JSON.parse collapses them. */
-function hasDuplicateKeysOrInvalidJson(source: string): boolean {
-  let offset = 0;
-  let duplicate = false;
-  const whitespace = (): void => {
-    while (offset < source.length && /\s/.test(source[offset]!)) offset += 1;
-  };
-  const string = (): string => {
-    if (source[offset++] !== '"') throw new Error("json");
-    let decoded = "";
-    while (offset < source.length) {
-      const character = source[offset++]!;
-      if (character === '"') return decoded;
-      if (character < " ") throw new Error("json");
-      if (character !== "\\") {
-        decoded += character;
-        continue;
-      }
-      const escape = source[offset++];
-      if (escape === '"' || escape === "\\" || escape === "/") decoded += escape;
-      else if (escape === "b") decoded += "\b";
-      else if (escape === "f") decoded += "\f";
-      else if (escape === "n") decoded += "\n";
-      else if (escape === "r") decoded += "\r";
-      else if (escape === "t") decoded += "\t";
-      else if (escape === "u") {
-        const hex = source.slice(offset, offset + 4);
-        if (!/^[0-9a-fA-F]{4}$/.test(hex)) throw new Error("json");
-        decoded += String.fromCharCode(Number.parseInt(hex, 16));
-        offset += 4;
-      } else throw new Error("json");
-    }
-    throw new Error("json");
-  };
-  const value = (depth = 0): void => {
-    if (depth > 32) throw new Error("json_depth");
-    whitespace();
-    if (source[offset] === "{") {
-      offset += 1;
-      whitespace();
-      const names = new Set<string>();
-      if (source[offset] === "}") {
-        offset += 1;
-        return;
-      }
-      for (;;) {
-        whitespace();
-        const name = string();
-        if (names.has(name)) duplicate = true;
-        else names.add(name);
-        whitespace();
-        if (source[offset++] !== ":") throw new Error("json");
-        value(depth + 1);
-        whitespace();
-        if (source[offset] === "}") {
-          offset += 1;
-          return;
-        }
-        if (source[offset++] !== ",") throw new Error("json");
-      }
-    }
-    if (source[offset] === "[") {
-      offset += 1;
-      whitespace();
-      if (source[offset] === "]") {
-        offset += 1;
-        return;
-      }
-      for (;;) {
-        value(depth + 1);
-        whitespace();
-        if (source[offset] === "]") {
-          offset += 1;
-          return;
-        }
-        if (source[offset++] !== ",") throw new Error("json");
-      }
-    }
-    if (source[offset] === '"') {
-      string();
-      return;
-    }
-    const literal = /^(?:true|false|null)(?![A-Za-z0-9_$])/.exec(source.slice(offset));
-    if (literal) {
-      offset += literal[0].length;
-      return;
-    }
-    const number = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/.exec(source.slice(offset));
-    if (number) {
-      offset += number[0].length;
-      return;
-    }
-    throw new Error("json");
-  };
-  try {
-    whitespace();
-    value();
-    whitespace();
-    return duplicate || offset !== source.length;
-  } catch {
-    return true;
-  }
 }

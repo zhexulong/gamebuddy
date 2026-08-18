@@ -10,6 +10,7 @@ import {
   RETIRED_ACTION_POLICY_MIGRATIONS,
   searchVisibleActions,
   visiblePublishedActions,
+  type PublishedAction,
 } from "./action-registry.js";
 
 test("default consent exposes only published live capabilities", () => {
@@ -101,7 +102,7 @@ test("default consent exposes only published live capabilities", () => {
     ),
   );
   assert.equal(
-    STARDEW_ACTION_REGISTRY.some((entry) => entry.actionId === "collect_resource"),
+    (STARDEW_ACTION_REGISTRY as readonly PublishedAction[]).some((entry) => entry.actionId === "collect_resource"),
     false,
   );
   assert.ok(
@@ -178,7 +179,7 @@ test("default consent exposes only published live capabilities", () => {
     ),
   );
   assert.equal(
-    STARDEW_ACTION_REGISTRY.some((entry) => entry.lifecycle === "planned"),
+    (STARDEW_ACTION_REGISTRY as readonly PublishedAction[]).some((entry) => entry.lifecycle === "planned"),
     false,
   );
 });

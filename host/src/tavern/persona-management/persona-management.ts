@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import { TavernArtifactStore, TavernRevisionConflict } from "../artifact-store.js";
-import { readSafeDirectory } from "../../path-lock.js";
+import { TavernArtifactStore } from "../artifact-store.js";
 import { validateTavernArtifact, type UserPersona } from "../types.js";
 
 export type PlayerPersonaProjection = Readonly<{
@@ -32,87 +31,45 @@ export function createPersonaManagementService(
   playerRoot: string,
 ): PersonaManagementService {
   const root = resolve(playerRoot);
-  const legacyPath = join(root, "persona-management", "persona.json");
   const personaId = `player-persona-${digest(root)}`;
-  const path = (revision: number) => join(root, "personas", personaId, "revisions", `${revision}.json`);
+  const repository = store.openRevisionRepository({
+    root: join(root, "personas", personaId),
+    artifactKind: "persona",
+    id: personaId,
+    validateArtifact: validateTavernArtifact,
+    matchesId: (artifact, id) => isUserPersona(artifact) && artifact.personaId === id,
+    project,
+    invalidArtifact: () => new Error("invalid_persona_artifact"),
+    conflict: () => new Error("persona_revision_conflict"),
+  });
   return Object.freeze({
     async create(request) {
       validateRequest(request);
-      const artifact: UserPersona = Object.freeze({
-        schemaVersion: 1,
-        revision: 1,
-        personaId,
-        name: request.name,
-        ...(request.description === undefined ? {} : { description: request.description }),
-      });
       try {
-        return project((await store.write(path(1), artifact, validateTavernArtifact)).artifact);
+        return await repository.create(() => persona(personaId, 1, request));
       } catch (error) {
-        if (error instanceof TavernRevisionConflict) throw new Error("persona_already_exists");
+        if (error instanceof Error && error.message === "persona_revision_conflict")
+          throw new Error("persona_already_exists");
         throw error;
       }
     },
     async read() {
-      const artifact = await latest(store, join(root, "personas", personaId), personaId);
-      return artifact === undefined ? null : project(artifact);
+      return (await repository.readLatest()) ?? null;
     },
     async update(request) {
       validateUpdateRequest(request);
-      const artifact: UserPersona = Object.freeze({
-        schemaVersion: 1,
-        revision: request.expectedRevision + 1,
-        personaId,
-        name: request.name,
-        ...(request.description === undefined ? {} : { description: request.description }),
-      });
-      try {
-        return project(
-          (await store.compareAndWrite(path(artifact.revision), undefined, artifact, validateTavernArtifact)).artifact,
-        );
-      } catch (error) {
-        if (error instanceof TavernRevisionConflict) throw new Error("persona_revision_conflict");
-        try {
-          await store.read(path(request.expectedRevision), validateTavernArtifact);
-        } catch {
-          throw new Error("persona_revision_conflict");
-        }
-        throw error;
-      }
+      return repository.update(request.expectedRevision, (revision) => persona(personaId, revision, request));
     },
   });
 }
-
-async function latest(
-  store: TavernArtifactStore,
-  directory: string,
-  personaId: string,
-): Promise<UserPersona | undefined> {
-  let names: readonly string[];
-  try {
-    names = await readSafeDirectory(join(directory, "revisions"), directory);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
-    throw error;
-  }
-  let corrupt = false;
-  for (const revision of names
-    .map((name) => /^(\d+)\.json$/u.exec(name)?.[1])
-    .filter((value): value is string => value !== undefined)
-    .map(Number)
-    .filter(Number.isSafeInteger)
-    .sort((a, b) => b - a)) {
-    try {
-      const artifact = (await store.read(join(directory, "revisions", `${revision}.json`), validateTavernArtifact))
-        .artifact;
-      if (isUserPersona(artifact) && artifact.personaId === personaId && artifact.revision === revision)
-        return artifact;
-      corrupt = true;
-    } catch {
-      corrupt = true;
-    }
-  }
-  if (corrupt) throw new Error("invalid_persona_artifact");
-  return undefined;
+function persona(personaId: string, revision: number, request: CreatePlayerPersonaRequest): UserPersona {
+  return Object.freeze({
+    schemaVersion: 1,
+    revision,
+    personaId,
+    name: request.name,
+    ...(request.description === undefined ? {} : { description: request.description }),
+  });
 }
 function project(artifact: unknown): PlayerPersonaProjection {
   if (!isUserPersona(artifact)) throw new Error("invalid_persona_artifact");

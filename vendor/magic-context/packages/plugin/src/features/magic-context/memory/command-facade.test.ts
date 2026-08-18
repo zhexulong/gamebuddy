@@ -66,6 +66,24 @@ describe("MemoryCommandFacade", () => {
         ]);
     });
 
+    it("returns the exact final mutation-log row from the committed transaction", () => {
+        db = makeDatabase();
+        const facade = new MemoryCommandFacade(db);
+        const created = facade.createWithCommitReceipt({
+            actor: player, projectPath: "/repo", category: "USER_DIRECTIVES", content: "Exact receipt",
+        });
+        const update = facade.updateWithCommitReceipt({
+            actor: player, projectPath: "/repo", id: created.value.memory.id,
+            stateToken: created.value.stateToken, content: "Exact final receipt",
+        });
+        expect(update.committedMemoryMutationId).toBe(
+            (db.prepare("SELECT MAX(id) AS id FROM memory_mutation_log").get() as { id: number }).id,
+        );
+        expect(db.prepare("SELECT new_content FROM memory_mutation_log WHERE id = ?").get(update.committedMemoryMutationId)).toEqual({
+            new_content: "Exact final receipt",
+        });
+    });
+
     it("rejects stale tokens and companion mutation of player or permanent records without delegation", () => {
         db = makeDatabase();
         const facade = new MemoryCommandFacade(db);

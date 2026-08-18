@@ -5,6 +5,7 @@ import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 
 const final: FinalVoiceInput = {
   sessionId: "session_01",
+  sourceEventId: "voice_source_01",
   inputId: "input_01",
   text: "去农场看看",
   locale: "zh-CN",
@@ -16,7 +17,14 @@ const final: FinalVoiceInput = {
 
 test("Host accepts only a final voice event through the ordinary player-input boundary", async () => {
   const received: FinalVoiceInput[] = [];
-  await deliverFinalVoiceInput({ receive(input) { received.push(input); } }, final);
+  await deliverFinalVoiceInput(
+    {
+      receive(input) {
+        received.push(input);
+      },
+    },
+    final,
+  );
   assert.deepEqual(received, [final]);
   assert.equal(JSON.stringify(received).includes("pcm"), true);
   assert.equal(JSON.stringify(received).includes("Uint8Array"), false);

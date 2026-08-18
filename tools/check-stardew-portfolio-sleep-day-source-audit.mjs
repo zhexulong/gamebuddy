@@ -20,21 +20,43 @@ const NORMAL_PLAYER_PATH = Object.freeze([
   "Game1.NewDay",
 ]);
 const PROHIBITED_ALTERNATIVES = Object.freeze([
-  "Game1.NewDay", "SaveGame.Save", "GameLocation.startSleep", "GameLocation.doSleep",
-  "answerDialogueAction", "UI/input", "reflection", "generic dispatcher", "save edit",
+  "Game1.NewDay",
+  "SaveGame.Save",
+  "GameLocation.startSleep",
+  "GameLocation.doSleep",
+  "answerDialogueAction",
+  "UI/input",
+  "reflection",
+  "generic dispatcher",
+  "save edit",
 ]);
-const REQUIRED_SEAM = "A separately approved source-owned typed semantic sleep entrypoint that preserves the complete normal-player decision and lifecycle without invoking a private confirmation continuation or raw save/day API.";
-const REQUIRED_HANDOFF = "PortfolioBridgeSession/PortfolioIntegration/PortfolioLocalPlayerBinding must durably record the exact old-binding execution before invalidation, and only an authenticated exact new-binding reclaim may correlate Saving, Saved, DayStarted, close, and reopen into one terminal receipt.";
+const REQUIRED_SEAM =
+  "A separately approved source-owned typed semantic sleep entrypoint that preserves the complete normal-player decision and lifecycle without invoking a private confirmation continuation or raw save/day API.";
+const REQUIRED_HANDOFF =
+  "PortfolioBridgeSession/PortfolioIntegration/PortfolioLocalPlayerBinding must durably record the exact old-binding execution before invalidation, and only an authenticated exact new-binding reclaim may correlate Saving, Saved, DayStarted, close, and reopen into one terminal receipt.";
 
 function exact(value, expected, label) {
   assert.deepEqual(value, expected, `${label} must match the approved sleep/day source boundary.`);
 }
 
 export function validateStardewPortfolioSleepDaySourceAudit(audit) {
-  assert.deepEqual(Object.keys(audit ?? {}).sort(), [
-    "action", "artifactKind", "auditId", "nonClaim", "normalPlayerPath", "prohibitedAlternatives",
-    "requiredCrossGenerationHandoff", "schemaVersion", "sourceOwnedMissingSeam", "target", "topology",
-  ].sort(), "sleep/day source audit fields must be closed.");
+  assert.deepEqual(
+    Object.keys(audit ?? {}).sort(),
+    [
+      "action",
+      "artifactKind",
+      "auditId",
+      "nonClaim",
+      "normalPlayerPath",
+      "prohibitedAlternatives",
+      "requiredCrossGenerationHandoff",
+      "schemaVersion",
+      "sourceOwnedMissingSeam",
+      "target",
+      "topology",
+    ].sort(),
+    "sleep/day source audit fields must be closed.",
+  );
   assert.equal(audit.schemaVersion, 1);
   assert.equal(audit.artifactKind, "portfolio_sleep_day_source_admissibility_audit");
   assert.equal(audit.auditId, "portfolio_sleep_day_source_admissibility_v1");

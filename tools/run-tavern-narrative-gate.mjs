@@ -92,7 +92,8 @@ export function evaluateNarrativeGateRuntime(value) {
     value?.schema !== "gamebuddy-tavern-narrative-gate-runtime/v1" ||
     typeof value.piSessionId !== "string" ||
     !/^[A-Za-z0-9_-]{1,256}$/.test(value.piSessionId)
-  ) return { observed: false, reasonCode: "provider_runtime_session_unavailable" };
+  )
+    return { observed: false, reasonCode: "provider_runtime_session_unavailable" };
   return { observed: true, piSessionId: value.piSessionId };
 }
 
@@ -111,6 +112,21 @@ export function evaluateNarrativeGateMarker(value, expectedDigest, expectedSessi
   return { observed: true, preSendSerialized: true };
 }
 
+/**
+ * Schema-v2 deployment input for the immutable dialogue artifact. Initial
+ * Tavern content is deliberately absent: Host production composition derives
+ * and durably bootstraps it from this manifest before runtime construction.
+ */
+export function createNarrativeGateDeploymentManifest(runtimeRoot, principal, bootstrapOperationId) {
+  return Object.freeze({
+    schemaVersion: 2,
+    topology: "independent_chat_and_game_surfaces",
+    runtimeRoot,
+    principal: Object.freeze({ ...principal }),
+    bootstrapOperationId,
+    authorityGeneration: 1,
+  });
+}
 
 function deadlineFetch(url, options = {}) {
   return fetch(url, { ...options, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
@@ -191,7 +207,17 @@ async function stop(child) {
   return "killed_after_stop_timeout";
 }
 
-async function sendTurn(origin, client) {
+export function classifyNarrativeTurnOutcome(outcome, lifecycle) {
+  if (outcome !== "timeout") return undefined;
+  // The marker fires directly at Pi's provider boundary. Seeing it without a
+  // terminal lifecycle event distinguishes a live provider wait from an SSE,
+  // controller, or presentation terminal-signal loss.
+  return lifecycle.includes("agent_start") && !lifecycle.includes("agent_end") && !lifecycle.includes("agent_settled")
+    ? "provider_request_pending"
+    : "dialogue_terminal_signal_unobserved";
+}
+
+export async function sendTurn(origin, client) {
   const events = [];
   const abort = new AbortController();
   const response = await fetch(`${origin}/events`, { headers: { Cookie: client.cookie }, signal: abort.signal });
@@ -218,6 +244,9 @@ async function sendTurn(origin, client) {
             if (["agent_start", "agent_end", "agent_settled"].includes(payload.type)) events.push(payload.type);
             if (payload.type === "presentation_text") return resolveOutcome("presentation_text");
             if (payload.type === "turn_failed") return resolveOutcome("turn_failed");
+            // A settled Pi run without presentation is a completed failed
+            // player turn even if the controller's terminal event was lost.
+            if (payload.type === "agent_settled") return resolveOutcome("agent_settled");
           }
         }
       } catch {
@@ -235,7 +264,11 @@ async function sendTurn(origin, client) {
       "X-GameBuddy-CSRF": client.csrf,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ clientMessageId: `tavern_gate_${randomBytes(8).toString("hex")}`, text: "Please respond naturally.", locale: "en-US" }),
+    body: JSON.stringify({
+      clientMessageId: `tavern_gate_${randomBytes(8).toString("hex")}`,
+      text: "Please respond naturally.",
+      locale: "en-US",
+    }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (message.status !== 202) throw new Error(`message_failed:${message.status}`);
@@ -248,7 +281,13 @@ async function sendTurn(origin, client) {
 async function productionArtifactIdentity() {
   try {
     const pointer = JSON.parse(await readFile(join(HOST_ROOT, "dist", "current.json"), "utf8"));
-    if (typeof pointer.generation !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(pointer.generation) || typeof pointer.inventoryDigest !== "string" || !/^[a-f0-9]{64}$/.test(pointer.inventoryDigest)) throw new Error("invalid");
+    if (
+      typeof pointer.generation !== "string" ||
+      !/^[A-Za-z0-9_-]{1,160}$/.test(pointer.generation) ||
+      typeof pointer.inventoryDigest !== "string" ||
+      !/^[a-f0-9]{64}$/.test(pointer.inventoryDigest)
+    )
+      throw new Error("invalid");
     return Object.freeze({ generation: pointer.generation, inventoryDigest: pointer.inventoryDigest });
   } catch {
     throw new Error("production_artifact_identity_unavailable");
@@ -288,29 +327,45 @@ export async function main(argv = process.argv.slice(2)) {
     // and is correctly rejected as an invalid source reference (HTTP 503).
     sourceRef: `host-receipt:${nonce}`,
   });
-  const identity = Object.freeze({ playerId: "tavern_gate_player", companionId: "tavern_gate_companion", continuityId: "tavern_gate_continuity" });
+  const identity = Object.freeze({
+    playerId: "tavern_gate_player",
+    companionId: "tavern_gate_companion",
+    continuityId: "tavern_gate_continuity",
+  });
+  const bootstrapOperationId = `tavern_gate_bootstrap_${randomBytes(12).toString("hex")}`;
   let child;
   let artifact;
   let report;
   try {
     artifact = await productionArtifactIdentity();
     const configPath = join(root, "dialogue.json");
-    await writeFile(configPath, JSON.stringify({ ...identity, runtimeRoot: root, tavernNarrativeGateNonceSha256: nonceSha256 }), "utf8");
-    child = spawn(process.execPath, [join(HOST_ROOT, "scripts", "start-production-artifact.mjs"), "dialogue-web-main.js", configPath], {
-      cwd: HOST_ROOT,
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-      windowsHide: true,
-      env: { ...process.env },
-    });
+    await writeFile(
+      configPath,
+      JSON.stringify(createNarrativeGateDeploymentManifest(root, identity, bootstrapOperationId)),
+      "utf8",
+    );
+    child = spawn(
+      process.execPath,
+      [join(HOST_ROOT, "scripts", "start-production-artifact.mjs"), "dialogue-web-main.js", configPath],
+      {
+        cwd: HOST_ROOT,
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+        windowsHide: true,
+        env: { ...process.env, GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: nonceSha256 },
+      },
+    );
     let stdout = "";
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
     child.stderr.on("data", () => undefined);
     let marker;
     let runtimeMarker;
     child.on("message", (value) => {
-      if (value?.schema === "gamebuddy-tavern-narrative-gate-runtime/v1" && runtimeMarker === undefined) runtimeMarker = value;
+      if (value?.schema === "gamebuddy-tavern-narrative-gate-runtime/v1" && runtimeMarker === undefined)
+        runtimeMarker = value;
       else if (value?.schema === "gamebuddy-tavern-narrative-gate-marker/v1" && marker === undefined) marker = value;
     });
     const ready = await waitForReady(child, () => stdout);
@@ -330,20 +385,28 @@ export async function main(argv = process.argv.slice(2)) {
     ]) {
       const body = { content, category, ...(sourceRefs === undefined ? {} : { sourceRefs }) };
       const result = await request(origin, client, "/memories", body);
-      if (result.status !== 201 || typeof result.body.memory?.stateToken !== "string") throw new Error(`memory_create_failed:${key}:${result.status}`);
+      if (result.status !== 201 || typeof result.body.memory?.stateToken !== "string")
+        throw new Error(`memory_create_failed:${key}:${result.status}`);
       created[key] = result.body.memory.stateToken;
     }
     const archived = await request(origin, client, "/memories/archive", { stateToken: created.archived });
     const archivedStateToken = archived.body.memory?.stateToken;
     const deleted = await request(origin, client, "/memories/delete-entry", { stateToken: created.deleted });
-    const excluded = await request(origin, client, "/memories/exclude-source", { stateToken: created.excluded, sourceRef: values.sourceRef });
+    const excluded = await request(origin, client, "/memories/exclude-source", {
+      stateToken: created.excluded,
+      sourceRef: values.sourceRef,
+    });
     const final = await list(origin, client);
     if (final.status !== 200 || !Array.isArray(final.body.memories)) throw new Error("final_memory_list_failed");
     const hasToken = (token) => final.body.memories.some((memory) => memory.stateToken === token);
     // The archive transition changes the opaque state token (status is part of
     // its CAS identity), so inspect the token returned by the checked facade
     // rather than the pre-transition token.
-    const archivedListed = archived.status === 200 && typeof archivedStateToken === "string" && hasToken(archivedStateToken) && final.body.memories.find((memory) => memory.stateToken === archivedStateToken)?.status === "archived";
+    const archivedListed =
+      archived.status === 200 &&
+      typeof archivedStateToken === "string" &&
+      hasToken(archivedStateToken) &&
+      final.body.memories.find((memory) => memory.stateToken === archivedStateToken)?.status === "archived";
     const deletedAbsent = !hasToken(created.deleted);
     const excludedListed = hasToken(created.excluded);
     const turn = await sendTurn(origin, client);
@@ -355,8 +418,19 @@ export async function main(argv = process.argv.slice(2)) {
       nonceSha256,
       runtimeSession.observed ? runtimeSession.piSessionId : undefined,
     );
-    const realTurn = turn.outcome === "presentation_text" || turn.outcome === "turn_failed" || turn.lifecycle.includes("agent_end");
-    const passed = archived.status === 200 && deleted.status === 200 && excluded.status === 200 && archivedListed && deletedAbsent && excludedListed && runtimeSession.observed && prompt.observed && realTurn;
+    const realTurn =
+      turn.outcome === "presentation_text" || turn.outcome === "turn_failed" || turn.outcome === "agent_settled";
+    const turnBlockedReason = classifyNarrativeTurnOutcome(turn.outcome, turn.lifecycle);
+    const passed =
+      archived.status === 200 &&
+      deleted.status === 200 &&
+      excluded.status === 200 &&
+      archivedListed &&
+      deletedAbsent &&
+      excludedListed &&
+      runtimeSession.observed &&
+      prompt.observed &&
+      realTurn;
     report = {
       ...reportBase(runId, startedAt, artifact),
       state: passed ? "passed" : "blocked",
@@ -375,8 +449,20 @@ export async function main(argv = process.argv.slice(2)) {
         realTurnOutcomeObserved: realTurn,
         providerAcceptedOrSemanticAnswer: false,
       },
-      statuses: { initial: initial.status, archive: archived.status, delete: deleted.status, excludeSource: excluded.status, final: final.status, turn: turn.outcome },
-      ...(passed ? {} : { reasonCode: runtimeSession.reasonCode ?? prompt.reasonCode ?? "narrative_gate_assertion_failed" }),
+      statuses: {
+        initial: initial.status,
+        archive: archived.status,
+        delete: deleted.status,
+        excludeSource: excluded.status,
+        final: final.status,
+        turn: turn.outcome,
+      },
+      ...(passed
+        ? {}
+        : {
+            reasonCode:
+              runtimeSession.reasonCode ?? prompt.reasonCode ?? turnBlockedReason ?? "narrative_gate_assertion_failed",
+          }),
     };
   } catch (error) {
     report = { ...reportBase(runId, startedAt, artifact ?? null), state: "blocked", reasonCode: safeReasonCode(error) };
@@ -395,5 +481,12 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().then((code) => { process.exitCode = code; }).catch((error) => { console.error(JSON.stringify({ schema: RUNNER_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) })); process.exitCode = 2; });
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      console.error(JSON.stringify({ schema: RUNNER_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }));
+      process.exitCode = 2;
+    });
 }

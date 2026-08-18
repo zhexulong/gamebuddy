@@ -63,7 +63,11 @@ function receipt(overrides = {}) {
     evidence: {
       identity: scope,
       action: request.action,
-      phaseTrace: [phase("fresh_observed", 7, "fresh_observed"), phase("accepted", 7, "accepted"), phase("terminal", 8, "bundle_action_completed")],
+      phaseTrace: [
+        phase("fresh_observed", 7, "fresh_observed"),
+        phase("accepted", 7, "accepted"),
+        phase("terminal", 8, "bundle_action_completed"),
+      ],
       target: request.target,
       itemIdentity: "none",
       stack: 0,
@@ -93,7 +97,12 @@ function receipt(overrides = {}) {
       inventoryChanged: true,
     },
   };
-  return { ...base, ...overrides, evidence: { ...base.evidence, ...overrides.evidence }, postcondition: { ...base.postcondition, ...overrides.postcondition } };
+  return {
+    ...base,
+    ...overrides,
+    evidence: { ...base.evidence, ...overrides.evidence },
+    postcondition: { ...base.postcondition, ...overrides.postcondition },
+  };
 }
 function fresh(overrides = {}) {
   return {
@@ -116,19 +125,48 @@ function fresh(overrides = {}) {
 
 test("M7 claim Given requires a fresh read-only available selected reward", () => {
   assert.equal(validateM7ClaimGiven(given(), scope).state, "READY");
-  for (const invalid of [given({ rewardState: "claimed" }), given({ fresh: false }), given({ gameplayMutationObserved: true }), given({ scope: { ...scope, extra: true } })])
+  for (const invalid of [
+    given({ rewardState: "claimed" }),
+    given({ fresh: false }),
+    given({ gameplayMutationObserved: true }),
+    given({ scope: { ...scope, extra: true } }),
+  ])
     assert.equal(validateM7ClaimGiven(invalid, scope).state, "BLOCKED");
 });
 
 test("M7 claim Then requires an exact terminal receipt and fresh same-execution reward reread", () => {
-  assert.equal(validateM7ClaimThen({ request, receipt: receipt(), freshReward: fresh(), expectedScope: scope }).state, "READY");
-  for (const invalid of [receipt({ state: "blocked" }), receipt({ evidence: { rewardInventoryStackAfter: 0 } }), receipt({ postcondition: { rewardClaimed: false } })])
-    assert.equal(validateM7ClaimThen({ request, receipt: invalid, freshReward: fresh(), expectedScope: scope }).state, "BLOCKED");
-  assert.equal(validateM7ClaimThen({ request, receipt: receipt(), freshReward: fresh({ executionId: "other" }), expectedScope: scope }).state, "BLOCKED");
+  assert.equal(
+    validateM7ClaimThen({ request, receipt: receipt(), freshReward: fresh(), expectedScope: scope }).state,
+    "READY",
+  );
+  for (const invalid of [
+    receipt({ state: "blocked" }),
+    receipt({ evidence: { rewardInventoryStackAfter: 0 } }),
+    receipt({ postcondition: { rewardClaimed: false } }),
+  ])
+    assert.equal(
+      validateM7ClaimThen({ request, receipt: invalid, freshReward: fresh(), expectedScope: scope }).state,
+      "BLOCKED",
+    );
+  assert.equal(
+    validateM7ClaimThen({
+      request,
+      receipt: receipt(),
+      freshReward: fresh({ executionId: "other" }),
+      expectedScope: scope,
+    }).state,
+    "BLOCKED",
+  );
 });
 
 test("M7 claim preflight proves only the future evidence correlation and remains source-edge BLOCKED", () => {
-  const result = runM7ClaimRewardPreflight({ expectedScope: scope, given: given(), request, receipt: receipt(), freshReward: fresh() });
+  const result = runM7ClaimRewardPreflight({
+    expectedScope: scope,
+    given: given(),
+    request,
+    receipt: receipt(),
+    freshReward: fresh(),
+  });
   assert.equal(result.state, "BLOCKED");
   assert.equal(result.code, "m7_reward_claim_native_semantic_edge_unresolved");
   assert.equal(result.given.state, "READY");

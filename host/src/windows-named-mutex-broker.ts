@@ -453,8 +453,7 @@ export class WindowsNamedMutexBroker {
           // An already-observed exit is only the normal close acknowledgement
           // after stdin-ended has been proven. `closing`/reap-started alone is
           // not enough to turn an unexpected exit into successful close.
-          if (!this.stdinEnded)
-            this.failed ??= new WindowsNamedMutexBrokerError("windows_named_mutex_broker_exit");
+          if (!this.stdinEnded) this.failed ??= new WindowsNamedMutexBrokerError("windows_named_mutex_broker_exit");
           return;
         }
         // Install before end(): stream errors can be emitted after end() has

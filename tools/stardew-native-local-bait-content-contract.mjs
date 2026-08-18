@@ -19,9 +19,21 @@ export const BAIT_CONTRACT = Object.freeze({
 });
 export function validateBaitProbe(probe) {
   const objects = probe?.objectsContent;
-  if (objects?.state !== "loaded" || objects.digest !== BAIT_CONTRACT.expectedObjectsDigest || !Array.isArray(objects.entries)) return "objects_content_probe_invalid";
+  if (
+    objects?.state !== "loaded" ||
+    objects.digest !== BAIT_CONTRACT.expectedObjectsDigest ||
+    !Array.isArray(objects.entries)
+  )
+    return "objects_content_probe_invalid";
   const bait = objects.entries.find((entry) => entry?.itemId === BAIT_CONTRACT.rawItemId);
-  if (!bait || bait.unknownFields?.length || bait.name !== BAIT_CONTRACT.name || bait.category !== BAIT_CONTRACT.category || bait.type !== BAIT_CONTRACT.type) return "bait_content_contract_mismatch";
+  if (
+    !bait ||
+    bait.unknownFields?.length ||
+    bait.name !== BAIT_CONTRACT.name ||
+    bait.category !== BAIT_CONTRACT.category ||
+    bait.type !== BAIT_CONTRACT.type
+  )
+    return "bait_content_contract_mismatch";
   return null;
 }
 if (resolve(process.argv[1] ?? "") === resolve(fileURLToPath(import.meta.url))) {
@@ -29,11 +41,25 @@ if (resolve(process.argv[1] ?? "") === resolve(fileURLToPath(import.meta.url))) 
   if (index < 0 || !process.argv[index + 1]) throw new Error("missing_game_path");
   const gamePath = process.argv[index + 1];
   const objectsPath = resolve(gamePath, "Content", "Data", "Objects.xnb");
-  const sha256 = createHash("sha256").update(await readFile(objectsPath)).digest("hex");
+  const sha256 = createHash("sha256")
+    .update(await readFile(objectsPath))
+    .digest("hex");
   if (sha256 !== BAIT_CONTRACT.expectedObjectsXnbSha256) throw new Error("objects_xnb_hash_mismatch");
-  const { stdout } = await execFileAsync("dotnet", ["run", "--project", resolve("tools/stardew-content-probe/ContentProbe.csproj"), "--", resolve(gamePath)], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+  const { stdout } = await execFileAsync(
+    "dotnet",
+    ["run", "--project", resolve("tools/stardew-content-probe/ContentProbe.csproj"), "--", resolve(gamePath)],
+    { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+  );
   const probe = JSON.parse(stdout);
   const failure = validateBaitProbe(probe);
   if (failure) throw new Error(failure);
-  console.log(JSON.stringify({ state: "verified", artifactKind: "stardew_native_local_bait_content_contract_v1", objectsXnbSha256: sha256, objectsDigest: probe.objectsContent.digest, contract: BAIT_CONTRACT }));
+  console.log(
+    JSON.stringify({
+      state: "verified",
+      artifactKind: "stardew_native_local_bait_content_contract_v1",
+      objectsXnbSha256: sha256,
+      objectsDigest: probe.objectsContent.digest,
+      contract: BAIT_CONTRACT,
+    }),
+  );
 }

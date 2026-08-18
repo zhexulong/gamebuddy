@@ -5,8 +5,8 @@ import {
   decideCapability,
   decideKnowledge,
   formatExecutionForPlayer,
-  parseKnowledgeBundle,
   type KnowledgeBundle,
+  parseKnowledgeBundle,
 } from "./knowledge.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
@@ -18,6 +18,7 @@ const snapshot = {
   health: 100,
   actionable: true,
   capabilities: ["move_to_tile"],
+  presentationLocale: "en-US",
   activeExecution: null,
 } as const;
 const bundle: KnowledgeBundle = {

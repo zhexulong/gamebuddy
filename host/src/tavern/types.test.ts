@@ -2,23 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { validateTavernArtifact } from "./types.js";
 
-test("Scenario preserves legacy fields and accepts durable player metadata only as safe optional fields", () => {
-  const legacy = {
+test("Scenario requires canonical name and description metadata", () => {
+  const canonical = {
     schemaVersion: 1,
     revision: 1,
     scenarioId: "scenario",
+    name: "Quiet room",
+    description: "A quiet room.",
     text: "A quiet room.",
     provenance: "authored" as const,
     owner: "companion_default" as const,
   };
-  assert.deepEqual(validateTavernArtifact(legacy), legacy);
-
-  const managed = { ...legacy, name: "Quiet room", description: "A quiet room." };
-  assert.deepEqual(validateTavernArtifact(managed), managed);
-  assert.throws(() => validateTavernArtifact({ ...managed, name: 42 }), /invalid_tavern_artifact/);
-  assert.throws(() => validateTavernArtifact({ ...managed, description: 42 }), /invalid_tavern_artifact/);
-  assert.throws(() => validateTavernArtifact({ ...managed, description: "unsafe\ntext" }), /invalid_tavern_artifact/);
-  assert.throws(() => validateTavernArtifact({ ...managed, script: "run()" }), /invalid_tavern_artifact/);
+  assert.deepEqual(validateTavernArtifact(canonical), canonical);
+  assert.throws(() => validateTavernArtifact({ ...canonical, name: undefined }), /invalid_tavern_artifact/);
+  assert.throws(() => validateTavernArtifact({ ...canonical, description: undefined }), /invalid_tavern_artifact/);
+  assert.throws(() => validateTavernArtifact({ ...canonical, name: 42 }), /invalid_tavern_artifact/);
+  assert.throws(() => validateTavernArtifact({ ...canonical, description: 42 }), /invalid_tavern_artifact/);
+  assert.throws(() => validateTavernArtifact({ ...canonical, description: "unsafe\ntext" }), /invalid_tavern_artifact/);
+  assert.throws(() => validateTavernArtifact({ ...canonical, script: "run()" }), /invalid_tavern_artifact/);
 });
 
 test("Persona, greeting, import, and thread optional fields are narrowed and forwarded", () => {
@@ -57,6 +58,110 @@ test("Persona, greeting, import, and thread optional fields are narrowed and for
     openingLockedAtEventId: "event",
   };
   assert.deepEqual(validateTavernArtifact(thread), thread);
+});
+
+test("Every canonical Tavern artifact root and nested record rejects unknown keys", () => {
+  const artifacts = [
+    {
+      schemaVersion: 1,
+      revision: 1,
+      candidateId: "candidate",
+      sourceFormat: "st-v3",
+      sourceVersion: "3",
+      sourceHash: "a".repeat(64),
+      name: "Name",
+      reviewState: "pending",
+      fields: [{ field: "name", text: "Name", eligibility: "candidate_only" }],
+    },
+    {
+      schemaVersion: 1,
+      revision: 1,
+      importId: "import",
+      candidateId: "candidate",
+      candidateRevision: 1,
+      sourceHash: "a".repeat(64),
+      reviewedFields: ["name"],
+      approvedAtMs: 1,
+    },
+    {
+      schemaVersion: 1,
+      revision: 1,
+      importId: "import",
+      source: "json",
+      sourceHash: "a".repeat(64),
+      dispositions: [{ field: "name", classification: "accepted_typed", reason: "safe" }],
+    },
+    {
+      schemaVersion: 1,
+      revision: 1,
+      companionId: "companion",
+      continuityId: "continuity",
+      name: "Name",
+      profileId: "profile",
+      profileRevision: 1,
+      profileHash: "a".repeat(64),
+    },
+    { schemaVersion: 1, revision: 1, personaId: "persona", name: "Name" },
+    {
+      schemaVersion: 1,
+      revision: 1,
+      scenarioId: "scenario",
+      name: "Name",
+      description: "Description",
+      text: "Text",
+      provenance: "authored",
+      owner: "companion_default",
+    },
+    { schemaVersion: 1, revision: 1, examplesId: "examples", blocks: ["Example"] },
+    { schemaVersion: 1, revision: 1, greetingSetId: "greetings", variants: [{ variantId: "variant", text: "Hello" }] },
+    {
+      schemaVersion: 1,
+      revision: 1,
+      chatThreadId: "thread",
+      companionId: "companion",
+      continuityId: "continuity",
+      openingSelection: { kind: "greeting", sourceRevision: 1, variantId: "variant", messageId: "message" },
+    },
+  ];
+  for (const artifact of artifacts)
+    assert.throws(() => validateTavernArtifact({ ...artifact, unexpected: true }), /invalid_tavern_artifact/);
+
+  const nested = [
+    {
+      schemaVersion: 1,
+      revision: 1,
+      candidateId: "candidate",
+      sourceFormat: "st-v3",
+      sourceVersion: "3",
+      sourceHash: "a".repeat(64),
+      name: "Name",
+      reviewState: "pending",
+      fields: [{ field: "name", text: "Name", eligibility: "candidate_only", unexpected: true }],
+    },
+    {
+      schemaVersion: 1,
+      revision: 1,
+      importId: "import",
+      source: "json",
+      sourceHash: "a".repeat(64),
+      dispositions: [{ field: "name", classification: "accepted_typed", reason: "safe", unexpected: true }],
+    },
+    {
+      schemaVersion: 1,
+      revision: 1,
+      greetingSetId: "greetings",
+      variants: [{ variantId: "variant", text: "Hello", unexpected: true }],
+    },
+    {
+      schemaVersion: 1,
+      revision: 1,
+      chatThreadId: "thread",
+      companionId: "companion",
+      continuityId: "continuity",
+      openingSelection: { kind: "blank", unexpected: true },
+    },
+  ];
+  for (const artifact of nested) assert.throws(() => validateTavernArtifact(artifact), /invalid_tavern_artifact/);
 });
 
 test("Optional Tavern fields reject non-string values without weakening unknown-field rejection", () => {

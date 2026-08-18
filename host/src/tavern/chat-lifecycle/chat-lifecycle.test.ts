@@ -8,6 +8,7 @@ import {
   createChatLifecycleService,
   createInternalChatLifecycleService,
   type ChatLifecycleAtomicGuard,
+  type ChatLifecycleMutationReader,
 } from "./chat-lifecycle-service.js";
 
 async function fixture() {
@@ -42,12 +43,19 @@ const passGuard: ChatLifecycleAtomicGuard = {
     return operation();
   },
 };
-function service(store: ReturnType<typeof createChatThreadStore>, atomicGuard: ChatLifecycleAtomicGuard = passGuard) {
+const passMutationReader: ChatLifecycleMutationReader = {
+  async assertChatLifecycleMutationAllowed() {},
+};
+function service(
+  store: ReturnType<typeof createChatThreadStore>,
+  atomicGuard: ChatLifecycleAtomicGuard = passGuard,
+  mutationReader: ChatLifecycleMutationReader = passMutationReader,
+) {
   return createChatLifecycleService(
     store,
-    { companionId: "companion_01", continuityId: "continuity_01" },
-    async () => true,
+    { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
     atomicGuard,
+    mutationReader,
   );
 }
 
@@ -76,6 +84,32 @@ test("trash persists the exact pre-trash restore target and transition readback"
       }),
       { status: "archived", managementRevision: 5, title: "Morning plans" },
     );
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("lifecycle mutation reader receives the exact identity and thread binding", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01");
+    const calls: Array<readonly [unknown, unknown]> = [];
+    const mutationReader: ChatLifecycleMutationReader = {
+      async assertChatLifecycleMutationAllowed(identity, threadBinding) {
+        calls.push([identity, threadBinding]);
+      },
+    };
+    await service(f.store, passGuard, mutationReader).archive({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "thread_01_surface",
+      expectedManagementRevision: 1,
+    });
+    assert.deepEqual(calls, [
+      [
+        { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
+        { chatThreadId: "thread_01", chatSurfaceSessionId: "thread_01_surface" },
+      ],
+    ]);
   } finally {
     await f.dispose();
   }
@@ -134,9 +168,9 @@ test("internal list/search retains exact opaque bindings while public results do
     });
     const internal = createInternalChatLifecycleService(
       f.store,
-      { companionId: "companion_01", continuityId: "continuity_01" },
-      async () => true,
+      { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
       passGuard,
+      passMutationReader,
     );
     const results = await internal.searchTitlesInternal({ literal: "quiet", status: "active" });
     assert.deepEqual(
@@ -231,6 +265,25 @@ test("a lifecycle request using a listed revision is rejected after another muta
   }
 });
 
+test("missing mutation reader fails closed without a legacy guard fallback", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01");
+    assert.throws(
+      () =>
+        createChatLifecycleService(
+          f.store,
+          { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
+          passGuard,
+          undefined,
+        ),
+      /mutation_reader_unavailable/,
+    );
+  } finally {
+    await f.dispose();
+  }
+});
+
 test("missing atomic guard fails closed rather than claiming cross-system serialization", async () => {
   const f = await fixture();
   try {
@@ -239,9 +292,9 @@ test("missing atomic guard fails closed rather than claiming cross-system serial
       () =>
         createChatLifecycleService(
           f.store,
-          { companionId: "companion_01", continuityId: "continuity_01" },
-          async () => true,
+          { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
           undefined,
+          passMutationReader,
         ),
       /atomic_guard_unavailable/,
     );

@@ -1,6 +1,8 @@
 import {
   newEnvelope,
+  nextCancelIdentity,
   type BridgeMessage,
+  type CancelIdentity,
   type ExecutionRequest,
   type ExecutionReceipt,
   type Snapshot,
@@ -24,6 +26,8 @@ export class CompanionIntegrationClient {
   #latestReasonCode: string | null = null;
   readonly #unsubscribeMessage: () => void;
   readonly #unsubscribeDisconnect: () => void;
+  /** One stable cancelId per request; cancelEpoch strictly increases per distinct cancel attempt. */
+  readonly #cancelIdentities = new Map<string, CancelIdentity>();
 
   public constructor(
     readonly scope: Scope,
@@ -79,8 +83,24 @@ export class CompanionIntegrationClient {
     nowMs = Date.now(),
   ): BridgeFault | "not_ready" | null {
     if (!this.state.connected) return "not_ready";
+    // The typed cancel identity is minted and remembered per request before
+    // the envelope leaves the Host; a cancel without it can never be emitted.
+    const identity = nextCancelIdentity(this.#cancelIdentities.get(requestId) ?? null);
+    this.#cancelIdentities.set(requestId, identity);
     return this.endpoint.send(
-      newEnvelope("cancel_request", this.scope, { requestId, executionId, reasonCode }, undefined, nowMs),
+      newEnvelope(
+        "cancel_request",
+        this.scope,
+        {
+          requestId,
+          executionId,
+          cancelId: identity.cancelId,
+          cancelEpoch: identity.cancelEpoch,
+          reasonCode,
+        },
+        undefined,
+        nowMs,
+      ),
       nowMs,
     );
   }

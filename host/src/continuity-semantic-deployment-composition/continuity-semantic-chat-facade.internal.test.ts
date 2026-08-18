@@ -15,16 +15,26 @@ test("production Chat composition is internal and owns construction dependencies
   assert.equal(chatComposition.includes("binding:"), false);
   assert.equal(chatComposition.includes("store:"), false);
   assert.equal(chatComposition.includes("factory:"), false);
+  assert.equal(chatComposition.includes("loadHostDeploymentManifest"), false);
+  assert.match(chatComposition, /createFreshUnmountedChatSemanticFacade\(\s*manifest: HostDeploymentManifest,/);
+  assert.match(
+    chatComposition,
+    /createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest\(manifest, options\)/,
+  );
   assert.equal(typeof createFreshUnmountedChatSemanticFacade, "function");
 });
 
-test(
-  "production Chat composition remains unmounted and is Windows-owner gated",
-  { skip: process.platform !== "win32" ? "requires concrete Windows binding" : false },
-  async () => {
-    await assert.rejects(
-      createFreshUnmountedChatSemanticFacade("C:\\missing-gamebuddy-manifest.json"),
-      /invalid_host_deployment_manifest/,
-    );
-  },
-);
+test("Chat facade preserves the exact manifest object and rejects adversarial manifest-path re-load after composition begins", async () => {
+  const folder = resolve(dirname(fileURLToPath(import.meta.url)));
+  const source = await readFile(
+    join(folder, "../../src/continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.ts"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /manifestPath\s*:/);
+  assert.doesNotMatch(source, /loadHostDeploymentManifest/);
+  assert.match(
+    source,
+    /const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest\(manifest, options\)/,
+  );
+  assert.doesNotMatch(source, /\{\s*\.\.\.manifest\s*\}/);
+});

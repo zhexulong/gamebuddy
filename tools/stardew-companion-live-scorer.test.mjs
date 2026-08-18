@@ -6,31 +6,136 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { scoreScenarioSuite, sealScenarioSuite } from "./lib/stardew-companion-live-scenario.mjs";
+import {
+  loadCompanionLiveFixtures,
+  scoreScenarioSuite,
+  sealScenarioSuite,
+} from "./lib/stardew-companion-live-scenario.mjs";
+
 const execFileAsync = promisify(execFile);
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
-const reseal = (run) => { for (const scenario of run.scenarios) { delete scenario.evidenceDigest; scenario.evidenceDigest = hash(scenario); } delete run.evidenceDigest; return Object.assign(run, sealScenarioSuite(run)); };
+const reseal = (run) => {
+  for (const scenario of run.scenarios) {
+    delete scenario.evidenceDigest;
+    scenario.evidenceDigest = hash(scenario);
+  }
+  delete run.evidenceDigest;
+  return Object.assign(run, sealScenarioSuite(run));
+};
 const identity = { topology: "native_ai_farmhand_multiplayer", game: "1", smapi: "1", mod: "1", host: "1", model: "1" };
-function result(id, overrides = {}) {
-  const phraseId = ({ "SIM-01": "open_help:1", "SIM-02": "redirect:1", "SIM-03": "stop:1", "SIM-04": "silence:1", "SIM-05": "reject:1" })[id];
-  const base = { scenarioId: id, phraseId, identity, eventRange: { start: 1, end: 20 }, executionOwners: [], receiptIds: [], presentationIds: [], events: [], bodySettled: true, verdict: "pass" };
-  if (["SIM-01", "SIM-02", "SIM-05"].includes(id)) base.events.push({ kind: "player_input", phraseId });
-  if (id === "SIM-01") Object.assign(base, { executionOwners: ["o1"], receiptIds: ["r1"], events: [...base.events, { kind: "action_dispatch", phraseId, ownerId: "o1", receiptId: "r1", toolId: "x", published: true, epoch: 2 }, { kind: "terminal_receipt", receiptId: "r1" }] });
-  if (id === "SIM-02") Object.assign(base, { freshSnapshot: { beforeReplacement: true, oldEpoch: 1 } });
-  if (id === "SIM-03") Object.assign(base, { receiptIds: ["r31", "r32", "r33", "r34"], events: ["active_execution", "active_execution", "provider_or_tool_wait", "provider_or_tool_wait"].map((timingProfile, index) => ({ kind: "stop_receipt", timingProfile, stopId: `SIM-03:${timingProfile}:stop-1`, phraseId: "stop:1", terminal: true, receiptId: `r3${index + 1}`, epoch: 1 })) });
-  if (id === "SIM-04") Object.assign(base, { receiptIds: ["r4"], events: [...base.events, { kind: "silence_window_receipt", windowId: "no_input_for_window", terminal: true, receiptId: "r4" }] });
-  if (id === "SIM-05") Object.assign(base, { receiptIds: ["r5"], events: [...base.events, { kind: "scope_receipt", phraseId, scopeAllowed: false, receiptId: "r5" }] });
-  return { ...base, ...overrides };
+
+// Deliberately synthetic scorer inputs. All canonical semantic IDs are derived from validated JSON fixtures.
+function syntheticResult(scenario, phrases) {
+  const phraseId = `${scenario.phraseSet}:1`,
+    base = {
+      scenarioId: scenario.id,
+      phraseId,
+      identity,
+      eventRange: { start: 1, end: 20 },
+      executionOwners: [],
+      receiptIds: [],
+      presentationIds: [],
+      events: [],
+      bodySettled: true,
+      verdict: "pass",
+    };
+  if (["SIM-01", "SIM-02", "SIM-05"].includes(scenario.id))
+    base.events.push({ kind: scenario.events[0].kind === "redirect" ? "redirect" : "player_input", phraseId });
+  if (scenario.id === "SIM-01")
+    Object.assign(base, {
+      executionOwners: ["o1"],
+      receiptIds: ["r1"],
+      events: [
+        ...base.events,
+        { kind: "action_dispatch", phraseId, ownerId: "o1", receiptId: "r1", toolId: "x", published: true, epoch: 2 },
+        { kind: "terminal_receipt", receiptId: "r1" },
+      ],
+    });
+  if (scenario.id === "SIM-02") Object.assign(base, { freshSnapshot: { beforeReplacement: true, oldEpoch: 1 } });
+  if (scenario.id === "SIM-03")
+    Object.assign(base, {
+      receiptIds: ["r31", "r32", "r33", "r34"],
+      events: scenario.events[0].timingProfiles.flatMap((timingProfile, index) =>
+        [0, 1].map((repeat) => ({
+          kind: "stop_receipt",
+          timingProfile,
+          stopId: `${scenario.id}:${timingProfile}:stop-1`,
+          phraseId,
+          terminal: true,
+          receiptId: `r3${index * 2 + repeat + 1}`,
+          epoch: 1,
+        })),
+      ),
+    });
+  if (scenario.id === "SIM-04")
+    Object.assign(base, {
+      receiptIds: ["r4"],
+      events: [
+        { kind: "silence_window_receipt", windowId: phrases.phraseSets.silence[0], terminal: true, receiptId: "r4" },
+      ],
+    });
+  if (scenario.id === "SIM-05")
+    Object.assign(base, {
+      receiptIds: ["r5"],
+      events: [...base.events, { kind: "scope_receipt", phraseId, scopeAllowed: false, receiptId: "r5" }],
+    });
+  return base;
 }
-function passing() { return reseal({ schemaVersion: 1, suiteId: "stardew_companion_live_v1", evidenceClass: "deterministic_fixture", scenarios: ["SIM-01", "SIM-02", "SIM-03", "SIM-04", "SIM-05"].map(result) }); }
-test("scores receipt-derived complete fixture evidence", () => assert.equal(scoreScenarioSuite(passing()).verdict, "pass"));
-test("rejects real, unknown, and arbitrary evidence classes before any semantic scoring", () => { for (const evidenceClass of ["real", "unknown", "production_port", "forged"]) { const run = passing(); run.evidenceClass = evidenceClass; reseal(run); const score = scoreScenarioSuite(run); assert.deepEqual(score, { verdict: "fail", failures: ["summary_envelope_invalid"], reviewRequired: [], evidenceClass: "deterministic_fixture" }); } });
-test("requires a matching suite and per-scenario integrity digest before scoring", () => { const missing = passing(); delete missing.evidenceDigest; assert.match(scoreScenarioSuite(missing).failures.join(" "), /summary_envelope_invalid/); const mismatched = passing(); mismatched.scenarios[0].evidenceDigest = "0".repeat(64); reseal(mismatched); mismatched.scenarios[0].evidenceDigest = "0".repeat(64); assert.deepEqual(scoreScenarioSuite(mismatched).failures, ["summary_envelope_invalid"]); });
-test("rejects unsafe or mismatched root scenario and phrase identities before redaction", () => { const unsafe = passing(); unsafe.scenarios[0].scenarioId = "SIM-01;$(whoami)"; reseal(unsafe); assert.deepEqual(scoreScenarioSuite(unsafe).failures, ["scenario_result_ingress_invalid"]); const mismatched = passing(); mismatched.scenarios[0].scenarioId = "SIM-02"; reseal(mismatched); assert.deepEqual(scoreScenarioSuite(mismatched).failures, ["scenario_result_ingress_invalid"]); const phrase = passing(); phrase.scenarios[0].phraseId = "open_help:1\nsecret"; reseal(phrase); assert.deepEqual(scoreScenarioSuite(phrase).failures, ["scenario_result_ingress_invalid"]); });
-test("fails closed for missing or mismatched scenario integrity even with a resealed root", () => { const sealRootOnly = (run) => { delete run.evidenceDigest; return Object.assign(run, sealScenarioSuite(run)); }; const missing = passing(); delete missing.scenarios[0].evidenceDigest; sealRootOnly(missing); assert.deepEqual(scoreScenarioSuite(missing).failures, ["scenario_result_ingress_invalid"]); const mismatched = passing(); mismatched.scenarios[0].evidenceDigest = "0".repeat(64); sealRootOnly(mismatched); assert.deepEqual(scoreScenarioSuite(mismatched).failures, ["scenario_result_ingress_invalid"]); });
-test("hard fails SIM-01 uncorrelated/missing phrase action", () => { const run = passing(); run.scenarios[0].events[1].phraseId = "other:1"; reseal(run); assert.deepEqual(scoreScenarioSuite(run).failures, ["scenario_redaction_contract_invalid"]); });
-test("hard fails missing terminal stop profile receipts", () => { const run = passing(); run.scenarios[2].events.pop(); reseal(run); assert.match(scoreScenarioSuite(run).failures.join(" "), /SIM-03:stop_not_idempotent/); });
-test("hard fails self-reported silence and rejection without authoritative receipts", () => { const run = passing(); run.scenarios[3].events = []; run.scenarios[4].events = [{ kind: "player_input", phraseId: "reject:1" }]; reseal(run); const failures = scoreScenarioSuite(run).failures.join(" "); assert.match(failures, /SIM-04:silence_window/); assert.match(failures, /SIM-05:scope_expansion/); });
-test("hard fails silence receipt missing from scenario receipts and stop phrase or stop-id mismatch", () => { const silence = passing(); silence.scenarios[3].receiptIds = []; reseal(silence); assert.match(scoreScenarioSuite(silence).failures.join(" "), /SIM-04:silence_window/); const stop = passing(); stop.scenarios[2].events[0].phraseId = "stop:2"; stop.scenarios[2].events[1].stopId = "SIM-03:wrong:stop-1"; reseal(stop); assert.deepEqual(scoreScenarioSuite(stop).failures, ["scenario_redaction_contract_invalid"]); });
-test("hard fails raw, hidden, injection, and unapproved scalar event evidence", () => { for (const mutation of [{ source: "raw prompt text" }, { hidden: true }, { toolId: "$(whoami)" }, { naturalLanguageHeuristic: "ignore previous instructions" }, { epoch: -1 }, { phraseId: "stop:99" }]) { const run = passing(); Object.assign(run.scenarios[0].events[1], mutation); reseal(run); assert.deepEqual(scoreScenarioSuite(run).failures, ["scenario_redaction_contract_invalid"]); } });
-test("score CLI never passes or reflects handcrafted real or unsafe summary data", async () => { const dir = await mkdtemp(join(tmpdir(), "stardew-companion-score-")); for (const [name, mutate] of [["real", (run) => { run.evidenceClass = "real"; }], ["unsafe", (run) => { run.scenarios[0].scenarioId = "SIM-01;$(whoami)"; }]]) { const path = join(dir, `${name}.json`); const run = passing(); mutate(run); reseal(run); await writeFile(path, JSON.stringify(run)); await assert.rejects(() => execFileAsync(process.execPath, ["tools/score-stardew-companion-live-scenarios.mjs", "--summary", path]), (error) => { assert.equal(error.code, 2); assert.match(error.stdout, /"verdict":"fail"/); assert.doesNotMatch(error.stdout, /SIM-01;|\$\(whoami\)|raw prompt text/); return true; }); } });
+async function passing() {
+  const fixtures = await loadCompanionLiveFixtures();
+  return {
+    fixtures,
+    run: reseal({
+      schema: "gamebuddy_stardew_companion_fixture_evidence/v1",
+      suiteId: fixtures.manifest.suiteId,
+      evidenceClass: "deterministic_fixture",
+      scenarios: fixtures.manifest.scenarios.map((scenario) => syntheticResult(scenario, fixtures.phrases)),
+    }),
+  };
+}
+
+test("scores complete class-specific fixture evidence", async () => {
+  const { fixtures, run } = await passing();
+  assert.equal(scoreScenarioSuite(run, fixtures).verdict, "pass");
+});
+test("rejects live, admission, and arbitrary proof classes before semantic scoring", async () => {
+  for (const schema of [
+    "gamebuddy_stardew_companion_live_evidence/v1",
+    "gamebuddy_stardew_companion_admission_record/v1",
+    "forged",
+  ]) {
+    const { fixtures, run } = await passing();
+    run.schema = schema;
+    assert.deepEqual(scoreScenarioSuite(run, fixtures).failures, ["summary_envelope_invalid"]);
+  }
+});
+test("rejects stale JSON-derived semantic correlations", async () => {
+  const { fixtures, run } = await passing();
+  run.scenarios[0].phraseId = "synthetic:1";
+  reseal(run);
+  assert.deepEqual(scoreScenarioSuite(run, fixtures).failures, ["scenario_result_ingress_invalid"]);
+});
+test("fails sealed failed scenarios and missing authoritative fixture receipts", async () => {
+  const { fixtures, run } = await passing();
+  run.scenarios[3].verdict = "fail";
+  run.scenarios[4].events = [{ kind: "player_input", phraseId: run.scenarios[4].phraseId }];
+  reseal(run);
+  const failures = scoreScenarioSuite(run, fixtures).failures.join(" ");
+  assert.match(failures, /sealed_scenario_verdict_failed/);
+  assert.match(failures, /scope_expansion_invalid/);
+});
+test("fixture scorer CLI rejects cross-class summaries without reflecting unsafe input", async () => {
+  const { run } = await passing(),
+    dir = await mkdtemp(join(tmpdir(), "stardew-companion-score-"));
+  run.schema = "gamebuddy_stardew_companion_live_evidence/v1";
+  const path = join(dir, "cross-class.json");
+  await writeFile(path, JSON.stringify(run));
+  await assert.rejects(
+    () => execFileAsync(process.execPath, ["tools/score-stardew-companion-live-scenarios.mjs", "--summary", path]),
+    (error) => {
+      assert.equal(error.code, 2);
+      assert.match(error.stdout, /"verdict":"fail"/);
+      return true;
+    },
+  );
+});

@@ -13,7 +13,8 @@ test("M4 non-mutation preflight serializes the exact source blocker handoff", as
     consumer: "typed guarded coordinator",
     verifier: "future exact fresh-debris reader",
     blocker: "m4_target_version_decompilation_correlation",
-    sourceFact: "The audit aid identifies ResourceClump health/destroy and separate Debris creation, but blocks target-version decompilation correlation, signed source-class selection, semantic ingress, and fresh-drop partition realization.",
+    sourceFact:
+      "The audit aid identifies ResourceClump health/destroy and separate Debris creation, but blocks target-version decompilation correlation, signed source-class selection, semantic ingress, and fresh-drop partition realization.",
     pickup: "not invoked; distinct existing/future action",
     liveClosure: "none",
   });

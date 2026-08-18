@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,17 +21,19 @@ test("text hygiene rejects trailing whitespace, mixed endings, BOM, and missing 
   ]);
 });
 
-test("text hygiene covers tracked and non-ignored untracked owned text while excluding generated and binary roots", async () => {
+test("text hygiene covers tracked and non-ignored untracked owned text while excluding generated, runtime, and binary roots", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "gamebuddy-text-hygiene-"));
   try {
     await writeFile(path.join(root, "tracked.txt"), "clean\n");
     await writeFile(path.join(root, "untracked.txt"), "bad \n");
     await writeFile(path.join(root, "nul.txt"), Buffer.from([0x6f, 0x6b, 0x00, 0x0a]));
     await writeFile(path.join(root, "ignored.png"), Buffer.from([0, 1, 2]));
+    await mkdir(path.join(root, "host", "contexts"), { recursive: true });
+    await writeFile(path.join(root, "host", "contexts", "runtime.db"), Buffer.from([0x6f, 0x6b, 0x00, 0x0a]));
     const result = await checkTextHygiene({
       root,
       git: async (arguments_) => {
-        if (arguments_.includes("--others")) return "untracked.txt\0nul.txt\0ignored.png\0";
+        if (arguments_.includes("--others")) return "untracked.txt\0nul.txt\0ignored.png\0host/contexts/runtime.db\0";
         return "tracked.txt\0";
       },
     });

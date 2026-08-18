@@ -18,11 +18,11 @@ function errorsFor(mutator) {
   });
 }
 
-test("M8 elevator example is strict implementation-needed and fixture-needed metadata", async () => {
+test("M8 elevator example records deterministic implementation while retaining fixture/live closure boundaries", async () => {
   const contract = await loadContract();
   assert.deepEqual(validateM8ElevatorActionContract(contract), []);
   const result = await checkM8ElevatorActionContract(contractPath, process.cwd());
-  assert.equal(result.state, "implementation_needed");
+  assert.equal(result.state, "implementation_present_not_live");
   assert.equal(result.fixtureState, "fixture_needed");
   assert.equal(result.action, "select_mine_elevator_floor");
   assert.equal(result.publication, "none");
@@ -38,7 +38,11 @@ test("M8 elevator contract rejects static floors, opaque native targets, and rou
   assert.match(staticFloor, /selectedDomain\.selectedCheckpoint\.value must be null|static floor/);
 
   const opaqueNativeTarget = await errorsFor((contract) => {
-    contract.action.target = { kind: "opaque_runtime_target", source: "fresh_native_elevator_observation", value: null };
+    contract.action.target = {
+      kind: "opaque_runtime_target",
+      source: "fresh_native_elevator_observation",
+      value: null,
+    };
   });
   assert.match(opaqueNativeTarget, /action: unknown field target/);
 
@@ -97,7 +101,8 @@ test("M8 elevator contract keeps ladder, generic travel, UI, input, warp, and sa
     "generic mine action, generic travel action, generic warp action, or direct warp request",
     "UI/menu automation, keyboard/mouse/XInput, visual/input injection, or window inspection",
     "save XML editing, direct save mutation, direct player/world mutation, or fixture-written result",
-  ]) assert.ok(contract.forbiddenBehavior.includes(entry), entry);
+  ])
+    assert.ok(contract.forbiddenBehavior.includes(entry), entry);
 
   const mutated = await errorsFor((value) => {
     value.forbiddenBehavior = value.forbiddenBehavior.filter((entry) => !entry.includes("ladder route"));

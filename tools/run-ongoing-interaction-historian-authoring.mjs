@@ -130,20 +130,26 @@ function historianGateReasonCode(error) {
   if (message === "product_auto_promote_must_remain_disabled") return message;
   if (message === "runtime_boot_timeout") return message;
   if (message === "embedded_historian_gate_publication_missing") return "historian_gate_publication_missing";
-  if (/^historian_gate_timeout:(semantic|interaction|ordinary-process)$/.test(message))
-    return "historian_gate_timeout";
+  if (/^historian_gate_timeout:(semantic|interaction|ordinary-process)$/.test(message)) return "historian_gate_timeout";
   if (/^unexpected_(semantic|interaction|ordinaryProcess)_result$/.test(message))
     return "historian_gate_unexpected_aggregate";
   if (/^historian_gate_scenario_counts:(semantic|interaction|ordinary):semantic=\d+:interaction=\d+$/.test(message))
     return "historian_gate_unexpected_aggregate";
-  if (/^embedded_historian_gate_category_mismatch:(semantic|interaction|ordinary-process):semantic=\d+:interaction=\d+$/.test(message))
+  if (
+    /^embedded_historian_gate_category_mismatch:(semantic|interaction|ordinary-process):semantic=\d+:interaction=\d+$/.test(
+      message,
+    )
+  )
     return "historian_gate_category_mismatch";
   return "historian_gate_execution_failed";
 }
 
 function historianGateObservedCategoryCounts(error) {
   const message = error instanceof Error ? error.message : "";
-  const match = /^(?:embedded_historian_gate_category_mismatch:(semantic|interaction|ordinary-process)|historian_gate_scenario_counts:(semantic|interaction|ordinary)):semantic=(\d+):interaction=(\d+)$/.exec(message);
+  const match =
+    /^(?:embedded_historian_gate_category_mismatch:(semantic|interaction|ordinary-process)|historian_gate_scenario_counts:(semantic|interaction|ordinary)):semantic=(\d+):interaction=(\d+)$/.exec(
+      message,
+    );
   if (match === null) return undefined;
   return Object.freeze({
     scenario: match[1] ?? match[2],
@@ -159,7 +165,8 @@ function assertScenarioFacts(name, result, expected) {
     (expected === "semantic" && semantic >= 1) ||
     (expected === "interaction" && interaction >= 1) ||
     (expected === "ordinary" && semantic === 0 && interaction === 0);
-  if (!valid) throw new Error(`historian_gate_scenario_counts:${expected}:semantic=${semantic}:interaction=${interaction}`);
+  if (!valid)
+    throw new Error(`historian_gate_scenario_counts:${expected}:semantic=${semantic}:interaction=${interaction}`);
 }
 
 function redactScenarioResult(result) {

@@ -2,6 +2,9 @@
 // This module deliberately does not choose actions or targets, interpret native
 // evidence, grant capabilities, or decide action-specific postconditions.
 
+import { readFile } from "node:fs/promises";
+import { loadHostProductionModule } from "./host-production-module.mjs";
+
 export const TERMINAL_STATES = new Set([
   "blocked",
   "invalidated",
@@ -94,8 +97,7 @@ export function assertImmediateReceipt(receipt, { requestId } = {}) {
   validateId(requestId, "invalid_native_accepted_request_id");
   validateId(receipt?.requestId, "invalid_native_receipt_request_id");
   validateId(receipt?.executionId, "invalid_native_receipt_execution_id");
-  if (receipt.requestId !== requestId)
-    throw new NativeSmokeHarnessError("native_receipt_request_id_mismatch");
+  if (receipt.requestId !== requestId) throw new NativeSmokeHarnessError("native_receipt_request_id_mismatch");
   return receipt;
 }
 
@@ -105,8 +107,7 @@ export function assertReceiptIdentity(receipt, accepted) {
   validateId(accepted?.executionId, "invalid_native_accepted_execution_id");
   validateId(receipt?.requestId, "invalid_native_receipt_request_id");
   validateId(receipt?.executionId, "invalid_native_receipt_execution_id");
-  if (receipt.requestId !== accepted.requestId)
-    throw new NativeSmokeHarnessError("native_receipt_request_id_mismatch");
+  if (receipt.requestId !== accepted.requestId) throw new NativeSmokeHarnessError("native_receipt_request_id_mismatch");
   if (receipt.executionId !== accepted.executionId)
     throw new NativeSmokeHarnessError("native_receipt_execution_id_mismatch");
   return receipt;
@@ -129,8 +130,7 @@ export function assertPostTerminalRevision(snapshot, terminal) {
   validateSnapshot(snapshot);
   validateId(terminal?.requestId, "invalid_native_terminal_request_id");
   validateId(terminal?.executionId, "invalid_native_terminal_execution_id");
-  if (!Number.isSafeInteger(terminal?.revision))
-    throw new NativeSmokeHarnessError("invalid_native_terminal_revision");
+  if (!Number.isSafeInteger(terminal?.revision)) throw new NativeSmokeHarnessError("invalid_native_terminal_revision");
   if (snapshot.revision !== terminal.revision)
     throw new NativeSmokeHarnessError("native_post_terminal_revision_mismatch");
   return snapshot;
@@ -195,6 +195,131 @@ export function summarizeReceipt(receipt) {
   };
 }
 
+/** Look up one required CLI argument by exact name. */
+export function requiredArg(name, argv = process.argv) {
+  if (typeof name !== "string" || !name.startsWith("--")) throw new NativeSmokeHarnessError("invalid_native_arg_name");
+  const index = argv.indexOf(name);
+  if (index < 0 || index + 1 >= argv.length) throw new NativeSmokeHarnessError(`missing_${name.slice(2)}`);
+  return argv[index + 1];
+}
+
+/** Read and parse the bounded runner client config JSON from --client-config. */
+export async function readNativeClientConfig(argv = process.argv) {
+  let raw;
+  try {
+    raw = await readFile(requiredArg("--client-config", argv), "utf8");
+  } catch (error) {
+    throw new NativeSmokeHarnessError("invalid_native_client_config");
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new NativeSmokeHarnessError("invalid_native_client_config");
+  }
+}
+
+/**
+ * Connect one native-local smoke session: production client, bounded scope,
+ * receipt buffer, and a close() that unsubscribes and closes the client.
+ * `loadModule` is injectable for contract tests; production always loads the
+ * immutable Host production generation.
+ */
+export async function connectNativeLocalClient(
+  config,
+  { loadModule = loadHostProductionModule, entry = "local-stardew-bridge.js" } = {},
+) {
+  if (!config || typeof config !== "object") throw new NativeSmokeHarnessError("invalid_native_config");
+  if (
+    typeof config.PipeName !== "string" ||
+    config.PipeName.length === 0 ||
+    typeof config.BridgeToken !== "string" ||
+    config.BridgeToken.length === 0
+  )
+    throw new NativeSmokeHarnessError("invalid_native_config");
+  const { LocalStardewBridgeClient } = await loadModule(entry);
+  const scope = createNativeScope(config);
+  const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
+  const receipts = [];
+  const unsubscribe = client.onFact((fact) => {
+    if (fact.type === "execution_receipt") receipts.push(fact.payload);
+  });
+  return {
+    client,
+    scope,
+    receipts,
+    close() {
+      unsubscribe();
+      client.close();
+    },
+  };
+}
+
+/** Poll until the snapshot is actionable with no active execution. */
+export async function waitForActionable(client, snapshot, timeoutMs) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TERMINAL_WAIT_MS)
+    throw new NativeSmokeHarnessError("invalid_native_actionable_timeout");
+  const deadline = Date.now() + timeoutMs;
+  let latest = snapshot;
+  while (Date.now() < deadline) {
+    if (latest?.actionable === true && latest.activeExecution == null) return latest;
+    await delay(100);
+    latest = await observeFresh(client);
+  }
+  throw new NativeSmokeHarnessError("native_snapshot_not_actionable");
+}
+
+/**
+ * Poll fresh observations until one satisfies revision, actionability, and an
+ * optional action-supplied check. Never interprets native evidence itself.
+ */
+export async function waitForFreshSnapshot(
+  client,
+  { minRevision = 0, timeoutMs = 5_000, requireActionable = false, check } = {},
+) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TERMINAL_WAIT_MS)
+    throw new NativeSmokeHarnessError("invalid_native_reread_timeout");
+  if (!Number.isSafeInteger(minRevision) || minRevision < 0)
+    throw new NativeSmokeHarnessError("invalid_native_reread_revision");
+  if (check !== undefined && typeof check !== "function")
+    throw new NativeSmokeHarnessError("invalid_native_reread_check");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const snapshot = await observeFresh(client);
+    if (snapshot.revision < minRevision) continue;
+    if (requireActionable && (snapshot.actionable !== true || snapshot.activeExecution != null)) continue;
+    if (check !== undefined && !check(snapshot)) continue;
+    return snapshot;
+  }
+  throw new NativeSmokeHarnessError("native_fresh_snapshot_timeout");
+}
+
+/**
+ * Poll fresh observations for a stable post-terminal revision window. A
+ * revision that advanced past the terminal is fail-closed: the observation
+ * no longer describes the same execution's postcondition.
+ */
+export async function waitForStableRevision(client, { revision, timeoutMs = 5_000, check } = {}) {
+  if (!Number.isSafeInteger(revision) || revision < 0) throw new NativeSmokeHarnessError("invalid_native_revision");
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TERMINAL_WAIT_MS)
+    throw new NativeSmokeHarnessError("invalid_native_reread_timeout");
+  if (check !== undefined && typeof check !== "function")
+    throw new NativeSmokeHarnessError("invalid_native_reread_check");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const snapshot = await observeFresh(client);
+    if (snapshot.revision > revision)
+      throw new NativeSmokeHarnessError(`native_post_terminal_revision_mismatch:${snapshot.revision}:${revision}`);
+    if (snapshot.revision === revision && (check === undefined || check(snapshot))) return snapshot;
+    await delay(100);
+  }
+  throw new NativeSmokeHarnessError("native_stable_revision_timeout");
+}
+
+/** Shared bounded sleep for polling loops. */
+export function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function validateSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== "object" || !Number.isSafeInteger(snapshot.revision))
     throw new NativeSmokeHarnessError("invalid_native_snapshot");
@@ -202,8 +327,4 @@ function validateSnapshot(snapshot) {
 
 function validateId(value, code) {
   if (typeof value !== "string" || value.length === 0 || value.length > 256) throw new NativeSmokeHarnessError(code);
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

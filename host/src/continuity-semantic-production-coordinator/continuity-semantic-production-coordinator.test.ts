@@ -20,10 +20,12 @@ import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
 import { authorityRootMutexName } from "../windows-partition-mutex.js";
 import * as internalCoordinator from "./continuity-semantic-production-coordinator.internal.js";
+import { createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest } from "./continuity-semantic-production-coordinator.internal.js";
 import {
-  createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest,
+  createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   createKnownSemanticGameProductionAuthorityFromDeploymentManifest,
-} from "./continuity-semantic-production-coordinator.internal.js";
+  type SemanticGameProductionAuthority,
+} from "./continuity-semantic-production-coordinator.js";
 import * as publicCoordinator from "./continuity-semantic-production-coordinator.js";
 import { createTestSemanticChatRuntimeCoordinator } from "./continuity-semantic-production-coordinator.test-support.js";
 
@@ -35,7 +37,8 @@ function cleanup(root: string): void {
     /* Windows SQLite cleanup is best effort */
   }
 }
-const timeout = (ms: number) =>
+const PROCESS_TIMEOUT_MS = 30_000;
+const timeout = (ms = PROCESS_TIMEOUT_MS) =>
   new Promise<never>((_resolve, reject) =>
     setTimeout(() => reject(new Error("semantic_known_game_process_timeout")), ms),
   );
@@ -44,7 +47,7 @@ type WorkerReply = Readonly<{
   code?: string;
 }>;
 async function next(child: ChildProcess): Promise<WorkerReply> {
-  return Promise.race([once(child, "message").then(([message]) => message as WorkerReply), timeout(12_000)]);
+  return Promise.race([once(child, "message").then(([message]) => message as WorkerReply), timeout()]);
 }
 async function stop(child: ChildProcess): Promise<void> {
   if (child.exitCode === null && child.signalCode === null && child.connected) {
@@ -90,7 +93,7 @@ async function retainedAbandon(name: string): Promise<ChildProcess> {
     { stdio: ["pipe", "pipe", "ignore"], windowsHide: true },
   );
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-  await Promise.race([once(lines, "line").then(([line]) => assert.equal(line, "ready")), timeout(12_000)]);
+  await Promise.race([once(lines, "line").then(([line]) => assert.equal(line, "ready")), timeout()]);
   return child;
 }
 async function releaseRetained(child: ChildProcess): Promise<void> {
@@ -228,14 +231,33 @@ test("v38 coordinator Chat request boundary reaches the actual store with an exa
   }
 });
 
-test("production coordinator exports no caller-supplied mutex/provision/store constructor", () => {
-  assert.deepEqual(Object.keys(publicCoordinator).sort(), ["SemanticProductionCoordinatorError"]);
-  assert.deepEqual(Object.keys(internalCoordinator).sort(), [
+test("production coordinator exports only the known Game constructor and its safe authority surface", () => {
+  assert.deepEqual(Object.keys(publicCoordinator).sort(), [
     "SemanticProductionCoordinatorError",
+    "createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
+    "createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
+    "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
+    "isCurrentMountedChatRuntimeLease",
+  ]);
+  const authorityType: SemanticGameProductionAuthority | undefined = undefined;
+  assert.equal(authorityType, undefined);
+  assert.deepEqual(Object.keys(internalCoordinator).sort(), [
+    "P4C_PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS",
+    "SemanticProductionCoordinatorError",
+    "acceptMountedP4DurableTurn",
+    "claimMountedP4Attempt",
+    "consumeMountedP4Admission",
+    "consumeMountedP4AttemptAdmission",
+    "consumeMountedP4AttemptInvocationAdmission",
     "createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createFreshSemanticProductionAuthorityFromDeploymentManifest",
     "createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest",
+    "createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
+    "isCurrentMountedChatRuntimeLease",
+    "orchestrateExplicitGameRecovery",
+    "startMountedP4Attempt",
+    "stopMountedChatPresentationEpoch",
   ]);
   assert.equal(typeof createTestSemanticChatRuntimeCoordinator, "function");
   const productionSource = readFileSync(
@@ -291,6 +313,7 @@ test("production Dialogue exposes close-drained manifest-bound Chat commands wit
         "readChatCatalog",
         "registerChat",
         "registerInitialChat",
+        "reselectTerminalChatRuntimeSuccessor",
         "resumeInitialChat",
         "resumeInitialChatWithContent",
         "selectInitialChat",
@@ -326,13 +349,7 @@ test("production Dialogue authorizes post-initial Tavern materialization outside
       const content = createManifestDerivedInitialChatExactContentPort(deployment);
       await authority.initializeInitialChat(content);
       const registered = await authority.registerChat();
-      const receipt = await content.ensureExactContent(
-        Object.freeze({
-          chatThreadId: registered.chatThreadId,
-          chatSurfaceSessionId: registered.chatSurfaceSessionId,
-          companionId: principal.companionId,
-          continuityId: principal.continuityId,
-        }),
+      const receipt = await content.createExplicit(
         Object.freeze({
           chatThreadId: registered.chatThreadId,
           chatSurfaceSessionId: registered.chatSurfaceSessionId,
@@ -435,7 +452,7 @@ test(
 );
 
 test(
-  "known Game authority owns fresh store transitions without exposing its store or mutex",
+  "public known Game authority constructor owns fresh store transitions without exposing its store or mutex",
   { skip: process.platform !== "win32" ? "requires real WindowsNamedMutexBroker" : false },
   async () => {
     const root = mkdtempSync(join(tmpdir(), "semantic-known-game-"));
@@ -449,12 +466,13 @@ test(
         assert.deepEqual(Object.keys(game).sort(), [
           "authority",
           "close",
-          "commitEnter",
           "commitClose",
-          "failEnter",
+          "commitEnter",
           "failClose",
-          "prepareEnter",
+          "failEnter",
           "prepareClose",
+          "prepareEnter",
+          "recoverDeadOwner",
         ]);
         const facts = Object.freeze({
           world: Object.freeze({ integrationId: "stardew", saveId: "save_01", worldId: "world_01" }),
@@ -530,7 +548,7 @@ test(
       assert.equal(rejected.type, "rejected");
       assert.match(
         rejected.code ?? "",
-        /production_authority_artifact_present|semantic_game_enter_not_effect_owned|game_origin_unavailable/,
+        /production_authority_artifact_present|semantic_game_enter_not_effect_owned|game_origin_unavailable|game_transition_invalid/,
       );
       first.send({ type: "terminalize" });
       assert.deepEqual(await next(first), { type: "terminalized" });
@@ -554,7 +572,7 @@ test(
 );
 
 test(
-  "independent initial Chat crash after registration resumes only through known-open exact-content reconciliation",
+  "independent initial Chat crash after registration fails closed when explicit creation did not complete",
   { skip: process.platform !== "win32" ? "requires real Windows named mutex and child processes" : false },
   async () => {
     const root = mkdtempSync(join(tmpdir(), "semantic-initial-process-"));
@@ -564,15 +582,20 @@ test(
       const manifestPath = manifest(root);
       crashed = initialChatWorker("crash-after-register", manifestPath);
       assert.deepEqual(await next(crashed), { type: "registered" });
-      await Promise.race([once(crashed, "exit").then(() => undefined), timeout(12_000)]);
+      await Promise.race([once(crashed, "exit").then(() => undefined), timeout()]);
       successor = initialChatWorker("resume", manifestPath);
-      assert.deepEqual(await next(successor), { type: "selected" });
-      await Promise.race([once(successor, "exit").then(() => undefined), timeout(12_000)]);
+      assert.deepEqual(await next(successor), { type: "fatal", code: "chat_thread_not_found" });
+      await Promise.race([once(successor, "exit").then(() => undefined), timeout()]);
       const deployment = await loadHostDeploymentManifest(manifestPath);
-      await assert.rejects(
-        createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest(deployment),
-        /initial_chat_known_open_saga_selected/,
-      );
+      const reopened = await createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest(deployment);
+      try {
+        await assert.rejects(
+          reopened.resumeInitialChatWithContent(createManifestDerivedInitialChatExactContentPort(deployment)),
+          /chat_thread_not_found/,
+        );
+      } finally {
+        await reopened.close();
+      }
     } finally {
       await Promise.all([crashed, successor].filter((child): child is ChildProcess => child !== undefined).map(stop));
       cleanup(root);
@@ -618,6 +641,157 @@ test(
   },
 );
 
+test(
+  "production mounted lease mints browser projections from its verified record without exposing durable identifiers",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const firstRoot = mkdtempSync(join(tmpdir(), "semantic-browser-projection-first-"));
+    const secondRoot = mkdtempSync(join(tmpdir(), "semantic-browser-projection-second-"));
+    const mountInIsolatedProductionProcess = async (manifestPath: string) => {
+      const coordinatorUrl = new URL("./continuity-semantic-production-coordinator.internal.js", import.meta.url).href;
+      const manifestUrl = new URL("../deployment-manifest.js", import.meta.url).href;
+      const script = `
+        const [coordinatorUrl, manifestUrl, manifestPath] = process.argv.slice(1);
+        const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = await import(coordinatorUrl);
+        const { loadHostDeploymentManifest } = await import(manifestUrl);
+        const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(await loadHostDeploymentManifest(manifestPath));
+        const lease = await authority.startMountedChatRuntime();
+        const projection = lease.browserProjection;
+        process.stdout.write(JSON.stringify({
+          chatThreadId: lease.chatThreadId,
+          chatSurfaceSessionId: lease.chatSurfaceSessionId,
+          projection: {
+            chatHandle: projection.chatHandle,
+            selectionGeneration: projection.selectionGeneration,
+            selectionStateRevision: projection.selectionStateRevision,
+            messageHandle: projection.projectMessageHandle("message_01"),
+            repeatedMessageHandle: projection.projectMessageHandle("message_01"),
+          },
+        }));
+        await authority.close();
+      `;
+      const child = spawn(process.execPath, ["--input-type=module", "--eval", script, coordinatorUrl, manifestUrl, manifestPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      const output: Buffer[] = [];
+      const errors: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
+      const [code] = await once(child, "exit") as [number | null];
+      assert.equal(code, 0, Buffer.concat(errors).toString("utf8"));
+      return JSON.parse(Buffer.concat(output).toString("utf8")) as Readonly<{
+        chatThreadId: string;
+        chatSurfaceSessionId: string;
+        projection: Readonly<{
+          chatHandle: string;
+          selectionGeneration: number;
+          selectionStateRevision: string;
+          messageHandle: string;
+          repeatedMessageHandle: string;
+        }>;
+      }>;
+    };
+    try {
+      const first = await mountInIsolatedProductionProcess(manifest(firstRoot));
+      const firstProjection = first.projection;
+      assert.equal(firstProjection.selectionGeneration, 1);
+      for (const handle of [
+        firstProjection.chatHandle,
+        firstProjection.selectionStateRevision,
+        firstProjection.messageHandle,
+        firstProjection.repeatedMessageHandle,
+      ])
+        assert.match(handle, /^[A-Za-z0-9_-]{43}$/);
+      assert.equal(firstProjection.repeatedMessageHandle, firstProjection.messageHandle);
+      assert.notEqual(firstProjection.chatHandle, first.chatThreadId);
+      assert.notEqual(firstProjection.selectionStateRevision, first.chatSurfaceSessionId);
+      assert.notEqual(firstProjection.messageHandle, "message_01");
+      assert.notEqual(firstProjection.chatHandle, firstProjection.selectionStateRevision);
+      assert.notEqual(firstProjection.chatHandle, firstProjection.messageHandle);
+      assert.notEqual(firstProjection.selectionStateRevision, firstProjection.messageHandle);
+
+      const second = await mountInIsolatedProductionProcess(manifest(secondRoot));
+      const secondProjection = second.projection;
+      assert.equal(secondProjection.selectionGeneration, 1);
+      assert.notEqual(secondProjection.chatHandle, firstProjection.chatHandle);
+      assert.notEqual(secondProjection.selectionStateRevision, firstProjection.selectionStateRevision);
+      assert.notEqual(secondProjection.messageHandle, firstProjection.messageHandle);
+    } finally {
+      cleanup(firstRoot);
+      cleanup(secondRoot);
+    }
+  },
+);
+
+test(
+  "mounted lease lifecycle tears down successfully, revokes its predicate, and rejects mount starts after authority close",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const leaseRoot = mkdtempSync(join(tmpdir(), "semantic-mounted-lease-lifecycle-"));
+    const closeRoot = mkdtempSync(join(tmpdir(), "semantic-mounted-authority-close-"));
+    try {
+      const leaseManifest = await loadHostDeploymentManifest(manifest(leaseRoot));
+      const leaseAuthority =
+        await publicCoordinator.createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(leaseManifest);
+      const lease = await leaseAuthority.startMountedChatRuntime();
+      assert.equal(publicCoordinator.isCurrentMountedChatRuntimeLease(lease), true);
+      const leaseClose = lease.close();
+      // close() synchronously revokes even while teardown awaits durable work.
+      assert.equal(publicCoordinator.isCurrentMountedChatRuntimeLease(lease), false);
+      await assert.rejects(leaseAuthority.startMountedChatRuntime(), /semantic_chat_runtime_authority_closed/);
+      await leaseClose;
+
+      const closeManifest = await loadHostDeploymentManifest(manifest(closeRoot));
+      const closeAuthority =
+        await publicCoordinator.createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(closeManifest);
+      await closeAuthority.startChatRuntime();
+      const authorityClose = closeAuthority.close();
+      await assert.rejects(closeAuthority.startMountedChatRuntime(), /semantic_chat_runtime_authority_closed/);
+      await authorityClose;
+    } finally {
+      cleanup(leaseRoot);
+      cleanup(closeRoot);
+    }
+  },
+);
+
+test(
+  "known-root Chat successor mounts only after terminal teardown and preserves the exact selected Chat",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), "semantic-known-chat-successor-"));
+    let first: Awaited<ReturnType<typeof publicCoordinator.createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest>> | undefined;
+    let successor: Awaited<ReturnType<typeof createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest>> | undefined;
+    try {
+      const deployment = await loadHostDeploymentManifest(manifest(root));
+      first = await publicCoordinator.createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(deployment);
+      const firstLease = await first.startMountedChatRuntime();
+      const firstIdentity = Object.freeze({
+        chatThreadId: firstLease.chatThreadId,
+        chatSurfaceSessionId: firstLease.chatSurfaceSessionId,
+        selectionGeneration: firstLease.browserProjection.selectionGeneration,
+      });
+      await firstLease.close();
+      await first.close();
+      first = undefined;
+
+      successor = await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(deployment);
+      const successorLease = await successor.startMountedChatRuntime();
+      assert.equal(successorLease.chatThreadId, firstIdentity.chatThreadId);
+      assert.equal(successorLease.chatSurfaceSessionId, firstIdentity.chatSurfaceSessionId);
+      assert.equal(successorLease.browserProjection.selectionGeneration, firstIdentity.selectionGeneration + 1);
+      await successorLease.close();
+      await successor.close();
+      successor = undefined;
+    } finally {
+      await successor?.close().catch(() => undefined);
+      await first?.close().catch(() => undefined);
+      cleanup(root);
+    }
+  },
+);
+
 test("production construction derives admission from the deployment manifest and refuses duplicate fresh authority", async () => {
   const root = mkdtempSync(join(tmpdir(), "semantic-s4-manifest-"));
   try {
@@ -635,7 +809,14 @@ test("production construction derives admission from the deployment manifest and
 
 test("Game coordinator source constructs independent enter and close requests without Chat origin lookup", () => {
   const source = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), "continuity-semantic-production-coordinator.internal.ts"),
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "src",
+      "continuity-semantic-production-coordinator",
+      "continuity-semantic-production-coordinator.internal.ts",
+    ),
     "utf8",
   );
   for (const forbidden of [

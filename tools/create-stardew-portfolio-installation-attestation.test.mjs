@@ -64,13 +64,27 @@ function expectedTarget() {
 }
 
 test("CLI parser requires the bounded absolute-root producer inputs", () => {
-  assert.deepEqual(parseArguments([
-    "--game-path", "C:/game", "--profile-root", "C:/profile", "--host-artifact", "C:/host.js",
-    "--host-build-id", BUILD_ID, "--out", "C:/attestation.json",
-  ]), {
-    gamePath: "C:/game", profileRoot: "C:/profile", hostArtifactPath: "C:/host.js", hostBuildId: BUILD_ID,
-    outputPath: "C:/attestation.json",
-  });
+  assert.deepEqual(
+    parseArguments([
+      "--game-path",
+      "C:/game",
+      "--profile-root",
+      "C:/profile",
+      "--host-artifact",
+      "C:/host.js",
+      "--host-build-id",
+      BUILD_ID,
+      "--out",
+      "C:/attestation.json",
+    ]),
+    {
+      gamePath: "C:/game",
+      profileRoot: "C:/profile",
+      hostArtifactPath: "C:/host.js",
+      hostBuildId: BUILD_ID,
+      outputPath: "C:/attestation.json",
+    },
+  );
   assert.throws(() => parseArguments(["--out", "x", "--out", "y"]), /usage:/);
   assert.throws(() => parseArguments([]), /usage:/);
 });
@@ -78,9 +92,14 @@ test("CLI parser requires the bounded absolute-root producer inputs", () => {
 test("producer rejects non-target bytes and does not create output", async (t) => {
   const values = await fixture(t);
   await assert.rejects(
-    createPortfolioInstallationAttestation(options({
-      gamePath: values.gamePath, profileRoot: values.profileRoot, hostArtifactPath: values.hostPath, outputPath: values.outputPath,
-    })),
+    createPortfolioInstallationAttestation(
+      options({
+        gamePath: values.gamePath,
+        profileRoot: values.profileRoot,
+        hostArtifactPath: values.hostPath,
+        outputPath: values.outputPath,
+      }),
+    ),
     /portfolio_target_game_hash_mismatch/,
   );
   await assert.rejects(readFile(values.outputPath));
@@ -102,9 +121,14 @@ test("producer rejects symlinked target artifacts before hashing", async (t) => 
     throw error;
   }
   await assert.rejects(
-    createPortfolioInstallationAttestation(options({
-      gamePath: values.gamePath, profileRoot: values.profileRoot, hostArtifactPath: values.hostPath, outputPath: values.outputPath,
-    })),
+    createPortfolioInstallationAttestation(
+      options({
+        gamePath: values.gamePath,
+        profileRoot: values.profileRoot,
+        hostArtifactPath: values.hostPath,
+        outputPath: values.outputPath,
+      }),
+    ),
     /portfolio_target_file_invalid:Stardew Valley.dll/,
   );
 });
@@ -117,13 +141,21 @@ test("producer reads approved bundle and host, validates and reparses create-onl
   // The pinned hash cannot be synthesized into a byte fixture. Assert the
   // conservative producer remains blocked rather than accepting invented data.
   await assert.rejects(
-    createPortfolioInstallationAttestation(options({
-      gamePath: values.gamePath, profileRoot: values.profileRoot, hostArtifactPath: values.hostPath, outputPath: values.outputPath,
-    })),
+    createPortfolioInstallationAttestation(
+      options({
+        gamePath: values.gamePath,
+        profileRoot: values.profileRoot,
+        hostArtifactPath: values.hostPath,
+        outputPath: values.outputPath,
+      }),
+    ),
     /portfolio_target_game_hash_mismatch/,
   );
   assert.equal(validatePortfolioInstallationAttestation({ topology: PORTFOLIO_TOPOLOGY }).valid, false);
-  assert.deepEqual(expectedTarget(), { gameSha256: PORTFOLIO_TARGET_GAME_SHA256, gameVersion: PORTFOLIO_TARGET_VERSION });
+  assert.deepEqual(expectedTarget(), {
+    gameSha256: PORTFOLIO_TARGET_GAME_SHA256,
+    gameVersion: PORTFOLIO_TARGET_VERSION,
+  });
 });
 
 test("publication is atomic create-only and never overwrites existing evidence", async (t) => {

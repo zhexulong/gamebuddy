@@ -54,15 +54,19 @@ internal sealed class PortfolioMineElevatorSemanticAdapter : IPortfolioMineEleva
         int currentFloor = 0;
         int lowestMineLevel = 0;
         bool mineEntryObserved = false;
+        bool elevatorInteractionAvailable = false;
         if (worldReady && singlePlayer && Game1.player is not null
             && Game1.player.currentLocation is MineShaft mine)
         {
             mineEntryObserved = true;
             currentFloor = mine.mineLevel;
             lowestMineLevel = MineShaft.lowestLevelReached;
+            elevatorInteractionAvailable = IsAccessibleElevatorInteraction(Game1.player, mine);
         }
-        bool checkpointValid = PortfolioBridgeProtocol.IsMineElevatorCheckpoint(request.SelectedCheckpoint);
-        bool targetUnlocked = checkpointValid && lowestMineLevel >= request.SelectedCheckpoint;
+        // Native materialization uses Math.Min(lowestLevelReached, 120), so
+        // progress above 120 still materializes the 120 checkpoint.
+        bool checkpointValid = PortfolioMineElevatorProjection.IsSelectableCheckpoint(request.SelectedCheckpoint);
+        bool targetUnlocked = PortfolioMineElevatorProjection.IsUnlockedSelection(lowestMineLevel, request.SelectedCheckpoint);
         // The selected checkpoint is the native semantic target. Stardew has no
         // opaque elevator object or ID; this value is only a deterministic,
         // non-secret correlation capability bound to the complete fresh facts.
@@ -83,6 +87,7 @@ internal sealed class PortfolioMineElevatorSemanticAdapter : IPortfolioMineEleva
             LowestMineLevel: lowestMineLevel,
             UnlockedLevelObserved: mineEntryObserved && checkpointValid,
             TargetUnlocked: targetUnlocked,
+            ElevatorInteractionAvailable: elevatorInteractionAvailable,
             OpaqueElevatorTarget: opaqueCorrelationId);
     }
 
@@ -92,7 +97,8 @@ internal sealed class PortfolioMineElevatorSemanticAdapter : IPortfolioMineEleva
         floor = null;
         if (request is null || !request.IsValid || !request.Scope.Equals(scope)
             || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= request.DeadlineMs
-            || !this.TryReadLiveFacts(scope, selectedCheckpoint, allowSelectedFloor: true, out int currentFloor, out int lowestMineLevel)
+            || !this.TryReadLiveFacts(scope, selectedCheckpoint, allowSelectedFloor: true,
+                requireElevatorInteraction: false, out int currentFloor, out int lowestMineLevel)
             || currentFloor != selectedCheckpoint
             || currentRevision <= request.ExpectedRevision)
             return false;
@@ -114,7 +120,7 @@ internal sealed class PortfolioMineElevatorSemanticAdapter : IPortfolioMineEleva
             return false;
         if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= context.DeadlineMs
             || !this.TryReadLiveFacts(context.Scope, context.SelectedCheckpoint, allowSelectedFloor: false,
-                out int currentFloor, out int lowestMineLevel))
+                requireElevatorInteraction: true, out _, out _))
             return false;
 
         Farmer player = Game1.player!;
@@ -126,9 +132,15 @@ internal sealed class PortfolioMineElevatorSemanticAdapter : IPortfolioMineEleva
             context.CancellationToken,
             player, oldMine, oldMine.Name, oldMine.mineLevel, -1, EdgeGeneration: 0) { ExecutionId = context.ExecutionId };
         candidate = candidate with { ExecutionId = context.ExecutionId };
-        this.pending = candidate;
 
         LocationRequest? previousRequest = Game1.locationRequest;
+        // This is the last admission before the native effect. It re-reads the
+        // live authorization and interaction facts rather than trusting a prior
+        // observation, so revocation rejects without calling enterMine.
+        if (!this.TryReadLiveFacts(context.Scope, context.SelectedCheckpoint, allowSelectedFloor: false,
+                requireElevatorInteraction: true, out _, out _))
+            return false;
+        this.pending = candidate;
         try
         {
             // This is the complete native edge for M8: no menu, input, dispatcher,
@@ -284,7 +296,7 @@ internal sealed class PortfolioMineElevatorSemanticAdapter : IPortfolioMineEleva
         try
         {
             if (!this.TryReadLiveFacts(candidate.Scope, candidate.SelectedCheckpoint, allowSelectedFloor: true,
-                    out int actualFloor, out int lowestMineLevel)
+                    requireElevatorInteraction: false, out int actualFloor, out int lowestMineLevel)
                 || actualFloor != candidate.SelectedCheckpoint
                 || lowestMineLevel < candidate.SelectedCheckpoint
                 || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= candidate.DeadlineMs)
@@ -315,25 +327,43 @@ internal sealed class PortfolioMineElevatorSemanticAdapter : IPortfolioMineEleva
     }
 
     private bool TryReadLiveFacts(PortfolioScope scope, int selectedCheckpoint, bool allowSelectedFloor,
-        out int currentFloor, out int lowestMineLevel)
+        bool requireElevatorInteraction, out int currentFloor, out int lowestMineLevel)
     {
         currentFloor = 0;
         lowestMineLevel = 0;
-        if (!this.isBindingCurrent() || !Context.IsWorldReady || !Game1.hasLoadedGame
+        // Re-evaluate the action policy in this game-thread admission immediately
+        // before the native effect. An authorization observed during probe or
+        // request parsing is not authority to enter the mine after revocation.
+        if (!this.config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.MineElevatorAction)
+            || !this.isBindingCurrent() || !Context.IsWorldReady || !Game1.hasLoadedGame
             || Context.IsMultiplayer || !Game1.IsMasterGame
             || Game1.getAllFarmers().Count() != 1 || Game1.player is null
             || Game1.player.UniqueMultiplayerID != Game1.MasterPlayer.UniqueMultiplayerID
             || Game1.player.UniqueMultiplayerID.ToString() != scope.LocalPlayerId
-            || Game1.player.currentLocation is not MineShaft mine)
+            || Game1.player.currentLocation is not MineShaft mine
+            || (requireElevatorInteraction && !IsAccessibleElevatorInteraction(Game1.player, mine)))
             return false;
 
         currentFloor = mine.mineLevel;
         lowestMineLevel = MineShaft.lowestLevelReached;
-        return PortfolioBridgeProtocol.IsMineElevatorCheckpoint(selectedCheckpoint)
+        return PortfolioMineElevatorProjection.IsUnlockedSelection(lowestMineLevel, selectedCheckpoint)
             && (allowSelectedFloor || selectedCheckpoint != currentFloor)
-            && currentFloor >= 0 && currentFloor <= PortfolioBridgeProtocol.MineElevatorMaximumCheckpoint
-            && lowestMineLevel >= selectedCheckpoint
-            && lowestMineLevel <= PortfolioBridgeProtocol.MineElevatorMaximumCheckpoint;
+            && currentFloor >= 0 && currentFloor <= PortfolioBridgeProtocol.MineElevatorMaximumCheckpoint;
+    }
+
+    // Exact public-state projection of locked MineShaft.checkAction case 112:
+    // local-player grab tile must be the elevator tile, and checkAction's
+    // mine-level domain must still permit the interaction. No menu is read or
+    // constructed and no checkAction/input route is invoked.
+    private static bool IsAccessibleElevatorInteraction(Farmer player, MineShaft mine)
+    {
+        var tile = player.GetGrabTile();
+        var location = new xTile.Dimensions.Location((int)tile.X, (int)tile.Y);
+        return PortfolioMineElevatorProjection.IsAccessibleElevatorInteraction(
+            player.IsLocalPlayer,
+            Utility.tileWithinRadiusOfPlayer((int)tile.X, (int)tile.Y, 1, player),
+            mine.mineLevel,
+            mine.getTileIndexAt(location, "Buildings"));
     }
 
     private void TryFail(PendingExecution candidate)

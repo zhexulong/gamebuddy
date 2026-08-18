@@ -1,121 +1,155 @@
-import { readFile } from "node:fs/promises";
-import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+// Stardew-local feed-animal smoke: production native client, bounded scope,
+// revision-bound requests, exact receipt identity, terminal wait, and owned
+// teardown all come from the shared harness. Action-specific logic (barn door
+// navigation, trough target selection, native evidence, postcondition) stays
+// in this runner.
 
-const { LocalStardewBridgeClient } = await loadHostProductionModule("local-stardew-bridge.js");
+import {
+  assertExactCapabilities,
+  connectNativeLocalClient,
+  delay,
+  executeFresh,
+  observeFresh,
+  readNativeClientConfig,
+  summarizeReceipt,
+  summarizeSnapshot,
+  waitForTerminal as waitForTerminalShared,
+} from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const config = JSON.parse(await readFile(required("--client-config"), "utf8"));
-validateConfig(config);
-const scope = {
-  integrationId: "stardew",
-  saveId: config.SaveId,
-  worldId: config.WorldId,
-  playerId: config.PlayerId,
-  companionId: config.CompanionId,
-};
-const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
-const receipts = [];
-const trace = [];
+const SCENARIO = "native_feed_animal_v1";
+const EXPECTED_CAPABILITIES = [
+  "cancel_active_execution",
+  "inspect_self",
+  "move_to_tile",
+  "travel",
+  "enter_exit",
+  "feed_animal",
+];
+
+// Last fresh observation, kept for bounded diagnostic door facts only.
 let lastSnapshot = null;
-let enterTerminal = null;
-const unsubscribe = client.onFact((fact) => {
-  if (fact.type === "execution_receipt") receipts.push(fact.payload);
-});
 
-try {
-  let snapshot = await observeActionable();
-  requireCapabilities(snapshot);
-  // The fixture may pre-position this otherwise unreachably distant spatial
-  // precondition inside the selected AnimalHouse before bridge attachment. In
-  // that narrow case do not leave and re-enter: doing so would discard exactly
-  // the native, verified standing position. All opaque target facts still come
-  // exclusively from this fresh production snapshot.
-  if (!isSetupBigFarmFirstDeluxeBarnLocation(snapshot.location)) {
-    if (snapshot.location !== "Farm") snapshot = await travelToFarm(snapshot);
-    snapshot = await awaitSetupBigFarmFirstDeluxeBarnDoor();
-    const animalHouseDoor = chooseAnimalHouseDoor(snapshot);
-    if (!adjacent(snapshot.tile, animalHouseDoor)) snapshot = await moveAdjacentToDoor(snapshot, animalHouseDoor);
-    snapshot = await observeActionable();
-    const freshDoor = findDoor(snapshot, animalHouseDoor);
-    if (!freshDoor || !adjacent(snapshot.tile, freshDoor)) throw new Error("fresh_animal_house_entry_unavailable");
-    const enterAccepted = await execute(
-      "enter_animal_house",
-      "enter_exit",
-      { x: freshDoor.sourceX, y: freshDoor.sourceY },
+/** Execute the feed-animal contract against an already-connected bridge session. */
+export async function runFeedAnimalSmoke(client, receipts, config) {
+  const trace = [];
+  const startedAt = Date.now();
+  let enterTerminal = null;
+  validateConfig(config);
+  try {
+    let snapshot = await observeActionable(client);
+    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    // The fixture may pre-position this otherwise unreachably distant spatial
+    // precondition inside the selected AnimalHouse before bridge attachment. In
+    // that narrow case do not leave and re-enter: doing so would discard exactly
+    // the native, verified standing position. All opaque target facts still come
+    // exclusively from this fresh production snapshot.
+    if (!isSetupBigFarmFirstDeluxeBarnLocation(snapshot.location)) {
+      if (snapshot.location !== "Farm") snapshot = await travelToFarm(client, receipts, trace, snapshot);
+      snapshot = await awaitSetupBigFarmFirstDeluxeBarnDoor(client);
+      const animalHouseDoor = chooseAnimalHouseDoor(snapshot);
+      if (!adjacent(snapshot.tile, animalHouseDoor))
+        snapshot = await moveAdjacentToDoor(client, receipts, trace, snapshot, animalHouseDoor);
+      snapshot = await observeActionable(client);
+      const freshDoor = findDoor(snapshot, animalHouseDoor);
+      if (!freshDoor || !adjacent(snapshot.tile, freshDoor)) throw new Error("fresh_animal_house_entry_unavailable");
+      const enterAccepted = await execute(
+        client,
+        trace,
+        "enter_animal_house",
+        "enter_exit",
+        { x: freshDoor.sourceX, y: freshDoor.sourceY },
+        snapshot,
+      );
+      if (enterAccepted.state !== "accepted")
+        throw new Error(`enter_animal_house_not_accepted:${enterAccepted.reasonCode}`);
+      enterTerminal = await waitForTerminal(receipts, enterAccepted, 20_000);
+      trace.push({
+        phase: "enter_animal_house_terminal",
+        action: "enter_exit",
+        receipt: summarizeReceipt(enterTerminal),
+      });
+      if (enterTerminal.state !== "succeeded" || enterTerminal.reasonCode !== "enter_exit_completed")
+        throw new Error(`enter_animal_house_failed:${enterTerminal.reasonCode}`);
+      snapshot = await awaitActionableSnapshotAfterEnter(client);
+    }
+    assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
+    const target = chooseSingleFeedTarget(snapshot);
+    const feedAccepted = await execute(
+      client,
+      trace,
+      "feed",
+      "feed_animal",
+      { slot: target.slot, x: target.x, y: target.y, expectedTargetId: target.targetId },
       snapshot,
     );
-    if (enterAccepted.state !== "accepted")
-      throw new Error(`enter_animal_house_not_accepted:${enterAccepted.reasonCode}`);
-    enterTerminal = await waitForTerminal(enterAccepted, 20_000);
-    trace.push({ phase: "enter_animal_house_terminal", action: "enter_exit", receipt: receiptSummary(enterTerminal) });
-    if (enterTerminal.state !== "succeeded" || enterTerminal.reasonCode !== "enter_exit_completed")
-      throw new Error(`enter_animal_house_failed:${enterTerminal.reasonCode}`);
-    snapshot = await awaitActionableSnapshotAfterEnter();
-  }
-  requireCapabilities(snapshot);
-  const target = chooseSingleFeedTarget(snapshot);
-  const feedAccepted = await execute(
-    "feed",
-    "feed_animal",
-    { slot: target.slot, x: target.x, y: target.y, expectedTargetId: target.targetId },
-    snapshot,
-  );
-  if (feedAccepted.state !== "succeeded" || feedAccepted.reasonCode !== "hay_placed_in_trough")
-    throw new Error(`feed_animal_failed:${feedAccepted.state}:${feedAccepted.reasonCode}`);
-  if (!sameIdentity(feedAccepted, feedAccepted)) throw new Error("feed_animal_identity_invalid");
-  const after = await observeActionable();
-  const evidence = parseEvidence(feedAccepted.evidence);
-  const targetGone = (after.feedTroughTargets ?? []).every((entry) => entry.targetId !== target.targetId);
-  const passed =
-    evidence.target === target.targetId &&
-    evidence.tile === `${target.x},${target.y}` &&
-    evidence.slot === String(target.slot) &&
-    evidence.native_handled === "true" &&
-    evidence.trough_filled === "true" &&
-    evidence.hay_consumed === "true" &&
-    Number(evidence.hay_before) === target.hayStack &&
-    Number(evidence.hay_after) === target.hayStack - 1 &&
-    targetGone &&
-    after.actionable &&
-    after.activeExecution == null;
-  console.log(
-    JSON.stringify({
+    if (feedAccepted.state !== "succeeded" || feedAccepted.reasonCode !== "hay_placed_in_trough")
+      throw new Error(`feed_animal_failed:${feedAccepted.state}:${feedAccepted.reasonCode}`);
+    const after = await observeActionable(client);
+    const evidence = parseEvidence(feedAccepted.evidence);
+    const targetGone = (after.feedTroughTargets ?? []).every((entry) => entry.targetId !== target.targetId);
+    const passed =
+      evidence.target === target.targetId &&
+      evidence.tile === `${target.x},${target.y}` &&
+      evidence.slot === String(target.slot) &&
+      evidence.native_handled === "true" &&
+      evidence.trough_filled === "true" &&
+      evidence.hay_consumed === "true" &&
+      Number(evidence.hay_before) === target.hayStack &&
+      Number(evidence.hay_after) === target.hayStack - 1 &&
+      targetGone &&
+      after.actionable &&
+      after.activeExecution == null;
+    return {
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
       reasonCode: passed ? "hay_placed_in_trough" : "feed_animal_postcondition_mismatch",
       target,
-      receipt: receiptSummary(feedAccepted),
-      enterReceipt: receiptSummary(enterTerminal),
+      receipt: summarizeReceipt(feedAccepted),
+      enterReceipt: summarizeReceipt(enterTerminal),
+      evidence,
       before: summary(snapshot),
       after: summary(after),
       trace,
-    }),
-  );
-  if (!passed) process.exitCode = 2;
-} catch (error) {
-  // When a pre-action discovery guard fails, record only the fresh bounded
-  // door facts already published by the bridge. This is diagnostic evidence,
-  // never an authorization to substitute a different door.
-  console.error(
-    JSON.stringify({
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    // When a pre-action discovery guard fails, record only the fresh bounded
+    // door facts already published by the bridge. This is diagnostic evidence,
+    // never an authorization to substitute a different door.
+    return {
       state: "blocked",
       topology: "native_local_player_fixture",
       reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
-      latestReceipt: receiptSummary(client.state.latestReceipt),
+      latestReceipt: summarizeReceipt(client.state?.latestReceipt),
       doorTargets: lastSnapshot?.doorTargets ?? [],
       trace,
-    }),
-  );
-  process.exitCode = 2;
-} finally {
-  unsubscribe();
-  client.close();
+      durationMs: Date.now() - startedAt,
+    };
+  }
+}
+
+if (import.meta.main) {
+  const config = await readNativeClientConfig();
+  const session = await connectNativeLocalClient(config);
+  try {
+    const result = await runFeedAnimalSmoke(session.client, session.receipts, config);
+    console.log(JSON.stringify(result));
+    if (result.state !== "passed") process.exitCode = 2;
+  } catch (error) {
+    console.error(
+      JSON.stringify({ state: "blocked", reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256) }),
+    );
+    process.exitCode = 2;
+  } finally {
+    session.close();
+  }
 }
 
 function validateConfig(value) {
   if (
     value?.NativeLocalPlayerFixture?.Enable !== true ||
     value.NativeLocalPlayerFixture.Bootstrap?.Enable === true ||
-    value.NativeLocalPlayerFixture.FixtureScenario !== "native_feed_animal_v1" ||
+    value.NativeLocalPlayerFixture.FixtureScenario !== SCENARIO ||
     value.ActionPolicyVersion !== 0 ||
     !same(value.EnabledActions, ["move_to_tile", "travel", "enter_exit", "feed_animal"])
   )
@@ -128,61 +162,47 @@ function validateConfig(value) {
   )
     throw new Error("native_local_feed_animal_topology_invalid");
 }
-function requireCapabilities(snapshot) {
-  if (
-    !same(
-      [...(snapshot.capabilities ?? [])].sort(),
-      ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "enter_exit", "feed_animal"].sort(),
-    )
-  )
-    throw new Error("native_local_feed_animal_capability_not_isolated");
-}
-async function observeActionable() {
-  const snapshot = await client.observe();
-  if (
-    !snapshot.actionable ||
-    snapshot.activeExecution != null ||
-    !Number.isInteger(snapshot.revision) ||
-    !validTile(snapshot.tile?.x) ||
-    !validTile(snapshot.tile?.y)
-  )
+async function observeActionable(client) {
+  const snapshot = await observeFresh(client, { actionable: true });
+  if (!validTile(snapshot.tile?.x) || !validTile(snapshot.tile?.y))
     throw new Error("native_local_feed_animal_snapshot_not_actionable");
   lastSnapshot = snapshot;
   return snapshot;
 }
-async function travelToFarm(snapshot) {
+async function travelToFarm(client, receipts, trace, snapshot) {
   const warps = (snapshot.warps ?? []).filter((entry) => validDoor(entry) && entry.targetLocation === "Farm");
   if (warps.length !== 1) throw new Error(warps.length ? "ambiguous_farm_warp" : "farm_warp_missing");
   const warp = warps[0];
-  if (!adjacent(snapshot.tile, warp)) snapshot = await move(snapshot, warp, "move_to_farm_warp");
-  snapshot = await observeActionable();
+  if (!adjacent(snapshot.tile, warp)) snapshot = await move(client, receipts, trace, snapshot, warp, "move_to_farm_warp");
+  snapshot = await observeActionable(client);
   const fresh = (snapshot.warps ?? []).find((entry) => sameDoor(entry, warp));
   if (!fresh || !adjacent(snapshot.tile, fresh)) throw new Error("fresh_farm_warp_unavailable");
-  const accepted = await execute("travel_to_farm", "travel", { x: fresh.sourceX, y: fresh.sourceY }, snapshot);
+  const accepted = await execute(client, trace, "travel_to_farm", "travel", { x: fresh.sourceX, y: fresh.sourceY }, snapshot);
   if (accepted.state !== "accepted") throw new Error(`travel_to_farm_not_accepted:${accepted.reasonCode}`);
-  const terminal = await waitForTerminal(accepted, 20_000);
-  trace.push({ phase: "travel_to_farm_terminal", action: "travel", receipt: receiptSummary(terminal) });
+  const terminal = await waitForTerminal(receipts, accepted, 20_000);
+  trace.push({ phase: "travel_to_farm_terminal", action: "travel", receipt: summarizeReceipt(terminal) });
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "travel_completed")
     throw new Error(`travel_to_farm_failed:${terminal.reasonCode}`);
-  const after = await observeActionable();
+  const after = await observeActionable(client);
   if (after.location !== "Farm" || after.revision < terminal.revision)
     throw new Error("travel_to_farm_postcondition_missing");
   return after;
 }
-async function awaitActionableSnapshotAfterEnter() {
+async function awaitActionableSnapshotAfterEnter(client) {
   const deadline = Date.now() + 5_000;
   do {
     try {
-      return await observeActionable();
+      return await observeActionable(client);
     } catch (error) {
-      if (String(error instanceof Error ? error.message : error) !== "native_local_feed_animal_snapshot_not_actionable")
+      const message = String(error instanceof Error ? error.message : error);
+      if (message !== "native_local_feed_animal_snapshot_not_actionable" && message !== "native_snapshot_not_actionable")
         throw error;
       await delay(100);
     }
   } while (Date.now() < deadline);
   throw new Error("native_local_feed_animal_post_enter_not_actionable");
 }
-async function awaitSetupBigFarmFirstDeluxeBarnDoor() {
+async function awaitSetupBigFarmFirstDeluxeBarnDoor(client) {
   // The travel terminal proves the player entered Farm, but its immediately
   // following snapshot is allowed to precede Farm door discovery. Poll only
   // fresh actionable snapshots and retain the exact source-derived selector;
@@ -190,7 +210,7 @@ async function awaitSetupBigFarmFirstDeluxeBarnDoor() {
   const deadline = Date.now() + 5_000;
   let snapshot;
   do {
-    snapshot = await observeActionable();
+    snapshot = await observeActionable(client);
     const doors = (snapshot.doorTargets ?? []).filter(isSetupBigFarmFirstDeluxeBarnDoor);
     if (doors.length === 1) return snapshot;
     if (doors.length > 1) throw new Error("ambiguous_animal_house_entry");
@@ -225,25 +245,27 @@ function isSetupBigFarmFirstDeluxeBarnDoor(entry) {
 function findDoor(snapshot, selected) {
   return (snapshot.doorTargets ?? []).find((entry) => sameDoor(entry, selected));
 }
-async function move(snapshot, target, phase) {
+async function move(client, receipts, trace, snapshot, target, phase) {
   const accepted = await execute(
+    client,
+    trace,
     phase,
     "move_to_tile",
     { x: target.sourceX ?? target.x, y: target.sourceY ?? target.y },
     snapshot,
   );
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
-  const terminal = await waitForTerminal(accepted, 55_000);
-  trace.push({ phase: `${phase}_terminal`, action: "move_to_tile", receipt: receiptSummary(terminal) });
+  const terminal = await waitForTerminal(receipts, accepted, 55_000);
+  trace.push({ phase: `${phase}_terminal`, action: "move_to_tile", receipt: summarizeReceipt(terminal) });
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "target_reached")
     throw new Error(`${phase}_failed:${terminal.reasonCode}`);
-  const after = await observeActionable();
+  const after = await observeActionable(client);
   const point = { x: target.sourceX ?? target.x, y: target.sourceY ?? target.y };
   if (after.revision < terminal.revision || !adjacent(after.tile, point))
     throw new Error(`${phase}_postcondition_missing`);
   return after;
 }
-async function moveAdjacentToDoor(snapshot, door) {
+async function moveAdjacentToDoor(client, receipts, trace, snapshot, door) {
   // A building's human-door tile can be non-pathable. Derive only its four
   // immediate approach tiles from the fresh, source-bound door; try each once
   // and accept no substitute door or target. A no_native_path receipt is a
@@ -256,52 +278,47 @@ async function moveAdjacentToDoor(snapshot, door) {
   ].filter((candidate) => validTile(candidate.x) && validTile(candidate.y));
   for (const candidate of candidates) {
     const phase = `move_to_animal_house_entry_${candidate.x}_${candidate.y}`;
-    const accepted = await execute(phase, "move_to_tile", candidate, snapshot);
+    const accepted = await execute(client, trace, phase, "move_to_tile", candidate, snapshot);
     if (accepted.state === "rejected" && accepted.reasonCode === "no_native_path") {
-      trace.push({ phase: `${phase}_rejected`, action: "move_to_tile", receipt: receiptSummary(accepted) });
-      snapshot = await observeActionable();
+      trace.push({ phase: `${phase}_rejected`, action: "move_to_tile", receipt: summarizeReceipt(accepted) });
+      snapshot = await observeActionable(client);
       continue;
     }
     if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
-    const terminal = await waitForTerminal(accepted, 55_000);
-    trace.push({ phase: `${phase}_terminal`, action: "move_to_tile", receipt: receiptSummary(terminal) });
+    const terminal = await waitForTerminal(receipts, accepted, 55_000);
+    trace.push({ phase: `${phase}_terminal`, action: "move_to_tile", receipt: summarizeReceipt(terminal) });
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "target_reached")
       throw new Error(`${phase}_failed:${terminal.reasonCode}`);
-    const after = await observeActionable();
+    const after = await observeActionable(client);
     if (after.revision < terminal.revision || !adjacent(after.tile, door))
       throw new Error(`${phase}_postcondition_missing`);
     return after;
   }
   throw new Error("no_native_path_to_animal_house_entry");
 }
-async function execute(phase, action, args, snapshot) {
-  const nonce = `${Date.now()}_${trace.length}`;
-  const requestId = `native_local_feed_animal_${phase}_${nonce}`;
-  const receipt = await client.execute({
+async function execute(client, trace, phase, action, args, snapshot) {
+  const requestId = `native_local_feed_animal_${phase}_${Date.now()}_${trace.length}`;
+  const receipt = await executeFresh(client, {
     requestId,
     idempotencyKey: `${requestId}_idem`,
     action,
     args,
-    expectedRevision: snapshot.revision,
-    deadlineMs: Date.now() + 30_000,
+    snapshot,
+    timeoutMs: 30_000,
   });
-  // A synchronous terminal receipt is still authoritative only when it binds
-  // to the exact request ID generated for this call. Async prerequisites are
-  // additionally correlated by this same ID and execution ID in waitForTerminal.
-  if (receipt.requestId !== requestId || typeof receipt.executionId !== "string" || receipt.executionId.length === 0) {
-    throw new Error(`${phase}_receipt_identity_mismatch`);
-  }
-  trace.push({ phase, action, args, receipt: receiptSummary(receipt) });
+  trace.push({ phase, action, args, requestId, receipt: summarizeReceipt(receipt) });
   return receipt;
 }
-async function waitForTerminal(accepted, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const receipt = receipts.find((entry) => sameIdentity(entry, accepted) && isTerminal(entry.state));
-    if (receipt) return receipt;
-    await delay(100);
-  }
-  throw new Error(`terminal_timeout:${accepted.executionId}`);
+/**
+ * Terminal wait bound to the exact request/execution identity pair. The bounded
+ * wait and nonmatching-fact rejection are delegated to the shared harness; the
+ * identity pair is re-asserted on the returned entry so a stale fact can never
+ * satisfy this call.
+ */
+async function waitForTerminal(receipts, accepted, timeoutMs) {
+  const entry = await waitForTerminalShared(receipts, accepted, timeoutMs);
+  if (!sameIdentity(entry, accepted)) throw new Error("feed_animal_terminal_identity_invalid");
+  return entry;
 }
 function chooseSingleFeedTarget(snapshot) {
   const targets = (snapshot.feedTroughTargets ?? []).filter(
@@ -366,39 +383,12 @@ function validTile(value) {
 function adjacent(left, right) {
   return Math.abs(left.x - (right.sourceX ?? right.x)) <= 1 && Math.abs(left.y - (right.sourceY ?? right.y)) <= 1;
 }
-function isTerminal(state) {
-  return ["succeeded", "failed", "invalidated", "cancelled", "expired", "uncertain", "rejected"].includes(state);
-}
 function same(left, right) {
   return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
-function required(name) {
-  const index = process.argv.indexOf(name);
-  if (index < 0 || !process.argv[index + 1]) throw new Error(`missing_${name.slice(2)}`);
-  return process.argv[index + 1];
-}
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 function summary(snapshot) {
   return {
-    revision: snapshot.revision,
-    location: snapshot.location,
-    tile: snapshot.tile,
-    actionable: snapshot.actionable,
-    activeExecution: snapshot.activeExecution ?? null,
+    ...summarizeSnapshot(snapshot),
     feedTroughTargets: snapshot.feedTroughTargets?.length ?? 0,
   };
-}
-function receiptSummary(receipt) {
-  return receipt
-    ? {
-        executionId: receipt.executionId,
-        requestId: receipt.requestId,
-        state: receipt.state,
-        reasonCode: receipt.reasonCode,
-        revision: receipt.revision,
-        evidence: receipt.evidence ?? null,
-      }
-    : null;
 }

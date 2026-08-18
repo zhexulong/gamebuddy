@@ -80,7 +80,7 @@ test("greeting management creates an exact authored opening set and reads back i
   }
 });
 
-test("greeting management falls back only when canonical is absent and fails closed for corrupt canonical revisions", async () => {
+test("greeting management fails closed for corrupt canonical revisions", async () => {
   const root = await mkdtemp(join(tmpdir(), "greeting-management-"));
   try {
     const store = new TavernArtifactStore(root);
@@ -89,13 +89,35 @@ test("greeting management falls back only when canonical is absent and fails clo
     await service.update({ expectedRevision: 1, label: "Two", variants: [{ label: "Second", text: "Welcome" }] });
     const id = `greeting-set-${createHash("sha256").update(resolve(root), "utf8").digest("hex").slice(0, 32)}`;
     await writeFile(join(resolve(root), "greetings", id, "revisions", "2.json"), "{ corrupt", "utf8");
-    assert.deepEqual(await service.read(), {
-      revision: 1,
-      label: "One",
-      variants: [{ label: "First", text: "Hello" }],
-    });
-    await writeFile(join(resolve(root), "greetings", id, "revisions", "1.json"), "{ corrupt", "utf8");
     await assert.rejects(service.read(), /invalid_greeting_artifact/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("greeting management rejects nonnumeric revision-directory entries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "greeting-management-"));
+  try {
+    const service = createGreetingManagementService(new TavernArtifactStore(root), root);
+    await service.create({ label: "One", variants: [{ label: "First", text: "Hello" }] });
+    const id = `greeting-set-${createHash("sha256").update(resolve(root), "utf8").digest("hex").slice(0, 32)}`;
+    await writeFile(join(resolve(root), "greetings", id, "revisions", ".DS_Store"), "junk", "utf8");
+    await assert.rejects(service.read(), /invalid_greeting_artifact/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("greeting management ignores a legacy singleton when no canonical revision exists", async () => {
+  const root = await mkdtemp(join(tmpdir(), "greeting-management-"));
+  try {
+    await (await import("node:fs/promises")).mkdir(join(resolve(root), "greeting-management"), { recursive: true });
+    await writeFile(
+      join(resolve(root), "greeting-management", "greetings.json"),
+      JSON.stringify({ schemaVersion: 1, revision: 1, greetingSetId: "legacy", variants: [] }),
+      "utf8",
+    );
+    assert.equal(await createGreetingManagementService(new TavernArtifactStore(root), root).read(), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

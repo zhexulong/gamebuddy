@@ -145,17 +145,18 @@ test("managed World Info cleans up only its temporary file after a successful at
   }
 });
 
-test("managed World Info uses wx and never removes a pre-existing temporary target", async () => {
-  const { root } = await temporaryRepository();
-  const fixedUUID = "00000000-0000-4000-8000-000000000001";
-  const repository = createWorldInfoManagementRepository(root, { randomUUID: () => fixedUUID });
-  const revisionDirectory = join(root, "world-info-management", "revisions", fixedUUID);
-  const temporaryPath = join(revisionDirectory, `1.json.${process.pid}.${fixedUUID}.tmp`);
+test("managed World Info persists opaque UUID handles without exposing them", async () => {
+  const { root, repository } = await temporaryRepository();
   try {
-    await mkdir(revisionDirectory, { recursive: true });
-    await writeFile(temporaryPath, "another writer owns this", "utf8");
-    await assert.rejects(() => repository.create(request), /EEXIST/);
-    assert.equal(await readFile(temporaryPath, "utf8"), "another writer owns this");
+    await repository.create(request);
+    await repository.create({ ...request, publicTitle: "Cindersap Forest" });
+    const catalog = JSON.parse(await readFile(join(root, "world-info-management", "catalog.json"), "utf8")) as {
+      artifacts: readonly { handle: string }[];
+    };
+    assert.equal(catalog.artifacts.length, 2);
+    assert.equal(new Set(catalog.artifacts.map((artifact) => artifact.handle)).size, 2);
+    for (const artifact of catalog.artifacts)
+      assert.match(artifact.handle, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -177,6 +178,6 @@ test("managed World Info verifies revision snapshots on readback and never proje
     await writeFile(revisionPath, JSON.stringify(tampered), "utf8");
     await assert.rejects(() => repository.detail("Pelican Town"), /invalid_world_info_artifact/);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });

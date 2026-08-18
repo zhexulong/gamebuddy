@@ -39,11 +39,8 @@ export type InternalChatLifecycleService = ChatLifecycleService &
   }>;
 
 /** Internal Host binding; never part of player-facing lifecycle DTOs. */
-export type ChatLifecycleBinding = Readonly<{ companionId: string; continuityId: string; playerId?: string }>;
-/** Returns true only when the target is safe to manage outside a non-ended Game return origin. */
-export type GameReturnOriginGuard = (
-  input: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string; companionId: string; continuityId: string }>,
-) => Promise<boolean>;
+export type ChatLifecycleBinding = Readonly<{ companionId: string; continuityId: string; playerId: string }>;
+/** Semantic authority for whether an exact Chat lifecycle mutation may proceed. */
 export type ChatLifecycleMutationReader = Readonly<{
   assertChatLifecycleMutationAllowed(
     identity: Readonly<{ playerId: string; companionId: string; continuityId: string }>,
@@ -54,9 +51,9 @@ export type ChatLifecycleMutationReader = Readonly<{
 /**
  * Required integration seam for the read/guard/mutate interval. The local file
  * store serializes its own metadata record, but cannot serialize independently
- * owned active-selection or Game-return records. Production wiring must supply
- * an adapter backed by the authoritative shared lock/transaction; this module
- * deliberately does not claim cross-system serialization itself.
+ * owned semantic lifecycle authority. Production wiring must supply an adapter
+ * backed by the authoritative shared lock/transaction; this module deliberately
+ * does not claim cross-system serialization itself.
  */
 export type ChatLifecycleAtomicGuard = Readonly<{
   withExactThreadManagementLock<T>(
@@ -87,17 +84,10 @@ type LifecycleStore = Pick<ChatThreadStore, "listThreads" | "readActiveThreadSel
 export function createChatLifecycleService(
   store: LifecycleStore,
   binding: ChatLifecycleBinding,
-  gameReturnOriginGuard: GameReturnOriginGuard | undefined,
   atomicGuard: ChatLifecycleAtomicGuard | undefined,
-  mutationReader?: ChatLifecycleMutationReader,
+  mutationReader: ChatLifecycleMutationReader | undefined,
 ): ChatLifecycleService {
-  const internal = createInternalChatLifecycleService(
-    store,
-    binding,
-    gameReturnOriginGuard,
-    atomicGuard,
-    mutationReader,
-  );
+  const internal = createInternalChatLifecycleService(store, binding, atomicGuard, mutationReader);
   return Object.freeze({
     archive: internal.archive,
     restore: internal.restore,
@@ -109,15 +99,13 @@ export function createChatLifecycleService(
 export function createInternalChatLifecycleService(
   store: LifecycleStore,
   binding: ChatLifecycleBinding,
-  gameReturnOriginGuard: GameReturnOriginGuard | undefined,
   atomicGuard: ChatLifecycleAtomicGuard | undefined,
-  mutationReader?: ChatLifecycleMutationReader,
+  mutationReader: ChatLifecycleMutationReader | undefined,
 ): InternalChatLifecycleService {
   if (store.listThreads === undefined || store.transitionLifecycle === undefined)
     throw new Error("chat_thread_lifecycle_management_unavailable");
-  if (gameReturnOriginGuard === undefined && mutationReader === undefined)
-    throw new Error("chat_thread_game_return_origin_guard_unavailable");
   if (atomicGuard === undefined) throw new Error("chat_thread_atomic_guard_unavailable");
+  if (mutationReader === undefined) throw new Error("chat_thread_mutation_reader_unavailable");
   const listThreads = store.listThreads;
   const transitionLifecycle = store.transitionLifecycle;
   const scoped = (thread: ChatThread) =>
@@ -164,13 +152,10 @@ export function createInternalChatLifecycleService(
     return atomicGuard.withExactThreadManagementLock(exactBinding, async () => {
       const active = await store.readActiveThreadSelection();
       if (isExactActiveSelection(active, request)) throw new Error("chat_thread_active_selection");
-      if (mutationReader !== undefined)
-        await mutationReader.assertChatLifecycleMutationAllowed(
-          { playerId: binding.playerId ?? "", companionId: binding.companionId, continuityId: binding.continuityId },
-          request,
-        );
-      else if ((await gameReturnOriginGuard!(exactBinding)) !== true)
-        throw new Error("chat_thread_game_return_origin_protected");
+      await mutationReader.assertChatLifecycleMutationAllowed(
+        { playerId: binding.playerId, companionId: binding.companionId, continuityId: binding.continuityId },
+        { chatThreadId: request.chatThreadId, chatSurfaceSessionId: request.chatSurfaceSessionId },
+      );
       return project(
         await transitionLifecycle({
           ...exactBinding,

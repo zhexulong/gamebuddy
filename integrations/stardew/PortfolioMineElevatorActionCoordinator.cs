@@ -20,11 +20,15 @@ internal sealed class PortfolioMineElevatorActionCoordinator
     private readonly object gate = new();
     private readonly IPortfolioMineElevatorSemanticAdapter? adapter;
     private readonly Dictionary<string, ReplayEntry> completedByIdempotency = new(StringComparer.Ordinal);
-    private readonly Queue<PortfolioMineElevatorTerminalDelivery> terminalDeliveries = new();
-    private readonly Dictionary<PortfolioMineElevatorTerminalDelivery, PortfolioPipeOutboundCompletion> terminalCompletions = new();
+    private readonly PortfolioTerminalDeliveryCore<PortfolioMineElevatorTerminalDelivery> terminalDelivery = new();
     private ElevatorExecution? active;
 
     internal PortfolioMineElevatorActionCoordinator(IPortfolioMineElevatorSemanticAdapter? adapter = null) => this.adapter = adapter;
+
+    internal bool HasActiveExecution
+    {
+        get { lock (this.gate) return this.active is not null; }
+    }
 
     internal PortfolioMineElevatorActionBeginResult Begin(
         PortfolioMineElevatorActionRequest request,
@@ -117,72 +121,19 @@ internal sealed class PortfolioMineElevatorActionCoordinator
     }
 
     internal bool TryPeekTerminalDelivery(out PortfolioMineElevatorTerminalDelivery? delivery)
-    {
-        lock (this.gate)
-        {
-            if (this.terminalDeliveries.Count == 0)
-            {
-                delivery = null;
-                return false;
-            }
-            delivery = this.terminalDeliveries.Peek();
-            return true;
-        }
-    }
+        => this.terminalDelivery.TryPeekTerminalDelivery(out delivery);
 
     internal bool TryArmTerminalDelivery(PortfolioMineElevatorTerminalDelivery delivery, PortfolioPipeOutboundCompletion completion)
-    {
-        lock (this.gate)
-        {
-            if (this.terminalDeliveries.Count == 0 || !ReferenceEquals(this.terminalDeliveries.Peek(), delivery)
-                || this.terminalCompletions.ContainsKey(delivery))
-                return false;
-            if (completion.Generation <= 0)
-                return false;
-            this.terminalCompletions.Add(delivery, completion);
-            return true;
-        }
-    }
+        => this.terminalDelivery.TryArmTerminalDelivery(delivery, completion);
 
     internal bool IsTerminalDeliveryPending(PortfolioMineElevatorTerminalDelivery delivery)
-    {
-        lock (this.gate)
-            return this.terminalCompletions.ContainsKey(delivery);
-    }
+        => this.terminalDelivery.IsTerminalDeliveryPending(delivery);
 
     internal bool TryCompleteTerminalDelivery(PortfolioMineElevatorTerminalDelivery delivery, long authenticatedGeneration, out bool failed)
-    {
-        lock (this.gate)
-        {
-            failed = false;
-            if (this.terminalDeliveries.Count == 0 || !ReferenceEquals(this.terminalDeliveries.Peek(), delivery))
-                return false;
-            if (!this.terminalCompletions.TryGetValue(delivery, out PortfolioPipeOutboundCompletion? completion))
-                return false;
-            if (!completion.IsCompleted)
-                return false;
-            this.terminalCompletions.Remove(delivery);
-            if (!completion.Succeeded || completion.Generation != authenticatedGeneration)
-            {
-                failed = true;
-                return false;
-            }
-            this.terminalDeliveries.Dequeue();
-            return true;
-        }
-    }
+        => this.terminalDelivery.TryCompleteTerminalDelivery(delivery, authenticatedGeneration, out failed);
 
     internal bool TryAcknowledgeTerminalDelivery(PortfolioMineElevatorTerminalDelivery delivery)
-    {
-        lock (this.gate)
-        {
-            if (this.terminalDeliveries.Count == 0 || !ReferenceEquals(this.terminalDeliveries.Peek(), delivery)
-                || this.terminalCompletions.ContainsKey(delivery))
-                return false;
-            this.terminalDeliveries.Dequeue();
-            return true;
-        }
-    }
+        => this.terminalDelivery.TryAcknowledgeTerminalDelivery(delivery);
 
     internal bool TryValidateFreshFloorRequest(PortfolioMineElevatorFreshFloorRequest request, long currentRevision, out int selectedCheckpoint)
     {
@@ -531,7 +482,7 @@ internal sealed class PortfolioMineElevatorActionCoordinator
         Remember(execution.ToRequest(), receipt);
         active = null;
         if (enqueue && !execution.BeginInProgress && PortfolioBridgeProtocol.IsOpaqueId(execution.CorrelationId))
-            this.terminalDeliveries.Enqueue(new PortfolioMineElevatorTerminalDelivery(execution.CorrelationId, execution.Scope, receipt));
+            this.terminalDelivery.Enqueue(new PortfolioMineElevatorTerminalDelivery(execution.CorrelationId, execution.Scope, receipt));
         return receipt;
     }
 

@@ -26,13 +26,13 @@ function child(pid = 1234) {
   return result;
 }
 
-function preparedConfig() {
+function preparedConfig(action = "select_mine_elevator_floor") {
   return JSON.stringify({
     Portfolio: {
       Enable: true,
       Topology: "single_player_native_companion",
       EnableObserveBridge: true,
-      EnabledActions: ["select_mine_elevator_floor"],
+      EnabledActions: [action],
       PipeName: environment.GAMEBUDDY_PORTFOLIO_PIPE_NAME,
       BridgeToken: environment.GAMEBUDDY_PORTFOLIO_BRIDGE_TOKEN,
       SaveId: environment.GAMEBUDDY_PORTFOLIO_SAVE_ID,
@@ -61,7 +61,7 @@ function setup(overrides = {}) {
     processList: async () => [],
     readFile: async () => preparedConfig(),
     spawnProcess: (program, args) => {
-      const value = child(spawned.length === 0 ? 1234 : 5678);
+      const value = child(spawned.length === 0 ? 1234 : spawned.length === 1 ? 2345 : 5678);
       spawned.push({ program, args, child: value });
       return value;
     },
@@ -91,12 +91,47 @@ test("M8 live runner rejects missing environment before process work", async () 
   assert.equal(spawned.length, 0);
 });
 
+test("M8 live runner selects the ladder runner without an elevator checkpoint", async () => {
+  const observed = [];
+  const { options, spawned, restored } = setup({
+    env: {
+      ...environment,
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
+    readFile: async () => preparedConfig("use_mine_ladder"),
+    runAction: async (runtimeEnv, actionRunnerPath) => {
+      observed.push({ generation: runtimeEnv.GAMEBUDDY_PORTFOLIO_BINDING_GENERATION, actionRunnerPath });
+      return { state: "M8_ACTION_TERMINAL", terminal: { state: "succeeded" } };
+    },
+  });
+  const result = await runM8TargetVersionLiveAction(options);
+  assert.equal(result.state, "M8_ACTION_LIVE_TERMINAL");
+  assert.equal(observed.length, 1);
+  assert.match(observed[0].actionRunnerPath, /run-stardew-portfolio-m8-ladder-action\.mjs$/);
+  assert.equal(observed[0].generation, "1");
+  assert.equal(spawned.length, 2);
+  assert.match(spawned[0].program, /StardewModdingAPI\.exe$/);
+  assert.match(spawned[1].program, /taskkill$/);
+  assert.equal(restored.length, 1);
+});
+
+test("M8 live runner rejects an unknown action before process work", async () => {
+  const { options, spawned, restored } = setup({
+    env: { ...environment, GAMEBUDDY_PORTFOLIO_M8_ACTION: "enter_mine" },
+  });
+  await assert.rejects(() => runM8TargetVersionLiveAction(options), /m8_live_action_invalid/);
+  assert.equal(spawned.length, 0);
+  assert.equal(restored.length, 0);
+});
+
 test("M8 live runner launches once, accepts one terminal action, then restores the owned profile", async () => {
   const { options, spawned, restored, waits } = setup();
   const result = await runM8TargetVersionLiveAction(options);
   assert.equal(result.state, "M8_ACTION_LIVE_TERMINAL");
-  assert.equal(spawned.length, 2, "SMAPI plus its taskkill cleanup process");
+  assert.equal(spawned.length, 2, "one SMAPI root and one cleanup process");
   assert.match(spawned[0].program, /C:[\\/]game[\\/]StardewModdingAPI\.exe$/);
+  assert.match(spawned[1].program, /taskkill$/);
   assert.equal(spawned[0].args[0], "--mods-path");
   assert.match(spawned[0].args[1], /C:[\\/]profile$/);
   assert.equal(restored.length, 1);

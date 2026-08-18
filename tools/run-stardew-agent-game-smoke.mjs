@@ -1,10 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  loadSelectedHostProductionModule,
-  selectHostProductionArtifact,
-} from "./lib/host-production-module.mjs";
+import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
 import { hasMatchingEquipToolEvidence } from "./lib/stardew-receipt-evidence.mjs";
 
 const selectedProductionArtifact = await selectHostProductionArtifact();

@@ -1,26 +1,46 @@
 {
   "schema": "gamebuddy-host-production-artifact-config/v2",
-  "entryRoots": ["main.js", "dialogue-web-main.js", "farmhand-companion-preview.js"],
+  "entryRoots": ["main.js", "dialogue-web-main.js", "stardew-attachment.js", "farmhand-companion-preview.js"],
+  "verificationRoots": ["tavern/p4-durable-turn-acceptance.js", "tavern/p4-provider-attempt.js", "tavern/p4-provider-start.js", "tavern/p5-presentation-commit.js", "tavern/p3-static-shell-composition.js", "reference-pipeline-dialogue-web.js", "tavern-management-dialogue-web.js", "tavern/tavern-management-static-shell-composition.js"],
   "resources": [
     {
       "source": "resources/windows-named-mutex-broker.ps1",
       "destination": "windows-named-mutex-broker.ps1"
+    },
+    {
+      "source": "resources/windows-current-user-control-pipe.ps1",
+      "destination": "windows-current-user-control-pipe.ps1"
     }
   ],
+  "browserArtifact": {
+    "kind": "verified_tavern_browser_artifact",
+    "destination": "browser/tavern/v1",
+    "browserContract": "tavern_browser_api/v1",
+    "profileId": "gamebuddy.tavern.browser.v1",
+    "manifest": "tavern-browser-artifact-manifest.json"
+  },
+  "windowsReparseInspector": {
+    "kind": "verified_windows_reparse_inspector",
+    "destination": "native/windows-reparse-inspector/win-x64",
+    "helper": "GameBuddy.WindowsReparseInspector.exe",
+    "manifest": "windows-reparse-inspector.manifest.json",
+    "probeEvidence": "windows-reparse-inspector.probe-evidence.json"
+  },
+  "windowsStaleLockReclaimer": {
+    "kind": "verified_windows_stale_lock_reclaimer",
+    "destination": "native/windows-stale-lock-reclaimer/win-x64",
+    "helper": "GameBuddy.WindowsStaleLockReclaimer.exe",
+    "manifest": "windows-stale-lock-reclaimer.manifest.json"
+  },
   "externalRuntimeClosure": {
     "kind": "declared_external_runtime_closure",
     "packages": [
       "@cortexkit/pi-magic-context",
       "@earendil-works/pi-coding-agent",
+      "@gamebuddy/voice-protocol",
       "typebox"
     ],
     "dynamicExternalImports": [
-      {
-        "package": "@cortexkit/pi-magic-context",
-        "module": "dialogue-web-main.js",
-        "expression": "pathToFileURL(magicContextEntry).href",
-        "occurrence": 0
-      },
       {
         "package": "@cortexkit/pi-magic-context",
         "module": "runtime.js",
@@ -38,6 +58,24 @@
         "module": "runtime.js",
         "expression": "pathToFileURL(magicContextEntry).href",
         "occurrence": 2
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime.js",
+        "expression": "pathToFileURL(magicContextEntry).href",
+        "occurrence": 3
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime.js",
+        "expression": "pathToFileURL(magicContextEntry).href",
+        "occurrence": 4
+      },
+      {
+        "package": "@cortexkit/pi-magic-context",
+        "module": "runtime.js",
+        "expression": "pathToFileURL(magicContextEntry).href",
+        "occurrence": 5
       }
     ]
   }

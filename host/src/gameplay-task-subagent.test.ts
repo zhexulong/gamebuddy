@@ -270,6 +270,7 @@ function scriptedIntegration(
   return {
     scope: integration.scope,
     module: STARDEW_INTEGRATION_MODULE,
+    executionGate: { executable: true } as never,
     get state() {
       return state;
     },
@@ -299,9 +300,7 @@ function scriptedIntegration(
   };
 }
 
-function testDispatchAdmissionFactory(
-  mounted: Pick<ReturnType<typeof scriptedIntegration>, "cancel">,
-) {
+function testDispatchAdmissionFactory(mounted: Pick<ReturnType<typeof scriptedIntegration>, "cancel">) {
   let generation = 0;
   return () => {
     const owner = { ownerId: `worker_test_${++generation}`, epoch: 0 };
@@ -355,6 +354,98 @@ async function invoke(tools: readonly ToolDefinition[], name: string, params: Re
   if (tool === undefined) throw new Error(`missing_test_tool:${name}`);
   return tool.execute("test_call", params, new AbortController().signal, undefined, undefined as never);
 }
+
+test("GameplayTaskSubagent reserves before construction, binds abort to its task, and releases only after finalization", async () => {
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const state: MutableIntegrationState = {
+    connected: true,
+    sessionId: "session_01",
+    capabilities: ["equip_tool"],
+    snapshot: liveSnapshot(["equip_tool"]),
+    latestReceipt: null,
+    latestReasonCode: null,
+  };
+  const calls = { execute: [] as string[], cancel: [] as string[] };
+  const mounted = scriptedIntegration(state, calls);
+  let resolveConstruction!: (session: AgentSession) => void;
+  let constructions = 0;
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      create: ({ customTools }) => {
+        if (constructions++ === 0)
+          return new Promise<AgentSession>((resolve) => {
+            resolveConstruction = resolve;
+          });
+        return Promise.resolve(fakeSession(customTools, async () => undefined));
+      },
+    },
+    undefined,
+    testDispatchAdmissionFactory(mounted),
+  );
+  const parent = new AbortController();
+  const runningA = worker.run("A", parent.signal);
+  while (resolveConstruction === undefined) await new Promise((resolve) => setTimeout(resolve, 1));
+  await assert.rejects(worker.run("B"), /gameplay_task_already_active/);
+  parent.abort();
+  resolveConstruction(fakeSession([], async () => undefined));
+  const resultA = await runningA;
+  assert.equal(resultA.state, "cancelled");
+  const resultB = await worker.run("B");
+  assert.equal(resultB.state, "blocked");
+});
+
+test("GameplayTaskSubagent releases a failed workspace reservation without a CWD mutation", async () => {
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const state: MutableIntegrationState = {
+    connected: true,
+    sessionId: "session_01",
+    capabilities: [],
+    snapshot: liveSnapshot([]),
+    latestReceipt: null,
+    latestReasonCode: null,
+  };
+  const calls = { execute: [] as string[], cancel: [] as string[] };
+  const mounted = scriptedIntegration(state, calls);
+  let workspaceAttempts = 0;
+  const worker = new GameplayTaskSubagent(paths, mounted, undefined, DEFAULT_GAMEPLAY_TASK_BUDGET, {
+    createWorkspace: async () => {
+      if (workspaceAttempts++ === 0) throw new Error("workspace_creation_failed");
+      return join(paths.runtimeCwd, "allocated-workspace");
+    },
+    create: async ({ customTools }) => fakeSession(customTools, async () => undefined),
+  });
+  assert.equal((await worker.run("first")).state, "blocked");
+  assert.equal(worker.activeTaskId, null);
+  assert.equal((await worker.run("second")).state, "blocked");
+  assert.equal(workspaceAttempts, 2);
+});
+
+test("GameplayTaskSubagent releases a failed construction reservation", async () => {
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const state: MutableIntegrationState = {
+    connected: true,
+    sessionId: "session_01",
+    capabilities: [],
+    snapshot: liveSnapshot([]),
+    latestReceipt: null,
+    latestReasonCode: null,
+  };
+  const calls = { execute: [] as string[], cancel: [] as string[] };
+  const mounted = scriptedIntegration(state, calls);
+  let attempts = 0;
+  const worker = new GameplayTaskSubagent(paths, mounted, undefined, DEFAULT_GAMEPLAY_TASK_BUDGET, {
+    create: async ({ customTools }) => {
+      if (attempts++ === 0) throw new Error("construction_failed");
+      return fakeSession(customTools, async () => undefined);
+    },
+  });
+  assert.equal((await worker.run("first")).state, "blocked");
+  assert.equal((await worker.run("second")).state, "blocked");
+});
 
 test("Gameplay worker hides action tools without a runtime-owned dispatch admission", async () => {
   await mkdir(paths.runtimeCwd, { recursive: true });
@@ -428,7 +519,7 @@ test("Gameplay worker fake session blocks a second action until the owned receip
             state: "succeeded",
             reasonCode: "target_reached",
             revision: 7,
-            evidence: { detail: "tile=2,2;target=2,2;arrival=exact" },
+            evidence: { detail: "tile=2,2;target=2,2;arrival=exact;path=stardew_native" },
           };
           await invoke(tools, "report_to_parent", {
             state: "completed",
@@ -516,25 +607,33 @@ test("Gameplay worker parent abort cancels only its accepted execution and recor
     releasePrompt = resolve;
   });
   let abortSession = false;
-  const worker = new GameplayTaskSubagent(paths, mounted, undefined, DEFAULT_GAMEPLAY_TASK_BUDGET, {
-    create: async ({ customTools }) =>
-      fakeSession(
-        customTools,
-        async (tools) => {
-          await invoke(tools, "stardew_equip_tool", {
-            slot: 1,
-            requestId: "request_cancel",
-            idempotencyKey: "key_cancel",
-          });
-          await promptGate;
-          if (abortSession) throw new Error("aborted");
-        },
-        () => {
-          abortSession = true;
-          releasePrompt();
-        },
-      ),
-  }, undefined, testDispatchAdmissionFactory(mounted));
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      create: async ({ customTools }) =>
+        fakeSession(
+          customTools,
+          async (tools) => {
+            await invoke(tools, "stardew_equip_tool", {
+              slot: 1,
+              requestId: "request_cancel",
+              idempotencyKey: "key_cancel",
+            });
+            await promptGate;
+            if (abortSession) throw new Error("aborted");
+          },
+          () => {
+            abortSession = true;
+            releasePrompt();
+          },
+        ),
+    },
+    undefined,
+    testDispatchAdmissionFactory(mounted),
+  );
   const parent = new AbortController();
   const running = worker.run("cancel task", parent.signal);
   while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
@@ -565,8 +664,19 @@ test("task-owned terminal waiter uses an exact wake only after rereading the own
     evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
   };
   for (const listener of listeners)
-    listener({ kind: "terminal", requestId: "request_01", executionId: "execution_01", state: "succeeded", reasonCode: "tool_selected" });
-  assert.deepEqual(await waiting, { requestId: "request_01", executionId: "execution_01", state: "succeeded", reasonCode: "tool_selected" });
+    listener({
+      kind: "terminal",
+      requestId: "request_01",
+      executionId: "execution_01",
+      state: "succeeded",
+      reasonCode: "tool_selected",
+    });
+  assert.deepEqual(await waiting, {
+    requestId: "request_01",
+    executionId: "execution_01",
+    state: "succeeded",
+    reasonCode: "tool_selected",
+  });
   assert.ok(Date.now() - startedAt < 200);
 });
 
@@ -581,12 +691,31 @@ test("matching terminal wake with null or nonterminal reread remains pending thr
     readReceipt: () => receipt,
   });
   for (const listener of listeners)
-    listener({ kind: "terminal", requestId: "request_01", executionId: "execution_01", state: "succeeded", reasonCode: "done" });
+    listener({
+      kind: "terminal",
+      requestId: "request_01",
+      executionId: "execution_01",
+      state: "succeeded",
+      reasonCode: "done",
+    });
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(listeners.size, 1);
-  receipt = { requestId: "request_01", executionId: "execution_01", state: "running", reasonCode: "running", revision: 7, evidence: null };
+  receipt = {
+    requestId: "request_01",
+    executionId: "execution_01",
+    state: "running",
+    reasonCode: "running",
+    revision: 7,
+    evidence: null,
+  };
   for (const listener of listeners)
-    listener({ kind: "terminal", requestId: "request_01", executionId: "execution_01", state: "succeeded", reasonCode: "done" });
+    listener({
+      kind: "terminal",
+      requestId: "request_01",
+      executionId: "execution_01",
+      state: "succeeded",
+      reasonCode: "done",
+    });
   assert.equal(await waiting, null);
   assert.equal(listeners.size, 0);
 });
@@ -605,9 +734,22 @@ test("task-owned terminal waiter ignores malformed and unrelated wakes", async (
     listener({ kind: "terminal", requestId: "", executionId: "", state: "", reasonCode: "" } as ExecutionWake);
   }
   await new Promise((resolve) => setTimeout(resolve, 20));
-  receipt = { requestId: "request_01", executionId: "execution_01", state: "cancelled", reasonCode: "cancelled", revision: 7, evidence: null };
+  receipt = {
+    requestId: "request_01",
+    executionId: "execution_01",
+    state: "cancelled",
+    reasonCode: "cancelled",
+    revision: 7,
+    evidence: null,
+  };
   for (const listener of listeners)
-    listener({ kind: "terminal", requestId: "request_01", executionId: "execution_01", state: "cancelled", reasonCode: "cancelled" });
+    listener({
+      kind: "terminal",
+      requestId: "request_01",
+      executionId: "execution_01",
+      state: "cancelled",
+      reasonCode: "cancelled",
+    });
   assert.equal((await waiting)?.state, "cancelled");
 });
 
@@ -620,7 +762,14 @@ test("task-owned terminal waiter recovers a lost wake with the bounded reconcili
     readReceipt: () => receipt,
   });
   setTimeout(() => {
-    receipt = { requestId: "request_01", executionId: "execution_01", state: "failed", reasonCode: "failed", revision: 7, evidence: null };
+    receipt = {
+      requestId: "request_01",
+      executionId: "execution_01",
+      state: "failed",
+      reasonCode: "failed",
+      revision: 7,
+      evidence: null,
+    };
   }, 10);
   assert.equal((await waiting)?.state, "failed");
 });
@@ -670,10 +819,19 @@ test("adapter liveness freezes the active task, cancels its owned execution once
         fakeSession(
           customTools,
           async (tools) => {
-            await invoke(tools, "stardew_equip_tool", { slot: 1, requestId: "request_live", idempotencyKey: "key_live" });
+            await invoke(tools, "stardew_equip_tool", {
+              slot: 1,
+              requestId: "request_live",
+              idempotencyKey: "key_live",
+            });
             await promptGate;
             await assert.rejects(
-              invoke(tools, "stardew_move_to_tile", { x: 2, y: 2, requestId: "request_next", idempotencyKey: "key_next" }),
+              invoke(tools, "stardew_move_to_tile", {
+                x: 2,
+                y: 2,
+                requestId: "request_next",
+                idempotencyKey: "key_next",
+              }),
               /integration_invalidated:scope_lost/,
             );
             throw new Error("aborted");
@@ -696,11 +854,90 @@ test("adapter liveness freezes the active task, cancels its owned execution once
   assert.equal(worker.lastTaskRecord?.terminalReceipt?.state, "cancelled");
 });
 
+test("worker mints a fresh runtime-owned admission for each action invocation", async () => {
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const state: MutableIntegrationState = {
+    connected: true,
+    sessionId: "session_01",
+    capabilities: ["equip_tool", "move_to_tile"],
+    snapshot: liveSnapshot(["equip_tool", "move_to_tile"]),
+    latestReceipt: null,
+    latestReasonCode: null,
+  };
+  const calls = { execute: [] as string[], cancel: [] as string[] };
+  const mounted = scriptedIntegration(state, calls);
+  mounted.execute = async (request) => {
+    calls.execute.push(request.action);
+    const receipt = {
+      requestId: request.requestId,
+      executionId: `execution_${calls.execute.length}`,
+      state: "succeeded",
+      reasonCode: "completed",
+      revision: request.expectedRevision,
+      evidence: null,
+    };
+    state.latestReceipt = receipt;
+    return receipt;
+  };
+  const admissions: string[] = [];
+  const createAdmission = testDispatchAdmissionFactory(mounted);
+  const factory = () => {
+    const admission = createAdmission();
+    admissions.push(admission.owner.ownerId);
+    return admission;
+  };
+  let releasePrompt!: () => void;
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      create: async ({ customTools }) =>
+        fakeSession(
+          customTools,
+          async (tools) => {
+            await invoke(tools, "stardew_equip_tool", {
+              slot: 1,
+              requestId: "request_same_owner",
+              idempotencyKey: "key_same_owner",
+            });
+            await invoke(tools, "stardew_move_to_tile", {
+              x: 2,
+              y: 2,
+              requestId: "request_fresh_owner",
+              idempotencyKey: "key_fresh_owner",
+            });
+            await new Promise<void>((resolve) => {
+              releasePrompt = resolve;
+            });
+            throw new Error("aborted");
+          },
+          () => releasePrompt(),
+        ),
+    },
+    undefined,
+    factory,
+  );
+  const parent = new AbortController();
+  const running = worker.run("same admission", parent.signal);
+  while (calls.execute.length < 2) await new Promise((resolve) => setTimeout(resolve, 1));
+  parent.abort();
+  const result = await running;
+  assert.equal(result.state, "cancelled");
+  assert.deepEqual(calls.cancel, []);
+  assert.deepEqual(admissions, ["worker_test_1", "worker_test_2"]);
+});
+
 test("latest nonterminal receipt before delayed tool resolution remains ledger-pending and cancels exactly once after bind", async () => {
   await mkdir(paths.runtimeCwd, { recursive: true });
   const state: MutableIntegrationState = {
-    connected: true, sessionId: "session_01", capabilities: ["equip_tool", "cancel_active_execution"],
-    snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]), latestReceipt: null, latestReasonCode: null,
+    connected: true,
+    sessionId: "session_01",
+    capabilities: ["equip_tool", "cancel_active_execution"],
+    snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]),
+    latestReceipt: null,
+    latestReasonCode: null,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   let resolveDispatch!: (value: any) => void;
@@ -712,13 +949,30 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
   };
   let releasePrompt!: () => void;
   const promptGate = new Promise<void>((resolve) => (releasePrompt = resolve));
-  const worker = new GameplayTaskSubagent(paths, mounted, undefined, DEFAULT_GAMEPLAY_TASK_BUDGET, {
-    create: async ({ customTools }) => fakeSession(customTools, async (tools) => {
-      await invoke(tools, "stardew_equip_tool", { slot: 1, requestId: "request_pending", idempotencyKey: "key_pending" });
-      await promptGate;
-      throw new Error("aborted");
-    }, releasePrompt),
-  }, undefined, testDispatchAdmissionFactory(mounted));
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      create: async ({ customTools }) =>
+        fakeSession(
+          customTools,
+          async (tools) => {
+            await invoke(tools, "stardew_equip_tool", {
+              slot: 1,
+              requestId: "request_pending",
+              idempotencyKey: "key_pending",
+            });
+            await promptGate;
+            throw new Error("aborted");
+          },
+          releasePrompt,
+        ),
+    },
+    undefined,
+    testDispatchAdmissionFactory(mounted),
+  );
   const parent = new AbortController();
   const running = worker.run("pending dispatch", parent.signal);
   while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
@@ -733,19 +987,107 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
     evidence: null,
   };
   parent.abort("player_stop");
-  resolveDispatch({ requestId: "request_pending", executionId: "execution_pending", state: "accepted", reasonCode: "accepted", revision: 7, evidence: null });
+  resolveDispatch({
+    requestId: "request_pending",
+    executionId: "execution_pending",
+    state: "accepted",
+    reasonCode: "accepted",
+    revision: 7,
+    evidence: null,
+  });
   const result = await running;
   assert.equal(result.state, "cancelled");
   assert.deepEqual(calls.cancel, ["request_pending:execution_pending:parent_aborted"]);
   assert.equal(worker.lastTaskRecord?.pendingDispatch, null);
-  assert.deepEqual(worker.lastTaskRecord?.executions.map(({ requestId, executionId }) => ({ requestId, executionId })), [{ requestId: "request_pending", executionId: "execution_pending" }]);
+  assert.deepEqual(
+    worker.lastTaskRecord?.executions.map(({ requestId, executionId }) => ({ requestId, executionId })),
+    [{ requestId: "request_pending", executionId: "execution_pending" }],
+  );
+});
+
+test("pending post-write dispatch settles from an exact terminal wake before its delayed execute response", async () => {
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const state: MutableIntegrationState = {
+    connected: true,
+    sessionId: "session_01",
+    capabilities: ["equip_tool"],
+    snapshot: liveSnapshot(["equip_tool"]),
+    latestReceipt: null,
+    latestReasonCode: null,
+  };
+  const calls = { execute: [] as string[], cancel: [] as string[] };
+  const mounted = scriptedIntegration(state, calls);
+  let resolveDispatch!: (value: any) => void;
+  const dispatch = new Promise<any>((resolve) => (resolveDispatch = resolve));
+  mounted.execute = async (request) => {
+    calls.execute.push(request.action);
+    return await dispatch;
+  };
+  const listeners = new Set<(wake: ExecutionWake) => void>();
+  let releasePrompt!: () => void;
+  const promptGate = new Promise<void>((resolve) => (releasePrompt = resolve));
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      create: async ({ customTools }) =>
+        fakeSession(
+          customTools,
+          async (tools) => {
+            await invoke(tools, "stardew_equip_tool", {
+              slot: 1,
+              requestId: "request_wake",
+              idempotencyKey: "key_wake",
+            });
+            await promptGate;
+            throw new Error("aborted");
+          },
+          releasePrompt,
+        ),
+    },
+    { onExecutionWake: (listener) => (listeners.add(listener), () => listeners.delete(listener)) },
+    testDispatchAdmissionFactory(mounted),
+  );
+  const parent = new AbortController();
+  const running = worker.run("pending exact wake", parent.signal);
+  while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+  state.latestReceipt = {
+    requestId: "request_wake",
+    executionId: "execution_wake",
+    state: "cancelled",
+    reasonCode: "player_stop",
+    revision: 7,
+    evidence: null,
+  };
+  parent.abort("player_stop");
+  for (const listener of listeners)
+    listener({
+      kind: "terminal",
+      requestId: "request_wake",
+      executionId: "execution_wake",
+      state: "cancelled",
+      reasonCode: "player_stop",
+    });
+  // The model-facing tool call still owns its transport Promise; the wake
+  // proves the cancellation waiter will reconcile from authoritative state
+  // rather than waiting for another 25ms polling-only turn after it unwinds.
+  resolveDispatch(state.latestReceipt);
+  const result = await running;
+  assert.equal(result.state, "cancelled");
+  assert.equal(worker.lastTaskRecord?.terminalReceipt?.state, "cancelled");
 });
 
 test("latest terminal receipt before delayed tool resolution retires ledger correlation without cancellation", async () => {
   await mkdir(paths.runtimeCwd, { recursive: true });
   const state: MutableIntegrationState = {
-    connected: true, sessionId: "session_01", capabilities: ["equip_tool", "cancel_active_execution"],
-    snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]), latestReceipt: null, latestReasonCode: null,
+    connected: true,
+    sessionId: "session_01",
+    capabilities: ["equip_tool", "cancel_active_execution"],
+    snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]),
+    latestReceipt: null,
+    latestReasonCode: null,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   let resolveDispatch!: (value: any) => void;
@@ -757,13 +1099,30 @@ test("latest terminal receipt before delayed tool resolution retires ledger corr
   };
   let releasePrompt!: () => void;
   const promptGate = new Promise<void>((resolve) => (releasePrompt = resolve));
-  const worker = new GameplayTaskSubagent(paths, mounted, undefined, DEFAULT_GAMEPLAY_TASK_BUDGET, {
-    create: async ({ customTools }) => fakeSession(customTools, async (tools) => {
-      await invoke(tools, "stardew_equip_tool", { slot: 1, requestId: "request_terminal", idempotencyKey: "key_terminal" });
-      await promptGate;
-      throw new Error("aborted");
-    }, releasePrompt),
-  }, undefined, testDispatchAdmissionFactory(mounted));
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      create: async ({ customTools }) =>
+        fakeSession(
+          customTools,
+          async (tools) => {
+            await invoke(tools, "stardew_equip_tool", {
+              slot: 1,
+              requestId: "request_terminal",
+              idempotencyKey: "key_terminal",
+            });
+            await promptGate;
+            throw new Error("aborted");
+          },
+          releasePrompt,
+        ),
+    },
+    undefined,
+    testDispatchAdmissionFactory(mounted),
+  );
   const parent = new AbortController();
   const running = worker.run("terminal pending dispatch", parent.signal);
   while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));

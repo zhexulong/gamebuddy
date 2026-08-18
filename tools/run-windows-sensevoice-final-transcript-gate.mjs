@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { createConnection } from "node:net";
+import { VoiceGatewayProbeClient } from "./lib/voice-gateway-probe-client.mjs";
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -50,7 +50,7 @@ async function main() {
       "gateway_start_timeout",
       () => stderr,
     );
-    const client = await ProtocolClient.connect(port, token);
+    const client = await VoiceGatewayProbeClient.connect(port, token);
     try {
       const sessionId = "voice_final_gate";
       const inputId = `ptt_${randomUUID().replaceAll("-", "")}`;
@@ -181,66 +181,6 @@ function summarizeGatewayDiagnostics(stderr) {
     .replace(/[A-Za-z]:\\[^\s]+/g, "<path>")
     .trim();
   return compact.length === 0 ? null : compact.slice(0, 240);
-}
-
-class ProtocolClient {
-  static async connect(port, token) {
-    const client = new ProtocolClient(port);
-    await client.open();
-    const hello = await client.request({ type: "hello", token, protocolVersion: 1, requestId: "hello_01" });
-    if (hello.type !== "hello_ack") throw new Error("voice_gateway_authentication_failed");
-    return client;
-  }
-  constructor(port) {
-    this.port = port;
-    this.pending = new Map();
-    this.buffer = "";
-  }
-  async open() {
-    this.socket = createConnection({ host: "127.0.0.1", port: this.port });
-    this.socket.setEncoding("utf8");
-    this.socket.on("data", (chunk) => this.receive(chunk));
-    await once(this.socket, "connect");
-  }
-  request(message) {
-    return new Promise((resolvePromise, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(message.requestId);
-        reject(new Error("voice_gateway_timeout"));
-      }, 15_000);
-      this.pending.set(message.requestId, { resolve: resolvePromise, reject, timer });
-      this.socket.write(`${JSON.stringify(message)}\n`);
-    });
-  }
-  receive(chunk) {
-    this.buffer += chunk;
-    for (;;) {
-      const index = this.buffer.indexOf("\n");
-      if (index < 0) return;
-      const line = this.buffer.slice(0, index);
-      this.buffer = this.buffer.slice(index + 1);
-      let value;
-      try {
-        value = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      const pending = this.pending.get(value.requestId);
-      if (pending) {
-        this.pending.delete(value.requestId);
-        clearTimeout(pending.timer);
-        pending.resolve(value);
-      }
-    }
-  }
-  close() {
-    this.socket?.destroy();
-    for (const item of this.pending.values()) {
-      clearTimeout(item.timer);
-      item.reject(new Error("voice_gateway_closed"));
-    }
-    this.pending.clear();
-  }
 }
 
 await main();

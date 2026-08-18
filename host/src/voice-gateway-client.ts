@@ -1,5 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
+import {
+  encodeVoiceGatewayMessage,
+  isFinalTranscriptEvent,
+  isVoiceGatewayRequest,
+  isOpaqueId,
+  isSourceEventId,
+  createBoundedUtf8NdjsonDecoder,
+  MAX_NDJSON_FRAME_BYTES,
+  parseVoiceGatewayResponse,
+  VOICE_PROTOCOL_VERSION,
+  type VoiceGatewayEvent,
+  type VoiceGatewayRequest,
+  type VoiceGatewayResponse,
+} from "@gamebuddy/voice-protocol";
 
 import {
   type FinalVoiceInput,
@@ -10,43 +24,25 @@ import {
   type VoiceSpeechPort,
 } from "./voice.js";
 
-const PROTOCOL_VERSION = 1;
-const REQUEST_TIMEOUT_MS = 5_000;
-const MAX_BUFFERED_BYTES = 64 * 1024;
+/**
+ * Opaque construction capability for the semantic Game entry. Its branded
+ * payload can only originate from a healthy LocalVoiceGatewayClient; callers
+ * cannot substitute a trace sink or arbitrary speech port.
+ */
+export type GameVoicePresentationAttachment = object;
 
-type GatewayEvent =
-  | Readonly<{
-      type: "final_transcript";
-      sessionId: string;
-      inputId: string;
-      text: string;
-      locale: string;
-      providerId: string;
-      modelRevision: string;
-      timestampMs: number;
-      actualFormat: Readonly<{ sampleRate: number; channels: number; encoding: "pcm_s16le" }>;
-    }>
-  | Readonly<{ type: "capture_state" | "partial_transcript" | "asr_failure" | "speech_state"; [key: string]: unknown }>;
-type Response = Readonly<
-  | { type: "hello_ack"; requestId: string; protocolVersion?: number; reasonCode?: string }
-  | {
-      type: "health";
-      requestId: string;
-      protocolVersion?: number;
-      status?: "ready" | "unavailable";
-      capabilities?: Readonly<{
-        providerId: string;
-        modelRevision: string;
-        perUtteranceDirection: boolean;
-        ready: boolean;
-        epoch: number;
-      }>;
-      reasonCode?: string;
-    }
-  | { type: "accepted"; requestId: string; value?: string | boolean; reasonCode?: string }
-  | { type: "events"; requestId: string; events?: readonly GatewayEvent[]; next?: number; reasonCode?: string }
-  | { type: "error"; requestId: string | null; reasonCode?: string }
->;
+type GameVoicePresentationPayload = Readonly<{
+  voiceProfile: string;
+  speechPort: VoiceSpeechPort;
+  voiceAudioAdmission: VoiceAudioEpochAdmission;
+  stopVoice(reasonCode: string): Promise<void>;
+}>;
+
+const GAME_VOICE_PRESENTATIONS = new WeakMap<object, GameVoicePresentationPayload>();
+
+const REQUEST_TIMEOUT_MS = 5_000;
+type Response = VoiceGatewayResponse;
+type VoiceRequestType = VoiceGatewayRequest["type"];
 type Pending = Readonly<{
   resolve: (response: Response) => void;
   reject: (error: Error) => void;
@@ -69,7 +65,10 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   readonly #pending = new Map<string, Pending>();
   readonly #finalListeners = new Set<(input: FinalVoiceInput) => void>();
   #socket: Socket | undefined;
-  #buffer = "";
+  readonly #framer = createBoundedUtf8NdjsonDecoder({
+    maxRecordBytes: MAX_NDJSON_FRAME_BYTES,
+    maxBufferedBytes: MAX_NDJSON_FRAME_BYTES,
+  });
   #connected = false;
   #eventCursor = 0;
   #pollPromise: Promise<void> | undefined;
@@ -126,6 +125,27 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     });
   }
 
+  /**
+   * Mints an opaque Game-only attachment after the client has passed its
+   * authenticated health check. Only `consumeGameVoicePresentationAttachment`
+   * can unwrap it at the materializer boundary.
+   */
+  public createGameVoicePresentationAttachment(voiceProfile: string): GameVoicePresentationAttachment {
+    if (!isOpaque(voiceProfile)) throw new Error("invalid_voice_profile");
+    this.currentReadyCapabilities();
+    const attachment = Object.freeze({});
+    GAME_VOICE_PRESENTATIONS.set(
+      attachment,
+      Object.freeze({
+        voiceProfile,
+        speechPort: this,
+        voiceAudioAdmission: this.createAudioEpochAdmission(),
+        stopVoice: (reasonCode) => this.stopAll(reasonCode),
+      }),
+    );
+    return attachment;
+  }
+
   public close(): void {
     this.#socket?.destroy();
     this.handleClose("voice_gateway_closed");
@@ -151,7 +171,7 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     const response = await this.request("health", voiceProfile === undefined ? {} : { voiceProfile });
     if (
       response.type !== "health" ||
-      response.protocolVersion !== PROTOCOL_VERSION ||
+      response.protocolVersion !== VOICE_PROTOCOL_VERSION ||
       response.capabilities === undefined ||
       !isCapabilityProfile(response.capabilities)
     )
@@ -160,8 +180,7 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     if (!capabilities.ready || response.status !== "ready") throw new Error("voice_gateway_unavailable");
     // A newer revalidation owns admission from its synchronous revocation.
     // A stale success must not recreate a ready enqueue route.
-    if (revalidationGeneration !== this.#audioAdmissionGeneration)
-      throw new Error("voice_gateway_health_superseded");
+    if (revalidationGeneration !== this.#audioAdmissionGeneration) throw new Error("voice_gateway_health_superseded");
     this.#capabilities = capabilities;
     return capabilities;
   }
@@ -243,13 +262,13 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     this.assertCurrentAudioEpochBinding(admission.audioBinding);
     const response = await this.request("speech_enqueue", { job });
     if (response.type !== "accepted" || response.value !== true)
-      throw new Error(response.reasonCode ?? "voice_speech_rejected");
+      throw new Error(response.type === "error" ? response.reasonCode : "voice_speech_rejected");
   }
 
   public async stopAll(reasonCode = "player_stop_all"): Promise<void> {
     const response = await this.request("stop_all", { reasonCode });
     if (response.type !== "accepted" || response.value !== true)
-      throw new Error(response.reasonCode ?? "voice_stop_rejected");
+      throw new Error(response.type === "error" ? response.reasonCode : "voice_stop_rejected");
     // Stop acceptance changes the remote mixer state. Revoke synchronously,
     // before the asynchronous authenticated revalidation below.
     const revalidate = this.#capabilities !== undefined;
@@ -313,9 +332,9 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
       socket.once("connect", () => {
         socket.off("error", fail);
         this.#socket = socket;
-        socket.setEncoding("utf8");
-        socket.on("data", (chunk: string) => this.receive(chunk));
+        socket.on("data", (chunk: Buffer) => this.receive(chunk));
         socket.on("error", () => this.handleClose("voice_gateway_socket_error"));
+        socket.on("end", () => this.finishReceive());
         socket.on("close", () => this.handleClose("voice_gateway_closed"));
         this.#connected = true;
         resolvePromise();
@@ -324,23 +343,28 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   }
 
   private async hello(): Promise<void> {
-    const response = await this.request("hello", { token: this.connection.token, protocolVersion: PROTOCOL_VERSION });
-    if (response.type !== "hello_ack" || response.protocolVersion !== PROTOCOL_VERSION)
-      throw new Error(response.reasonCode ?? "voice_gateway_authentication_failed");
+    const response = await this.request("hello", {
+      token: this.connection.token,
+      protocolVersion: VOICE_PROTOCOL_VERSION,
+    });
+    if (response.type !== "hello_ack" || response.protocolVersion !== VOICE_PROTOCOL_VERSION)
+      throw new Error(response.type === "error" ? response.reasonCode : "voice_gateway_authentication_failed");
   }
 
-  private request(type: string, payload: Record<string, unknown>): Promise<Response> {
+  private request(type: VoiceRequestType, payload: Record<string, unknown>): Promise<Response> {
     if (!this.#connected || this.#socket === undefined || this.#socket.destroyed)
       return Promise.reject(new Error("voice_gateway_disconnected"));
     const requestId = randomUUID();
-    const line = JSON.stringify({ type, requestId, ...payload });
+    const message: unknown = { type, requestId, ...payload };
+    if (!isVoiceGatewayRequest(message)) return Promise.reject(new Error("invalid_voice_gateway_request"));
+    const line = encodeVoiceGatewayMessage(message);
     return new Promise<Response>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(requestId);
         reject(new Error("voice_gateway_response_timeout"));
       }, REQUEST_TIMEOUT_MS);
       this.#pending.set(requestId, { resolve: resolvePromise, reject, timer });
-      this.#socket!.write(`${line}\n`, (error) => {
+      this.#socket!.write(line, (error) => {
         if (error != null) {
           clearTimeout(timer);
           this.#pending.delete(requestId);
@@ -350,25 +374,17 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     });
   }
 
-  private receive(chunk: string): void {
-    this.#buffer += chunk;
-    if (Buffer.byteLength(this.#buffer, "utf8") > MAX_BUFFERED_BYTES) {
+  private receive(chunk: Buffer): void {
+    let frames: readonly string[];
+    try {
+      frames = this.#framer.push(chunk);
+    } catch {
       this.close();
       return;
     }
-    for (;;) {
-      const newline = this.#buffer.indexOf("\n");
-      if (newline < 0) return;
-      const line = this.#buffer.slice(0, newline);
-      this.#buffer = this.#buffer.slice(newline + 1);
-      let response: Response;
-      try {
-        response = JSON.parse(line) as Response;
-      } catch {
-        this.close();
-        return;
-      }
-      if (!validResponse(response)) {
+    for (const line of frames) {
+      const response = parseVoiceGatewayResponse(line);
+      if (response === null) {
         this.close();
         return;
       }
@@ -378,6 +394,14 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
       this.#pending.delete(response.requestId);
       clearTimeout(pending.timer);
       pending.resolve(response);
+    }
+  }
+
+  private finishReceive(): void {
+    try {
+      this.#framer.finish();
+    } catch {
+      this.close();
     }
   }
 
@@ -391,6 +415,17 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
     }
     this.#pending.clear();
   }
+}
+
+/** Internal unwrapping boundary for the semantic Game materializer. */
+export function consumeGameVoicePresentationAttachment(
+  attachment: GameVoicePresentationAttachment,
+): GameVoicePresentationPayload {
+  if (typeof attachment !== "object" || attachment === null)
+    throw new Error("invalid_game_voice_presentation_attachment");
+  const payload = GAME_VOICE_PRESENTATIONS.get(attachment);
+  if (payload === undefined) throw new Error("invalid_game_voice_presentation_attachment");
+  return payload;
 }
 
 function snapshotSpeechEnqueueJob(expression: VoiceExpression): Readonly<{
@@ -416,6 +451,18 @@ function snapshotSpeechEnqueueJob(expression: VoiceExpression): Readonly<{
   const voiceProfile = expression.voiceProfile;
   const expiresAtMs = expression.expiresAtMs;
   const direction = expression.direction;
+  if (
+    typeof jobId !== "string" ||
+    typeof sessionId !== "string" ||
+    typeof epoch !== "number" ||
+    typeof sourceEventId !== "string" ||
+    typeof text !== "string" ||
+    typeof locale !== "string" ||
+    typeof voiceProfile !== "string" ||
+    typeof expiresAtMs !== "number" ||
+    (direction !== undefined && typeof direction !== "string")
+  )
+    throw new Error("invalid_voice_expression");
   return Object.freeze({
     jobId,
     sessionId,
@@ -450,32 +497,21 @@ function isCapabilityProfile(value: unknown): value is {
   );
 }
 
-function validResponse(value: unknown): value is Response {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as { type?: unknown }).type === "string" &&
-    (value as { type?: unknown }).type !== "hello" &&
-    ((value as { requestId?: unknown }).requestId === null ||
-      typeof (value as { requestId?: unknown }).requestId === "string")
-  );
-}
-
-function finalVoiceInput(event: GatewayEvent): FinalVoiceInput | null {
-  if (event.type !== "final_transcript") return null;
+function finalVoiceInput(event: VoiceGatewayEvent): FinalVoiceInput | null {
+  if (!isFinalTranscriptEvent(event)) return null;
   const format = event.actualFormat;
   if (
-    !isOpaque(event.sessionId) ||
-    !isOpaque(event.inputId) ||
+    !isOpaqueId(event.sessionId) ||
+    !isSourceEventId(event.sourceEventId) ||
+    !isOpaqueId(event.inputId) ||
     typeof event.text !== "string" ||
     event.text.length === 0 ||
     event.text.length > 4_000 ||
     typeof event.locale !== "string" ||
     event.locale.length === 0 ||
     event.locale.length > 32 ||
-    !isOpaque(event.providerId) ||
-    !isOpaque(event.modelRevision) ||
+    !isOpaqueId(event.providerId) ||
+    !isOpaqueId(event.modelRevision) ||
     !Number.isFinite(event.timestampMs) ||
     format.sampleRate !== 16_000 ||
     format.channels !== 1 ||

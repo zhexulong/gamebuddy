@@ -59,18 +59,29 @@ async function assertNoDurableThreadArtifacts(root: string, rejectedResult: unkn
   assert.equal(isTrustedTavernExactContentReceipt(rejectedResult), false);
 }
 
-test("genuine ChatThreadStore exact missing creates then durably reads back a trusted receipt", async () => {
+test("exact resume of missing content fails closed; explicit creation reads back a trusted receipt", async () => {
   const fixture = await capability();
   try {
     const port = createInitialChatExactContentPort(fixture.capability);
-    const receipt = await port.ensureExactContent(binding, request);
+    await assert.rejects(
+      () =>
+        port.resumeExact(binding.chatThreadId, binding.companionId, binding.continuityId, binding.chatSurfaceSessionId),
+      expectCode("chat_thread_not_found"),
+    );
+    const threadDirectory = join(
+      fixture.root,
+      "tavern",
+      "v1",
+      "continuities",
+      "a".repeat(64),
+      "threads",
+      binding.chatThreadId,
+    );
+    assert.deepEqual(await readdir(threadDirectory), []);
+    const receipt = await port.createExplicit(request);
     const durableState = await fixture.store.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId);
     assert.deepEqual(receipt, { ...binding, digest: stateDigest(durableState) });
     assert.ok(isTrustedTavernExactContentReceipt(receipt));
-    assert.deepEqual(
-      durableState,
-      await fixture.store.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId),
-    );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
@@ -103,7 +114,7 @@ test("receipt digest covers complete durable state and changes for binding-prese
       binding.continuityId,
       binding.chatSurfaceSessionId,
     );
-    const renamed = await fixture.store.renameThreadTitle!({
+    await fixture.store.renameThreadTitle!({
       chatThreadId: binding.chatThreadId,
       chatSurfaceSessionId: binding.chatSurfaceSessionId,
       expectedManagementRevision: 1,
@@ -116,7 +127,10 @@ test("receipt digest covers complete durable state and changes for binding-prese
       binding.chatSurfaceSessionId,
     );
     assert.notEqual(afterMetadata.digest, initial.digest);
-    assert.equal(afterMetadata.digest, stateDigest({ thread: renamed, messages: [] }));
+    assert.equal(
+      afterMetadata.digest,
+      stateDigest(await fixture.store.resumeThread(binding.chatThreadId, binding.chatSurfaceSessionId)),
+    );
 
     await fixture.store.appendPlayer(binding.chatThreadId, {
       messageId: "player_01",
@@ -144,7 +158,16 @@ test("collision does not fall back and broad not-found Error text cannot create"
   try {
     const port = createInitialChatExactContentPort(fixture.capability);
     await fixture.store.createThread(request);
-    assert.ok(isTrustedTavernExactContentReceipt(await port.ensureExactContent(binding, request)));
+    assert.ok(
+      isTrustedTavernExactContentReceipt(
+        await port.resumeExact(
+          binding.chatThreadId,
+          binding.companionId,
+          binding.continuityId,
+          binding.chatSurfaceSessionId,
+        ),
+      ),
+    );
     const missing = { ...binding, chatThreadId: "missing_01" };
     const missingRequest = { ...request, chatThreadId: "missing_01" };
     const threadDir = join(fixture.root, "tavern", "v1", "continuities", "a".repeat(64), "threads", "missing_01");
@@ -153,12 +176,13 @@ test("collision does not fall back and broad not-found Error text cannot create"
       await writeFile(join(threadDir, "thread.json"), "{ broken", "utf8");
     });
     await assert.rejects(
-      () => port.ensureExactContent(missing, missingRequest),
-      /Unexpected token|Expected property name|storage|broken/,
+      () =>
+        port.resumeExact(missing.chatThreadId, missing.companionId, missing.continuityId, missing.chatSurfaceSessionId),
+      /invalid_strict_json_file/,
     );
     await assert.rejects(
       () => fixture.store.resumeThread("missing_01", binding.chatSurfaceSessionId),
-      /Unexpected token|Expected property name|broken/,
+      /invalid_strict_json_file/,
     );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -188,7 +212,7 @@ test("malformed durable state fails closed without a receipt", async () => {
           binding.continuityId,
           binding.chatSurfaceSessionId,
         ),
-      /Unexpected token|Expected property name|malformed/,
+      /invalid_strict_json_file/,
     );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -242,7 +266,7 @@ test("genuine capabilities reject proxy, clones, promises, and thenables without
 test("fake stores, capabilities, and receipts are rejected", async () => {
   const fake = Object.freeze({
     resumeExact: async () => ({ kind: "found", receipt: {} }),
-    ensureExactContent: async () => ({ kind: "created" }),
+    createExplicit: async () => ({ kind: "created" }),
   });
   assert.throws(() => createInitialChatExactContentCapability(fake as never), /untrusted_chat_thread_store/);
   assert.throws(
@@ -252,7 +276,7 @@ test("fake stores, capabilities, and receipts are rejected", async () => {
   const fixture = await capability();
   try {
     const port = createInitialChatExactContentPort(fixture.capability);
-    const receipt = await port.ensureExactContent(binding, request);
+    const receipt = await port.createExplicit(request);
     assert.equal(isTrustedTavernExactContentReceipt({ ...receipt }), false);
     assert.equal(isTrustedTavernExactContentReceipt(JSON.parse(JSON.stringify(receipt))), false);
     assert.equal(isTrustedTavernExactContentReceipt(new Proxy(receipt, {})), false);
@@ -262,12 +286,12 @@ test("fake stores, capabilities, and receipts are rejected", async () => {
   }
 });
 
-test("public initial content port has no explicit create operation", async () => {
+test("public initial content port exposes distinct explicit creation and exact resume operations", async () => {
   const fixture = await capability();
   try {
     const port = createInitialChatExactContentPort(fixture.capability);
-    assert.deepEqual(Object.keys(port).sort(), ["ensureExactContent", "resumeExact"]);
-    assert.equal("createExplicit" in port, false);
+    assert.deepEqual(Object.keys(port).sort(), ["createExplicit", "resumeExact"]);
+    assert.equal("ensureExactContent" in port, false);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

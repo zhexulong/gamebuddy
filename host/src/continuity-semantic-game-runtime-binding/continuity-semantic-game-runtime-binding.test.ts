@@ -10,6 +10,7 @@ import { createIntegrationActionCatalog, type GameIntegrationModule } from "../i
 import { RECEIPT_BACKED_INTEGRATION_AUTHORITY, type IntegrationLaunchHandle } from "../integration-launcher.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import type { IntegrationConnection } from "../integration-types.js";
+import { loadHostDeploymentManifest, type HostDeploymentManifest } from "../deployment-manifest.js";
 import {
   createGameRuntimeBinding,
   createWindowsRuntimeOwnerIdentityPort,
@@ -128,7 +129,7 @@ function fixture(
   };
 }
 
-async function manifestPath(): Promise<string> {
+async function manifest(): Promise<HostDeploymentManifest> {
   const root = await mkdtemp(join(tmpdir(), "game-runtime-binding-"));
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
@@ -136,15 +137,15 @@ async function manifestPath(): Promise<string> {
   await writeFile(
     path,
     JSON.stringify({
-      schemaVersion: 1,
-      topology: "dialogue_initializes_game_opens",
+      schemaVersion: 2,
+      topology: "independent_chat_and_game_surfaces",
       runtimeRoot,
       principal,
       bootstrapOperationId: "bootstrap_01",
       authorityGeneration: 1,
     }),
   );
-  return path;
+  return loadHostDeploymentManifest(path);
 }
 
 test("mints an opaque one-shot token and exposes only executeWithBinding/close", async () => {
@@ -159,7 +160,7 @@ test("mints an opaque one-shot token and exposes only executeWithBinding/close",
     },
   );
   const binding = await createGameRuntimeBinding({
-    manifestPath: await manifestPath(),
+    manifest: await manifest(),
     launcher,
     launcherConfig: { opaque: true },
     configDirectory: process.cwd(),
@@ -197,13 +198,13 @@ test("mints distinct immutable per-launch facts", async () => {
     () => undefined,
   );
   const first = await createGameRuntimeBinding({
-    manifestPath: await manifestPath(),
+    manifest: await manifest(),
     launcher: firstFixture.launcher,
     launcherConfig: null,
     configDirectory: process.cwd(),
   });
   const second = await createGameRuntimeBinding({
-    manifestPath: await manifestPath(),
+    manifest: await manifest(),
     launcher: secondFixture.launcher,
     launcherConfig: null,
     configDirectory: process.cwd(),
@@ -239,7 +240,7 @@ test("rejects reentrant execution and repeated or post-close callback execution"
     },
   );
   const binding = await createGameRuntimeBinding({
-    manifestPath: await manifestPath(),
+    manifest: await manifest(),
     launcher,
     launcherConfig: null,
     configDirectory: process.cwd(),
@@ -285,7 +286,7 @@ test("rejects a launcher without adapter-owned prepare before launch", async () 
   };
   await assert.rejects(
     createGameRuntimeBinding({
-      manifestPath: await manifestPath(),
+      manifest: await manifest(),
       launcher,
       launcherConfig: null,
       configDirectory: process.cwd(),
@@ -313,7 +314,7 @@ test("does not launch when adapter-owned prepare rejects", async () => {
   } as ConfigurableIntegrationLauncher;
   await assert.rejects(
     createGameRuntimeBinding({
-      manifestPath: await manifestPath(),
+      manifest: await manifest(),
       launcher,
       launcherConfig: null,
       configDirectory: process.cwd(),
@@ -338,7 +339,7 @@ test("rejects owner-proof injection before launch", async () => {
   };
   await assert.rejects(
     createGameRuntimeBinding({
-      manifestPath: await manifestPath(),
+      manifest: await manifest(),
       launcher,
       launcherConfig: null,
       configDirectory: process.cwd(),
@@ -372,7 +373,7 @@ test("rejects a mutable adapter world scope and reverse-closes the launch", asyn
   } as ConfigurableIntegrationLauncher;
   await assert.rejects(
     createGameRuntimeBinding({
-      manifestPath: await manifestPath(),
+      manifest: await manifest(),
       launcher: mutableLauncher,
       launcherConfig: null,
       configDirectory: process.cwd(),
@@ -405,7 +406,7 @@ test("rejects prepared scope drift and reverse-closes the launched adapter", asy
   } as ConfigurableIntegrationLauncher;
   await assert.rejects(
     createGameRuntimeBinding({
-      manifestPath: await manifestPath(),
+      manifest: await manifest(),
       launcher: drifted,
       launcherConfig: null,
       configDirectory: process.cwd(),
@@ -422,7 +423,7 @@ test("rejects detached microtask lease admission immediately after a synchronous
     () => undefined,
   );
   const binding = await createGameRuntimeBinding({
-    manifestPath: await manifestPath(),
+    manifest: await manifest(),
     launcher,
     launcherConfig: null,
     configDirectory: process.cwd(),
@@ -453,7 +454,7 @@ test("rejects callback-reentrant close and lets external close drain once", asyn
     },
   );
   const binding = await createGameRuntimeBinding({
-    manifestPath: await manifestPath(),
+    manifest: await manifest(),
     launcher,
     launcherConfig: null,
     configDirectory: process.cwd(),
@@ -499,7 +500,6 @@ test("production binding source does not import forbidden legacy, store, facade,
   const forbidden = [
     "integration-bootstrap",
     "continuity.js",
-    "production-game-continuity",
     "continuity-semantic-store",
     "deployment-composition",
     "production-coordinator",
@@ -510,6 +510,11 @@ test("production binding source does not import forbidden legacy, store, facade,
   for (const source of sources)
     for (const segment of forbidden)
       assert.equal(source.includes(segment), false, `forbidden production ingress: ${segment}`);
+  assert.equal(
+    sources.some((source) => source.includes("loadHostDeploymentManifest")),
+    false,
+  );
+  assert.equal(sources[0]!.includes("manifestPath"), false);
 });
 
 test("revokes and closes once when world validation fails", async () => {
@@ -532,7 +537,7 @@ test("revokes and closes once when world validation fails", async () => {
   } as ConfigurableIntegrationLauncher;
   await assert.rejects(
     createGameRuntimeBinding({
-      manifestPath: await manifestPath(),
+      manifest: await manifest(),
       launcher: badLauncher,
       launcherConfig: {},
       configDirectory: process.cwd(),

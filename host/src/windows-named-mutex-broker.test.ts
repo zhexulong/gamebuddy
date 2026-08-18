@@ -419,7 +419,11 @@ test("late stdin error after reap is consumed without revising successful close"
   broker.child = {
     exitCode: null,
     signalCode: null,
-    stdin: Object.assign(stdin, { end: () => { ends += 1; } }),
+    stdin: Object.assign(stdin, {
+      end: () => {
+        ends += 1;
+      },
+    }),
     kill: () => {
       kills += 1;
       return true;
@@ -494,11 +498,27 @@ test("stdin.end, kill, and reap-body exceptions normalize to one terminal broker
   const cases = [
     {
       name: "stdin.end",
-      child: { exitCode: null, signalCode: null, stdin: { end: () => { throw new Error("stdin_end_throw"); } }, kill: () => true },
+      child: {
+        exitCode: null,
+        signalCode: null,
+        stdin: {
+          end: () => {
+            throw new Error("stdin_end_throw");
+          },
+        },
+        kill: () => true,
+      },
     },
     {
       name: "kill",
-      child: { exitCode: null, signalCode: null, stdin: { end: () => undefined }, kill: () => { throw new Error("kill_throw"); } },
+      child: {
+        exitCode: null,
+        signalCode: null,
+        stdin: { end: () => undefined },
+        kill: () => {
+          throw new Error("kill_throw");
+        },
+      },
     },
     {
       name: "reap-body",
@@ -513,7 +533,9 @@ test("stdin.end, kill, and reap-body exceptions normalize to one terminal broker
     };
     broker.child = failure.child;
     if (failure.name === "reap-body") {
-      broker.waitForExit = async () => { throw new Error("wait_for_exit_throw"); };
+      broker.waitForExit = async () => {
+        throw new Error("wait_for_exit_throw");
+      };
     } else if (failure.name === "kill") {
       broker.waitForExit = async () => false;
     }

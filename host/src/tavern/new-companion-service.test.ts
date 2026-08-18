@@ -97,7 +97,12 @@ test("New Companion fails closed when runtime namespace is replaced by a symlink
     try {
       await symlink(outside, contextsPath, process.platform === "win32" ? "junction" : "dir");
     } catch (error) {
-      if (process.platform === "win32" && error instanceof Error && "code" in error && ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))) {
+      if (
+        process.platform === "win32" &&
+        error instanceof Error &&
+        "code" in error &&
+        ["EPERM", "EACCES", "ENOTSUP"].includes(String(error.code))
+      ) {
         t.skip("Windows junction fixture creation is unsupported");
         return;
       }

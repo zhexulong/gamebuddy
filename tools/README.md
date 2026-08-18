@@ -277,17 +277,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-stardew-attachment
 
 The runner does not use Computer Use, keyboard injection, or UI navigation. It only starts isolated SMAPI profiles, reads the signed session exchange, invokes the existing Companion App attachment flow, and asserts native game-thread/log evidence.
 
-## Verified native mechanics smoke
+## Native-local action runners
 
-When a formal AI-client is already at `readyToPlay`, `run-stardew-equip-tool-smoke.mjs` sends one `equip_tool` request through the production named-pipe bridge. The Mod must advertise `equip_tool` in the local player's `EnabledActions`; the script never enables capabilities itself.
+Farmhand action runners are selected only through `tools/stardew-action-gate-descriptors.mjs`. Each published action resolves to one `run-stardew-native-local-player-*-smoke.mjs` runner, which uses the shared `stardew-native-smoke-harness-v1.mjs` connection, receipt, fresh-reread, and teardown mechanics. The disposable fixture launcher selects the same runner identity:
 
 ```powershell
-node tools/run-stardew-equip-tool-smoke.mjs `
-  --client-config "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-profiles\\A-ai-client\\GameBuddy\\config.json" `
-  --slot 3
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-stardew-native-local-player-move-fixture.ps1 `
+  -GamePath "D:\\Steam\\steamapps\\common\\Stardew Valley" `
+  -ModsPath "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-fixture-mods" `
+  -FixtureRoot "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-fixtures" `
+  -SaveName "GameBuddyFixture_445094166" `
+  -Action equip_tool
 ```
 
-The result is accepted only when the Mod receipt is `state=succeeded`, `reasonCode=tool_selected`, and its evidence contains matching `before`, `expected`, and `after` tool identities. This is a single non-resource-changing capability proof, not complete mechanics or Agent acceptance.
+The runner never enables capabilities itself. A passed result requires its exact action-specific terminal evidence and fresh postcondition; it is not a release or whole-product acceptance claim.
 
 ## Windows TTS output gate
 

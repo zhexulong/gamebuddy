@@ -76,7 +76,7 @@ function validateReadiness(value, scenario, saveName, sessionToken, notBeforeUni
     value.fixtureScenario !== scenario ||
     value.saveName !== saveName ||
     (value.state !== "fixture_ready" && value.state !== "fixture_blocked") ||
-    !isReasonCode(value.reasonCode) ||
+    !isAllowedReadinessReason(value.state, value.reasonCode) ||
     !Number.isSafeInteger(value.publishedAtUnixMs) ||
     !isOpaque(value.sessionNonce) ||
     typeof value.signature !== "string"
@@ -96,8 +96,11 @@ function verifySignature(value, token) {
   return actual.length === wanted.length && timingSafeEqual(actual, wanted);
 }
 
-function isReasonCode(value) {
-  return typeof value === "string" && /^[a-z0-9_:-]{1,128}$/.test(value);
+function isAllowedReadinessReason(state, value) {
+  if (typeof value !== "string" || !/^[a-z0-9_:-]{1,128}$/.test(value)) return false;
+  // Preview has one live-locale denial outcome. Accept it only as a signed
+  // blocked report; it is never a generic ready reason or an open-ended error.
+  return value !== "fixture_live_locale_unavailable" || state === "fixture_blocked";
 }
 
 function isOpaque(value) {

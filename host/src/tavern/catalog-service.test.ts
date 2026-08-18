@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 import { canonicalJson, TavernArtifactStore } from "./artifact-store.js";
-import { createChatThreadStore } from "./chat-thread-store.js";
 import {
   createTavernCatalogService,
   materializeTavernStableContext,
   type TavernCatalogBindingStore,
   type TavernCatalogSelection,
 } from "./catalog-service.js";
-import { createWorldInfoManagementRepository } from "./world-info-management/world-info-management.js";
-import { createManagedWorldInfoBindingResolver } from "./world-info-binding/managed-world-info-binding.js";
+import { createChatThreadStore } from "./chat-thread-store.js";
 import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import { validateTavernArtifact } from "./types.js";
+import { createManagedWorldInfoBindingResolver } from "./world-info-binding/managed-world-info-binding.js";
+import { createWorldInfoManagementRepository } from "./world-info-management/world-info-management.js";
 
 const hash = "a".repeat(64);
 const companion = {
@@ -34,6 +34,8 @@ const catalog = {
       schemaVersion: 1 as const,
       revision: 1,
       scenarioId: "scenario",
+      name: "Quiet room",
+      description: "A quiet tavern scenario.",
       text: "Quiet.",
       provenance: "authored" as const,
       owner: "chat_override" as const,
@@ -138,6 +140,8 @@ test("stable materialization uses exact Persona, Scenario, complete DialogueExam
       schemaVersion: 1 as const,
       revision: 1,
       scenarioId: "scenario",
+      name: "Quiet tavern",
+      description: "A peaceful tavern scenario.",
       text: "Quiet tavern.",
       provenance: "authored" as const,
       owner: "chat_override" as const,

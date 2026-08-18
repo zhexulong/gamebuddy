@@ -19,9 +19,23 @@ test("M3 spawned forage protocol stays distinct from Debris pickup_item and perm
 
 test("M3 coordinator binds fresh selector target and range/capacity guards, then fails closed before dispatch", async () => {
   const [, coordinator] = await sources();
-  for (const required of ["InRange", "InventoryCapacityAvailable", "SpawnedForagePresent", "ExpectedRevision", "DeadlineMs", "forage_source_semantic_edge_unestablished"])
+  for (const required of [
+    "InRange",
+    "InventoryCapacityAvailable",
+    "SpawnedForagePresent",
+    "ExpectedRevision",
+    "DeadlineMs",
+    "forage_source_semantic_edge_unestablished",
+  ])
     assert.match(coordinator, new RegExp(required));
-  for (const forbidden of ["Game1.tryToCheckAt", "GameLocation.checkAction", "\.checkAction\\(", "reflection", "SaveGame", "NewDay"])
+  for (const forbidden of [
+    "Game1.tryToCheckAt",
+    "GameLocation.checkAction",
+    "\.checkAction\\(",
+    "reflection",
+    "SaveGame",
+    "NewDay",
+  ])
     assert.doesNotMatch(coordinator, new RegExp(forbidden));
   assert.match(coordinator, /phases, scope, targetId, false, 0/);
 });

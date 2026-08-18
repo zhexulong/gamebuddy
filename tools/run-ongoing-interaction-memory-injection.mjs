@@ -14,10 +14,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import {
-  loadSelectedHostProductionModule,
-  selectHostProductionArtifact,
-} from "./lib/host-production-module.mjs";
+import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
 const selectedProductionArtifact = await selectHostProductionArtifact();
 const [{ startDialogueWebServer }, { createProductionGameContinuity }] = await Promise.all([
   loadSelectedHostProductionModule(selectedProductionArtifact, "dialogue-web.js"),

@@ -106,10 +106,7 @@ test("CLI argument parsing and malformed JSON fail closed", async () => {
   const malformedPath = path.join(directory, "malformed.json");
   try {
     await writeFile(malformedPath, "{not-json", "utf8");
-    await assert.rejects(
-      () => checkCrabPotOutputFixtureContract(malformedPath),
-      /Contract is not valid JSON/,
-    );
+    await assert.rejects(() => checkCrabPotOutputFixtureContract(malformedPath), /Contract is not valid JSON/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
