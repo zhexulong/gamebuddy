@@ -76,8 +76,8 @@ export async function prepareFixtureProfile(options) {
     if (await exists(backupDir)) throw new Error(`fixture_backup_already_exists:${backupDir}`);
     const sidecar = await readProfileConfigs(context);
     assertFormalAttachmentShape(sidecar.host, sidecar.ai);
-    const host = configureHost(sidecar.host, options.scenario, targetSave);
-    const ai = configureAi(sidecar.ai, experimentalActions);
+    const host = configureHost(sidecar.host, options.scenario, targetSave, options.requireFixtureLiveLocale);
+    const ai = configureAi(sidecar.ai, experimentalActions, options.bridgeOverride);
 
     await mkdir(backupDir, { recursive: true });
     backupCreated = true;
@@ -90,6 +90,7 @@ export async function prepareFixtureProfile(options) {
       scenario: options.scenario,
       targetSave,
       experimentalActions,
+      requireFixtureLiveLocale: options.requireFixtureLiveLocale,
       backupDir,
     });
     return Object.freeze({
@@ -118,18 +119,38 @@ export async function verifyFixtureProfile(options) {
   return verifyFixtureProfileUnlocked({ ...resolveContext(options), ...options });
 }
 
+/** Apply one run's authenticated bridge binding after a fresh Host attachment
+ * manifest exists. The surrounding launcher owns the already-running Host and
+ * must call this before it starts the AI client. The backup/lock remain
+ * untouched so restore is still byte-for-byte. */
+export async function applyFixtureBridgeOverride(options) {
+  const context = resolveContext(options);
+  const backupName = assertBackupName(options.backupName);
+  await assertFixtureTransaction(context, backupName);
+  const ai = await readJson(context.aiSidecar);
+  assertFormalAttachmentShape(await readJson(context.hostSidecar), ai);
+  const configured = configureAi(ai, normalizeActionIds(options.experimentalActions ?? []), options.bridgeOverride);
+  await writeJson(context.aiSidecar, configured);
+  await writeJson(context.aiMod, configured);
+  return Object.freeze({
+    state: "fixture_bridge_override_applied",
+    effectiveConfigSources: Object.freeze([context.aiSidecar, context.aiMod]),
+  });
+}
+
 async function verifyFixtureProfileUnlocked(options) {
   const context = resolveContext(options);
   const expectedScenario = options.scenario;
   const expectedSave = options.targetSave ?? DEFAULT_FIXTURE_SAVE;
   const expectedExperimentalActions = normalizeActionIds(options.experimentalActions ?? []);
+  const requiredFixtureLiveLocale = normalizeFixtureLiveLocaleRequirement(options.requireFixtureLiveLocale);
   const hostSidecar = await readJson(context.hostSidecar);
   const aiSidecar = await readJson(context.aiSidecar);
   const hostMod = await readJson(context.hostMod);
   const aiMod = await readJson(context.aiMod);
 
-  assertHostFixtureConfig(hostSidecar, expectedScenario, expectedSave);
-  assertHostFixtureConfig(hostMod, expectedScenario, expectedSave);
+  assertHostFixtureConfig(hostSidecar, expectedScenario, expectedSave, requiredFixtureLiveLocale);
+  assertHostFixtureConfig(hostMod, expectedScenario, expectedSave, requiredFixtureLiveLocale);
   assertAiFixtureConfig(aiSidecar, expectedExperimentalActions);
   assertAiFixtureConfig(aiMod, expectedExperimentalActions);
   await assertSidecarBundlesAbsent(context);
@@ -496,26 +517,74 @@ function assertFixtureInputs(scenario, targetSave) {
     throw new Error("invalid_fixture_save");
 }
 
-function configureHost(value, scenario, targetSave) {
+function configureHost(value, scenario, targetSave, requireFixtureLiveLocale = undefined) {
   assertFixtureInputs(scenario, targetSave);
+  const requiredFixtureLiveLocale = normalizeFixtureLiveLocaleRequirement(requireFixtureLiveLocale);
   const host = structuredClone(value);
   host.HostAutomation.SaveName = targetSave;
   host.HostAutomation.FixtureScenario = scenario;
   host.HostAutomation.TimeoutSeconds = 300;
+  host.HostAutomation.RequireFixtureLiveLocale = requiredFixtureLiveLocale;
   host.ActionPolicyVersion = 0;
   host.ExperimentalActions = [];
   host.EnabledActions = null;
   return host;
 }
 
-function configureAi(value, experimentalActions) {
+function configureAi(value, experimentalActions, bridgeOverride = undefined) {
   const ai = structuredClone(value);
   ai.ActionPolicyVersion = 1;
   ai.DeniedActions = [];
   ai.DeniedActionFamilies = [];
   ai.ExperimentalActions = experimentalActions;
   delete ai.EnabledActions;
+  if (bridgeOverride !== undefined) {
+    const bridge = assertFixtureBridgeOverride(bridgeOverride);
+    ai.EnableLocalBridge = true;
+    ai.PipeName = bridge.pipeName;
+    ai.BridgeToken = bridge.bridgeToken;
+    ai.SaveId = bridge.saveId;
+    ai.WorldId = bridge.worldId;
+    ai.PlayerId = bridge.playerId;
+    ai.CompanionId = bridge.companionId;
+  }
   return ai;
+}
+
+/**
+ * Trusted launcher-only override for a transaction-owned AI config. It is
+ * deliberately narrow: a fresh formal manifest supplies scope and the launcher
+ * supplies the pipe credentials. Nothing here accepts policy, capability,
+ * model, or external credentials.
+ */
+function assertFixtureBridgeOverride(value) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(",") !== "bridgeToken,companionId,pipeName,playerId,saveId,worldId" ||
+    !isOpaque(value.pipeName) ||
+    !isToken(value.bridgeToken) ||
+    !isOpaque(value.saveId) ||
+    !isOpaque(value.worldId) ||
+    !isOpaque(value.playerId) ||
+    !isOpaque(value.companionId)
+  )
+    throw new Error("invalid_fixture_bridge_override");
+  return Object.freeze({ ...value });
+}
+
+function normalizeFixtureLiveLocaleRequirement(value) {
+  if (value === undefined || value === "") return "";
+  if (value !== "zh-CN" && value !== "en-US") throw new Error("invalid_fixture_live_locale_requirement");
+  return value;
+}
+
+function isOpaque(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+function isToken(value) {
+  return typeof value === "string" && value.length >= 16 && value.length <= 256 && /^[A-Za-z0-9_-]+$/.test(value);
 }
 
 async function backupConfigs(context, backupDir) {
@@ -575,12 +644,13 @@ async function deployModBundle(context, host, ai) {
   await writeJson(context.aiMod, ai);
 }
 
-function assertHostFixtureConfig(value, scenario, targetSave) {
+function assertHostFixtureConfig(value, scenario, targetSave, requiredFixtureLiveLocale = "") {
   if (
     value?.HostAutomation?.Enable !== true ||
     value.HostAutomation.SaveName !== targetSave ||
     value.HostAutomation.FixtureScenario !== scenario ||
     value.HostAutomation.TimeoutSeconds !== 300 ||
+    value.HostAutomation.RequireFixtureLiveLocale !== requiredFixtureLiveLocale ||
     value.ActionPolicyVersion !== 0 ||
     !Array.isArray(value.ExperimentalActions) ||
     value.ExperimentalActions.length !== 0 ||
