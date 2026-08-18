@@ -83,3 +83,76 @@ test("event stream never binds a listener for a resync subscription", () => {
   stream.publish(event());
   assert.equal(received, 0);
 });
+
+test("event stream rejects inputs that would override the stream-owned epoch, sequence, or apiVersion", () => {
+  const stream = createChatEventStream();
+  const base = { eventType: "draft.changed" as const, selectionGeneration: 1, payload: { revision: 1, present: true } };
+  for (const forged of [
+    { ...base, epoch: "A".repeat(43) },
+    { ...base, sequence: 999 },
+    { ...base, apiVersion: 1 },
+  ]) {
+    assert.throws(
+      () => stream.publish(forged as unknown as Parameters<typeof stream.publish>[0]),
+      /chat_event_stream_event_invalid/,
+    );
+  }
+  assert.deepEqual(stream.decodeCursor(stream.cursor), {
+    epoch: stream.epoch,
+    sequence: 0,
+  });
+  const first = stream.publish(event());
+  assert.equal(first.epoch, stream.epoch);
+  assert.equal(first.sequence, 1);
+});
+
+test("event stream publishes an epoch-owned restart resync marker that advances the cursor", () => {
+  const stream = createChatEventStream();
+  const marker = stream.resync("restart", 3);
+  assert.equal(marker.apiVersion, 1);
+  assert.equal(marker.epoch, stream.epoch);
+  assert.equal(marker.sequence, 1);
+  assert.equal(marker.eventType, "stream.resync_required");
+  assert.equal(marker.selectionGeneration, 3);
+  assert.deepEqual(marker.payload, { reason: "restart" });
+  assert.deepEqual(stream.decodeCursor(stream.cursor), {
+    epoch: stream.epoch,
+    sequence: 1,
+  });
+  for (const invalidGeneration of [0, 1.5, "2"]) {
+    assert.throws(
+      () => stream.resync("restart", invalidGeneration as unknown as number),
+      /chat_event_stream_generation_invalid/,
+    );
+  }
+  const next = stream.publish(event());
+  assert.equal(next.epoch, stream.epoch);
+  assert.equal(next.sequence, 2);
+});
+
+test("event stream delivers live publications to two concurrent readers and closing one leaves the other bound", () => {
+  const stream = createChatEventStream();
+  const left: number[] = [];
+  const right: number[] = [];
+  const first = stream.listen(
+    { epoch: stream.epoch, after: 0, generation: 1 },
+    (publication) => left.push(publication.sequence),
+  );
+  const second = stream.listen(
+    { epoch: stream.epoch, after: 0, generation: 1 },
+    (publication) => right.push(publication.sequence),
+  );
+  assert.equal(first.result.kind, "replay");
+  assert.equal(second.result.kind, "replay");
+  stream.publish(event());
+  stream.publish({ ...event(), payload: { revision: 2, present: false } });
+  assert.deepEqual(left, [1, 2]);
+  assert.deepEqual(right, [1, 2]);
+  first.close();
+  stream.publish({ ...event(), payload: { revision: 3, present: true } });
+  assert.deepEqual(left, [1, 2]);
+  assert.deepEqual(right, [1, 2, 3]);
+  second.close();
+  stream.publish({ ...event(), payload: { revision: 4, present: false } });
+  assert.deepEqual(right, [1, 2, 3]);
+});
