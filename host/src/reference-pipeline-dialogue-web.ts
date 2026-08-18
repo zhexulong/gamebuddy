@@ -224,7 +224,7 @@ export function createReferencePipelineDialogueWebRequestHandler(
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/events") {
         if (url.searchParams.has("unexpected") || (await hasRequestBody(request)))
           return sendProblem(response, 400, "invalid_request");
-        if (!isSameOrigin(request, origin) || authenticate(request, browser, origin) === null)
+        if (!isBrowserSameOriginRead(request, origin) || authenticate(request, browser, origin) === null)
           return sendProblem(response, 401, "unauthorized");
         if (eventStream === undefined) return sendProblem(response, 404, "profile_operation_unavailable");
         const apiVersion = url.searchParams.get("apiVersion");
@@ -233,7 +233,10 @@ export function createReferencePipelineDialogueWebRequestHandler(
         const queryCursor = url.searchParams.get("cursor");
         if (url.searchParams.getAll("cursor").length > 1)
           return sendProblem(response, 400, "invalid_request");
-        const headerCursor = singleHeader(request.headers["last-event-id"]);
+        const rawHeaderCursor = request.headers["last-event-id"];
+        if (Array.isArray(rawHeaderCursor))
+          return sendSseResync(response, eventStream, "ambiguous_cursor");
+        const headerCursor = singleHeader(rawHeaderCursor);
         const decodedQuery = queryCursor === null ? null : eventStream.decodeCursor(queryCursor);
         const decodedHeader = headerCursor === null ? null : eventStream.decodeCursor(headerCursor);
         if ((queryCursor !== null && decodedQuery === null) || (headerCursor !== null && decodedHeader === null)) {
@@ -260,6 +263,9 @@ export function createReferencePipelineDialogueWebRequestHandler(
           return sendSseResync(response, eventStream, connection.result.reason ?? "ambiguous_cursor", generation);
         }
         for (const event of connection.result.events) writeSseEvent(response, event, eventStream);
+        // A live subscription has no replay events; flush the response head so
+        // the browser observes an open 200 stream before the first publication.
+        response.flushHeaders();
         const close = () => {
           connection.close();
           activeStreams.delete(close);

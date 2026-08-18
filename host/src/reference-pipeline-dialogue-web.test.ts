@@ -65,36 +65,21 @@ const facade: ReferencePipelineStateFacade = Object.freeze({
 });
 async function openSse(
   url: string,
-  headers: Record<string, string>,
+  headers: Record<string, string | string[]>,
 ): Promise<Readonly<{
   response: IncomingMessage;
-  readChunk(): Promise<string>;
+  /** Buffered bytes up to the first complete `\n\n` SSE frame. */
+  readFrame(): Promise<string>;
+  /** Remaining buffered bytes once the response ends, or empty when already ended. */
+  readToEnd(): Promise<string>;
   close(): Promise<void>;
 }>> {
   return await new Promise((resolve, reject) => {
     const request = httpRequest(url, { agent: false, headers }, (response) => {
-      let readSettled = false;
-      let readResolve: (value: string) => void;
-      let readReject: (error: Error) => void;
-      const chunk = new Promise<string>((chunkResolve, chunkReject) => {
-        readResolve = chunkResolve;
-        readReject = chunkReject;
-      });
-      response.once("data", (value: Buffer) => {
-        if (!readSettled) {
-          readSettled = true;
-          readResolve(value.toString("utf8"));
-        }
-      });
-      response.once("error", (error) => {
-        if (!readSettled) {
-          readSettled = true;
-          readReject(error instanceof Error ? error : new Error("sse_read_failed"));
-        }
-      });
       resolve(Object.freeze({
         response,
-        readChunk: () => chunk,
+        readFrame: () => readSseUntil(response, "frame"),
+        readToEnd: () => readSseUntil(response, "end"),
         close: async () => {
           if (response.destroyed) return;
           await new Promise<void>((resolveClose) => {
@@ -108,6 +93,100 @@ async function openSse(
     request.once("error", (error) => reject(error));
     request.end();
   });
+}
+
+/**
+ * Bounded reader so SSE tests fail on a stalled connection instead of
+ * hanging: "frame" resolves at the first `\n\n` boundary, "end" resolves
+ * when the response completes. Both reject after SSE_STALL_TIMEOUT_MS.
+ */
+const SSE_STALL_TIMEOUT_MS = 2_000;
+function readSseUntil(
+  response: IncomingMessage,
+  until: "frame" | "end",
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let buffer = "";
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      response.off("data", onData);
+      response.off("end", onEnd);
+      response.off("error", onError);
+    };
+    const onData = (value: Buffer) => {
+      buffer += value.toString("utf8");
+      if (until === "frame" && buffer.includes("\n\n")) {
+        settled = true;
+        cleanup();
+        resolve(buffer);
+      }
+    };
+    const onEnd = () => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        resolve(buffer);
+      }
+    };
+    const onError = (error: Error) => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(error instanceof Error ? error : new Error("sse_read_failed"));
+      }
+    };
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(new Error(until === "frame" ? "sse_frame_timeout" : "sse_end_timeout"));
+      }
+    }, SSE_STALL_TIMEOUT_MS);
+    if (until === "end" && response.complete) {
+      settled = true;
+      cleanup();
+      resolve("");
+      return;
+    }
+    response.on("data", onData);
+    response.on("end", onEnd);
+    response.on("error", onError);
+  });
+}
+
+function parseSseFrame(frame: string): Readonly<{
+  id: string;
+  eventType: string;
+  event: {
+    apiVersion: number;
+    epoch: string;
+    sequence: number;
+    eventType: string;
+    selectionGeneration: number;
+    payload: unknown;
+  };
+}> {
+  const lines = frame.split("\n");
+  assert.equal(lines.length, 5);
+  assert.equal(lines[3], "");
+  assert.equal(lines[4], "");
+  const id = lines[0].slice("id: ".length);
+  assert.match(id, /^[A-Za-z0-9_-]{22,}$/);
+  const eventType = lines[1].slice("event: ".length);
+  assert.notEqual(eventType, lines[1]);
+  const data = lines[2];
+  assert.ok(data.startsWith("data: "));
+  const event = JSON.parse(data.slice("data: ".length)) as {
+    apiVersion: number;
+    epoch: string;
+    sequence: number;
+    eventType: string;
+    selectionGeneration: number;
+    payload: unknown;
+  };
+  assert.equal(event.apiVersion, 1);
+  return Object.freeze({ id, eventType, event });
 }
 
 const result: SubmitResultV1 = Object.freeze({
@@ -364,7 +443,7 @@ test("premature response close rejects the continuation and provider start remai
   assert.equal(recorder.closes, 1);
 });
 
-test("reference handler streams live events and replays an existing cursor", async () => {
+test("reference handler replays an existing SSE cursor", async () => {
   const stream = createChatEventStream();
   const recorder = { starts: 0, statuses: 0, closes: 0 };
   const server = await startReferencePipelineDialogueWebServer({
@@ -392,35 +471,81 @@ test("reference handler streams live events and replays an existing cursor", asy
       { Origin: server.origin, Cookie: cookie, Connection: "close" },
     );
     assert.equal(replay.response.statusCode, 200);
-    const replayChunk = await replay.readChunk();
-    assert.match(replayChunk, new RegExp(`event: draft\\.changed`));
-    assert.match(replayChunk, new RegExp(`data: .*${first.epoch}.*${first.sequence}`));
-    await replay.close();
-
-    const live = await openSse(
-      `${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${stream.encodeCursor({ epoch: stream.epoch, sequence: first.sequence })}`,
-      { Origin: server.origin, Cookie: cookie },
-    );
-    assert.equal(live.response.statusCode, 200);
-    const next = stream.publish({
-      eventType: "draft.changed",
-      selectionGeneration: 1,
-      payload: { revision: 6, present: false },
+    const parsed = parseSseFrame(await replay.readFrame());
+    assert.equal(parsed.eventType, "draft.changed");
+    assert.deepEqual(stream.decodeCursor(parsed.id), {
+      epoch: stream.epoch,
+      sequence: first.sequence,
     });
-    const liveChunk = await live.readChunk();
-    assert.match(liveChunk, new RegExp(`event: draft\\.changed`));
-    assert.match(liveChunk, new RegExp(`data: .*${next.epoch}.*${next.sequence}`));
-    await live.close();
+    assert.equal(parsed.event.epoch, first.epoch);
+    assert.equal(parsed.event.sequence, first.sequence);
+    await replay.close();
+  } finally {
+    server.closeAllConnections();
+    await server.close();
+  }
+});
 
-    const future = await openSse(
-      `${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${stream.encodeCursor({ epoch: stream.epoch, sequence: 999 })}`,
-      { Origin: server.origin, Cookie: cookie },
-    );
+test("reference handler streams a live SSE publication", async () => {
+  const stream = createChatEventStream();
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const server = await startReferencePipelineDialogueWebServer({ referenceStateFacade: facade, pipelineService: service(recorder), profile, eventStream: stream, bootstrapToken: token });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const live = await openSse(`${server.origin}/api/tavern/v1/events?apiVersion=1`, { Origin: server.origin, Cookie: cookie });
+    assert.equal(live.response.statusCode, 200);
+    const next = stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 6, present: false } });
+    const parsed = parseSseFrame(await live.readFrame());
+    assert.equal(parsed.eventType, "draft.changed");
+    assert.deepEqual(stream.decodeCursor(parsed.id), {
+      epoch: stream.epoch,
+      sequence: next.sequence,
+    });
+    assert.equal(parsed.event.epoch, next.epoch);
+    assert.equal(parsed.event.sequence, next.sequence);
+    await live.close();
+    await live.close();
+  } finally {
+    server.closeAllConnections();
+    await server.close();
+  }
+});
+
+test("reference handler closes an SSE resync response for an ambiguous cursor", async () => {
+  const stream = createChatEventStream();
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const server = await startReferencePipelineDialogueWebServer({ referenceStateFacade: facade, pipelineService: service(recorder), profile, eventStream: stream, bootstrapToken: token });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const future = await openSse(`${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${stream.encodeCursor({ epoch: stream.epoch, sequence: 999 })}`, { Origin: server.origin, Cookie: cookie });
     assert.equal(future.response.statusCode, 200);
-    const futureBody = await future.readChunk();
-    assert.match(futureBody, /event: stream\.resync_required/);
-    assert.match(futureBody, /"reason":"ambiguous_cursor"/);
+    const parsed = parseSseFrame(await future.readFrame());
+    assert.equal(parsed.eventType, "stream.resync_required");
+    assert.deepEqual(parsed.event.payload, { reason: "ambiguous_cursor" });
+    assert.equal(await future.readToEnd(), "");
     await future.close();
+  } finally {
+    server.closeAllConnections();
+    await server.close();
+  }
+});
+
+test("reference handler accepts origin-less same-origin SSE and rejects duplicate Last-Event-ID", async () => {
+  const stream = createChatEventStream();
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const server = await startReferencePipelineDialogueWebServer({ referenceStateFacade: facade, pipelineService: service(recorder), profile, eventStream: stream, bootstrapToken: token });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const duplicate = await openSse(`${server.origin}/api/tavern/v1/events?apiVersion=1`, { Cookie: cookie, "sec-fetch-site": "same-origin", "last-event-id": [stream.encodeCursor({ epoch: stream.epoch, sequence: 0 }), stream.encodeCursor({ epoch: stream.epoch, sequence: 0 })] });
+    assert.equal(duplicate.response.statusCode, 200);
+    const parsed = parseSseFrame(await duplicate.readFrame());
+    assert.equal(parsed.eventType, "stream.resync_required");
+    assert.deepEqual(parsed.event.payload, { reason: "ambiguous_cursor" });
+    assert.equal(await duplicate.readToEnd(), "");
+    await duplicate.close();
   } finally {
     server.closeAllConnections();
     await server.close();

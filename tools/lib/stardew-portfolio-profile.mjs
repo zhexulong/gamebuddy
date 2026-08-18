@@ -18,7 +18,10 @@ const CONTAMINATION_FILE_NAMES = new Map([
   ["stardew-fixture-readiness.json", "portfolio_contaminated_fixture_readiness"],
 ]);
 const DEFAULT_PROCESS_NAMES = Object.freeze(["StardewModdingAPI.exe", "Stardew Valley.exe", "StardewValley.exe"]);
-const PORTFOLIO_EXISTING_SAVE_ACTIONS = Object.freeze(["use_mine_ladder", "select_mine_elevator_floor"]);
+// Default-deny existing-save allowlist. `enter_mine` is the independent
+// floor-1 native entry; the mine route arms `enter_mine` together with
+// `use_mine_ladder` so each game-thread admission rechecks its own action.
+const PORTFOLIO_EXISTING_SAVE_ACTIONS = Object.freeze(["use_mine_ladder", "select_mine_elevator_floor", "enter_mine"]);
 const PORTFOLIO_INNER_CONFIG_KEYS = Object.freeze([
   "Enable",
   "Topology",

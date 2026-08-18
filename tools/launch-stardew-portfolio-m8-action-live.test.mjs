@@ -26,13 +26,14 @@ function child(pid = 1234) {
   return result;
 }
 
-function preparedConfig(action = "select_mine_elevator_floor") {
+function preparedConfig(actions = "select_mine_elevator_floor") {
+  const enabled = Array.isArray(actions) ? actions : [actions];
   return JSON.stringify({
     Portfolio: {
       Enable: true,
       Topology: "single_player_native_companion",
       EnableObserveBridge: true,
-      EnabledActions: [action],
+      EnabledActions: enabled,
       PipeName: environment.GAMEBUDDY_PORTFOLIO_PIPE_NAME,
       BridgeToken: environment.GAMEBUDDY_PORTFOLIO_BRIDGE_TOKEN,
       SaveId: environment.GAMEBUDDY_PORTFOLIO_SAVE_ID,
@@ -116,9 +117,48 @@ test("M8 live runner selects the ladder runner without an elevator checkpoint", 
   assert.equal(restored.length, 1);
 });
 
+test("M8 live runner maps enter_mine to the one-generation mine-route runner", async () => {
+  const observed = [];
+  const { options, spawned, restored } = setup({
+    env: {
+      ...environment,
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "enter_mine",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
+    readFile: async () => preparedConfig(["enter_mine", "use_mine_ladder"]),
+    runAction: async (runtimeEnv, actionRunnerPath) => {
+      observed.push({ generation: runtimeEnv.GAMEBUDDY_PORTFOLIO_BINDING_GENERATION, actionRunnerPath });
+      return { state: "M8_ACTION_TERMINAL", terminal: { state: "succeeded" } };
+    },
+  });
+  const result = await runM8TargetVersionLiveAction(options);
+  assert.equal(result.state, "M8_ACTION_LIVE_TERMINAL");
+  assert.equal(observed.length, 1);
+  assert.match(observed[0].actionRunnerPath, /run-stardew-portfolio-m8-mine-route-action\.mjs$/);
+  assert.equal(observed[0].generation, "1");
+  assert.equal(spawned.length, 2);
+  assert.match(spawned[0].program, /StardewModdingAPI\.exe$/);
+  assert.match(spawned[1].program, /taskkill$/);
+  assert.equal(restored.length, 1);
+});
+
+test("M8 live runner refuses a route profile without the exact ladder allowlist", async () => {
+  const { options, spawned, restored } = setup({
+    env: {
+      ...environment,
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "enter_mine",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
+    readFile: async () => preparedConfig("enter_mine"),
+  });
+  await assert.rejects(() => runM8TargetVersionLiveAction(options), /m8_live_prepared_config_invalid/);
+  assert.equal(spawned.length, 0);
+  assert.equal(restored.length, 0);
+});
+
 test("M8 live runner rejects an unknown action before process work", async () => {
   const { options, spawned, restored } = setup({
-    env: { ...environment, GAMEBUDDY_PORTFOLIO_M8_ACTION: "enter_mine" },
+    env: { ...environment, GAMEBUDDY_PORTFOLIO_M8_ACTION: "single_player_sleep_and_advance_day" },
   });
   await assert.rejects(() => runM8TargetVersionLiveAction(options), /m8_live_action_invalid/);
   assert.equal(spawned.length, 0);

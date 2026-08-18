@@ -524,6 +524,30 @@ test("Portfolio existing-save transaction only arms an explicitly observed nativ
   assert.equal((await inspectPortfolioProfile(context)).transactionLock.state, "absent");
 });
 
+test("Portfolio existing-save transaction arms the independent enter_mine route allowlist", async (t) => {
+  const context = await createContext(t);
+  await rm(context.profileRoot, { recursive: true, force: true });
+  const options = {
+    ...context,
+    backupName: "existing-save-route",
+    pipeName: "gamebuddy-stardew-portfolio-existing-save",
+    bridgeToken: "portfolio_existing_save_token_1234",
+    saveId: "445880081",
+    worldId: "8474196460473483841",
+    localPlayerId: "8474196460473483841",
+    companionId: "portfolio_companion",
+    observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
+    enabledActions: ["enter_mine", "use_mine_ladder"],
+  };
+  const prepared = await preparePortfolioExistingSaveProfile(options);
+  assert.equal(prepared.state, "existing_save_profile_prepared");
+  const written = JSON.parse(await readFile(join(context.profileRoot, "GameBuddy", "config.json"), "utf8"));
+  assert.deepEqual(written.Portfolio.EnabledActions, ["enter_mine", "use_mine_ladder"]);
+  const restored = await restorePortfolioProfile(options);
+  assert.equal(restored.state, "restored");
+  assert.equal((await inspectPortfolioProfile(context)).transactionLock.state, "absent");
+});
+
 test("Portfolio existing-save transaction rejects an observed slot without a decimal native ID suffix", async (t) => {
   const context = await createContext(t);
   await rm(context.profileRoot, { recursive: true, force: true });
@@ -558,7 +582,7 @@ test("Portfolio existing-save profile requires the closed non-sleep action allow
     companionId: "portfolio_companion",
     observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
   };
-  for (const enabledActions of [undefined, [], ["select_mine_elevator_floor", "select_mine_elevator_floor"], ["unknown"], ["sleep"], ["select_mine_elevator_floor", "sleep"], [42]]) {
+  for (const enabledActions of [undefined, [], ["select_mine_elevator_floor", "select_mine_elevator_floor"], ["unknown"], ["sleep"], ["select_mine_elevator_floor", "sleep"], ["enter_mine", "sleep"], [42]]) {
     const options = { ...base, ...(enabledActions === undefined ? {} : { enabledActions }) };
     await assert.rejects(
       () => preparePortfolioExistingSaveProfile(options),
