@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import {
+  applyFixtureBridgeOverride,
   inspectFixtureTransaction,
   prepareFixtureProfile,
   restoreFixtureProfile,
@@ -77,6 +78,7 @@ test("fixture profile transaction patches every effective config and restores by
     scenario: "native_pickup_item_v1",
     backupName: "example-fixture-backup",
     experimentalActions: ["npc_relationship"],
+    requireFixtureLiveLocale: "zh-CN",
   });
   assert.equal(prepared.state, "profile_preflight_passed");
   assert.deepEqual(prepared.aiExperimentalActions, ["npc_relationship"]);
@@ -85,6 +87,7 @@ test("fixture profile transaction patches every effective config and restores by
   const ai = JSON.parse(await readFile(aiSidecar, "utf8"));
   const aiEffective = JSON.parse(await readFile(aiMod, "utf8"));
   assert.equal(host.HostAutomation.FixtureScenario, "native_pickup_item_v1");
+  assert.equal(host.HostAutomation.RequireFixtureLiveLocale, "zh-CN");
   assert.deepEqual(hostEffective, host);
   assert.deepEqual(aiEffective, ai);
   assert.deepEqual(ai.ExperimentalActions, ["npc_relationship"]);
@@ -140,6 +143,7 @@ test("fixture profile transaction patches every effective config and restores by
     releaseDir,
     scenario: "native_pickup_item_v1",
     experimentalActions: ["npc_relationship"],
+    requireFixtureLiveLocale: "zh-CN",
   });
   assert.equal(verified.state, "profile_preflight_passed");
 
@@ -159,6 +163,69 @@ test("fixture profile transaction patches every effective config and restores by
   const idleInspection = await inspectFixtureTransaction({ root, profiles, processNames: [] });
   assert.equal(idleInspection.transactionState, "idle");
   assert.equal(idleInspection.mutationPerformed, false);
+});
+
+test("fixture bridge override accepts only lease-free minted-shaped scope and remains reversible", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-fixture-bridge-override-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const profiles = join(root, "stardew-profiles");
+  const releaseDir = join(root, "release");
+  await makeRelease(releaseDir);
+  const hostSidecar = join(profiles, "A-host", "GameBuddy", "config.json");
+  const aiSidecar = join(profiles, "A-ai-client", "GameBuddy", "config.json");
+  const hostFormal = {
+    Enable: true,
+    SessionDirectory: "C:/fixture/session",
+    SessionToken: FIXTURE_TEST_SESSION_TOKEN,
+    Endpoint: "127.0.0.1:24642",
+  };
+  const aiFormal = {
+    Enable: true,
+    ManifestPath: "C:/fixture/session/stardew-farmhand-manifest.json",
+    SessionToken: FIXTURE_TEST_SESSION_TOKEN,
+  };
+  await writeJson(hostSidecar, { ...hostBase, HostFarmhandProvisioning: hostFormal });
+  await writeJson(aiSidecar, { ...aiBase, FarmhandProvisioner: aiFormal });
+  const original = await readFile(aiSidecar);
+  await prepareFixtureProfile({
+    root,
+    profiles,
+    releaseDir,
+    processNames: [],
+    scenario: "native_pickup_item_v1",
+    backupName: "bridge-override-fixture-backup",
+  });
+  const bridgeOverride = {
+    pipeName: "gamebuddy_preview_01",
+    bridgeToken: "a".repeat(32),
+    saveId: "save_01",
+    worldId: "world_01",
+    playerId: "123456",
+    companionId: "companion_01",
+  };
+  await applyFixtureBridgeOverride({ root, profiles, backupName: "bridge-override-fixture-backup", bridgeOverride });
+  const applied = JSON.parse(await readFile(aiSidecar, "utf8"));
+  assert.equal(applied.BridgeToken, bridgeOverride.bridgeToken);
+  assert.equal("BridgeLeaseExpiresAtUnixMs" in applied, false);
+  assert.equal(applied.PlayerId, bridgeOverride.playerId);
+  await assert.rejects(
+    () =>
+      applyFixtureBridgeOverride({
+        root,
+        profiles,
+        backupName: "bridge-override-fixture-backup",
+        bridgeOverride: { ...bridgeOverride, BridgeLeaseExpiresAtUnixMs: Date.now() + 60_000 },
+      }),
+    /invalid_fixture_bridge_override/,
+  );
+  await restoreFixtureProfile({
+    root,
+    profiles,
+    releaseDir,
+    processNames: [],
+    backupName: "bridge-override-fixture-backup",
+  });
+  assert.deepEqual(await readFile(aiSidecar), original);
 });
 
 test("orphaned backup is never overwritten or restored by a failed new prepare", async (t) => {
