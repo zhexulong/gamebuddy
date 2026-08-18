@@ -19,6 +19,8 @@ Thumbs.db
 node_modules/
 dist/
 dist-portfolio/
+dist-test/
+dist-production/
 coverage/
 *.tsbuildinfo
 
@@ -48,6 +50,15 @@ tmp_*
 /tavern-gate-output.json
 *.stackdump
 /tools/.tmp-*
+
+# Local Stardew/Farmhand verification outputs
+**/preview-evidence.jsonl
+**/*-fixture-backup/
+**/.stardew-fixture-profile.lock/
+**/.stardew-native-local-player-fixture.lock/
+**/native-copy/
+**/immutable-generations/
+**/farmhand-companion-preview-*/
 
 # Playwright generated artifacts
 dialogue-web/test-results/
