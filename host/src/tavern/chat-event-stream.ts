@@ -97,6 +97,15 @@ export function createChatEventStream(windowSize = DEFAULT_WINDOW): ChatEventStr
     publish(input) {
       if (input === null || typeof input !== "object" || Array.isArray(input))
         throw new Error("chat_event_stream_event_invalid");
+      if (
+        Object.hasOwn(input, "apiVersion") ||
+        Object.hasOwn(input, "epoch") ||
+        Object.hasOwn(input, "sequence")
+      )
+        // Stream-owned fields are minted here and must never be overridable
+        // by caller input; a forged-but-schema-valid epoch/sequence would
+        // otherwise corrupt the monotonic cursor of every subscriber.
+        throw new Error("chat_event_stream_event_invalid");
       sequence += 1;
       const event = Object.freeze({ apiVersion: 1 as const, epoch, sequence, ...input });
       if (!TavernBrowserValidatorsV1.BrowserEventV1Schema.Check(event)) {
