@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "contractId": "portfolio_m2_crop_action_batch_v1",
+  "topology": "single_player_native_companion",
+  "sourceAudit": { "auditId": "portfolio_m2_crop_lifecycle_source_audit_v1", "projectionState": "blocked", "liveState": "not_performed" },
+  "scenario": {
+    "given": "A read-only target-version crop reader produces one fresh opaque tile and, after plant, the same fresh opaque crop identity; it observes no mutation or terminal M2 result.",
+    "when": "One of till, plant, water, harvest is a typed request whose game-thread coordinator consumes identical scope, observation revision, tile/crop identities, policy, deadline, idempotency, and cancellation authority.",
+    "then": "A future bridge-safe native edge must produce the same requestId/executionId terminal succeeded receipt and an exact fresh native tile/crop/inventory delta; this batch's coordinator instead produces source_realization_blocked with no mutation.",
+    "and": "The separately owned single_player_sleep_and_advance_day lifecycle must preserve the same tile/crop identity across native day/save/reopen before harvest; M2 neither invokes nor models that lifecycle."
+  },
+  "primitives": ["till", "plant", "water", "harvest"],
+  "producerConsumerVerifier": {
+    "given": "producer=read_only_crop_reader; consumer=typed_request; verifier=fresh_observation_regression",
+    "when": "producer=typed_ingress; consumer=PortfolioCropActionCoordinator; verifier=target_version_native_semantic_edge",
+    "then": "producer=native_semantic_edge; consumer=correlated_receipt_runner; verifier=fresh_crop_reader",
+    "and": "producer=separately_owned_sleep_day_native_lifecycle; consumer=same_tile_crop_identity_binding; verifier=post_reopen_crop_reader"
+  },
+  "blocker": {
+    "code": "source_realization_blocked",
+    "producer": "M2 source audit unverified target-version decompilation correlation and absent typed bridge ingress",
+    "consumer": "PortfolioCropActionCoordinator",
+    "verifier": "correlated blocked terminal receipt with NativeMutationObserved=false and FreshPostconditionObserved=false"
+  },
+  "forbidden": ["UI/input", "reflection", "generic dispatcher/native invoker", "raw save/day calls", "save edits", "synthetic/live evidence"],
+  "status": "blocked_no_projection_or_live_claim"
+}

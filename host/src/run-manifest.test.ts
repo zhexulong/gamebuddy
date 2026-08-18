@@ -21,7 +21,13 @@ const manifest: CompanionRunManifest = {
   identityProfile: { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) },
   worldBook: null,
   presentation: null,
-  featureFlags: { gameplaySubagent: false, magicContextMemoryDomain: "ongoing-interaction", magicContextMemoryEnabled: true, magicContextAutoPromoteEnabled: false, magicContextAutoSearchEnabled: false },
+  featureFlags: {
+    gameplaySubagent: false,
+    magicContextMemoryDomain: "ongoing-interaction",
+    magicContextMemoryEnabled: true,
+    magicContextAutoPromoteEnabled: false,
+    magicContextAutoSearchEnabled: false,
+  },
 };
 
 async function paths(): Promise<RuntimePaths> {
@@ -44,12 +50,20 @@ test("run manifest writes once atomically and verifies stable immutable configur
   assert.deepEqual(JSON.parse(await readFile(runtimePaths.runManifestPath, "utf8")), manifest);
 });
 
-test("run manifest fails closed for damage and configuration mismatch", async () => {
+test("run manifest surfaces malformed and corrupt persisted data as a public invalid-manifest error", async () => {
   const runtimePaths = await paths();
-  await writeFile(runtimePaths.runManifestPath, "{ truncated", "utf8");
-  await assert.rejects(() => writeOrVerifyRunManifest(runtimePaths, manifest), /invalid_run_manifest/);
+  for (const contents of ["{ truncated", '{"key":1,"key":2}']) {
+    await writeFile(runtimePaths.runManifestPath, contents, "utf8");
+    await assert.rejects(() => writeOrVerifyRunManifest(runtimePaths, manifest), { message: "invalid_run_manifest" });
+  }
+});
+
+test("run manifest preserves configuration mismatch semantics", async () => {
+  const runtimePaths = await paths();
   await writeFile(runtimePaths.runManifestPath, JSON.stringify(manifest), "utf8");
-  await assert.rejects(() => writeOrVerifyRunManifest(runtimePaths, { ...manifest, mountedTools: ["other_tool"] }), /run_manifest_mismatch/);
+  await assert.rejects(() => writeOrVerifyRunManifest(runtimePaths, { ...manifest, mountedTools: ["other_tool"] }), {
+    message: "run_manifest_mismatch",
+  });
 });
 
 test("run manifest serializes concurrent identical initialization without corrupting its immutable binding", async () => {

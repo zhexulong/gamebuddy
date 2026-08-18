@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>PortfolioTerminalDeliveryCore.Contract</AssemblyName>
+    <TargetFramework>net6.0</TargetFramework>
+    <GamePath Condition="'$(GamePath)' == '' and '$(GAMEBUDDY_STARDEW_GAME_PATH)' != ''">$(GAMEBUDDY_STARDEW_GAME_PATH)</GamePath>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GameBuddy.Stardew.csproj" />
+  </ItemGroup>
+
+  <!-- The production Mod is normally loaded by SMAPI, which supplies these
+       assemblies. This standalone contract executable runs under dotnet, so
+       it must carry the same target-version runtime dependencies explicitly. -->
+  <ItemGroup Condition="'$(GamePath)' != ''">
+    <Reference Include="StardewModdingAPI">
+      <HintPath>$(GamePath)\StardewModdingAPI.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Stardew Valley">
+      <HintPath>$(GamePath)\Stardew Valley.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MonoGame.Framework">
+      <HintPath>$(GamePath)\MonoGame.Framework.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(GamePath)\smapi-internal\Newtonsoft.Json.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="PortfolioTerminalDeliveryCoreTests.cs" />
+  </ItemGroup>
+</Project>

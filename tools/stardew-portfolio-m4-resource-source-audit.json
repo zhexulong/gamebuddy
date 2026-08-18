@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_focused_source_audit",
+  "auditId": "portfolio_m4_resource_delivery_source_audit_v1",
+  "traceFamilyId": "portfolio_m4_source_to_delivery",
+  "topology": "single_player_native_companion",
+  "charterAuthority": {
+    "modelId": "core_valley_milestone_portfolio_v1_command_path_charter",
+    "scopeDocument": "design/16_STARDEW_DEMO_SCOPE_AND_GOAL_CONTRACTS.md",
+    "scopeDocumentSha256": "e1d458afc36e6f4c81229cab3062f17786dbbab7701f7ca7e0a6f6ad3122193e"
+  },
+  "auditSource": {
+    "provenanceDocument": "design/13_STARDEW_NATIVE_PROVENANCE.md",
+    "localSnapshotContentManifestSha256": "8ef8fc0a6eae9ca9064a37538c0bc017b0c8e4341a02441ddca072515d4c636c",
+    "targetAssemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "disposition": "unverified_audit_aid_blocks_target_version_realization"
+  },
+  "anchors": [
+    {
+      "anchorId": "tool_location_ingress",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "startByte": 553230,
+      "endByte": 553297,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "01fa2069f9afaf190a4a62646a6abcce3a5d8a494b4c401e402d6e301d537da1",
+      "needle": "public virtual bool performToolAction(Tool t, int tileX, int tileY)",
+      "semanticRole": "native_tool_to_location_resource_router"
+    },
+    {
+      "anchorId": "resource_clump_dispatch",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "startByte": 553866,
+      "endByte": 553931,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "2c3f269572faaf5f712cd9791bbf509c27c6a5290db6053f22a7a65e3fa30307",
+      "needle": "resourceClumps[i].performToolAction(t, 1, resourceClumps[i].Tile)",
+      "semanticRole": "resource_clump_target_dispatch"
+    },
+    {
+      "anchorId": "resource_clump_tool_guard",
+      "relativePath": "StardewValley.TerrainFeatures/ResourceClump.cs",
+      "startByte": 2774,
+      "endByte": 2854,
+      "fileSha256": "9030893cd7a305ab5d3a2fef82df6bf36f2137c0d3e32299a7c025a3d5f7dda4",
+      "sliceSha256": "4b020b5bb9a730a5f55cf8445ff38ac9a3ffef5db551426d2a4f73737a96bd82",
+      "needle": "public override bool performToolAction(Tool t, int damage, Vector2 tileLocation)",
+      "semanticRole": "resource_source_tool_guard_owner"
+    },
+    {
+      "anchorId": "resource_clump_health_commit",
+      "relativePath": "StardewValley.TerrainFeatures/ResourceClump.cs",
+      "startByte": 5357,
+      "endByte": 5379,
+      "fileSha256": "9030893cd7a305ab5d3a2fef82df6bf36f2137c0d3e32299a7c025a3d5f7dda4",
+      "sliceSha256": "09c89e99c519d978f1003c0690c6187720eca2f2416d04088f78ff714ea86ab3",
+      "needle": "health.Value -= power;",
+      "semanticRole": "resource_source_health_commit"
+    },
+    {
+      "anchorId": "resource_clump_terminal_destroy",
+      "relativePath": "StardewValley.TerrainFeatures/ResourceClump.cs",
+      "startByte": 6275,
+      "endByte": 6347,
+      "fileSha256": "9030893cd7a305ab5d3a2fef82df6bf36f2137c0d3e32299a7c025a3d5f7dda4",
+      "sliceSha256": "7f5f64e1a1185f3a616a9b75fc662c04721d3fa0f7c0abd15a4a40aa2932596e",
+      "needle": "public bool destroy(Tool t, GameLocation location, Vector2 tileLocation)",
+      "semanticRole": "resource_source_terminal_destroy_owner"
+    },
+    {
+      "anchorId": "resource_clump_fresh_drop_creation",
+      "relativePath": "StardewValley.TerrainFeatures/ResourceClump.cs",
+      "startByte": 7687,
+      "endByte": 7746,
+      "fileSha256": "9030893cd7a305ab5d3a2fef82df6bf36f2137c0d3e32299a7c025a3d5f7dda4",
+      "sliceSha256": "754cb776a419cf6c22e48645b20774b88537ba938995e8802d580081ea567bcf",
+      "needle": "Game1.createMultipleItemDebris(hardwood, tileLocation * 64f",
+      "semanticRole": "resource_source_debris_creation"
+    },
+    {
+      "anchorId": "debris_factory",
+      "relativePath": "StardewValley/Game1.cs",
+      "startByte": 311062,
+      "endByte": 311227,
+      "fileSha256": "09056204adb00f259dee184271e1f0d4c4023b472f752ee66cb652333f6343a9",
+      "sliceSha256": "726577e481ff8018556ba41e0bc148bc5be237abc850774031d8f1477b16dad3",
+      "needle": "public static void createMultipleItemDebris(Item item, Vector2 pixelOrigin, int direction, GameLocation location = null, int groundLevel = -1, bool flopFish = false)",
+      "semanticRole": "native_debris_set_creation_owner"
+    },
+    {
+      "anchorId": "debris_delivery_capacity_commit",
+      "relativePath": "StardewValley/Debris.cs",
+      "startByte": 13260,
+      "endByte": 13322,
+      "fileSha256": "34fcdf5902b6135ed33c82089a10b1ba4a7e9299467741d5278954c182aacfcd",
+      "sliceSha256": "56ca31a2a8ab9e54568f13ae262d913e2c8d6d33b4a5e837e2f24068b292dbe4",
+      "needle": "public virtual bool collect(Farmer farmer, Chunk chunk = null)",
+      "semanticRole": "debris_inventory_delivery_and_capacity_owner"
+    },
+    {
+      "anchorId": "debris_update_collection_continuation",
+      "relativePath": "StardewValley/Debris.cs",
+      "startByte": 22943,
+      "endByte": 22976,
+      "fileSha256": "34fcdf5902b6135ed33c82089a10b1ba4a7e9299467741d5278954c182aacfcd",
+      "sliceSha256": "b1e738522e797c24bb372d3c3a3da7f9a137d0db6af7d7be9dd78d156a0a519d",
+      "needle": "if (collect(player.Value, chunk))",
+      "semanticRole": "debris_update_collection_continuation"
+    }
+  ],
+  "observedSemanticConstraints": [
+    "the normal tool-to-location router dispatches a matching ResourceClump before a source may be transformed",
+    "ResourceClump has an owned tool guard and a nonterminal health decrement before its terminal destroy path",
+    "terminal source destruction can create one_or_more native Debris via an item-debris factory",
+    "the resulting Debris lifecycle has a separate update-time collection continuation rather than an immediate transform-to-inventory equivalence",
+    "Debris collection has a native local-Farmer inventory-capacity branch before delivery succeeds",
+    "this local source snapshot does not authorize direct inventory mutation raw_ui_input typed_bridge_projection or a source-realization claim"
+  ],
+  "unresolvedQuestions": [
+    {
+      "questionId": "m4_target_version_decompilation_correlation",
+      "question": "The committed local source snapshot is an audit aid only; focused correlation to the actual target-version assembly/decompilation is required before Charter source realization may become realized.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m4_signed_resource_class_and_drop_content",
+      "question": "The Charter's source sort can cover more than ResourceClump. The signed DSM must select the exact resource-source equivalence class, tool prerequisites, and finite expected drop-content domain before any projection.",
+      "disposition": "requires_signed_dsm_selection"
+    },
+    {
+      "questionId": "m4_source_commit_and_drop_observation_partition",
+      "question": "The source health decrement, terminal destruction, Debris creation, and later automatic collection have distinct native lifecycles. Focused target-version review must decide the required semantic/protocol partition and fresh-drop identity observation model.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m4_typed_bridge_ingress_and_game_thread_contract",
+      "question": "The audit does not establish a safe typed Mod bridge ingress, game-thread revalidation, cancellation, replay, per-drop evidence, or capacity/stale response contract.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m4_target_version_live_transform_delivery_and_reopen",
+      "question": "No formal target-version typed live request, same-execution per-drop receipts, fresh postcondition, native save/reopen reread, or recovery evidence exists.",
+      "disposition": "blocks_projection"
+    }
+  ],
+  "conclusion": {
+    "sourceRealizationStatus": "unknown",
+    "projectionState": "blocked",
+    "liveState": "not_performed",
+    "nonClaim": "This is a focused audit-aid dossier. It does not mark the Charter trace realized, derive a capability, authorize a bridge route, close a CCM row, or establish a live result."
+  }
+}

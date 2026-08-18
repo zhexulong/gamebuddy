@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_m9_unprovisioned_fixture_contract",
+  "fixtureId": "portfolio_m9_special_order_unprovisioned_v1",
+  "topology": "single_player_native_companion",
+  "targetVersion": "1.6.15.24356",
+  "purpose": "Concrete unprovisioned example for a native single-player M9 Special Order run; it defines safe starting and selection boundaries without creating a save or terminal state.",
+  "startingState": {
+    "saveCreatedBy": "target_version_native_only",
+    "specialOrderState": "ordinary_nonterminal_or_absent",
+    "selectedOffer": "unselected",
+    "selectedGeneration": "unselected",
+    "selectedObjectives": "unselected",
+    "rewardEntitlement": "absent",
+    "terminalFacts": "absent"
+  },
+  "freshSelectionRequirements": {
+    "offer": "fresh_opaque_observation",
+    "generation": "fresh_opaque_observation_matching_offer",
+    "objectiveSet": "frozen_dsm_finite_set_then_fresh_native_observation",
+    "reward": "frozen_dsm_content_then_fresh_native_observation",
+    "revalidation": "game_thread_before_each_typed_transaction"
+  },
+  "antiFinalStepAssertions": [
+    "No offer acceptance, objective progress, completion, reward claim, receipt, postcondition, or final-result script occurs during fixture creation.",
+    "No static order key, generation seed, objective ID, or reward ID substitutes for an opaque unselected value.",
+    "The fixture contains no terminal completion state, participant entitlement, reward inventory delta, or claimed reward."
+  ],
+  "forbiddenBehavior": [
+    "terminal special order, preselected offer, objective, generation, reward, or claimed entitlement",
+    "save XML editing, direct team/order/objective/reward mutation, or synthetic receipt/postcondition creation",
+    "UI/input automation, board/menu callback invocation, raw dispatcher, or arbitrary native fallback"
+  ],
+  "nonClaims": [
+    "This unprovisioned fixture contract does not create a save, publish an action, or establish live evidence.",
+    "Fresh observation must supply opaque offer and generation values; no static IDs are substituted."
+  ],
+  "status": { "state": "fixture_needed", "liveClosure": "none" }
+}

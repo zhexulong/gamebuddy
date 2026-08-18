@@ -5,13 +5,25 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "test": "pnpm run test:ui && pnpm run test:artifact && pnpm run test:composed && pnpm run test:mounted-reference",
+    "test:ui": "playwright test tests/tavern-ui.spec.ts tests/tavern-visual.spec.ts",
+    "test:artifact": "node --test tests/manifest-boundary.test.mjs",
+    "test:composed": "node --test tests/p3-composed-browser.test.mjs",
+    "test:mounted-reference": "playwright test tests/reference-pipeline-browser.spec.ts --project=chromium --workers=1",
+    "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "5.1.2",
+    "lucide-react": "1.31.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "vite": "8.2.0"
+    "react-dom": "19.2.8"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.5",
+    "typescript": "5.9.3",
+    "vite": "8.2.1"
+  }
 }

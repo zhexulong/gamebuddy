@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <EnableHarmony>false</EnableHarmony>
+    <EnableHarmony>true</EnableHarmony>
     <EnableModDeploy>false</EnableModDeploy>
     <EnableModZip>false</EnableModZip>
   </PropertyGroup>
@@ -12,6 +12,11 @@
   <ItemGroup>
     <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" PrivateAssets="all" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+  </ItemGroup>
+
 
   <ItemGroup>
     <None Update="manifest.json">

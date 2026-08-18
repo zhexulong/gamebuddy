@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "descriptor": {
+    "name": "gamebuddy-node-sbom",
+    "version": "1"
+  },
+  "bom": {
+    "format": "CycloneDX",
+    "specVersion": "1.5",
+    "component": {
+      "type": "application",
+      "name": "gamebuddy",
+      "version": "0.0.0"
+    }
+  },
+  "inventory": {
+    "scope": "node-dependencies-only",
+    "acceptedClaimEcosystems": [
+      "node",
+      "node.js",
+      "nodejs",
+      "npm",
+      "pnpm"
+    ],
+    "input": {
+      "command": "pnpm licenses list --json",
+      "lockfile": "pnpm-lock.yaml"
+    }
+  }
+}

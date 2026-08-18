@@ -1,18 +1,16 @@
 import { access, cp, mkdir, rm } from "node:fs/promises";
-import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { promisify } from "node:util";
+import { resolveTypeScriptInvocation } from "./build-production-artifact.mjs";
+import { runBoundedChild } from "./test-supervisor.mjs";
 import { writeHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = resolve(hostRoot, "dist-test");
 await rm(outputRoot, { recursive: true, force: true });
-await promisify(execFile)(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["exec", "tsc", "--project", "tsconfig.test.json"], {
-  cwd: hostRoot,
-  // Node launches Windows .cmd wrappers through cmd.exe. The test-artifact
-  // lock and manifest verify the resulting bounded build lifecycle.
-  ...(process.platform === "win32" ? { shell: true } : {}),
+await runBoundedChild({
+  ...(await resolveTypeScriptInvocation({ project: "tsconfig.test.json" })),
+  stdio: "inherit",
 });
 for (const entry of ["main.js", "dialogue-web-main.js"]) {
   try { await access(resolve(outputRoot, entry)); throw new Error(`test_artifact_contains_production_entry:${entry}`); }

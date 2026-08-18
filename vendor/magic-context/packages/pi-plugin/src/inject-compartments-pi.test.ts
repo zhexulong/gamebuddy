@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import {
 	getMemoriesByProject,
 	insertMemory,
 } from "@magic-context/core/features/magic-context/memory/storage-memory";
+import { MemoryCommandFacade } from "@magic-context/core/features/magic-context/memory/command-facade";
 import {
 	getCompartments,
 	getOrCreateSessionMeta,
@@ -30,7 +32,45 @@ import {
 	renderM0Pi,
 	renderM1Pi,
 } from "./inject-compartments-pi";
+import { materializeGameBuddyStableContextSnapshot } from "./gamebuddy-stable-context-source";
 import { createTestDb, textOf, userMessage } from "./test-utils.test";
+
+const stableContextBinding = {
+	continuityId: "continuity-stable-source",
+	sessionId: "stable-source-session",
+	surface: "tavern" as const,
+};
+
+function canonicalStableJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonicalStableJson).join(",")}]`;
+	if (value !== null && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalStableJson(record[key])}`).join(",")}}`;
+	}
+	return JSON.stringify(value);
+}
+
+function stableContext(content: string, sources = true) {
+	const source = {
+		sourceId: "scenario",
+		kind: "scenario" as const,
+		revision: "1",
+		canonicalHash: createHash("sha256").update(content).digest("hex"),
+		content,
+		budgetTokens: 20,
+		totalOrderKey: "0001",
+		provenance: "test/tavern/scenario",
+	};
+	const body = {
+		version: "gamebuddy-stable-context-source/v1" as const,
+		...stableContextBinding,
+		sources: sources ? [source] : [],
+	};
+	return materializeGameBuddyStableContextSnapshot(
+		{ ...body, canonicalHash: createHash("sha256").update(canonicalStableJson(body)).digest("hex") },
+		stableContextBinding,
+	);
+}
 
 function user(text: string, timestamp = 1) {
 	return { role: "user" as const, content: text, timestamp };
@@ -62,6 +102,57 @@ function result(toolCallId: string) {
 		timestamp: 1,
 	};
 }
+
+describe("GameBuddy stable source m[0]/m[1] lifecycle", () => {
+	it("serializes replacement and tombstone once into m[1], then folds the final source only on HARD", () => {
+		const db = createTestDb();
+		try {
+			const initial = stableContext("initial premise");
+			const initialMessages = [user("first")];
+			injectM0M1Pi(
+				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: initial },
+				db,
+				initialMessages,
+			);
+			expect(textOf(initialMessages[0])).toContain("initial premise");
+
+			const replacement = stableContext("revised premise");
+			const replacementMessages = [user("second")];
+			injectM0M1Pi(
+				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: replacement },
+				db,
+				replacementMessages,
+				undefined,
+				true,
+			);
+			expect(textOf(replacementMessages[0])).toContain("initial premise");
+			expect(textOf(replacementMessages[1])).toContain("revised premise");
+			expect(textOf(replacementMessages[1])).toContain("old-canonical-hash");
+
+			const tombstoneMessages = [user("third")];
+			injectM0M1Pi(
+				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: stableContext("", false) },
+				db,
+				tombstoneMessages,
+				undefined,
+				true,
+			);
+			expect(textOf(tombstoneMessages[1])).toContain("tombstone");
+
+			const hardFoldMessages = [user("fourth")];
+			injectM0M1Pi(
+				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: stableContext("", false), hardSignals: { systemHash: "", modelKey: "new-model", cacheExpired: false, lastResponseTime: 0 } },
+				db,
+				hardFoldMessages,
+			);
+			expect(textOf(hardFoldMessages[0])).toContain("gamebuddy-stable-context");
+			expect(textOf(hardFoldMessages[0])).not.toContain("initial premise");
+			expect(textOf(hardFoldMessages[1])).not.toContain("gamebuddy-stable-context-updates");
+		} finally {
+			db.close();
+		}
+	});
+});
 
 describe("workspace memory sharing", () => {
 	it("filters foreign categories consistently in Pi m[0] and status counts", () => {
@@ -407,7 +498,7 @@ describe("injectM0M1Pi memory feature gate", () => {
 });
 
 describe("ongoing-interaction read-only injection", () => {
-	it("renders only same-project Semantic Memory and never unrelated or non-semantic rows", () => {
+	it("renders same-project Semantic Memory and Interaction Episode rows, never unrelated or coding rows", () => {
 		const db = createTestDb();
 		const ownCwd = mkdtempSync(join(tmpdir(), "pi-ongoing-own-"));
 		const otherCwd = mkdtempSync(join(tmpdir(), "pi-ongoing-other-"));
@@ -419,6 +510,12 @@ describe("ongoing-interaction read-only injection", () => {
 				category: "SEMANTIC_MEMORY",
 				content: "The player prefers options before consequential decisions.",
 				sourceType: "historian",
+			});
+			insertMemory(db, {
+				projectPath: own.projectIdentity,
+				category: "INTERACTION_EPISODE",
+				content: "The player and Companion agreed to revisit the named topic later.",
+				sourceType: "user",
 			});
 			insertMemory(db, {
 				projectPath: own.projectIdentity,
@@ -437,6 +534,7 @@ describe("ongoing-interaction read-only injection", () => {
 			injectM0M1Pi({ ...own, memoryEnabled: true, memoryDomain: "ongoing-interaction" }, db, ownMessages as never, undefined, true);
 			const ownM0 = textOf(ownMessages[0] as never);
 			expect(ownM0).toContain("The player prefers options before consequential decisions.");
+			expect(ownM0).toContain("The player and Companion agreed to revisit the named topic later.");
 			expect(ownM0).not.toContain("Coding taxonomy must not appear");
 			expect(ownM0).not.toContain("Other continuity memory must not cross");
 
@@ -1146,6 +1244,92 @@ describe("injectM0M1Pi", () => {
 		}
 	});
 
+	it("refreshes externally committed Memory before a provider invocation without folding m[0]", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-external-memory-"));
+		try {
+			const state = piState("ses-pi-m1-external-memory", cwd);
+			const first = [userMessage("hello", 10)];
+			injectM0M1Pi(state, db, first as never, undefined, true, true);
+			const initialM0 = textOf(first[0] as never);
+			insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Player-managed Memory arrives before this turn.",
+				sourceType: "user",
+			});
+			const provider = [userMessage("provider", 20)];
+			injectM0M1Pi(state, db, provider as never, undefined, false, true);
+			expect(textOf(provider[0] as never)).toBe(initialM0);
+			expect(textOf(provider[1] as never)).toContain("Player-managed Memory arrives before this turn.");
+			const deferred = [userMessage("defer", 30)];
+			injectM0M1Pi(state, db, deferred as never, undefined, false, false);
+			expect(textOf(deferred[1] as never)).toBe(textOf(provider[1] as never));
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("refreshes a player mutation across separate Chat and Game sessions on their next provider invocations", () => {
+		const db = createTestDb();
+		const sharedCwd = mkdtempSync(join(tmpdir(), "pi-cross-surface-memory-"));
+		const foreignCwd = mkdtempSync(join(tmpdir(), "pi-cross-surface-memory-foreign-"));
+		try {
+			const chat = {
+				...piState("chat-surface-session", sharedCwd),
+				memoryEnabled: true,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+			const game = {
+				...piState("game-surface-session", sharedCwd),
+				memoryEnabled: true,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+			const foreign = {
+				...piState("other-continuity-session", foreignCwd),
+				memoryEnabled: true,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+
+			// Establish independent surface caches before the player mutation.
+			const chatInitial = [userMessage("Chat initial", 10)];
+			const gameInitial = [userMessage("Game initial", 11)];
+			injectM0M1Pi(chat, db, chatInitial as never, undefined, true, true);
+			injectM0M1Pi(game, db, gameInitial as never, undefined, true, true);
+			const chatM0 = textOf(chatInitial[0] as never);
+			const gameM0 = textOf(gameInitial[0] as never);
+
+			// This is the same governed command facade used by the player API,
+			// not a direct storage insert. It queues the mutation cursor that each
+			// independently cached surface must consume before its provider call.
+			new MemoryCommandFacade(db).create({
+				actor: { principal: "player_direct", delegated: false },
+				projectPath: chat.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "The player prefers calm options before consequential decisions.",
+				sourceType: "user",
+			});
+
+			const gameNextInvocation = [userMessage("Game next", 20)];
+			injectM0M1Pi(game, db, gameNextInvocation as never, undefined, false, true);
+			expect(textOf(gameNextInvocation[0] as never)).toBe(gameM0);
+			expect(textOf(gameNextInvocation[1] as never)).toContain("The player prefers calm options");
+
+			const chatReturnInvocation = [userMessage("Chat return", 30)];
+			injectM0M1Pi(chat, db, chatReturnInvocation as never, undefined, false, true);
+			expect(textOf(chatReturnInvocation[0] as never)).toBe(chatM0);
+			expect(textOf(chatReturnInvocation[1] as never)).toContain("The player prefers calm options");
+
+			const foreignInvocation = [userMessage("Foreign continuity", 40)];
+			injectM0M1Pi(foreign, db, foreignInvocation as never, undefined, false, true);
+			expect(`${textOf(foreignInvocation[0] as never)}${textOf(foreignInvocation[1] as never)}`).not.toContain("The player prefers calm options");
+		} finally {
+			rmSync(sharedCwd, { recursive: true, force: true });
+			rmSync(foreignCwd, { recursive: true, force: true });
+			closeQuietly(db);
+		}
+	});
+
 	it("renders archive removals for m0-resident memory only on cache-busting pass and replays them on defer", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-archive-delta-"));
@@ -1244,6 +1428,230 @@ describe("injectM0M1Pi", () => {
 				"Updated but not resident.",
 			);
 		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("retains a direct player Memory selected for the exact next provider m1 render", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-exact-next-retention-"));
+		try {
+			const state = {
+				...piState("ses-pi-m1-exact-next-retention", cwd),
+				injectionBudgetTokens: 1,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+			injectM0M1Pi(state, db, [userMessage("baseline", 1)] as never, undefined, true);
+			const target = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Target direct player memory must survive the exact next delta cap.",
+				sourceType: "user",
+			});
+			const commit = queueMemoryMutation(db, {
+				projectPath: state.projectIdentity,
+				mutationType: "update",
+				targetMemoryId: target.id,
+			});
+			// A normal player create does not change projectMemoryEpoch. Exact-next
+			// may preserve that m[0] baseline, but must never suppress a genuine
+			// unrelated HARD epoch change.
+			setProjectState(db, state.projectIdentity, { projectMemoryEpoch: 0 });
+
+			const messages = [userMessage("next", 2)];
+			const result = injectM0M1Pi(
+				state,
+				db,
+				messages as never,
+				undefined,
+				true,
+				true,
+				target.id,
+			);
+			expect(textOf(messages[1] as never)).toContain(
+				"Target direct player memory must survive the exact next delta cap.",
+			);
+			expect(result.m1MemoryMutationProvenance).toContainEqual({
+				memoryId: target.id,
+				latestMutationId: commit.id,
+			});
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("reports selected mutation provenance only for m1 entries admitted by budget trimming", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-exact-selection-"));
+		try {
+			const state = {
+				...piState("ses-pi-m1-exact-selection", cwd),
+				injectionBudgetTokens: 200,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+			// Establish an empty m[0] baseline so both rows are m[1] candidates.
+			injectM0M1Pi(state, db, [userMessage("baseline", 1)] as never, undefined, true);
+			const selected = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Selected compact player memory.",
+				importance: 100,
+				sourceType: "user",
+			});
+			const omitted = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Omitted player memory because its text exceeds the m1 trim budget by a wide margin. ".repeat(20),
+				importance: 1,
+				sourceType: "user",
+			});
+			queueMemoryMutation(db, { projectPath: state.projectIdentity, mutationType: "update", targetMemoryId: selected.id });
+			const commit = queueMemoryMutation(db, { projectPath: state.projectIdentity, mutationType: "update", targetMemoryId: omitted.id });
+
+			const result = injectM0M1Pi(state, db, [userMessage("next", 2)] as never, undefined, true, true);
+			expect(result.m1MaxMemoryMutationId).toBeGreaterThanOrEqual(commit.id);
+			expect(result.m1MemoryMutationProvenance).toContainEqual({
+				memoryId: selected.id,
+				latestMutationId: expect.any(Number),
+			});
+			expect(result.m1MemoryMutationProvenance.some((entry) => entry.memoryId === omitted.id)).toBe(false);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("captures provenance for an emitted m0-resident memory update delta", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-m0-update-provenance-"));
+		try {
+			const state = piState("ses-pi-m1-m0-update-provenance", cwd);
+			const memory = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Baseline player memory.",
+				sourceType: "user",
+			});
+			injectM0M1Pi(state, db, [userMessage("baseline", 1)] as never, undefined, true);
+			const commit = queueMemoryMutation(db, {
+				projectPath: state.projectIdentity,
+				mutationType: "update",
+				targetMemoryId: memory.id,
+				newContent: "Updated player memory.",
+			});
+			const messages = [userMessage("next", 2)];
+			const result = injectM0M1Pi(state, db, messages as never, undefined, true, true);
+			expect(textOf(messages[1] as never)).toContain("Updated player memory.");
+			expect(result.m1MemoryMutationProvenance).toContainEqual({
+				memoryId: memory.id,
+				latestMutationId: commit.id,
+			});
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("does not credit an m0-resident memory when its update delta was not emitted", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-m0-unemitted-provenance-"));
+		try {
+			const state = piState("ses-pi-m1-m0-unemitted-provenance", cwd);
+			const memory = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Baseline resident memory.",
+				sourceType: "user",
+			});
+			injectM0M1Pi(state, db, [userMessage("baseline", 1)] as never, undefined, true);
+			queueMemoryMutation(db, {
+				projectPath: state.projectIdentity,
+				mutationType: "update",
+				targetMemoryId: memory.id,
+				newContent: "Deferred update not in replay.",
+			});
+			const messages = [userMessage("replay", 2)];
+			const result = injectM0M1Pi(state, db, messages as never);
+			expect(textOf(messages[1] as never)).not.toContain("Deferred update not in replay.");
+			expect(result.m1MemoryMutationProvenance.some((entry) => entry.memoryId === memory.id)).toBe(false);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("replaces soft-refresh provenance when the same injection drift-refolds m1", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-drift-refold-provenance-"));
+		try {
+			const state = {
+				...piState("ses-pi-m1-drift-refold-provenance", cwd),
+				historyBudgetTokens: 100,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+			injectM0M1Pi(state, db, [userMessage("baseline", 1)] as never, undefined, true);
+			const memory = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Drift-refold final baseline memory. ".repeat(20),
+				sourceType: "user",
+			});
+			const softRefreshMutation = queueMemoryMutation(db, {
+				projectPath: state.projectIdentity,
+				mutationType: "update",
+				targetMemoryId: memory.id,
+			});
+
+			const messages = [userMessage("refresh then refold", 2)];
+			const result = injectM0M1Pi(
+				state,
+				db,
+				messages as never,
+				undefined,
+				true,
+				true,
+			);
+
+			// The soft refresh emits this memory in m[1], but the pressure refold in
+			// this same call moves it into final m[0]. Returned m[1] evidence must
+			// describe those final bytes, not credit the replaced soft-refresh delta.
+			expect(result.m0Materialized).toBe(true);
+			expect(textOf(messages[0] as never)).toContain("Drift-refold final baseline memory.");
+			expect(textOf(messages[1] as never)).not.toContain("Drift-refold final baseline memory.");
+			expect(result.m1MemoryMutationProvenance).toEqual([]);
+			expect(result.m1MemoryMutationProvenance).not.toContainEqual({
+				memoryId: memory.id,
+				latestMutationId: softRefreshMutation.id,
+			});
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("retains frozen provenance when a mutation arrives after m1 render commit", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-frozen-provenance-"));
+		const originalExec = db.exec.bind(db);
+		try {
+			const state = { ...piState("ses-pi-m1-frozen-provenance", cwd), memoryDomain: "ongoing-interaction" as const };
+			injectM0M1Pi(state, db, [userMessage("baseline", 1)] as never, undefined, true);
+			const memory = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Frozen selected memory.",
+				sourceType: "user",
+			});
+			const renderedCommit = queueMemoryMutation(db, { projectPath: state.projectIdentity, mutationType: "update", targetMemoryId: memory.id });
+			let injectedConcurrentMutation = false;
+			db.exec = ((sql: string) => {
+				originalExec(sql);
+				if (sql === "COMMIT" && !injectedConcurrentMutation) {
+					injectedConcurrentMutation = true;
+					queueMemoryMutation(db, { projectPath: state.projectIdentity, mutationType: "update", targetMemoryId: memory.id });
+				}
+			}) as typeof db.exec;
+			const result = injectM0M1Pi(state, db, [userMessage("next", 2)] as never, undefined, true, true);
+			expect(injectedConcurrentMutation).toBe(true);
+			expect(result.m1MemoryMutationProvenance).toContainEqual({ memoryId: memory.id, latestMutationId: renderedCommit.id });
+		} finally {
+			db.exec = originalExec;
 			closeQuietly(db);
 		}
 	});

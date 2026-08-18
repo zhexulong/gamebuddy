@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "contractId": "portfolio_m4_break_rock_source_v1",
+  "action": "break_rock_source",
+  "topology": "single_player_native_companion",
+  "sourceAudit": {
+    "path": "tools/stardew-portfolio-m4-resource-source-audit.json",
+    "auditId": "portfolio_m4_resource_delivery_source_audit_v1",
+    "projectionState": "blocked",
+    "blocker": "m4_target_version_decompilation_correlation"
+  },
+  "scenario": {
+    "given": "fresh source identity, positive health, and eligible equipped Pickaxe",
+    "when": "typed request is game-thread guarded before any semantic edge",
+    "then": "source-transform receipt correlates exact fresh Debris IDs; pickup remains distinct"
+  },
+  "forbidden": [
+    "UI/input, reflection, generic dispatcher/native invoker, raw save/day calls, or save edits",
+    "Debris pickup, inventory delivery, collect_resource, chop_tree_source, or generic tool/resource actions",
+    "synthetic receipt, synthetic fresh-debris observation, or live-closure claim"
+  ],
+  "status": "dependency_blocked"
+}

@@ -24,7 +24,10 @@ test("content classification collapses localized copies and preserves logical op
 test("content classification distinguishes finite data tables from map and minigame assets", () => {
   assert.equal(contentAssetIsGameplayRelevant("Data/Machines.xnb"), true);
   assert.deepEqual(contentOperationDomain("Data/Machines.xnb"), { domainKind: "data_table", keyDomain: "Machines" });
-  assert.deepEqual(contentOperationDomain("Maps/AdventureGuild.xnb"), { domainKind: "map_asset", keyDomain: "AdventureGuild" });
+  assert.deepEqual(contentOperationDomain("Maps/AdventureGuild.xnb"), {
+    domainKind: "map_asset",
+    keyDomain: "AdventureGuild",
+  });
   assert.deepEqual(contentOperationDomain("Minigames/Darts.xnb"), { domainKind: "minigame_asset", keyDomain: "Darts" });
 });
 

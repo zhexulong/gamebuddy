@@ -42,7 +42,11 @@ export function classifyWorldDispatcherCall(dispatcherMethod, callExpression) {
   const base = classifyIngressReachableCall(callExpression);
   if (base) return base;
   if (dispatcherMethod === "pressActionButton") {
-    if (/^(?:getOldMouse[XY]|value\d?\.Normalize|value2\.Normalize|Vector2(?:\.Dot)?|currentObjectDialogue\.(?:Peek|Dequeue)|currentSpeaker\.(?:Name\.Equals|CurrentDialogue\.(?:Peek|Pop))|getCurrentDialogue|isOnFinalDialogue|objectData\.TryGetValue|questionChoices\.Clear|didPlayerJustRightClick|isFestival|IsPerformingMousePlacement|obj\.getMineArea|player\.(?:ActiveObject\.(?:HasContextTag|isPlaceable)|currentLocation\.isCharacterAtTile|faceDirection|FarmerSprite\.setCurrentSingleAnimation|GetGrabTile|hasBuff|isRidingHorse|team\.SpecialOrderRuleActive))$/.test(callExpression)) {
+    if (
+      /^(?:getOldMouse[XY]|value\d?\.Normalize|value2\.Normalize|Vector2(?:\.Dot)?|currentObjectDialogue\.(?:Peek|Dequeue)|currentSpeaker\.(?:Name\.Equals|CurrentDialogue\.(?:Peek|Pop))|getCurrentDialogue|isOnFinalDialogue|objectData\.TryGetValue|questionChoices\.Clear|didPlayerJustRightClick|isFestival|IsPerformingMousePlacement|obj\.getMineArea|player\.(?:ActiveObject\.(?:HasContextTag|isPlaceable)|currentLocation\.isCharacterAtTile|faceDirection|FarmerSprite\.setCurrentSingleAnimation|GetGrabTile|hasBuff|isRidingHorse|team\.SpecialOrderRuleActive))$/.test(
+        callExpression,
+      )
+    ) {
       return { classification: "supporting_path", reason: "dialogue_or_target_selection_helper" };
     }
     if (/^(?:HUDMessage|addHUDMessage|content\.LoadString)$/.test(callExpression)) {
@@ -50,10 +54,16 @@ export function classifyWorldDispatcherCall(dispatcherMethod, callExpression) {
     }
   }
   if (dispatcherMethod === "pressUseToolButton") {
-    if (/^(?:getOldMouse[XY]|GetPlacementGrabTile|CanPlayerStowItem|didPlayerJustLeftClick|IsPerformingMousePlacement|CurrentEvent\.canPlayerUseTool|currentLocation\.(?:Objects\.TryGetValue|terrainFeatures\.TryGetValue|doesPositionCollideWithCharacter)|player\.(?:GetToolLocation|getGeneralDirectionTowards|FarmerSprite\.(?:IsPlayingBasicAnimation|StopAnimation)|isRidingHorse|IsSitting)|value\.(?:getHealth|IsTwig)|ItemRegistry\.Create|Location|Microsoft\.Xna\.Framework\.Rectangle|Vector2)$/.test(callExpression)) {
+    if (
+      /^(?:getOldMouse[XY]|GetPlacementGrabTile|CanPlayerStowItem|didPlayerJustLeftClick|IsPerformingMousePlacement|CurrentEvent\.canPlayerUseTool|currentLocation\.(?:Objects\.TryGetValue|terrainFeatures\.TryGetValue|doesPositionCollideWithCharacter)|player\.(?:GetToolLocation|getGeneralDirectionTowards|FarmerSprite\.(?:IsPlayingBasicAnimation|StopAnimation)|isRidingHorse|IsSitting)|value\.(?:getHealth|IsTwig)|ItemRegistry\.Create|Location|Microsoft\.Xna\.Framework\.Rectangle|Vector2)$/.test(
+        callExpression,
+      )
+    ) {
       return { classification: "supporting_path", reason: "target_resolution_or_native_tool_setup" };
     }
-    if (/^(?:random\.Next|TemporaryAnimatedSprite|uiOverlayTempSprites\.Add|updateCursorTileHint)$/.test(callExpression)) {
+    if (
+      /^(?:random\.Next|TemporaryAnimatedSprite|uiOverlayTempSprites\.Add|updateCursorTileHint)$/.test(callExpression)
+    ) {
       return { classification: "non_gameplay_path", reason: "presentation_or_cursor_feedback_helper" };
     }
   }

@@ -3,7 +3,13 @@ import { type SpeechJob, type TtsProvider } from "./gateway.js";
 export const MIMO_TTS_ENDPOINT = "https://api.xiaomimimo.com/v1/chat/completions";
 export const MIMO_TTS_MODEL = "mimo-v2.5-tts";
 
-export type MimoTtsOptions = Readonly<{ apiKey: string; voiceByProfile: Readonly<Record<string, string>>; endpoint?: string; styleByProfile?: Readonly<Record<string, string>> }>;
+export type MimoTtsOptions = Readonly<{
+  apiKey: string;
+  voiceByProfile: Readonly<Record<string, string>>;
+  endpoint?: string;
+  styleByProfile?: Readonly<Record<string, string>>;
+  ready?: boolean;
+}>;
 
 /**
  * Explicit MiMo V2.5 streaming adapter. The key stays in caller-owned local
@@ -13,16 +19,53 @@ export type MimoTtsOptions = Readonly<{ apiKey: string; voiceByProfile: Readonly
 export class MimoTtsProvider implements TtsProvider {
   public readonly providerId = "xiaomi-mimo";
   public readonly modelRevision = MIMO_TTS_MODEL;
+  // Credential length and an operator-supplied voice name are not a provider
+  // availability proof. The caller may set this only after a bounded,
+  // credential-safe provider/profile probe; mixer readiness is independently
+  // required by VoiceGatewayCore.
+  public readonly ready: boolean;
+  public readonly capabilities = Object.freeze({ perUtteranceDirection: true });
   readonly #endpoint: string;
   public constructor(private readonly options: MimoTtsOptions) {
     if (options.apiKey.length < 16) throw new Error("mimo_api_key_not_configured");
     this.#endpoint = options.endpoint ?? MIMO_TTS_ENDPOINT;
+    this.ready = options.ready === true;
+  }
+
+  public supportsVoiceProfile(voiceProfile: string): boolean {
+    return (
+      typeof this.options.voiceByProfile[voiceProfile] === "string" &&
+      this.options.voiceByProfile[voiceProfile]!.length > 0
+    );
+  }
+
+  /** Bounded non-user probe. It does not log/provider-store a player line or raw PCM. */
+  public async probe(voiceProfile: string, signal: AbortSignal): Promise<void> {
+    if (!this.supportsVoiceProfile(voiceProfile)) throw new Error("mimo_voice_profile_not_configured");
+    const job: SpeechJob = {
+      jobId: "voice_probe",
+      sessionId: "voice_probe",
+      epoch: 0,
+      sourceEventId: "voice_probe",
+      text: "。",
+      locale: "zh-CN",
+      voiceProfile,
+      expiresAtMs: Date.now() + 10_000,
+      interruptible: true,
+    };
+    let bytes = 0;
+    for await (const chunk of this.synthesize(job, signal)) {
+      bytes += chunk.byteLength;
+      if (bytes > 0) return;
+    }
+    throw new Error("mimo_no_audio");
   }
 
   public async *synthesize(job: SpeechJob, signal: AbortSignal): AsyncIterable<Uint8Array> {
     const voice = this.options.voiceByProfile[job.voiceProfile];
     if (voice === undefined) throw new Error("mimo_voice_profile_not_configured");
-    const style = this.options.styleByProfile?.[job.voiceProfile];
+    const baseStyle = this.options.styleByProfile?.[job.voiceProfile];
+    const style = [baseStyle, job.direction].filter((value): value is string => value !== undefined).join("\n");
     const response = await fetch(this.#endpoint, {
       method: "POST",
       headers: { "api-key": this.options.apiKey, "content-type": "application/json", accept: "text/event-stream" },
@@ -30,24 +73,40 @@ export class MimoTtsProvider implements TtsProvider {
       body: JSON.stringify({
         model: MIMO_TTS_MODEL,
         messages: [
-          ...(style === undefined ? [] : [{ role: "user", content: style }]),
+          ...(style.length === 0 ? [] : [{ role: "user", content: style }]),
           { role: "assistant", content: job.text },
         ],
-        audio: { format: "pcm16", voice }, stream: true,
+        audio: { format: "pcm16", voice },
+        stream: true,
       }),
     });
     if (!response.ok || response.body === null) throw new Error(`mimo_http_${response.status}`);
-    const decoder = new TextDecoder(); let buffered = ""; let completed = false; let sawAudio = false;
+    const decoder = new TextDecoder();
+    let buffered = "";
+    let completed = false;
+    let sawAudio = false;
     for await (const chunk of response.body) {
       if (signal.aborted) return;
       buffered += decoder.decode(chunk, { stream: true });
       for (;;) {
-        const newline = buffered.indexOf("\n"); if (newline < 0) break;
-        const line = buffered.slice(0, newline).trim(); buffered = buffered.slice(newline + 1);
+        const newline = buffered.indexOf("\n");
+        if (newline < 0) break;
+        const line = buffered.slice(0, newline).trim();
+        buffered = buffered.slice(newline + 1);
         if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim(); if (data === "[DONE]") { completed = true; break; }
-        const payload = parseSseJson(data); const base64 = audioData(payload);
-        if (base64 !== null) { const pcm16 = Uint8Array.from(Buffer.from(base64, "base64")); if (pcm16.byteLength === 0) throw new Error("mimo_empty_audio_chunk"); sawAudio = true; yield pcm16; }
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") {
+          completed = true;
+          break;
+        }
+        const payload = parseSseJson(data);
+        const base64 = audioData(payload);
+        if (base64 !== null) {
+          const pcm16 = Uint8Array.from(Buffer.from(base64, "base64"));
+          if (pcm16.byteLength === 0) throw new Error("mimo_empty_audio_chunk");
+          sawAudio = true;
+          yield pcm16;
+        }
         if (providerError(payload)) throw new Error("mimo_provider_error");
       }
       if (completed) break;
@@ -57,14 +116,26 @@ export class MimoTtsProvider implements TtsProvider {
   }
 }
 
-function parseSseJson(data: string): unknown { try { return JSON.parse(data) as unknown; } catch { throw new Error("mimo_invalid_sse_json"); } }
+function parseSseJson(data: string): unknown {
+  try {
+    return JSON.parse(data) as unknown;
+  } catch {
+    throw new Error("mimo_invalid_sse_json");
+  }
+}
 function providerError(value: unknown): boolean {
-  return typeof value === "object" && value !== null && "error" in value && (value as { error?: unknown }).error !== undefined;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "error" in value &&
+    (value as { error?: unknown }).error !== undefined
+  );
 }
 function audioData(value: unknown): string | null {
   if (typeof value !== "object" || value === null) return null;
   const choices = (value as { choices?: unknown }).choices;
-  if (!Array.isArray(choices) || choices.length === 0 || typeof choices[0] !== "object" || choices[0] === null) return null;
+  if (!Array.isArray(choices) || choices.length === 0 || typeof choices[0] !== "object" || choices[0] === null)
+    return null;
   const delta = (choices[0] as { delta?: unknown }).delta;
   if (typeof delta !== "object" || delta === null) return null;
   const audio = (delta as { audio?: unknown }).audio;

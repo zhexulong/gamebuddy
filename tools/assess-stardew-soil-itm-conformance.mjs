@@ -20,5 +20,9 @@ const projections = [
 const model = JSON.parse(await readFile(modelPath, "utf8"));
 const sourceReport = JSON.parse(await readFile(sourceReportPath, "utf8"));
 const liveCases = liveCasesPath ? JSON.parse(await readFile(liveCasesPath, "utf8")) : [];
-const environment = environmentPath ? JSON.parse(await readFile(environmentPath, "utf8")) : { state: "blocked_or_not_supplied" };
-process.stdout.write(`${JSON.stringify(assessSoilItmConformance({ model, projections, liveCases, sourceReport, environment }), null, 2)}\n`);
+const environment = environmentPath
+  ? JSON.parse(await readFile(environmentPath, "utf8"))
+  : { state: "blocked_or_not_supplied" };
+process.stdout.write(
+  `${JSON.stringify(assessSoilItmConformance({ model, projections, liveCases, sourceReport, environment }), null, 2)}\n`,
+);

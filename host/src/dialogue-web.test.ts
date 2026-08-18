@@ -1,70 +1,377 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
+import { request as httpRequest } from "node:http";
+import { composeTavernProfile } from "./tavern/browser-contract/index.js";
 import { startDialogueWebServer } from "./dialogue-web.js";
-import { validateWorldBook, worldBookMetadata } from "./worldbook.js";
+import type {
+  ChatPipelineService,
+  SubmitResultV1,
+} from "./tavern/chat-pipeline-service.js";
+import type {
+  ReferencePipelineState,
+  ReferencePipelineStateFacade,
+} from "./tavern/reference-pipeline-state.js";
+import type {
+  P3ExactChatState,
+  P3ExactChatStateFacade,
+} from "./tavern/p3-exact-chat-state.js";
 
-const identity = { playerId: "player_dialogue", companionId: "companion_dialogue", continuityId: "continuity_dialogue" } as const;
-
-test("Dialogue web runtime is loopback-only and mounts only explicit chat presentation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-dialogue-web-"));
-  const server = await startDialogueWebServer({ identity, runtimeRoot: root });
-  try {
-    assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/#boot=[A-Za-z0-9_-]{43}$/);
-    assert.deepEqual(server.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "companion_text", "todowrite"]);
-    assert.equal(server.runtime.session.agent.state.tools.some((tool) => tool.name.startsWith("stardew_") || tool.name === "delegate_game_task"), false);
-  } finally { await server.close(); }
+const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const handle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const profile = composeTavernProfile({
+  profileId: "gamebuddy.chat-core.p3",
+  releaseTier: "chat_core",
+  routeIds: ["bootstrap", "state.read", "draft.read"],
+  operationIds: [],
+  navigationItemIds: ["chat"],
 });
 
-test("Dialogue web binds an audited WorldBook without exposing its body through bootstrap", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-dialogue-web-"));
-  const book = validateWorldBook({ schemaVersion: 1, worldBookId: "book_01", revision: 1, alwaysOnPremise: "premise", entries: [{ entryId: "entry_01", title: "Secret title", content: "never in bootstrap", scope: "companion", provenance: "authored", tokenBudget: "small" }] });
-  const server = await startDialogueWebServer({ identity, runtimeRoot: root, worldBook: { book, metadata: worldBookMetadata(book) } });
-  try {
-    assert.deepEqual(server.runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "companion_text", "companion_worldbook_catalog", "companion_worldbook_query", "todowrite"]);
-    const base = server.url.slice(0, server.url.indexOf("/#"));
-    const token = new URL(server.url).hash.slice("#boot=".length);
-    const bootstrap = await fetch(`${base}/bootstrap`, { method: "POST", headers: { Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
-    const body = await bootstrap.text();
-    assert.match(body, /book_01/); assert.doesNotMatch(body, /Secret title|never in bootstrap/);
-  } finally { await server.close(); }
-});
+function state(revision = 2, text: string | null = "draft"): P3ExactChatState {
+  return Object.freeze({
+    selection: Object.freeze({
+      chatHandle: handle,
+      generation: 1,
+      stateRevision: handle,
+    }),
+    companionDisplayName: "Companion",
+    title: "Exact Chat",
+    transcript: Object.freeze([
+      Object.freeze({
+        handle,
+        role: "player" as const,
+        text: "Hello",
+        locale: "und" as const,
+        order: 0,
+        revision: 1,
+      }),
+    ]),
+    draft: Object.freeze({ revision, text }),
+  });
+}
+function fakeFacade(
+  read: () => Promise<P3ExactChatState>,
+): P3ExactChatStateFacade {
+  return Object.freeze({ read });
+}
+function bootstrapUrl(server: { origin: string }): string {
+  return `${server.origin}/api/tavern/v1/bootstrap`;
+}
+function rawRequest(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body?: string,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(url, { method, headers }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("end", () =>
+        resolve({
+          status: response.statusCode!,
+          body: Buffer.concat(chunks).toString("utf8"),
+        }),
+      );
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
+}
 
-test("Dialogue web resumes the same explicit chat surface with only player-visible transcript entries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-dialogue-web-"));
-  const first = await startDialogueWebServer({ identity, runtimeRoot: root });
-  const surfaceSessionId = first.surfaceSession.sessionId;
+test("P3 mounts only profile-authorized v1 bootstrap, state, and draft reads", async () => {
+  let reads = 0;
+  const server = await startDialogueWebServer({
+    p3Facade: fakeFacade(async () => state(++reads)),
+    profile,
+    bootstrapToken: token,
+  });
   try {
-    const base = first.url.slice(0, first.url.indexOf("/#"));
-    const token = new URL(first.url).hash.slice("#boot=".length);
-    const response = await fetch(`${base}/bootstrap`, { method: "POST", headers: { Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
-    const { csrf } = await response.json() as { csrf: string };
-    const cookie = response.headers.get("set-cookie")!.split(";")[0]!;
-    await fetch(`${base}/message`, { method: "POST", headers: { Origin: base, Cookie: cookie, "X-GameBuddy-CSRF": csrf, "Content-Type": "application/json" }, body: JSON.stringify({ clientMessageId: "visible_01", text: "visible player text", locale: "en-US" }) });
-  } finally { await first.close(); }
-  const resumed = await startDialogueWebServer({ identity, runtimeRoot: root, surfaceSessionId });
-  try {
-    const base = resumed.url.slice(0, resumed.url.indexOf("/#"));
-    const token = new URL(resumed.url).hash.slice("#boot=".length);
-    const response = await fetch(`${base}/bootstrap`, { method: "POST", headers: { Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
-    const body = await response.text();
-    assert.match(body, /visible player text/); assert.doesNotMatch(body, /tool_result|thinking|receipt/);
-  } finally { await resumed.close(); }
-});
-
-test("Dialogue web bootstrap is one-time and requires its loopback capability", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-dialogue-web-"));
-  const server = await startDialogueWebServer({ identity, runtimeRoot: root });
-  try {
-    const base = server.url.slice(0, server.url.indexOf("/#"));
-    const token = new URL(server.url).hash.slice("#boot=".length);
-    const bootstrap = await fetch(`${base}/bootstrap`, { method: "POST", headers: { Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+    const origin = server.origin;
+    const bootstrap = await fetch(bootstrapUrl(server), {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
     assert.equal(bootstrap.status, 200);
-    const replay = await fetch(`${base}/bootstrap`, { method: "POST", headers: { Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+    const snapshot = (await bootstrap.json()) as {
+      operations: unknown[];
+      navigation: unknown[];
+      eventStream: unknown;
+      memory: unknown;
+      chat: { draft: { revision: number; present: boolean } };
+    };
+    assert.deepEqual(snapshot.operations, []);
+    assert.deepEqual(snapshot.navigation, [
+      {
+        itemId: "chat",
+        labelKey: "tavern.nav.chat",
+        availability: "available",
+      },
+    ]);
+    assert.equal(snapshot.eventStream, null);
+    assert.deepEqual(snapshot.memory, {
+      readAvailable: false,
+      mutationAvailable: false,
+      projectionRevision: null,
+    });
+    assert.deepEqual(snapshot.chat.draft, { revision: 1, present: true });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const reread = await fetch(`${origin}/api/tavern/v1/state`, {
+      headers: { Origin: origin, Cookie: cookie },
+    });
+    assert.equal(reread.status, 200);
+    assert.equal(reads, 2);
+    const draft = await fetch(`${origin}/api/tavern/v1/draft`, {
+      headers: { Origin: origin, Cookie: cookie },
+    });
+    assert.deepEqual(await draft.json(), {
+      apiVersion: 1,
+      revision: 3,
+      text: "draft",
+    });
+    assert.equal(reads, 3);
+    for (const path of [
+      "/bootstrap",
+      "/events",
+      "/message",
+      "/memories",
+      "/api/tavern/v1/events",
+    ]) {
+      const response = await fetch(`${origin}${path}`, {
+        headers: { Origin: origin, Cookie: cookie },
+      });
+      assert.equal(response.status, 404);
+      assert.equal(
+        ((await response.json()) as { code: string }).code,
+        "profile_operation_unavailable",
+      );
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("P3 bootstrap is strict and one-time; subsequent reads require same-origin browser session", async () => {
+  const server = await startDialogueWebServer({
+    p3Facade: fakeFacade(async () => state()),
+    profile,
+    bootstrapToken: token,
+  });
+  try {
+    const origin = server.origin;
+    const malformed = await fetch(bootstrapUrl(server), {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiVersion: 1,
+        bootstrapToken: token,
+        extra: true,
+      }),
+    });
+    assert.equal(malformed.status, 400);
+    assert.equal(
+      ((await malformed.json()) as { code: string }).code,
+      "invalid_request",
+    );
+    const bootstrap = await fetch(bootstrapUrl(server), {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const replay = await fetch(bootstrapUrl(server), {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
     assert.equal(replay.status, 401);
-    const foreign = await fetch(`${base}/message`, { method: "POST", headers: { Origin: "http://example.test", "Content-Type": "application/json" }, body: JSON.stringify({ clientMessageId: "x", text: "hello", locale: "en-US" }) });
-    assert.equal(foreign.status, 401);
-  } finally { await server.close(); }
+    assert.equal(
+      (
+        await fetch(`${origin}/api/tavern/v1/state`, {
+          headers: { Cookie: cookie },
+        })
+      ).status,
+      401,
+    );
+    assert.equal(
+      (
+        await fetch(`${origin}/api/tavern/v1/state`, {
+          headers: { Origin: "http://evil.invalid", Cookie: cookie },
+        })
+      ).status,
+      401,
+    );
+    assert.equal(
+      (
+        await fetch(`${origin}/api/tavern/v1/state`, {
+          headers: { Origin: origin, Cookie: cookie },
+        })
+      ).status,
+      200,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("P3 rejects every query and GET body, and bootstrap malformed input is v1 invalid_request", async () => {
+  const server = await startDialogueWebServer({
+    p3Facade: fakeFacade(async () => state()),
+    profile,
+    bootstrapToken: token,
+  });
+  try {
+    const origin = server.origin;
+    for (const response of [
+      await fetch(`${bootstrapUrl(server)}?unexpected=1`, {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+      }),
+      await fetch(bootstrapUrl(server), {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: "{",
+      }),
+      await fetch(bootstrapUrl(server), {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "text/plain" },
+        body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+      }),
+      await fetch(bootstrapUrl(server), {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: `{"apiVersion":1,"bootstrapToken":"${token}","padding":"${"x".repeat(4_096)}"}`,
+      }),
+    ]) {
+      assert.equal(response.status, 400);
+      assert.equal(
+        ((await response.json()) as { code: string }).code,
+        "invalid_request",
+      );
+    }
+    const bootstrap = await fetch(bootstrapUrl(server), {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    for (const path of [
+      "/api/tavern/v1/state?unexpected=1",
+      "/api/tavern/v1/draft?unexpected=1",
+    ]) {
+      const response = await fetch(`${origin}${path}`, {
+        headers: { Origin: origin, Cookie: cookie },
+      });
+      assert.equal(response.status, 400);
+      assert.equal(
+        ((await response.json()) as { code: string }).code,
+        "invalid_request",
+      );
+    }
+    for (const path of ["/api/tavern/v1/state", "/api/tavern/v1/draft"]) {
+      const response = await rawRequest(
+        `${origin}${path}`,
+        "GET",
+        { Origin: origin, Cookie: cookie, "Content-Length": "2" },
+        "{}",
+      );
+      assert.equal(response.status, 400);
+      assert.equal(
+        (JSON.parse(response.body) as { code: string }).code,
+        "invalid_request",
+      );
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("P3 reports facade failure as closed v1 state reconciliation problem", async () => {
+  const server = await startDialogueWebServer({
+    p3Facade: fakeFacade(async () => {
+      throw new Error("p3_exact_chat_state_unavailable");
+    }),
+    profile,
+    bootstrapToken: token,
+  });
+  try {
+    const origin = server.origin;
+    const response = await fetch(bootstrapUrl(server), {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(response.status, 409);
+    const problem = (await response.json()) as { code: string; status: number };
+    assert.equal(problem.code, "state_reconciliation_required");
+    assert.equal(problem.status, 409);
+  } finally {
+    await server.close();
+  }
+});
+
+test("P3 accepts a browser same-origin Fetch Metadata read when browsers omit Origin on GET", async () => {
+  const server = await startDialogueWebServer({
+    p3Facade: fakeFacade(async () => state()),
+    profile,
+    bootstrapToken: token,
+  });
+  try {
+    const origin = server.origin;
+    const bootstrap = await fetch(bootstrapUrl(server), {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const response = await fetch(`${origin}/api/tavern/v1/draft`, {
+      headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+    });
+    assert.equal(response.status, 200);
+  } finally {
+    await server.close();
+  }
+});
+
+test("P3 rejects profiles other than its frozen exact profile", async () => {
+  for (const invalid of [
+    composeTavernProfile({
+      profileId: "gamebuddy.chat-core.wide",
+      releaseTier: "chat_core",
+      routeIds: ["bootstrap", "state.read", "draft.read", "events"],
+      operationIds: [],
+      navigationItemIds: ["chat"],
+    }),
+    composeTavernProfile({
+      profileId: "gamebuddy.chat-core.p3",
+      releaseTier: "chat_core",
+      routeIds: ["state.read", "bootstrap", "draft.read"],
+      operationIds: [],
+      navigationItemIds: ["chat"],
+    }),
+    composeTavernProfile({
+      profileId: "gamebuddy.chat-core.p3",
+      releaseTier: "chat_core",
+      routeIds: ["bootstrap", "state.read", "draft.read"],
+      operationIds: [],
+      navigationItemIds: ["memory"],
+    }),
+    composeTavernProfile({
+      profileId: "gamebuddy.chat-core.p3",
+      releaseTier: "chat_core",
+      routeIds: ["bootstrap", "state.read", "draft.read"],
+      operationIds: [],
+      navigationItemIds: [],
+    }),
+  ]) {
+    await assert.rejects(
+      startDialogueWebServer({
+        p3Facade: fakeFacade(async () => state()),
+        profile: invalid,
+        bootstrapToken: token,
+      }),
+      /p3_profile_operation_unavailable/,
+    );
+  }
 });

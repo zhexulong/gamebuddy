@@ -1,124 +1,246 @@
-import { readFile } from "node:fs/promises";
-import { LocalStardewBridgeClient } from "../host/dist/local-stardew-bridge.js";
+// Native-local wood-fence smoke. Shared harness owns bridge mechanics;
+// this runner owns fixture topology, target discovery, evidence, and postcondition.
+import {
+  connectNativeLocalClient,
+  executeFresh,
+  observeFresh,
+  readNativeClientConfig,
+  summarizeReceipt,
+  summarizeSnapshot,
+  waitForActionable,
+  waitForFreshSnapshot,
+  waitForTerminal,
+} from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-function option(name) {
-  const index = process.argv.indexOf(name);
-  if (index < 0 || index + 1 >= process.argv.length) throw new Error(`missing_${name.slice(2)}`);
-  return process.argv[index + 1];
+const ACTION = "place_wood_fence";
+const REQUIRED_CAPABILITIES = [ACTION, "move_to_tile", "travel"];
+
+export async function runPlaceWoodFenceSmoke(
+  client,
+  receipts,
+  config,
+  { moveTimeoutMs = 55_000, transitionTimeoutMs = 20_000, postconditionTimeoutMs = 5_000 } = {},
+) {
+  const trace = [];
+  const startedAt = Date.now();
+  try {
+    validateConfig(config);
+    let snapshot = await actionableSnapshot(client);
+    requireCapabilities(snapshot);
+    if (snapshot.location !== "Farm") snapshot = await travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, transitionTimeoutMs);
+    snapshot = await waitForActionable(client, snapshot, 5_000);
+    snapshot = await moveToReachableTarget(client, receipts, trace, snapshot, moveTimeoutMs);
+    snapshot = await waitForActionable(client, snapshot, 3_000);
+    if (snapshot.actionable !== true || snapshot.activeExecution != null)
+      throw new Error("player_not_actionable_before_place");
+    const target = chooseReachableWoodFenceTarget(snapshot);
+    if (!target) throw new Error("no_adjacent_live_wood_fence_target");
+    const accepted = await dispatch(client, trace, "place", ACTION, {
+      slot: target.slot,
+      x: target.x,
+      y: target.y,
+      expectedQualifiedItemId: target.qualifiedItemId,
+      expectedTargetId: target.targetId,
+    }, snapshot);
+    const terminal = await waitForTerminal(receipts, accepted, postconditionTimeoutMs);
+    if (terminal.state !== "succeeded" || terminal.reasonCode !== "wood_fence_placed")
+      throw new Error(`wood_fence_failed:${terminal.reasonCode}`);
+    const after = await waitForFreshSnapshot(client, {
+      minRevision: terminal.revision,
+      timeoutMs: postconditionTimeoutMs,
+      requireActionable: true,
+      check: (candidate) => Array.isArray(candidate.woodFenceResultTargets),
+    });
+    const evidence = parseStrictEvidence(terminal.evidence);
+    const resultFence = after.woodFenceResultTargets.find((entry) => entry.targetId === target.targetId);
+    const resultMatches =
+      resultFence !== undefined &&
+      resultFence.location === target.location &&
+      resultFence.x === target.x &&
+      resultFence.y === target.y &&
+      resultFence.slot === target.slot &&
+      resultFence.targetId === target.targetId &&
+      resultFence.qualifiedItemId === target.qualifiedItemId &&
+      resultFence.isFence === true &&
+      resultFence.isGate === false &&
+      Number.isFinite(resultFence.health) &&
+      resultFence.health === Number(evidence.health) &&
+      Number.isFinite(resultFence.maxHealth) &&
+      resultFence.maxHealth >= resultFence.health;
+    const evidenceMatches =
+      evidence.source === "(O)322" &&
+      evidence.location === target.location &&
+      Number(evidence.x) === target.x &&
+      Number(evidence.y) === target.y &&
+      evidence.target === target.targetId &&
+      evidence.item === target.qualifiedItemId &&
+      Number(evidence.slot) === target.slot &&
+      evidence.source_empty_before === "true" &&
+      evidence.is_fence === "true" &&
+      evidence.is_gate === "false" &&
+      Number.isFinite(Number(evidence.health)) &&
+      Number(evidence.health) > 0 &&
+      Number.isFinite(Number(evidence.max_health)) &&
+      Number(evidence.max_health) >= Number(evidence.health);
+    const stackDeltaProven = Number(evidence.inventory_before) === 1 && Number(evidence.inventory_after) === 0;
+    const passed =
+      terminal.executionId === accepted.executionId &&
+      terminal.requestId === accepted.requestId &&
+      evidenceMatches &&
+      stackDeltaProven &&
+      resultMatches &&
+      after.revision === terminal.revision &&
+      after.actionable === true &&
+      after.activeExecution == null;
+    return {
+      state: passed ? "passed" : "blocked",
+      reasonCode: passed ? "wood_fence_placed" : terminal.reasonCode,
+      target,
+      receipt: summarizeReceipt(terminal),
+      evidence,
+      resultFence,
+      evidenceMatches,
+      resultMatches,
+      stackDeltaProven,
+      trace,
+      before: summarize(snapshot),
+      after: summarize(after),
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      state: "blocked",
+      reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
+      latestReceipt: summarizeReceipt(client.state?.latestReceipt),
+      trace,
+      durationMs: Date.now() - startedAt,
+    };
+  }
 }
 
-const config = JSON.parse(await readFile(option("--client-config"), "utf8"));
-const required = ["SaveId", "WorldId", "PlayerId", "CompanionId", "PipeName", "BridgeToken"];
-if (required.some((key) => typeof config[key] !== "string" || config[key].length === 0)) throw new Error("invalid_client_config");
-const scope = { integrationId: "stardew", saveId: config.SaveId, worldId: config.WorldId, playerId: config.PlayerId, companionId: config.CompanionId };
-const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
-const receipts = [];
-const trace = [];
-const startedAt = Date.now();
-const unsubscribe = client.onFact((fact) => { if (fact.type === "execution_receipt") receipts.push(fact.payload); });
-
-try {
-  let snapshot = await client.observe();
-  for (const action of ["place_wood_fence", "move_to_tile", "travel"]) {
-    if (!snapshot.capabilities.includes(action)) throw new Error(`native_local_${action}_capability_missing`);
+if (import.meta.main) {
+  const config = await readNativeClientConfig();
+  const session = await connectNativeLocalClient(config);
+  try {
+    const result = await runPlaceWoodFenceSmoke(session.client, session.receipts, config);
+    console.log(JSON.stringify(result));
+    if (result.state !== "passed") process.exitCode = 2;
+  } finally {
+    session.close();
   }
-  snapshot = await waitForActionable(snapshot, 5_000);
-  if (snapshot.location !== "Farm") snapshot = await travelToFarm(snapshot);
-  snapshot = await waitForActionable(snapshot, 5_000);
-  snapshot = await moveToReachableSeedTarget(snapshot);
-  snapshot = await waitForActionable(snapshot, 3_000);
-  if (!snapshot.actionable || snapshot.activeExecution != null) throw new Error("player_not_actionable_before_place");
-  const target = chooseReachableWoodFenceTarget(snapshot);
-  if (!target) throw new Error("no_adjacent_live_wood_fence_target");
-  const receipt = await execute("place", "place_wood_fence", {
-    slot: target.slot, x: target.x, y: target.y,
-    expectedQualifiedItemId: target.qualifiedItemId, expectedTargetId: target.targetId,
-  }, snapshot);
-  const after = await waitForActionable(await client.observe(), 5_000);
-  const evidence = parseStrictEvidence(receipt.evidence);
-  const resultFence = after.woodFenceResultTargets?.find((entry) => entry.targetId === target.targetId);
-  const resultMatches = resultFence !== undefined && resultFence.location === target.location && resultFence.x === target.x && resultFence.y === target.y
-    && resultFence.slot === target.slot && resultFence.targetId === target.targetId && resultFence.qualifiedItemId === target.qualifiedItemId
-    && resultFence.isFence === true && resultFence.isGate === false
-    && Number.isFinite(resultFence.health) && resultFence.health === Number(evidence.health)
-    && Number.isFinite(resultFence.maxHealth) && resultFence.maxHealth === Number(evidence.max_health) && resultFence.maxHealth >= resultFence.health;
-  const evidenceMatches = evidence.source === "(O)322" && evidence.location === target.location && Number(evidence.x) === target.x && Number(evidence.y) === target.y
-    && evidence.target === target.targetId && evidence.item === target.qualifiedItemId && Number(evidence.slot) === target.slot
-    && evidence.source_empty_before === "true" && evidence.is_fence === "true" && evidence.is_gate === "false"
-    && Number.isFinite(Number(evidence.health)) && Number(evidence.health) > 0 && Number.isFinite(Number(evidence.max_health))
-    && Number(evidence.max_health) >= Number(evidence.health);
-  const stackDeltaProven = Number(evidence.inventory_before) === 1 && Number(evidence.inventory_after) === 0;
-  const passed = receipt.state === "succeeded" && receipt.reasonCode === "wood_fence_placed"
-    && typeof receipt.executionId === "string" && receipt.executionId.length > 0
-    && evidenceMatches && stackDeltaProven && resultMatches && after.revision === receipt.revision
-    && after.actionable && after.activeExecution == null;
-  console.log(JSON.stringify({ state: passed ? "passed" : "blocked", reasonCode: passed ? "wood_fence_placed" : receipt.reasonCode, target, receipt: summarizeReceipt(receipt), evidence, resultFence, evidenceMatches, resultMatches, stackDeltaProven, trace, before: summarize(snapshot), after: summarize(after), durationMs: Date.now() - startedAt }));
-  if (!passed) process.exitCode = 2;
-} catch (error) {
-  console.error(JSON.stringify({ state: "blocked", reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256), latestReceipt: summarizeReceipt(client.state.latestReceipt), trace }));
-  process.exitCode = 2;
-} finally { unsubscribe(); client.close(); }
+}
 
-async function execute(phase, action, args, snapshot) {
-  if (!snapshot.actionable || snapshot.activeExecution != null) throw new Error(`${phase}_player_not_actionable`);
-  const requestId = `native_local_place_wood_fence_${phase}_${Date.now()}`;
-  const receipt = await client.execute({ requestId, idempotencyKey: `${requestId}_idem`, action, args, expectedRevision: snapshot.revision, deadlineMs: Date.now() + 30_000 });
-  if (receipt.requestId !== requestId || receipt.revision < snapshot.revision || typeof receipt.executionId !== "string" || receipt.executionId.length === 0) throw new Error(`${phase}_receipt_identity_mismatch`);
-  trace.push({ phase, requestId, args, receipt: summarizeReceipt(receipt) });
+async function dispatch(client, trace, phase, action, args, snapshot) {
+  if (snapshot.actionable !== true || snapshot.activeExecution != null)
+    throw new Error(`${phase}_player_not_actionable`);
+  const requestId = `native_local_place_wood_fence_${phase}_${Date.now()}_${trace.length}`;
+  const receipt = await executeFresh(client, {
+    requestId,
+    idempotencyKey: `${requestId}_idem`,
+    action,
+    args,
+    snapshot,
+    timeoutMs: 30_000,
+  });
+  trace.push({ phase, action, args, requestId, receipt: summarizeReceipt(receipt) });
   return receipt;
 }
-async function travelToFarm(snapshot) {
+
+async function travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, transitionTimeoutMs) {
   const warp = snapshot.warps?.find((entry) => entry.targetLocation === "Farm");
   if (!warp) throw new Error("farm_warp_missing");
-  if (!adjacent(snapshot.tile, { x: warp.sourceX, y: warp.sourceY })) snapshot = await move(snapshot, { x: warp.sourceX, y: warp.sourceY }, "move_to_farm_warp");
-  const accepted = await execute("travel", "travel", { x: warp.sourceX, y: warp.sourceY }, snapshot);
-  if (accepted.state !== "accepted") throw new Error(`travel_not_accepted:${accepted.reasonCode}`);
-  return waitForReceiptAndSnapshot(accepted.executionId, (latest) => latest.location === "Farm" && latest.activeExecution == null, 15_000);
+  if (!adjacent(snapshot.tile, warp)) snapshot = await move(client, receipts, trace, snapshot, warp, "move_to_farm_warp", moveTimeoutMs);
+  const accepted = await dispatch(client, trace, "travel", "travel", { x: warp.sourceX, y: warp.sourceY }, snapshot);
+  const terminal = await waitForTerminal(receipts, accepted, transitionTimeoutMs);
+  if (terminal.state !== "succeeded") throw new Error(`navigation_failed:${terminal.reasonCode}`);
+  return waitForFreshSnapshot(client, {
+    minRevision: terminal.revision,
+    timeoutMs: transitionTimeoutMs,
+    requireActionable: true,
+    check: (latest) => latest.location === "Farm",
+  });
 }
-async function move(snapshot, target, phase) {
-  snapshot = await waitForActionable(snapshot, 10_000);
-  const accepted = await execute(phase, "move_to_tile", target, snapshot);
-  if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
-  return waitForReceiptAndSnapshot(accepted.executionId, (latest) => latest.activeExecution == null && adjacent(latest.tile, target), 55_000);
+
+async function move(client, receipts, trace, snapshot, target, phase, timeoutMs) {
+  snapshot = await waitForActionable(client, snapshot, 10_000);
+  const accepted = await dispatch(client, trace, phase, "move_to_tile", { x: target.x, y: target.y }, snapshot);
+  const terminal = await waitForTerminal(receipts, accepted, timeoutMs);
+  if (terminal.state !== "succeeded" || terminal.reasonCode !== "target_reached")
+    throw new Error(`navigation_failed:${terminal.reasonCode}`);
+  return waitForFreshSnapshot(client, {
+    minRevision: terminal.revision,
+    timeoutMs,
+    requireActionable: true,
+    check: (latest) => adjacent(latest.tile, target),
+  });
 }
-async function moveToReachableSeedTarget(snapshot) {
+
+async function moveToReachableTarget(client, receipts, trace, snapshot, moveTimeoutMs) {
   if (chooseReachableWoodFenceTarget(snapshot)) return snapshot;
   for (let radius = 2; radius <= 12; radius++) {
-    const candidates = [];
-    for (let dx = -radius; dx <= radius; dx++) for (let dy = -radius; dy <= radius; dy++) if (Math.max(Math.abs(dx), Math.abs(dy)) === radius) candidates.push({ x: snapshot.tile.x + dx, y: snapshot.tile.y + dy });
-    for (const waypoint of candidates) {
+    for (let dx = -radius; dx <= radius; dx++) for (let dy = -radius; dy <= radius; dy++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
       try {
-        const moved = await move(snapshot, waypoint, "move_to_native_place_wood_fence_fixture");
+        const moved = await move(client, receipts, trace, snapshot, { x: snapshot.tile.x + dx, y: snapshot.tile.y + dy }, "move_to_native_place_wood_fence_fixture", moveTimeoutMs);
         if (chooseReachableWoodFenceTarget(moved)) return moved;
         snapshot = moved;
       } catch (error) {
         const reason = String(error instanceof Error ? error.message : error);
-        if (!reason.endsWith("_not_accepted:no_native_path") && !reason.startsWith("navigation_failed:no_native_path")) throw error;
-        snapshot = await client.observe();
+        if (!reason.endsWith("no_native_path") && !reason.startsWith("navigation_failed:no_native_path")) throw error;
+        snapshot = await observeFresh(client, { actionable: true });
         if (chooseReachableWoodFenceTarget(snapshot)) return snapshot;
       }
     }
   }
   throw new Error("no_reachable_native_place_wood_fence_fixture_target");
 }
-function chooseReachableWoodFenceTarget(snapshot) { return snapshot.woodFenceTargets?.find((target) => Number.isInteger(target.slot) && Number.isInteger(target.x) && Number.isInteger(target.y) && typeof target.targetId === "string" && typeof target.qualifiedItemId === "string" && adjacent(snapshot.tile, target)) ?? null; }
-async function waitForActionable(snapshot, timeoutMs) { const deadline = Date.now() + timeoutMs; let latest = snapshot; while (Date.now() < deadline) { if (latest.actionable && latest.activeExecution == null) return latest; await delay(250); latest = await client.observe(); } return latest; }
-async function waitForReceiptAndSnapshot(executionId, predicate, timeoutMs) { const deadline = Date.now() + timeoutMs; let latest = await client.observe(); while (Date.now() < deadline) { const terminal = receipts.find((receipt) => receipt.executionId === executionId && receipt.state !== "accepted" && isTerminal(receipt.state)); if (terminal && terminal.state !== "succeeded") throw new Error(`navigation_failed:${terminal.reasonCode}`); if (terminal?.state === "succeeded" && predicate(latest)) return latest; await delay(200); latest = await client.observe(); } throw new Error(`navigation_timeout:${executionId}`); }
-function adjacent(left, right) { return Math.abs(left.x - right.x) <= 1 && Math.abs(left.y - right.y) <= 1; }
-function isTerminal(state) { return ["succeeded", "failed", "invalidated", "cancelled", "expired", "uncertain", "rejected"].includes(state); }
+
+async function actionableSnapshot(client) {
+  const snapshot = await observeFresh(client, { actionable: true });
+  if (!Number.isInteger(snapshot.tile?.x) || !Number.isInteger(snapshot.tile?.y))
+    throw new Error("native_local_wood_fence_snapshot_invalid");
+  return snapshot;
+}
+
+function validateConfig(config) {
+  if (config?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
+  if (
+    config.Portfolio?.Enable === true ||
+    config.HostAutomation?.Enable === true ||
+    config.HostFarmhandProvisioning?.Enable === true ||
+    config.FarmhandProvisioner?.Enable === true
+  )
+    throw new Error("native_local_fixture_topology_not_isolated");
+}
+function requireCapabilities(snapshot) {
+  for (const action of REQUIRED_CAPABILITIES) if (!snapshot.capabilities?.includes(action))
+    throw new Error(`native_local_${action}_capability_missing`);
+}
+function chooseReachableWoodFenceTarget(snapshot) {
+  return snapshot.woodFenceTargets?.find((target) =>
+    Number.isInteger(target?.slot) && Number.isInteger(target?.x) && Number.isInteger(target?.y) &&
+    typeof target.targetId === "string" && typeof target.qualifiedItemId === "string" && adjacent(snapshot.tile, target),
+  ) ?? null;
+}
+function adjacent(left, right) {
+  return Number.isInteger(left?.x) && Number.isInteger(left?.y) && Number.isInteger(right?.x) && Number.isInteger(right?.y) &&
+    Math.abs(left.x - right.x) <= 1 && Math.abs(left.y - right.y) <= 1;
+}
 function parseStrictEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
   const result = {};
   for (const field of detail.split(";")) {
     const index = field.indexOf("=");
     const key = index > 0 ? field.slice(0, index) : "";
-    if (index <= 0 || index === field.length - 1 || !/^[a-z][a-z0-9_]{0,63}$/.test(key) || result[key] !== undefined) throw new Error("malformed_or_duplicate_fence_evidence");
+    if (index <= 0 || index === field.length - 1 || !/^[a-z][a-z0-9_]{0,63}$/.test(key) || result[key] !== undefined)
+      throw new Error("malformed_or_duplicate_fence_evidence");
     result[key] = field.slice(index + 1);
   }
   const expectedKeys = ["source", "location", "x", "y", "target", "item", "slot", "source_empty_before", "is_fence", "is_gate", "health", "max_health", "inventory_before", "inventory_after"];
-  if (Object.keys(result).length !== expectedKeys.length || !expectedKeys.every((key) => result[key] !== undefined)) throw new Error("unknown_or_incomplete_fence_evidence");
+  if (Object.keys(result).length !== expectedKeys.length || !expectedKeys.every((key) => result[key] !== undefined))
+    throw new Error("unknown_or_incomplete_fence_evidence");
   return result;
 }
-function summarize(snapshot) { return { revision: snapshot.revision, location: snapshot.location, tile: snapshot.tile, actionable: snapshot.actionable, woodFenceTargets: snapshot.woodFenceTargets?.length ?? 0, woodFenceResultTargets: snapshot.woodFenceResultTargets?.length ?? 0, activeExecution: snapshot.activeExecution ?? null }; }
-function summarizeReceipt(receipt) { return receipt ? { executionId: receipt.executionId, requestId: receipt.requestId, state: receipt.state, reasonCode: receipt.reasonCode, revision: receipt.revision, evidence: receipt.evidence ?? null } : null; }
-function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function summarize(snapshot) {
+  return { ...summarizeSnapshot(snapshot), woodFenceTargets: snapshot.woodFenceTargets?.length ?? 0, woodFenceResultTargets: snapshot.woodFenceResultTargets?.length ?? 0 };
+}

@@ -2,13 +2,29 @@
 /design/
 /ref/
 /docs/
+legacy/
+**/legacy/
 
-# Local Pi/subagent state, skills, and scratch analysis outputs
+# Local Pi/subagent state and scratch analysis outputs
+/.pi/
 /.pi-subagents/
-/.agents/
+/.pi-subagent-sessions/
 /.claude/
+/.commit-snapshots/
+/.commit-validation/
 /skills-lock.json
 /.worktree/
+
+# Project-owned skills are versioned; locally installed external skills are not.
+/.agents/*
+!/.agents/README.md
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/stardew-action-closure-batching/
+!/.agents/skills/stardew-action-closure-batching/**
+!/.agents/parked-skills/
+!/.agents/parked-skills/stardew-vertical-slice/
+!/.agents/parked-skills/stardew-vertical-slice/**
 
 # OS/editor artifacts
 [Nn][Uu][Ll]
@@ -18,9 +34,23 @@ Thumbs.db
 # Node.js
 node_modules/
 dist/
+# Disposable Host verification outputs. Production runners must resolve the
+# immutable generation via host/scripts/production-artifact.mjs; tests own
+# host/dist-test only through host/.test-artifact.lock.
+host/dist-test/
+host/.dist-production-emitted/
+host/.memory-live-check/
+dialogue-web/.build-staging/
+# Ephemeral isolated Host/Pi runtime roots; may contain local SQLite/auth/session state.
+host/contexts/
 dist-portfolio/
-dist-test/
-dist-production/
+# Test and verification evidence outputs are local by default; committed fixtures
+# and source-realization dossiers live under fixtures/ and tools/ instead.
+/artifacts/
+# Contract executables and package builds are reconstructed locally.
+/integrations/stardew/tests/bin/
+/integrations/stardew/tests/obj/
+/packages/voice-protocol/dist/
 coverage/
 *.tsbuildinfo
 
@@ -48,17 +78,11 @@ tmp_*
 .tmp-*/
 /.tmp-*
 /tavern-gate-output.json
+/contentprobe.err
+/contentprobe.out
+/windows-capture-cleanup-*/
 *.stackdump
 /tools/.tmp-*
-
-# Local Stardew/Farmhand verification outputs
-**/preview-evidence.jsonl
-**/*-fixture-backup/
-**/.stardew-fixture-profile.lock/
-**/.stardew-native-local-player-fixture.lock/
-**/native-copy/
-**/immutable-generations/
-**/farmhand-companion-preview-*/
 
 # Playwright generated artifacts
 dialogue-web/test-results/

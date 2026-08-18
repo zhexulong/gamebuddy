@@ -1,4 +1,5 @@
 using System.Reflection;
+using HarmonyLib;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
@@ -11,9 +12,8 @@ namespace GameBuddy.Stardew;
 
 /// <summary>
 /// Embodiment entry point. State is isolated per local split-screen player.
-/// The normal action runtime binds the configured PlayerId to one real local
-/// Farmhand; the opt-in Portfolio topology instead observes its exact native
-/// single-player local Player and never exposes an action surface.
+/// The configured PlayerId selects the one real local Farmhand GameBuddy may
+/// control; no state is created for the human player's screen.
 /// </summary>
 public sealed partial class ModEntry : Mod
 {
@@ -38,13 +38,6 @@ public sealed partial class ModEntry : Mod
     private bool hostAutomationObservedAiClientExit;
     private bool hostAutomationFixtureInitialized;
     private bool hostAutomationFixtureReadinessPublished;
-// Portfolio is a separate observe-only topology. NativeLocalPlayerFixture
-    // is a disposable mechanics harness for the ordinary action bridge.
-    private PortfolioLocalPlayerBinding? portfolioBinding;
-    private PortfolioBridgeSession? portfolioBridgeSession;
-    private PortfolioLocalPipeBridge? portfolioPipeBridge;
-    private long portfolioBindingGeneration;
-    private long portfolioLastObservedRevision = -1;
     private bool nativeLocalPlayerFixtureStarted;
     private bool nativeLocalPlayerFixtureInitialized;
     private bool nativeLocalPlayerFixtureTerminal;
@@ -57,6 +50,15 @@ public sealed partial class ModEntry : Mod
     private NativeLocalClearHoeDirtFixturePending? nativeLocalClearHoeDirtFixturePending;
     private NativeLocalDigArtifactSpotFixturePending? nativeLocalDigArtifactSpotFixturePending;
     private NativeLocalPlaceCrabPotFixturePending? nativeLocalPlaceCrabPotFixturePending;
+    private NativeLocalBaitCrabPotFixturePending? nativeLocalBaitCrabPotFixturePending;
+    private PortfolioLocalPlayerBinding? portfolioBinding;
+    private PortfolioBridgeSession? portfolioBridgeSession;
+    private PortfolioLocalPipeBridge? portfolioPipeBridge;
+    private long portfolioBindingGeneration;
+    private long portfolioLastObservedRevision = -1;
+    private bool nativeChatObservationInstalled;
+    private bool nativeChatStopCommandRegistered;
+    private static ModEntry? nativeChatIngressOwner;
 
     public override void Entry(IModHelper helper)
     {
@@ -69,15 +71,110 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.Saving += this.OnSaving;
         helper.Events.GameLoop.Saved += this.OnSaved;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
+        helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
 
         helper.ConsoleCommands.Add("gamebuddy_farmhands", "List authoritative local-co-op player and Farmhand identities without changing game state.", this.FarmhandsCommand);
         helper.ConsoleCommands.Add("gamebuddy_status", "Print the configured AI Farmhand's authoritative snapshot on its local screen.", this.StatusCommand);
         helper.ConsoleCommands.Add("gamebuddy_trace", "Print bounded AI Farmhand directive/route/body execution trace evidence.", this.TraceCommand);
-        helper.ConsoleCommands.Add("gamebuddy_move_fixture", "Phase 1 local-only movement fixture: gamebuddy_move_fixture <tile-x> <tile-y> <request-id>.", this.MoveFixtureCommand);
-        helper.ConsoleCommands.Add("gamebuddy_equip_tool_fixture", "Phase 1 local-only native mechanic fixture: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>.", this.EquipToolFixtureCommand);
-        helper.ConsoleCommands.Add("gamebuddy_cancel", "Cancel the active local AI Farmhand GameBuddy execution.", this.CancelCommand);
+        // Fixture console mechanics are registered only under an explicit valid
+        // NativeLocalPlayerFixture admission. Handlers additionally revalidate
+        // the same admission on the game thread before executing, so a stale or
+        // forged registration can never run outside the fixture.
+        if (this.config.NativeLocalPlayerFixture is { IsValid: true })
+        {
+            helper.ConsoleCommands.Add("gamebuddy_move_fixture", "Phase 1 local-only movement fixture: gamebuddy_move_fixture <tile-x> <tile-y> <request-id>.", this.MoveFixtureCommand);
+            helper.ConsoleCommands.Add("gamebuddy_equip_tool_fixture", "Phase 1 local-only native mechanic fixture: gamebuddy_equip_tool_fixture <inventory-slot> <request-id>.", this.EquipToolFixtureCommand);
+            helper.ConsoleCommands.Add("gamebuddy_cancel", "Cancel the active local AI Farmhand GameBuddy execution.", this.CancelCommand);
+        }
 
         this.Monitor.Log("GameBuddy Stardew Integration loaded; formal attachment requires a signed manifest and native Farmhand identity match.", LogLevel.Info);
+    }
+
+    private void InstallNativeChatIngress()
+    {
+        if (this.config.HostFarmhandProvisioning is not { IsValid: true } host
+            || !NativeChatIngressPolicy.CanInstallForHostRole(this.hostRoleConfigured, this.hostFarmhandProvisioner is not null)
+            || !NativeChatIngressPolicy.IsSupportedRuntime(
+                Game1.version,
+                Game1.versionBuildNumber,
+                Constants.ApiVersion.ToString(),
+                host.ExpectedGameVersion,
+                host.ExpectedGameBuildNumber,
+                host.ExpectedSmapiVersion))
+        {
+            this.nativeChatObservationInstalled = false;
+            this.nativeChatStopCommandRegistered = false;
+            nativeChatIngressOwner = null;
+            this.Monitor.Log("GameBuddy disabled native chat ingress: target_game_or_smapi_version_mismatch.", LogLevel.Error);
+            return;
+        }
+        MethodInfo? textSubmitTarget;
+        MethodInfo? textSubmitPostfix;
+        MethodInfo? textBoxDelegateTarget;
+        MethodInfo? textBoxDelegatePostfix;
+        try
+        {
+            textSubmitTarget = AccessTools.Method(typeof(ChatBox), "textBoxEnter", new[] { typeof(string) });
+            textSubmitPostfix = AccessTools.Method(typeof(ModEntry), nameof(NativeChatTextBoxEnterPostfix));
+            textBoxDelegateTarget = AccessTools.Method(typeof(ChatBox), "textBoxEnter", new[] { typeof(TextBox) });
+            textBoxDelegatePostfix = AccessTools.Method(typeof(ModEntry), nameof(NativeChatTextBoxEnterDelegatePrefix));
+            if (textSubmitTarget is null || textSubmitPostfix is null || textBoxDelegateTarget is null || textBoxDelegatePostfix is null
+                || !NativeChatIngressPolicy.IsTextSubmitPostfix(
+                    textSubmitTarget.DeclaringType?.FullName,
+                    textSubmitTarget.Name,
+                    textSubmitTarget.GetParameters().Select(parameter => parameter.ParameterType).ToArray(),
+                    textSubmitTarget.GetParameters().Select(parameter => parameter.Name).ToArray(),
+                    isPostfix: true)
+                || !NativeChatIngressPolicy.IsTextBoxDelegatePrefix(
+                    textBoxDelegateTarget.DeclaringType?.FullName,
+                    textBoxDelegateTarget.Name,
+                    textBoxDelegateTarget.GetParameters().Select(parameter => parameter.ParameterType).ToArray(),
+                    textBoxDelegateTarget.GetParameters().Select(parameter => parameter.Name).ToArray(),
+                    isPrefix: true))
+                throw new MissingMethodException("ChatBox.textBoxEnter(string/TextBox)");
+        }
+        catch (Exception exception)
+        {
+            this.nativeChatObservationInstalled = false;
+            this.nativeChatStopCommandRegistered = false;
+            nativeChatIngressOwner = null;
+            this.Monitor.Log($"GameBuddy disabled native chat text observation: lookup_failed ({exception.GetType().Name}).", LogLevel.Error);
+            return;
+        }
+        try
+        {
+            Harmony harmony = new(this.ModManifest.UniqueID + ".native-chat-ingress");
+            harmony.Patch(textSubmitTarget, postfix: new HarmonyMethod(textSubmitPostfix));
+            harmony.Patch(textBoxDelegateTarget, prefix: new HarmonyMethod(textBoxDelegatePostfix));
+            nativeChatIngressOwner = this;
+            this.nativeChatObservationInstalled = true;
+            this.Monitor.Log("GameBuddy enabled native chat text observation.", LogLevel.Info);
+        }
+        catch (Exception exception)
+        {
+            this.nativeChatObservationInstalled = false;
+            this.nativeChatStopCommandRegistered = false;
+            nativeChatIngressOwner = null;
+            this.Monitor.Log($"GameBuddy disabled native chat text observation: patch_failed ({exception.GetType().Name}).", LogLevel.Error);
+            return;
+        }
+        if (ChatCommands.Exists("stop"))
+        {
+            this.nativeChatStopCommandRegistered = false;
+            this.Monitor.Log("GameBuddy disabled native /stop: command_registration_conflict (CommandNameConflict).", LogLevel.Error);
+            return;
+        }
+        try
+        {
+            ChatCommands.Register("stop", this.StopChatCommand, _ => "Stop the bound GameBuddy Farmhand.", multiplayerOnly: true);
+            this.nativeChatStopCommandRegistered = true;
+            this.Monitor.Log("GameBuddy enabled native /stop control.", LogLevel.Info);
+        }
+        catch (Exception exception)
+        {
+            this.nativeChatStopCommandRegistered = false;
+            this.Monitor.Log($"GameBuddy disabled native /stop: command_registration_failed ({exception.GetType().Name}).", LogLevel.Error);
+        }
     }
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
@@ -89,20 +186,36 @@ public sealed partial class ModEntry : Mod
             this.Monitor.Log("GameBuddy rejected Stardew Game Action policy: use ActionPolicyVersion 1 with known DeniedActions/DeniedActionFamilies, or an explicit legacy EnabledActions configuration.", LogLevel.Error);
             return;
         }
+        if (this.config.Portfolio?.P0bLifecycleProducer?.Enable == true && !this.config.IsP0bExclusiveConfigurationValid)
+        {
+            this.provisioningConfigurationRejected = true;
+            this.Monitor.Log("GameBuddy rejected Portfolio P0b configuration: P0b requires every fixture, bootstrap, automation, and provisioning mode to be explicitly disabled, including root ModConfig modes.", LogLevel.Error);
+            return;
+        }
         if (this.config.Portfolio?.Enable == true)
         {
-            this.hostRoleConfigured = false;
-            this.provisioningProbe = null;
             if (this.config.NativeLocalPlayerFixture?.Enable == true)
             {
                 this.provisioningConfigurationRejected = true;
-                this.Monitor.Log("GameBuddy rejected a configuration that combines Portfolio observe-only topology with NativeLocalPlayerFixture action mechanics.", LogLevel.Error);
+                this.Monitor.Log("GameBuddy rejected configuration: NativeLocalPlayerFixture and Portfolio cannot be enabled together.", LogLevel.Error);
                 return;
             }
-            this.Monitor.Log(this.config.Portfolio.IsValid
-                ? "GameBuddy Portfolio topology enabled: Farmhand/provisioning/HostAutomation surfaces are disabled; observe-only native local Player binding will begin after SaveLoaded."
-                : "GameBuddy rejected Portfolio configuration; no Farmhand or Portfolio bridge was started.",
-                this.config.Portfolio.IsValid ? LogLevel.Info : LogLevel.Error);
+            this.hostRoleConfigured = false;
+            this.provisioningProbe = null;
+            if (this.config.Portfolio.Bootstrap is { Enable: true })
+            {
+                this.Monitor.Log(this.config.Portfolio.IsBootstrapValid
+                    ? "GameBuddy Portfolio native-save bootstrap armed: only the target-version title-screen new-game lifecycle may run; observe bridge remains closed until bootstrap disarms itself."
+                    : "GameBuddy rejected Portfolio native-save bootstrap configuration; no save or bridge was started.",
+                    this.config.Portfolio.IsBootstrapValid ? LogLevel.Info : LogLevel.Error);
+            }
+            else
+            {
+                this.Monitor.Log(this.config.Portfolio.IsValid
+                    ? "GameBuddy Portfolio topology enabled: Farmhand/provisioning/HostAutomation surfaces are disabled; observe-only native local Player binding will begin after SaveLoaded."
+                    : "GameBuddy rejected Portfolio configuration; no Farmhand or Portfolio bridge was started.",
+                    this.config.Portfolio.IsValid ? LogLevel.Info : LogLevel.Error);
+            }
             return;
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
@@ -113,7 +226,7 @@ public sealed partial class ModEntry : Mod
                 || this.config.HostAutomation?.Enable == true)
             {
                 this.provisioningConfigurationRejected = true;
-                this.Monitor.Log("GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save and no HostAutomation, Farmhand provisioning, or LAN host.", LogLevel.Error);
+                this.Monitor.Log("GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save and no HostAutomation, Farmhand provisioning, LAN host, or Portfolio topology.", LogLevel.Error);
                 return;
             }
             this.hostRoleConfigured = false;
@@ -140,6 +253,8 @@ public sealed partial class ModEntry : Mod
                 this.config.HostAutomation?.Enable == true);
             if (this.hostFarmhandProvisioner is null)
                 this.Monitor.Log("GameBuddy host provisioning is enabled but its configuration is invalid; no client or diagnostic fallback was started.", LogLevel.Error);
+            else
+                this.InstallNativeChatIngress();
             if (this.config.HostAutomation is { Enable: true } automation && !automation.IsValid)
             {
                 this.hostAutomationTerminal = true;
@@ -168,6 +283,203 @@ public sealed partial class ModEntry : Mod
         this.provisioningProbe = FarmhandProvisioningProbe.TryStart(this.Monitor, this.config.FarmhandProvisioningProbe);
     }
 
+    private void StopChatCommand(string[] command, ChatBox chat)
+    {
+        if (!NativeChatIngressPolicy.CanPublishStopAll(this.nativeChatObservationInstalled, this.nativeChatStopCommandRegistered))
+        {
+            chat.addErrorMessage("GameBuddy player control is unavailable.");
+            return;
+        }
+        if (!NativeChatIngressPolicy.IsBareStopCommand(command))
+        {
+            chat.addErrorMessage("Usage: /stop");
+            return;
+        }
+        this.PublishNativeChat(PlayerControlProtocol.StopAll, null, chat);
+    }
+
+    // Harmony binds ordinary postfix parameters by the target's parameter
+    // name. Preserve the pinned ChatBox.textBoxEnter(string text_to_send)
+    // name rather than relying on positional binding.
+    private static void NativeChatTextBoxEnterPostfix(string text_to_send)
+    {
+        try { nativeChatIngressOwner?.ObserveNativeChatText(text_to_send); }
+        catch
+        {
+            // Never interrupt native chat. This fixed redacted stage marker is
+            // the sole visibility of an otherwise contained observer failure.
+            nativeChatIngressOwner?.MonitorNativeChatIngress("postfix_exception");
+        }
+    }
+
+    // This prefix follows the target's actual TextBoxEvent delegate before its
+    // implementation clears the ChatTextBox. It must never inspect sender or
+    // provide another way to obtain submitted text.
+    private static void NativeChatTextBoxEnterDelegatePrefix(TextBox sender)
+    {
+        try { nativeChatIngressOwner?.MonitorNativeChatIngress("textbox_delegate_prefix_reached"); }
+        catch
+        {
+            nativeChatIngressOwner?.MonitorNativeChatIngress("delegate_prefix_exception");
+        }
+    }
+
+    private void ObserveNativeChatText(string text)
+    {
+        NativeChatIngressTextClassification classification = NativeChatIngressPolicy.ClassifySubmittedText(text);
+        this.MonitorNativeChatIngress($"postfix_reached_{classification}");
+        if (!NativeChatIngressPolicy.CanPublishPlayerInput(this.nativeChatObservationInstalled))
+        {
+            this.MonitorNativeChatIngress("player_input_observer_unavailable");
+            return;
+        }
+        if (classification != NativeChatIngressTextClassification.Ordinary)
+            return;
+        this.PublishNativeChat(PlayerControlProtocol.PlayerInput, text, null);
+    }
+
+    /// <summary>
+    /// Bounded diagnostics for one native-chat ingress run. It deliberately
+    /// accepts a fixed stage vocabulary only: never text, IDs, scope, locale,
+    /// token, message body, or exception data.
+    /// </summary>
+    private void MonitorNativeChatIngress(string stage) =>
+        // These fixed redacted stages are the live diagnosis boundary. Debug is
+        // retained in the default SMAPI log; Trace is not, which made the
+        // previous no-reply run observationally inconclusive.
+        this.Monitor.Log($"GameBuddy native chat ingress stage={stage}.", LogLevel.Debug);
+
+    private void PublishNativeChat(string kind, string? text, ChatBox? chat)
+    {
+        if (kind == PlayerControlProtocol.PlayerInput && (string.IsNullOrWhiteSpace(text) || text.Length > PlayerControlProtocol.MaximumTextLength))
+        {
+            this.MonitorNativeChatIngress("player_input_invalid_after_classification");
+            return;
+        }
+        if (!Context.IsWorldReady || Game1.player is null || !Game1.IsMasterGame || this.hostFarmhandProvisioner is null)
+        {
+            this.MonitorNativeChatIngress("dispatch_world_or_host_unavailable");
+            chat?.addErrorMessage("GameBuddy player control is unavailable in this world.");
+            return;
+        }
+        FarmhandBindingStore bindings;
+        try { bindings = this.Helper.Data.ReadSaveData<FarmhandBindingStore>(FarmhandProvisioningProtocol.SaveDataKey) ?? new FarmhandBindingStore(); }
+        catch
+        {
+            this.MonitorNativeChatIngress("dispatch_binding_store_unavailable");
+            chat?.addErrorMessage("GameBuddy player control binding is unavailable.");
+            return;
+        }
+        string saveId = Game1.uniqueIDForThisGame.ToString();
+        string worldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString();
+        FarmhandBinding[] matches = bindings.Bindings.Where(binding => binding.SaveId == saveId && binding.WorldId == worldId).ToArray();
+        if (matches.Length != 1 || !long.TryParse(matches[0].FarmhandId.ToString(), out long farmhandId))
+        {
+            this.MonitorNativeChatIngress("dispatch_bound_farmhand_unavailable");
+            chat?.addErrorMessage("GameBuddy has no uniquely bound connected Farmhand.");
+            return;
+        }
+        IMultiplayerPeer? peer = this.Helper.Multiplayer.GetConnectedPlayer(farmhandId);
+        if (!NativeChatIngressPolicy.CanRoutePlayerControlToBoundFarmhand(
+            peer is not null,
+            peer?.HasSmapi == true,
+            peer?.HasSmapi == true ? peer.Mods.Select(mod => mod.ID) : null,
+            this.ModManifest.UniqueID))
+        {
+            // SendMessage silently filters out vanilla or non-target-mod peers;
+            // declare that fixed condition rather than recording an attempt that
+            // no remote Farmhand can receive.
+            this.MonitorNativeChatIngress("dispatch_bound_farmhand_modmessage_unavailable");
+            chat?.addErrorMessage("GameBuddy has no ModMessage-capable bound Farmhand.");
+            return;
+        }
+        BridgeScope scope = new("stardew", saveId, worldId, farmhandId.ToString(), matches[0].CompanionId);
+        if (!scope.IsValid)
+        {
+            this.MonitorNativeChatIngress("dispatch_scope_invalid");
+            chat?.addErrorMessage("GameBuddy player control scope is unavailable.");
+            return;
+        }
+        string locale = NativeChatPresentationPolicy.CurrentBcp47Locale();
+        if (!NativeChatPresentationPolicy.IsValidBcp47Locale(locale))
+        {
+            this.MonitorNativeChatIngress("dispatch_locale_invalid");
+            chat?.addErrorMessage("GameBuddy player control locale is unavailable.");
+            return;
+        }
+        PlayerControlModMessage message = new(Guid.NewGuid().ToString("N"), Game1.player.UniqueMultiplayerID.ToString(), scope, kind,
+            Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"), text, locale);
+        this.Helper.Multiplayer.SendMessage(message, PlayerControlProtocol.MessageType, new[] { this.ModManifest.UniqueID }, new[] { farmhandId });
+        this.MonitorNativeChatIngress("dispatch_modmessage_send_attempted");
+    }
+
+    private void OnModMessageReceived(object? sender, ModMessageReceivedEventArgs e)
+    {
+        if (e.FromModID != this.ModManifest.UniqueID || e.Type != PlayerControlProtocol.MessageType)
+            return;
+        // Record wire arrival before role/lifecycle admission so an early guard
+        // cannot masquerade as a failed host-to-AI transport.
+        this.MonitorNativeChatIngress("ai_modmessage_wire_received");
+        if (!Context.IsWorldReady || !this.IsConfiguredAiScreen(out Farmer? localPlayer, out _))
+        {
+            this.MonitorNativeChatIngress("ai_modmessage_receiver_unavailable");
+            return;
+        }
+        this.MonitorNativeChatIngress("ai_modmessage_received");
+        PlayerControlModMessage message;
+        try { message = e.ReadAs<PlayerControlModMessage>(); }
+        catch
+        {
+            this.MonitorNativeChatIngress("ai_modmessage_malformed");
+            this.Monitor.Log("GameBuddy rejected malformed player-control ModMessage.", LogLevel.Warn);
+            return;
+        }
+        ScreenEmbodimentState state = this.GetEmbodimentState();
+        PlayerControlReplayGuard? replayGuard = state.PlayerControlReplayGuard;
+        if (!PlayerControlProtocol.IsValid(message, out string reasonCode)
+            || e.FromPlayerID.ToString() != message.IssuerPlayerId
+            || message.IssuerPlayerId != Game1.MasterPlayer.UniqueMultiplayerID.ToString()
+            || message.Scope.IntegrationId != "stardew"
+            || message.Scope.SaveId != Game1.uniqueIDForThisGame.ToString()
+            || message.Scope.WorldId != Game1.MasterPlayer.UniqueMultiplayerID.ToString()
+            || message.Scope.PlayerId != localPlayer!.UniqueMultiplayerID.ToString()
+            || message.Scope.CompanionId != (this.config.FarmhandProvisioner?.Enable == true ? this.farmhandProvisioner?.Manifest.CompanionId : this.config.CompanionId)
+            || replayGuard is null
+            || !replayGuard.TryConsume(message.MessageId))
+        {
+            this.MonitorNativeChatIngress("ai_modmessage_rejected");
+            this.Monitor.Log($"GameBuddy rejected player-control ModMessage: {reasonCode}.", LogLevel.Warn);
+            return;
+        }
+        long generation = state.LocalPipeBridge?.CurrentGeneration ?? 0;
+        BridgePlayerControlFact fact = new(message.Kind, message.ControlId, message.SourceEventId, message.Text, message.Locale, message.IssuerPlayerId);
+        if (state.BridgeSession is null || generation == 0 || !state.BridgeSession.TryCreatePlayerControlEvent(generation, fact, message.MessageId, out string json))
+        {
+            this.MonitorNativeChatIngress("ai_bridge_unavailable");
+            this.Monitor.Log("GameBuddy rejected player-control ModMessage because the authenticated bridge is unavailable.", LogLevel.Warn);
+            return;
+        }
+        if (!state.LocalPipeBridge!.TryEnqueueOutbound(generation, json, out PipeOutboundCompletion completion))
+        {
+            // The frame never entered the authenticated bridge queue, so it
+            // cannot have reached Host. Release only this exact reservation.
+            state.BridgeSession.TryAbandonPlayerControl(generation, message.ControlId, message.SourceEventId);
+            this.MonitorNativeChatIngress("ai_bridge_unavailable");
+            this.Monitor.Log("GameBuddy rejected player-control ModMessage because the authenticated bridge is unavailable.", LogLevel.Warn);
+            return;
+        }
+        this.MonitorNativeChatIngress("ai_player_control_pipe_enqueued");
+        this.TrackNativeChatPipeDelivery(state, generation, completion);
+        if (message.Kind == PlayerControlProtocol.StopAll)
+        {
+            // STOP is the Mod-side presentation authority: it invalidates any
+            // request already queued on the pipe before that request is drained.
+            state.BridgeSession.AdvancePresentationEpoch();
+            state.StopObservationEpoch++;
+            state.PendingStopObservation = new BridgeStopObservation("body_settled", message.ControlId, message.SourceEventId, state.StopObservationEpoch);
+        }
+    }
+
     private void FarmhandsCommand(string command, string[] args)
     {
         if (!Context.IsWorldReady)
@@ -188,9 +500,32 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        // Configuration rejection is terminal for this load. Do not allow an
+        // invalid P0b-exclusive profile to reach any Portfolio lifecycle owner.
+        if (this.provisioningConfigurationRejected)
+            return;
+        // Portfolio is a single-player native topology. It must not enter the
+        // Farmhand fixture, host automation, provisioning, or embodiment paths.
         if (this.config.Portfolio?.Enable == true)
         {
+            if (this.config.Portfolio.Bootstrap is { Enable: true })
+            {
+                if (this.TryCompletePortfolioBootstrap())
+                    return;
+                this.TryInitializePortfolioBinding();
+                return;
+            }
+            if (this.config.Portfolio.InitialNativeLoad is { Enable: true })
+            {
+                // A rejected native load is terminal and must never fall through
+                // into binding initialization. Only a successfully observed
+                // current slot/scope is allowed to open the Portfolio bridge.
+                if (this.TryCompletePortfolioInitialNativeLoad() == PortfolioInitialNativeLoadCompletion.Succeeded)
+                    this.TryInitializePortfolioBinding();
+                return;
+            }
             this.TryInitializePortfolioBinding();
+            this.OnPortfolioP0bSaveLoaded();
             return;
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
@@ -385,14 +720,15 @@ public sealed partial class ModEntry : Mod
             || this.nativeLocalCollectAnimalProductFixturePending is not null
             || this.nativeLocalClearHoeDirtFixturePending is not null
             || this.nativeLocalDigArtifactSpotFixturePending is not null
-            || this.nativeLocalPlaceCrabPotFixturePending is not null)
+            || this.nativeLocalPlaceCrabPotFixturePending is not null
+            || this.nativeLocalBaitCrabPotFixturePending is not null)
             return;
         if (fixture.FixtureScenario.Length == 0)
         {
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_tree_first_hit_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -463,6 +799,26 @@ public sealed partial class ModEntry : Mod
                     throw new InvalidOperationException("fixture_native_local_wood_fence_target_missing");
                 this.nativeLocalPlayerFixtureInitialized = true;
                 this.Monitor.Log($"GameBuddy native-local-player initialized wood-fence fixture before bridge attachment: item={fenceId}; production alone invokes native placement, consumes one item, and emits receipt.", LogLevel.Info);
+                return;
+            }
+
+            if (fixture.FixtureScenario == "native_bait_crab_pot_v1")
+            {
+                // Pre-attachment fixture only: create one current-player-owned,
+                // unbaited (O)710 Crab Pot and one (O)685 Bait. Production alone
+                // invokes checkAction and owns all attachment/consumption evidence.
+                const string baitId = "(O)685";
+                (Vector2 TargetTile, Vector2 StandingTile)? selected = FindNativeLocalCrabPotFixtureTarget(farm);
+                if (selected is null) throw new InvalidOperationException("fixture_native_local_bait_crab_pot_target_missing");
+                Vector2 targetTile = selected.Value.TargetTile;
+                StardewValley.Objects.CrabPot pot = new();
+                pot.owner.Value = player.UniqueMultiplayerID;
+                farm.objects.Add(targetTile, pot);
+                if (player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(baitId, 1)) is not null) throw new InvalidOperationException("fixture_native_local_bait_inventory_full");
+                StardewValley.Object? bait = player.Items.OfType<StardewValley.Object>().SingleOrDefault(item => item.QualifiedItemId == baitId && item.Stack == 1);
+                if (bait is null || pot.bait.Value is not null || pot.owner.Value != player.UniqueMultiplayerID) throw new InvalidOperationException("fixture_native_local_bait_crab_pot_precondition_failed");
+                player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)selected.Value.StandingTile.X, (int)selected.Value.StandingTile.Y, false));
+                this.nativeLocalBaitCrabPotFixturePending = new NativeLocalBaitCrabPotFixturePending(farm.NameOrUniqueName, targetTile, selected.Value.StandingTile, pot, bait, player.UniqueMultiplayerID);
                 return;
             }
 
@@ -956,7 +1312,7 @@ public sealed partial class ModEntry : Mod
                 return;
             }
 
-            if (fixture.FixtureScenario is "native_tree_first_hit_v1" or "native_chop_tree_source_v1")
+            if (fixture.FixtureScenario is "native_chop_tree_source_v1")
             {
                 foreach (Item? ownedItem in player.Items.Where(item => item is Axe).ToArray())
                     player.Items.Remove(ownedItem);
@@ -978,7 +1334,7 @@ public sealed partial class ModEntry : Mod
                 if (treeTile is null || farm.terrainFeatures.ContainsKey(treeTile.Value))
                     throw new InvalidOperationException("fixture_native_local_tree_placement_missing");
                 StardewValley.TerrainFeatures.Tree tree = new("1", StardewValley.TerrainFeatures.Tree.treeStage);
-                float fixtureHealth = fixture.FixtureScenario == "native_chop_tree_source_v1" ? 1f : 10f;
+                float fixtureHealth = 1f;
                 tree.health.Value = fixtureHealth;
                 farm.terrainFeatures.Add(treeTile.Value, tree);
                 if (!farm.terrainFeatures.TryGetValue(treeTile.Value, out StardewValley.TerrainFeatures.TerrainFeature? placed)
@@ -986,8 +1342,7 @@ public sealed partial class ModEntry : Mod
                     || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value != fixtureHealth)
                     throw new InvalidOperationException("fixture_native_local_tree_placement_validation_failed");
                 this.nativeLocalPlayerFixtureInitialized = true;
-                string treeFixtureAction = fixture.FixtureScenario == "native_chop_tree_source_v1" ? "chop-tree-source" : "tree-first-hit";
-                this.Monitor.Log($"GameBuddy native-local-player initialized {treeFixtureAction} precondition before bridge attachment: tile={(int)treeTile.Value.X},{(int)treeTile.Value.Y}; health={fixtureHealth:0}; moss=false; tapped=false; production alone invokes exactly one Axe hit and emits receipt.", LogLevel.Info);
+                this.Monitor.Log($"GameBuddy native-local-player initialized chop-tree-source precondition before bridge attachment: tile={(int)treeTile.Value.X},{(int)treeTile.Value.Y}; health={fixtureHealth:0}; moss=false; tapped=false; production alone invokes exactly one Axe hit and emits receipt.", LogLevel.Info);
                 return;
             }
 
@@ -1444,7 +1799,10 @@ public sealed partial class ModEntry : Mod
             return;
         }
 
-        state.Executions = new ExecutionManager(this.Monitor, receipt => this.PublishReceipt(state, receipt), this.config.EnabledActionSet);
+        FarmhandCapabilitySurface capabilitySurface = this.config.CreateFarmhandCapabilitySurface();
+        state.Executions = new ExecutionManager(this.Monitor, capabilitySurface,
+            receipt => this.PublishReceipt(state, receipt),
+            trace => this.PublishBodyTrace(state, trace));
         string saveId = formalClientConfigured
             ? this.farmhandProvisioner!.Manifest.SaveId
             : this.config.SaveId;
@@ -1466,8 +1824,9 @@ public sealed partial class ModEntry : Mod
             && this.config.BridgeToken.Length is >= 16 and <= 256
             && new BridgeScope("stardew", saveId, worldId, playerId, companionId).IsValid;
         state.BridgeSession = bridgeConfigValid && scopeMatchesWorld
-            ? new BridgeSession(state.Executions, new BridgeScope("stardew", saveId, worldId, playerId, companionId), this.config.BridgeToken, this.config.EnabledActionSet)
+            ? new BridgeSession(state.Executions, new BridgeScope("stardew", saveId, worldId, playerId, companionId), this.config.BridgeToken, capabilitySurface)
             : null;
+        state.PlayerControlReplayGuard = state.BridgeSession is null ? null : new PlayerControlReplayGuard();
         state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
         if (!scopeMatchesWorld && formalClientConfigured)
             this.Monitor.Log("GameBuddy formal attachment remains closed: manifest and local save/world/Farmhand scope do not match.", LogLevel.Warn);
@@ -1491,10 +1850,23 @@ public sealed partial class ModEntry : Mod
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
-        if (this.config.Portfolio?.Enable == true)
+        // This gate must precede bootstrap, binding, producer, and bridge work;
+        // rejected P0b configuration is fail-closed for the entire tick path.
+        if (this.provisioningConfigurationRejected)
+            return;
+        if (this.config.Portfolio?.Bootstrap is { Enable: true })
         {
-            this.TryInitializePortfolioBinding();
-            this.UpdatePortfolioBridge();
+            this.TryBootstrapPortfolioNativeSave();
+            if (!Context.IsWorldReady)
+                return;
+        }
+        if (this.config.Portfolio?.InitialNativeLoad is { Enable: true })
+        {
+            this.TryLoadPortfolioInitialNativeSave();
+            // An armed one-shot loader owns the only route into a Portfolio
+            // binding. It disarms itself only from a matching SaveLoaded
+            // completion; terminal rejection must never fall through to the
+            // generic loaded-world branch on a later tick.
             return;
         }
         if (this.config.NativeLocalPlayerFixture?.Enable == true)
@@ -1512,11 +1884,22 @@ public sealed partial class ModEntry : Mod
             this.ObserveBridgeGeneration(nativeLocalState);
             this.DrainLocalPipeBridge(nativeLocalState);
             nativeLocalState.Executions?.Update();
+            this.PublishPendingStopObservation(nativeLocalState);
             return;
         }
-        this.TryInitializeNativeFixtureScenario();
-        this.TryStartHostAutomation();
-        this.TryStartFarmhandProvisioner();
+        if (this.config.Portfolio?.Enable != true)
+        {
+            this.TryInitializeNativeFixtureScenario();
+            this.TryStartHostAutomation();
+            this.TryStartFarmhandProvisioner();
+        }
+        if (this.config.Portfolio?.Enable == true)
+        {
+            this.TryInitializePortfolioBinding();
+            this.UpdatePortfolioP0bLifecycleProducer();
+            this.UpdatePortfolioBridge();
+            return;
+        }
         this.hostFarmhandProvisioner?.Update();
         this.TryObserveNativeAutomationClientExit();
         this.TryTriggerNativeAutomationSave();
@@ -1537,8 +1920,11 @@ public sealed partial class ModEntry : Mod
 
         ScreenEmbodimentState state = this.GetEmbodimentState();
         this.ObserveBridgeGeneration(state);
+        this.ObserveNativeChatPipeDeliveries(state);
+        this.ObserveTerminalReceiptDeliveries(state);
         this.DrainLocalPipeBridge(state);
         state.Executions?.Update();
+        this.PublishPendingStopObservation(state);
     }
 
     private void TryStartHostAutomation()
@@ -1546,10 +1932,37 @@ public sealed partial class ModEntry : Mod
         HostAutomationConfig? automation = this.config.HostAutomation;
         if (!this.hostRoleConfigured || automation?.Enable != true || this.hostAutomationTerminal)
             return;
+
+        // Stardew applies startup_preferences.languageCode asynchronously from
+        // the title-menu update. Do not call SaveGame.Load before that native
+        // initialization has reached the required live locale: a load first
+        // locks the game into the fallback/default font for this whole run.
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!this.hostAutomationStarted && !NativeChatPresentationPolicy.IsFixtureLiveLocaleAvailable(
+                automation.RequireFixtureLiveLocale,
+                NativeChatPresentationPolicy.CurrentBcp47Locale()))
+        {
+            if (this.hostAutomationDeadlineUnixMs == 0)
+                this.hostAutomationDeadlineUnixMs = now + Math.Clamp(automation.TimeoutSeconds, 10, 300) * 1_000L;
+            if (now >= this.hostAutomationDeadlineUnixMs)
+            {
+                this.hostAutomationTerminal = true;
+                this.PublishFixtureReadiness(automation, "fixture_blocked", "fixture_live_locale_unavailable");
+                this.Monitor.Log("GameBuddy HostAutomation fixture blocked: required live locale was not applied at the native title menu.", LogLevel.Error);
+            }
+            return;
+        }
         if (this.IsNativeAutomationWorldReady())
         {
             if (automation.FixtureScenario.Length > 0 && !this.hostAutomationFixtureInitialized)
                 return;
+            if (!NativeChatPresentationPolicy.IsFixtureLiveLocaleAvailable(automation.RequireFixtureLiveLocale, NativeChatPresentationPolicy.CurrentBcp47Locale()))
+            {
+                this.hostAutomationTerminal = true;
+                this.PublishFixtureReadiness(automation, "fixture_blocked", "fixture_live_locale_unavailable");
+                this.Monitor.Log("GameBuddy HostAutomation fixture blocked: required live locale is unavailable after native save load.", LogLevel.Error);
+                return;
+            }
             this.PublishFixtureReadiness(automation, "fixture_ready", "native_preconditions_ready");
             if (this.hostAutomationServerStarted)
                 return;
@@ -1589,7 +2002,6 @@ public sealed partial class ModEntry : Mod
             }
             return;
         }
-        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.hostAutomationStarted)
         {
             if (now >= this.hostAutomationDeadlineUnixMs)
@@ -1602,7 +2014,8 @@ public sealed partial class ModEntry : Mod
         }
 
         this.hostAutomationStarted = true;
-        this.hostAutomationDeadlineUnixMs = now + Math.Clamp(automation.TimeoutSeconds, 10, 300) * 1_000L;
+        if (this.hostAutomationDeadlineUnixMs == 0)
+            this.hostAutomationDeadlineUnixMs = now + Math.Clamp(automation.TimeoutSeconds, 10, 300) * 1_000L;
         try
         {
             SaveGame.Load(automation.SaveName);
@@ -2497,6 +2910,30 @@ public sealed partial class ModEntry : Mod
 
     private void OnWarped(object? sender, WarpedEventArgs e)
     {
+        // M8 consumes only the fresh native Player.Warped lifecycle callback;
+        // the adapter and coordinator remain the sole owners of postcondition.
+        this.portfolioMineElevatorAdapter?.ObserveWarped(e);
+        this.portfolioMineEntryAdapter?.ObserveWarped(e);
+        this.portfolioMineLadderAdapter?.ObserveWarped(e);
+        if (this.nativeLocalBaitCrabPotFixturePending is NativeLocalBaitCrabPotFixturePending baitPending && e.Player == Game1.player)
+        {
+            if (e.NewLocation is Farm farm && string.Equals(farm.NameOrUniqueName, baitPending.FarmName, StringComparison.Ordinal)
+                && e.Player.Tile == baitPending.StandingTile
+                && farm.objects.TryGetValue(baitPending.TargetTile, out StardewValley.Object? placed)
+                && ReferenceEquals(placed, baitPending.Pot) && baitPending.Pot.QualifiedItemId == "(O)710"
+                && baitPending.Pot.owner.Value == baitPending.OwnerId && baitPending.Pot.bait.Value is null
+                && e.Player.Items.Any(item => ReferenceEquals(item, baitPending.Bait) && item.QualifiedItemId == "(O)685" && item.Stack == 1))
+            {
+                this.nativeLocalBaitCrabPotFixturePending = null;
+                this.nativeLocalPlayerFixtureInitialized = true;
+                this.Monitor.Log($"GameBuddy native-local-player initialized bait-crab-pot precondition before bridge attachment: pot={(int)baitPending.TargetTile.X},{(int)baitPending.TargetTile.Y}; bait=(O)685; production alone invokes GameLocation.checkAction probe+commit and emits receipt.", LogLevel.Info);
+                return;
+            }
+            this.nativeLocalBaitCrabPotFixturePending = null;
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_bait_crab_pot_v1; error=fixture_native_local_bait_crab_pot_approach_unreachable; exception_type=InvalidOperationException.", LogLevel.Error);
+            return;
+        }
         if (this.nativeLocalPlaceCrabPotFixturePending is NativeLocalPlaceCrabPotFixturePending crabPotPending && e.Player == Game1.player)
         {
             if (e.NewLocation is Farm farm
@@ -2650,7 +3087,10 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaving(object? sender, SavingEventArgs e)
     {
+        // P0b retains only its frozen initial scope across this invalidation.
+        // It must never consult the live Portfolio binding during save lifecycle.
         this.InvalidatePortfolioState("portfolio_saving");
+        this.OnPortfolioP0bSaving();
         this.hostFarmhandProvisioner?.OnSaving();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
@@ -2661,6 +3101,7 @@ public sealed partial class ModEntry : Mod
 
     private void OnSaved(object? sender, SavedEventArgs e)
     {
+        this.OnPortfolioP0bSaved();
         this.hostFarmhandProvisioner?.OnSaved();
         // A request can arrive while the previous native SaveGameMenu cycle is
         // still settling. Release the fixture latch at the authoritative Saved
@@ -2670,7 +3111,10 @@ public sealed partial class ModEntry : Mod
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        // P0b reload is authorized by its frozen initial scope and derived slot,
+        // never by a binding that survived a title transition.
         this.InvalidatePortfolioState("portfolio_returned_to_title");
+        this.OnPortfolioP0bReturnedToTitle();
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
         this.hostAutomationSaveMenuOpened = false;
         this.farmhandProvisioner?.Disconnect();
@@ -2687,6 +3131,7 @@ public sealed partial class ModEntry : Mod
         this.nativeLocalClearHoeDirtFixturePending = null;
         this.nativeLocalDigArtifactSpotFixturePending = null;
         this.nativeLocalPlaceCrabPotFixturePending = null;
+        this.nativeLocalBaitCrabPotFixturePending = null;
         this.farmhandProvisioningTerminal = false;
         this.nextFarmhandProvisionerAttemptAtMs = 0;
         ScreenEmbodimentState state = this.GetEmbodimentState();
@@ -2717,7 +3162,7 @@ public sealed partial class ModEntry : Mod
 
     private void MoveFixtureCommand(string command, string[] args)
     {
-        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
+        if (!this.RequireNativeLocalPlayerFixture(out ScreenEmbodimentState state))
             return;
         if (args.Length != 3 || !int.TryParse(args[0], out int x) || !int.TryParse(args[1], out int y) || !IsOpaqueRequestId(args[2]))
         {
@@ -2730,7 +3175,7 @@ public sealed partial class ModEntry : Mod
 
     private void EquipToolFixtureCommand(string command, string[] args)
     {
-        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
+        if (!this.RequireNativeLocalPlayerFixture(out ScreenEmbodimentState state))
             return;
         if (args.Length != 2 || !int.TryParse(args[0], out int slot) || !IsOpaqueRequestId(args[1]))
         {
@@ -2743,7 +3188,7 @@ public sealed partial class ModEntry : Mod
 
     private void CancelCommand(string command, string[] args)
     {
-        if (!this.RequireAiWorld(out ScreenEmbodimentState state))
+        if (!this.RequireNativeLocalPlayerFixture(out ScreenEmbodimentState state))
             return;
         LocalExecutionReceipt receipt = state.Executions!.CancelActiveForFixture("local_console_cancel");
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
@@ -2753,6 +3198,11 @@ public sealed partial class ModEntry : Mod
     {
         if (state.LocalPipeBridge is null || state.Executions is null)
             return;
+
+        if (state.LocalPipeBridge.TryConsumeWorkerTerminal(out PipeWorkerTerminal terminal))
+            this.MonitorNativeChatIngress(terminal.Kind == PipeWorkerTerminalKind.ReaderEnded
+                ? "ai_player_control_pipe_reader_ended"
+                : "ai_player_control_pipe_writer_ended");
 
         long generation = state.LocalPipeBridge.CurrentGeneration;
         if (state.LastBridgeGeneration != 0 && generation == 0)
@@ -2789,6 +3239,10 @@ public sealed partial class ModEntry : Mod
                     "observe_request" => this.HandleObserve(state, inbound.Generation, inbound.Json),
                     "execution_request" => this.HandleExecute(state, inbound.Generation, inbound.Json),
                     "cancel_request" => this.HandleCancel(state, inbound.Generation, inbound.Json),
+                    "execution_receipt_query" => this.HandleExecutionReceiptQuery(state, inbound.Generation, inbound.Json, correlationId),
+                    "companion_presentation_request" => this.HandleCompanionPresentation(state, inbound.Generation, inbound.Json),
+                    "system_notice_request" => this.HandleSystemNotice(state, inbound.Generation, inbound.Json),
+                    "player_control_receipt" => this.HandlePlayerControlReceipt(state, inbound.Generation, inbound.Json, correlationId),
                     _ => this.SerializeError(state, correlationId, "unknown_message_type"),
                 };
                 if (response is not null && !state.LocalPipeBridge.TryEnqueueOutbound(inbound.Generation, response))
@@ -2805,15 +3259,123 @@ public sealed partial class ModEntry : Mod
         }
     }
 
+    /// <summary>
+    /// Queue admission is not pipe delivery. Retain only the completion/generation
+    /// for bounded redacted diagnosis; never retry or retain player content/IDs.
+    /// </summary>
+    private void TrackNativeChatPipeDelivery(ScreenEmbodimentState state, long generation, PipeOutboundCompletion completion)
+    {
+        if (state.NativeChatPipeDeliveries.Count >= 8)
+        {
+            this.MonitorNativeChatIngress("ai_player_control_pipe_delivery_untracked");
+            return;
+        }
+        state.NativeChatPipeDeliveries.Enqueue(new NativeChatPipeDelivery(generation, completion, Environment.TickCount64));
+    }
+
+    private void ObserveNativeChatPipeDeliveries(ScreenEmbodimentState state)
+    {
+        while (state.NativeChatPipeDeliveries.TryPeek(out NativeChatPipeDelivery? pending))
+        {
+            if (pending.Completion.Result.IsCompleted)
+            {
+                state.NativeChatPipeDeliveries.Dequeue();
+                this.MonitorNativeChatIngress(pending.Completion.Result.GetAwaiter().GetResult()
+                    ? "ai_player_control_pipe_flushed"
+                    : "ai_player_control_pipe_write_failed");
+                continue;
+            }
+            if (Environment.TickCount64 - pending.EnqueuedAtMs >= 2_000)
+            {
+                state.NativeChatPipeDeliveries.Dequeue();
+                this.MonitorNativeChatIngress("ai_player_control_pipe_flush_unconfirmed");
+                continue;
+            }
+            break;
+        }
+    }
+
+    private void PublishPendingStopObservation(ScreenEmbodimentState state)
+    {
+        BridgeStopObservation? observation = state.PendingStopObservation;
+        if (observation is null || state.Executions is null || !state.Executions.IsBodySettled || state.LocalPipeBridge is null || state.BridgeSession is null)
+            return;
+        long generation = state.LocalPipeBridge.CurrentGeneration;
+        string correlationId = Guid.NewGuid().ToString("N");
+        if (generation != 0 && state.BridgeSession.TryCreateStopBodySettledEvent(generation, observation, correlationId, out string json)
+            && state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
+            state.PendingStopObservation = null;
+    }
+
     private void PublishReceipt(ScreenEmbodimentState state, LocalExecutionReceipt receipt)
     {
         if (state.LocalPipeBridge is null || state.BridgeSession is null)
             return;
         long generation = state.LocalPipeBridge.CurrentGeneration;
         if (generation != 0 && state.BridgeSession.TryCreateReceiptEvent(generation, receipt, out string json)
-            && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
-            this.Monitor.Log("GameBuddy dropped receipt event due to closed/backpressured bridge.", LogLevel.Warn);
+            && state.LocalPipeBridge.TryEnqueueOutbound(generation, json, out PipeOutboundCompletion completion))
+        {
+            // Queue admission is not pipe delivery. A terminal receipt must not
+            // be silently claimed as delivered: its exact generation-bound
+            // completion stays tracked until the bridge writer confirms the
+            // flush (see ObserveTerminalReceiptDeliveries). Non-terminal receipt
+            // events are observational and remain fire-and-forget.
+            if (ModEntry.IsUnconfirmedTerminal(receipt.State)
+                && !state.TerminalReceiptDeliveryTracker.TryTrack(receipt.RequestId, receipt.State, generation, completion, Environment.TickCount64))
+            {
+                // The bounded pending queue is full; fail closed: the receipt
+                // can no longer be confirmed, so it is demoted to unconfirmed.
+                this.MonitorNativeChatIngress("gamebuddy_terminal_receipt_delivery_untracked");
+                state.TerminalReceiptDeliveryTracker.RetainUnconfirmed(receipt.RequestId, receipt.State, generation, Environment.TickCount64);
+            }
+            return;
+        }
+        // Terminal delivery failed (connection closed or outbound queue
+        // saturated). Queue admission failure must never silently claim a
+        // terminal receipt: retain a bounded, redacted unresolved diagnostic
+        // for the exact request so the outcome stays recoverable (an exact
+        // Host observe/idempotent replay can re-fetch the settled receipt)
+        // and observably unconfirmed. Only requestId/state/generation/clock
+        // are retained; they already exist in the exact execution ledger and
+        // no player content or identity is added. Without a live connection
+        // (generation 0) no peer can receive the frame; the settled receipt
+        // stays in the execution ledger for an exact later observe.
+        if (ModEntry.IsUnconfirmedTerminal(receipt.State) && generation != 0)
+        {
+            if (state.TerminalReceiptDeliveryTracker.RetainUnconfirmed(receipt.RequestId, receipt.State, generation, Environment.TickCount64))
+                this.Monitor.Log($"GameBuddy terminal receipt for {receipt.RequestId} was not deliverable (closed/backpressured bridge); retained as an unconfirmed exact-receipt diagnostic.", LogLevel.Warn);
+            else
+                this.MonitorNativeChatIngress("gamebuddy_unconfirmed_terminal_receipt_untracked");
+            return;
+        }
+        this.Monitor.Log("GameBuddy dropped a non-terminal receipt event due to closed/backpressured bridge.", LogLevel.Warn);
     }
+
+    private void ObserveTerminalReceiptDeliveries(ScreenEmbodimentState state)
+    {
+        while (true)
+        {
+            TerminalReceiptDeliveryTracker.ObserveOutcome outcome = state.TerminalReceiptDeliveryTracker.Observe(Environment.TickCount64);
+            if (outcome == TerminalReceiptDeliveryTracker.ObserveOutcome.Pending)
+                return;
+            this.MonitorNativeChatIngress(outcome switch
+            {
+                TerminalReceiptDeliveryTracker.ObserveOutcome.Flushed => "gamebuddy_terminal_receipt_flushed",
+                TerminalReceiptDeliveryTracker.ObserveOutcome.WriteFailed => "gamebuddy_terminal_receipt_write_failed",
+                _ => "gamebuddy_terminal_receipt_flush_unconfirmed",
+            });
+        }
+    }
+
+    // Unified with the wire/Host terminal-receipt classification
+    // (host/src/execution-correlation-ledger.ts, gameplay-task-subagent.ts and
+    // stardew-integration-launcher.ts classify blocked, invalidated, succeeded,
+    // partially_succeeded, failed, cancelled, expired, rejected and uncertain as
+    // terminal; accepted, running and meaningful_progress are progress states).
+    internal static bool IsUnconfirmedTerminal(ExecutionState state) => state is
+        ExecutionState.Succeeded or ExecutionState.PartiallySucceeded or ExecutionState.Failed
+        or ExecutionState.Cancelled or ExecutionState.Invalidated or ExecutionState.Expired
+        or ExecutionState.Rejected or ExecutionState.Blocked or ExecutionState.Uncertain;
 
     private void PublishSemantic(ScreenEmbodimentState state, string kind, string reasonCode)
     {
@@ -2824,6 +3386,17 @@ public sealed partial class ModEntry : Mod
         if (generation != 0 && state.BridgeSession.TryCreateSemanticEvent(generation, kind, correlationId, reasonCode, out string json)
             && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
             this.Monitor.Log("GameBuddy dropped semantic event due to closed/backpressured bridge.", LogLevel.Warn);
+    }
+
+    private void PublishBodyTrace(ScreenEmbodimentState state, ExecutionTrace trace)
+    {
+        if (state.LocalPipeBridge is null || state.BridgeSession is null)
+            return;
+        long generation = state.LocalPipeBridge.CurrentGeneration;
+        string correlationId = Guid.NewGuid().ToString("N");
+        if (generation != 0 && state.BridgeSession.TryCreateBodyTraceEvent(generation, trace, correlationId, out string json)
+            && !state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
+            this.Monitor.Log("GameBuddy dropped body trace event due to closed/backpressured bridge.", LogLevel.Warn);
     }
 
     private void PublishLifecycle(ScreenEmbodimentState state, string lifecycleState, string reasonCode)
@@ -2840,20 +3413,70 @@ public sealed partial class ModEntry : Mod
     private string? SerializeError(ScreenEmbodimentState state, string? correlationId, string reasonCode) => state.BridgeSession is not null && BridgeProtocol.TrySerialize(state.BridgeSession.CreateError(correlationId, reasonCode), out string json, out _) ? json : null;
 
     private string? HandleHello(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeHello, BridgeHelloAck>(state,
-        System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeHello>>(json, BridgeProtocol.JsonOptions),
+        BridgeProtocol.TryDeserializeInbound(json, "hello", out BridgeEnvelope<BridgeHello>? request, out _, "token") ? request : null,
         (BridgeEnvelope<BridgeHello> request, out BridgeEnvelope<BridgeHelloAck>? response, out string reason) => state.BridgeSession!.TryAuthenticate(generation, request, out response, out reason), out _);
 
     private string? HandleObserve(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeObserveRequest, BridgeSnapshot>(state,
-        System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeObserveRequest>>(json, BridgeProtocol.JsonOptions),
+        BridgeProtocol.TryDeserializeInbound(json, "observe_request", out BridgeEnvelope<BridgeObserveRequest>? request, out _) ? request : null,
         (BridgeEnvelope<BridgeObserveRequest> request, out BridgeEnvelope<BridgeSnapshot>? response, out string reason) => state.BridgeSession!.TryObserve(generation, request, out response, out reason), out _);
 
     private string? HandleExecute(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(state,
-        System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeExecutionRequest>>(json, BridgeProtocol.JsonOptions),
+        BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? request, out _) ? request : null,
         (BridgeEnvelope<BridgeExecutionRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryExecute(generation, request, out response, out reason), out _);
 
     private string? HandleCancel(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeCancelRequest, BridgeReceipt>(state,
-        System.Text.Json.JsonSerializer.Deserialize<BridgeEnvelope<BridgeCancelRequest>>(json, BridgeProtocol.JsonOptions),
+        BridgeProtocol.TryDeserializeInbound(json, "cancel_request", out BridgeEnvelope<BridgeCancelRequest>? request, out _, "requestId", "executionId", "cancelId", "cancelEpoch", "reasonCode") ? request : null,
         (BridgeEnvelope<BridgeCancelRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryCancel(generation, request, out response, out reason), out _);
+
+    private string? HandleExecutionReceiptQuery(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeExecutionReceiptQuery(json, out BridgeEnvelope<BridgeExecutionReceiptQuery>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<BridgeExecutionReceiptQuery, BridgeReceipt>(state, request,
+            (BridgeEnvelope<BridgeExecutionReceiptQuery> r, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryQueryExecutionReceipt(generation, r, out response, out reason), out _);
+    }
+
+    private string? HandleCompanionPresentation(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeCompanionPresentationRequest, BridgeCompanionPresentationReceipt>(state,
+        BridgeProtocol.TryDeserializeInbound(json, "companion_presentation_request", out BridgeEnvelope<BridgeCompanionPresentationRequest>? request, out _, "expressionId", "sourceEventId", "text", "locale", "expectedRevision", "presentationEpoch") ? request : null,
+        (BridgeEnvelope<BridgeCompanionPresentationRequest> request, out BridgeEnvelope<BridgeCompanionPresentationReceipt>? response, out string reason) =>
+            state.BridgeSession!.TryPresentCompanionText(generation, request, this.TrySendCompanionPresentation, out response, out reason), out _);
+
+    private string? HandleSystemNotice(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeSystemNoticeRequest, BridgeSystemNoticeReceipt>(state,
+        BridgeProtocol.TryDeserializeInbound(json, "system_notice_request", out BridgeEnvelope<BridgeSystemNoticeRequest>? request, out _, "noticeId", "key", "text", "locale") ? request : null,
+        (BridgeEnvelope<BridgeSystemNoticeRequest> request, out BridgeEnvelope<BridgeSystemNoticeReceipt>? response, out string reason) =>
+            state.BridgeSession!.TryPresentSystemNotice(generation, request, this.TrySendSystemNotice, out response, out reason), out _);
+
+    private string? HandlePlayerControlReceipt(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeInbound(json, "player_control_receipt", out BridgeEnvelope<BridgePlayerControlReceipt>? receipt, out _, "controlId", "sourceEventId", "status"))
+            return this.SerializeError(state, correlationId, "invalid_player_control_receipt");
+        if (!state.BridgeSession!.TryAcceptPlayerControlReceipt(generation, receipt, out string reasonCode))
+            return this.SerializeError(state, correlationId, reasonCode);
+        this.MonitorNativeChatIngress("ai_player_control_host_accepted");
+        return null;
+    }
+
+    /// <summary>Final game-thread presentation authority; no UI injection or envelope echo.</summary>
+    private bool TrySendCompanionPresentation(BridgeCompanionPresentationRequest request) => this.TrySendNativeChat(request.Text, request.Locale);
+
+    private bool TrySendSystemNotice(BridgeSystemNoticeRequest request) => this.TrySendNativeChat(request.Text, request.Locale);
+
+    private bool TrySendNativeChat(string text, string locale)
+    {
+        if (!this.IsConfiguredAiScreen(out Farmer? farmhand, out _)
+            || !NativeChatPresentationPolicy.IsBoundHumanRecipient(farmhand)
+            || !NativeChatPresentationPolicy.IsCurrentLocale(locale))
+            return false;
+        // This is the sole egress reflection: the exact static Game1 multiplayer
+        // field with the exact native type. Visibility varies by target build;
+        // identity and type are the authority boundary. Any drift fails closed.
+        FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        if (!NativeChatPresentationPolicy.IsExactMultiplayerField(field)
+            || field!.GetValue(null) is not Multiplayer multiplayer)
+            return false;
+        multiplayer.sendChatMessage(LocalizedContentManager.CurrentLanguageCode, text, Game1.MasterPlayer.UniqueMultiplayerID);
+        return true;
+    }
 
     private string? SerializeBridgeResponse<TRequest, TResponse>(
         ScreenEmbodimentState state,
@@ -2892,6 +3515,28 @@ public sealed partial class ModEntry : Mod
             return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Defense-in-depth gate for fixture-only console mechanics. Registration
+    /// is already limited to an explicit valid NativeLocalPlayerFixture config;
+    /// this revalidates the same admission plus live fixture state on the game
+    /// thread, so the commands fail closed in every other world.
+    /// </summary>
+    private bool RequireNativeLocalPlayerFixture(out ScreenEmbodimentState state)
+    {
+        state = null!;
+        if (this.config.NativeLocalPlayerFixture is not { IsValid: true })
+        {
+            this.Monitor.Log("GameBuddy refused a fixture console command: native_local_player_fixture_admission_missing.", LogLevel.Warn);
+            return false;
+        }
+        if (this.nativeLocalPlayerFixtureTerminal || !this.nativeLocalPlayerFixtureInitialized)
+        {
+            this.Monitor.Log("GameBuddy refused a fixture console command: native_local_player_fixture_not_active.", LogLevel.Warn);
+            return false;
+        }
+        return this.RequireAiWorld(out state);
     }
 
     private bool IsConfiguredNativeLocalPlayer(out Farmer? localPlayer, out string reasonCode)
@@ -2951,6 +3596,7 @@ public sealed partial class ModEntry : Mod
         state.LocalPipeBridge?.Dispose();
         state.LocalPipeBridge = null;
         state.BridgeSession = null;
+        state.PlayerControlReplayGuard = null;
         state.Executions = null;
     }
 
@@ -2976,6 +3622,8 @@ public sealed partial class ModEntry : Mod
     private sealed record NativeLocalCollectAnimalProductFixturePending(string AnimalHouseName, long AnimalId, Vector2 AnimalTile, string ProduceId, string ToolKind);
     private sealed record NativeLocalClearHoeDirtFixturePending(string FarmName, Vector2 DirtTile, Vector2 StandingTile);
     private sealed record NativeLocalDigArtifactSpotFixturePending(string FarmName, Vector2 ArtifactTile, Vector2 StandingTile);
+    private sealed record NativeLocalBaitCrabPotFixturePending(string FarmName, Vector2 TargetTile, Vector2 StandingTile, StardewValley.Objects.CrabPot Pot, StardewValley.Object Bait, long OwnerId);
+
     private sealed record NativeLocalPlaceCrabPotFixturePending(
         string FarmName,
         Vector2 TargetTile,
@@ -2994,6 +3642,109 @@ public sealed partial class ModEntry : Mod
         internal ExecutionManager? Executions { get; set; }
         internal BridgeSession? BridgeSession { get; set; }
         internal LocalPipeBridge? LocalPipeBridge { get; set; }
+        internal PlayerControlReplayGuard? PlayerControlReplayGuard { get; set; }
+        internal long StopObservationEpoch { get; set; }
+        internal BridgeStopObservation? PendingStopObservation { get; set; }
         internal long LastBridgeGeneration { get; set; }
+        internal Queue<NativeChatPipeDelivery> NativeChatPipeDeliveries { get; } = new();
+        internal TerminalReceiptDeliveryTracker TerminalReceiptDeliveryTracker { get; } = new();
+    }
+
+    private sealed record NativeChatPipeDelivery(long Generation, PipeOutboundCompletion Completion, long EnqueuedAtMs);
+    private sealed record TerminalReceiptDelivery(string RequestId, ExecutionState State, long Generation, PipeOutboundCompletion Completion, long EnqueuedAtMs);
+    private sealed record UnconfirmedTerminalReceipt(string RequestId, ExecutionState State, long Generation, long EnqueuedAtMs);
+
+    /// <summary>
+    /// Bounded, fail-closed tracker for terminal receipt delivery. Queue
+    /// admission is not pipe delivery: an admitted terminal receipt stays
+    /// pending until its exact generation-bound outbound completion settles,
+    /// and only a flushed completion confirms delivery. A write-failed or
+    /// unconfirmed completion demotes the receipt to a bounded unconfirmed
+    /// diagnostic so a terminal outcome is never silently claimed as
+    /// delivered; the exact settled receipt remains recoverable from the
+    /// execution ledger by an idempotent Host observe/replay.
+    /// </summary>
+    internal sealed class TerminalReceiptDeliveryTracker
+    {
+        private const int MaximumPendingDeliveries = 16;
+        private const int MaximumUnconfirmedReceipts = 16;
+        private const long UnconfirmedAfterMilliseconds = 2_000;
+
+        private readonly Queue<TerminalReceiptDelivery> pending = new();
+        private readonly Queue<UnconfirmedTerminalReceipt> unconfirmed = new();
+
+        internal enum ObserveOutcome
+        {
+            /// <summary>No tracked delivery settled (queue empty or the head is still within its confirmation window).</summary>
+            Pending,
+            /// <summary>The exact frame was flushed to the live connection; that is the only delivery evidence.</summary>
+            Flushed,
+            /// <summary>The exact completion resolved false; the terminal receipt was not delivered.</summary>
+            WriteFailed,
+            /// <summary>The head stayed unresolved past the bounded window; delivery is not confirmed.</summary>
+            FlushUnconfirmed,
+        }
+
+        /// <summary>
+        /// Track an admitted terminal receipt until its exact completion
+        /// settles. Returns false when the bounded pending queue is full; the
+        /// caller then demotes the receipt to unconfirmed (fail closed).
+        /// </summary>
+        internal bool TryTrack(string requestId, ExecutionState state, long generation, PipeOutboundCompletion completion, long nowMs)
+        {
+            if (this.pending.Count >= MaximumPendingDeliveries)
+                return false;
+            this.pending.Enqueue(new TerminalReceiptDelivery(requestId, state, generation, completion, nowMs));
+            return true;
+        }
+
+        /// <summary>
+        /// Advance the head of the pending queue. Only Flushed is delivery
+        /// evidence; WriteFailed and FlushUnconfirmed both demote the head to
+        /// the bounded unconfirmed diagnostic exactly once, so a terminal
+        /// receipt is never silently claimed as delivered. A still-unresolved
+        /// head inside its confirmation window leaves the queue untouched
+        /// (Pending).
+        /// </summary>
+        internal ObserveOutcome Observe(long nowMs)
+        {
+            if (!this.pending.TryPeek(out TerminalReceiptDelivery? delivery))
+                return ObserveOutcome.Pending;
+            if (delivery.Completion.Result.IsCompleted)
+            {
+                this.pending.Dequeue();
+                if (delivery.Completion.Result.GetAwaiter().GetResult())
+                    return ObserveOutcome.Flushed;
+                this.RetainUnconfirmed(delivery.RequestId, delivery.State, delivery.Generation, nowMs);
+                return ObserveOutcome.WriteFailed;
+            }
+            if (nowMs - delivery.EnqueuedAtMs >= UnconfirmedAfterMilliseconds)
+            {
+                this.pending.Dequeue();
+                this.RetainUnconfirmed(delivery.RequestId, delivery.State, delivery.Generation, nowMs);
+                return ObserveOutcome.FlushUnconfirmed;
+            }
+            return ObserveOutcome.Pending;
+        }
+
+        /// <summary>
+        /// Retain an undeliverable or unconfirmable terminal receipt as a
+        /// bounded redacted exact-request diagnostic (only requestId/state/
+        /// generation/clock; those already exist in the exact execution ledger
+        /// and no player content or identity is added). The new record is
+        /// always retained; returns false only when the bounded queue was full
+        /// and its oldest record had to be evicted to keep it.
+        /// </summary>
+        internal bool RetainUnconfirmed(string requestId, ExecutionState state, long generation, long nowMs)
+        {
+            bool overflowed = false;
+            if (this.unconfirmed.Count >= MaximumUnconfirmedReceipts)
+            {
+                this.unconfirmed.Dequeue();
+                overflowed = true;
+            }
+            this.unconfirmed.Enqueue(new UnconfirmedTerminalReceipt(requestId, state, generation, nowMs));
+            return !overflowed;
+        }
     }
 }

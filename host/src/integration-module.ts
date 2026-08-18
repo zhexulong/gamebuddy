@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { isActionClass, type ActionClass } from "./action-class.js";
+import type { ExecutionDispatchObserver, ExecutionCorrelationOwner } from "./execution-correlation-ledger.js";
 import type { IntegrationConnection } from "./integration-types.js";
 
 /** Host-owned identity fields that a selected module may bind to its connection. */
@@ -56,6 +58,7 @@ export type IntegrationStateView = Readonly<{
 export type IntegrationActionDescriptor = Readonly<{
   actionId: string;
   familyId: string;
+  actionClass: ActionClass;
   lifecycle: IntegrationActionLifecycle;
   label: string;
   description: string;
@@ -69,8 +72,18 @@ export type IntegrationReceiptEvidence = Readonly<{
   evidence: Readonly<Record<string, unknown>> | null;
 }>;
 
+export type IntegrationDispatchAdmission = Readonly<{
+  /** Runtime-local observer and owner captured before action tool execution. */
+  observer: ExecutionDispatchObserver;
+  owner: ExecutionCorrelationOwner;
+  /** Ledger-only exact cancel facade; it rejects unknown owner/request/execution tuples. */
+  cancelExact(requestId: string, executionId: string, reasonCode: string): Promise<unknown>;
+}>;
+
 export type IntegrationToolContext = Readonly<{
   connection: IntegrationConnection;
+  /** Required for executable action tools. It mints a fresh runtime-owned admission for each execution invocation. */
+  dispatchAdmissionFactory?: () => IntegrationDispatchAdmission;
   /** Advisory data is opaque to Host core and interpreted only by the module. */
   knowledge?: unknown;
   gameVersion?: string;
@@ -110,8 +123,15 @@ export type IntegrationActionCatalog = Readonly<{
   entries: readonly IntegrationActionDescriptor[];
   revision: string;
   get(actionId: string): IntegrationActionDescriptor | undefined;
-  visibleActions(capabilities: readonly string[], policy?: IntegrationActionPolicy): readonly IntegrationActionDescriptor[];
-  searchVisibleActions(capabilities: readonly string[], query: string, policy?: IntegrationActionPolicy): readonly IntegrationActionDescriptor[];
+  visibleActions(
+    capabilities: readonly string[],
+    policy?: IntegrationActionPolicy,
+  ): readonly IntegrationActionDescriptor[];
+  searchVisibleActions(
+    capabilities: readonly string[],
+    query: string,
+    policy?: IntegrationActionPolicy,
+  ): readonly IntegrationActionDescriptor[];
   familyFor(actionId: string): string | undefined;
   isPublished(actionId: string): boolean;
   hasCompletionEvidence(actionId: string, receipt: IntegrationReceiptEvidence): boolean;
@@ -134,13 +154,20 @@ export type GameIntegrationModule = Readonly<{
   /** Materialize only tools backed by this module's validated connection. */
   createToolSet(context: IntegrationToolContext): IntegrationToolSet;
   /** Return immutable manifest metadata without exposing adapter state. */
-  knowledgeMetadata(context: Readonly<{ connection?: IntegrationConnection; knowledge?: unknown; gameVersion?: string }>): IntegrationKnowledgeMetadata;
+  knowledgeMetadata(
+    context: Readonly<{ connection?: IntegrationConnection; knowledge?: unknown; gameVersion?: string }>,
+  ): IntegrationKnowledgeMetadata;
   /** Project adapter-owned state into the small Host lifecycle view. */
   readState(connection: IntegrationConnection): IntegrationStateView;
   /** Project only bounded status fields for the player-facing Host status tool. */
   status(connection: IntegrationConnection): IntegrationStatusDetails;
   /** Request cancellation through the adapter; the adapter/remote game remains authoritative. */
-  cancelExecution(connection: IntegrationConnection, requestId: string, executionId: string, reasonCode: string): unknown;
+  cancelExecution(
+    connection: IntegrationConnection,
+    requestId: string,
+    executionId: string,
+    reasonCode: string,
+  ): unknown;
   /** Parse this module's action-tool result into a receipt without trusting model text. */
   parseReceipt(details: unknown): IntegrationExecutionReceipt | null;
   /** Map module-owned tool names back to action IDs for Host budgets/receipts. */
@@ -166,21 +193,25 @@ export function createIntegrationActionCatalog(
   if (!Array.isArray(entries) || entries.length > 512) throw new Error("invalid_integration_action_catalog");
   const normalized = entries.map((entry) => {
     if (!isRecord(entry)) throw new Error("invalid_integration_action_catalog");
-    const { actionId, familyId, lifecycle, label, description, targetKinds, requiredCapability } = entry;
-    if (!isIdentifier(actionId)
-      || !isIdentifier(familyId)
-      || !isIdentifier(requiredCapability)
-      || !isLifecycle(lifecycle)
-      || !boundedText(label, 256)
-      || !boundedText(description, 4_096)
-      || !Array.isArray(targetKinds)
-      || targetKinds.length > 32
-      || !targetKinds.every(isIdentifier)) {
+    const { actionId, familyId, actionClass, lifecycle, label, description, targetKinds, requiredCapability } = entry;
+    if (
+      !isIdentifier(actionId) ||
+      !isIdentifier(familyId) ||
+      !isActionClass(actionClass) ||
+      !isIdentifier(requiredCapability) ||
+      !isLifecycle(lifecycle) ||
+      !boundedText(label, 256) ||
+      !boundedText(description, 4_096) ||
+      !Array.isArray(targetKinds) ||
+      targetKinds.length > 32 ||
+      !targetKinds.every(isIdentifier)
+    ) {
       throw new Error("invalid_integration_action_catalog");
     }
     return Object.freeze({
       actionId,
       familyId,
+      actionClass,
       lifecycle,
       label,
       description,
@@ -196,20 +227,35 @@ export function createIntegrationActionCatalog(
   const frozenEntries = Object.freeze(normalized);
   const byId = new Map(frozenEntries.map((entry) => [entry.actionId, entry]));
   const revision = createHash("sha256").update(JSON.stringify(frozenEntries)).digest("hex");
-  const visible = (capabilities: readonly string[], policy?: IntegrationActionPolicy): readonly IntegrationActionDescriptor[] => {
+  const visible = (
+    capabilities: readonly string[],
+    policy?: IntegrationActionPolicy,
+  ): readonly IntegrationActionDescriptor[] => {
     const capabilitySet = new Set(capabilities);
     const deniedActions = new Set(policy?.deniedActions ?? []);
     const deniedFamilies = new Set(policy?.deniedFamilies ?? []);
-    return frozenEntries.filter((entry) => entry.lifecycle === "published"
-      && capabilitySet.has(entry.requiredCapability)
-      && !deniedActions.has(entry.actionId)
-      && !deniedFamilies.has(entry.familyId));
+    return frozenEntries.filter(
+      (entry) =>
+        entry.actionClass === "primitive" &&
+        entry.lifecycle === "published" &&
+        capabilitySet.has(entry.requiredCapability) &&
+        !deniedActions.has(entry.actionId) &&
+        !deniedFamilies.has(entry.familyId),
+    );
   };
-  const search = (capabilities: readonly string[], query: string, policy?: IntegrationActionPolicy): readonly IntegrationActionDescriptor[] => {
+  const search = (
+    capabilities: readonly string[],
+    query: string,
+    policy?: IntegrationActionPolicy,
+  ): readonly IntegrationActionDescriptor[] => {
     const available = visible(capabilities, policy);
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (normalizedQuery.length === 0) return available;
-    return available.filter((entry) => `${entry.actionId} ${entry.familyId} ${entry.label} ${entry.description}`.toLocaleLowerCase().includes(normalizedQuery));
+    return available.filter((entry) =>
+      `${entry.actionId} ${entry.familyId} ${entry.label} ${entry.description}`
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
+    );
   };
   return Object.freeze({
     entries: frozenEntries,
@@ -218,43 +264,54 @@ export function createIntegrationActionCatalog(
     visibleActions: visible,
     searchVisibleActions: search,
     familyFor: (actionId: string) => byId.get(actionId)?.familyId,
-    isPublished: (actionId: string) => byId.get(actionId)?.lifecycle === "published",
-    hasCompletionEvidence: (actionId: string, receipt: IntegrationReceiptEvidence) => hasCompletionEvidence(actionId, receipt),
+    isPublished: (actionId: string) => {
+      const entry = byId.get(actionId);
+      return entry?.actionClass === "primitive" && entry.lifecycle === "published";
+    },
+    hasCompletionEvidence: (actionId: string, receipt: IntegrationReceiptEvidence) =>
+      hasCompletionEvidence(actionId, receipt),
   });
 }
 
 export function assertIntegrationModule(module: GameIntegrationModule, integrationId: string): void {
-  if (!isRecord(module)
-    || !isRecord(module.descriptor)
-    || !isIdentifier(module.descriptor.integrationId)
-    || !VERSION.test(module.descriptor.version)
-    || !isToolNamePrefix(module.descriptor.toolNamePrefix)
-    || module.descriptor.integrationId !== integrationId
-    || typeof module.assertIdentityBinding !== "function"
-    || typeof module.worldScope !== "function"
-    || typeof module.createToolSet !== "function"
-    || typeof module.knowledgeMetadata !== "function"
-    || typeof module.status !== "function"
-    || typeof module.readState !== "function"
-    || typeof module.parsePolicy !== "function"
-    || typeof module.cancelExecution !== "function"
-    || typeof module.parseReceipt !== "function"
-    || typeof module.actionIdForToolName !== "function"
-    || typeof module.isCancellationTool !== "function"
-    || !isRecord(module.actionCatalog)
-    || !Array.isArray(module.actionCatalog.entries)
-    || typeof module.actionCatalog.revision !== "string"
-    || typeof module.actionCatalog.get !== "function"
-    || typeof module.actionCatalog.visibleActions !== "function"
-    || typeof module.actionCatalog.searchVisibleActions !== "function"
-    || typeof module.actionCatalog.familyFor !== "function"
-    || typeof module.actionCatalog.isPublished !== "function"
-    || typeof module.actionCatalog.hasCompletionEvidence !== "function"
-    || module.actionCatalog.entries.some((entry) => !isIdentifier(entry.actionId) || !isIdentifier(entry.familyId))) {
+  if (
+    !isRecord(module) ||
+    !isRecord(module.descriptor) ||
+    !isIdentifier(module.descriptor.integrationId) ||
+    !VERSION.test(module.descriptor.version) ||
+    !isToolNamePrefix(module.descriptor.toolNamePrefix) ||
+    module.descriptor.integrationId !== integrationId ||
+    typeof module.assertIdentityBinding !== "function" ||
+    typeof module.worldScope !== "function" ||
+    typeof module.createToolSet !== "function" ||
+    typeof module.knowledgeMetadata !== "function" ||
+    typeof module.status !== "function" ||
+    typeof module.readState !== "function" ||
+    typeof module.parsePolicy !== "function" ||
+    typeof module.cancelExecution !== "function" ||
+    typeof module.parseReceipt !== "function" ||
+    typeof module.actionIdForToolName !== "function" ||
+    typeof module.isCancellationTool !== "function" ||
+    !isRecord(module.actionCatalog) ||
+    !Array.isArray(module.actionCatalog.entries) ||
+    typeof module.actionCatalog.revision !== "string" ||
+    typeof module.actionCatalog.get !== "function" ||
+    typeof module.actionCatalog.visibleActions !== "function" ||
+    typeof module.actionCatalog.searchVisibleActions !== "function" ||
+    typeof module.actionCatalog.familyFor !== "function" ||
+    typeof module.actionCatalog.isPublished !== "function" ||
+    typeof module.actionCatalog.hasCompletionEvidence !== "function" ||
+    module.actionCatalog.entries.some(
+      (entry) => !isIdentifier(entry.actionId) || !isIdentifier(entry.familyId) || !isActionClass(entry.actionClass),
+    )
+  ) {
     throw new Error("integration_module_scope_mismatch");
   }
   try {
-    const canonicalRevision = createIntegrationActionCatalog(module.actionCatalog.entries, module.actionCatalog.hasCompletionEvidence).revision;
+    const canonicalRevision = createIntegrationActionCatalog(
+      module.actionCatalog.entries,
+      module.actionCatalog.hasCompletionEvidence,
+    ).revision;
     if (!/^[a-f0-9]{64}$/.test(module.actionCatalog.revision) || canonicalRevision !== module.actionCatalog.revision) {
       throw new Error("integration_module_catalog_revision_mismatch");
     }
@@ -277,9 +334,17 @@ export function assertIntegrationModuleConformance(
     throw new Error("integration_module_scope_mismatch");
   }
   assertIntegrationModule(module, connection.scope.integrationId);
-  const tools = module.createToolSet({ connection, knowledge: connection.knowledge, gameVersion: connection.gameVersion });
+  const tools = module.createToolSet({
+    connection,
+    knowledge: connection.knowledge,
+    gameVersion: connection.gameVersion,
+  });
   const status = module.status(connection);
-  if (!Array.isArray(status.capabilities) || status.capabilities.length > 512 || status.capabilities.some((capability) => !isIdentifier(capability))) {
+  if (
+    !Array.isArray(status.capabilities) ||
+    status.capabilities.length > 512 ||
+    status.capabilities.some((capability) => !isIdentifier(capability))
+  ) {
     throw new Error("integration_status_view_invalid");
   }
   const toolGroups = [tools.observation, tools.actions, tools.knowledge];
@@ -287,7 +352,12 @@ export function assertIntegrationModuleConformance(
   const names = toolGroups.flat().map((tool) => tool.name);
   const actionIds = new Set(module.actionCatalog.entries.map((entry) => entry.actionId));
   for (const name of names) {
-    if (typeof name !== "string" || !name.startsWith(module.descriptor.toolNamePrefix) || name.length > 128 || name.startsWith("ctx_")) {
+    if (
+      typeof name !== "string" ||
+      !name.startsWith(module.descriptor.toolNamePrefix) ||
+      name.length > 128 ||
+      name.startsWith("ctx_")
+    ) {
       throw new Error("integration_tool_namespace_invalid");
     }
     const actionId = module.actionIdForToolName(name);
@@ -298,7 +368,10 @@ export function assertIntegrationModuleConformance(
   if (!Array.isArray(state.capabilities) || (state.activeExecution !== null && !isRecord(state.activeExecution))) {
     throw new Error("integration_state_view_invalid");
   }
-  return Object.freeze({ toolNames: Object.freeze([...names].sort()), actionCatalogRevision: module.actionCatalog.revision });
+  return Object.freeze({
+    toolNames: Object.freeze([...names].sort()),
+    actionCatalogRevision: module.actionCatalog.revision,
+  });
 }
 
 function isIdentifier(value: unknown): value is string {

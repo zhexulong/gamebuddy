@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { discoverTestFiles, runDiscoveredTests } from "./run-tests.mjs";
+import { chunkTestFiles, discoverTestFiles, runDiscoveredTests, runTestBatches } from "./run-tests.mjs";
 
 async function withFixture(run) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-test-runner-"));
@@ -28,6 +28,12 @@ test("recursively discovers sorted nested regular test files and passes every pa
   assert.deepEqual(calls, [{ command: "node-under-test", args: ["--test", "--test-concurrency=1", ...tests], cwd: resolve(import.meta.dirname, "..") }]);
 }));
 
+test("discovers script-level ESM tests when explicitly requested", async () => withFixture(async (root) => {
+  await writeFile(join(root, "script.test.mjs"), "");
+  await writeFile(join(root, "compiled.test.js"), "");
+  assert.deepEqual(await discoverTestFiles(root, ".test.mjs"), [resolve(root, "script.test.mjs")]);
+}));
+
 test("fails closed when the test root is missing, invalid, or contains no tests", async () => withFixture(async (root) => {
   await assert.rejects(discoverTestFiles(join(root, "missing")), /test_root_missing/);
   await writeFile(join(root, "not-a-directory"), "");
@@ -49,4 +55,46 @@ test("fails closed on symlinked test paths", async (t) => withFixture(async (roo
 
 test("rejects an empty explicit test invocation", async () => {
   await assert.rejects(runDiscoveredTests([]), /test_files_missing/);
+});
+
+test("runs sorted test files in bounded fresh-coordinator batches with one suite deadline", async () => {
+  const paths = ["a.test.js", "b.test.js", "c.test.js", "d.test.js", "e.test.js"];
+  const calls = [];
+  let clock = 0;
+  await runTestBatches(paths, {
+    suite: "fixture",
+    batchSize: 2,
+    timeoutMs: 1_000,
+    now: () => clock,
+    run: async (batch, options) => {
+      calls.push({ batch, timeoutMs: options.timeoutMs });
+      clock += 1;
+    },
+  });
+  assert.deepEqual(calls, [
+    { batch: ["a.test.js", "b.test.js"], timeoutMs: 1_000 },
+    { batch: ["c.test.js", "d.test.js"], timeoutMs: 999 },
+    { batch: ["e.test.js"], timeoutMs: 998 },
+  ]);
+  assert.deepEqual(chunkTestFiles(paths, 3), [["a.test.js", "b.test.js", "c.test.js"], ["d.test.js", "e.test.js"]]);
+});
+
+test("fails closed before starting a batch after the shared suite deadline", async () => {
+  let clock = 0;
+  const calls = [];
+  await assert.rejects(
+    runTestBatches(["a.test.js", "b.test.js"], {
+      suite: "fixture",
+      batchSize: 1,
+      timeoutMs: 100,
+      now: () => clock,
+      run: async (batch) => {
+        calls.push(batch);
+        clock = 100;
+      },
+    }),
+    /test_suite_timeout:fixture/,
+  );
+  assert.deepEqual(calls, [["a.test.js"]]);
+  assert.throws(() => chunkTestFiles(["a.test.js"], 0), /invalid_test_batch_size/);
 });

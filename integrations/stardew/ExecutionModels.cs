@@ -18,19 +18,19 @@ internal enum ExecutionState
     Uncertain,
 }
 
-/// <summary>Bounded, meaningful-only replay correlation record. It never logs
-/// every tick: route/body facts are recorded on receipt/state transitions.</summary>
+/// <summary>
+/// Bounded public body-transition record. It intentionally contains no action
+/// arguments, receipt evidence, planner state, or arbitrary object dumps.
+/// Idle is emitted only when an owned route has settled, never on every tick.
+/// </summary>
 internal sealed record ExecutionTrace(
-    long Revision,
-    string TimestampUtc,
+    string Category,
     string ExecutionId,
     string RequestId,
-    long RouteRevision,
-    ExecutionState State,
-    string ReasonCode,
+    int Tick,
+    long Revision,
     string? Location,
-    Vector2? ActorTile,
-    string? Evidence);
+    Vector2? ActorTile);
 
 internal sealed record LocalMoveSpec(
     string ExecutionId,

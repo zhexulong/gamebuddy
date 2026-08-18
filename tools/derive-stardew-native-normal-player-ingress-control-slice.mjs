@@ -3,10 +3,73 @@ import path from "node:path";
 import { verifyExactMechanismReportSources } from "./lib/stardew-native-mechanism-review-register.mjs";
 import { deriveNativeNormalPlayerControlSlice } from "./lib/stardew-native-normal-player-ingress-control-slice.mjs";
 import { validateNativeNormalPlayerIngressRegister } from "./lib/stardew-native-normal-player-ingress-register.mjs";
-function fail(code, message) { const error = new Error(message); error.code = code; throw error; }
-function args(argv) { const value = {}; for (let index = 0; index < argv.length; index += 1) { const key = argv[index]; const next = argv[++index]; if (!key?.startsWith("--") || !next || next.startsWith("--")) fail("normal_player_ingress_arguments_invalid", "Usage: --mechanism-report <report.json> --source-root <exact-source-root> --out <register.json>"); value[key.slice(2)] = next; } if (!value["mechanism-report"] || !value["source-root"] || !value.out) fail("normal_player_ingress_arguments_required", "Usage: --mechanism-report <report.json> --source-root <exact-source-root> --out <register.json>"); return value; }
-async function json(filePath) { try { return JSON.parse(await readFile(filePath, "utf8")); } catch (error) { fail("normal_player_ingress_json_invalid", `Could not read JSON: ${error.message}`); } }
-async function sources(report, root) { return Object.fromEntries(await Promise.all(report.source.files.map(async ({ relativePath, sha256 }) => [relativePath, { sha256, text: await readFile(path.join(root, relativePath), "utf8") }]))); }
-async function writeAtomic(filePath, value) { const temporary = `${path.resolve(filePath)}.${process.pid}.${Date.now()}.tmp`; await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`); await rename(temporary, path.resolve(filePath)); }
-async function main() { const input = args(process.argv.slice(2).filter((value) => value !== "--")); const report = await json(input["mechanism-report"]); const sourceFiles = await sources(report, path.resolve(input["source-root"])); verifyExactMechanismReportSources(report, Object.fromEntries(Object.entries(sourceFiles).map(([file, source]) => [file, source.text]))); const attestation = { targetAssemblySha256: report.target.sha256, sourceManifestSha256: report.source.sourceManifestSha256, decompilerConfigurationDigest: report.decompilation.configurationDigest }; const register = deriveNativeNormalPlayerControlSlice({ sourceFiles, attestation }); const result = validateNativeNormalPlayerIngressRegister(register, { expectedAttestation: attestation, sourceFiles }); await writeAtomic(input.out, register); process.stdout.write(`${JSON.stringify({ artifactKind: "native_normal_player_ingress_control_slice", ...result })}\n`); }
-main().catch((error) => { process.stderr.write(`${error.code ?? "normal_player_ingress_derivation_failed"}: ${error.message}\n`); process.exitCode = 1; });
+function fail(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  throw error;
+}
+function args(argv) {
+  const value = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const key = argv[index];
+    const next = argv[++index];
+    if (!key?.startsWith("--") || !next || next.startsWith("--"))
+      fail(
+        "normal_player_ingress_arguments_invalid",
+        "Usage: --mechanism-report <report.json> --source-root <exact-source-root> --out <register.json>",
+      );
+    value[key.slice(2)] = next;
+  }
+  if (!value["mechanism-report"] || !value["source-root"] || !value.out)
+    fail(
+      "normal_player_ingress_arguments_required",
+      "Usage: --mechanism-report <report.json> --source-root <exact-source-root> --out <register.json>",
+    );
+  return value;
+}
+async function json(filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8"));
+  } catch (error) {
+    fail("normal_player_ingress_json_invalid", `Could not read JSON: ${error.message}`);
+  }
+}
+async function sources(report, root) {
+  return Object.fromEntries(
+    await Promise.all(
+      report.source.files.map(async ({ relativePath, sha256 }) => [
+        relativePath,
+        { sha256, text: await readFile(path.join(root, relativePath), "utf8") },
+      ]),
+    ),
+  );
+}
+async function writeAtomic(filePath, value) {
+  const temporary = `${path.resolve(filePath)}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(temporary, path.resolve(filePath));
+}
+async function main() {
+  const input = args(process.argv.slice(2).filter((value) => value !== "--"));
+  const report = await json(input["mechanism-report"]);
+  const sourceFiles = await sources(report, path.resolve(input["source-root"]));
+  verifyExactMechanismReportSources(
+    report,
+    Object.fromEntries(Object.entries(sourceFiles).map(([file, source]) => [file, source.text])),
+  );
+  const attestation = {
+    targetAssemblySha256: report.target.sha256,
+    sourceManifestSha256: report.source.sourceManifestSha256,
+    decompilerConfigurationDigest: report.decompilation.configurationDigest,
+  };
+  const register = deriveNativeNormalPlayerControlSlice({ sourceFiles, attestation });
+  const result = validateNativeNormalPlayerIngressRegister(register, { expectedAttestation: attestation, sourceFiles });
+  await writeAtomic(input.out, register);
+  process.stdout.write(
+    `${JSON.stringify({ artifactKind: "native_normal_player_ingress_control_slice", ...result })}\n`,
+  );
+}
+main().catch((error) => {
+  process.stderr.write(`${error.code ?? "normal_player_ingress_derivation_failed"}: ${error.message}\n`);
+  process.exitCode = 1;
+});

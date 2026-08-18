@@ -2669,6 +2669,29 @@ const MIGRATIONS: Migration[] = [
             healMismatchedTierClose(db, "recomp_compartments", false);
         },
     },
+    {
+        version: 71,
+        description: "add project-scoped memory source exclusions",
+        up(db: Database): void {
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS memory_source_exclusions (
+                    project_path TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (project_path, source_ref)
+                );
+            `);
+        },
+    },
+    {
+        version: 72,
+        description: "persist m[1] memory and mutation coverage watermarks",
+        up(db: Database): void {
+            if (!tableExists(db, "session_meta")) return;
+            ensureColumn(db, "session_meta", "cached_m1_max_memory_id", "INTEGER");
+            ensureColumn(db, "session_meta", "cached_m1_max_memory_mutation_id", "INTEGER");
+        },
+    },
 ];
 
 /**

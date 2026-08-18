@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "portfolio_m3_spawned_forage_preflight_fixture_v1",
+  "topology": "single_player_native_companion",
+  "action": "pickup_forage",
+  "fixtureBoundary": "non_mutating_preflight_only",
+  "provides": [
+    "lawful_nonterminal_single_player_scope",
+    "empty_terminal_outcome",
+    "fresh_reader_required_for_opaque_spawned_forage_target",
+    "range_and_inventory_capacity_must_be_rechecked_on_game_thread"
+  ],
+  "forbids": [
+    "prebound_target",
+    "debris_target",
+    "pickup_item_substitution",
+    "target_removal",
+    "inventory_delivery",
+    "receipt_generation",
+    "save_mutation",
+    "gameplay_mutation",
+    "ui_input",
+    "raw_dispatch"
+  ]
+}

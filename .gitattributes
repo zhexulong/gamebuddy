@@ -1,0 +1,26 @@
+# GameBuddy-owned text is always LF so diagnostics and snapshots do not depend on core.autocrlf.
+* text=auto eol=lf
+
+# Explicit binary assets must never be EOL-normalized.
+*.7z binary
+*.bmp binary
+*.dll binary
+*.exe binary
+*.gif binary
+*.ico binary
+*.jar binary
+*.jpeg binary
+*.jpg binary
+*.mp3 binary
+*.mp4 binary
+*.nupkg binary
+*.pdf binary
+*.png binary
+*.so binary
+*.tar binary
+*.tgz binary
+*.wasm binary
+*.webm binary
+*.woff binary
+*.woff2 binary
+*.zip binary

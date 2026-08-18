@@ -9,9 +9,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const model = process.env.GAMEBUDDY_TRACE_MODEL ?? "deepseek-v4-flash";
 const provider = process.env.GAMEBUDDY_TRACE_PROVIDER ?? "cpa-oai";
 const thinking = process.env.GAMEBUDDY_TRACE_THINKING ?? "high";
-const piCommand = process.env.PI_BIN ?? (process.platform === "win32"
-  ? join(process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local"), "pnpm", "bin", "pi.CMD")
-  : "pi");
+const piCommand =
+  process.env.PI_BIN ??
+  (process.platform === "win32"
+    ? join(process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local"), "pnpm", "bin", "pi.CMD")
+    : "pi");
 const keepTrace = process.env.GAMEBUDDY_KEEP_MODEL_TRACE === "1";
 
 const extensionSource = `
@@ -92,28 +94,60 @@ async function resolvePiInvocation() {
 
 function runPi(invocation, extensionPath, tracePath) {
   return new Promise((resolveRun, rejectRun) => {
-    const args = ["--no-session", "--no-extensions", "-e", extensionPath, "--no-tools", "--tools", "game_snapshot,stardew_game_knowledge,stardew_equip_tool,todowrite", "--provider", provider, "--model", model, "--thinking", thinking, "--mode", "json", "-p", [
-      "You are running a controlled GameBuddy Agent model trace.",
-      "Complete this open-ended two-step companion objective using only the supplied tools.",
-      "First call game_snapshot, then query stardew_game_knowledge for equip_tool.",
-      "If the live snapshot declares equip_tool and the knowledge is supported, use todowrite to track: selecting Pickaxe and verifying the authoritative receipt.",
-      "Then call stardew_equip_tool with slot 3.",
-      "After the action, call game_snapshot again and inspect the receipt.",
-      "Only mark both todo items completed when the receipt state is succeeded and evidence contains before, expected, and after.",
-      "Never treat accepted or running as success, never invent a receipt, and do not claim a game result without evidence.",
-    ].join(" ")];
-    const child = spawn(invocation.command, [...invocation.prefix, ...args], { cwd: repoRoot, env: { ...process.env, GAMEBUDDY_TRACE_PATH: tracePath }, stdio: ["ignore", "pipe", "pipe"] });
+    const args = [
+      "--no-session",
+      "--no-extensions",
+      "-e",
+      extensionPath,
+      "--no-tools",
+      "--tools",
+      "game_snapshot,stardew_game_knowledge,stardew_equip_tool,todowrite",
+      "--provider",
+      provider,
+      "--model",
+      model,
+      "--thinking",
+      thinking,
+      "--mode",
+      "json",
+      "-p",
+      [
+        "You are running a controlled GameBuddy Agent model trace.",
+        "Complete this open-ended two-step companion objective using only the supplied tools.",
+        "First call game_snapshot, then query stardew_game_knowledge for equip_tool.",
+        "If the live snapshot declares equip_tool and the knowledge is supported, use todowrite to track: selecting Pickaxe and verifying the authoritative receipt.",
+        "Then call stardew_equip_tool with slot 3.",
+        "After the action, call game_snapshot again and inspect the receipt.",
+        "Only mark both todo items completed when the receipt state is succeeded and evidence contains before, expected, and after.",
+        "Never treat accepted or running as success, never invent a receipt, and do not claim a game result without evidence.",
+      ].join(" "),
+    ];
+    const child = spawn(invocation.command, [...invocation.prefix, ...args], {
+      cwd: repoRoot,
+      env: { ...process.env, GAMEBUDDY_TRACE_PATH: tracePath },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    const timeout = setTimeout(() => {
-      child.kill();
-      rejectRun(new Error("agent_model_trace_timeout"));
-    }, Number(process.env.GAMEBUDDY_TRACE_TIMEOUT_MS ?? 120_000));
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", (error) => { clearTimeout(timeout); rejectRun(error); });
+    const timeout = setTimeout(
+      () => {
+        child.kill();
+        rejectRun(new Error("agent_model_trace_timeout"));
+      },
+      Number(process.env.GAMEBUDDY_TRACE_TIMEOUT_MS ?? 120_000),
+    );
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      rejectRun(error);
+    });
     child.once("close", (code, signal) => {
       clearTimeout(timeout);
       resolveRun({ code: code ?? 1, signal, stdout, stderr });
@@ -130,7 +164,9 @@ function summarize(rows) {
   const postSnapshot = rows.findIndex((row, index) => index > action && row.tool === "game_snapshot");
   const todos = rows.filter((row) => row.tool === "todowrite").at(-1)?.details?.todos ?? [];
   const evidence = receipt?.evidence;
-  const evidenceComplete = evidence !== undefined && ["before", "expected", "after"].every((key) => typeof evidence[key] === "string" && evidence[key].length > 0);
+  const evidenceComplete =
+    evidence !== undefined &&
+    ["before", "expected", "after"].every((key) => typeof evidence[key] === "string" && evidence[key].length > 0);
   const completed = Array.isArray(todos) && todos.length >= 2 && todos.every((todo) => todo.status === "completed");
   return {
     provider,
@@ -138,10 +174,25 @@ function summarize(rows) {
     thinking,
     toolOrder: tools,
     requiredOrder: firstSnapshot >= 0 && knowledge > firstSnapshot && action > knowledge && postSnapshot > action,
-    receipt: receipt ? { state: receipt.state, reasonCode: receipt.reasonCode, executionId: receipt.executionId, requestId: receipt.requestId, evidence: receipt.evidence } : null,
+    receipt: receipt
+      ? {
+          state: receipt.state,
+          reasonCode: receipt.reasonCode,
+          executionId: receipt.executionId,
+          requestId: receipt.requestId,
+          evidence: receipt.evidence,
+        }
+      : null,
     evidenceComplete,
     todoCompleted: completed,
-    passed: firstSnapshot >= 0 && knowledge > firstSnapshot && action > knowledge && postSnapshot > action && receipt?.state === "succeeded" && evidenceComplete && completed,
+    passed:
+      firstSnapshot >= 0 &&
+      knowledge > firstSnapshot &&
+      action > knowledge &&
+      postSnapshot > action &&
+      receipt?.state === "succeeded" &&
+      evidenceComplete &&
+      completed,
   };
 }
 
@@ -149,7 +200,9 @@ let piInvocation;
 try {
   piInvocation = await resolvePiInvocation();
 } catch {
-  throw new Error(`Pi executable not found or could not be resolved: ${piCommand}. Set PI_BIN to the configured pi executable.`);
+  throw new Error(
+    `Pi executable not found or could not be resolved: ${piCommand}. Set PI_BIN to the configured pi executable.`,
+  );
 }
 
 const tempRoot = await mkdtemp(join(tmpdir(), "gamebuddy-model-trace-"));
@@ -159,7 +212,13 @@ try {
   await writeFile(extensionPath, extensionSource, "utf8");
   const run = await runPi(piInvocation, extensionPath, tracePath);
   const raw = await readFile(tracePath, "utf8").catch(() => "");
-  const rows = raw.trim() === "" ? [] : raw.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  const rows =
+    raw.trim() === ""
+      ? []
+      : raw
+          .trim()
+          .split(/\r?\n/)
+          .map((line) => JSON.parse(line));
   const summary = summarize(rows);
   const finalSummary = { ...summary, exitCode: run.code, passed: summary.passed && run.code === 0 };
   if (!finalSummary.passed) {
@@ -169,7 +228,9 @@ try {
     console.log(JSON.stringify(finalSummary));
   }
   if (keepTrace) {
-    const destination = resolve(process.env.GAMEBUDDY_MODEL_TRACE_OUTPUT ?? join(repoRoot, "tmp", `agent-model-trace-${Date.now()}.jsonl`));
+    const destination = resolve(
+      process.env.GAMEBUDDY_MODEL_TRACE_OUTPUT ?? join(repoRoot, "tmp", `agent-model-trace-${Date.now()}.jsonl`),
+    );
     const { mkdir } = await import("node:fs/promises");
     await mkdir(dirname(destination), { recursive: true });
     await writeFile(destination, raw, "utf8");

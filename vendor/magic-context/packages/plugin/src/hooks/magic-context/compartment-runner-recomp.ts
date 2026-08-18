@@ -88,7 +88,12 @@ export function promoteRecompStagingWithM0Mutation(
     holderId: string,
 ): {
     compartments: CandidateCompartment[];
-    facts: Array<{ category: string; content: string }>;
+    facts: Array<{
+        category: string;
+        content: string;
+        /** Adapter-supplied opaque provenance; never parsed from Historian XML. */
+        sourceRefs?: readonly string[];
+    }>;
 } | null {
     const now = Date.now();
     db.exec("BEGIN IMMEDIATE");

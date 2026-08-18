@@ -92,6 +92,10 @@ import {
 
 import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-session-formatting";
 import type { MessageLike } from "@magic-context/core/hooks/magic-context/tag-messages";
+import type {
+	GameBuddyStableContextMaterialization,
+	GameBuddyStableContextSourceRecord,
+} from "./gamebuddy-stable-context-source";
 import { sessionLog as logSession } from "@magic-context/core/shared/logger";
 import { resolvePiStableId, SYNTH_USER_ID_PREFIX } from "./read-session-pi";
 
@@ -542,6 +546,12 @@ export interface PiM0M1State {
 	/** Explicit mural wire options for tests. When set, skips on-demand resolve
 	 *  during HARD materialization (mirrors OpenCode `M0M1RenderOptions.mural`). */
 	mural?: MuralWireOptions;
+	/**
+	 * Pre-validated GameBuddy Tavern stable sources for this exact binding.
+	 * This is renderer input only. The context handler acquires the registered
+	 * process-local publication; this fork owns all m[0]/m[1] persistence.
+	 */
+	stableContext?: Readonly<GameBuddyStableContextMaterialization>;
 }
 
 function filterMemoriesForDomain(
@@ -550,8 +560,9 @@ function filterMemoriesForDomain(
 ): Memory[] {
 	// Undefined preserves upstream's existing renderer behavior for callers
 	// outside the explicit domain-aware runtime. GameBuddy always sends its
-	// selected domain, so ongoing-interaction remains fail-closed to
-	// SEMANTIC_MEMORY without silently changing legacy/custom callers.
+	// selected domain, so ongoing-interaction uses the domain's explicit
+	// Semantic Memory + Interaction Episode categories without silently changing
+	// legacy/custom callers.
 	if (domain === undefined) return memories;
 	const allowed = new Set(factCategoriesForDomain(domain));
 	return memories.filter((memory) => allowed.has(memory.category));
@@ -784,6 +795,20 @@ function resolveMuralForM0Pi(
 	);
 }
 
+function selectedMemoryMutationProvenance(
+	db: ContextDatabase,
+	memoryIds: readonly number[],
+): readonly Readonly<{ memoryId: number; latestMutationId: number }>[] {
+	const ids = [...new Set(memoryIds)].filter((id) => Number.isSafeInteger(id) && id > 0);
+	if (ids.length === 0) return [];
+	return db.prepare(
+		`SELECT target_memory_id AS memoryId, MAX(id) AS latestMutationId
+		 FROM memory_mutation_log
+		 WHERE target_memory_id IN (${ids.map(() => "?").join(",")})
+		 GROUP BY target_memory_id`,
+	).all(...ids) as Readonly<{ memoryId: number; latestMutationId: number }>[];
+}
+
 function cachedInjectionTokenCounts(
 	sessionId: string,
 	m0: string,
@@ -811,6 +836,21 @@ export interface PiRenderedCompartmentBoundary {
 }
 
 export interface PiM0M1InjectionResult extends PiInjectionResult {
+	/** Payload-blind aggregate from the persisted m[1] materialization snapshot. */
+	m1MaxMemoryMutationId: number;
+	/**
+	 * Source-only mutation provenance for exact Memory revisions represented in
+	 * this frozen m[1]: trimmed new-memory cards and emitted memory-update deltas.
+	 * Never serialized into the provider request.
+	 */
+	m1MemoryMutationProvenance: readonly Readonly<{
+		memoryId: number;
+		latestMutationId: number;
+	}>[];
+	materializedMemoryCategoryCounts: Readonly<{
+		SEMANTIC_MEMORY: number;
+		INTERACTION_EPISODE: number;
+	}>;
 	m0Materialized: boolean;
 	m0Reason: string | null;
 	m0Bytes: number;
@@ -928,6 +968,19 @@ function setCachedBoundary(
 	db.prepare(
 		"UPDATE session_meta SET cached_m0_last_baseline_end_message_id = ? WHERE session_id = ?",
 	).run(boundary, sessionId);
+}
+
+/**
+ * Memory changes are volatile m[1] deltas. Compare their store watermarks with
+ * the cursor persisted alongside cached_m1_bytes: a normal model invocation
+ * refreshes them before prompt materialization, while a DEFER maintenance pass
+ * still calls injectM0M1Pi with its own `recomputeM1ThisPass=false` contract.
+ */
+function m1CoverageAdvancedPi(db: ContextDatabase, state: PiM0M1State): boolean {
+	const row = readCachedPiM0M1Row(db, state.sessionId);
+	if (!row || row.cached_m1_max_memory_id === null || row.cached_m1_max_memory_mutation_id === null) return true;
+	const current = readCurrentMarkers(db, state, undefined);
+	return current.maxMemoryId > row.cached_m1_max_memory_id || current.maxMemoryMutationId > row.cached_m1_max_memory_mutation_id;
 }
 
 function getCachedMarkers(
@@ -1336,6 +1389,7 @@ export function renderM0Pi(
 		trimmedProfile,
 	);
 	if (userProfile.length > 0) sections.push(userProfile);
+	if (state.stableContext) sections.push(state.stableContext.renderedBlock);
 	sections.push(
 		decayed.length > 0
 			? `<session-history>\n${decayed}\n</session-history>`
@@ -1572,11 +1626,16 @@ function renderFreshM0PiNonPersisted(
 export function materializeM0Pi(
 	state: PiM0M1State,
 	db: ContextDatabase,
+	exactNextTargetMemoryId?: number,
 ): {
 	m0: string;
 	m1: string;
 	snapshotMarkers: PiM0SnapshotMarkers;
 	renderedMemoryIds: number[];
+	memoryMutationProvenance: readonly Readonly<{
+		memoryId: number;
+		latestMutationId: number;
+	}>[];
 } {
 	// Phase 1 (no lock): read markers + render. Rendering can be slow, so we do
 	// it OUTSIDE the write lock to keep the BEGIN IMMEDIATE critical section tiny.
@@ -1585,7 +1644,15 @@ export function materializeM0Pi(
 	const frozen = readFrozenM0InputsPi(state, db, docs, foldMaterializedAt);
 	const snapshotMarkers = frozen.markers;
 
-	const snapshotMemories = frozen.memories;
+	// When no prior baseline exists, reserve the direct player-created target
+	// for m[1] rather than folding it into the inaugural m[0] snapshot. This
+	// keeps its actual mutation revision in the provider-bound delta, where the
+	// source marker can prove exact selected coverage. Existing baselines take
+	// the normal soft-refresh route above and never reach this materializer.
+	const snapshotMemories =
+		exactNextTargetMemoryId === undefined
+			? frozen.memories
+			: frozen.memories.filter((memory) => memory.id !== exactNextTargetMemoryId);
 	const snapshotCompartments = frozen.compartments;
 	const snapshotUserProfile = frozen.userProfile;
 	const renderedMemoryIds = renderedMemoryIdsForPi(
@@ -1699,6 +1766,15 @@ export function materializeM0Pi(
 			db,
 			snapshotMarkers,
 			renderedMemoryIds,
+			exactNextTargetMemoryId,
+			undefined,
+			undefined,
+			// `maxMemoryId` describes the pre-reservation baseline. Its current
+			// value includes the target because the snapshot was taken atomically;
+			// move only the new-memory delta start backward for this one render.
+			exactNextTargetMemoryId === undefined
+				? undefined
+				: exactNextTargetMemoryId - 1,
 		);
 		const m1Bytes = Buffer.from(m1Render.text, "utf8");
 
@@ -1714,6 +1790,8 @@ export function materializeM0Pi(
 			maxMutationId: snapshotMarkers.maxMutationId,
 			maxMemoryMutationId: snapshotMarkers.maxMemoryMutationId,
 			m1Bytes,
+			m1MaxMemoryId: snapshotMarkers.maxMemoryId,
+			m1MaxMemoryMutationId: snapshotMarkers.maxMemoryMutationId,
 			projectDocsHash: snapshotMarkers.projectDocsHash,
 			materializedAt: snapshotMarkers.materializedAt,
 			sessionFactsVersion: snapshotMarkers.sessionFactsVersion,
@@ -1761,6 +1839,7 @@ export function materializeM0Pi(
 			m1: m1Render.text,
 			snapshotMarkers,
 			renderedMemoryIds,
+			memoryMutationProvenance: m1Render.memoryMutationProvenance,
 		};
 	} catch (error) {
 		try {
@@ -1777,16 +1856,21 @@ export function materializeM0PiWithRetry(
 	state: PiM0M1State,
 	db: ContextDatabase,
 	maxRetries = 3,
+	exactNextTargetMemoryId?: number,
 ): {
 	m0: string;
 	m1: string;
 	snapshotMarkers: PiM0SnapshotMarkers;
 	renderedMemoryIds: number[];
+	memoryMutationProvenance: readonly Readonly<{
+		memoryId: number;
+		latestMutationId: number;
+	}>[];
 } {
 	let lastError: PiMaterializeContentionError | null = null;
 	for (let attempt = 0; attempt < maxRetries; attempt++) {
 		try {
-			return materializeM0Pi(state, db);
+			return materializeM0Pi(state, db, exactNextTargetMemoryId);
 		} catch (error) {
 			if (!(error instanceof PiMaterializeContentionError)) throw error;
 			lastError = error;
@@ -1804,8 +1888,14 @@ function renderMemoryUpdatesBlockPi(args: {
 	workspace: WorkspaceRenderContext;
 	afterId: number;
 	renderedMemoryIds: readonly number[];
-}): { block: string; count: number } {
-	if (args.renderedMemoryIds.length === 0) return { block: "", count: 0 };
+}): {
+	block: string;
+	count: number;
+	/** Exact mutation rows whose deltas were emitted into this block. */
+	provenance: readonly Readonly<{ memoryId: number; latestMutationId: number }>[];
+} {
+	if (args.renderedMemoryIds.length === 0)
+		return { block: "", count: 0, provenance: [] };
 
 	const renderedIds = new Set(args.renderedMemoryIds);
 	const mutations = args.workspace.isWorkspaced
@@ -1821,7 +1911,7 @@ function renderMemoryUpdatesBlockPi(args: {
 				args.afterId,
 				args.renderedMemoryIds,
 			);
-	if (mutations.length === 0) return { block: "", count: 0 };
+	if (mutations.length === 0) return { block: "", count: 0, provenance: [] };
 
 	const lines = [
 		"These memories changed since the snapshot below — trust these:",
@@ -1852,12 +1942,87 @@ function renderMemoryUpdatesBlockPi(args: {
 	return {
 		block: `<memory-updates>\n${lines.join("\n")}\n</memory-updates>`,
 		count: mutations.length,
+		// `mutations` is precisely the coalesced set used to produce the concrete
+		// XML entries above; retain its log row IDs instead of re-reading live DB
+		// state after provider bytes have been frozen.
+		provenance: mutations.map((mutation) => ({
+			memoryId: mutation.targetMemoryId,
+			latestMutationId: mutation.id,
+		})),
 	};
 }
 
 interface RenderM1PiResult {
 	text: string;
 	memoryUpdateCount: number;
+	/** Row IDs selected by the renderer; never serialized into the provider request. */
+	materializedMemoryIds: readonly number[];
+	/** Exact memory revisions represented in the frozen m[1] text. */
+	memoryMutationProvenance: readonly Readonly<{
+		memoryId: number;
+		latestMutationId: number;
+	}>[];
+}
+
+interface StableSourceBaseline {
+	kind: string;
+	sourceId: string;
+	revision: string;
+	canonicalHash: string;
+}
+
+function decodeXmlAttribute(value: string): string {
+	return value
+		.replaceAll("&quot;", '"')
+		.replaceAll("&apos;", "'")
+		.replaceAll("&lt;", "<")
+		.replaceAll("&gt;", ">")
+		.replaceAll("&amp;", "&");
+}
+
+/** Reads only the fork-owned m[0] source marker; Host never supplies a cursor. */
+function stableSourceBaselineFromM0(m0: string): Map<string, StableSourceBaseline> {
+	const baseline = new Map<string, StableSourceBaseline>();
+	const sourcePattern = /<gamebuddy-stable-source\s+([^>]+)>/g;
+	for (const match of m0.matchAll(sourcePattern)) {
+		const attributes = new Map<string, string>();
+		for (const attribute of match[1].matchAll(/([a-z-]+)="([^"]*)"/g)) {
+			attributes.set(attribute[1], decodeXmlAttribute(attribute[2]));
+		}
+		const kind = attributes.get("kind");
+		const sourceId = attributes.get("source-id");
+		const revision = attributes.get("revision");
+		const canonicalHash = attributes.get("canonical-hash");
+		if (!kind || !sourceId || !revision || !canonicalHash) continue;
+		baseline.set(`${kind}\u0000${sourceId}`, { kind, sourceId, revision, canonicalHash });
+	}
+	return baseline;
+}
+
+function renderStableContextUpdates(
+	stableContext: Readonly<GameBuddyStableContextMaterialization> | undefined,
+	baselineM0: string | undefined,
+): string | undefined {
+	if (!stableContext || baselineM0 === undefined) return undefined;
+	const previous = stableSourceBaselineFromM0(baselineM0);
+	const current = new Map<string, Readonly<GameBuddyStableContextSourceRecord>>();
+	for (const source of stableContext.sources) current.set(`${source.kind}\u0000${source.sourceId}`, source);
+	const updates: string[] = [];
+	for (const [identity, oldSource] of previous) {
+		const next = current.get(identity);
+		if (!next) {
+			updates.push(`  <tombstone kind="${oldSource.kind}" source-id="${escapeXmlContent(oldSource.sourceId)}" old-revision="${escapeXmlContent(oldSource.revision)}" old-canonical-hash="${oldSource.canonicalHash}"/>`);
+		} else if (next.revision !== oldSource.revision || next.canonicalHash !== oldSource.canonicalHash) {
+			updates.push(`  <replacement kind="${next.kind}" source-id="${escapeXmlContent(next.sourceId)}" old-revision="${escapeXmlContent(oldSource.revision)}" old-canonical-hash="${oldSource.canonicalHash}" new-revision="${escapeXmlContent(next.revision)}" new-canonical-hash="${next.canonicalHash}" provenance="${escapeXmlContent(next.provenance)}">\n${escapeXmlContent(next.content)}\n  </replacement>`);
+		}
+	}
+	for (const [identity, source] of current) {
+		if (previous.has(identity)) continue;
+		updates.push(`  <replacement kind="${source.kind}" source-id="${escapeXmlContent(source.sourceId)}" old-revision="" old-canonical-hash="" new-revision="${escapeXmlContent(source.revision)}" new-canonical-hash="${source.canonicalHash}" provenance="${escapeXmlContent(source.provenance)}">\n${escapeXmlContent(source.content)}\n  </replacement>`);
+	}
+	return updates.length > 0
+		? `<gamebuddy-stable-context-updates cursor="${stableContext.snapshotCanonicalHash}">\n${updates.join("\n")}\n</gamebuddy-stable-context-updates>`
+		: undefined;
 }
 
 function renderM1PiWithMetadata(
@@ -1865,6 +2030,8 @@ function renderM1PiWithMetadata(
 	db: ContextDatabase,
 	markers: PiM0SnapshotMarkers,
 	renderedMemoryIds: readonly number[],
+	/** Source-only exact-next target; must be retained through m[1] trimming. */
+	exactNextTargetMemoryId?: number,
 	// The compartment set the CALLER will use to advance the persisted trim
 	// boundary. When provided, the new-compartments filter renders from this
 	// exact set instead of a fresh live read — so a compartment can never be
@@ -1872,8 +2039,16 @@ function renderM1PiWithMetadata(
 	// snapshot, which would leave its raw messages in the tail too (duplication).
 	// Omitted by callers that don't advance the boundary (e.g. renderM1Pi probe).
 	compartmentsOverride?: readonly PiCompartment[],
+	stableBaselineM0?: string,
+	/** Override only for an exact-next first-pass delta; normal calls use the m[0] watermark. */
+	memoryDeltaStartIdOverride?: number,
 ): RenderM1PiResult {
 	const sections: string[] = [];
+	const stableUpdates = renderStableContextUpdates(
+		state.stableContext,
+		stableBaselineM0,
+	);
+	if (stableUpdates) sections.push(stableUpdates);
 	const workspace = resolveWorkspaceRenderContextPi(state, db);
 
 	const memPath = memoryProjectPath(state);
@@ -1885,7 +2060,7 @@ function renderM1PiWithMetadata(
 				afterId: markers.maxMemoryMutationId,
 				renderedMemoryIds,
 			})
-		: { block: undefined as string | undefined, count: 0 };
+		: { block: undefined as string | undefined, count: 0, provenance: [] as const };
 	if (memoryUpdates.block) sections.push(memoryUpdates.block);
 
 	const newCompartments = (
@@ -1899,13 +2074,14 @@ function renderM1PiWithMetadata(
 		sections.push(`<new-compartments>\n${body}\n</new-compartments>`);
 	}
 
+	let trimmedNewMemories: Memory[] = [];
 	const newMemories = filterMemoriesForDomain(
 		memPath
 			? workspace.isWorkspaced
 				? readNewMemoriesForM1Union(
 						db,
 						workspace.expandedIdentities,
-						markers.maxMemoryId,
+						memoryDeltaStartIdOverride ?? markers.maxMemoryId,
 						// Freeze expiry to the m[0] materialization timestamp (parity with
 						// OpenCode readNewMemoriesForM1): defer passes replay the same markers,
 						// so a memory crossing expires_at between passes can't silently shift
@@ -1923,7 +2099,10 @@ function renderM1PiWithMetadata(
 						// so a memory crossing expires_at between passes can't silently shift
 						// m[1].
 						markers.materializedAt,
-					).filter((memory) => memory.id > markers.maxMemoryId)
+					).filter(
+						(memory) =>
+							memory.id > (memoryDeltaStartIdOverride ?? markers.maxMemoryId),
+					)
 			: [],
 		state.memoryDomain,
 	);
@@ -1941,12 +2120,20 @@ function renderM1PiWithMetadata(
 				workspace,
 			}),
 		};
-		const trimmedNewMemories = trimMemoriesToBudgetV2(
+		trimmedNewMemories = trimMemoriesToBudgetV2(
 			state.sessionId,
 			newMemories,
 			Math.max(1, Math.floor(memoryBudget * 0.25)),
 			memoryRenderOptions,
 		).renderOrder;
+		// Player direct mutation has a one-shot exact-next contract. It may not
+		// silently lose the committed selected Memory to the ordinary volatile
+		// delta budget; retain it source-side, otherwise fail evidence closed.
+		if (exactNextTargetMemoryId !== undefined) {
+			const target = newMemories.find((memory) => memory.id === exactNextTargetMemoryId);
+			if (target && !trimmedNewMemories.some((memory) => memory.id === target.id))
+				trimmedNewMemories = [...trimmedNewMemories, target];
+		}
 		const newMemoriesBlock = renderMemoryBlockV2(
 			trimmedNewMemories,
 			"new-memories",
@@ -1978,10 +2165,33 @@ function renderM1PiWithMetadata(
 		if (profileBlock) sections.push(profileBlock);
 	}
 
+	const materializedMemoryIds = [
+		...renderedMemoryIds,
+		...trimmedNewMemories.map((memory) => memory.id),
+	];
+	// The m[1] new-memory cards are selected immediately above. Read their
+	// mutation revisions now, as part of the same coherent renderer snapshot;
+	// never derive evidence later from a post-render live database state.
+	const selectedCardProvenance = selectedMemoryMutationProvenance(
+		db,
+		trimmedNewMemories.map((memory) => memory.id),
+	);
+	const provenanceByMemoryId = new Map<number, number>();
+	for (const entry of [...selectedCardProvenance, ...memoryUpdates.provenance]) {
+		provenanceByMemoryId.set(
+			entry.memoryId,
+			Math.max(provenanceByMemoryId.get(entry.memoryId) ?? 0, entry.latestMutationId),
+		);
+	}
+	const memoryMutationProvenance = [...provenanceByMemoryId].map(
+		([memoryId, latestMutationId]) => ({ memoryId, latestMutationId }),
+	);
 	if (sections.length === 0) {
 		return {
 			text: PI_M1_PLACEHOLDER,
 			memoryUpdateCount: memoryUpdates.count,
+			materializedMemoryIds,
+			memoryMutationProvenance,
 		};
 	}
 	// Join with "\n" (single newline) to match OpenCode renderM1 exactly — the
@@ -1989,6 +2199,8 @@ function renderM1PiWithMetadata(
 	return {
 		text: `<session-history-since>\n${sections.join("\n")}\n</session-history-since>`,
 		memoryUpdateCount: memoryUpdates.count,
+		materializedMemoryIds,
+		memoryMutationProvenance,
 	};
 }
 
@@ -2021,6 +2233,8 @@ interface CachedPiM0M1Row {
 	cached_m0_model_key: string | null;
 	cached_m0_project_identity: string | null;
 	cached_m0_last_baseline_end_message_id: string | null;
+	cached_m1_max_memory_id: number | null;
+	cached_m1_max_memory_mutation_id: number | null;
 	memory_block_ids: string | null;
 }
 
@@ -2072,6 +2286,8 @@ function readCachedPiM0M1Row(
 					cached_m0_model_key,
 					cached_m0_project_identity,
 					cached_m0_last_baseline_end_message_id,
+					cached_m1_max_memory_id,
+					cached_m1_max_memory_mutation_id,
 					memory_block_ids
 			   FROM session_meta
 			  WHERE session_id = ?`,
@@ -2232,12 +2448,17 @@ function softRefreshCachedM1Pi(args: {
 	db: ContextDatabase;
 	m0Bytes: Buffer;
 	markers: PiM0SnapshotMarkers;
+	exactNextTargetMemoryId?: number;
 	compartmentsForNormalization: readonly PiCompartment[];
 }): {
 	m0: string;
 	m1: string;
 	markers: PiM0SnapshotMarkers;
 	memoryUpdateCount: number;
+	memoryMutationProvenance: readonly Readonly<{
+		memoryId: number;
+		latestMutationId: number;
+	}>[];
 	recomputed: boolean;
 } {
 	args.db.exec("BEGIN IMMEDIATE");
@@ -2270,6 +2491,7 @@ function softRefreshCachedM1Pi(args: {
 					compartmentsForNormalization: siblingCompartments,
 				}),
 				memoryUpdateCount: 0,
+				memoryMutationProvenance: [],
 				recomputed: false,
 			};
 		}
@@ -2288,12 +2510,26 @@ function softRefreshCachedM1Pi(args: {
 			args.db,
 			markers,
 			parseMemoryBlockIds(row.memory_block_ids),
+			args.exactNextTargetMemoryId,
 			// Render new compartments from the SAME snapshot the boundary advances
 			// from below, so a concurrent sibling publish can't put a compartment
 			// in m[1] while its raw messages stay in the tail.
 			args.compartmentsForNormalization,
+			decodeCachedM0(row.cached_m0_bytes) ?? "",
 		);
 		const m1Bytes = Buffer.from(rendered.text, "utf8");
+		const workspace = resolveWorkspaceRenderContextPi(args.state, args.db);
+		const memPath = memoryProjectPath(args.state);
+		const maxMemoryId = memPath
+			? workspace.isWorkspaced
+				? getMaxMemoryIdForProjects(args.db, workspace.expandedIdentities, workspace.ownIdentities, workspace.shareCategories, markers.materializedAt)
+				: getMaxMemoryIdForProjects(args.db, [memPath], [memPath], undefined, markers.materializedAt)
+			: 0;
+		const maxMemoryMutationId = memPath
+			? workspace.isWorkspaced
+				? (getMaxMemoryMutationIdForProjects(args.db, workspace.expandedIdentities) ?? 0)
+				: (getMaxMemoryMutationId(args.db, memPath) ?? 0)
+			: 0;
 		// Advance the persisted trim boundary to the latest compartment now rendered
 		// in m[1]. renderM1 covers compartments seq > cachedM0Seq up to the current
 		// latest, so the visible-message trim must move with it — otherwise the newly
@@ -2312,15 +2548,16 @@ function softRefreshCachedM1Pi(args: {
 				: markers.lastBaselineEndMessageId;
 		args.db
 			.prepare(
-				"UPDATE session_meta SET cached_m1_bytes = ?, cached_m0_last_baseline_end_message_id = ? WHERE session_id = ?",
+				"UPDATE session_meta SET cached_m1_bytes = ?, cached_m1_max_memory_id = ?, cached_m1_max_memory_mutation_id = ?, cached_m0_last_baseline_end_message_id = ? WHERE session_id = ?",
 			)
-			.run(m1Bytes, advancedBoundary, args.state.sessionId);
+			.run(m1Bytes, maxMemoryId, maxMemoryMutationId, advancedBoundary, args.state.sessionId);
 		args.db.exec("COMMIT");
 		return {
 			m0: decodeCachedM0(row.cached_m0_bytes) ?? "",
 			m1: rendered.text,
 			markers: { ...markers, lastBaselineEndMessageId: advancedBoundary },
 			memoryUpdateCount: rendered.memoryUpdateCount,
+			memoryMutationProvenance: rendered.memoryMutationProvenance,
 			recomputed: true,
 		};
 	} catch (error) {
@@ -2389,12 +2626,41 @@ function prependM0M1Messages(
 	);
 }
 
+function latestMemoryMutationIdForProject(
+	db: ContextDatabase,
+	projectPath: string,
+): number {
+	const row = db
+		.prepare(
+			"SELECT COALESCE(MAX(id), 0) AS id FROM memory_mutation_log WHERE project_path = ?",
+		)
+		.get(projectPath) as { id: number };
+	return row.id;
+}
+
+function latestMemoryMutationIdForTarget(
+	db: ContextDatabase,
+	projectPath: string,
+	targetMemoryId: number,
+): number {
+	const row = db
+		.prepare(
+			"SELECT COALESCE(MAX(id), 0) AS id FROM memory_mutation_log WHERE project_path = ? AND target_memory_id = ?",
+		)
+		.get(projectPath, targetMemoryId) as { id: number };
+	return row.id;
+}
+
 export function injectM0M1Pi(
 	state: PiM0M1State,
 	db: ContextDatabase,
 	piMessages: PiAgentMessage[],
 	entryIds?: readonly (string | undefined)[],
 	recomputeM1ThisPass = false,
+	/** True only for a real provider invocation; false preserves DEFER maintenance replay. */
+	allowExternalMemoryRefresh = false,
+	/** Source-only selected memory identity for a one-shot exact-next m[1] render. */
+	exactNextTargetMemoryId?: number,
 ): PiM0M1InjectionResult {
 	// One compartment snapshot for the WHOLE decision: the materialize decision
 	// and every cached-marker reload below normalize against this same set, so a
@@ -2402,6 +2668,32 @@ export function injectM0M1Pi(
 	// the guarded fallback (TOCTOU).
 	const currentCompartments = getCompartments(db, state.sessionId);
 	let decision = mustMaterializePi(state, db, currentCompartments);
+	// A committed direct player Memory creates a one-shot m[1] obligation. If a
+	// valid m[0] baseline exists, preserve it even when the ordinary scheduler
+	// classifies the new direct row as a HARD change: m[0] would otherwise absorb
+	// the target and leave no selected m[1] provenance for the next provider
+	// request. The exact source path below immediately soft-refreshes m[1] from
+	// this cached baseline and retains the selected target beyond its normal cap.
+	if (exactNextTargetMemoryId !== undefined && decision.value) {
+		const cachedMeta = getOrCreateSessionMeta(db, state.sessionId);
+		const cachedMarkers = getCachedMarkers(db, state, currentCompartments);
+		if (
+			decodeCachedM0(cachedMeta.cachedM0Bytes) &&
+			cachedMarkers !== null &&
+			cachedMarkers.projectMemoryEpoch ===
+				readCurrentMarkers(db, state).projectMemoryEpoch &&
+			// Only the expected direct mutation can be deferred into its one-shot
+			// m[1] delta. Any other queued mutation remains a normal HARD fold.
+			latestMemoryMutationIdForProject(db, state.projectIdentity) ===
+				latestMemoryMutationIdForTarget(
+					db,
+					state.projectIdentity,
+					exactNextTargetMemoryId,
+				)
+		) {
+			decision = { value: false, reason: null };
+		}
+	}
 	let m0 = "";
 	let m1 = PI_M1_PLACEHOLDER;
 	let markers: PiM0SnapshotMarkers | null = null;
@@ -2410,6 +2702,12 @@ export function injectM0M1Pi(
 	let memoryUpdateCount = 0;
 	let m1Recomputed = false;
 	let freshFallbackRenderedMemoryIds: number[] | null = null;
+	// Only the renderer that froze the m[1] bytes may contribute provenance.
+	// Replays intentionally remain empty rather than performing a live reread.
+	let frozenM1MemoryMutationProvenance: readonly Readonly<{
+		memoryId: number;
+		latestMutationId: number;
+	}>[] = [];
 
 	if (decision.value) {
 		// On contention exhaustion, reuse the cached m[0]/m[1] pair rather than
@@ -2418,10 +2716,11 @@ export function injectM0M1Pi(
 		// correct and the next pass retries — dropping injection entirely would lose
 		// the whole history block.
 		try {
-			const result = materializeM0PiWithRetry(state, db);
+			const result = materializeM0PiWithRetry(state, db, 3, exactNextTargetMemoryId);
 			m0 = result.m0;
 			m1 = result.m1;
 			markers = result.snapshotMarkers;
+			frozenM1MemoryMutationProvenance = result.memoryMutationProvenance;
 			materialized = true;
 			m1Recomputed = true;
 		} catch (error) {
@@ -2466,10 +2765,11 @@ export function injectM0M1Pi(
 		if (!m0 || !markers) {
 			decision = { value: true, reason: "cache_invalid" };
 			try {
-				const result = materializeM0PiWithRetry(state, db);
+				const result = materializeM0PiWithRetry(state, db, 3, exactNextTargetMemoryId);
 				m0 = result.m0;
 				m1 = result.m1;
 				markers = result.snapshotMarkers;
+				frozenM1MemoryMutationProvenance = result.memoryMutationProvenance;
 				materialized = true;
 				m1Recomputed = true;
 			} catch (error) {
@@ -2509,24 +2809,31 @@ export function injectM0M1Pi(
 			db,
 			markers,
 			freshFallbackRenderedMemoryIds,
+			exactNextTargetMemoryId,
 		);
 		m1 = freshM1.text;
 		memoryUpdateCount = freshM1.memoryUpdateCount;
+		// The emergency no-cache fallback deliberately does not claim exact
+		// provenance: it cannot hold the normal materialization transaction while
+		// rendering, so concurrent writes would make positive evidence unsafe.
+		frozenM1MemoryMutationProvenance = [];
 		m1Recomputed = true;
 	} else if (contentionExhausted) {
 		// m[1] was replayed with the cached m[0] pair above.
-	} else if (recomputeM1ThisPass) {
+	} else if (recomputeM1ThisPass || (allowExternalMemoryRefresh && m1CoverageAdvancedPi(db, state))) {
 		const refreshed = softRefreshCachedM1Pi({
 			state,
 			db,
 			m0Bytes: Buffer.from(m0, "utf8"),
 			markers,
+			exactNextTargetMemoryId,
 			compartmentsForNormalization: currentCompartments,
 		});
 		m0 = refreshed.m0;
 		m1 = refreshed.m1;
 		markers = refreshed.markers;
 		memoryUpdateCount = refreshed.memoryUpdateCount;
+		frozenM1MemoryMutationProvenance = refreshed.memoryMutationProvenance;
 		m1Recomputed = refreshed.recomputed;
 	} else {
 		const replayed = replayCachedM1Pi(db, state, currentCompartments);
@@ -2574,10 +2881,13 @@ export function injectM0M1Pi(
 	) {
 		decision = { value: true, reason: "drift" };
 		try {
-			const result = materializeM0PiWithRetry(state, db);
+			const result = materializeM0PiWithRetry(state, db, 3, exactNextTargetMemoryId);
 			m0 = result.m0;
 			m1 = result.m1;
 			markers = result.snapshotMarkers;
+			// The drift refold replaces the soft-refresh m[1] bytes, so its
+			// evidence must replace the earlier renderer's provenance as well.
+			frozenM1MemoryMutationProvenance = result.memoryMutationProvenance;
 			materialized = true;
 		} catch (error) {
 			if (!(error instanceof PiMaterializeContentionError)) throw error;
@@ -2651,8 +2961,31 @@ export function injectM0M1Pi(
 				).length
 			: getMemoriesByProject(db, memPath, ["active", "permanent"]).length
 		: 0;
+	const materializedMemoryCategoryCounts = {
+		SEMANTIC_MEMORY: 0,
+		INTERACTION_EPISODE: 0,
+	};
+	// Cache/category accounting remains independent of evidence. Crucially, do
+	// not reconstruct selected m[1] cards or mutation revisions here: this code
+	// runs after provider-bound bytes are frozen and a concurrent writer could
+	// otherwise credit a revision absent from those bytes.
+	const cachedRow = readCachedPiM0M1Row(db, state.sessionId);
+	const cachedMaterializedIds = new Set(parseMemoryBlockIds(cachedRow?.memory_block_ids ?? null));
+	if (memPath && cachedRow) {
+		const candidates = workspace.isWorkspaced
+			? getMemoriesByProjects(db, workspace.expandedIdentities, ["active", "permanent"], cachedRow.cached_m0_materialized_at ?? Date.now(), workspace.ownIdentities, workspace.shareCategories)
+			: getMemoriesByProject(db, memPath, ["active", "permanent"], cachedRow.cached_m0_materialized_at ?? Date.now());
+		for (const memory of filterMemoriesForDomain(candidates, state.memoryDomain)) {
+			if (!cachedMaterializedIds.has(memory.id)) continue;
+			if (memory.category === "SEMANTIC_MEMORY") materializedMemoryCategoryCounts.SEMANTIC_MEMORY += 1;
+			if (memory.category === "INTERACTION_EPISODE") materializedMemoryCategoryCounts.INTERACTION_EPISODE += 1;
+		}
+	}
 	return {
 		injected: true,
+		m1MaxMemoryMutationId: readCachedPiM0M1Row(db, state.sessionId)?.cached_m1_max_memory_mutation_id ?? 0,
+		m1MemoryMutationProvenance: frozenM1MemoryMutationProvenance,
+		materializedMemoryCategoryCounts,
 		compartmentCount: getCompartments(db, state.sessionId).length,
 		factCount: 0, // v2: facts retired as a render source (facts = promoted memories)
 		memoryCount,

@@ -25,7 +25,7 @@ save XML and it refuses to touch any save whose name does not begin with
 
 `tools/run-stardew-native-local-player-move-fixture.ps1` is a deliberately
 minimal, single-process harness for existing shared actions. It currently
-supports separately allowlisted `move_to_tile`, `travel`, `enter_exit`, `feed_animal`, `collect_animal_product`, `break_rock_source`, `equip_tool`, `till_soil`, `water_crop`, `refill_watering_can`, `plant_seed`, `fertilize_tile`, `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `tree_first_hit`, and `clear_debris`; each run exposes only the
+supports separately allowlisted `move_to_tile`, `travel`, `enter_exit`, `feed_animal`, `collect_animal_product`, `break_rock_source`, `equip_tool`, `till_soil`, `water_crop`, `refill_watering_can`, `plant_seed`, `fertilize_tile`, `harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, and `clear_debris`; each run exposes only the
 capability required by its selected slice (plus separately receipted
 prerequisites where a slice needs them). `fertilize_tile` has passed a
 native-local target-version mechanics run; `harvest_crop` has also passed after
@@ -61,25 +61,6 @@ Portfolio or Farmhand publication evidence.
 `native_clear_debris_resource_clump_v1` is separately allowlisted only in the disposable `native_local_player_fixture` lane. Before bridge attachment it uses the reviewed target-version `Farm.addResourceClumpAndRemoveUnderlyingTerrain` placement lifecycle to establish exactly one intact `2×2` `ResourceClump` at Farm `(62,17)`, `parentSheetIndex=752`, health `8`, and one basic Pickaxe. Every footprint tile must be available; an existing parent-`752` clump or unavailable fixed geometry blocks setup. The fixture never invokes `Pickaxe.DoFunction`, changes clump health/removal, collects drops, alters output inventory, or emits a receipt.
 
 The production runner accepts only that fixed tuple and the finite approaches `(61,17)`, `(64,17)`, and `(62,19)`; it does not scan or drift across the Farm. It independently equips the Pickaxe and submits one fresh typed `clear_debris` request for every hit. The target-version serial gate retained a matching request/execution receipt for each hit: seven `partially_succeeded/debris_hit` receipts with health `8→1`, then the eighth request's `succeeded/debris_cleared` receipt with `health_before=1`, `health_after=0`, and `clump_removed=true`. A fresh snapshot omitted the exact opaque target (`debrisTargets=0`); profile transaction restore, backup/lock and working-save removal, and process absence were verified. This is shared native-local mechanics evidence only—not Farmhand, Portfolio, publication, release, or persistence/reopen evidence. Drops and later `pickup_item` are separate lifecycles.
-
-### Native-local `tree_first_hit` fixture and live mechanics closure
-
-`native_tree_first_hit_v1` is separately allowlisted only in the disposable
-`native_local_player_fixture` lane. Before bridge attachment it uses
-reviewed target-version native APIs only to establish the starting state in the
-working Farm save: one mature ordinary, non-moss, untapped tree with health
-`10`, one legal adjacent approach, and exactly one Axe. It does not invoke the
-Axe path, reduce tree health, make a terminal state, or emit a receipt. Its
-legacy profile explicitly reuses `move_to_tile`, `travel`, and `equip_tool`,
-then adds `tree_first_hit`; those prerequisites retain their own receipts.
-
-The target-version native-local gate travelled to Farm, equipped `(T)Axe` in
-slot `4`, then executed `tree_first_hit` for fresh opaque target
-`tree_shake_source_af99b95b5acdd092` at Farm `(64,17)`. The authoritative
-same-execution terminal was `succeeded/tree_first_hit` with evidence
-`before=10;after=9;delta=-1`; a fresh postcondition snapshot retained the same
-source at health `9`. This is shared native-local mechanics evidence only—not
-Farmhand, Portfolio, publication, or persistence/reopen evidence.
 
 ### Native-local `refill_watering_can` fixture
 
@@ -193,6 +174,33 @@ the initial world available; it never calls the action under test and never
 writes receipt, inventory, relationship, production, or completion fields.
 
 ## Native template requirements
+
+### `collect_crab_pot_output` fixture provenance contract (fixture-needed only)
+
+`crab-pot-output.fixture.example.json` is a checked-in, metadata-only provenance
+contract for the future `collect_crab_pot_output` ready-CrabPot fixture. It is
+bounded to Stardew `1.6.15.24356` and the approved assembly/content hashes, and
+requires the native placement → bait → day transition (`CrabPot.DayUpdate`) →
+`Saving/Saved` → reload lifecycle. It forbids save/XML or readiness/output/bait/
+owner/inventory mutation, UI/input/raw-dispatcher ingress, collection ingress,
+and fixture-produced receipts or success evidence. Production must rediscover a
+fresh opaque target; no opaque target ID is recorded here.
+
+The checked-in example is explicitly `save.provisioningState=unprovisioned` and
+`templatePayloadSha256=null` and `provisioningAttestation=null`: it makes no
+claim that a native template exists or has been validated. Validate only with:
+
+```text
+node tools/check-crab-pot-output-fixture-contract.mjs --contract fixtures/stardew/crab-pot-output.fixture.example.json
+```
+
+A passing result is explicitly `state=fixture_needed`,
+`contractKind=provenance_contract_only`, `liveClosure=none`, and
+`templateValidated=false`. A future provisioned artifact must replace the null values with a real
+canonical native-template SHA-256 and a nonempty native save/reload attestation
+reference; that does not publish or execute an action. This contract does not
+implement or prove the typed action, Host/Mod protocol, registry publication,
+smoke runner, game launch, template provisioning, or any live closure.
 
 The harness itself deliberately **does not edit** buildings, animals, produce,
 inventory tools, receipts, or action postconditions. It also never uses

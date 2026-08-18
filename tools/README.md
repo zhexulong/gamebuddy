@@ -277,17 +277,89 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-stardew-attachment
 
 The runner does not use Computer Use, keyboard injection, or UI navigation. It only starts isolated SMAPI profiles, reads the signed session exchange, invokes the existing Companion App attachment flow, and asserts native game-thread/log evidence.
 
-## Verified native mechanics smoke
+## Native-local action runners
 
-When a formal AI-client is already at `readyToPlay`, `run-stardew-equip-tool-smoke.mjs` sends one `equip_tool` request through the production named-pipe bridge. The Mod must advertise `equip_tool` in the local player's `EnabledActions`; the script never enables capabilities itself.
+Farmhand action runners are selected only through `tools/stardew-action-gate-descriptors.mjs`. Each published action resolves to one `run-stardew-native-local-player-*-smoke.mjs` runner, which uses the shared `stardew-native-smoke-harness-v1.mjs` connection, receipt, fresh-reread, and teardown mechanics. The disposable fixture launcher selects the same runner identity:
 
 ```powershell
-node tools/run-stardew-equip-tool-smoke.mjs `
-  --client-config "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-profiles\\A-ai-client\\GameBuddy\\config.json" `
-  --slot 3
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-stardew-native-local-player-move-fixture.ps1 `
+  -GamePath "D:\\Steam\\steamapps\\common\\Stardew Valley" `
+  -ModsPath "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-fixture-mods" `
+  -FixtureRoot "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-fixtures" `
+  -SaveName "GameBuddyFixture_445094166" `
+  -Action equip_tool
 ```
 
-The result is accepted only when the Mod receipt is `state=succeeded`, `reasonCode=tool_selected`, and its evidence contains matching `before`, `expected`, and `after` tool identities. This is a single non-resource-changing capability proof, not complete mechanics or Agent acceptance.
+The runner never enables capabilities itself. A passed result requires its exact action-specific terminal evidence and fresh postcondition; it is not a release or whole-product acceptance claim.
+
+## Windows TTS output gate
+
+The Gateway can use the current Windows default render device only when both a
+bounded MiMo provider probe and a real `waveOut` open/write/completion check
+succeed. `default` means Windows resolves its current default device on every
+open; an explicit `waveout:N` selection never silently falls back.
+
+```powershell
+$env:MIMO_API_KEY = '<process-local key>'
+node tools/run-windows-voice-output-gate.mjs `
+  --device default --voice Chloe --port 49739 `
+  --token '<16+ opaque local token>'
+```
+
+The runner starts a temporary Gateway, obtains authenticated health, and exits
+zero only if the MiMo probe returned PCM and the selected Windows device
+accepted/completed the write. It never records provider audio, text, or the
+credential.
+
+## Windows PTT input gate
+
+```powershell
+node tools/run-windows-voice-input-gate.mjs --device default --duration-ms 1000
+```
+
+The input gate opens the current Windows default capture device (or a strict
+`wavein:N` selection), starts a bounded 16 kHz mono PCM16 recording and checks
+that the driver returns a non-empty frame. It does not save PCM or invoke ASR.
+In the real Gateway this adapter is mountable only after the operator-provided
+Fun-ASR asset manifest passes SHA-256 audit; local PCM is pulled inside the
+Gateway at PTT stop and never sent through Host protocol. A full speech-input
+pass requires the separately audited Fun-ASR native runtime, encoder, decoder,
+and VAD assets plus a real final transcript gate.
+
+## Windows PTT → final transcript gate
+
+```powershell
+node tools/run-windows-sensevoice-final-transcript-gate.mjs `
+  --manifest "$env:LOCALAPPDATA\GameBuddy\voice-assets\funasr-llamacpp\sensevoice-assets.manifest.json" `
+  --device default `
+  --port 49741 `
+  --token '<16+ opaque local token>' `
+  --duration-ms 4000
+```
+
+This one-shot, loopback-only gate verifies local asset hashes, opens the selected
+PTT device, invokes native Fun-ASR, and accepts only a sanitized
+`final_transcript` event from authenticated Gateway polling. It never prints raw
+audio or transcript text. Silence/no-speech remains `blocked`, never success.
+The runner has no option to display, compare, hash, persist, or otherwise derive
+a correctness metric from user speech; users assess any local transcription only
+in their own product UI.
+
+## Fun-ASR offline regression baseline
+
+```powershell
+node tools/run-funasr-offline-baseline.mjs `
+  --manifest "$env:LOCALAPPDATA\GameBuddy\voice-assets\funasr-llamacpp\sensevoice-assets.manifest.json"
+```
+
+This gate uses the vendored, Apache-2.0 `FunAudioLLM/Fun-ASR` fixed 6-second
+Chinese regression clip and its frozen upstream reference text. It SHA-256 audits
+both source fixture files and requires an exact normalized text match. It exposes
+lengths and match state only, never transcript content. This exact comparison is
+permitted only because the fixture and reference are public, upstream-provided,
+and Apache-2.0 licensed. Passing this model/runtime baseline does not establish
+microphone accuracy; user speech must never be matched, hashed, scored, or
+reported by a validation runner.
 
 ## Windows TTS output gate
 

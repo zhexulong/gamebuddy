@@ -35,9 +35,10 @@ export const PROMOTABLE_CATEGORIES: MemoryCategory[] = [
 ];
 
 export const CATEGORY_PRIORITY: MemoryCategory[] = [
-    // Ongoing-interaction Semantic Memory is rendered before legacy coding
-    // categories when a partition intentionally uses that domain.
+    // Ongoing-interaction memory is rendered before legacy coding categories
+    // when a partition intentionally uses that domain.
     "SEMANTIC_MEMORY",
+    "INTERACTION_EPISODE",
     // v2 world taxonomy (these dominate coding-project sessions)
     "PROJECT_RULES",
     "ARCHITECTURE",

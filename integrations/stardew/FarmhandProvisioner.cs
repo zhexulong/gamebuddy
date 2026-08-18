@@ -284,8 +284,19 @@ internal sealed class FarmhandProvisioner
         this.versionGuard = guard;
         this.waitingForManifest = false;
         this.monitor.Log("GameBuddy FarmhandProvisioner accepted a signed, version-matched manifest; native LAN connection is starting.", LogLevel.Info);
-        this.client = new LidgrenClient(loadedManifest.Endpoint);
-        this.client.connect();
+        // The target game's native join path always gives a new client to the
+        // current Multiplayer implementation before it connects. At runtime
+        // SMAPI overrides that implementation to install its client hooks,
+        // including the context exchange that makes the remote Farmhand a
+        // ModMessage-capable peer. A direct LidgrenClient.connect() bypasses
+        // those hooks and is therefore unsafe even when native joining works.
+        if (!TryCreateInitializedNativeClient(loadedManifest.Endpoint, out LidgrenClient? initializedClient))
+        {
+            this.Fail("native_client_initialization_failed");
+            return true;
+        }
+        this.client = initializedClient;
+        initializedClient.connect();
         return true;
     }
 
@@ -360,6 +371,39 @@ internal sealed class FarmhandProvisioner
             || (cabinMatches[0].BoundCompanionId.Length > 0 && cabinMatches[0].BoundCompanionId != manifest.CompanionId))
             return new(false, "session_cabin_binding_mismatch");
         return new(true, "accepted");
+    }
+
+    /// <summary>
+    /// Constructs a native client through the current target-version multiplayer
+    /// seam. Game1.multiplayer is private in the game API, so reflect only the
+    /// exact static Multiplayer field and never fall back to direct connection.
+    /// </summary>
+    internal static bool TryCreateInitializedNativeClient(string endpoint, out LidgrenClient client)
+    {
+        client = null!;
+        FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        if (field is null || !field.IsStatic || field.FieldType != typeof(Multiplayer) || field.GetValue(null) is not Multiplayer multiplayer)
+            return false;
+        return TryInitializeNativeClient(multiplayer, endpoint, out client);
+    }
+
+    /// <summary>Pure injection seam for target-version initialization characterization.</summary>
+    internal static bool TryInitializeNativeClient(Multiplayer multiplayer, string endpoint, out LidgrenClient client)
+    {
+        client = null!;
+        if (multiplayer is null || string.IsNullOrWhiteSpace(endpoint))
+            return false;
+        try
+        {
+            if (multiplayer.InitClient(new LidgrenClient(endpoint)) is not LidgrenClient initializedClient)
+                return false;
+            client = initializedClient;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private sealed record VersionGuard(bool IsCompatible, string ReasonCode);

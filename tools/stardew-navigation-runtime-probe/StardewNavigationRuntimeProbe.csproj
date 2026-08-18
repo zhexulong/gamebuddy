@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GamePath Condition="'$(GamePath)' == ''">$(GAMEBUDDY_STARDEW_GAME_PATH)</GamePath>
+  </PropertyGroup>
+
+  <Target Name="RequireTargetAssemblies" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(GamePath)' == ''" Text="GamePath (or GAMEBUDDY_STARDEW_GAME_PATH) is required for the probe-only target assembly build." />
+    <Error Condition="!Exists('$(GamePath)\Stardew Valley.dll')" Text="Target Stardew Valley.dll is missing." />
+    <Error Condition="!Exists('$(GamePath)\StardewModdingAPI.dll')" Text="Target StardewModdingAPI.dll is missing." />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="Stardew Valley"><HintPath>$(GamePath)\Stardew Valley.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="StardewModdingAPI"><HintPath>$(GamePath)\StardewModdingAPI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="StardewValley.GameData"><HintPath>$(GamePath)\StardewValley.GameData.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MonoGame.Framework"><HintPath>$(GamePath)\MonoGame.Framework.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="manifest.json"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+  </ItemGroup>
+</Project>

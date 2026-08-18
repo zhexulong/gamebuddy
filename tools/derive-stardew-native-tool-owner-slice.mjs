@@ -2,8 +2,66 @@ import { readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { validateNativeToolOwnerSlice } from "./lib/stardew-native-tool-owner-slice.mjs";
-function fail(code, message) { const error = new Error(message); error.code = code; throw error; }
-function parse(argv) { const values = {}; for (let i = 0; i < argv.length; i += 1) { const key = argv[i], value = argv[++i]; if (!key?.startsWith("--") || !value || value.startsWith("--")) fail("tool_owner_slice_arguments_invalid", "Usage: --source-root <exact-source-root> --inventory <report.json> --slice <slice.json> --out <report.json>"); values[key.slice(2)] = value; } for (const key of ["source-root", "inventory", "slice", "out"]) if (!values[key]) fail("tool_owner_slice_arguments_required", "Usage: --source-root <exact-source-root> --inventory <report.json> --slice <slice.json> --out <report.json>"); return values; }
-async function sources(root) { const pending = [root], result = {}; while (pending.length) { const directory = pending.pop(); for (const entry of await readdir(directory, { withFileTypes: true })) { const absolute = path.join(directory, entry.name); if (entry.isDirectory()) pending.push(absolute); else if (entry.isFile() && entry.name.endsWith(".cs")) { const text = await readFile(absolute, "utf8"); result[path.relative(root, absolute).replaceAll("\\", "/")] = { text, sha256: createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex") }; } } } return result; }
-async function main() { const input = parse(process.argv.slice(2).filter((item) => item !== "--")); const sourceFiles = await sources(path.resolve(input["source-root"])); const inventory = JSON.parse(await readFile(path.resolve(input.inventory), "utf8")); const slice = JSON.parse(await readFile(path.resolve(input.slice), "utf8")); const validation = validateNativeToolOwnerSlice(slice, { inventory }, { sourceFiles }); const report = { schemaVersion: 1, artifactKind: "native_tool_owner_slice_report", slice, validation }; const target = path.resolve(input.out), temporary = `${target}.${process.pid}.${Date.now()}.tmp`; await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`); await rename(temporary, target); process.stdout.write(`${JSON.stringify({ artifactKind: report.artifactKind, implementationId: slice.implementationId, invocationCount: validation.invocationCount, blockingGapCount: validation.blockingGapIds.length })}\n`); }
-main().catch((error) => { process.stderr.write(`${error.code ?? "tool_owner_slice_failed"}: ${error.message}\n`); process.exitCode = 1; });
+function fail(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  throw error;
+}
+function parse(argv) {
+  const values = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const key = argv[i],
+      value = argv[++i];
+    if (!key?.startsWith("--") || !value || value.startsWith("--"))
+      fail(
+        "tool_owner_slice_arguments_invalid",
+        "Usage: --source-root <exact-source-root> --inventory <report.json> --slice <slice.json> --out <report.json>",
+      );
+    values[key.slice(2)] = value;
+  }
+  for (const key of ["source-root", "inventory", "slice", "out"])
+    if (!values[key])
+      fail(
+        "tool_owner_slice_arguments_required",
+        "Usage: --source-root <exact-source-root> --inventory <report.json> --slice <slice.json> --out <report.json>",
+      );
+  return values;
+}
+async function sources(root) {
+  const pending = [root],
+    result = {};
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) pending.push(absolute);
+      else if (entry.isFile() && entry.name.endsWith(".cs")) {
+        const text = await readFile(absolute, "utf8");
+        result[path.relative(root, absolute).replaceAll("\\", "/")] = {
+          text,
+          sha256: createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex"),
+        };
+      }
+    }
+  }
+  return result;
+}
+async function main() {
+  const input = parse(process.argv.slice(2).filter((item) => item !== "--"));
+  const sourceFiles = await sources(path.resolve(input["source-root"]));
+  const inventory = JSON.parse(await readFile(path.resolve(input.inventory), "utf8"));
+  const slice = JSON.parse(await readFile(path.resolve(input.slice), "utf8"));
+  const validation = validateNativeToolOwnerSlice(slice, { inventory }, { sourceFiles });
+  const report = { schemaVersion: 1, artifactKind: "native_tool_owner_slice_report", slice, validation };
+  const target = path.resolve(input.out),
+    temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`);
+  await rename(temporary, target);
+  process.stdout.write(
+    `${JSON.stringify({ artifactKind: report.artifactKind, implementationId: slice.implementationId, invocationCount: validation.invocationCount, blockingGapCount: validation.blockingGapIds.length })}\n`,
+  );
+}
+main().catch((error) => {
+  process.stderr.write(`${error.code ?? "tool_owner_slice_failed"}: ${error.message}\n`);
+  process.exitCode = 1;
+});

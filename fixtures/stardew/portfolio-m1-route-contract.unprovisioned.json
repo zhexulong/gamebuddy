@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_route_blocker_fixture",
+  "fixtureId": "portfolio_m1_leave_and_return_route_unprovisioned_v1",
+  "topology": "single_player_native_companion",
+  "state": "unprovisioned",
+  "mutation": false,
+  "terminalOutcome": false,
+  "checkpoint": null,
+  "receipt": null,
+  "nativeEvidence": null,
+  "notes": "No location, tile, route, outside obligation, request, execution, receipt, or result is provisioned by this fixture."
+}

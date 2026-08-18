@@ -1,0 +1,612 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import {
+  type GameRuntimeBindingExecution,
+  type ReservedGameRuntimeMaterialization,
+  reserveGameRuntimeMaterialization,
+  withConsumedBindingExecution,
+} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
+import {
+  createGameRuntimeBinding,
+  type GameRuntimeBinding,
+} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import type { ProductionGamePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
+import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
+import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
+import { createIntegrationActionCatalog, type GameIntegrationModule } from "../integration-module.js";
+import type { IntegrationConnection } from "../integration-types.js";
+import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
+
+const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
+
+function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegrationLauncher {
+  const module: GameIntegrationModule = {
+    descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
+    actionCatalog: createIntegrationActionCatalog([
+      {
+        actionId: "activate",
+        familyId: "interaction",
+        actionClass: "primitive",
+        lifecycle: "published",
+        label: "Activate",
+        description: "Activate",
+        targetKinds: ["console"],
+        requiredCapability: "activate",
+      },
+    ]),
+    defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
+    parsePolicy: (value) => value as never,
+    assertIdentityBinding: (_connection, identity) => {
+      if (
+        identity.playerId !== principal.playerId ||
+        identity.companionId !== principal.companionId ||
+        identity.saveId !== "save_01" ||
+        identity.worldId !== "world_01"
+      )
+        throw new Error("identity_drift");
+    },
+    worldScope: () => Object.freeze({ integrationId: "test-arcade", saveId: "save_01", worldId: "world_01" }),
+    createToolSet: () => ({
+      observation: [],
+      actions: [
+        defineTool({
+          name: "arcade_activate",
+          label: "Activate",
+          description: "Activate",
+          parameters: Type.Object({}),
+          execute: async () => ({ content: [], details: {} }),
+        }),
+      ],
+      knowledge: [],
+    }),
+    knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
+    readState: () => ({
+      connected: true,
+      sessionId: "session_01",
+      capabilities: ["activate"],
+      snapshotRevision: 1,
+      activeExecution: null,
+      latestReceipt: null,
+      latestReasonCode: null,
+    }),
+    status: () => ({
+      connected: true,
+      capabilities: ["activate"],
+      snapshotRevision: 1,
+      latestReceiptState: null,
+      latestReasonCode: null,
+    }),
+    cancelExecution: () => undefined,
+    parseReceipt: () => null,
+    actionIdForToolName: (name) => (name === "arcade_activate" ? "activate" : null),
+    isCancellationTool: () => false,
+  };
+  const connection: IntegrationConnection = {
+    scope: { integrationId: "test-arcade" },
+    module,
+    state: Object.freeze({ connected: true }),
+    executionGate: { executable: true },
+  };
+  const handle: IntegrationLaunchHandle = {
+    connection,
+    events: { onFact: () => () => undefined, onLifecycle: () => () => undefined },
+    authority: RECEIPT_BACKED_INTEGRATION_AUTHORITY,
+    lifecycle: "ready",
+    initialFacts: [{ source: "fixture", kind: "snapshot", correlationId: "snapshot_01", revision: 1, payload: {} }],
+    revoke: onRevoke,
+    close: onClose,
+  };
+  return {
+    integrationId: "test-arcade",
+    module,
+    prepare: async () =>
+      Object.freeze({
+        launchConfig: Object.freeze({ prepared: true }),
+        identityScope: Object.freeze({ saveId: "save_01", worldId: "world_01" }),
+      }),
+    launch: async () => handle,
+  };
+}
+
+async function binding(): Promise<GameRuntimeBinding> {
+  const root = await mkdtemp(join(tmpdir(), "game-runtime-materializer-"));
+  const runtimeRoot = join(root, "runtime");
+  await mkdir(runtimeRoot);
+  const manifestPath = join(root, "manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      schemaVersion: 2,
+      topology: "independent_chat_and_game_surfaces",
+      runtimeRoot,
+      principal,
+      bootstrapOperationId: "bootstrap_01",
+      authorityGeneration: 1,
+    }),
+  );
+  return createGameRuntimeBinding({
+    manifest: await loadHostDeploymentManifest(manifestPath),
+    launcher: fixture(
+      () => undefined,
+      () => undefined,
+    ),
+    launcherConfig: null,
+    configDirectory: process.cwd(),
+  });
+}
+
+function permit(
+  execution: GameRuntimeBindingExecution,
+  overrides: Partial<ProductionGamePermit> = {},
+): ProductionGamePermit {
+  return Object.freeze({
+    principal: execution.principal,
+    operationId: "operation_01",
+    requestId: "request_01",
+    kind: "enter",
+    gameSessionId: "game_session_01",
+    world: execution.world,
+    bindingDigest: execution.bindingFacts.bindingDigest,
+    owner: execution.bindingFacts.owner,
+    deadlineAtMs: Date.now() + 5_000,
+    expected: Object.freeze({
+      partitionRevision: 1,
+      gameRevision: 0,
+      leaseRevision: 0,
+      fenceEpoch: 1,
+    }),
+    payloadDigest: "b".repeat(64),
+    fenceToken: "fence_01",
+    prepared: Object.freeze({
+      partitionRevision: 2,
+      gameRevision: 0,
+      leaseRevision: 1,
+      fenceEpoch: 2,
+    }),
+    ...overrides,
+  });
+}
+
+async function inActiveBinding<T>(
+  binding: GameRuntimeBinding,
+  callback: (execution: GameRuntimeBindingExecution, reservation: ReservedGameRuntimeMaterialization) => Promise<T> | T,
+): Promise<T> {
+  return binding.executeWithBinding((token) =>
+    withConsumedBindingExecution(token, (execution) =>
+      callback(execution, reserveGameRuntimeMaterialization(execution)),
+    ),
+  );
+}
+
+test("materializes only an exact enter permit and mints a permit-exact Host receipt", async () => {
+  let factoryCalls = 0;
+  let sessionDisposed = 0;
+  let workerDisposed = 0;
+  const materializer = createTestGameRuntimeMaterializer(async () => {
+    factoryCalls += 1;
+    return Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          sessionDisposed += 1;
+        },
+      }),
+      gameplaySubagent: Object.freeze({
+        dispose: () => {
+          workerDisposed += 1;
+        },
+      }),
+    });
+  });
+  const runtimeBinding = await binding();
+  let entered!: ProductionGamePermit;
+  try {
+    const result = await inActiveBinding(runtimeBinding, (execution, reservation) => {
+      entered = permit(execution);
+      return materializer.materializeEnter(reservation, entered);
+    });
+    assert.equal(factoryCalls, 1);
+    assert.equal(result.receipt.kind, "runtime_bootstrapped");
+    assert.equal(result.receipt.operationId, entered.operationId);
+    assert.equal(result.receipt.requestId, entered.requestId);
+    assert.equal(result.receipt.gameSessionId, entered.gameSessionId);
+    assert.equal(result.receipt.bindingDigest, entered.bindingDigest);
+    assert.deepEqual(result.receipt.world, entered.world);
+    assert.deepEqual(result.receipt.owner, entered.owner);
+    assert.equal(result.receipt.fenceToken, entered.fenceToken);
+    assert.ok(result.receipt.occurredAtMs <= entered.deadlineAtMs);
+    await result.close();
+    await result.close();
+    assert.equal(workerDisposed, 1);
+    assert.equal(sessionDisposed, 1);
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("tears down only for the exact same-session close permit, marks the neutral connection state, and mints runtime_torn_down afterwards", async () => {
+  let disposed = 0;
+  let closingMarks = 0;
+  let exactClose!: ProductionGamePermit;
+  const materializer = createTestGameRuntimeMaterializer(async () =>
+    Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          disposed += 1;
+        },
+      }),
+      connected: Object.freeze({
+        host: Object.freeze({ close: () => undefined }) as never,
+        lifecycleSnapshot: () =>
+          Object.freeze({
+            availability: "available" as const,
+            surface: "active" as const,
+            freshness: "current" as const,
+            availableCapabilities: Object.freeze({ category: "none" as const, count: 0 }),
+            activeExecution: "none" as const,
+            latestAuthoritativeReceipt: "none" as const,
+          }),
+        markClosing: () => {
+          closingMarks += 1;
+        },
+        activateIngress: () => undefined,
+      }),
+    }),
+  );
+  const runtimeBinding = await binding();
+  try {
+    const result = await inActiveBinding(runtimeBinding, (execution, reservation) => {
+      exactClose = permit(execution, {
+        kind: "close",
+        operationId: "close_01",
+        requestId: "close_request_01",
+        fenceToken: "close_fence_01",
+      });
+      return materializer.materializeEnter(reservation, permit(execution));
+    });
+    await assert.rejects(
+      result.teardownClose(Object.freeze({ ...exactClose, gameSessionId: "foreign_session" })),
+      /game_runtime_materialization_close_permit_rejected/,
+    );
+    assert.equal(disposed, 0);
+    assert.equal(closingMarks, 0);
+    const receipt = await result.teardownClose(exactClose);
+    assert.equal(receipt.kind, "runtime_torn_down");
+    assert.equal(closingMarks, 1);
+    assert.equal(receipt.operationId, exactClose.operationId);
+    assert.equal(disposed, 1);
+    await assert.rejects(result.teardownClose(exactClose), /game_runtime_materialization_unavailable/);
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("a teardown rejection retains the exact runtime for a same-permit retry", async () => {
+  let attempts = 0;
+  let exactClose!: ProductionGamePermit;
+  const materializer = createTestGameRuntimeMaterializer(async () =>
+    Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("first_teardown_failed");
+        },
+      }),
+    }),
+  );
+  const runtimeBinding = await binding();
+  try {
+    const result = await inActiveBinding(runtimeBinding, (execution, reservation) => {
+      exactClose = permit(execution, {
+        kind: "close",
+        operationId: "close_retry_01",
+        requestId: "close_retry_request_01",
+        fenceToken: "close_retry_fence_01",
+      });
+      return materializer.materializeEnter(reservation, permit(execution));
+    });
+    await assert.rejects(result.teardownClose(exactClose), /game_runtime_materialization_close_failed/);
+    const terminal = await result.teardownClose(exactClose);
+    assert.equal(terminal.kind, "runtime_torn_down");
+    assert.equal(terminal.operationId, exactClose.operationId);
+    assert.equal(attempts, 2);
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("rejects a drifted permit before factory invocation and never mints a receipt", async () => {
+  let factoryCalls = 0;
+  const materializer = createTestGameRuntimeMaterializer(async () => {
+    factoryCalls += 1;
+    return Object.freeze({ session: Object.freeze({ dispose: () => undefined }) });
+  });
+  const runtimeBinding = await binding();
+  try {
+    await assert.rejects(
+      inActiveBinding(runtimeBinding, (execution, reservation) =>
+        materializer.materializeEnter(reservation, permit(execution, { bindingDigest: "c".repeat(64) })),
+      ),
+      /game_runtime_materialization_permit_rejected/,
+    );
+    assert.equal(factoryCalls, 0);
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("rejects forged reservations and permits exactly one deferred use of a callback-admitted reservation", async () => {
+  let factoryCalls = 0;
+  const materializer = createTestGameRuntimeMaterializer(async () => {
+    factoryCalls += 1;
+    return Object.freeze({ session: Object.freeze({ dispose: () => undefined }) });
+  });
+  const runtimeBinding = await binding();
+  let retainedExecution!: GameRuntimeBindingExecution;
+  let retainedReservation!: ReservedGameRuntimeMaterialization;
+  try {
+    await inActiveBinding(runtimeBinding, (execution, reservation) => {
+      retainedExecution = execution;
+      retainedReservation = reservation;
+      assert.throws(() => reserveGameRuntimeMaterialization(execution), /game_runtime_binding_execution_rejected/);
+    });
+    await assert.rejects(
+      materializer.materializeEnter({} as ReservedGameRuntimeMaterialization, permit(retainedExecution)),
+      /game_runtime_binding_execution_rejected/,
+    );
+    const result = await materializer.materializeEnter(retainedReservation, permit(retainedExecution));
+    assert.equal(factoryCalls, 1);
+    await result.close();
+    await assert.rejects(
+      materializer.materializeEnter(retainedReservation, permit(retainedExecution)),
+      /game_runtime_binding_execution_rejected/,
+    );
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("propagates materialization failure and does not synthesize a lifecycle receipt", async () => {
+  const materializer = createTestGameRuntimeMaterializer(async () => {
+    throw new Error("runtime_creation_failed");
+  });
+  const runtimeBinding = await binding();
+  try {
+    await assert.rejects(
+      inActiveBinding(runtimeBinding, (execution, reservation) =>
+        materializer.materializeEnter(reservation, permit(execution)),
+      ),
+      /runtime_creation_failed/,
+    );
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("does not let a detached continuation create a reservation after callback completion", async () => {
+  const runtimeBinding = await binding();
+  let execution!: GameRuntimeBindingExecution;
+  let detached!: Promise<void>;
+  try {
+    await runtimeBinding.executeWithBinding((token) =>
+      withConsumedBindingExecution(token, (current) => {
+        execution = current;
+        detached = Promise.resolve().then(() => {
+          assert.throws(() => reserveGameRuntimeMaterialization(execution), /game_runtime_binding_execution_rejected/);
+        });
+      }),
+    );
+    await detached;
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("close drains materialization admitted before callback completion", async () => {
+  let disposed = 0;
+  let release!: () => void;
+  const factoryStarted = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const materializer = createTestGameRuntimeMaterializer(async () => {
+    await factoryStarted;
+    return Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          disposed += 1;
+        },
+      }),
+    });
+  });
+  const runtimeBinding = await binding();
+  let admitted!: Promise<unknown>;
+  try {
+    await inActiveBinding(runtimeBinding, async (execution, reservation) => {
+      admitted = materializer.materializeEnter(reservation, permit(execution, { deadlineAtMs: Date.now() + 5_000 }));
+      await delay(0);
+    });
+    const closing = runtimeBinding.close();
+    release();
+    const result = await admitted;
+    assert.equal(typeof (result as { close(): Promise<void> }).close, "function");
+    await closing;
+    assert.equal(disposed, 0);
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("rejects expired and deadline-overrun materialization without retaining a runtime", async () => {
+  let disposed = 0;
+  const materializer = createTestGameRuntimeMaterializer(async () => {
+    await delay(5);
+    return Object.freeze({
+      session: Object.freeze({
+        dispose: () => {
+          disposed += 1;
+        },
+      }),
+    });
+  });
+  const expiredBinding = await binding();
+  try {
+    await assert.rejects(
+      inActiveBinding(expiredBinding, (execution, reservation) =>
+        materializer.materializeEnter(reservation, permit(execution, { deadlineAtMs: 0 })),
+      ),
+      /game_runtime_materialization_permit_rejected/,
+    );
+  } finally {
+    await expiredBinding.close();
+  }
+  const overrunBinding = await binding();
+  try {
+    await assert.rejects(
+      inActiveBinding(overrunBinding, (execution, reservation) =>
+        materializer.materializeEnter(reservation, permit(execution, { deadlineAtMs: Date.now() + 1 })),
+      ),
+      /game_runtime_materialization_permit_rejected/,
+    );
+    assert.equal(disposed, 1);
+  } finally {
+    await overrunBinding.close();
+  }
+});
+
+test("rejects nested permit extension fields and reconstructs closed receipt records", async () => {
+  const materializer = createTestGameRuntimeMaterializer(async () =>
+    Object.freeze({ session: Object.freeze({ dispose: () => undefined }) }),
+  );
+  const invalidBinding = await binding();
+  try {
+    await assert.rejects(
+      inActiveBinding(invalidBinding, (execution, reservation) =>
+        materializer.materializeEnter(
+          reservation,
+          permit(execution, {
+            deadlineAtMs: Date.now() + 5_000,
+            world: Object.freeze({ ...execution.world, injected: "x" }) as never,
+          }),
+        ),
+      ),
+      /game_runtime_materialization_permit_rejected/,
+    );
+  } finally {
+    await invalidBinding.close();
+  }
+  const validBinding = await binding();
+  try {
+    const result = await inActiveBinding(validBinding, (execution, reservation) =>
+      materializer.materializeEnter(reservation, permit(execution, { deadlineAtMs: Date.now() + 5_000 })),
+    );
+    assert.deepEqual(Object.keys(result.receipt.world).sort(), ["integrationId", "saveId", "worldId"]);
+    assert.deepEqual(Object.keys(result.receipt.owner).sort(), [
+      "ownerPid",
+      "ownerProcessStartIdentity",
+      "ownerToken",
+      "runtimeInstanceId",
+    ]);
+    await result.close();
+  } finally {
+    await validBinding.close();
+  }
+});
+
+test("production materializer source rejects legacy lifecycle, facade, store command, and entrypoint ingress", async () => {
+  const root = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "../../src/continuity-semantic-game-runtime-materializer",
+  );
+  const sources = await Promise.all([
+    readFile(join(root, "continuity-semantic-game-runtime-materializer.ts"), "utf8"),
+    readFile(join(root, "continuity-semantic-game-runtime-materializer.internal.ts"), "utf8"),
+  ]);
+  const forbidden = [
+    "integration-bootstrap",
+    "game-surface-lifecycle",
+    "GameSurfaceLifecycle",
+    "markReturning",
+    "continuity.js",
+    "deployment-composition",
+    "-facade",
+    "main.js",
+    "dialogue-web-main",
+    "prepareGame(",
+    "commitGameTerminal(",
+    "failGame(",
+  ];
+  for (const source of sources)
+    for (const segment of forbidden) assert.equal(source.includes(segment), false, `forbidden S4c ingress: ${segment}`);
+  assert.equal(
+    sources.some((source) => /export\s+(?:async\s+)?function\s+create(?:Host|Materialized)GameRuntime\b/.test(source)),
+    false,
+    "S4c must not export a Game-specific runtime constructor",
+  );
+  assert.equal(
+    sources.some((source) => /async\s+function\s+createMaterializedGameRuntime\b/.test(source)),
+    true,
+    "S4c must keep its named Game construction helper private to the materializer",
+  );
+  assert.equal(
+    sources.some((source) => /import\s*\{[^}]*createGameCompanionRuntime/.test(source)),
+    true,
+    "S4c uses the explicit Game-only runtime constructor when the operational marker is armed",
+  );
+  assert.equal(
+    sources.some((source) => source.includes("GameRuntimeBindingExecution")),
+    true,
+    "S4c materialization remains bound to S4b execution facts",
+  );
+  assert.equal(
+    sources.some((source) => source.includes("gameOperationalGateNonceSha256")),
+    true,
+    "S4c accepts the construction-owned operational marker option",
+  );
+});
+
+test("production Game presentation composition supplies session and opaque admission only inside materialization", async () => {
+  const source = await readFile(
+    join(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-game-runtime-materializer"),
+      "continuity-semantic-game-runtime-materializer.ts",
+    ),
+    "utf8",
+  );
+  assert.match(source, /gameVoicePresentation\?: GameVoicePresentationAttachment/);
+  assert.doesNotMatch(source, /gamePresentation\?:/);
+  assert.match(source, /sessionId: gameSessionId/);
+  assert.match(source, /createGamePresentationAdmissionProvider\(turnTracker, handle\.interruption\)/);
+  assert.match(source, /host\.attachVoiceStopper\(consumeGameVoicePresentationAttachment/);
+  assert.match(source, /const activateIngress/);
+  assert.doesNotMatch(source, /trace.*sink/i);
+  assert.doesNotMatch(source, /inputId.*admission/i);
+});
+
+test("Game materializer source mints origin-free receipts and exposes only close teardown", async () => {
+  const source = await readFile(
+    join(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-game-runtime-materializer"),
+      "continuity-semantic-game-runtime-materializer.internal.ts",
+    ),
+    "utf8",
+  );
+  for (const forbidden of [
+    "teardownReturn",
+    "returnPermit",
+    "GameOrigin",
+    "permit.origin",
+    "origin:",
+    "GameSurfaceLifecycle",
+    "markReturning",
+    "game-surface-lifecycle",
+  ])
+    assert.equal(source.includes(forbidden), false, `forbidden Game materializer semantic: ${forbidden}`);
+  assert.match(source, /teardownClose\(permit: ProductionGamePermit\)/);
+});

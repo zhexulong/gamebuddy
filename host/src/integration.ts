@@ -1,6 +1,8 @@
 import {
   newEnvelope,
+  nextCancelIdentity,
   type BridgeMessage,
+  type CancelIdentity,
   type ExecutionRequest,
   type ExecutionReceipt,
   type Snapshot,
@@ -24,6 +26,8 @@ export class CompanionIntegrationClient {
   #latestReasonCode: string | null = null;
   readonly #unsubscribeMessage: () => void;
   readonly #unsubscribeDisconnect: () => void;
+  /** One stable cancelId per request; cancelEpoch strictly increases per distinct cancel attempt. */
+  readonly #cancelIdentities = new Map<string, CancelIdentity>();
 
   public constructor(
     readonly scope: Scope,
@@ -72,9 +76,33 @@ export class CompanionIntegrationClient {
     return this.endpoint.send(newEnvelope("execution_request", this.scope, request, undefined, nowMs), nowMs);
   }
 
-  public cancel(requestId: string, executionId: string, reasonCode: string, nowMs = Date.now()): BridgeFault | "not_ready" | null {
+  public cancel(
+    requestId: string,
+    executionId: string,
+    reasonCode: string,
+    nowMs = Date.now(),
+  ): BridgeFault | "not_ready" | null {
     if (!this.state.connected) return "not_ready";
-    return this.endpoint.send(newEnvelope("cancel_request", this.scope, { requestId, executionId, reasonCode }, undefined, nowMs), nowMs);
+    // The typed cancel identity is minted and remembered per request before
+    // the envelope leaves the Host; a cancel without it can never be emitted.
+    const identity = nextCancelIdentity(this.#cancelIdentities.get(requestId) ?? null);
+    this.#cancelIdentities.set(requestId, identity);
+    return this.endpoint.send(
+      newEnvelope(
+        "cancel_request",
+        this.scope,
+        {
+          requestId,
+          executionId,
+          cancelId: identity.cancelId,
+          cancelEpoch: identity.cancelEpoch,
+          reasonCode,
+        },
+        undefined,
+        nowMs,
+      ),
+      nowMs,
+    );
   }
 
   /** Accept a validated Mod-to-Host fact from any transport adapter. */
@@ -89,7 +117,8 @@ export class CompanionIntegrationClient {
         break;
       case "snapshot":
         // A delayed observation response must never replace newer Mod state.
-        if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision) this.#snapshot = message.payload;
+        if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision)
+          this.#snapshot = message.payload;
         break;
       case "execution_receipt":
         this.#latestReceipt = message.payload;
@@ -104,5 +133,4 @@ export class CompanionIntegrationClient {
         this.#latestReasonCode = "unexpected_inbound_message";
     }
   }
-
 }
