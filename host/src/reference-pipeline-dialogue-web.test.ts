@@ -577,3 +577,127 @@ test("reference handler rejects non-exact profile before binding a listener", as
     /reference_pipeline_profile_operation_unavailable/,
   );
 });
+
+test("reference handler fails closed when a present-but-invalid cursor accompanies a valid one", async () => {
+  const stream = createChatEventStream();
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const server = await startReferencePipelineDialogueWebServer({ referenceStateFacade: facade, pipelineService: service(recorder), profile, eventStream: stream, bootstrapToken: token });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 1, present: true } });
+    const good = stream.encodeCursor({ epoch: stream.epoch, sequence: 1 });
+    const matrix = [
+      { url: `${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=not-a-cursor`, headers: { Origin: server.origin, Cookie: cookie, "last-event-id": good } },
+      { url: `${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${good}`, headers: { Origin: server.origin, Cookie: cookie, "last-event-id": "not-a-cursor" } },
+      { url: `${server.origin}/api/tavern/v1/events?apiVersion=1`, headers: { Origin: server.origin, Cookie: cookie, "last-event-id": "" } },
+    ];
+    for (const entry of matrix) {
+      const connection = await openSse(entry.url, entry.headers);
+      assert.equal(connection.response.statusCode, 200);
+      const parsed = parseSseFrame(await connection.readFrame());
+      assert.equal(parsed.eventType, "stream.resync_required");
+      assert.deepEqual(parsed.event.payload, { reason: "ambiguous_cursor" });
+      assert.equal(await connection.readToEnd(), "");
+      await connection.close();
+    }
+    const duplicate = await fetch(`${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${good}&cursor=${good}`, { headers: { Origin: server.origin, Cookie: cookie } });
+    assert.equal(duplicate.status, 400);
+  } finally {
+    server.closeAllConnections();
+    await server.close();
+  }
+});
+
+test("reference handler prefers Last-Event-ID over a valid query cursor", async () => {
+  const stream = createChatEventStream();
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const server = await startReferencePipelineDialogueWebServer({ referenceStateFacade: facade, pipelineService: service(recorder), profile, eventStream: stream, bootstrapToken: token });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 1, present: true } });
+    stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 2, present: false } });
+    stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 3, present: true } });
+    const headerCursor = stream.encodeCursor({ epoch: stream.epoch, sequence: 2 });
+    const queryCursor = stream.encodeCursor({ epoch: stream.epoch, sequence: 0 });
+    const connection = await openSse(`${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${queryCursor}`, { Origin: server.origin, Cookie: cookie, "last-event-id": headerCursor });
+    assert.equal(connection.response.statusCode, 200);
+    const first = parseSseFrame(await connection.readFrame());
+    assert.equal(first.eventType, "draft.changed");
+    assert.deepEqual(stream.decodeCursor(first.id), { epoch: stream.epoch, sequence: 3 });
+    const live = stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 4, present: false } });
+    const next = parseSseFrame(await connection.readFrame());
+    assert.deepEqual(stream.decodeCursor(next.id), { epoch: stream.epoch, sequence: live.sequence });
+    assert.deepEqual(next.event.payload, { revision: 4, present: false });
+    await connection.close();
+  } finally {
+    server.closeAllConnections();
+    await server.close();
+  }
+});
+
+test("reference handler serves two concurrent readers with equivalent header-only and query-only replay and independent lifecycle", async () => {
+  const stream = createChatEventStream();
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const server = await startReferencePipelineDialogueWebServer({ referenceStateFacade: facade, pipelineService: service(recorder), profile, eventStream: stream, bootstrapToken: token });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 1, present: true } });
+    stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 2, present: false } });
+    const afterOne = stream.encodeCursor({ epoch: stream.epoch, sequence: 1 });
+    const queryReader = await openSse(`${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${afterOne}`, { Origin: server.origin, Cookie: cookie });
+    const headerReader = await openSse(`${server.origin}/api/tavern/v1/events?apiVersion=1`, { Origin: server.origin, Cookie: cookie, "last-event-id": afterOne });
+    assert.equal(queryReader.response.statusCode, 200);
+    assert.equal(headerReader.response.statusCode, 200);
+    const queryReplay = parseSseFrame(await queryReader.readFrame());
+    const headerReplay = parseSseFrame(await headerReader.readFrame());
+    assert.deepEqual(stream.decodeCursor(queryReplay.id), { epoch: stream.epoch, sequence: 2 });
+    assert.deepEqual(stream.decodeCursor(headerReplay.id), { epoch: stream.epoch, sequence: 2 });
+    assert.deepEqual(headerReplay.event.payload, queryReplay.event.payload);
+    const third = stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 3, present: true } });
+    assert.deepEqual(stream.decodeCursor(parseSseFrame(await queryReader.readFrame()).id), { epoch: stream.epoch, sequence: third.sequence });
+    assert.deepEqual(stream.decodeCursor(parseSseFrame(await headerReader.readFrame()).id), { epoch: stream.epoch, sequence: third.sequence });
+    await queryReader.close();
+    const fourth = stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 4, present: false } });
+    assert.deepEqual(stream.decodeCursor(parseSseFrame(await headerReader.readFrame()).id), { epoch: stream.epoch, sequence: fourth.sequence });
+    await headerReader.close();
+  } finally {
+    server.closeAllConnections();
+    await server.close();
+  }
+});
+
+test("reference handler resyncs a reconnect from a previous host epoch and serves a clean post-resync reconnect", async () => {
+  const previous = createChatEventStream();
+  const first = previous.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 1, present: true } });
+  const second = previous.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 2, present: false } });
+  const previousCursor = previous.encodeCursor({ epoch: previous.epoch, sequence: second.sequence });
+  assert.equal(first.epoch, previous.epoch);
+  const stream = createChatEventStream();
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const server = await startReferencePipelineDialogueWebServer({ referenceStateFacade: facade, pipelineService: service(recorder), profile, eventStream: stream, bootstrapToken: token });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }) });
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const reconnect = await openSse(`${server.origin}/api/tavern/v1/events?apiVersion=1`, { Origin: server.origin, Cookie: cookie, "last-event-id": previousCursor });
+    assert.equal(reconnect.response.statusCode, 200);
+    const resyncFrame = parseSseFrame(await reconnect.readFrame());
+    assert.equal(resyncFrame.eventType, "stream.resync_required");
+    assert.deepEqual(resyncFrame.event.payload, { reason: "epoch_changed" });
+    assert.deepEqual(stream.decodeCursor(resyncFrame.id), { epoch: stream.epoch, sequence: 1 });
+    assert.equal(await reconnect.readToEnd(), "");
+    await reconnect.close();
+    const fresh = await openSse(`${server.origin}/api/tavern/v1/events?apiVersion=1`, { Origin: server.origin, Cookie: cookie, "last-event-id": resyncFrame.id });
+    assert.equal(fresh.response.statusCode, 200);
+    const publication = stream.publish({ eventType: "draft.changed", selectionGeneration: 1, payload: { revision: 3, present: true } });
+    const liveFrame = parseSseFrame(await fresh.readFrame());
+    assert.equal(liveFrame.eventType, "draft.changed");
+    assert.deepEqual(stream.decodeCursor(liveFrame.id), { epoch: stream.epoch, sequence: publication.sequence });
+    await fresh.close();
+  } finally {
+    server.closeAllConnections();
+    await server.close();
+  }
+});
