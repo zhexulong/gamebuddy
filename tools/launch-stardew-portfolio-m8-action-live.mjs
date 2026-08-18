@@ -145,8 +145,11 @@ export async function runM8TargetVersionLiveAction(options = {}) {
     } catch (error) {
       cleanupErrors.push(`profile_restore:${message(error)}`);
     }
-    if (cleanupErrors.length > 0 && primaryError === null)
-      throw new Error(`m8_live_cleanup_failed:${cleanupErrors.join(",")}`);
+    if (cleanupErrors.length > 0) {
+      const cleanupMessage = `m8_live_cleanup_failed:${cleanupErrors.join(",")}`;
+      if (primaryError === null) throw new Error(cleanupMessage);
+      primaryError.message = `${primaryError.message};${cleanupMessage}`;
+    }
   }
 }
 
