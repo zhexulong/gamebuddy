@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { request as httpRequest, type IncomingMessage } from "node:http";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -62,6 +63,53 @@ const facade: ReferencePipelineStateFacade = Object.freeze({
   readDraft: async () =>
     Object.freeze({ apiVersion: 1, revision: 4, text: "draft" }),
 });
+async function openSse(
+  url: string,
+  headers: Record<string, string>,
+): Promise<Readonly<{
+  response: IncomingMessage;
+  readChunk(): Promise<string>;
+  close(): Promise<void>;
+}>> {
+  return await new Promise((resolve, reject) => {
+    const request = httpRequest(url, { agent: false, headers }, (response) => {
+      let readSettled = false;
+      let readResolve: (value: string) => void;
+      let readReject: (error: Error) => void;
+      const chunk = new Promise<string>((chunkResolve, chunkReject) => {
+        readResolve = chunkResolve;
+        readReject = chunkReject;
+      });
+      response.once("data", (value: Buffer) => {
+        if (!readSettled) {
+          readSettled = true;
+          readResolve(value.toString("utf8"));
+        }
+      });
+      response.once("error", (error) => {
+        if (!readSettled) {
+          readSettled = true;
+          readReject(error instanceof Error ? error : new Error("sse_read_failed"));
+        }
+      });
+      resolve(Object.freeze({
+        response,
+        readChunk: () => chunk,
+        close: async () => {
+          if (response.destroyed) return;
+          await new Promise<void>((resolveClose) => {
+            response.once("close", resolveClose);
+            response.destroy();
+            request.destroy();
+          });
+        },
+      }));
+    });
+    request.once("error", (error) => reject(error));
+    request.end();
+  });
+}
+
 const result: SubmitResultV1 = Object.freeze({
   apiVersion: 1,
   disposition: "accepted",
@@ -327,7 +375,6 @@ test("reference handler streams live events and replays an existing cursor", asy
     bootstrapToken: token,
   });
   try {
-    console.error("[sse-debug] bootstrap");
     const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, {
       method: "POST",
       headers: { Origin: server.origin, "Content-Type": "application/json" },
@@ -335,56 +382,45 @@ test("reference handler streams live events and replays an existing cursor", asy
     });
     const snapshot = (await bootstrap.json()) as { csrfToken: string };
     const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
-    console.error("[sse-debug] publish");
     const first = stream.publish({
       eventType: "draft.changed",
       selectionGeneration: 1,
       payload: { revision: 5, present: true },
     });
-    const replayAbort = new AbortController();
-    console.error("[sse-debug] replay fetch");
-    const replayResponse = await fetch(
+    const replay = await openSse(
       `${server.origin}/api/tavern/v1/events?apiVersion=1`,
-      { headers: { Origin: server.origin, Cookie: cookie }, signal: replayAbort.signal },
+      { Origin: server.origin, Cookie: cookie, Connection: "close" },
     );
-    assert.equal(replayResponse.status, 200);
-    console.error("[sse-debug] replay headers");
-    const replayReader = replayResponse.body!.getReader();
-    const replayChunk = new TextDecoder().decode((await replayReader.read()).value);
+    assert.equal(replay.response.statusCode, 200);
+    const replayChunk = await replay.readChunk();
     assert.match(replayChunk, new RegExp(`event: draft\\.changed`));
     assert.match(replayChunk, new RegExp(`data: .*${first.epoch}.*${first.sequence}`));
-    console.error("[sse-debug] replay chunk");
-    replayAbort.abort();
+    await replay.close();
 
-    const liveAbort = new AbortController();
-    console.error("[sse-debug] live fetch");
-    const liveResponse = await fetch(
+    const live = await openSse(
       `${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${stream.encodeCursor({ epoch: stream.epoch, sequence: first.sequence })}`,
-      { headers: { Origin: server.origin, Cookie: cookie }, signal: liveAbort.signal },
+      { Origin: server.origin, Cookie: cookie },
     );
-    assert.equal(liveResponse.status, 200);
-    console.error("[sse-debug] live headers");
-    const liveReader = liveResponse.body!.getReader();
+    assert.equal(live.response.statusCode, 200);
     const next = stream.publish({
       eventType: "draft.changed",
       selectionGeneration: 1,
       payload: { revision: 6, present: false },
     });
-    const liveChunk = new TextDecoder().decode((await liveReader.read()).value);
+    const liveChunk = await live.readChunk();
     assert.match(liveChunk, new RegExp(`event: draft\\.changed`));
     assert.match(liveChunk, new RegExp(`data: .*${next.epoch}.*${next.sequence}`));
-    console.error("[sse-debug] live chunk");
-    liveAbort.abort();
+    await live.close();
 
-    console.error("[sse-debug] future fetch");
-    const future = await fetch(      `${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${stream.encodeCursor({ epoch: stream.epoch, sequence: 999 })}`,
-      { headers: { Origin: server.origin, Cookie: cookie } },
+    const future = await openSse(
+      `${server.origin}/api/tavern/v1/events?apiVersion=1&cursor=${stream.encodeCursor({ epoch: stream.epoch, sequence: 999 })}`,
+      { Origin: server.origin, Cookie: cookie },
     );
-    assert.equal(future.status, 200);
-    const futureBody = await future.text();
-    console.error("[sse-debug] future body");
+    assert.equal(future.response.statusCode, 200);
+    const futureBody = await future.readChunk();
     assert.match(futureBody, /event: stream\.resync_required/);
     assert.match(futureBody, /"reason":"ambiguous_cursor"/);
+    await future.close();
   } finally {
     server.closeAllConnections();
     await server.close();
