@@ -288,3 +288,19 @@ test("M8 live runner labels a missing action verdict rather than masking it", as
   await assert.rejects(() => runM8TargetVersionLiveAction(options), /m8_live_action_not_terminal:missing_action_verdict/);
   assert.equal(restored.length, 1);
 });
+
+test("M8 live runner exposes restore failure after an action failure", async () => {
+  let restoreCalled = false;
+  const { options } = setup({
+    runAction: async () => ({ state: "BLOCKED", code: "action_failed" }),
+    restore: async () => {
+      restoreCalled = true;
+      throw new Error("restore_broken");
+    },
+  });
+  await assert.rejects(
+    () => runM8TargetVersionLiveAction(options),
+    /m8_live_action_not_terminal:action_failed;m8_live_cleanup_failed:profile_restore:restore_broken/,
+  );
+  assert.equal(restoreCalled, true);
+});
