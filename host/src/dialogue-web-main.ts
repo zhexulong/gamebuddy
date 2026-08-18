@@ -61,6 +61,7 @@ async function runReferenceProfile(manifest: HostDeploymentManifest, mode: "fres
     server = await startReferencePipelineStaticShellComposition({
       referenceStateFacade,
       pipelineService,
+      eventStream,
       profile,
       bootstrapToken,
       inspector,
