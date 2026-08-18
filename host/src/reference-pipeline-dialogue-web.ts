@@ -243,6 +243,12 @@ export function createReferencePipelineDialogueWebRequestHandler(
         if (state.eventStream === null) return sendProblem(response, 409, "stream_resync_required");
         const generation = state.selection.generation;
         const effective = decodedHeader ?? decodedQuery ?? { epoch: eventStream.epoch, sequence: 0 };
+        response.writeHead(200, {
+          "Cache-Control": "no-store",
+          "Content-Type": "text/event-stream; charset=utf-8",
+          Connection: "keep-alive",
+          "X-Content-Type-Options": "nosniff",
+        });
         const connection = eventStream.listen(
           { epoch: effective.epoch, after: effective.sequence, generation },
           (event) => {
@@ -253,12 +259,6 @@ export function createReferencePipelineDialogueWebRequestHandler(
           connection.close();
           return sendSseResync(response, eventStream, connection.result.reason ?? "ambiguous_cursor", generation);
         }
-        response.writeHead(200, {
-          "Cache-Control": "no-store",
-          "Content-Type": "text/event-stream; charset=utf-8",
-          Connection: "keep-alive",
-          "X-Content-Type-Options": "nosniff",
-        });
         for (const event of connection.result.events) writeSseEvent(response, event, eventStream);
         const close = () => {
           connection.close();
@@ -494,7 +494,10 @@ async function readJsonBody(
 
 async function hasRequestBody(request: IncomingMessage): Promise<boolean> {
   const contentLength = request.headers["content-length"];
+  const transferEncoding = request.headers["transfer-encoding"];
+  if (contentLength === undefined && transferEncoding === undefined) return false;
   let hasBody = contentLength !== undefined && contentLength !== "0";
+  if (!hasBody && transferEncoding === undefined) return false;
   for await (const chunk of request) {
     if ((Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk)) > 0)
       hasBody = true;
