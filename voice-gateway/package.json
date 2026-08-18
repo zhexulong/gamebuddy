@@ -6,8 +6,8 @@
   "engines": { "node": ">=24.13.0 <25" },
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "test": "node --test dist/**/*.test.js",
-    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "pnpm --filter @gamebuddy/voice-protocol build && node --test dist/**/*.test.js",
+    "typecheck": "pnpm --filter @gamebuddy/voice-protocol build && tsc --project tsconfig.json --noEmit",
     "start": "node dist/main.js"
   },
   "dependencies": {
