@@ -6,10 +6,11 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test": "pnpm run test:ui && pnpm run test:artifact && pnpm run test:composed",
+    "test": "pnpm run test:ui && pnpm run test:artifact && pnpm run test:composed && pnpm run test:mounted-reference",
     "test:ui": "playwright test tests/tavern-ui.spec.ts tests/tavern-visual.spec.ts",
     "test:artifact": "node --test tests/manifest-boundary.test.mjs",
     "test:composed": "node --test tests/p3-composed-browser.test.mjs",
+    "test:mounted-reference": "playwright test tests/reference-pipeline-browser.spec.ts --project=chromium --workers=1",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
