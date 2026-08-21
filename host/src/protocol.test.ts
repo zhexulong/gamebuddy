@@ -832,6 +832,14 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   );
   assert.equal(validateExecutionRequest({ ...valid, expectedRevision: 3 }, snapshot, now), "stale_snapshot");
   assert.equal(validateExecutionRequest({ ...valid, action: "sell_item" }, snapshot, now), "unknown_action");
+  assert.equal(
+    validateExecutionRequest(
+      { ...valid, action: "sop_composite_pipeline", args: { pipelinePayload: {} } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "sop_composite_pipeline"] },
+      now,
+    ),
+    "unknown_action",
+  );
   const travel = { ...valid, action: "travel", args: { x: 10, y: 10 } };
   assert.equal(
     validateExecutionRequest(travel, { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] }, now),

@@ -1,6 +1,5 @@
 using System.Reflection;
 using GameBuddy.Stardew.Core.Abstractions;
-using GameBuddy.Stardew.Core.Handlers;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
@@ -1836,7 +1835,6 @@ public sealed partial class ModEntry : Mod
         router.Register(new MovementActionHandler(state.Executions));
         router.Register(new MachineAndAnimalActionHandler(state.Executions));
         router.Register(new ResourceToolActionHandler(state.Executions));
-        router.Register(new SopCompositeActionHandler(new SmapiLiveStepRunner(state.Executions)));
 
         state.BridgeSession = bridgeConfigValid && scopeMatchesWorld
             ? new BridgeSession(state.Executions, router, new BridgeScope("stardew", saveId, worldId, playerId, companionId), this.config.BridgeToken, capabilitySurface)

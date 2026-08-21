@@ -42,7 +42,6 @@ public static class FarmhandActionCatalog
         Definition("clear_hoedirt", "farming_crops", 1),
         Definition("dig_artifact_spot", "resource_gathering", 1),
         Definition("refill_watering_can", "farming_crops", 1),
-        Definition("sop_composite_pipeline", "meta_composition", 1, FarmhandActionLifecycle.Published),
         Definition("clear_debris", "resource_gathering", 1, FarmhandActionLifecycle.Experimental),
         Definition("npc_relationship", "npc_social", 1, FarmhandActionLifecycle.Experimental),
         Definition("pet_animal", "animals_pets", 1, FarmhandActionLifecycle.Experimental),

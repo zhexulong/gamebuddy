@@ -790,7 +790,7 @@ test("language-neutral schema validates strict chop-tree result snapshot facts",
 test("language-neutral schema rejects retired tree_first_hit and inspect_self execution requests", async () => {
   const validate = await schemaValidator();
   const [message] = (await fixture("golden-sequence.json")).messages;
-  for (const action of ["tree_first_hit", "inspect_self"]) {
+  for (const action of ["tree_first_hit", "inspect_self", "sop_composite_pipeline"]) {
     assert.equal(
       validate({
         ...(message as Record<string, unknown>),
