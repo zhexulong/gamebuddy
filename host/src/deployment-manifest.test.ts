@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -42,7 +42,7 @@ test("loads a strict v2 manifest as a deeply frozen plain DTO", async () => {
   try {
     await writeFile(subject.path, JSON.stringify(valid(subject.runtimeRoot)), "utf8");
     const manifest = await loadHostDeploymentManifest(subject.path);
-    assert.deepEqual(manifest, valid(subject.runtimeRoot));
+    assert.deepEqual(manifest, valid(await realpath(subject.runtimeRoot)));
     assert.equal(Object.getPrototypeOf(manifest), Object.prototype);
     assert.ok(Object.isFrozen(manifest));
     assert.ok(Object.isFrozen(manifest.principal));
