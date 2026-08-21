@@ -12,19 +12,6 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
         this.executions = executions ?? throw new ArgumentNullException(nameof(executions));
     }
 
-    public IReadOnlyCollection<string> SupportedActions { get; } = new[]
-    {
-        "equip_tool",
-        "clear_debris",
-        "chop_tree_source",
-        "break_rock_source",
-        "dig_artifact_spot",
-        "refill_watering_can",
-        "place_wood_fence",
-        "place_crab_pot",
-        "bait_crab_pot",
-    };
-
     public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         return request.Action switch

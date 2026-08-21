@@ -12,12 +12,6 @@ internal sealed class GatheringActionHandler : IFarmhandActionHandler
         this.executions = executions ?? throw new ArgumentNullException(nameof(executions));
     }
 
-    public IReadOnlyCollection<string> SupportedActions { get; } = new[]
-    {
-        "pickup_forage",
-        "pickup_item",
-    };
-
     public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         return request.Action switch

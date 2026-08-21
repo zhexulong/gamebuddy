@@ -1,11 +1,13 @@
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew.Core.Routing;
 
 /// <summary>
-/// Authoritative game-thread dispatch table for registered Farmhand actions.
-/// Router enforces unique handler registration and fails closed if an action is not mapped or called off-thread.
+/// Authoritative game-thread dispatch table. It is composed from the one
+/// closed Mod registration catalog and fails closed for unknown, duplicate, or
+/// off-thread action requests.
 /// </summary>
 public sealed class FarmhandActionRouter
 {
@@ -17,15 +19,12 @@ public sealed class FarmhandActionRouter
         this.ownerManagedThreadId = ownerManagedThreadId ?? Environment.CurrentManagedThreadId;
     }
 
-    public void Register(IFarmhandActionHandler handler)
+    public void Register(FarmhandActionRegistration registration, IFarmhandActionHandler handler)
     {
+        ArgumentNullException.ThrowIfNull(registration);
         ArgumentNullException.ThrowIfNull(handler);
-        foreach (string actionId in handler.SupportedActions)
-        {
-            if (this.handlers.ContainsKey(actionId))
-                throw new InvalidOperationException($"Duplicate farmhand action handler registration: {actionId}");
-            this.handlers[actionId] = handler;
-        }
+        if (!this.handlers.TryAdd(registration.ActionId, handler))
+            throw new InvalidOperationException($"Duplicate farmhand action handler registration: {registration.ActionId}");
     }
 
     public bool IsOnOwnerThread => Environment.CurrentManagedThreadId == this.ownerManagedThreadId;

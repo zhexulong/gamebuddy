@@ -12,18 +12,6 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
         this.executions = executions ?? throw new ArgumentNullException(nameof(executions));
     }
 
-    public IReadOnlyCollection<string> SupportedActions { get; } = new[]
-    {
-        "machine_inspect",
-        "machine_load",
-        "machine_collect_output",
-        "npc_relationship",
-        "pet_animal",
-        "collect_animal_product",
-        "feed_animal",
-        "use_item",
-    };
-
     public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         return request.Action switch

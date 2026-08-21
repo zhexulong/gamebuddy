@@ -13,16 +13,6 @@ internal sealed class FarmingActionHandler : IFarmhandActionHandler
         this.executions = executions ?? throw new ArgumentNullException(nameof(executions));
     }
 
-    public IReadOnlyCollection<string> SupportedActions { get; } = new[]
-    {
-        "till_soil",
-        "water_crop",
-        "plant_seed",
-        "fertilize_tile",
-        "harvest_crop",
-        "clear_hoedirt",
-    };
-
     public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         return request.Action switch

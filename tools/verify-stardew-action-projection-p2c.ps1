@@ -50,7 +50,6 @@ $P2OwnedPaths = @(
     "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/NativeFarmingContractTests.cs",
     "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/NativeToolContractTests.cs",
     "integrations/stardew/tests/FarmhandLocalPipeBridgeDeliveryTests.cs",
-    "integrations/stardew/tests/FarmhandTypedReceiptContractTests.cs",
     "host/src/action-registry.ts",
     "host/src/game-tools.ts",
     "host/src/protocol.ts",
