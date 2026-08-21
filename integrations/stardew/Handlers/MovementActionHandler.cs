@@ -13,13 +13,6 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
         this.executions = executions ?? throw new ArgumentNullException(nameof(executions));
     }
 
-    public IReadOnlyCollection<string> SupportedActions { get; } = new[]
-    {
-        "move_to_tile",
-        "travel",
-        "enter_exit",
-    };
-
     public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         return request.Action switch

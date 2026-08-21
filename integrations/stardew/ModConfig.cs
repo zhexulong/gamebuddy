@@ -83,7 +83,7 @@ public sealed class ModConfig
 
     // The sole Mod-side ordinary Farmhand action identity composition. Host and
     // descriptor metadata are checked projections and never publication inputs.
-    internal static IReadOnlyList<FarmhandActionDefinition> FarmhandActionDefinitions => FarmhandActionCatalog.Definitions;
+    internal static IReadOnlyList<FarmhandActionRegistration> FarmhandActionDefinitions => FarmhandActionCatalog.Registrations;
 
     internal bool HasValidLocalBridgeConfiguration => EnableLocalBridge
         && BridgeProtocol.IsOpaqueId(PipeName)

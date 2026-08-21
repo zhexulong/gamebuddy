@@ -6,7 +6,7 @@ namespace GameBuddy.Stardew.Core.Tests;
 
 public sealed class ActionPolicyEnginePropertyTests
 {
-    private static readonly string[] PublishedActionIds = FarmhandActionCatalog.Definitions
+    private static readonly string[] PublishedActionIds = FarmhandActionCatalog.Registrations
         .Where(d => d.Lifecycle == FarmhandActionLifecycle.Published)
         .Select(d => d.ActionId)
         .ToArray();
@@ -29,7 +29,7 @@ public sealed class ActionPolicyEnginePropertyTests
     [Property(MaxTest = 100)]
     public Property DeniedFamily_ExcludesAllFamilyMembers(PositiveInt indexGenerator)
     {
-        var families = FarmhandActionCatalog.Definitions.Select(d => d.FamilyId).Distinct().ToArray();
+        var families = FarmhandActionCatalog.Registrations.Select(d => d.FamilyId).Distinct().ToArray();
         string deniedFamily = families[indexGenerator.Get % families.Length];
 
         var options = new ActionPolicyOptions(
@@ -38,7 +38,7 @@ public sealed class ActionPolicyEnginePropertyTests
         );
 
         var enabled = ActionPolicyEngine.ComputeEnabledActions(options);
-        var expectedExcluded = FarmhandActionCatalog.Definitions
+        var expectedExcluded = FarmhandActionCatalog.Registrations
             .Where(d => d.FamilyId == deniedFamily)
             .Select(d => d.ActionId);
 

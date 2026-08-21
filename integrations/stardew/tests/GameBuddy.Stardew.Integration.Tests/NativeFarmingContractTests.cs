@@ -9,21 +9,20 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class NativeFarmingContractTests
 {
     [Fact]
-    public void FarmingActionHandler_SupportedActions_ContainsCoreFarmingCapabilities()
+    public void FarmhandActionCatalog_RegistersCoreFarmingCapabilitiesOnce()
     {
-        var surface = FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(new[] { "till_soil", "water_crop" }));
-        var executions = new ExecutionManager(new DummyMonitor(), surface);
-        var handler = new FarmingActionHandler(executions);
-
-        handler.SupportedActions.Should().Contain(new[]
-        {
-            "till_soil",
-            "water_crop",
-            "plant_seed",
-            "fertilize_tile",
-            "harvest_crop",
-            "clear_hoedirt",
-        });
+        FarmhandActionCatalog.Registrations
+            .Where(registration => registration.HandlerGroup == FarmhandActionHandlerGroup.Farming)
+            .Select(registration => registration.ActionId)
+            .Should().Contain(new[]
+            {
+                "till_soil",
+                "water_crop",
+                "plant_seed",
+                "fertilize_tile",
+                "harvest_crop",
+                "clear_hoedirt",
+            });
     }
 
     [Fact]

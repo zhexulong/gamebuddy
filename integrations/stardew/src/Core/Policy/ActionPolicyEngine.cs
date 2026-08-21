@@ -18,28 +18,27 @@ public static class ActionPolicyEngine
         {
             HashSet<string> deniedActions = new(options.DeniedActions ?? Array.Empty<string>(), StringComparer.Ordinal);
             HashSet<string> deniedFamilies = new(options.DeniedActionFamilies ?? Array.Empty<string>(), StringComparer.Ordinal);
-            HashSet<string> result = new(FarmhandActionCatalog.Definitions
-                .Where(definition => definition.Lifecycle == FarmhandActionLifecycle.Published
-                    && !deniedActions.Contains(definition.ActionId)
-                    && !deniedFamilies.Contains(definition.FamilyId))
-                .Select(definition => definition.ActionId), StringComparer.Ordinal);
+            HashSet<string> result = new(FarmhandActionCatalog.Registrations
+                .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Published
+                    && !deniedActions.Contains(registration.ActionId)
+                    && !deniedFamilies.Contains(registration.FamilyId))
+                .Select(registration => registration.ActionId), StringComparer.Ordinal);
 
             if (options.ExperimentalActions is { Count: > 0 })
             {
                 result.UnionWith(options.ExperimentalActions
-                    .Join(FarmhandActionCatalog.Definitions.Where(definition => definition.Lifecycle == FarmhandActionLifecycle.Experimental),
+                    .Join(FarmhandActionCatalog.Registrations.Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Experimental),
                         action => action,
-                        definition => definition.ActionId,
-                        (_, definition) => definition)
-                    .Where(definition => !deniedActions.Contains(definition.ActionId) && !deniedFamilies.Contains(definition.FamilyId))
-                    .Select(definition => definition.ActionId));
+                        registration => registration.ActionId,
+                        (_, registration) => registration)
+                    .Where(registration => !deniedActions.Contains(registration.ActionId) && !deniedFamilies.Contains(registration.FamilyId))
+                    .Select(registration => registration.ActionId));
             }
 
             return result;
         }
 
-        // Legacy explicit allowlist semantics (ActionPolicyVersion 0)
-        HashSet<string> definedActions = new(FarmhandActionCatalog.Definitions.Select(definition => definition.ActionId), StringComparer.Ordinal);
+        HashSet<string> definedActions = new(FarmhandActionCatalog.Registrations.Select(registration => registration.ActionId), StringComparer.Ordinal);
         return new HashSet<string>((options.EnabledActions ?? Array.Empty<string>()).Where(definedActions.Contains), StringComparer.Ordinal);
     }
 
@@ -49,11 +48,11 @@ public static class ActionPolicyEngine
         if (options.ActionPolicyVersion == 0 && ((options.DeniedActions?.Count ?? 0) > 0 || (options.DeniedActionFamilies?.Count ?? 0) > 0)) return false;
         if (options.ActionPolicyVersion == 1 && options.EnabledActions is not null) return false;
 
-        HashSet<string> actionIds = new(FarmhandActionCatalog.Definitions.Select(definition => definition.ActionId), StringComparer.Ordinal);
-        HashSet<string> familyIds = new(FarmhandActionCatalog.Definitions.Select(definition => definition.FamilyId), StringComparer.Ordinal);
-        HashSet<string> experimentalActionIds = new(FarmhandActionCatalog.Definitions
-            .Where(definition => definition.Lifecycle == FarmhandActionLifecycle.Experimental)
-            .Select(definition => definition.ActionId), StringComparer.Ordinal);
+        HashSet<string> actionIds = new(FarmhandActionCatalog.Registrations.Select(registration => registration.ActionId), StringComparer.Ordinal);
+        HashSet<string> familyIds = new(FarmhandActionCatalog.Registrations.Select(registration => registration.FamilyId), StringComparer.Ordinal);
+        HashSet<string> experimentalActionIds = new(FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Lifecycle == FarmhandActionLifecycle.Experimental)
+            .Select(registration => registration.ActionId), StringComparer.Ordinal);
 
         return (options.DeniedActions ?? Array.Empty<string>()).All(actionIds.Contains)
             && (options.DeniedActionFamilies ?? Array.Empty<string>()).All(familyIds.Contains)

@@ -1829,12 +1829,7 @@ public sealed partial class ModEntry : Mod
             && BridgeProtocol.IsOpaqueId(this.config.PipeName)
             && this.config.BridgeToken.Length is >= 16 and <= 256
             && new BridgeScope("stardew", saveId, worldId, playerId, companionId).IsValid;
-        FarmhandActionRouter router = new();
-        router.Register(new FarmingActionHandler(state.Executions));
-        router.Register(new GatheringActionHandler(state.Executions));
-        router.Register(new MovementActionHandler(state.Executions));
-        router.Register(new MachineAndAnimalActionHandler(state.Executions));
-        router.Register(new ResourceToolActionHandler(state.Executions));
+        FarmhandActionRouter router = CreateFarmhandActionRouter(state.Executions);
 
         state.BridgeSession = bridgeConfigValid && scopeMatchesWorld
             ? new BridgeSession(state.Executions, router, new BridgeScope("stardew", saveId, worldId, playerId, companionId), this.config.BridgeToken, capabilitySurface)
@@ -1859,6 +1854,33 @@ public sealed partial class ModEntry : Mod
             ? $"GameBuddy bound native local Player fixture: screen_id={Context.ScreenId}, player_id={localPlayer!.UniqueMultiplayerID}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}."
             : $"GameBuddy bound native AI Farmhand only: screen_id={Context.ScreenId}, farmhand_id={localPlayer!.UniqueMultiplayerID}, formal_attachment={this.farmhandProvisioner is not null}, location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"}.",
             LogLevel.Info);
+    }
+
+    private static FarmhandActionRouter CreateFarmhandActionRouter(ExecutionManager executions)
+    {
+        ArgumentNullException.ThrowIfNull(executions);
+        FarmingActionHandler farming = new(executions);
+        GatheringActionHandler gathering = new(executions);
+        MovementActionHandler movement = new(executions);
+        MachineAndAnimalActionHandler machinesAndAnimals = new(executions);
+        ResourceToolActionHandler resourceTools = new(executions);
+        FarmhandActionRouter router = new();
+
+        foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
+        {
+            IFarmhandActionHandler handler = registration.HandlerGroup switch
+            {
+                FarmhandActionHandlerGroup.Farming => farming,
+                FarmhandActionHandlerGroup.Gathering => gathering,
+                FarmhandActionHandlerGroup.Movement => movement,
+                FarmhandActionHandlerGroup.MachinesAndAnimals => machinesAndAnimals,
+                FarmhandActionHandlerGroup.ResourceTools => resourceTools,
+                _ => throw new InvalidOperationException("Unknown Farmhand action handler group."),
+            };
+            router.Register(registration, handler);
+        }
+
+        return router;
     }
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)

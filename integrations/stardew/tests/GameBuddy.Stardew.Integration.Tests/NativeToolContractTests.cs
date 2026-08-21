@@ -9,24 +9,23 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class NativeToolContractTests
 {
     [Fact]
-    public void ResourceToolActionHandler_SupportedActions_ContainsCoreToolCapabilities()
+    public void FarmhandActionCatalog_RegistersCoreToolCapabilitiesOnce()
     {
-        var surface = FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(new[] { "equip_tool", "chop_tree_source" }));
-        var executions = new ExecutionManager(new DummyMonitor(), surface);
-        var handler = new ResourceToolActionHandler(executions);
-
-        handler.SupportedActions.Should().Contain(new[]
-        {
-            "equip_tool",
-            "clear_debris",
-            "chop_tree_source",
-            "break_rock_source",
-            "dig_artifact_spot",
-            "refill_watering_can",
-            "place_wood_fence",
-            "place_crab_pot",
-            "bait_crab_pot",
-        });
+        FarmhandActionCatalog.Registrations
+            .Where(registration => registration.HandlerGroup == FarmhandActionHandlerGroup.ResourceTools)
+            .Select(registration => registration.ActionId)
+            .Should().Contain(new[]
+            {
+                "equip_tool",
+                "clear_debris",
+                "chop_tree_source",
+                "break_rock_source",
+                "dig_artifact_spot",
+                "refill_watering_can",
+                "place_wood_fence",
+                "place_crab_pot",
+                "bait_crab_pot",
+            });
     }
 
     [Fact]
