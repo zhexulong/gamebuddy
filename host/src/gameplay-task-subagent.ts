@@ -15,7 +15,7 @@ import { Type } from "typebox";
 import { type IntegrationConnection } from "./integration-types.js";
 import { type IntegrationActionCatalog, type IntegrationActionPolicy, type IntegrationExecutionReceipt, type IntegrationStateView } from "./integration-module.js";
 import { finalAssistantText } from "./agent-expression.js";
-import { type CompanionModelConfig, type RuntimePaths } from "./runtime.js";
+import { type CompanionModelConfig, type RuntimePaths } from "./runtime-core.js";
 
 /** Gameplay workers are deliberately pinned independently from the dialogue model. */
 export const GAMEPLAY_SUBAGENT_MODEL_CONFIG: CompanionModelConfig = Object.freeze({

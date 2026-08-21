@@ -3,7 +3,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCompanionRuntime, DEFAULT_COMPANION_MODEL_CONFIG, resolveRuntimePaths, type CompanionIdentity, type CompanionModelConfig, type RuntimeSession } from "./runtime.js";
+import { DEFAULT_COMPANION_MODEL_CONFIG, resolveRuntimePaths, type CompanionIdentity, type CompanionModelConfig, type RuntimeSession } from "./runtime-core.js";
+import { createChatCompanionRuntime } from "./runtime-chat.js";
 import { selectContinuitySession, type SurfaceSession } from "./continuity.js";
 import { type IdentityProfile } from "./identity-profile.js";
 import { type WorldBookBinding } from "./worldbook.js";
@@ -63,25 +64,21 @@ export async function startDialogueWebServer(options: DialogueWebOptions): Promi
   const continuityPaths = resolveRuntimePaths(options.identity, options.runtimeRoot);
   const selection = await selectContinuitySession(continuityPaths, options.identity, { surface: "chat", ...(options.surfaceSessionId === undefined ? {} : { sessionId: options.surfaceSessionId }) });
   const presentation = new DialoguePresentationPort();
-  const runtime = await createCompanionRuntime(
-    options.identity,
-    options.runtimeRoot,
-    undefined,
-    options.modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG,
-    undefined,
-    {
+  const runtime = await createChatCompanionRuntime({
+    identity: options.identity,
+    root: options.runtimeRoot,
+    modelConfig: options.modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG,
+    presentation: {
       profile: { locale: "zh-CN", text: true, speech: null },
       surface: "chat",
       sessionId: selection.session.sessionId,
       textPort: presentation,
     } satisfies PresentationRuntime,
-    false,
-    options.initialProfile,
-    selection.session.sessionId,
-    options.worldBook,
-    "chat",
-    options.internalMagicContextFeatureTestOverride,
-  );
+    initialProfile: options.initialProfile,
+    surfaceSessionId: selection.session.sessionId,
+    worldBook: options.worldBook,
+    internalMagicContextFeatureTestOverride: options.internalMagicContextFeatureTestOverride,
+  });
   const toolNames = runtime.session.agent.state.tools.map((tool) => tool.name).sort();
   const expectedTools = ["companion_status", "companion_text", "todowrite", ...(options.worldBook === undefined ? [] : ["companion_worldbook_catalog", "companion_worldbook_query"])].sort();
   if (JSON.stringify(toolNames) !== JSON.stringify(expectedTools)) {

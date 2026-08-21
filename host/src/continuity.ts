@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { withPathLock } from "./path-lock.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { CompanionIdentity, RuntimePaths } from "./runtime.js";
+import type { CompanionIdentity, RuntimePaths } from "./runtime-core.js";
 
 export const CONTINUITY_LEDGER_SCHEMA_VERSION = 1 as const;
 /** Retain enough explicit user-visible surface lifecycle for recovery without allowing unbounded ledger growth. */

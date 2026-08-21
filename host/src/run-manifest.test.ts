@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { writeOrVerifyRunManifest, type CompanionRunManifest } from "./run-manifest.js";
 import type { IntegrationActionPolicy } from "./integration-module.js";
-import type { RuntimePaths } from "./runtime.js";
+import type { RuntimePaths } from "./runtime-core.js";
 
 const manifest: CompanionRunManifest = {
   schemaVersion: 1,

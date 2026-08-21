@@ -8,7 +8,7 @@ import { createDeterministicBridgePair } from "../host/dist/bridge.js";
 import { CompanionIntegrationClient } from "../host/dist/integration.js";
 import { STARDEW_INTEGRATION_MODULE } from "../host/dist/stardew-integration-module.js";
 import { newEnvelope } from "../host/dist/protocol.js";
-import { createCompanionRuntime } from "../host/dist/runtime.js";
+import { createGameCompanionRuntime } from "../host/dist/runtime-game.js";
 
 const repoRoot = resolve(join(fileURLToPath(new URL(".", import.meta.url)), ".."));
 const root = await mkdtemp(join(tmpdir(), "gamebuddy-gameplay-subagent-model-trace-"));
@@ -67,15 +67,13 @@ let runtime;
 try {
   integration.hello("a".repeat(16));
   integration.observe();
-  runtime = await createCompanionRuntime(
+  runtime = await createGameCompanionRuntime({
     identity,
     root,
     integration,
-    { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "high" },
-    undefined,
-    undefined,
-    true,
-  );
+    modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4-flash", thinkingLevel: "high" },
+    gameplaySubagentEnabled: true,
+  });
   const parentTools = runtime.session.agent.state.tools.map((tool) => tool.name).sort();
   const child = runtime.gameplaySubagent;
   if (child === undefined) throw new Error("gameplay_subagent_not_materialized");

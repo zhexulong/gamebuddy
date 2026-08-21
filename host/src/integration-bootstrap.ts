@@ -4,8 +4,9 @@ import { CompanionHostService } from "./host-service.js";
 import { assertReceiptBackedLaunch, type IntegrationLauncher, type IntegrationLaunchHandle } from "./integration-launcher.js";
 import { type IntegrationActionPolicy } from "./integration-module.js";
 import { type PresentationProfile, type PresentationRuntime, type CompanionTextPort } from "./presentation.js";
-import { createCompanionRuntime, identityKey, resolveRuntimePaths, type CompanionModelConfig, type GameCompanionIdentity, type RuntimeSession } from "./runtime.js";
-import { type VoiceSpeechPort } from "./voice.js";
+import { identityKey, resolveRuntimePaths, type CompanionModelConfig, type GameCompanionIdentity } from "./runtime-core.js";
+import { createGameCompanionRuntime, type GameRuntimeSession } from "./runtime-game.js";
+import { type CompanionSpeechPort } from "./presentation-types.js";
 import { type WorldBookBinding } from "./worldbook.js";
 
 export type IntegrationCompanionConnection = Readonly<{
@@ -19,14 +20,14 @@ export type IntegrationCompanionConnection = Readonly<{
   gameplaySubagent?: boolean;
   presentationProfile?: PresentationProfile;
   textPort?: CompanionTextPort;
-  speechPort?: VoiceSpeechPort;
+  speechPort?: CompanionSpeechPort;
   surfaceSessionId?: string;
   worldBook?: WorldBookBinding;
 }>;
 
 export type ConnectedIntegrationCompanion = Readonly<{
   launch: IntegrationLaunchHandle;
-  runtime: RuntimeSession;
+  runtime: GameRuntimeSession;
   loop: CompanionLoop;
   host: CompanionHostService;
 }>;
@@ -54,19 +55,11 @@ export async function connectIntegrationCompanion(connection: IntegrationCompani
       textPort: connection.textPort,
       speechPort: connection.speechPort,
     } satisfies PresentationRuntime;
-    const runtime = await createCompanionRuntime(
-      connection.identity,
-      connection.runtimeRoot,
-      launch.connection,
-      connection.modelConfig,
-      connection.actionPolicy,
-      presentation,
-      connection.gameplaySubagent === true,
-      undefined,
-      surfaceSessionId,
-      connection.worldBook,
-      "game",
-    );
+    const runtime = await createGameCompanionRuntime({
+      identity: connection.identity, root: connection.runtimeRoot, integration: launch.connection, modelConfig: connection.modelConfig,
+      actionPolicy: connection.actionPolicy, presentation, gameplaySubagentEnabled: connection.gameplaySubagent === true,
+      surfaceSessionId, worldBook: connection.worldBook,
+    });
     const loop = new CompanionLoop(runtime.session);
     const host = new CompanionHostService(loop, launch.events, (reasonCode) => {
       // Revoke before any adapter teardown so stale tool closures and the

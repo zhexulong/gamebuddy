@@ -7,19 +7,26 @@ import test from "node:test";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
-  companionStatusTool,
   DEFAULT_COMPANION_MODEL_CONFIG,
-  createCompanionStatusTool,
-  createCompanionRuntime,
+
   identityKey,
   MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED,
   MAGIC_CONTEXT_MEMORY_DOMAIN,
   MAGIC_CONTEXT_MEMORY_ENABLED,
   MAGIC_CONTEXT_HISTORIAN_ENABLED,
   MAGIC_CONTEXT_RECALL_ENABLED,
-  PHASE_0B_ALLOWED_TOOL_NAMES,
   resolveRuntimePaths,
-} from "./runtime.js";
+} from "./runtime-core.js";
+import { companionStatusTool, createCompanionStatusTool, createGameCompanionRuntime } from "./runtime-game.js";
+import { CHAT_PHASE_0B_ALLOWED_TOOL_NAMES, createChatCompanionRuntime } from "./runtime-chat.js";
+import type { CompanionIdentity, CompanionModelConfig, RuntimeSession } from "./runtime-core.js";
+import type { IntegrationConnection } from "./integration-types.js";
+import type { IntegrationActionPolicy } from "./integration-module.js";
+import type { PresentationRuntime } from "./presentation.js";
+import type { IdentityProfile } from "./identity-profile.js";
+import type { WorldBookBinding } from "./worldbook.js";
+import type { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
+type MagicContextFeatureTestOverride = Readonly<{ memoryEnabled?: boolean; historianEnabled?: boolean; historianExecuteThresholdTokens?: number; historianExecuteThresholdPercentage?: number }>;
 import { createDeterministicBridgePair } from "./bridge.js";
 import { CompanionIntegrationClient } from "./integration.js";
 import { type Scope } from "./protocol.js";
@@ -28,6 +35,11 @@ import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profil
 import { actionRegistryRevision, type CompanionRunManifest } from "./run-manifest.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
+
+async function createRuntimeForTest(identity: CompanionIdentity, root?: string, integration?: IntegrationConnection, modelConfig?: CompanionModelConfig, actionPolicy?: IntegrationActionPolicy, presentation?: PresentationRuntime, gameplaySubagentEnabled = false, initialProfile?: IdentityProfile, surfaceSessionId?: string, worldBook?: WorldBookBinding, surface: "chat" | "game" = "game", internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride): Promise<RuntimeSession & { gameplaySubagent?: GameplayTaskSubagent }> {
+  if (surface === "chat") return createChatCompanionRuntime({ identity, root, modelConfig, presentation, initialProfile, surfaceSessionId, worldBook, internalMagicContextFeatureTestOverride });
+  return createGameCompanionRuntime({ identity, root, integration, modelConfig, actionPolicy, presentation, gameplaySubagentEnabled, surfaceSessionId, worldBook });
+}
 
 const identity = Object.freeze({
   playerId: "player_01",
@@ -67,7 +79,7 @@ test("offline runtime exposes only its deterministic Companion status tool", asy
   const tool = companionStatusTool;
   const result = await tool.execute("test-call", {}, new AbortController().signal, () => {}, {} as never);
 
-  assert.deepEqual(PHASE_0B_ALLOWED_TOOL_NAMES, ["companion_status"]);
+  assert.deepEqual(CHAT_PHASE_0B_ALLOWED_TOOL_NAMES, ["companion_status"]);
   const firstContent = result.content[0];
   assert.equal(firstContent?.type, "text");
   assert.match(firstContent?.type === "text" ? firstContent.text : "", /"connected":false/);
@@ -130,7 +142,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     module: fake,
     state: { capabilities: ["activate_console"] },
   } as never;
-  const runtime = await createCompanionRuntime(identity, root, integration);
+  const runtime = await createRuntimeForTest(identity, root, integration);
   try {
     assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["arcade_activate_console", "companion_status", "todowrite"]);
     const manifest = JSON.parse(await readFile(runtime.paths.runManifestPath, "utf8")) as CompanionRunManifest;
@@ -144,7 +156,7 @@ test("runtime rejects a mounted integration whose save identity does not match",
   const wrongScope: Scope = { integrationId: "stardew", saveId: "other_save", worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(wrongScope);
   const integration = new CompanionIntegrationClient(wrongScope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
-  await assert.rejects(() => createCompanionRuntime(identity, root, integration), /integration_identity_binding_mismatch/);
+  await assert.rejects(() => createRuntimeForTest(identity, root, integration), /integration_identity_binding_mismatch/);
   integration.dispose();
 });
 
@@ -153,7 +165,7 @@ test("game surface keeps the game system prompt when it resumes an explicit surf
   const scope: Scope = { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
   const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
-  const runtime = await createCompanionRuntime(identity, root, integration, undefined, undefined, undefined, false, undefined, "game_surface_01", undefined, "game");
+  const runtime = await createRuntimeForTest(identity, root, integration, undefined, undefined, undefined, false, undefined, "game_surface_01", undefined, "game");
   try {
     assert.doesNotMatch(runtime.session.systemPrompt, /<gamebuddy_chat_surface>/);
     assert.equal(runtime.session.agent.state.tools.some((tool) => tool.name === "companion_text"), false);
@@ -168,7 +180,7 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
   const scope: Scope = { integrationId: "stardew", saveId: identity.saveId, worldId: identity.worldId, playerId: identity.playerId, companionId: identity.companionId };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
   const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
-  const runtime = await createCompanionRuntime(identity, root, integration);
+  const runtime = await createRuntimeForTest(identity, root, integration);
   try {
     // The executable action is absent until the Mod declares it in the
     // player-controlled capability snapshot. Observations remain factual.
@@ -186,10 +198,10 @@ test("runtime materializes the optional gameplay subagent without exposing its t
   const [hostEndpoint] = createDeterministicBridgePair(scope);
   const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE);
   const config = { provider: "cpa-oai" as const, modelId: "deepseek-v4-flash" as const, thinkingLevel: "high" as const };
-  const offline = await createCompanionRuntime(identity, offlineRoot);
+  const offline = await createRuntimeForTest(identity, offlineRoot);
   try { assert.equal(offline.session.agent.state.tools.some((tool) => tool.name === "delegate_game_task"), false); }
   finally { offline.session.dispose(); }
-  const delegated = await createCompanionRuntime(identity, delegatedRoot, integration, config, undefined, undefined, true);
+  const delegated = await createRuntimeForTest(identity, delegatedRoot, integration, config, undefined, undefined, true);
   try {
     assert.ok(delegated.gameplaySubagent);
     assert.deepEqual(delegated.gameplaySubagent.modelConfig, { provider: "cpa-oai", modelId: "gpt-5.6-luna", thinkingLevel: "medium" });
@@ -208,7 +220,7 @@ test("runtime mounts Host-owned version-bound knowledge only when explicitly con
   const [hostEndpoint] = createDeterministicBridgePair(scope);
   const bundle: KnowledgeBundle = { bundleVersion: 1, integrationId: "stardew", gameVersion: "1.6.15", rules: [{ id: "move-v1", integrationId: "stardew", gameVersion: "1.6.15", capability: "move_to_tile", text: "Use a fresh actionable snapshot." }] };
   const integration = new CompanionIntegrationClient(scope, hostEndpoint, STARDEW_INTEGRATION_MODULE, bundle, "1.6.15");
-  const runtime = await createCompanionRuntime(identity, root, integration);
+  const runtime = await createRuntimeForTest(identity, root, integration);
   try {
     assert.ok(runtime.session.agent.state.tools.some((tool) => tool.name === "stardew_game_knowledge"));
   } finally {
@@ -219,7 +231,7 @@ test("runtime mounts Host-owned version-bound knowledge only when explicitly con
 
 test("runtime loads only Magic Context and preserves a session partition", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-runtime-"));
-  const runtime = await createCompanionRuntime(identity, root);
+  const runtime = await createRuntimeForTest(identity, root);
 
   try {
     assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", "todowrite"]);
@@ -285,7 +297,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
     runtime.session.dispose();
   }
 
-  const resumed = await createCompanionRuntime(identity, root);
+  const resumed = await createRuntimeForTest(identity, root);
   try {
     assert.equal(resumed.session.sessionFile, runtime.session.sessionFile);
     const resumedEntries = JSON.stringify(resumed.session.messages);
@@ -297,7 +309,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
     resumed.session.dispose();
   }
 
-  const otherSave = await createCompanionRuntime({ ...identity, saveId: "save_02" }, root);
+  const otherSave = await createRuntimeForTest({ ...identity, saveId: "save_02" }, root);
   try {
     assert.notEqual(otherSave.session.sessionFile, runtime.session.sessionFile);
     assert.equal(JSON.stringify(otherSave.session.messages).includes("Player conversation persistence sentinel."), false);
@@ -313,8 +325,8 @@ test("concurrent runtime bootstraps retain separate Magic Context data roots", a
   const firstIdentity = { ...identity, saveId: "save_concurrent_01" };
   const secondIdentity = { ...identity, saveId: "save_concurrent_02" };
   const [first, second] = await Promise.all([
-    createCompanionRuntime(firstIdentity, root),
-    createCompanionRuntime(secondIdentity, root),
+    createRuntimeForTest(firstIdentity, root),
+    createRuntimeForTest(secondIdentity, root),
   ]);
   try {
     assert.notEqual(first.paths.runtimeCwd, second.paths.runtimeCwd);
@@ -329,7 +341,7 @@ test("concurrent runtime bootstraps retain separate Magic Context data roots", a
 
 test("internal Historian fixture override can disable automatic authoring without changing Memory gates", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-historian-off-fixture-"));
-  const runtime = await createCompanionRuntime(identity, root, undefined, undefined, undefined, undefined, false, undefined, "historian_off_fixture", undefined, "chat", { historianEnabled: false });
+  const runtime = await createRuntimeForTest(identity, root, undefined, undefined, undefined, undefined, false, undefined, "historian_off_fixture", undefined, "chat", { historianEnabled: false });
   try {
     const config = JSON.parse(await readFile(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"), "utf8"));
     assert.deepEqual(config.historian, { disable: true });
@@ -343,7 +355,7 @@ test("internal Historian fixture override can disable automatic authoring withou
 
 test("runtime binds the Host-owned IdentityProfile to Pi system prompt and fails closed on mismatch", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-runtime-"));
-  const runtime = await createCompanionRuntime(identity, root);
+  const runtime = await createRuntimeForTest(identity, root);
   try {
     assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
     assert.match(runtime.session.systemPrompt, new RegExp(runtime.identityProfile.canonicalHash));
@@ -359,12 +371,12 @@ test("runtime binds the Host-owned IdentityProfile to Pi system prompt and fails
     identity: { ...DEFAULT_IDENTITY_PROFILE.identity, name: "Modified Companion" },
   };
   await writeFile(runtime.paths.identityProfilePath, JSON.stringify({ ...modifiedProfile, canonicalHash: identityProfileHash(modifiedProfile) }), "utf8");
-  await assert.rejects(() => createCompanionRuntime(identity, root), /identity_profile_mismatch/);
+  await assert.rejects(() => createRuntimeForTest(identity, root), /identity_profile_mismatch/);
 
   const secondRoot = await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-binding-"));
-  const first = await createCompanionRuntime(identity, secondRoot);
+  const first = await createRuntimeForTest(identity, secondRoot);
   const bindingPath = first.paths.identityProfileBindingPath;
   first.session.dispose();
   await unlink(bindingPath);
-  await assert.rejects(() => createCompanionRuntime(identity, secondRoot), /identity_profile_mismatch/);
+  await assert.rejects(() => createRuntimeForTest(identity, secondRoot), /identity_profile_mismatch/);
 });

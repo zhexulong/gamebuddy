@@ -1,36 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type VoiceExpression, type VoiceSpeechPort } from "./voice.js";
-
-export type PresentationProfile = Readonly<{
-  locale: string;
-  text: boolean;
-  speech: Readonly<{
-    voiceProfile: string;
-  }> | null;
-}>;
-
-export type CompanionTextExpression = Readonly<{
-  expressionId: string;
-  sessionId: string;
-  sourceEventId: string;
-  text: string;
-  locale: string;
-}>;
-
-export interface CompanionTextPort {
-  present(expression: CompanionTextExpression): Promise<void> | void;
-}
-
-export type PresentationRuntime = Readonly<{
-  profile: PresentationProfile;
-  /** The verified player-facing surface; it changes tool guidance, not authority. */
-  surface?: "chat" | "game";
-  sessionId: string;
-  textPort?: CompanionTextPort;
-  speechPort?: VoiceSpeechPort;
-}>;
+import type { CompanionSpeechPort, CompanionTextExpression, CompanionTextPort, PresentationProfile, PresentationRuntime } from "./presentation-types.js";
+type VoiceExpression = Parameters<CompanionSpeechPort["enqueue"]>[0];
+export type { CompanionTextExpression, CompanionTextPort, PresentationProfile, PresentationRuntime } from "./presentation-types.js";
 
 const MAX_PLAYER_LINE_LENGTH = 4_000;
 const MECHANISM_LANGUAGE = /(?:subagent|tool(?:\s+call|\s+result)?|receipt|capability|execution[_ ]?id|schema|provider|json|internal|system prompt|game action)/i;
