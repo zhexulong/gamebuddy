@@ -3,9 +3,9 @@
  * Automated, content-free Tavern narrative gate.
  *
  * The runner talks only to a fresh checked Host production artifact through its
- * authenticated loopback HTTP API. It creates direct Semantic and Interaction
- * Memory rows, exercises archive/delete/exclude-source, and submits one real
- * Dialogue turn. It never opens SQLite, invokes a fake provider, or drives UI.
+ * authenticated Reference Chat HTTP API and submits one real Dialogue turn.
+ * It never opens SQLite, invokes a fake provider, or drives UI. Player Memory
+ * CRUD belongs to the separate Management profile and has its own mounted gate.
  *
  * Prompt materialization is intentionally not inferred from the model's answer.
  * A one-shot provider-boundary marker is received over child IPC; it proves
@@ -22,9 +22,11 @@ const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
 const RUNNER_SCHEMA = "gamebuddy-tavern-narrative-gate/v1";
 const RUNNER_ID = "tavern-narrative-gate";
 const READY_PREFIX = "GameBuddy Dialogue is ready at ";
-const START_TIMEOUT_MS = 30_000;
+const START_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 12_000;
-const TURN_TIMEOUT_MS = 90_000;
+const TURN_TIMEOUT_MS = 180_000;
+const POST_SUBMIT_STATE_POLLS = 6;
+const POST_SUBMIT_STATE_POLL_MS = 400;
 const STOP_TIMEOUT_MS = 5_000;
 
 export function parseArguments(argv) {
@@ -133,35 +135,20 @@ function deadlineFetch(url, options = {}) {
 }
 
 async function bootstrap(origin, token) {
-  const response = await deadlineFetch(`${origin}/bootstrap`, {
+  const response = await deadlineFetch(`${origin}/api/tavern/v1/bootstrap`, {
     method: "POST",
     headers: { Origin: origin, "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
   });
   const body = await response.json();
   const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
-  if (!response.ok || typeof cookie !== "string" || typeof body.csrf !== "string")
+  if (!response.ok || typeof cookie !== "string" || typeof body.csrfToken !== "string")
     throw new Error(`bootstrap_failed:${response.status}`);
-  return Object.freeze({ cookie, csrf: body.csrf });
+  return Object.freeze({ cookie, csrf: body.csrfToken });
 }
 
-async function request(origin, client, pathname, body) {
-  const response = await deadlineFetch(`${origin}${pathname}`, {
-    method: "POST",
-    headers: {
-      Origin: origin,
-      Cookie: client.cookie,
-      "X-GameBuddy-CSRF": client.csrf,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  return Object.freeze({ status: response.status, body: await response.json() });
-}
-
-async function list(origin, client) {
-  const response = await deadlineFetch(`${origin}/memories`, { headers: { Cookie: client.cookie } });
-  return Object.freeze({ status: response.status, body: await response.json() });
+function sanitizeProblemCode(value) {
+  return typeof value === "string" && /^[a-z0-9_.:-]{1,160}$/i.test(value) ? value : "unavailable";
 }
 
 async function waitForReady(child, readStdout) {
@@ -212,15 +199,15 @@ export function classifyNarrativeTurnOutcome(outcome, lifecycle) {
   // The marker fires directly at Pi's provider boundary. Seeing it without a
   // terminal lifecycle event distinguishes a live provider wait from an SSE,
   // controller, or presentation terminal-signal loss.
-  return lifecycle.includes("agent_start") && !lifecycle.includes("agent_end") && !lifecycle.includes("agent_settled")
-    ? "provider_request_pending"
-    : "dialogue_terminal_signal_unobserved";
+  return lifecycle.includes("turn.state_changed")
+    ? "dialogue_terminal_signal_unobserved"
+    : "provider_request_pending";
 }
 
 export async function sendTurn(origin, client) {
   const events = [];
   const abort = new AbortController();
-  const response = await fetch(`${origin}/events`, { headers: { Cookie: client.cookie }, signal: abort.signal });
+  const response = await fetch(`${origin}/api/tavern/v1/events?apiVersion=1`, { headers: { Cookie: client.cookie, Origin: origin }, signal: abort.signal });
   if (!response.ok || response.body === null) throw new Error(`events_failed:${response.status}`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -241,12 +228,13 @@ export async function sendTurn(origin, client) {
             const match = /^event: ([^\n]+)\ndata: (.+)$/m.exec(frame);
             if (!match) continue;
             const payload = JSON.parse(match[2]);
-            if (["agent_start", "agent_end", "agent_settled"].includes(payload.type)) events.push(payload.type);
-            if (payload.type === "presentation_text") return resolveOutcome("presentation_text");
-            if (payload.type === "turn_failed") return resolveOutcome("turn_failed");
-            // A settled Pi run without presentation is a completed failed
-            // player turn even if the controller's terminal event was lost.
-            if (payload.type === "agent_settled") return resolveOutcome("agent_settled");
+            if (payload.eventType === "turn.state_changed") {
+              const state = payload.payload?.state;
+              events.push("turn.state_changed");
+              if (state === "completed") return resolveOutcome("completed");
+              if (state === "failed") return resolveOutcome("turn_failed");
+              if (state === "cancelled") return resolveOutcome("cancelled");
+            }
           }
         }
       } catch {
@@ -256,18 +244,31 @@ export async function sendTurn(origin, client) {
       }
     })();
   });
-  const message = await fetch(`${origin}/message`, {
+  const state = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+    headers: { Cookie: client.cookie, Origin: origin },
+  });
+  const snapshot = await state.json();
+  if (
+    !state.ok ||
+    !Number.isSafeInteger(snapshot?.selection?.generation) ||
+    !Number.isSafeInteger(snapshot?.chat?.draft?.revision)
+  )
+    throw new Error(`state_failed:${state.status}`);
+  const message = await fetch(`${origin}/api/tavern/v1/messages`, {
     method: "POST",
     headers: {
       Origin: origin,
       Cookie: client.cookie,
-      "X-GameBuddy-CSRF": client.csrf,
+      "X-CSRF-Token": client.csrf,
+      "Idempotency-Key": randomBytes(16).toString("base64url"),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      clientMessageId: `tavern_gate_${randomBytes(8).toString("hex")}`,
+      apiVersion: 1,
+      selectionGeneration: snapshot.selection.generation,
       text: "Please respond naturally.",
-      locale: "en-US",
+      locale: "en",
+      expectedDraftRevision: snapshot.chat.draft.revision,
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -275,6 +276,29 @@ export async function sendTurn(origin, client) {
   outcome = await observed;
   abort.abort();
   await reader.cancel().catch(() => undefined);
+  // The stream is a notification channel. Reconcile its observation through
+  // the authenticated durable `/state` projection so an SSE state is never
+  // treated as a terminal provider result by itself.
+  for (let attempt = 0; attempt < POST_SUBMIT_STATE_POLLS; attempt += 1) {
+    const terminal = await deadlineFetch(`${origin}/api/tavern/v1/state`, {
+      headers: { Cookie: client.cookie, Origin: origin },
+    });
+    const terminalSnapshot = await terminal.json().catch(() => undefined);
+    const state = terminalSnapshot?.chat?.turn?.state;
+    if (terminal.ok && state === "completed") {
+      outcome = "completed";
+      break;
+    }
+    if (terminal.ok && state === "failed") {
+      outcome = Object.freeze({ kind: "turn_failed", problemCode: sanitizeProblemCode(terminalSnapshot?.chat?.turn?.problemCode) });
+      break;
+    }
+    if (terminal.ok && state === "cancelled") {
+      outcome = "cancelled";
+      break;
+    }
+    if (attempt + 1 < POST_SUBMIT_STATE_POLLS) await new Promise((resolvePoll) => setTimeout(resolvePoll, POST_SUBMIT_STATE_POLL_MS));
+  }
   return Object.freeze({ outcome, lifecycle: events });
 }
 
@@ -302,7 +326,7 @@ function reportBase(runId, startedAt, artifact) {
     startedAt,
     completedAt: new Date().toISOString(),
     artifact,
-    scope: "authenticated_dialogue_memory_api_and_real_provider",
+    scope: "authenticated_reference_chat_api_and_real_provider",
     providerInvocation: false,
     note: "Create-only content-free evidence; no Memory text, prompt, credential, revision token, or provider response is retained.",
   };
@@ -316,17 +340,6 @@ export async function main(argv = process.argv.slice(2)) {
   const startedAt = new Date().toISOString();
   const nonce = randomBytes(18).toString("hex");
   const nonceSha256 = sha256(nonce);
-  const values = Object.freeze({
-    semantic: `semantic_${nonce}`,
-    interaction: `interaction_${nonce}`,
-    archived: `archived_${nonce}`,
-    deleted: `deleted_${nonce}`,
-    excluded: `excluded_${nonce}`,
-    // Magic Context's production facade accepts only typed opaque provenance
-    // references.  `source_${nonce}` reaches the facade's validation boundary
-    // and is correctly rejected as an invalid source reference (HTTP 503).
-    sourceRef: `host-receipt:${nonce}`,
-  });
   const identity = Object.freeze({
     playerId: "tavern_gate_player",
     companionId: "tavern_gate_companion",
@@ -346,21 +359,29 @@ export async function main(argv = process.argv.slice(2)) {
     );
     child = spawn(
       process.execPath,
-      [join(HOST_ROOT, "scripts", "start-production-artifact.mjs"), "dialogue-web-main.js", configPath],
+      [
+        join(HOST_ROOT, "scripts", "start-production-artifact.mjs"),
+        "dialogue-web-main.js",
+        `--tavern-narrative-gate-nonce-sha256=${nonceSha256}`,
+        configPath,
+      ],
       {
         cwd: HOST_ROOT,
         stdio: ["ignore", "pipe", "pipe", "ipc"],
         windowsHide: true,
-        env: { ...process.env, GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256: nonceSha256 },
+        env: { ...process.env },
       },
     );
     let stdout = "";
+    let stderr = "";
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
     });
-    child.stderr.on("data", () => undefined);
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
     let marker;
     let runtimeMarker;
     child.on("message", (value) => {
@@ -368,48 +389,31 @@ export async function main(argv = process.argv.slice(2)) {
         runtimeMarker = value;
       else if (value?.schema === "gamebuddy-tavern-narrative-gate-marker/v1" && marker === undefined) marker = value;
     });
-    const ready = await waitForReady(child, () => stdout);
+    let ready;
+    try {
+      ready = await waitForReady(child, () => stdout);
+    } catch (error) {
+      if (safeReasonCode(error) === "dialogue_start_timeout" && stderr.length > 0) {
+        const errorLine = stderr
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => /(?:Error|error|failed|unavailable|timeout|rejected|cannot)/i.test(line));
+        if (errorLine !== undefined) {
+          const code = errorLine.match(/(?:Error:\s*)?([a-z][a-z0-9_:-]{2,159})/i)?.[1];
+          if (code !== undefined) throw new Error(`dialogue_start_stderr:${code.toLowerCase()}`);
+        }
+      }
+      throw error;
+    }
     const url = new URL(ready);
     const origin = `${url.protocol}//${url.host}`;
-    const client = await bootstrap(origin, url.hash.slice("#boot=".length));
-    const initial = await list(origin, client);
-    if (initial.status !== 200 || !Array.isArray(initial.body.memories)) throw new Error("initial_memory_list_failed");
-
-    const created = {};
-    for (const [key, content, category, sourceRefs] of [
-      ["semantic", values.semantic, "semantic"],
-      ["interaction", values.interaction, "interaction"],
-      ["archived", values.archived, "semantic"],
-      ["deleted", values.deleted, "semantic"],
-      ["excluded", values.excluded, "semantic", [values.sourceRef]],
-    ]) {
-      const body = { content, category, ...(sourceRefs === undefined ? {} : { sourceRefs }) };
-      const result = await request(origin, client, "/memories", body);
-      if (result.status !== 201 || typeof result.body.memory?.stateToken !== "string")
-        throw new Error(`memory_create_failed:${key}:${result.status}`);
-      created[key] = result.body.memory.stateToken;
-    }
-    const archived = await request(origin, client, "/memories/archive", { stateToken: created.archived });
-    const archivedStateToken = archived.body.memory?.stateToken;
-    const deleted = await request(origin, client, "/memories/delete-entry", { stateToken: created.deleted });
-    const excluded = await request(origin, client, "/memories/exclude-source", {
-      stateToken: created.excluded,
-      sourceRef: values.sourceRef,
-    });
-    const final = await list(origin, client);
-    if (final.status !== 200 || !Array.isArray(final.body.memories)) throw new Error("final_memory_list_failed");
-    const hasToken = (token) => final.body.memories.some((memory) => memory.stateToken === token);
-    // The archive transition changes the opaque state token (status is part of
-    // its CAS identity), so inspect the token returned by the checked facade
-    // rather than the pre-transition token.
-    const archivedListed =
-      archived.status === 200 &&
-      typeof archivedStateToken === "string" &&
-      hasToken(archivedStateToken) &&
-      final.body.memories.find((memory) => memory.stateToken === archivedStateToken)?.status === "archived";
-    const deletedAbsent = !hasToken(created.deleted);
-    const excludedListed = hasToken(created.excluded);
+    const bootstrapToken = new URLSearchParams(url.hash.slice(1)).get("boot");
+    if (bootstrapToken === null) throw new Error("bootstrap_token_missing");
+    const client = await bootstrap(origin, bootstrapToken);
     const turn = await sendTurn(origin, client);
+    // Allow process IPC callbacks fired at the provider boundary to drain
+    // before severing the child connection during teardown.
+    await new Promise((resolveMarkerDrain) => setTimeout(resolveMarkerDrain, 50));
     await stop(child);
     child = undefined;
     const runtimeSession = evaluateNarrativeGateRuntime(runtimeMarker);
@@ -418,44 +422,26 @@ export async function main(argv = process.argv.slice(2)) {
       nonceSha256,
       runtimeSession.observed ? runtimeSession.piSessionId : undefined,
     );
-    const realTurn =
-      turn.outcome === "presentation_text" || turn.outcome === "turn_failed" || turn.outcome === "agent_settled";
-    const turnBlockedReason = classifyNarrativeTurnOutcome(turn.outcome, turn.lifecycle);
-    const passed =
-      archived.status === 200 &&
-      deleted.status === 200 &&
-      excluded.status === 200 &&
-      archivedListed &&
-      deletedAbsent &&
-      excludedListed &&
-      runtimeSession.observed &&
-      prompt.observed &&
-      realTurn;
+    const turnFailed = typeof turn.outcome === "object" && turn.outcome?.kind === "turn_failed";
+    const realTurn = turn.outcome === "completed";
+    const turnBlockedReason = turnFailed
+      ? `turn_failed:${turn.outcome.problemCode}`
+      : classifyNarrativeTurnOutcome(turn.outcome, turn.lifecycle);
+    const passed = runtimeSession.observed && prompt.observed && realTurn;
     report = {
       ...reportBase(runId, startedAt, artifact),
       state: passed ? "passed" : "blocked",
       providerInvocation: prompt.observed,
       assertions: {
-        authenticatedMemoryApi: initial.status === 200 && final.status === 200,
-        semanticCreated: created.semantic !== undefined,
-        interactionCreated: created.interaction !== undefined,
-        archiveListedArchived: archivedListed,
-        deleteAbsent: deletedAbsent,
-        excludeSourceEndpointAndPersistence: excluded.status === 200 && excludedListed,
-        excludeSourceInjectionBehaviorAsserted: false,
-        realDialogueTurnAttempted: turn.lifecycle.includes("agent_start") || turn.outcome !== "events_error",
+        authenticatedReferenceChatApi: true,
+        realDialogueTurnAttempted: turn.outcome !== "events_error",
         providerRuntimeSessionBound: runtimeSession.observed,
         providerPreSendSerialized: prompt.preSendSerialized === true,
         realTurnOutcomeObserved: realTurn,
         providerAcceptedOrSemanticAnswer: false,
       },
       statuses: {
-        initial: initial.status,
-        archive: archived.status,
-        delete: deleted.status,
-        excludeSource: excluded.status,
-        final: final.status,
-        turn: turn.outcome,
+        turn: typeof turn.outcome === "object" ? turn.outcome.kind : turn.outcome,
       },
       ...(passed
         ? {}

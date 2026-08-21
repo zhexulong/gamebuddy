@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { type AsrProvider, type SpeechJob, type TtsProvider } from "./gateway.js";
+import type { AsrProvider, SpeechJob, TtsProvider } from "./gateway.js";
 import { runTtsAsrLoop } from "./tts-asr-loop.js";
 
 const job: SpeechJob = {

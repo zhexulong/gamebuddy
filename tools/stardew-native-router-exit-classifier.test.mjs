@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { deriveNativeRouterInvocationInventory } from "./lib/stardew-native-router-invocation-inventory.mjs";
 import { validateNativeRouterExitClassifier } from "./lib/stardew-native-router-exit-classifier.mjs";
+import { deriveNativeRouterInvocationInventory } from "./lib/stardew-native-router-invocation-inventory.mjs";
+
 const source = `class Demo { void Route() { direct(); target.Dynamic(); local(); } void direct() {} void local() {} }`;
 const inventory = await deriveNativeRouterInvocationInventory({
   source,

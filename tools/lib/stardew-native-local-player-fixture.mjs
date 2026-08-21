@@ -1,8 +1,13 @@
-import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
+import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
-const BUNDLE_FILES = Object.freeze(["GameBuddy.Stardew.dll", "manifest.json", "GameBuddy.Stardew.deps.json"]);
+const BUNDLE_FILES = Object.freeze([
+  "GameBuddy.Stardew.dll",
+  "GameBuddy.Stardew.Core.dll",
+  "manifest.json",
+  "GameBuddy.Stardew.deps.json",
+]);
 const LOCK_DIRECTORY = ".stardew-native-local-player-fixture.lock";
 
 export async function prepareNativeLocalPlayerFixture(options) {
@@ -405,9 +410,9 @@ async function backupManagedFiles(context, backup) {
 }
 async function restoreManagedFiles(context, backup, removeBackup) {
   const manifest = await readJson(join(backup, "manifest.json"));
-  if (manifest?.version !== 1 || !Array.isArray(manifest.entries) || manifest.entries.length !== 4)
-    throw new Error("invalid_fixture_backup_manifest");
+  if (manifest?.version !== 1 || !Array.isArray(manifest.entries)) throw new Error("invalid_fixture_backup_manifest");
   const expectedNames = ["config.json", ...BUNDLE_FILES];
+  if (manifest.entries.length !== expectedNames.length) throw new Error("invalid_fixture_backup_manifest");
   if (new Set(manifest.entries.map((entry) => entry?.name)).size !== expectedNames.length)
     throw new Error("invalid_fixture_backup_manifest");
   for (const entry of manifest.entries) {

@@ -1,5 +1,5 @@
-import { cp, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
+import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export const PORTFOLIO_TOPOLOGY = "single_player_native_companion";
@@ -8,6 +8,7 @@ export const PORTFOLIO_LOCK_DIRECTORY = ".stardew-portfolio-profile.lock";
 
 export const PORTFOLIO_BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
+  "GameBuddy.Stardew.Core.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ]);
@@ -18,10 +19,14 @@ const CONTAMINATION_FILE_NAMES = new Map([
   ["stardew-fixture-readiness.json", "portfolio_contaminated_fixture_readiness"],
 ]);
 const DEFAULT_PROCESS_NAMES = Object.freeze(["StardewModdingAPI.exe", "Stardew Valley.exe", "StardewValley.exe"]);
-// Default-deny existing-save allowlist. `enter_mine` is the independent
-// floor-1 native entry; the mine route arms `enter_mine` together with
-// `use_mine_ladder` so each game-thread admission rechecks its own action.
-const PORTFOLIO_EXISTING_SAVE_ACTIONS = Object.freeze(["use_mine_ladder", "select_mine_elevator_floor", "enter_mine"]);
+// Default-deny existing-save action universe. Each prepared M8 transaction
+// selects one member exactly; enter_mine never implicitly arms ladder.
+const PORTFOLIO_EXISTING_SAVE_ACTIONS = Object.freeze([
+  "use_mine_ladder",
+  "select_mine_elevator_floor",
+  "skip_event",
+  "enter_mine",
+]);
 const PORTFOLIO_INNER_CONFIG_KEYS = Object.freeze([
   "Enable",
   "Topology",
@@ -39,6 +44,9 @@ const PORTFOLIO_INNER_CONFIG_KEYS = Object.freeze([
   "Bootstrap",
   "InitialNativeLoad",
   "P0bLifecycleProducer",
+  "MineEntryGivenFixture",
+  "MineLadderGivenFixture",
+  "MineElevatorGivenFixture",
 ]);
 const PORTFOLIO_P0B_PRODUCER_KEYS = Object.freeze([
   "Enable",
@@ -89,8 +97,7 @@ export async function checkPortfolioPrerequisites(options = {}) {
   if (game.state !== "ready") blockers.push(...game.reasons);
   // P0b remains an independent diagnostic pipeline. It is not an
   // action-first M8 admission gate.
-  if (options.requireP0bAttestation === true)
-    blockers.push("portfolio_p0b_attestation_gate_retired");
+  if (options.requireP0bAttestation === true) blockers.push("portfolio_p0b_attestation_gate_retired");
   if (blockers.length === 0)
     return Object.freeze({
       state: "PASS",
@@ -137,7 +144,7 @@ export async function preparePortfolioProfile(options) {
   try {
     if (await exists(backupDir)) throw new Error("portfolio_backup_already_exists");
     await mkdir(backupDir, { recursive: true });
-    const manifest = await backupProfile(context, backupDir);
+    const _manifest = await backupProfile(context, backupDir);
     await deploySingleBundle(context, options.releaseDir);
     const after = await inspectPortfolioProfile({ ...options, ...context });
     if (after.profile.state !== "ready") throw new Error(after.profile.reasons[0]);
@@ -296,7 +303,7 @@ export async function preparePortfolioBootstrapProfile(options) {
   try {
     if (await exists(backupDir)) throw new Error("portfolio_backup_already_exists");
     await mkdir(backupDir, { recursive: true });
-    const manifest = await backupProfile(context, backupDir);
+    const _manifest = await backupProfile(context, backupDir);
     await deploySingleBundle(context, options.releaseDir, bootstrap);
     const armed = await inspectPortfolioProfile({ ...options, ...context });
     if (
@@ -554,12 +561,40 @@ function configContaminationReasons(config, context) {
     (portfolio.EnableObserveBridge !== true || portfolio.Topology !== PORTFOLIO_TOPOLOGY)
   )
     reasons.push("portfolio_runtime_bridge_not_closed_or_scoped");
+  if (portfolio.MineEntryGivenFixture !== undefined) {
+    const fixture = portfolio.MineEntryGivenFixture;
+    if (
+      !fixture ||
+      typeof fixture !== "object" ||
+      Array.isArray(fixture) ||
+      Object.keys(fixture).some((key) => key !== "Enable") ||
+      typeof fixture.Enable !== "boolean" ||
+      (fixture.Enable === true && !isMineEntryActionSequence(portfolio.EnabledActions))
+    )
+      reasons.push("portfolio_mine_entry_given_fixture_invalid");
+  }
+  if (portfolio.MineLadderGivenFixture !== undefined) {
+    const fixture = portfolio.MineLadderGivenFixture;
+    if (
+      !fixture ||
+      typeof fixture !== "object" ||
+      Array.isArray(fixture) ||
+      Object.keys(fixture).some((key) => key !== "Enable") ||
+      fixture.Enable !== true ||
+      !isMineLadderActionSequence(portfolio.EnabledActions)
+    )
+      reasons.push("portfolio_mine_ladder_given_fixture_invalid");
+  }
   if (portfolio.InitialNativeLoad !== undefined) {
     const initialLoad = portfolio.InitialNativeLoad;
-    if (!initialLoad || typeof initialLoad !== "object" || Array.isArray(initialLoad)
-      || Object.keys(initialLoad).some((key) => !["Enable", "ObservedSaveSlot"].includes(key))
-      || typeof initialLoad.Enable !== "boolean"
-      || !/^GameBuddyPortfolio[A-Za-z0-9_-]{1,128}_[0-9]{1,32}$/.test(initialLoad.ObservedSaveSlot ?? ""))
+    if (
+      !initialLoad ||
+      typeof initialLoad !== "object" ||
+      Array.isArray(initialLoad) ||
+      Object.keys(initialLoad).some((key) => !["Enable", "ObservedSaveSlot"].includes(key)) ||
+      typeof initialLoad.Enable !== "boolean" ||
+      !/^GameBuddyPortfolio[A-Za-z0-9_-]{1,128}_[0-9]{1,32}$/.test(initialLoad.ObservedSaveSlot ?? "")
+    )
       reasons.push("portfolio_initial_native_load_invalid");
   }
   if (portfolio.P0bLifecycleProducer !== undefined) {
@@ -568,10 +603,7 @@ function configContaminationReasons(config, context) {
       !producer ||
       typeof producer !== "object" ||
       Array.isArray(producer) ||
-      Object.keys(producer).some(
-        (key) =>
-          !PORTFOLIO_P0B_PRODUCER_KEYS.includes(key),
-      ) ||
+      Object.keys(producer).some((key) => !PORTFOLIO_P0B_PRODUCER_KEYS.includes(key)) ||
       typeof producer.Enable !== "boolean" ||
       !isValidPortfolioP0bLogicalSaveName(producer.LogicalSaveName) ||
       !isObservedSaveSlotForLogicalName(producer.ObservedSaveSlot, producer.LogicalSaveName) ||
@@ -756,13 +788,34 @@ function validateExistingSaveOptions(options, context) {
   const bridgeToken = options.bridgeToken;
   const enabledActions = options.enabledActions;
   const observedSaveSlot = options.observedSaveSlot;
-  if (
+  const mineEntryGivenFixture = isMineEntryActionSequence(enabledActions);
+  const mineLadderGivenFixture = isMineLadderActionSequence(enabledActions);
+  const mineElevatorGivenFixture = isMineElevatorActionSequence(enabledActions);
+  if (options.mineEntryGivenFixture !== undefined && options.mineEntryGivenFixture !== mineEntryGivenFixture)
+    throw new Error("portfolio_existing_save_mine_entry_fixture_must_match_action");
+  if (options.mineLadderGivenFixture !== undefined)
+    throw new Error("portfolio_existing_save_mine_ladder_fixture_is_action_derived");
+  if (options.mineElevatorGivenFixture !== undefined)
+    throw new Error("portfolio_existing_save_mine_elevator_fixture_is_action_derived");
+  if (mineEntryGivenFixture) {
+    // Only the exact ordered skip/entry sequence or the single entry action
+    // exists as an M8 entry Given. Do not generalize arbitrary arrays.
+    if (!isMineEntryActionSequence(enabledActions))
+      throw new Error("portfolio_existing_save_enabled_actions_invalid");
+  } else if (
     !Array.isArray(enabledActions) ||
-    enabledActions.length === 0 ||
-    new Set(enabledActions).size !== enabledActions.length ||
-    enabledActions.some((action) => typeof action !== "string" || !PORTFOLIO_EXISTING_SAVE_ACTIONS.includes(action))
-  )
-    throw new Error("portfolio_existing_save_enabled_actions_invalid");
+    enabledActions.length !== 1 ||
+    enabledActions[0] !== "enter_mine"
+  ) {
+    // Non-entry profiles remain single-action within the closed allowlist.
+    if (
+      !Array.isArray(enabledActions) ||
+      enabledActions.length !== 1 ||
+      new Set(enabledActions).size !== enabledActions.length ||
+      enabledActions.some((action) => typeof action !== "string" || !PORTFOLIO_EXISTING_SAVE_ACTIONS.includes(action))
+    )
+      throw new Error("portfolio_existing_save_enabled_actions_invalid");
+  }
   const scope = Object.fromEntries(
     ["saveId", "worldId", "localPlayerId", "companionId"].map((key) => [key, options[key]]),
   );
@@ -772,8 +825,13 @@ function validateExistingSaveOptions(options, context) {
     throw new Error("portfolio_existing_save_bridge_token_invalid");
   if (Object.values(scope).some((value) => typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value)))
     throw new Error("portfolio_existing_save_scope_invalid");
-  if (typeof observedSaveSlot !== "string" || !/^GameBuddyPortfolio[A-Za-z0-9_-]{1,128}_[0-9]{1,32}$/.test(observedSaveSlot))
+  if (
+    typeof observedSaveSlot !== "string" ||
+    !/^GameBuddyPortfolio[A-Za-z0-9_-]{1,128}_[0-9]{1,32}$/.test(observedSaveSlot)
+  )
     throw new Error("portfolio_existing_save_observed_slot_invalid");
+  if (mineEntryGivenFixture && !isMineEntryActionSequence(enabledActions))
+    throw new Error("portfolio_existing_save_mine_entry_fixture_action_invalid");
   return Object.freeze({
     Enable: true,
     Topology: PORTFOLIO_TOPOLOGY,
@@ -792,7 +850,26 @@ function validateExistingSaveOptions(options, context) {
     // guard; this does not invoke bootstrap or mutate the existing save.
     Bootstrap: { Enable: false, SaveName: context.saveName, PlayerName: "GameBuddy" },
     InitialNativeLoad: { Enable: true, ObservedSaveSlot: observedSaveSlot },
+    ...(mineEntryGivenFixture ? { MineEntryGivenFixture: { Enable: true } } : {}),
+    ...(mineLadderGivenFixture ? { MineLadderGivenFixture: { Enable: true } } : {}),
+    ...(mineElevatorGivenFixture ? { MineElevatorGivenFixture: { Enable: true } } : {}),
   });
+}
+
+function isMineEntryActionSequence(enabledActions) {
+  return (
+    Array.isArray(enabledActions) &&
+    (JSON.stringify(enabledActions) === JSON.stringify(["enter_mine"]) ||
+      JSON.stringify(enabledActions) === JSON.stringify(["skip_event", "enter_mine"]))
+  );
+}
+
+function isMineLadderActionSequence(enabledActions) {
+  return Array.isArray(enabledActions) && enabledActions.length === 1 && enabledActions[0] === "use_mine_ladder";
+}
+
+function isMineElevatorActionSequence(enabledActions) {
+  return Array.isArray(enabledActions) && enabledActions.length === 1 && enabledActions[0] === "select_mine_elevator_floor";
 }
 
 function isValidPortfolioSaveName(value) {
@@ -841,8 +918,7 @@ async function validateP0bLifecycleProducerOptions(options, context) {
     (typeof context.saveRoot === "string" && isPathWithin(resolvedManifestPath, context.saveRoot))
   )
     throw new Error("portfolio_p0b_start_manifest_path_overlap");
-  if (await hasReparsePathComponent(resolvedManifestPath))
-    throw new Error("portfolio_p0b_start_manifest_path_reparse");
+  if (await hasReparsePathComponent(resolvedManifestPath)) throw new Error("portfolio_p0b_start_manifest_path_reparse");
   if (!(await hasExistingNonReparseParent(resolvedManifestPath)))
     throw new Error("portfolio_p0b_start_manifest_path_missing");
   const target = await lstat(resolvedManifestPath).catch((error) => {
@@ -942,8 +1018,46 @@ async function readOwnedBootstrapPortfolioConfig(context, producer) {
   if (Object.keys(portfolio).some((key) => !PORTFOLIO_INNER_CONFIG_KEYS.includes(key)))
     throw new Error("portfolio_bootstrap_config_cross_topology_contamination");
   const initialLoad = portfolio.InitialNativeLoad;
-  if (initialLoad !== undefined && (!initialLoad || typeof initialLoad !== "object" || Array.isArray(initialLoad)
-    || Object.keys(initialLoad).some((key) => !["Enable", "ObservedSaveSlot"].includes(key))))
+  if (
+    initialLoad !== undefined &&
+    (!initialLoad ||
+      typeof initialLoad !== "object" ||
+      Array.isArray(initialLoad) ||
+      Object.keys(initialLoad).some((key) => !["Enable", "ObservedSaveSlot"].includes(key)))
+  )
+    throw new Error("portfolio_bootstrap_config_cross_topology_contamination");
+  const mineEntryGivenFixture = portfolio.MineEntryGivenFixture;
+  if (
+    mineEntryGivenFixture !== undefined &&
+    (!mineEntryGivenFixture ||
+      typeof mineEntryGivenFixture !== "object" ||
+      Array.isArray(mineEntryGivenFixture) ||
+      Object.keys(mineEntryGivenFixture).some((key) => key !== "Enable") ||
+      mineEntryGivenFixture.Enable !== true ||
+      !isMineEntryActionSequence(portfolio.EnabledActions))
+  )
+    throw new Error("portfolio_bootstrap_config_cross_topology_contamination");
+  const mineLadderGivenFixture = portfolio.MineLadderGivenFixture;
+  if (
+    mineLadderGivenFixture !== undefined &&
+    (!mineLadderGivenFixture ||
+      typeof mineLadderGivenFixture !== "object" ||
+      Array.isArray(mineLadderGivenFixture) ||
+      Object.keys(mineLadderGivenFixture).some((key) => key !== "Enable") ||
+      mineLadderGivenFixture.Enable !== true ||
+      !isMineLadderActionSequence(portfolio.EnabledActions))
+  )
+    throw new Error("portfolio_bootstrap_config_cross_topology_contamination");
+  const mineElevatorGivenFixture = portfolio.MineElevatorGivenFixture;
+  if (
+    mineElevatorGivenFixture !== undefined &&
+    (!mineElevatorGivenFixture ||
+      typeof mineElevatorGivenFixture !== "object" ||
+      Array.isArray(mineElevatorGivenFixture) ||
+      Object.keys(mineElevatorGivenFixture).some((key) => key !== "Enable") ||
+      mineElevatorGivenFixture.Enable !== true ||
+      !isMineElevatorActionSequence(portfolio.EnabledActions))
+  )
     throw new Error("portfolio_bootstrap_config_cross_topology_contamination");
   const bootstrap = portfolio.Bootstrap;
   if (!bootstrap || typeof bootstrap !== "object" || Array.isArray(bootstrap) || bootstrap.Enable !== false) {
@@ -954,7 +1068,9 @@ async function readOwnedBootstrapPortfolioConfig(context, producer) {
   const existingProducer = portfolio.P0bLifecycleProducer;
   if (
     existingProducer !== undefined &&
-    (!existingProducer || typeof existingProducer !== "object" || Array.isArray(existingProducer) ||
+    (!existingProducer ||
+      typeof existingProducer !== "object" ||
+      Array.isArray(existingProducer) ||
       Object.keys(existingProducer).some((key) => !PORTFOLIO_P0B_PRODUCER_KEYS.includes(key)))
   )
     throw new Error("portfolio_bootstrap_config_cross_topology_contamination");
@@ -1151,7 +1267,7 @@ async function inspectStardewProcesses(names) {
   const { promisify } = await import("node:util");
   try {
     const { stdout } = await promisify(execFile)("tasklist", ["/FO", "CSV", "/NH"]);
-    return names.filter((name) => stdout.toLowerCase().includes(`\"${name.toLowerCase()}\"`));
+    return names.filter((name) => stdout.toLowerCase().includes(`"${name.toLowerCase()}"`));
   } catch {
     return [];
   }

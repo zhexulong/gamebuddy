@@ -1,9 +1,9 @@
+import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 
 import { type AsrProvider, REQUIRED_PCM_FORMAT } from "./gateway.js";
 
@@ -51,7 +51,7 @@ export class SenseVoiceCliAsrProvider implements AsrProvider {
     this.modelRevision = `${assets.runtimeId}:${assets.runtimeRevision}:${assets.modelSha256.slice(0, 12)}`;
   }
 
-  public async transcribe(pcm16: Uint8Array, locale: string, signal: AbortSignal): Promise<string> {
+  public async transcribe(pcm16: Uint8Array, _locale: string, signal: AbortSignal): Promise<string> {
     if (signal.aborted) throw new Error("asr_cancelled");
     if (pcm16.byteLength === 0 || pcm16.byteLength % 2 !== 0) throw new Error("invalid_pcm16_audio");
     const directory = await mkdtemp(join(tmpdir(), "gamebuddy-sensevoice-"));

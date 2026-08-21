@@ -5,18 +5,18 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
-  readdirSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  type ProductionPrincipal as AuthenticatedContinuityPrincipal,
   openProductionContinuityStore,
   PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION,
   type ProductionBootstrapInput,
-  type ProductionPrincipal as AuthenticatedContinuityPrincipal,
   type ProductionContinuityStore,
   type ProductionSagaStore,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
@@ -24,8 +24,8 @@ import {
 const AUTHORITY_DIRECTORY_NAME = ".gamebuddy-semantic-continuity-v1";
 const DATABASE_NAME = "gamebuddy-continuity-v1.sqlite";
 const AUTHORITY_MARKER_NAME = "production-authority-marker.json";
-const PRODUCTION_SCHEMA_VERSION = PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION;
-const FRESH_LEGACY_SENTINEL = "0".repeat(64);
+const _PRODUCTION_SCHEMA_VERSION = PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION;
+const _FRESH_LEGACY_SENTINEL = "0".repeat(64);
 const LEGACY_ROOT_ARTIFACTS = new Set([
   "companion-continuity.json",
   "game-runtime-owner.json",
@@ -366,13 +366,7 @@ function provision(
       // Synchronous control closure has no concurrent in-flight window. A
       // failed attempt remains close-only and is retried at this same stage.
       closing = true;
-      try {
-        control.close();
-      } catch (error) {
-        // The authority remains close-only, but a failed control close has not
-        // established successful closure. A later owner close may retry it.
-        throw error;
-      }
+      control.close();
       closed = true;
     },
   });
@@ -518,7 +512,7 @@ function validateAuthorityMarker(
     ];
   if (
     Object.keys(marker).length !== fields.length ||
-    !fields.every((field) => Object.prototype.hasOwnProperty.call(marker, field)) ||
+    !fields.every((field) => Object.hasOwn(marker, field)) ||
     marker.version !== 21 ||
     marker.schemaVersion !== PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION ||
     marker.bootstrapOperationId !== options.bootstrapOperationId ||

@@ -1,26 +1,25 @@
 import { randomUUID } from "node:crypto";
-
-import { type CompanionIntegration, type CompanionIntegrationState } from "./integration-types.js";
-import { type GameIntegrationModule } from "./integration-module.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
-import { type KnowledgeBundle } from "./knowledge.js";
+import type { GameIntegrationModule } from "./integration-module.js";
+import type { CompanionIntegration, CompanionIntegrationState } from "./integration-types.js";
+import type { KnowledgeBundle } from "./knowledge.js";
 import { NamedPipeTransport } from "./named-pipe.js";
-import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 import {
-  diagnoseBridgeMessage,
-  newEnvelope,
-  nextCancelIdentity,
   type BridgeMessage,
   type CancelIdentity,
-  type ExecutionRequest,
+  type CompanionPresentationRequest,
+  diagnoseBridgeMessage,
   type ExecutionReceipt,
   type ExecutionReceiptQuery,
-  type CompanionPresentationRequest,
-  type SystemNoticeRequest,
+  type ExecutionRequest,
+  newEnvelope,
+  nextCancelIdentity,
   type Scope,
   type Snapshot,
+  type SystemNoticeRequest,
   validateBridgeMessage,
 } from "./protocol.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 
 export type LocalStardewBridgeState = CompanionIntegrationState & Readonly<{ authenticated: boolean }>;
 /** Validated Mod-originated facts forwarded to the Host event pump. */
@@ -249,10 +248,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     this.#capabilities = [...response.payload.capabilities];
   }
 
-  private request(
-    type: OutboundRequestType,
-    payload: Record<string, unknown>,
-  ): Promise<BridgeMessage> {
+  private request(type: OutboundRequestType, payload: Record<string, unknown>): Promise<BridgeMessage> {
     if (!this.transport.connected) return Promise.reject(new Error("pipe_disconnected"));
     const correlationId = randomUUID();
     const message = newEnvelope(type, this.scope, payload, correlationId);
@@ -307,8 +303,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       // The externally visible diagnostic taxonomy is deliberately narrower
       // than protocol internals. It never includes a frame, player text,
       // identity, scope, credential, or an implementation type name.
-      const diagnosticReasonCode =
-        reasonCode === "invalid_semantic_event" ? "malformed_player_control" : reasonCode;
+      const diagnosticReasonCode = reasonCode === "invalid_semantic_event" ? "malformed_player_control" : reasonCode;
       for (const listener of this.#diagnosticListeners)
         listener({ stage: "native_chat_bridge_inbound_rejected", reasonCode: diagnosticReasonCode });
       this.transport.close(reasonCode);
@@ -367,12 +362,20 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
 function isPurportedPlayerControlSemanticEvent(message: unknown): boolean {
   if (!message || typeof message !== "object" || Array.isArray(message)) return false;
   const record = message as Record<string, unknown>;
-  if (record.type !== "semantic_event" || !record.payload || typeof record.payload !== "object" || Array.isArray(record.payload))
+  if (
+    record.type !== "semantic_event" ||
+    !record.payload ||
+    typeof record.payload !== "object" ||
+    Array.isArray(record.payload)
+  )
     return false;
   const kind = (record.payload as Record<string, unknown>).kind;
   return kind === "player_input" || kind === "stop_all";
 }
 
 function isPlayerControlSemanticEvent(message: BridgeMessage): boolean {
-  return message.type === "semantic_event" && (message.payload.kind === "player_input" || message.payload.kind === "stop_all");
+  return (
+    message.type === "semantic_event" &&
+    (message.payload.kind === "player_input" || message.payload.kind === "stop_all")
+  );
 }

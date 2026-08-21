@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { isActionClass, type ActionClass } from "./action-class.js";
-import type { ExecutionDispatchObserver, ExecutionCorrelationOwner } from "./execution-correlation-ledger.js";
+import { type ActionClass, isActionClass } from "./action-class.js";
+import type { ExecutionCorrelationOwner, ExecutionDispatchObserver } from "./execution-correlation-ledger.js";
 import type { IntegrationConnection } from "./integration-types.js";
 
 /** Host-owned identity fields that a selected module may bind to its connection. */

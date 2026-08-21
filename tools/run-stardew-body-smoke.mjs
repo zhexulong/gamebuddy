@@ -135,7 +135,7 @@ try {
   client.close();
 }
 
-function chooseNearbyTarget(snapshot, distance) {
+function chooseNearbyTarget(snapshot, _distance) {
   // The current save opens the AI Farmhand in a farmhouse. Keep the probe
   // inside the local room and use the known adjacent floor tile from the
   // target-version save rather than testing map routing here.

@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import {
   validateMechanismReport,
   validateNativeMechanismReviewRegister,
 } from "./lib/stardew-native-mechanism-review-register.mjs";
+
 function fail(code, message, details = {}) {
   const error = new Error(message);
   error.code = code;

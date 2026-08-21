@@ -156,11 +156,7 @@ if (import.meta.main) {
 
 function validateConfig(value) {
   const fixture = value?.NativeLocalPlayerFixture;
-  if (
-    fixture?.Enable !== true ||
-    fixture?.Bootstrap?.Enable === true ||
-    fixture?.FixtureScenario !== SCENARIO
-  ) {
+  if (fixture?.Enable !== true || fixture?.Bootstrap?.Enable === true || fixture?.FixtureScenario !== SCENARIO) {
     throw new Error("native_local_break_rock_source_fixture_config_invalid");
   }
   if (
@@ -255,8 +251,7 @@ async function moveToReachableRock(
         snapshot = moved;
       } catch (error) {
         const reason = String(error instanceof Error ? error.message : error);
-        if (!reason.endsWith("_not_accepted:no_native_path") && !reason.endsWith("_failed:no_native_path"))
-          throw error;
+        if (!reason.endsWith("_not_accepted:no_native_path") && !reason.endsWith("_failed:no_native_path")) throw error;
         snapshot = await waitForActionable(client, await observeFresh(client), actionableTimeoutMs);
         if (rockCandidates(snapshot).length === 1) return snapshot;
       }

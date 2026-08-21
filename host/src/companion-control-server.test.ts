@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { PassThrough } from "node:stream";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { startCompanionControlServer, readProductControlLaunch } from "./companion-control-server.js";
+import { readProductControlLaunch, startCompanionControlServer } from "./companion-control-server.js";
 
 const launch = Object.freeze({ pipeName: "control_pipe_01", launchToken: "A123456789012345678901234567890" });
 

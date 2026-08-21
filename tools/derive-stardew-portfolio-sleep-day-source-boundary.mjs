@@ -9,6 +9,7 @@ import {
   disposeTarget,
   targetAssembly,
 } from "./lib/stardew-portfolio-sleep-day-source-boundary.mjs";
+
 const arg = (n) => {
   const i = process.argv.indexOf(n);
   return i < 0 ? undefined : process.argv[i + 1];

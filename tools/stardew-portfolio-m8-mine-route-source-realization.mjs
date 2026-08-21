@@ -1,8 +1,8 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 /** Locked-target source/map dossier for the blocked ordinary route to Mine. */
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";

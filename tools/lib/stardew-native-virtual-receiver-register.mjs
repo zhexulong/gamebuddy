@@ -28,7 +28,7 @@ function methodBody(bytes, startByte) {
   }
   return null;
 }
-function text(bytes, start, end) {
+function _text(bytes, start, end) {
   return bytes.subarray(start, end).toString("utf8");
 }
 function noProductTerms(value, at = "$") {

@@ -1,7 +1,7 @@
 {
   "schema": "gamebuddy-host-production-artifact-config/v2",
   "entryRoots": ["main.js", "dialogue-web-main.js", "stardew-attachment.js", "farmhand-companion-preview.js"],
-  "verificationRoots": ["tavern/p4-durable-turn-acceptance.js", "tavern/p4-provider-attempt.js", "tavern/p4-provider-start.js", "tavern/p5-presentation-commit.js", "tavern/p3-static-shell-composition.js", "reference-pipeline-dialogue-web.js", "tavern-management-dialogue-web.js", "tavern/tavern-management-static-shell-composition.js"],
+  "verificationRoots": ["tavern/p4-durable-turn-acceptance.js", "tavern/p4-provider-attempt.js", "tavern/chat-provider-start.js", "tavern/p3-static-shell-composition.js", "reference-pipeline-dialogue-web.js", "tavern-management-dialogue-web.js", "tavern/tavern-management-static-shell-composition.js"],
   "resources": [
     {
       "source": "resources/windows-named-mutex-broker.ps1",
@@ -73,9 +73,9 @@
       },
       {
         "package": "@cortexkit/pi-magic-context",
-        "module": "runtime.js",
+        "module": "tavern/memory-management/memory-management.js",
         "expression": "pathToFileURL(magicContextEntry).href",
-        "occurrence": 5
+        "occurrence": 0
       }
     ]
   }

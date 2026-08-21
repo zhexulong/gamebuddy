@@ -1,18 +1,21 @@
-import { assertProfileMatchesBinding, readIdentityProfile, readIdentityProfileBinding } from "../identity-profile.js";
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import {
   isCurrentMountedChatRuntimeLease,
   type MountedChatRuntimeLease,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { assertProfileMatchesBinding, readIdentityProfile, readIdentityProfileBinding } from "../identity-profile.js";
+import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import {
-  TavernBrowserValidatorsV1,
   type BrowserTurnV1,
   type ComposedTavernProfile,
+  isComposedTavernProfile,
   type TavernBrowserOperationV1,
+  TavernBrowserValidatorsV1,
+  type WorldInfoStateV1,
 } from "./browser-contract/index.js";
-import { createChatThreadStore, type ChatThreadState, type ChatTurnLedger } from "./chat-thread-store.js";
+import { type ChatThreadState, type ChatTurnLedger, createChatThreadStore } from "./chat-thread-store.js";
 import type { P3ExactChatMessage } from "./p3-exact-chat-state.js";
+import type { WorldInfoBindingManagementService } from "./world-info-binding/world-info-binding-management-service.js";
 
 const MAX_TRANSCRIPT_MESSAGES = 500;
 type TavernManagementBinding = Readonly<{
@@ -40,6 +43,7 @@ export type TavernManagementState = Readonly<{
   draft: Readonly<{ revision: number; text: string | null }>;
   turn: BrowserTurnV1 | null;
   operations: readonly TavernBrowserOperationV1[];
+  worldInfo: WorldInfoStateV1 | null;
 }>;
 
 /** Read-only management capability: no roots, stores, selector, lease, or mutation authority escapes. */
@@ -58,9 +62,13 @@ export async function createTavernManagementStateFacade(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
   profile: ComposedTavernProfile,
+  worldInfoService?: WorldInfoBindingManagementService,
 ): Promise<TavernManagementStateFacade> {
   if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
-  assertComposedProfile(profile);
+  // Canonical WeakSet identity-brand gate (same authority as the binding
+  // service): a structural clone of a composed profile is never accepted,
+  // and the rejection precedes every durable read below.
+  if (!isComposedTavernProfile(profile)) throw unavailable();
   const binding = bindingFrom(manifest, lease);
   const paths = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot, lease.chatSurfaceSessionId);
   const expectedIdentityKey = identityKey(manifest.principal);
@@ -82,6 +90,18 @@ export async function createTavernManagementStateFacade(
   const companionDisplayName = identityProfile.identity.name;
   if (companionDisplayName.length === 0) throw unavailable();
 
+  // A profile that declares either World Info route without a bound service
+  // must fail closed before any durable I/O: the capability cannot be
+  // advertised without the exact service backing it.
+  if (
+    profile.routeIds.includes("world-info.read") ||
+    profile.routeIds.includes("world-info.bind")
+  ) {
+    if (worldInfoService === undefined)
+      throw new Error("tavern_management_composition_unavailable");
+  }
+  const resolvedWorldInfoService = worldInfoService;
+
   return Object.freeze({
     async read(): Promise<TavernManagementState> {
       if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
@@ -91,7 +111,7 @@ export async function createTavernManagementStateFacade(
         // Durable reads do not hold the mount capability. A concurrent close
         // revokes the lease before projection, so never project stale data.
         assertTavernManagementLeaseAfterDurableRead(lease);
-        return project(lease, companionDisplayName, profile, state);
+        return await project(lease, companionDisplayName, profile, state, resolvedWorldInfoService);
       } catch {
         throw unavailable();
       }
@@ -133,17 +153,19 @@ function validateStateBinding(state: ChatThreadState, binding: TavernManagementB
     throw unavailable();
 }
 
-function project(
+async function project(
   lease: MountedChatRuntimeLease,
   companionDisplayName: string,
   profile: ComposedTavernProfile,
   state: ChatThreadState,
-): TavernManagementState {
+  worldInfoService?: WorldInfoBindingManagementService,
+): Promise<TavernManagementState> {
   if (state.messages.length > MAX_TRANSCRIPT_MESSAGES) throw unavailable();
   const projection = lease.browserProjection;
   const transcript = Object.freeze(state.messages.map((message, order) => projectMessage(lease, message, order)));
   const turn = projectTurn(lease, state.turnLedger);
   const operations = projectOperations(profile);
+  const worldInfoState = worldInfoService === undefined ? null : await v1WorldInfo(worldInfoService);
   const value = Object.freeze({
     selection: Object.freeze({
       chatHandle: projection.chatHandle,
@@ -156,16 +178,45 @@ function project(
     draft: Object.freeze({ revision: state.draft.revision, text: state.draft.text }),
     turn,
     operations,
+    worldInfo: worldInfoState,
   });
   // Fail closed unless every projected browser fact satisfies its frozen
   // contract schema; a partial or invalid projection never escapes.
   if (
     transcript.some((message) => !TavernBrowserValidatorsV1.BrowserMessageV1Schema.Check(message)) ||
     (turn !== null && !TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(turn)) ||
-    operations.some((operation) => !TavernBrowserValidatorsV1.TavernBrowserOperationV1Schema.Check(operation))
+    operations.some((operation) => !TavernBrowserValidatorsV1.TavernBrowserOperationV1Schema.Check(operation)) ||
+    (worldInfoState !== null && !TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfoState))
   )
     throw unavailable();
   return value;
+}
+
+/**
+ * Safe World Info projection from the bound service. The full-state read is
+ * validated against the frozen schema before it may enter the browser
+ * snapshot; a malformed or failed projection fails closed so no partial World
+ * Info state ever escapes the facade.
+ */
+async function v1WorldInfo(worldInfoService: WorldInfoBindingManagementService): Promise<WorldInfoStateV1> {
+  try {
+    const value = await worldInfoService.read();
+    if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(value)) throw unavailable();
+    // Fresh contract-shaped copies of the service's readonly projection; the
+    // caller's schema gate then revalidates the exact snapshot facts.
+    return {
+      state: value.state,
+      revision: value.revision,
+      items: value.items.map((item) => ({
+        handle: item.handle,
+        title: item.title,
+        summary: item.summary,
+        selected: item.selected,
+      })),
+    };
+  } catch {
+    throw unavailable();
+  }
 }
 
 function projectMessage(
@@ -211,44 +262,50 @@ function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger | nu
 }
 
 /**
- * Frozen operations projection for the management profile: draft save/discard
- * and `chat.rename` appear only when the mounted profile declares them. The
- * mounted Chat always exists, so durable CAS owns every rejection.
+ * Frozen operations projection for the management profile: draft save/discard,
+ * `chat.rename` and `world-info.bind` appear only when the mounted profile
+ * declares them. The mounted Chat always exists, so durable CAS owns every
+ * rejection.
  */
 function projectOperations(profile: ComposedTavernProfile): readonly TavernBrowserOperationV1[] {
   const operations: TavernBrowserOperationV1[] = [];
   if (profile.operationIds.includes("draft.save"))
-    operations.push(Object.freeze({ operationId: "draft.save", labelKey: "tavern.operation.draft.save", availability: "available", routeId: "draft.save" }));
+    operations.push(
+      Object.freeze({
+        operationId: "draft.save",
+        labelKey: "tavern.operation.draft.save",
+        availability: "available",
+        routeId: "draft.save",
+      }),
+    );
   if (profile.operationIds.includes("draft.discard"))
-    operations.push(Object.freeze({ operationId: "draft.discard", labelKey: "tavern.operation.draft.discard", availability: "available", routeId: "draft.discard" }));
+    operations.push(
+      Object.freeze({
+        operationId: "draft.discard",
+        labelKey: "tavern.operation.draft.discard",
+        availability: "available",
+        routeId: "draft.discard",
+      }),
+    );
   if (profile.operationIds.includes("chat.rename"))
-    operations.push(Object.freeze({ operationId: "chat.rename", labelKey: "tavern.operation.rename", availability: "available", routeId: "chat.rename" }));
+    operations.push(
+      Object.freeze({
+        operationId: "chat.rename",
+        labelKey: "tavern.operation.rename",
+        availability: "available",
+        routeId: "chat.rename",
+      }),
+    );
+  if (profile.operationIds.includes("world-info.bind"))
+    operations.push(
+      Object.freeze({
+        operationId: "world-info.bind",
+        labelKey: "tavern.operation.world-info.bind",
+        availability: "available",
+        routeId: "world-info.bind",
+      }),
+    );
   return Object.freeze(operations);
-}
-
-/**
- * Accepts only a composed tavern capability slice (the frozen shape produced
- * by `composeTavernProfile`); plain or partial forgeries fail closed before
- * any I/O.
- */
-function assertComposedProfile(profile: ComposedTavernProfile): void {
-  if (
-    typeof profile !== "object" ||
-    profile === null ||
-    Array.isArray(profile) ||
-    Object.getPrototypeOf(profile) !== Object.prototype ||
-    !Object.isFrozen(profile)
-  )
-    throw unavailable();
-  const expectedKeys = ["profileId", "releaseTier", "routeIds", "operationIds", "navigationItemIds"] as const;
-  const keys = Reflect.ownKeys(profile);
-  if (
-    keys.length !== expectedKeys.length ||
-    !expectedKeys.every((key) => keys.includes(key)) ||
-    !Object.isFrozen(profile.operationIds) ||
-    profile.operationIds.some((operationId) => typeof operationId !== "string")
-  )
-    throw unavailable();
 }
 
 function safeBrowserRevision(value: number): boolean {

@@ -27,7 +27,7 @@ export function Composer({
     el.style.height = "auto";
     const nextHeight = Math.min(Math.max(el.scrollHeight, 48), 176);
     el.style.height = `${nextHeight}px`;
-  }, [value]);
+  }, []);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

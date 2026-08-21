@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { createFreshUnmountedChatSemanticFacade } from "./continuity-semantic-chat-facade.internal.js";
 
 test("production Chat composition is internal and owns construction dependencies", async () => {

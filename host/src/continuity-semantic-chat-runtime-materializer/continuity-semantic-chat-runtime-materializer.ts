@@ -2,14 +2,15 @@
  * Construction-zone Chat runtime materializer. Its only production factory is
  * Host-owned here; no caller can inject a runtime constructor or presentation.
  */
-import { createCompanionRuntime, type RuntimeSession } from "../runtime.js";
+
 import { prepareExactChatRuntimeConstruction } from "../continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
+import { createCompanionRuntime, type RuntimeSession } from "../runtime.js";
 import {
-  materializeAndPublishChatStableContext,
-  materializeExactChatRuntime,
   type ChatRuntimeDisposal,
   type ChatRuntimeMaterializer,
   type MaterializedChatRuntime,
+  materializeAndPublishChatStableContext,
+  materializeExactChatRuntime,
 } from "./continuity-semantic-chat-runtime-materializer.internal.js";
 
 /** The mounted materialization product remains an internal production-chain type. */
@@ -22,10 +23,6 @@ export type { ChatRuntimeDisposal, ChatRuntimeMaterializer };
  */
 export type HostChatRuntimeMaterializerOptions = Readonly<{
   tavernNarrativeGateNonceSha256?: string;
-  playerMemoryNextRoundEvidence?: Readonly<{
-    nonceSha256: string;
-    onSourceMarker(marker: unknown): void;
-  }>;
 }>;
 
 export function createHostChatRuntimeMaterializer(
@@ -78,9 +75,7 @@ async function createMaterializedChatRuntime(
     "chat",
     undefined,
     undefined,
-    undefined,
     construction.tavernNarrativeGateNonceSha256,
-    construction.playerMemoryNextRoundEvidence,
   );
   return Object.freeze({ construction, runtime });
 }

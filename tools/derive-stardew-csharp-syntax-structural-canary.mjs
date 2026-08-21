@@ -1,13 +1,13 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { mkdtemp, readFile, rm, stat, lstat, writeFile, rename } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
-  parseCSharpSyntaxStructure,
   assertCSharpSyntaxParseClean,
+  parseCSharpSyntaxStructure,
 } from "./lib/stardew-csharp-syntax-structural-canary.mjs";
 
 const EXPECTED_FILE_VERSION = "1.6.15.24356";

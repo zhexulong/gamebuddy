@@ -1,5 +1,5 @@
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 

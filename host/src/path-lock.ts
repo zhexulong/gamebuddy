@@ -7,8 +7,8 @@ import {
   reclaimStaleLock as nativeReclaimStaleLock,
   releaseOwnedLock as nativeReleaseOwnedLock,
   requestWindowsStaleLockReclaimer,
-  type WindowsStaleLockReclaimerCapability,
   type WindowsStaleLockReclaimCategory,
+  type WindowsStaleLockReclaimerCapability,
   type WindowsStaleLockReclaimPolicy,
   type WindowsStaleLockReleaseCategory,
 } from "./windows-stale-lock-reclaimer/index.js";
@@ -52,9 +52,7 @@ export function bindWindowsStaleLockReclaimer(capability: WindowsStaleLockReclai
 }
 
 type WindowsReclaimerBinding = Readonly<
-  | { kind: "unbound" }
-  | { kind: "capability"; capability: WindowsStaleLockReclaimerCapability }
-  | { kind: "disabled" }
+  { kind: "unbound" } | { kind: "capability"; capability: WindowsStaleLockReclaimerCapability } | { kind: "disabled" }
 >;
 let windowsReclaimerBinding: WindowsReclaimerBinding = { kind: "unbound" };
 let defaultWindowsReclaimerRequest: Promise<WindowsStaleLockReclaimerCapability | undefined> | undefined;
@@ -96,7 +94,12 @@ export type PathLockRecoveryResult = Readonly<{
  */
 export type PathLockReleaseResult = Readonly<{
   outcome: "released" | "kept" | "unavailable";
-  reason: "exact_token_released" | "lock_already_missing" | "token_mismatch" | "not_regular" | "windows_reclaimer_unavailable";
+  reason:
+    | "exact_token_released"
+    | "lock_already_missing"
+    | "token_mismatch"
+    | "not_regular"
+    | "windows_reclaimer_unavailable";
 }>;
 
 export type SafeFileIdentity = Readonly<{ dev: number; ino: number }>;
@@ -519,26 +522,45 @@ export async function releaseOwnedPathLock(lockPath: string, token: string): Pro
     return releaseResult("unavailable", "windows_reclaimer_unavailable");
   }
   switch (category) {
-    case "released": return releaseResult("released", "exact_token_released");
-    case "missing": return releaseResult("released", "lock_already_missing");
-    case "kept_token_mismatch": return releaseResult("kept", "token_mismatch");
-    case "kept_not_regular": return releaseResult("kept", "not_regular");
-    case "indeterminate": return releaseResult("unavailable", "windows_reclaimer_unavailable");
+    case "released":
+      return releaseResult("released", "exact_token_released");
+    case "missing":
+      return releaseResult("released", "lock_already_missing");
+    case "kept_token_mismatch":
+      return releaseResult("kept", "token_mismatch");
+    case "kept_not_regular":
+      return releaseResult("kept", "not_regular");
+    case "indeterminate":
+      return releaseResult("unavailable", "windows_reclaimer_unavailable");
   }
 }
 
-function mapReclaimCategory(category: WindowsStaleLockReclaimCategory, policy: WindowsStaleLockReclaimPolicy): PathLockRecoveryResult {
+function mapReclaimCategory(
+  category: WindowsStaleLockReclaimCategory,
+  policy: WindowsStaleLockReclaimPolicy,
+): PathLockRecoveryResult {
   switch (category) {
     case "reclaimed":
-      return recoveryResult("reclaimed", policy === "stale_valid_dead" ? "valid_owner_stale_and_dead" : "malformed_stale_identity_stable");
-    case "missing": return recoveryResult("kept", "lock_disappeared");
-    case "kept_malformed_fresh": return recoveryResult("kept", "malformed_fresh");
-    case "kept_valid_fresh": return recoveryResult("kept", "valid_owner_fresh");
-    case "kept_policy_mismatch": return recoveryResult("kept", "identity_changed_during_observation");
-    case "kept_identity_changed": return recoveryResult("kept", "identity_changed_during_observation");
-    case "kept_path_replaced": return recoveryResult("kept", "identity_changed_during_observation");
-    case "kept_not_regular": return recoveryResult("unsafe", "reparse_or_link");
-    case "indeterminate": return recoveryResult("kept", "windows_reclaimer_unavailable");
+      return recoveryResult(
+        "reclaimed",
+        policy === "stale_valid_dead" ? "valid_owner_stale_and_dead" : "malformed_stale_identity_stable",
+      );
+    case "missing":
+      return recoveryResult("kept", "lock_disappeared");
+    case "kept_malformed_fresh":
+      return recoveryResult("kept", "malformed_fresh");
+    case "kept_valid_fresh":
+      return recoveryResult("kept", "valid_owner_fresh");
+    case "kept_policy_mismatch":
+      return recoveryResult("kept", "identity_changed_during_observation");
+    case "kept_identity_changed":
+      return recoveryResult("kept", "identity_changed_during_observation");
+    case "kept_path_replaced":
+      return recoveryResult("kept", "identity_changed_during_observation");
+    case "kept_not_regular":
+      return recoveryResult("unsafe", "reparse_or_link");
+    case "indeterminate":
+      return recoveryResult("kept", "windows_reclaimer_unavailable");
   }
 }
 
@@ -572,11 +594,17 @@ function staleByMtime(observation: LockFileObservation): boolean {
   return Date.now() - Number(observation.mtimeNs / 1_000_000n) >= STALE_LOCK_MS;
 }
 
-function recoveryResult(outcome: PathLockRecoveryResult["outcome"], reason: PathLockRecoveryResult["reason"]): PathLockRecoveryResult {
+function recoveryResult(
+  outcome: PathLockRecoveryResult["outcome"],
+  reason: PathLockRecoveryResult["reason"],
+): PathLockRecoveryResult {
   return Object.freeze({ outcome, reason });
 }
 
-function releaseResult(outcome: PathLockReleaseResult["outcome"], reason: PathLockReleaseResult["reason"]): PathLockReleaseResult {
+function releaseResult(
+  outcome: PathLockReleaseResult["outcome"],
+  reason: PathLockReleaseResult["reason"],
+): PathLockReleaseResult {
   return Object.freeze({ outcome, reason });
 }
 

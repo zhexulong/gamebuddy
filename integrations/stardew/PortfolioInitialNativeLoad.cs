@@ -63,11 +63,10 @@ public sealed partial class ModEntry
             this.Monitor.Log("GameBuddy rejected Portfolio initial native load completion because the native local world is invalid.", LogLevel.Error);
             return PortfolioInitialNativeLoadCompletion.Rejected;
         }
-        string observed = $"{Game1.GetSaveGameName(set_value: false)}_{Game1.uniqueIDForThisGame}";
-        if (!String.Equals(observed, initialLoad.ObservedSaveSlot, StringComparison.Ordinal))
+        if (Game1.uniqueIDForThisGame <= 0)
         {
             this.portfolioInitialNativeLoadTerminal = true;
-            this.Monitor.Log("GameBuddy rejected Portfolio initial native load completion because the observed slot differs.", LogLevel.Error);
+            this.Monitor.Log("GameBuddy rejected Portfolio initial native load completion because the native save identity is invalid.", LogLevel.Error);
             return PortfolioInitialNativeLoadCompletion.Rejected;
         }
 
@@ -89,6 +88,9 @@ public sealed partial class ModEntry
             Bootstrap = portfolio.Bootstrap,
             InitialNativeLoad = new PortfolioInitialNativeLoadConfig { Enable = false, ObservedSaveSlot = initialLoad.ObservedSaveSlot },
             P0bLifecycleProducer = portfolio.P0bLifecycleProducer,
+            MineEntryGivenFixture = portfolio.MineEntryGivenFixture,
+            MineLadderGivenFixture = portfolio.MineLadderGivenFixture,
+            MineElevatorGivenFixture = portfolio.MineElevatorGivenFixture,
         };
         if (!completed.IsValid)
         {
@@ -100,7 +102,7 @@ public sealed partial class ModEntry
         this.Helper.WriteConfig(this.config);
         this.portfolioInitialNativeLoadSucceeded = true;
         this.portfolioInitialNativeLoadTerminal = true;
-        this.Monitor.Log("GameBuddy observed Portfolio initial native load and recorded current native local-player scope; opening bridge.", LogLevel.Info);
+        this.Monitor.Log("GameBuddy observed Portfolio initial native load and recorded current native local-player scope; Portfolio Given gates remain pending before bridge binding.", LogLevel.Info);
         return PortfolioInitialNativeLoadCompletion.Succeeded;
     }
 

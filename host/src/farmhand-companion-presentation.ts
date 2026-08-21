@@ -1,5 +1,5 @@
 import type { CompanionInterruption, InterruptionSnapshot } from "./companion-interruption.js";
-import type { GameCompanionTextExpression, CompanionTextPort, PresentationCommitAdmission } from "./presentation.js";
+import type { CompanionTextPort, GameCompanionTextExpression, PresentationCommitAdmission } from "./presentation.js";
 import type { StopSystemNotice } from "./system-notices.js";
 
 /** Adapter-owned narrow surface needed for Farmhand native text presentation. */
@@ -63,7 +63,11 @@ export function createFarmhandCompanionPresentationPort(
       epoch.assertCurrent(epoch.binding);
       // This adapter is Game-only; the discriminated expression type requires
       // a source-owned event before any bridge write.
-      if (expression.surface !== "game" || !("sourceEventId" in expression) || !(expression as { sourceEventId?: string }).sourceEventId) {
+      if (
+        expression.surface !== "game" ||
+        !("sourceEventId" in expression) ||
+        !(expression as { sourceEventId?: string }).sourceEventId
+      ) {
         throw new Error("farmhand_presentation_source_event_required");
       }
       const snapshot = bridge.state.snapshot;

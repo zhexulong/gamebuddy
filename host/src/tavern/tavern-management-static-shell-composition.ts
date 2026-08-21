@@ -6,10 +6,10 @@ import {
 } from "../tavern-management-dialogue-web.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
 import {
-  TAVERN_BROWSER_CONTRACT,
   createTavernStaticArtifactRequestHandler,
-  verifyTavernStaticArtifact,
+  TAVERN_BROWSER_CONTRACT,
   type TavernStaticArtifactIdentity,
+  verifyTavernStaticArtifact,
 } from "./static-artifact/index.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -19,18 +19,16 @@ const LOOPBACK_HOST = "127.0.0.1";
  * (one static identity per shipped browser bundle); the management profile is
  * selected purely by its fragment marker.
  */
-export const TAVERN_MANAGEMENT_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIdentity =
-  Object.freeze({
-    browserContract: TAVERN_BROWSER_CONTRACT,
-    profileId: "gamebuddy.tavern.browser.v1",
-  });
+export const TAVERN_MANAGEMENT_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIdentity = Object.freeze({
+  browserContract: TAVERN_BROWSER_CONTRACT,
+  profileId: "gamebuddy.tavern.browser.v1",
+});
 
-export type TavernManagementStaticShellCompositionOptions =
-  TavernManagementDialogueWebOptions &
-    Readonly<{
-      artifactRoot: string;
-      inspector?: WindowsReparseInspectorCapability;
-    }>;
+export type TavernManagementStaticShellCompositionOptions = TavernManagementDialogueWebOptions &
+  Readonly<{
+    artifactRoot: string;
+    inspector?: WindowsReparseInspectorCapability;
+  }>;
 
 export type TavernManagementStaticShellComposition = Readonly<{
   origin: string;

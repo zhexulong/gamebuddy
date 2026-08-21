@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { readFile, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   checkM9SpecialOrderActionContract,

@@ -7,9 +7,9 @@ import test from "node:test";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createGameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import { createTestGameRuntimeMaterializer } from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.js";
 import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
 import { createIntegrationActionCatalog, type GameIntegrationModule } from "../integration-module.js";
@@ -463,7 +463,10 @@ test("P7 Task 5 characterization: initial-chat resume facade is saga/content-onl
     // runtime-mounting constructor exists at the deployment-composition level.
     const { dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const folder = resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-deployment-composition");
+    const folder = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../src/continuity-semantic-deployment-composition",
+    );
     const compositionSource = readFileSync(join(folder, "continuity-semantic-deployment-composition.ts"), "utf8");
     assert.equal(compositionSource.includes("resumeInitialChat(): Promise<ProductionSagaReadback | null>;"), true);
     assert.equal(compositionSource.includes("resumeInitialChatWithContent(content)"), true);

@@ -118,10 +118,7 @@ test("place-crab-pot runner fails closed on capability profile and target misses
     /production_capability_profile_invalid/,
   );
   await assert.rejects(
-    runPlaceCrabPotSmoke(
-      client,
-      { ...config, EnabledActions: ["move_to_tile", "travel", "place_crab_pot", "extra"] },
-    ),
+    runPlaceCrabPotSmoke(client, { ...config, EnabledActions: ["move_to_tile", "travel", "place_crab_pot", "extra"] }),
     /production_capability_profile_invalid/,
   );
   const missingCapability = { ...before, capabilities: ["cancel_active_execution", "move_to_tile", "travel"] };
@@ -235,7 +232,10 @@ test("place-crab-pot session uses the shared harness and tears down exactly once
   assert.equal(instance.closed, 1);
   assert.equal(instance.listeners.size, 0);
 
-  const source = await readFile(new URL("./run-stardew-native-local-player-place-crab-pot-smoke.mjs", import.meta.url), "utf8");
+  const source = await readFile(
+    new URL("./run-stardew-native-local-player-place-crab-pot-smoke.mjs", import.meta.url),
+    "utf8",
+  );
   assert.match(source, /connectNativeLocalClient\(config\)/);
   assert.match(source, /finally \{\s+session\.close\(\);\s+\}/);
   assert.match(source, /waitForFreshSnapshot\(client, \{/);

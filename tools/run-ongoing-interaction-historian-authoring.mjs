@@ -158,7 +158,7 @@ function historianGateObservedCategoryCounts(error) {
   });
 }
 
-function assertScenarioFacts(name, result, expected) {
+function assertScenarioFacts(_name, result, expected) {
   const semantic = result.semanticFactsEmitted;
   const interaction = result.interactionEpisodeFactsEmitted;
   const valid =

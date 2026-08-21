@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile, rename } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { deriveArchitectureAccounting, sha256Text } from "./lib/stardew-native-architecture-accounting.mjs";
 
 const ASSEMBLY_NAME = "Stardew Valley.dll";
@@ -124,12 +124,12 @@ function fail(code, message, details = {}) {
   error.details = details;
   throw error;
 }
-function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+function _canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(_canonicalJson).join(",")}]`;
   if (value && typeof value === "object")
     return `{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .map((key) => `${JSON.stringify(key)}:${_canonicalJson(value[key])}`)
       .join(",")}}`;
   return JSON.stringify(value);
 }

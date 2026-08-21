@@ -1,20 +1,20 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { canonicalJson, TavernArtifactStore } from "./artifact-store.js";
+import { canonicalJson, type TavernArtifactStore } from "./artifact-store.js";
 import type {
   ChatThread,
   TavernStableManagedWorldInfoBinding,
   TavernStableWorldBookBinding,
   TavernStableWorldInfoBinding,
 } from "./chat-thread-store.js";
-import { tavernRevisionPath, type TavernPaths } from "./tavern-paths.js";
+import { type TavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import {
-  validateTavernArtifact,
   type DialogueExamples,
   type GreetingSet,
   type Scenario,
   type TavernCompanion,
   type UserPersona,
+  validateTavernArtifact,
   type WorldBookBinding,
 } from "./types.js";
 

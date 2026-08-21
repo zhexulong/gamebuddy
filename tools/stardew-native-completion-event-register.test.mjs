@@ -5,6 +5,7 @@ import {
   deriveNativeCompletionEventRegister,
   validateNativeCompletionEventRegister,
 } from "./lib/stardew-native-completion-event-register.mjs";
+
 const h = (text) => createHash("sha256").update(text).digest("hex");
 const text = `class Pan { private readonly NetEvent0 finishEvent = new NetEvent0(); void init() { finishEvent.onEvent += doFinish; } void Done() { finishEvent.Fire(); } void tick() { finishEvent.Poll(); } private void doFinish() { } }`;
 const sourceFiles = { "Pan.cs": { text, sha256: h(text) } };

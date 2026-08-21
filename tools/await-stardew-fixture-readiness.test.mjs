@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 
 const root = await mkdtemp(join(tmpdir(), "gamebuddy-fixture-readiness-"));
 const token = "fixture-readiness-token-123456";

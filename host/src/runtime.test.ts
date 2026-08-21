@@ -11,13 +11,11 @@ import { createDeterministicBridgePair } from "./bridge.js";
 import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
 import { CompanionIntegrationClient } from "./integration.js";
 import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
-import { type KnowledgeBundle } from "./knowledge.js";
+import type { KnowledgeBundle } from "./knowledge.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
-import { type Scope } from "./protocol.js";
-import { actionRegistryRevision, type CompanionRunManifest } from "./run-manifest.js";
+import type { Scope } from "./protocol.js";
+import type { CompanionRunManifest } from "./run-manifest.js";
 import {
-  type CompanionMemoryCommand,
-  type CompanionMemoryFacade,
   companionStatusTool,
   createCompanionRuntime,
   createCompanionStatusTool,
@@ -105,78 +103,6 @@ test("offline runtime exposes only its deterministic Companion status tool", asy
   const firstContent = result.content[0];
   assert.equal(firstContent?.type, "text");
   assert.match(firstContent?.type === "text" ? firstContent.text : "", /"connected":false/);
-});
-
-test("chat runtime mounts an injected read-only GameBuddy companion memory facade", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-companion-memory-"));
-  const calls: CompanionMemoryCommand[] = [];
-  const memory: CompanionMemoryFacade = {
-    execute: async (command) => {
-      calls.push(command);
-      return command.operation === "list"
-        ? [{ stateToken: "memory_state_01", content: "Remember this." }]
-        : command.operation === "get"
-          ? { stateToken: command.stateToken, content: "Remember this." }
-          : { stateToken: "memory_state_02", content: command.content };
-    },
-  };
-  const runtime = await createCompanionRuntime(
-    { ...identity, continuityId: "continuity_01" },
-    root,
-    undefined,
-    undefined,
-    undefined,
-    {
-      profile: { locale: "zh-CN", text: true, speech: null },
-      surface: "chat",
-      sessionId: "memory_chat_01",
-      textPort: { present: () => undefined },
-    },
-    false,
-    undefined,
-    "memory_chat_01",
-    undefined,
-    "chat",
-    undefined,
-    undefined,
-    memory,
-  );
-  try {
-    const tool = runtime.session.agent.state.tools.find((candidate) => candidate.name === "companion_memory");
-    assert.ok(tool);
-    const list = await tool.execute("memory-list", { operation: "list" }, new AbortController().signal);
-    assert.match(list.content[0]?.type === "text" ? list.content[0].text : "", /Remember this/);
-    const get = await tool.execute(
-      "memory-get",
-      { operation: "get", stateToken: "memory_state_01" },
-      new AbortController().signal,
-    );
-    assert.match(get.content[0]?.type === "text" ? get.content[0].text : "", /memory_state_01/);
-    const delegated = await tool.execute(
-      "memory-delegated",
-      { operation: "create_inferred_semantic", content: "Likes rain." },
-      new AbortController().signal,
-    );
-    assert.match(delegated.content[0]?.type === "text" ? delegated.content[0].text : "", /Likes rain/);
-    assert.deepEqual(calls, [
-      { operation: "list" },
-      { operation: "get", stateToken: "memory_state_01" },
-      { operation: "create_inferred_semantic", content: "Likes rain." },
-    ]);
-    assert.equal(
-      runtime.recoverStardewExecutionReceipts,
-      undefined,
-      "a chat runtime must never expose the game recovery closure",
-    );
-    assert.deepEqual(
-      (tool.parameters as { anyOf?: unknown[] }).anyOf?.map(
-        (entry) => (entry as { properties?: { operation?: { const?: string } } }).properties?.operation?.const,
-      ),
-      ["list", "get", "create_inferred_semantic"],
-    );
-  } finally {
-    runtime.session.dispose();
-  }
 });
 
 test("mounted Companion status reports live integration facts without inferring success", async () => {
@@ -378,15 +304,46 @@ test("generic runtime keeps an explicit game surface when the Host construction 
     "game",
   );
   try {
-    assert.doesNotMatch(runtime.session.systemPrompt, /<gamebuddy_chat_surface>/);
+    assert.doesNotMatch(runtime.session.systemPrompt, /companion_text/);
+    assert.doesNotMatch(runtime.session.systemPrompt, /private/);
+    assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
     assert.equal(
-      runtime.session.agent.state.tools.some((tool) => tool.name === "companion_text"),
+      runtime.session.agent.state.tools.some((tool) => tool.name === "companion_text" || tool.name === "companion_speak"),
       false,
     );
     assert.equal(runtime.paths.surfaceSessionId, "game_surface_01");
   } finally {
     runtime.session.dispose();
     integration.dispose();
+  }
+});
+
+test("Chat surface runtime has no presentation pseudo-tools before the Host mounts a presentation authority", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-surface-runtime-"));
+  const runtime = await createCompanionRuntime(
+    { ...identity, continuityId: "continuity_chat_01" },
+    root,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+    undefined,
+    "chat_surface_01",
+    undefined,
+    "chat",
+  );
+  try {
+    assert.doesNotMatch(runtime.session.systemPrompt, /companion_text/);
+    assert.doesNotMatch(runtime.session.systemPrompt, /private/);
+    assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
+    assert.equal(
+      runtime.session.agent.state.tools.some((tool) => tool.name === "companion_text" || tool.name === "companion_speak"),
+      false,
+    );
+    assert.equal(runtime.paths.surfaceSessionId, "chat_surface_01");
+  } finally {
+    runtime.session.dispose();
   }
 });
 
@@ -419,15 +376,9 @@ test("formal Preview Game composition does not load Magic Context", async () => 
     assert.deepEqual(runtime.extensions, []);
     await assert.rejects(
       access(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc")),
-      (error: unknown) =>
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT",
+      (error: unknown) => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT",
     );
-    const manifest = JSON.parse(
-      await readFile(runtime.paths.runManifestPath, "utf8"),
-    ) as CompanionRunManifest;
+    const manifest = JSON.parse(await readFile(runtime.paths.runManifestPath, "utf8")) as CompanionRunManifest;
     assert.equal(manifest.featureFlags.magicContextMemoryEnabled, false);
     assert.equal(
       typeof runtime.recoverStardewExecutionReceipts,

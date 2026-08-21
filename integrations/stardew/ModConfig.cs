@@ -1,3 +1,7 @@
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core.Protocol;
+
 namespace GameBuddy.Stardew;
 
 /// <summary>Local-only pipe is opt-in and authenticated; no defaults expose a bridge.</summary>
@@ -51,38 +55,13 @@ public sealed class ModConfig
     /// <summary>Legacy allowlist retained only for explicit pre-policy configs.</summary>
     public List<string>? EnabledActions { get; init; }
 
-    internal IReadOnlySet<string> EnabledActionSet
-    {
-        get
-        {
-            if (this.ActionPolicyVersion == 1)
-            {
-                HashSet<string> deniedActions = new(this.DeniedActions, StringComparer.Ordinal);
-                HashSet<string> deniedFamilies = new(this.DeniedActionFamilies, StringComparer.Ordinal);
-                HashSet<string> result = new(FarmhandActionDefinitions
-                    .Where(definition => definition.Lifecycle == FarmhandActionLifecycle.Published
-                        && !deniedActions.Contains(definition.ActionId)
-                        && !deniedFamilies.Contains(definition.FamilyId))
-                    .Select(definition => definition.ActionId), StringComparer.Ordinal);
-                result.UnionWith(this.ExperimentalActions
-                    .Join(FarmhandActionDefinitions.Where(definition => definition.Lifecycle == FarmhandActionLifecycle.Experimental),
-                        action => action,
-                        definition => definition.ActionId,
-                        (_, definition) => definition)
-                    .Where(definition => !deniedActions.Contains(definition.ActionId) && !deniedFamilies.Contains(definition.FamilyId))
-                    .Select(definition => definition.ActionId));
-                return result;
-            }
-
-            // Existing configs keep their old fail-closed allowlist semantics
-            // until explicitly migrated to ActionPolicyVersion 1.
-            // Legacy profiles remain explicit and fail closed. They may also
-            // opt into a test-only experimental action; that action still
-            // never enters the version-1 default player-facing surface.
-            HashSet<string> definedActions = new(FarmhandActionDefinitions.Select(definition => definition.ActionId), StringComparer.Ordinal);
-            return new HashSet<string>((this.EnabledActions ?? Enumerable.Empty<string>()).Where(definedActions.Contains), StringComparer.Ordinal);
-        }
-    }
+    internal IReadOnlySet<string> EnabledActionSet =>
+        ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions(
+            this.ActionPolicyVersion,
+            this.DeniedActions,
+            this.DeniedActionFamilies,
+            this.ExperimentalActions,
+            this.EnabledActions));
 
     /// <summary>
     /// The sole Farmhand bridge publication: policy-derived game actions plus
@@ -94,48 +73,17 @@ public sealed class ModConfig
 
     internal bool UsesDefaultConsentPolicy => this.ActionPolicyVersion == 1;
 
-    internal bool HasValidActionPolicy
-    {
-        get
-        {
-            if (this.ActionPolicyVersion is not (0 or 1)) return false;
-            if (this.ActionPolicyVersion == 0 && (this.DeniedActions.Count > 0 || this.DeniedActionFamilies.Count > 0)) return false;
-            if (this.ActionPolicyVersion == 1 && this.EnabledActions is not null) return false;
-            HashSet<string> actionIds = new(FarmhandActionDefinitions.Select(definition => definition.ActionId), StringComparer.Ordinal);
-            HashSet<string> familyIds = new(FarmhandActionDefinitions.Select(definition => definition.FamilyId), StringComparer.Ordinal);
-            HashSet<string> experimentalActionIds = new(FarmhandActionDefinitions
-                .Where(definition => definition.Lifecycle == FarmhandActionLifecycle.Experimental)
-                .Select(definition => definition.ActionId), StringComparer.Ordinal);
-            return this.DeniedActions.All(actionIds.Contains)
-                && this.DeniedActionFamilies.All(familyIds.Contains)
-                && this.ExperimentalActions.All(experimentalActionIds.Contains);
-        }
-    }
+    internal bool HasValidActionPolicy =>
+        ActionPolicyEngine.ValidateActionPolicy(new ActionPolicyOptions(
+            this.ActionPolicyVersion,
+            this.DeniedActions,
+            this.DeniedActionFamilies,
+            this.ExperimentalActions,
+            this.EnabledActions));
 
     // The sole Mod-side ordinary Farmhand action identity composition. Host and
     // descriptor metadata are checked projections and never publication inputs.
-    internal static readonly IReadOnlyList<FarmhandActionDefinition> FarmhandActionDefinitions = Array.AsReadOnly(new[]
-    {
-        Definition("move_to_tile", "movement_navigation", 1), Definition("equip_tool", "body_tools", 1),
-        Definition("travel", "transport_warps", 1), Definition("enter_exit", "movement_navigation", 1),
-        Definition("till_soil", "farming_crops", 1), Definition("pickup_forage", "resource_gathering", 1),
-        Definition("pickup_item", "inventory_items", 1), Definition("water_crop", "farming_crops", 1),
-        Definition("plant_seed", "farming_crops", 1), Definition("fertilize_tile", "farming_crops", 1),
-        Definition("machine_inspect", "machines_processing", 1), Definition("machine_load", "machines_processing", 1),
-        Definition("machine_collect_output", "machines_processing", 1), Definition("collect_animal_product", "animals_pets", 1),
-        Definition("feed_animal", "animals_pets", 1), Definition("use_item", "inventory_items", 1),
-        Definition("harvest_crop", "farming_crops", 1), Definition("place_wood_fence", "buildings_farm_management", 1),
-        Definition("place_crab_pot", "buildings_farm_management", 1), Definition("bait_crab_pot", "buildings_farm_management", 1),
-        Definition("chop_tree_source", "resource_gathering", 1), Definition("break_rock_source", "resource_gathering", 1),
-        Definition("clear_hoedirt", "farming_crops", 1), Definition("dig_artifact_spot", "resource_gathering", 1),
-        Definition("refill_watering_can", "farming_crops", 1),
-        Definition("clear_debris", "resource_gathering", 1, FarmhandActionLifecycle.Experimental),
-        Definition("npc_relationship", "npc_social", 1, FarmhandActionLifecycle.Experimental),
-        Definition("pet_animal", "animals_pets", 1, FarmhandActionLifecycle.Experimental),
-    });
-
-    private static FarmhandActionDefinition Definition(string actionId, string familyId, int identityVersion,
-        FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(actionId, familyId, identityVersion, lifecycle);
+    internal static IReadOnlyList<FarmhandActionDefinition> FarmhandActionDefinitions => FarmhandActionCatalog.Definitions;
 
     internal bool HasValidLocalBridgeConfiguration => EnableLocalBridge
         && BridgeProtocol.IsOpaqueId(PipeName)
@@ -154,50 +102,6 @@ public sealed class ModConfig
         && this.HostFarmhandProvisioning?.Enable != true
         && this.FarmhandProvisioner?.Enable != true
         && this.FarmhandProvisioningProbe?.Enable != true;
-}
-
-internal enum FarmhandActionLifecycle
-{
-    Published,
-    Experimental,
-}
-
-internal sealed record FarmhandActionDefinition(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle);
-
-/// <summary>
-/// Immutable deterministic Farmhand publication. Game action membership comes
-/// exclusively from ModConfig.EnabledActionSet; control entries are protocol
-/// capabilities and are deliberately not valid execution-action inputs.
-/// </summary>
-internal sealed class FarmhandCapabilitySurface
-{
-    private static readonly IReadOnlyList<string> ProtocolControls = Array.AsReadOnly(new[]
-    {
-        "inspect_self",
-        "cancel_active_execution",
-    });
-
-    private readonly IReadOnlySet<string> gameActions;
-
-    private FarmhandCapabilitySurface(IReadOnlySet<string> gameActions, IReadOnlyList<string> capabilities)
-    {
-        this.gameActions = gameActions;
-        this.Capabilities = capabilities;
-    }
-
-    internal IReadOnlyList<string> Capabilities { get; }
-
-    internal bool ContainsGameAction(string action) => this.gameActions.Contains(action);
-
-    internal static FarmhandCapabilitySurface FromEnabledActions(IReadOnlySet<string> enabledActions)
-    {
-        ArgumentNullException.ThrowIfNull(enabledActions);
-        string[] orderedActions = enabledActions.OrderBy(action => action, StringComparer.Ordinal).ToArray();
-        HashSet<string> immutableMembership = new(orderedActions, StringComparer.Ordinal);
-        return new FarmhandCapabilitySurface(
-            immutableMembership,
-            Array.AsReadOnly(orderedActions.Concat(ProtocolControls).ToArray()));
-    }
 }
 
 public sealed class NativeLocalPlayerFixtureConfig
@@ -293,6 +197,26 @@ public sealed class PortfolioConfig
     /// <summary>Explicit, default-disabled P0b native signed start-manifest producer.</summary>
     public PortfolioP0bLifecycleProducerConfig? P0bLifecycleProducer { get; init; }
 
+    /// <summary>
+    /// Internal, default-disabled M8 Given preparation for the independent
+    /// enter_mine action. It is not a bridge action and produces no receipt.
+    /// </summary>
+    public PortfolioMineEntryGivenFixtureConfig? MineEntryGivenFixture { get; init; }
+
+    /// <summary>
+    /// Internal, default-disabled M8 Given preparation for the independent
+    /// use_mine_ladder action. The fixed native destination is Mod-owned;
+    /// this configuration carries no destination, pose, or action authority.
+    /// </summary>
+    public PortfolioMineLadderGivenFixtureConfig? MineLadderGivenFixture { get; init; }
+
+    /// <summary>
+    /// Internal, default-disabled M8 Given preparation for the independent
+    /// select_mine_elevator_floor action. The fixed native destination is
+    /// Mod-owned; this configuration carries no checkpoint, pose, or action authority.
+    /// </summary>
+    public PortfolioMineElevatorGivenFixtureConfig? MineElevatorGivenFixture { get; init; }
+
     // The local Player id is not known before the first native SaveLoaded. A
     // disarmed bootstrap may therefore leave it blank while retaining the
     // already-recorded save/world/companion scope; the game-thread binding
@@ -313,7 +237,16 @@ public sealed class PortfolioConfig
         && HasValidActionAllowlist
         && (Bootstrap is null || !Bootstrap.Enable)
         && (InitialNativeLoad is null || !InitialNativeLoad.Enable || InitialNativeLoad.IsValid)
-        && (P0bLifecycleProducer is null || !P0bLifecycleProducer.Enable || P0bLifecycleProducer.IsValid);
+        && (P0bLifecycleProducer is null || !P0bLifecycleProducer.Enable || P0bLifecycleProducer.IsValid)
+        && (MineEntryGivenFixture is null || !MineEntryGivenFixture.Enable || MineEntryGivenFixture.IsValid)
+        && (MineEntryGivenFixture is null || !MineEntryGivenFixture.Enable
+            || IsMineEntryActionSequence)
+        && (MineLadderGivenFixture is null || !MineLadderGivenFixture.Enable || MineLadderGivenFixture.IsValid)
+        && (MineLadderGivenFixture is null || !MineLadderGivenFixture.Enable
+            || IsMineLadderActionSequence)
+        && (MineElevatorGivenFixture is null || !MineElevatorGivenFixture.Enable || MineElevatorGivenFixture.IsValid)
+        && (MineElevatorGivenFixture is null || !MineElevatorGivenFixture.Enable
+            || IsMineElevatorActionSequence);
 
     internal bool IsBootstrapValid => Enable
         && Topology == PortfolioBridgeProtocol.Topology
@@ -329,11 +262,23 @@ public sealed class PortfolioConfig
         && Bootstrap is { IsValid: true };
 
     private static readonly IReadOnlySet<string> PortfolioActionIds = new HashSet<string>(
-        new[] { PortfolioBridgeProtocol.SleepDayAction, PortfolioBridgeProtocol.MineElevatorAction, PortfolioBridgeProtocol.MineLadderAction, PortfolioBridgeProtocol.MineEntryAction },
+        new[] { PortfolioBridgeProtocol.SleepDayAction, PortfolioBridgeProtocol.MineElevatorAction, PortfolioBridgeProtocol.MineLadderAction, PortfolioBridgeProtocol.MineEntryAction, PortfolioBridgeProtocol.SkipEventAction },
         StringComparer.Ordinal);
 
     private bool HasValidActionAllowlist => this.EnabledActions.Count == this.EnabledActions.Distinct(StringComparer.Ordinal).Count()
         && this.EnabledActions.All(action => PortfolioActionIds.Contains(action));
+
+    internal bool IsMineEntryActionSequence =>
+        (this.EnabledActions.Count == 1 && this.EnabledActions[0] == PortfolioBridgeProtocol.MineEntryAction)
+        || (this.EnabledActions.Count == 2
+            && this.EnabledActions[0] == PortfolioBridgeProtocol.SkipEventAction
+            && this.EnabledActions[1] == PortfolioBridgeProtocol.MineEntryAction);
+
+    internal bool IsMineLadderActionSequence => this.EnabledActions.Count == 1
+        && this.EnabledActions[0] == PortfolioBridgeProtocol.MineLadderAction;
+
+    internal bool IsMineElevatorActionSequence => this.EnabledActions.Count == 1
+        && this.EnabledActions[0] == PortfolioBridgeProtocol.MineElevatorAction;
 
     /// <summary>
     /// Rechecks the explicit Portfolio allowlist at the game-thread request
@@ -346,12 +291,36 @@ public sealed class PortfolioConfig
         && this.EnabledActions.Contains(action, StringComparer.Ordinal);
 }
 
+public sealed class PortfolioMineEntryGivenFixtureConfig
+{
+    public bool Enable { get; init; }
+
+    // The strongly typed bool is the complete shape contract; PortfolioConfig
+    // applies the action-specific admission rule when Enable is true.
+    internal bool IsValid => true;
+}
+
+public sealed class PortfolioMineLadderGivenFixtureConfig
+{
+    // The strongly typed bool is the complete serialized shape contract.
+    // PortfolioConfig applies the exact ladder-only action admission rule.
+    public bool Enable { get; init; }
+    internal bool IsValid => true;
+}
+
+public sealed class PortfolioMineElevatorGivenFixtureConfig
+{
+    // The strongly typed bool is the complete serialized shape contract.
+    // PortfolioConfig applies the exact elevator-only action admission rule.
+    public bool Enable { get; init; }
+    internal bool IsValid => true;
+}
+
 public sealed class PortfolioInitialNativeLoadConfig
 {
     public bool Enable { get; init; }
     /// <summary>Exact observed target-version physical save slot passed to SaveGame.Load.</summary>
     public string ObservedSaveSlot { get; init; } = string.Empty;
-
     internal bool IsValid => Enable && IsObservedPortfolioSlot(ObservedSaveSlot);
 
     private static bool IsObservedPortfolioSlot(string value)

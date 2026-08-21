@@ -35,24 +35,76 @@ test("P1T exit matrix is a complete static non-authoritative aggregation", async
   const result = await validateP1tExitMatrix();
   assert.equal(result.authority, "none");
   assert.equal(result.liveClosure, "none");
-  assert.deepEqual(result.rows.map((entry) => entry.id), requiredIds);
+  assert.deepEqual(
+    result.rows.map((entry) => entry.id),
+    requiredIds,
+  );
   assert.equal(result.rows.filter((entry) => entry.status === "characterized-bounded-evidence").length, 14);
   assert.equal(result.rows.filter((entry) => entry.status === "explicitly-unimplemented-lifecycle").length, 1);
   assert.equal(result.rows.filter((entry) => entry.status === "not-claimed").length, 3);
-  assert.equal(result.rows.some((entry) => /actionId|move_to_tile|stardew_/i.test(JSON.stringify({ id: entry.id, nonclaim: entry.nonclaim }))), false);
+  assert.equal(
+    result.rows.some((entry) =>
+      /actionId|move_to_tile|stardew_/i.test(JSON.stringify({ id: entry.id, nonclaim: entry.nonclaim })),
+    ),
+    false,
+  );
 });
 
 test("P1T exit matrix rejects removed rows, changed statuses, and lifecycle reclassification", async () => {
   await assert.rejects(validateP1tExitMatrix(changed((matrix) => matrix.rows.pop())), /row_count_invalid/);
-  await assert.rejects(validateP1tExitMatrix(changed((matrix) => { matrix.rows[0].status = "not-claimed"; })), /status_reclassified/);
-  await assert.rejects(validateP1tExitMatrix(changed((matrix) => { matrix.rows.find((entry) => entry.id === "coverage-withdrawal-generation-revision-boundary").status = "not-claimed"; })), /withdrawal_reclassified/);
-  await assert.rejects(validateP1tExitMatrix(changed((matrix) => { matrix.rows.find((entry) => entry.id === "coverage-immutable-same-surface-generation-fence").nonclaim = "generation fence"; })), /immutable_fence_invalid/);
+  await assert.rejects(
+    validateP1tExitMatrix(
+      changed((matrix) => {
+        matrix.rows[0].status = "not-claimed";
+      }),
+    ),
+    /status_reclassified/,
+  );
+  await assert.rejects(
+    validateP1tExitMatrix(
+      changed((matrix) => {
+        matrix.rows.find((entry) => entry.id === "coverage-withdrawal-generation-revision-boundary").status =
+          "not-claimed";
+      }),
+    ),
+    /withdrawal_reclassified/,
+  );
+  await assert.rejects(
+    validateP1tExitMatrix(
+      changed((matrix) => {
+        matrix.rows.find((entry) => entry.id === "coverage-immutable-same-surface-generation-fence").nonclaim =
+          "generation fence";
+      }),
+    ),
+    /immutable_fence_invalid/,
+  );
 });
 
 test("P1T exit matrix rejects substituted, reordered, and unavailable bound evidence", async () => {
-  await assert.rejects(validateP1tExitMatrix(changed((matrix) => { matrix.rows[0].evidence = ["missing-evidence.test.mjs"]; })), /evidence_binding_invalid/);
-  await assert.rejects(validateP1tExitMatrix(changed((matrix) => { matrix.rows[1].evidence.reverse(); })), /evidence_binding_invalid/);
-  await assert.rejects(validateP1tExitMatrix(P1T_EXIT_MATRIX, { pathExists: async () => { throw new Error("unavailable"); } }), /evidence_missing:integrations\/stardew\/tests/);
+  await assert.rejects(
+    validateP1tExitMatrix(
+      changed((matrix) => {
+        matrix.rows[0].evidence = ["missing-evidence.test.mjs"];
+      }),
+    ),
+    /evidence_binding_invalid/,
+  );
+  await assert.rejects(
+    validateP1tExitMatrix(
+      changed((matrix) => {
+        matrix.rows[1].evidence.reverse();
+      }),
+    ),
+    /evidence_binding_invalid/,
+  );
+  await assert.rejects(
+    validateP1tExitMatrix(P1T_EXIT_MATRIX, {
+      pathExists: async () => {
+        throw new Error("unavailable");
+      },
+    }),
+    /evidence_missing:integrations\/stardew\/tests/,
+  );
   await assert.doesNotReject(access("tools/stardew-p1t-exit-matrix.mjs"));
 });
 
@@ -64,5 +116,12 @@ test("P1T exit matrix rejects evidence whose registered marker is absent", async
 });
 
 test("P1T exit matrix rejects claim language", async () => {
-  await assert.rejects(validateP1tExitMatrix(changed((matrix) => { matrix.rows[0].nonclaim = "P1T passed with action live behavior"; })), /forbidden_claim/);
+  await assert.rejects(
+    validateP1tExitMatrix(
+      changed((matrix) => {
+        matrix.rows[0].nonclaim = "P1T passed with action live behavior";
+      }),
+    ),
+    /forbidden_claim/,
+  );
 });

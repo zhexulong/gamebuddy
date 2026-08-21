@@ -1,11 +1,9 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-
-import { REQUIRED_PCM_FORMAT } from "./gateway.js";
 
 const MAX_CAPTURE_BYTES = 960_000;
 const POWERSHELL_TIMEOUT_MS = 65_000;

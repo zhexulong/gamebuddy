@@ -1,35 +1,27 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  type AgentSession,
   createAgentSession,
   DefaultResourceLoader,
   defineTool,
   ModelRuntime,
   SessionManager,
   SettingsManager,
-  type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
-import { type IntegrationConnection } from "./integration-types.js";
-import {
-  executionWakeSourceFor,
-  normalizeExecutionWake,
-} from "./action-execution-coordinator.internal.js";
-import {
-  type ExecutionWake,
-  type ExecutionWakeSource,
-} from "./integration-launcher.js";
-import {
-  type IntegrationActionCatalog,
-  type IntegrationActionPolicy,
-  type IntegrationDispatchAdmission,
-  type IntegrationExecutionReceipt,
-  type IntegrationStateView,
-} from "./integration-module.js";
+import { executionWakeSourceFor, normalizeExecutionWake } from "./action-execution-coordinator.internal.js";
 import { finalAssistantText } from "./agent-expression.js";
-import { type CompanionModelConfig, type RuntimePaths } from "./runtime.js";
+import type { ExecutionWake, ExecutionWakeSource } from "./integration-launcher.js";
+import type {
+  IntegrationActionCatalog,
+  IntegrationActionPolicy,
+  IntegrationDispatchAdmission,
+  IntegrationExecutionReceipt,
+} from "./integration-module.js";
+import type { IntegrationConnection } from "./integration-types.js";
+import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 
 /** Gameplay workers are deliberately pinned independently from the dialogue model. */
 export const GAMEPLAY_SUBAGENT_MODEL_CONFIG: CompanionModelConfig = Object.freeze({
@@ -403,9 +395,25 @@ export class GameplayTaskSubagent {
         ),
       );
       const customTools = [
-        budgetTool(status, record, controller, this.integration, integrationModule, cancelThisTask, cancelSettledPendingDispatch),
+        budgetTool(
+          status,
+          record,
+          controller,
+          this.integration,
+          integrationModule,
+          cancelThisTask,
+          cancelSettledPendingDispatch,
+        ),
         ...budgetedIntegrationTools,
-        budgetTool(reportTool, record, controller, this.integration, integrationModule, cancelThisTask, cancelSettledPendingDispatch),
+        budgetTool(
+          reportTool,
+          record,
+          controller,
+          this.integration,
+          integrationModule,
+          cancelThisTask,
+          cancelSettledPendingDispatch,
+        ),
       ];
       const allowedToolNames = customTools.map((tool) => tool.name).sort();
       if (this.sessionFactory !== undefined) {
@@ -647,7 +655,7 @@ async function createTaskModelRuntime(agentDir: string, config: CompanionModelCo
   });
 }
 
-function isPromiseLike(value: unknown): value is Promise<unknown> {
+function _isPromiseLike(value: unknown): value is Promise<unknown> {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -853,10 +861,10 @@ async function abortedTaskResult(
   record: MutableTaskRecord,
   report: GameplayTaskReport | null,
   integration: IntegrationConnection,
-  signal: AbortSignal | undefined,
+  _signal: AbortSignal | undefined,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<GameplayTaskResult> {
-  const integrationModule = requireIntegrationModule(integration);
+  const _integrationModule = requireIntegrationModule(integration);
   const reasonCode = record.terminalReasonCode ?? "gameplay_task_cancelled";
   const budgetExhausted = reasonCode.includes("budget_exhausted");
   // Cancellation has already triggered the signal; continue to await the Mod's

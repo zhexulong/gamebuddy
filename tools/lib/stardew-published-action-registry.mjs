@@ -1,7 +1,7 @@
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const require = createRequire(resolve(root, "host", "package.json"));
@@ -32,7 +32,8 @@ function variableInitializer(source, name) {
 }
 
 function unwrapExpression(node) {
-  while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) node = node.expression;
+  while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node))
+    node = node.expression;
   return node;
 }
 

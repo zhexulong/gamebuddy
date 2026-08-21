@@ -89,24 +89,23 @@ export type TavernStateSnapshotV1 = Readonly<{
   operations: readonly TavernBrowserOperationV1[];
   navigation: readonly unknown[];
   selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }> | null;
-  chat:
-    | Readonly<{
-        companion: Readonly<{ name: string }>;
-        title: string | null;
-        transcript: readonly BrowserMessageV1[];
-        draft: Readonly<{ revision: number; present: boolean }>;
-        turn: BrowserTurnV1 | null;
-        worldInfo: Readonly<Record<string, unknown>> | null;
-      }>
-    | null;
+  chat: Readonly<{
+    companion: Readonly<{ name: string }>;
+    title: string | null;
+    transcript: readonly BrowserMessageV1[];
+    draft: Readonly<{ revision: number; present: boolean }>;
+    turn: BrowserTurnV1 | null;
+    worldInfo: Readonly<Record<string, unknown>> | null;
+  }> | null;
   memory: Readonly<{ readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null }>;
   eventStream: Readonly<{ epoch: string; cursor: string }> | null;
 }>;
 
 /** A snapshot whose active identity (build profile + selection) is present and well-formed. */
-export type ActiveTavernStateSnapshotV1 = TavernStateSnapshotV1 & Readonly<{
-  selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }>;
-}>;
+export type ActiveTavernStateSnapshotV1 = TavernStateSnapshotV1 &
+  Readonly<{
+    selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }>;
+  }>;
 
 /**
  * Content-free pending submission: exactly the four enumerable keys below.
@@ -124,6 +123,8 @@ export type ReferencePipelineSession = Readonly<{
   snapshot: TavernStateSnapshotV1;
   pending: PendingSubmission | null;
   applySnapshot(snapshot: TavernStateSnapshotV1): ReferencePipelineSession;
+  /** Reset the volatile SSE checkpoint after authoritative snapshot recovery. */
+  resetEventCheckpoint(): ReferencePipelineSession;
   applyEvent(event: BrowserEventV1): ReferencePipelineSession;
   withPending(pending: PendingSubmission | null): ReferencePipelineSession;
 }>;
@@ -147,7 +148,12 @@ export class ReferencePipelineSessionError extends Error {
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const TERMINAL_DISPOSITIONS = new Set<string>(["terminal"]);
 const KNOWN_DISPOSITIONS = new Set<string>(["unknown", "pending", "accepted", "terminal", "expired"]);
-const PENDING_KEYS = new Set<string>(["idempotencyKey", "selectionGeneration", "stateRevision", "expectedDraftRevision"]);
+const PENDING_KEYS = new Set<string>([
+  "idempotencyKey",
+  "selectionGeneration",
+  "stateRevision",
+  "expectedDraftRevision",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -167,9 +173,20 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isBrowserEvent(value: unknown): value is BrowserEventV1 {
   if (!isRecord(value) || value.apiVersion !== TAVERN_BROWSER_API_VERSION) return false;
-  if (!isNonEmptyString(value.epoch) || !isPositiveSafeInteger(value.sequence) || !isPositiveSafeInteger(value.selectionGeneration)) return false;
+  if (
+    !isNonEmptyString(value.epoch) ||
+    !isPositiveSafeInteger(value.sequence) ||
+    !isPositiveSafeInteger(value.selectionGeneration)
+  )
+    return false;
   if (!isNonEmptyString(value.eventType) || !isRecord(value.payload)) return false;
-  return ["message.committed", "draft.changed", "turn.state_changed", "memory.changed", "stream.resync_required"].includes(value.eventType);
+  return [
+    "message.committed",
+    "draft.changed",
+    "turn.state_changed",
+    "memory.changed",
+    "stream.resync_required",
+  ].includes(value.eventType);
 }
 
 function deepFreeze<T>(value: T): T {
@@ -268,11 +285,25 @@ function createSession(state: SessionState): ReferencePipelineSession {
         eventSequence: frozenNext.eventStream?.epoch === state.eventEpoch ? state.eventSequence : null,
       });
     },
+    resetEventCheckpoint(): ReferencePipelineSession {
+      return createSession({
+        fingerprint: state.fingerprint,
+        snapshot: state.snapshot,
+        pending: state.pending,
+        eventEpoch: state.snapshot.eventStream?.epoch ?? null,
+        eventSequence: null,
+      });
+    },
     applyEvent(event: BrowserEventV1): ReferencePipelineSession {
       if (!isBrowserEvent(event)) throw new ReferencePipelineSessionError("stream_resync_required");
       const selection = requireActiveIdentity(state.snapshot).selection;
-      if (event.eventType === "stream.resync_required") throw new ReferencePipelineSessionError("stream_resync_required");
-      if (state.snapshot.eventStream === null || event.epoch !== state.snapshot.eventStream.epoch || event.selectionGeneration !== selection.generation) {
+      if (event.eventType === "stream.resync_required")
+        throw new ReferencePipelineSessionError("stream_resync_required");
+      if (
+        state.snapshot.eventStream === null ||
+        event.epoch !== state.snapshot.eventStream.epoch ||
+        event.selectionGeneration !== selection.generation
+      ) {
         throw new ReferencePipelineSessionError("stream_resync_required");
       }
       if (state.eventEpoch !== null && state.eventEpoch !== event.epoch && state.eventSequence !== null) {
@@ -363,7 +394,10 @@ export function pendingSubmission(
  * Snapshot and turn are never read or mutated here; a status result never
  * synthesizes chat content.
  */
-export function applyStatus(pending: PendingSubmission | null, status: MessageSubmissionStatusV1): SubmissionStatusResult {
+export function applyStatus(
+  pending: PendingSubmission | null,
+  status: MessageSubmissionStatusV1,
+): SubmissionStatusResult {
   const statusValue: unknown = status;
   if (
     !isRecord(statusValue) ||

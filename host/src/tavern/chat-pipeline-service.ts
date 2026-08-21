@@ -1,23 +1,24 @@
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import type { ChatEventStream } from "./chat-event-stream.js";
-import { identityKey } from "../runtime.js";
-import {
-  isCurrentMountedChatRuntimeLease,
-  type MountedChatRuntimeLease,
-} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { Static } from "typebox";
 import {
-  TAVERN_BROWSER_API_VERSION,
-  TavernBrowserValidatorsV1,
-  MessageSubmissionStatusQueryV1Schema,
-  MessageSubmissionStatusV1Schema,
-  SubmitMessageCommandV1Schema,
-  SubmitResultV1Schema,
+  isCurrentMountedChatRuntimeLease,
+  stopMountedChatPresentationEpoch,
+  type MountedChatRuntimeLease,
+} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { identityKey } from "../runtime.js";
+import {
   type BrowserMessageV1,
   type BrowserTurnV1,
+  type CancelTurnCommandV1,
   type ComposedTavernProfile,
+  type MessageSubmissionStatusQueryV1Schema,
+  type MessageSubmissionStatusV1Schema,
   type SubmitMessageCommandV1,
+  type SubmitResultV1Schema,
+  TAVERN_BROWSER_API_VERSION,
+  TavernBrowserValidatorsV1,
 } from "./browser-contract/index.js";
+import type { ChatEventStream } from "./chat-event-stream.js";
 
 /**
  * Frozen contract static types, derived from the single browser-contract
@@ -28,39 +29,42 @@ import {
 export type SubmitResultV1 = Static<typeof SubmitResultV1Schema>;
 export type MessageSubmissionStatusQueryV1 = Static<typeof MessageSubmissionStatusQueryV1Schema>;
 export type MessageSubmissionStatusV1 = Static<typeof MessageSubmissionStatusV1Schema>;
+
 import {
-  createChatThreadStore,
   type AcceptedQueuedTurn,
   type AttemptStartingTurn,
   type CancelledTurn,
   type ChatThreadState,
   type ChatTurnLedger,
   type CompletedTurn,
+  createChatThreadStore,
   type FailedTurn,
 } from "./chat-thread-store.js";
 import { createP4DurableTurnAcceptanceFacade } from "./p4-durable-turn-acceptance.js";
 import { createP4ProviderAttemptFacade } from "./p4-provider-attempt.js";
-import { createP5PresentationCommitFacade } from "./p5-presentation-commit.js";
+import { startMountedChatProvider } from "./chat-provider-start.js";
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
 
 /** Non-terminal durable ledger states (design/40 §6.7). */
-const NON_TERMINAL_TURN_STATUSES = new Set<ChatTurnLedger["status"]>([
-  "accepted_queued",
-  "attempt_starting",
-  "running",
-  "presentation_committed",
-  "completion_claimed",
-  "cancel_claimed",
-]);
+function isTerminalLedger(ledger: ChatTurnLedger): boolean {
+  return ledger.status === "completed" || ledger.status === "cancelled" || ledger.status === "failed";
+}
 
 function isNonTerminalLedger(ledger: ChatTurnLedger): boolean {
-  return NON_TERMINAL_TURN_STATUSES.has(ledger.status);
+  return !isTerminalLedger(ledger);
+}
+
+/** Stop is actionable only after the exact prompt has reached durable arm. */
+function isCancellableLedger(ledger: ChatTurnLedger): boolean {
+  return (
+    (ledger.status === "attempt_starting" && ledger.observation?.phase === "armed") || ledger.status === "running"
+  );
 }
 
 /**
  * The narrow injected test-only seam for the sole connected P4c/P5 path.
- * Production always uses `createP5PresentationCommitFacade`; the dependency is
+ * Production always uses `startMountedChatProvider`; the dependency is
  * injectable only because the live provider path cannot be scripted
  * deterministically in a focused service test. It carries no admission,
  * binding, store, or provider capability of its own.
@@ -116,6 +120,8 @@ export type ChatPipelineService = Readonly<{
    * claim, start, or mutate anything.
    */
   readSubmissionStatus(query: MessageSubmissionStatusQueryV1): Promise<MessageSubmissionStatusV1>;
+  /** Stops the exact active turn and returns its fresh browser-safe projection. */
+  cancel(turnHandle: string, command: CancelTurnCommandV1): Promise<BrowserTurnV1>;
   /**
    * Rejects new admission and drains admitted acceptance, commit callbacks and
    * background start work before resolving. The mounted lease itself stays
@@ -166,7 +172,9 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
   )
     throw unavailable();
 
-  const start: ChatPipelineStartDependency = options.deps?.start ?? createP5PresentationCommitFacade(manifest, lease);
+  const start: ChatPipelineStartDependency = options.deps?.start ?? Object.freeze({
+    start: async () => await startMountedChatProvider(manifest, lease),
+  });
   const eventStream = options.eventStream;
   const accept = createP4DurableTurnAcceptanceFacade(manifest, lease);
   const claim = createP4ProviderAttemptFacade(manifest, lease);
@@ -304,6 +312,53 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       return status;
     },
 
+    async cancel(turnHandle: string, command: CancelTurnCommandV1): Promise<BrowserTurnV1> {
+      assertOpen();
+      if (!profile.operationIds.includes("chat.cancel")) throw unavailable();
+      if (typeof turnHandle !== "string" || !TavernBrowserValidatorsV1.CancelTurnCommandV1Schema.Check(command))
+        throw unavailable();
+      if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+      const state = await resumeState();
+      const ledger = state.turnLedger;
+      if (ledger === null || lease.browserProjection.projectTurnHandle(ledger.turnId) !== turnHandle) throw unavailable();
+      if (!isNonTerminalLedger(ledger)) return projectTurn(lease, ledger);
+      if (!isCancellableLedger(ledger) || !("attempt" in ledger)) return projectTurn(lease, ledger);
+      const expected = Object.freeze({ turnId: ledger.turnId, attemptId: ledger.attempt.attemptId });
+      // The coordinator owns the active Pi prompt and the P5 presentation
+      // admission. Stop through its one mounted authority so revocation, the
+      // durable cancel CAS, and `session.abort()` retain their existing race
+      // ordering; browser code never reaches a raw store mutation or Pi handle.
+      let winner: ChatTurnLedger;
+      try {
+        winner = await stopMountedChatPresentationEpoch(manifest, lease, {
+          stopId: `browser_stop_${randomId()}`,
+          sourceEventId: `browser_stop_source_${randomId()}`,
+          reasonCode: "browser_chat_cancel",
+        });
+      } catch (error) {
+        // Completion/failure can win the terminal race. Reread exactly once
+        // and project that durable winner; any still-active or mismatched turn
+        // remains a request failure rather than a synthetic cancellation.
+        const reread = await resumeState();
+        if (
+          reread.turnLedger === null ||
+          reread.turnLedger.turnId !== expected.turnId ||
+          !isTerminalLedger(reread.turnLedger)
+        )
+          throw error;
+        winner = reread.turnLedger;
+      }
+      assertChatPipelineServiceLeaseAfterDurableRead(lease);
+      const result = projectTurn(lease, winner);
+      if (eventStream !== undefined && profile.routeIds.includes("events"))
+        eventStream.publish({
+          eventType: "turn.state_changed",
+          selectionGeneration: lease.browserProjection.selectionGeneration,
+          payload: result,
+        });
+      return result;
+    },
+
     async close(): Promise<void> {
       if (closePromise !== undefined) return closePromise;
       closing = true;
@@ -388,25 +443,21 @@ function projectMessage(
 /**
  * Frozen durable TurnLedger → BrowserTurnV1 projection (design/72 §7),
  * identical to the reference-pipeline state projection. `projectionRevision`
- * is the literal 1; `canCancel` is always false (no cancel operation mounted);
- * `problemCode` appears only for the durable `failed` terminal.
+ * is the literal 1; older internal intermediate states map to the five MVP
+ * browser states and never create separate UI lifecycle outcomes.
  */
 function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger): BrowserTurnV1 {
   const state =
     ledger.status === "accepted_queued" || ledger.status === "attempt_starting"
       ? "queued"
-      : ledger.status === "running"
+      : ledger.status === "running" || ledger.status === "presentation_committed" || ledger.status === "completion_claimed" || ledger.status === "cancel_claimed"
         ? "running"
-        : ledger.status === "presentation_committed" || ledger.status === "completion_claimed"
-          ? "response_visible"
-          : ledger.status === "cancel_claimed"
-            ? "stopping"
-            : ledger.status;
+        : ledger.status;
   return Object.freeze({
     handle: lease.browserProjection.projectTurnHandle(ledger.turnId),
     state,
     projectionRevision: 1,
-    canCancel: false,
+    canCancel: isCancellableLedger(ledger),
     ...(ledger.status === "failed" ? { problemCode: ledger.reasonCode } : {}),
   });
 }
@@ -430,6 +481,10 @@ function validateSubmitCommand(command: SubmitMessageCommandV1, lease: MountedCh
     throw unavailable();
   // Exact-binding selection: browser input can never select another generation.
   if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+}
+
+function randomId(): string {
+  return crypto.randomUUID().replaceAll("-", "");
 }
 
 function validIdempotencyKey(value: unknown): value is string {

@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { type Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import test from "node:test";
-
-import { PortfolioStardewBridgeClient } from "./portfolio-stardew-bridge.js";
 import {
   computePortfolioBindingHash,
   PORTFOLIO_INTEGRATION_ID,
@@ -16,6 +14,7 @@ import {
   type PortfolioBootstrapIdentity,
   type PortfolioScope,
 } from "./portfolio-protocol.js";
+import { PortfolioStardewBridgeClient } from "./portfolio-stardew-bridge.js";
 
 // Standalone compiled C# Portfolio peer contract (supplied by the C# lane;
 // this file is its Node-side consumer and exercises the real Host client):
@@ -24,7 +23,8 @@ import {
 //   otherwise integrations/stardew/tests/bin/Release/net6.0/
 //   PortfolioStardewInterop.Contract.dll. A path ending in ".exe" is executed
 //   directly; any other path is run with `dotnet <path>`.
-// - Invocation: <peer> <pipe-name> <mode> with mode "success" or "cancel";
+// - Invocation: <peer> <pipe-name> <mode> with mode "success", "cancel",
+//   "entry_success", "entry_cancel", or "ladder_success";
 //   cwd is the repository root; stdin is ignored; stdout carries only the two
 //   contract lines below; stderr must stay empty; exit code 0 after the
 //   strict session disconnects.
@@ -70,6 +70,19 @@ import {
 //   lowestMineLevelAfter 10, postcondition
 //   selectedCheckpoint/actualCurrentFloor/observedLowestMineLevel 10,
 //   freshObservation true, sameExecution true.
+// - Scenario "entry_success" (terminal drain): the peer drives the compiled
+//   Mine exterior -> floor-1 transition and delivers a succeeded enter_mine
+//   receipt through the exact private ModEntry entry terminal drain. Its
+//   evidence and postcondition prove the fresh floor-1 observation.
+// - Scenario "entry_cancel" (accepted-then-cancel): the real Host calls
+//   cancelMineEntry with the exact accepted entry identity and cancellation
+//   token. The peer sends that raw frame to the exact compiled private
+//   ModEntry.HandlePortfolioMineEntryCancel handler; its direct uncertain
+//   terminal receipt settles both the original terminal and cancel promise
+//   exactly once, and a second cancel sends no additional frame.
+// - Scenario "ladder_success" (terminal drain): the peer drives the compiled
+//   floor-1 -> floor-2 ladder transition and delivers its succeeded receipt
+//   through the exact private ModEntry ladder terminal drain.
 // - Scenario "cancel" (accepted-then-cancel): the real Host calls
 //   cancelMineElevator with the exact accepted execution identity and the
 //   same cancellation token. The peer feeds the raw frame to the exact
@@ -87,12 +100,12 @@ import {
 //   false). The client settles the cancel promise AND the original terminal
 //   exactly once with the same cancelled lifecycle identity (structurally
 //   equal receipts).
-// - Delivery proof: after the scenario receipt frame write has completed the
-//   peer prints exactly one scenario stdout line
-//   "portfolio_stardew_interop_success_receipt_delivered" (success, only
-//   after the second drain dequeued the delivery) or
-//   "portfolio_stardew_interop_cancel_receipt_delivered" (cancel), then keeps
-//   the strict connection open until the client disconnects and exits 0.
+// - Delivery proof: after the scenario receipt frame write has completed, the
+//   peer prints exactly one matching scenario stdout marker. The success,
+//   entry_success, and ladder_success markers are printed only after the
+//   second terminal drain dequeued the delivery; cancel is printed after its
+//   exact terminal delivery. The peer then keeps the strict connection open
+//   until the client disconnects and exits 0.
 //   Protocol violations or timeouts exit nonzero with a stderr diagnostic.
 //   No other stdout/stderr content.
 
@@ -116,7 +129,9 @@ async function assertAttestedPeerBinding(): Promise<void> {
   assert.equal(peerPath, defaultPeerPath, "attested interop contract peer path must be canonical");
   const expectedHash = process.env.GAMEBUDDY_PORTFOLIO_INTEROP_PEER_SHA256;
   assert.match(expectedHash ?? "", /^[a-f0-9]{64}$/, "attested interop peer digest must be supplied");
-  const actualHash = createHash("sha256").update(await readFile(peerPath)).digest("hex");
+  const actualHash = createHash("sha256")
+    .update(await readFile(peerPath))
+    .digest("hex");
   assert.equal(actualHash, expectedHash, "attested interop peer digest mismatch");
 }
 
@@ -140,12 +155,14 @@ const requestId = "request_interop_mine_elevator";
 const traceId = "trace_interop_mine_elevator";
 const cancellationToken = "cancel_interop_mine_elevator_1";
 
-type InteropScenario = "success" | "cancel" | "ladder_success";
+type InteropScenario = "success" | "cancel" | "entry_success" | "entry_cancel" | "ladder_success";
 
 const scenarioReadyMarker = "portfolio_stardew_interop_ready";
 const scenarioDeliveryMarkers: Record<InteropScenario, string> = {
   success: "portfolio_stardew_interop_success_receipt_delivered",
   cancel: "portfolio_stardew_interop_cancel_receipt_delivered",
+  entry_success: "portfolio_stardew_interop_entry_success_receipt_delivered",
+  entry_cancel: "portfolio_stardew_interop_entry_cancel_receipt_delivered",
   ladder_success: "portfolio_stardew_interop_ladder_success_receipt_delivered",
 };
 
@@ -241,7 +258,7 @@ function isPipeListenerNotReady(error: unknown): boolean {
   return error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
 }
 
-async function connectAfterPipeListen<T>(pipeName: string, connect: () => Promise<T>): Promise<T> {
+async function connectAfterPipeListen<T>(_pipeName: string, connect: () => Promise<T>): Promise<T> {
   const deadlineMs = Date.now() + 5_000;
   let lastError: unknown;
   while (Date.now() < deadlineMs) {
@@ -357,6 +374,49 @@ async function connectThroughAcceptedLadder(pipeName: string) {
   }
 }
 
+async function connectThroughAcceptedEntry(pipeName: string, mode: "entry_success" | "entry_cancel") {
+  const peer = spawnPeer(pipeName, mode);
+  const stderr: Buffer[] = [];
+  const observed: string[] = [];
+  peer.stdout.on("data", (chunk: Buffer) => observed.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)));
+  peer.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+  let client: PortfolioStardewBridgeClient | undefined;
+
+  try {
+    await waitForLine(peer, scenarioReadyMarker, observed, stderr);
+    client = await beforeDeadline(
+      connectAfterPipeListen(pipeName, () => PortfolioStardewBridgeClient.connectBootstrap(identity, pipeName, token)),
+      "interop_portfolio_bootstrap_connect",
+      observed,
+    );
+    const closeReasons: string[] = [];
+    client.onClose((reason) => closeReasons.push(reason));
+    const snapshot = await beforeDeadline(client.observe(), "interop_portfolio_observe", observed);
+    assert.equal(snapshot.state, "ready");
+    assert.equal(snapshot.revision, 1);
+
+    const started = await beforeDeadline(
+      client.startMineEntry({
+        action: "enter_mine",
+        requestId: "request_interop_mine_entry",
+        traceId: "trace_interop_mine_entry",
+        idempotencyKey: "idem_interop_mine_entry",
+        expectedRevision: snapshot.revision,
+        deadlineMs: Date.now() + 30_000,
+        cancellationToken: "cancel_interop_mine_entry_1",
+        scope,
+      }),
+      "interop_portfolio_mine_entry_start",
+      observed,
+    );
+    return { peer, client, observed, stderr, closeReasons, started };
+  } catch (error) {
+    client?.close();
+    await exit(peer);
+    throw error;
+  }
+}
+
 test(
   "Portfolio C# peer success terminal-drain scenario: exact private ModEntry drain -> real pipe -> real client succeeded receipt + second-drain dequeue",
   {
@@ -386,7 +446,11 @@ test(
       // The peer's delivery-completion proof: the receipt frame write
       // finished on its side and the second exact drain dequeued the delivery
       // before any quiet-window or teardown check.
-      await beforeDeadline(waitForLine(peer, deliveredMarker, observed, stderr), "interop_portfolio_receipt_delivered", observed);
+      await beforeDeadline(
+        waitForLine(peer, deliveredMarker, observed, stderr),
+        "interop_portfolio_receipt_delivered",
+        observed,
+      );
 
       // The pending request resolves to the exact expected terminal receipt
       // exactly once: no duplicate delivery, no fail-closed close, no extra
@@ -410,11 +474,46 @@ test(
       assert.equal(receipt.revision, 3);
       assert.deepEqual(receipt.evidence.scope, scope);
       assert.deepEqual(receipt.evidence.phaseTrace, [
-        { requestId, traceId, executionId: started.executionId, phase: "fresh_observed", revision: 1, reasonCode: "fresh_observed" },
-        { requestId, traceId, executionId: started.executionId, phase: "accepted", revision: 1, reasonCode: "accepted" },
-        { requestId, traceId, executionId: started.executionId, phase: "transition_started", revision: 2, reasonCode: "mine_elevator_transition_started" },
-        { requestId, traceId, executionId: started.executionId, phase: "postcondition", revision: 3, reasonCode: "postcondition_observed" },
-        { requestId, traceId, executionId: started.executionId, phase: "terminal", revision: 3, reasonCode: "mine_elevator_floor_selected" },
+        {
+          requestId,
+          traceId,
+          executionId: started.executionId,
+          phase: "fresh_observed",
+          revision: 1,
+          reasonCode: "fresh_observed",
+        },
+        {
+          requestId,
+          traceId,
+          executionId: started.executionId,
+          phase: "accepted",
+          revision: 1,
+          reasonCode: "accepted",
+        },
+        {
+          requestId,
+          traceId,
+          executionId: started.executionId,
+          phase: "transition_started",
+          revision: 2,
+          reasonCode: "mine_elevator_transition_started",
+        },
+        {
+          requestId,
+          traceId,
+          executionId: started.executionId,
+          phase: "postcondition",
+          revision: 3,
+          reasonCode: "postcondition_observed",
+        },
+        {
+          requestId,
+          traceId,
+          executionId: started.executionId,
+          phase: "terminal",
+          revision: 3,
+          reasonCode: "mine_elevator_floor_selected",
+        },
       ]);
       assert.equal(receipt.evidence.entryObserved, true);
       assert.equal(receipt.evidence.currentFloorBefore, 0);
@@ -487,11 +586,20 @@ test(
         "interop_portfolio_mine_elevator_cancel",
         observed,
       );
-      const terminalReceipt = await beforeDeadline(terminal, "interop_portfolio_mine_elevator_terminal", observed, 25_000);
+      const terminalReceipt = await beforeDeadline(
+        terminal,
+        "interop_portfolio_mine_elevator_terminal",
+        observed,
+        25_000,
+      );
 
       // The peer's delivery-completion proof: the cancel receipt frame write
       // finished on its side before any quiet-window or teardown check.
-      await beforeDeadline(waitForLine(peer, deliveredMarker, observed, stderr), "interop_portfolio_receipt_delivered", observed);
+      await beforeDeadline(
+        waitForLine(peer, deliveredMarker, observed, stderr),
+        "interop_portfolio_receipt_delivered",
+        observed,
+      );
 
       // The cancel promise and the original terminal settle exactly once with
       // the SAME cancelled lifecycle identity (the client materializes a fresh
@@ -518,9 +626,30 @@ test(
       assert.equal(cancelReceipt.revision, 1);
       assert.deepEqual(cancelReceipt.evidence.scope, scope);
       assert.deepEqual(cancelReceipt.evidence.phaseTrace, [
-        { requestId, traceId, executionId: started.executionId, phase: "fresh_observed", revision: 1, reasonCode: "fresh_observed" },
-        { requestId, traceId, executionId: started.executionId, phase: "accepted", revision: 1, reasonCode: "accepted" },
-        { requestId, traceId, executionId: started.executionId, phase: "terminal", revision: 1, reasonCode: "native_operation_uncertain" },
+        {
+          requestId,
+          traceId,
+          executionId: started.executionId,
+          phase: "fresh_observed",
+          revision: 1,
+          reasonCode: "fresh_observed",
+        },
+        {
+          requestId,
+          traceId,
+          executionId: started.executionId,
+          phase: "accepted",
+          revision: 1,
+          reasonCode: "accepted",
+        },
+        {
+          requestId,
+          traceId,
+          executionId: started.executionId,
+          phase: "terminal",
+          revision: 1,
+          reasonCode: "native_operation_uncertain",
+        },
       ]);
       assert.equal(cancelReceipt.evidence.entryObserved, true);
       assert.equal(cancelReceipt.evidence.currentFloorBefore, 0);
@@ -572,6 +701,241 @@ test(
 );
 
 test(
+  "Portfolio C# peer entry terminal-drain scenario: exact private ModEntry drain -> real pipe -> real client succeeded receipt + second-drain dequeue",
+  {
+    timeout: 60_000,
+    skip: peerAvailable
+      ? false
+      : `Portfolio C# interop peer is not built; expected ${peerPath} or set GAMEBUDDY_PORTFOLIO_INTEROP_PEER_DLL`,
+  },
+  async () => {
+    await assertAttestedPeerBinding();
+    const mode = "entry_success" as const;
+    const deliveredMarker = scenarioDeliveryMarkers[mode];
+    const pipeName = `gamebuddy-stardew-portfolio-entry-interop_${process.pid}_${randomUUID().replaceAll("-", "")}`;
+    const { peer, client, observed, stderr, closeReasons, started } = await connectThroughAcceptedEntry(pipeName, mode);
+
+    try {
+      let terminalSettlements = 0;
+      const terminal = started.terminal.then((receipt) => {
+        terminalSettlements += 1;
+        return receipt;
+      });
+      const receipt = await beforeDeadline(terminal, "interop_portfolio_mine_entry_terminal", observed, 25_000);
+      await beforeDeadline(
+        waitForLine(peer, deliveredMarker, observed, stderr),
+        "interop_portfolio_receipt_delivered",
+        observed,
+      );
+
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 200));
+      assert.equal(terminalSettlements, 1);
+      assert.equal(client.state.connected, true);
+      assert.equal(client.state.authenticated, true);
+      assert.equal(client.state.latestReasonCode, null);
+      assert.deepEqual(closeReasons, []);
+
+      assert.equal(receipt.state, "succeeded");
+      assert.equal(receipt.reasonCode, "enter_mine_floor_used");
+      assert.equal(receipt.requestId, "request_interop_mine_entry");
+      assert.equal(receipt.traceId, "trace_interop_mine_entry");
+      assert.equal(receipt.executionId, started.executionId);
+      assert.equal(receipt.revision, 3);
+      assert.deepEqual(receipt.evidence.scope, scope);
+      assert.deepEqual(receipt.evidence.phaseTrace, [
+        {
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          phase: "fresh_observed",
+          revision: 1,
+          reasonCode: "fresh_observed",
+        },
+        {
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          phase: "accepted",
+          revision: 1,
+          reasonCode: "accepted",
+        },
+        {
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          phase: "transition_started",
+          revision: 2,
+          reasonCode: "enter_mine_transition_started",
+        },
+        {
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          phase: "postcondition",
+          revision: 3,
+          reasonCode: "postcondition_observed",
+        },
+        {
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          phase: "terminal",
+          revision: 3,
+          reasonCode: "enter_mine_floor_used",
+        },
+      ]);
+      assert.equal(receipt.evidence.entryObserved, true);
+      assert.equal(receipt.evidence.currentFloorBefore, 0);
+      assert.equal(receipt.evidence.lowestMineLevelBefore, 10);
+      assert.equal(receipt.evidence.opaqueEntryTarget, "enter_mine_target_01");
+      assert.equal(receipt.evidence.nativeEntryTransitionObserved, true);
+      assert.equal(receipt.evidence.currentFloorAfter, 1);
+      assert.equal(receipt.evidence.lowestMineLevelAfter, 10);
+      assert.equal(receipt.evidence.lowestMineLevelObserved, true);
+      assert.equal(receipt.postcondition.targetFloor, 1);
+      assert.equal(receipt.postcondition.actualCurrentFloor, 1);
+      assert.equal(receipt.postcondition.observedLowestMineLevel, 10);
+      assert.equal(receipt.postcondition.opaqueEntryTarget, "enter_mine_target_01");
+      assert.equal(receipt.postcondition.freshObservation, true);
+      assert.equal(receipt.postcondition.sameExecution, true);
+
+      client.close("interop_portfolio_test_complete");
+      const [code] = await beforeDeadline(once(peer, "close"), "interop_portfolio_peer_close", observed, 10_000);
+      assert.equal(code, 0);
+      assert.deepEqual(observed, [scenarioReadyMarker, deliveredMarker]);
+    } finally {
+      client.close();
+      await exit(peer);
+    }
+
+    assert.equal(Buffer.concat(stderr).toString("utf8"), "");
+  },
+);
+
+test(
+  "Portfolio C# peer entry accepted-then-cancel scenario: exact private ModEntry.HandlePortfolioMineEntryCancel -> compiled session/coordinator -> real pipe -> real client uncertain receipt",
+  {
+    timeout: 60_000,
+    skip: peerAvailable
+      ? false
+      : `Portfolio C# interop peer is not built; expected ${peerPath} or set GAMEBUDDY_PORTFOLIO_INTEROP_PEER_DLL`,
+  },
+  async () => {
+    await assertAttestedPeerBinding();
+    const mode = "entry_cancel" as const;
+    const deliveredMarker = scenarioDeliveryMarkers[mode];
+    const pipeName = `gamebuddy-stardew-portfolio-entry-cancel-interop_${process.pid}_${randomUUID().replaceAll("-", "")}`;
+    const { peer, client, observed, stderr, closeReasons, started } = await connectThroughAcceptedEntry(pipeName, mode);
+
+    try {
+      let terminalSettlements = 0;
+      const terminal = started.terminal.then((receipt) => {
+        terminalSettlements += 1;
+        return receipt;
+      });
+      const cancelReceipt = await beforeDeadline(
+        client.cancelMineEntry({
+          action: "enter_mine",
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          cancellationToken: "cancel_interop_mine_entry_1",
+          scope,
+        }),
+        "interop_portfolio_mine_entry_cancel",
+        observed,
+      );
+      const terminalReceipt = await beforeDeadline(terminal, "interop_portfolio_mine_entry_terminal", observed, 25_000);
+      await beforeDeadline(
+        waitForLine(peer, deliveredMarker, observed, stderr),
+        "interop_portfolio_receipt_delivered",
+        observed,
+      );
+
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 200));
+      assert.equal(terminalSettlements, 1);
+      assert.deepEqual(cancelReceipt, terminalReceipt);
+      assert.equal(client.state.connected, true);
+      assert.equal(client.state.authenticated, true);
+      assert.equal(client.state.latestReasonCode, null);
+      assert.deepEqual(closeReasons, []);
+
+      assert.equal(cancelReceipt.state, "uncertain");
+      assert.equal(cancelReceipt.reasonCode, "native_operation_uncertain");
+      assert.equal(cancelReceipt.requestId, "request_interop_mine_entry");
+      assert.equal(cancelReceipt.traceId, "trace_interop_mine_entry");
+      assert.equal(cancelReceipt.executionId, started.executionId);
+      assert.equal(cancelReceipt.revision, 1);
+      assert.deepEqual(cancelReceipt.evidence.scope, scope);
+      assert.deepEqual(cancelReceipt.evidence.phaseTrace, [
+        {
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          phase: "fresh_observed",
+          revision: 1,
+          reasonCode: "fresh_observed",
+        },
+        {
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          phase: "accepted",
+          revision: 1,
+          reasonCode: "accepted",
+        },
+        {
+          requestId: "request_interop_mine_entry",
+          traceId: "trace_interop_mine_entry",
+          executionId: started.executionId,
+          phase: "terminal",
+          revision: 1,
+          reasonCode: "native_operation_uncertain",
+        },
+      ]);
+      assert.equal(cancelReceipt.evidence.entryObserved, true);
+      assert.equal(cancelReceipt.evidence.currentFloorBefore, 0);
+      assert.equal(cancelReceipt.evidence.lowestMineLevelBefore, 10);
+      assert.equal(cancelReceipt.evidence.opaqueEntryTarget, "enter_mine_target_01");
+      assert.equal(cancelReceipt.evidence.nativeEntryTransitionObserved, false);
+      assert.equal(cancelReceipt.evidence.currentFloorAfter, 0);
+      assert.equal(cancelReceipt.evidence.lowestMineLevelAfter, 0);
+      assert.equal(cancelReceipt.evidence.lowestMineLevelObserved, false);
+      assert.equal(cancelReceipt.postcondition.targetFloor, 1);
+      assert.equal(cancelReceipt.postcondition.actualCurrentFloor, 0);
+      assert.equal(cancelReceipt.postcondition.observedLowestMineLevel, 0);
+      assert.equal(cancelReceipt.postcondition.opaqueEntryTarget, "enter_mine_target_01");
+      assert.equal(cancelReceipt.postcondition.freshObservation, false);
+      assert.equal(cancelReceipt.postcondition.sameExecution, false);
+
+      const activeClient = client;
+      await assert.rejects(
+        () =>
+          activeClient.cancelMineEntry({
+            action: "enter_mine",
+            requestId: "request_interop_mine_entry",
+            traceId: "trace_interop_mine_entry",
+            executionId: started.executionId,
+            cancellationToken: "cancel_interop_mine_entry_1",
+            scope,
+          }),
+        /portfolio_enter_mine_cancel_not_pending/,
+      );
+
+      client.close("interop_portfolio_test_complete");
+      const [code] = await beforeDeadline(once(peer, "close"), "interop_portfolio_peer_close", observed, 10_000);
+      assert.equal(code, 0);
+      assert.deepEqual(observed, [scenarioReadyMarker, deliveredMarker]);
+    } finally {
+      client.close();
+      await exit(peer);
+    }
+
+    assert.equal(Buffer.concat(stderr).toString("utf8"), "");
+  },
+);
+
+test(
   "Portfolio C# peer ladder terminal-drain scenario: exact private ModEntry drain -> real pipe -> real client succeeded receipt + second-drain dequeue",
   {
     timeout: 60_000,
@@ -593,7 +957,11 @@ test(
         return receipt;
       });
       const receipt = await beforeDeadline(terminal, "interop_portfolio_mine_ladder_terminal", observed, 25_000);
-      await beforeDeadline(waitForLine(peer, deliveredMarker, observed, stderr), "interop_portfolio_receipt_delivered", observed);
+      await beforeDeadline(
+        waitForLine(peer, deliveredMarker, observed, stderr),
+        "interop_portfolio_receipt_delivered",
+        observed,
+      );
 
       await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 200));
       assert.equal(terminalSettlements, 1);
@@ -610,11 +978,46 @@ test(
       assert.equal(receipt.revision, 3);
       assert.deepEqual(receipt.evidence.scope, scope);
       assert.deepEqual(receipt.evidence.phaseTrace, [
-        { requestId: "request_interop_mine_ladder", traceId: "trace_interop_mine_ladder", executionId: started.executionId, phase: "fresh_observed", revision: 1, reasonCode: "fresh_observed" },
-        { requestId: "request_interop_mine_ladder", traceId: "trace_interop_mine_ladder", executionId: started.executionId, phase: "accepted", revision: 1, reasonCode: "accepted" },
-        { requestId: "request_interop_mine_ladder", traceId: "trace_interop_mine_ladder", executionId: started.executionId, phase: "transition_started", revision: 2, reasonCode: "mine_ladder_transition_started" },
-        { requestId: "request_interop_mine_ladder", traceId: "trace_interop_mine_ladder", executionId: started.executionId, phase: "postcondition", revision: 3, reasonCode: "postcondition_observed" },
-        { requestId: "request_interop_mine_ladder", traceId: "trace_interop_mine_ladder", executionId: started.executionId, phase: "terminal", revision: 3, reasonCode: "mine_ladder_floor_used" },
+        {
+          requestId: "request_interop_mine_ladder",
+          traceId: "trace_interop_mine_ladder",
+          executionId: started.executionId,
+          phase: "fresh_observed",
+          revision: 1,
+          reasonCode: "fresh_observed",
+        },
+        {
+          requestId: "request_interop_mine_ladder",
+          traceId: "trace_interop_mine_ladder",
+          executionId: started.executionId,
+          phase: "accepted",
+          revision: 1,
+          reasonCode: "accepted",
+        },
+        {
+          requestId: "request_interop_mine_ladder",
+          traceId: "trace_interop_mine_ladder",
+          executionId: started.executionId,
+          phase: "transition_started",
+          revision: 2,
+          reasonCode: "mine_ladder_transition_started",
+        },
+        {
+          requestId: "request_interop_mine_ladder",
+          traceId: "trace_interop_mine_ladder",
+          executionId: started.executionId,
+          phase: "postcondition",
+          revision: 3,
+          reasonCode: "postcondition_observed",
+        },
+        {
+          requestId: "request_interop_mine_ladder",
+          traceId: "trace_interop_mine_ladder",
+          executionId: started.executionId,
+          phase: "terminal",
+          revision: 3,
+          reasonCode: "mine_ladder_floor_used",
+        },
       ]);
       assert.equal(receipt.evidence.entryObserved, true);
       assert.equal(receipt.evidence.currentFloorBefore, 1);

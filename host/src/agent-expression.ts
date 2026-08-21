@@ -1,4 +1,4 @@
-import { type AgentSession, type AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 /**
  * Legacy observation hook retained for trace consumers. It deliberately does

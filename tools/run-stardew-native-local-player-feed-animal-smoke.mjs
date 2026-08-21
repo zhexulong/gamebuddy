@@ -137,7 +137,10 @@ if (import.meta.main) {
     if (result.state !== "passed") process.exitCode = 2;
   } catch (error) {
     console.error(
-      JSON.stringify({ state: "blocked", reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256) }),
+      JSON.stringify({
+        state: "blocked",
+        reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
+      }),
     );
     process.exitCode = 2;
   } finally {
@@ -173,11 +176,19 @@ async function travelToFarm(client, receipts, trace, snapshot) {
   const warps = (snapshot.warps ?? []).filter((entry) => validDoor(entry) && entry.targetLocation === "Farm");
   if (warps.length !== 1) throw new Error(warps.length ? "ambiguous_farm_warp" : "farm_warp_missing");
   const warp = warps[0];
-  if (!adjacent(snapshot.tile, warp)) snapshot = await move(client, receipts, trace, snapshot, warp, "move_to_farm_warp");
+  if (!adjacent(snapshot.tile, warp))
+    snapshot = await move(client, receipts, trace, snapshot, warp, "move_to_farm_warp");
   snapshot = await observeActionable(client);
   const fresh = (snapshot.warps ?? []).find((entry) => sameDoor(entry, warp));
   if (!fresh || !adjacent(snapshot.tile, fresh)) throw new Error("fresh_farm_warp_unavailable");
-  const accepted = await execute(client, trace, "travel_to_farm", "travel", { x: fresh.sourceX, y: fresh.sourceY }, snapshot);
+  const accepted = await execute(
+    client,
+    trace,
+    "travel_to_farm",
+    "travel",
+    { x: fresh.sourceX, y: fresh.sourceY },
+    snapshot,
+  );
   if (accepted.state !== "accepted") throw new Error(`travel_to_farm_not_accepted:${accepted.reasonCode}`);
   const terminal = await waitForTerminal(receipts, accepted, 20_000);
   trace.push({ phase: "travel_to_farm_terminal", action: "travel", receipt: summarizeReceipt(terminal) });
@@ -195,7 +206,10 @@ async function awaitActionableSnapshotAfterEnter(client) {
       return await observeActionable(client);
     } catch (error) {
       const message = String(error instanceof Error ? error.message : error);
-      if (message !== "native_local_feed_animal_snapshot_not_actionable" && message !== "native_snapshot_not_actionable")
+      if (
+        message !== "native_local_feed_animal_snapshot_not_actionable" &&
+        message !== "native_snapshot_not_actionable"
+      )
         throw error;
       await delay(100);
     }

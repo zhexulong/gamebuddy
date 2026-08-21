@@ -3,14 +3,14 @@ import test from "node:test";
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type WorldFact } from "./event-pump.js";
+import { normalizeExecutionWake } from "./action-execution-coordinator.internal.js";
+import type { WorldFact } from "./event-pump.js";
 import {
   assertReceiptBackedLaunch,
-  RECEIPT_BACKED_INTEGRATION_AUTHORITY,
   type IntegrationLauncher,
   type IntegrationLaunchHandle,
+  RECEIPT_BACKED_INTEGRATION_AUTHORITY,
 } from "./integration-launcher.js";
-import { normalizeExecutionWake } from "./action-execution-coordinator.internal.js";
 import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";

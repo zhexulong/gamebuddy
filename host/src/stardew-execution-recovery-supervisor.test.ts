@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import { createActionExecutionCoordinator } from "./action-execution-coordinator.internal.js";
+import type { IntegrationConnection } from "./integration-types.js";
+import type { ExecutionReceipt } from "./protocol.js";
 import {
   isExactReceiptRecoveryPort,
   StardewExecutionRecoverySupervisor,
 } from "./stardew-execution-recovery-supervisor.js";
-import { createActionExecutionCoordinator } from "./action-execution-coordinator.internal.js";
-import type { ExecutionReceipt } from "./protocol.js";
-import type { IntegrationConnection } from "./integration-types.js";
 
 function receipt(state: ExecutionReceipt["state"]): ExecutionReceipt {
   return {
@@ -77,6 +76,8 @@ test("receipt_not_found preserves uncertainty and a mismatched receipt never ent
   const mismatch = await supervisor.recoverFromFreshBinding({
     queryExecutionReceipt: async () => ({ ...receipt("succeeded"), requestId: "other_request" }),
   });
-  assert.deepEqual(mismatch, [{ requestId: "request_recovery_01", result: "rejected", reasonCode: "receipt_request_mismatch" }]);
+  assert.deepEqual(mismatch, [
+    { requestId: "request_recovery_01", result: "rejected", reasonCode: "receipt_request_mismatch" },
+  ]);
   assert.equal(coordinator.uncertainDispatches().length, 1);
 });

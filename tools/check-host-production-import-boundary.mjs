@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const requireFromHost = createRequire(resolve(import.meta.dirname, "../host/package.json"));
 const ts = requireFromHost("typescript");
@@ -54,7 +54,7 @@ const P4B_FACADE_MODULE = "tavern/p4-provider-attempt.ts";
 const P4B_BRIDGE_MODULE = "tavern/p4-provider-attempt.internal.ts";
 const P4C_FACADE_MODULE = "tavern/p4-provider-start.ts";
 const P4C_BRIDGE_MODULE = "tavern/p4-provider-start.internal.ts";
-const P4C_EXECUTION_MODULE = "tavern/p4-provider-start-execution.ts";
+const _P4C_EXECUTION_MODULE = "tavern/p4-provider-start-execution.ts";
 const P5_FACADE_MODULE = "tavern/p5-presentation-commit.ts";
 const P5_BRIDGE_MODULE = "tavern/p5-presentation-commit.internal.ts";
 const P4_STORE_MODULE = "tavern/chat-thread-store.ts";
@@ -65,10 +65,7 @@ const P4B_COORDINATOR_IMPORTS = new Set([
   "consumeMountedP4AttemptAdmission",
   "consumeMountedP4AttemptInvocationAdmission",
 ]);
-const P4C_COORDINATOR_IMPORTS = new Set([
-  "startMountedP4Attempt",
-  "consumeMountedP4AttemptInvocationAdmission",
-]);
+const P4C_COORDINATOR_IMPORTS = new Set(["startMountedP4Attempt", "consumeMountedP4AttemptInvocationAdmission"]);
 const P4_STORE_IMPORTS = new Set([
   "acceptP4MountedPlayerMessage",
   "claimP4MountedAttempt",
@@ -258,15 +255,20 @@ function importedBindings(all, start, end) {
   let inBraces = false;
   for (let cursor = start; cursor < end; cursor += 1) {
     const token = all[cursor];
-    if (token.value === "{") { inBraces = true; continue; }
-    if (token.value === "}") { inBraces = false; continue; }
-    if (token.value === "*") { bindings.push("*"); continue; }
+    if (token.value === "{") {
+      inBraces = true;
+      continue;
+    }
+    if (token.value === "}") {
+      inBraces = false;
+      continue;
+    }
+    if (token.value === "*") {
+      bindings.push("*");
+      continue;
+    }
     if ((token.type !== "word" && token.type !== "string") || token.value === "type" || token.value === "as") continue;
-    if (
-      inBraces &&
-      ["{", ","].includes(all[cursor - 1]?.value) &&
-      all[cursor - 1]?.value !== "type"
-    )
+    if (inBraces && ["{", ","].includes(all[cursor - 1]?.value) && all[cursor - 1]?.value !== "type")
       // ES module bindings may be string-named (for example
       // `import { "acceptP4MountedPlayerMessage" as raw }`). Those are
       // executable bindings just like identifier-named imports.
@@ -287,13 +289,21 @@ function p4BridgeRuntimeExports(source) {
     if (all[index].value !== "import" || all[index + 1]?.value === "type") continue;
     let from = -1;
     for (let cursor = index + 1; cursor < all.length && all[cursor].value !== ";"; cursor += 1)
-      if (all[cursor].value === "from" && all[cursor + 1]?.type === "string") { from = cursor; break; }
+      if (all[cursor].value === "from" && all[cursor + 1]?.type === "string") {
+        from = cursor;
+        break;
+      }
     if (from < 0) continue;
     const specifier = all[from + 1].value;
-    const sensitive = specifier.includes("continuity-semantic-production-coordinator.internal") || specifier.includes("/chat-thread-store");
+    const sensitive =
+      specifier.includes("continuity-semantic-production-coordinator.internal") ||
+      specifier.includes("/chat-thread-store");
     if (!sensitive) continue;
     for (let cursor = index + 1; cursor < from; cursor += 1) {
-      if (all[cursor].value === "*") { if (all[cursor + 1]?.value === "as") sensitiveLocals.add(all[cursor + 2]?.value); continue; }
+      if (all[cursor].value === "*") {
+        if (all[cursor + 1]?.value === "as") sensitiveLocals.add(all[cursor + 2]?.value);
+        continue;
+      }
       if (all[cursor].value === "{") {
         const close = matchingToken(all, cursor, "{", "}");
         for (let item = cursor + 1; item < close; item += 1) {
@@ -352,12 +362,19 @@ function p4BridgeRuntimeExports(source) {
     if (all[index + 1]?.value === "{") {
       const close = matchingToken(all, index + 1, "{", "}");
       for (let item = index + 2; item < close; item += 1) {
-        if (all[item].type !== "word" || all[item].value === "type" || !["{", ","].includes(all[item - 1]?.value)) continue;
-        exports.push({ name: all[item + 1]?.value === "as" ? all[item + 2]?.value : all[item].value, sensitive: sensitiveLocals.has(all[item].value) });
+        if (all[item].type !== "word" || all[item].value === "type" || !["{", ","].includes(all[item - 1]?.value))
+          continue;
+        exports.push({
+          name: all[item + 1]?.value === "as" ? all[item + 2]?.value : all[item].value,
+          sensitive: sensitiveLocals.has(all[item].value),
+        });
       }
       continue;
     }
-    if (all[index + 1]?.value === "*") { exports.push({ name: "*", sensitive: true }); continue; }
+    if (all[index + 1]?.value === "*") {
+      exports.push({ name: "*", sensitive: true });
+      continue;
+    }
     if (["const", "let", "var", "function", "class", "async"].includes(all[index + 1]?.value)) {
       const name = all[index + 1]?.value === "async" ? all[index + 3]?.value : all[index + 2]?.value;
       exports.push({ name, sensitive: sensitiveLocals.has(name) });
@@ -365,13 +382,16 @@ function p4BridgeRuntimeExports(source) {
   }
   return exports;
 }
-function isExactP4BridgeImplementation(source, shape = Object.freeze({
-  facade: "acceptMountedP4DurableTurnFromFacade",
-  runner: "acceptMountedP4DurableTurn",
-  consumer: "consumeMountedP4Admission",
-  store: "acceptP4MountedPlayerMessage",
-  command: true,
-})) {
+function isExactP4BridgeImplementation(
+  source,
+  shape = Object.freeze({
+    facade: "acceptMountedP4DurableTurnFromFacade",
+    runner: "acceptMountedP4DurableTurn",
+    consumer: "consumeMountedP4Admission",
+    store: "acceptP4MountedPlayerMessage",
+    command: true,
+  }),
+) {
   const file = ts.createSourceFile("p4-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const runtimeImports = new Map();
   const addRuntimeImport = (module, name, local) => {
@@ -385,7 +405,8 @@ function isExactP4BridgeImplementation(source, shape = Object.freeze({
       if (!ts.isStringLiteral(statement.moduleSpecifier)) return false;
       const clause = statement.importClause;
       if (clause === undefined || clause.isTypeOnly) continue;
-      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings)) return false;
+      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings))
+        return false;
       for (const entry of clause.namedBindings.elements) {
         if (entry.isTypeOnly) continue;
         addRuntimeImport(statement.moduleSpecifier.text, entry.propertyName?.text ?? entry.name.text, entry.name.text);
@@ -407,15 +428,23 @@ function isExactP4BridgeImplementation(source, shape = Object.freeze({
   }
   const hasExactRuntimeImports = (module, expected) => {
     const actual = runtimeImports.get(module) ?? [];
-    return actual.length === expected.length && expected.every(({ name, local }) => actual.some((entry) => entry.name === name && entry.local === local));
+    return (
+      actual.length === expected.length &&
+      expected.every(({ name, local }) => actual.some((entry) => entry.name === name && entry.local === local))
+    );
   };
   if (
     runtimeImports.size !== 2 ||
-    !hasExactRuntimeImports("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", [
-      { name: shape.runner, local: shape.runner },
-      { name: shape.consumer, local: shape.consumer },
-      ...(shape.invocationConsumer === undefined ? [] : [{ name: shape.invocationConsumer, local: shape.invocationConsumer }]),
-    ]) ||
+    !hasExactRuntimeImports(
+      "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
+      [
+        { name: shape.runner, local: shape.runner },
+        { name: shape.consumer, local: shape.consumer },
+        ...(shape.invocationConsumer === undefined
+          ? []
+          : [{ name: shape.invocationConsumer, local: shape.invocationConsumer }]),
+      ],
+    ) ||
     !hasExactRuntimeImports("./chat-thread-store.js", [{ name: shape.store, local: shape.store }]) ||
     implementation === undefined ||
     implementation.name?.text !== shape.facade ||
@@ -425,7 +454,8 @@ function isExactP4BridgeImplementation(source, shape = Object.freeze({
     implementation.parameters.some(
       (parameter, index) =>
         parameter.name.kind !== ts.SyntaxKind.Identifier ||
-        parameter.name.getText(file) !== (shape.command ? ["manifest", "lease", "command"][index] : ["manifest", "lease"][index]) ||
+        parameter.name.getText(file) !==
+          (shape.command ? ["manifest", "lease", "command"][index] : ["manifest", "lease"][index]) ||
         parameter.initializer !== undefined ||
         parameter.dotDotDotToken !== undefined ||
         parameter.questionToken !== undefined ||
@@ -438,19 +468,50 @@ function isExactP4BridgeImplementation(source, shape = Object.freeze({
   )
     return false;
   const outer = implementation.body.statements[0].expression;
-  if (!ts.isCallExpression(outer) || !ts.isIdentifier(outer.expression) || outer.expression.text !== shape.runner || outer.arguments.length !== (shape.invocationConsumer === undefined ? 3 : 4)) return false;
-  if (!ts.isIdentifier(outer.arguments[0]) || outer.arguments[0].text !== "manifest" || !ts.isIdentifier(outer.arguments[1]) || outer.arguments[1].text !== "lease") return false;
+  if (
+    !ts.isCallExpression(outer) ||
+    !ts.isIdentifier(outer.expression) ||
+    outer.expression.text !== shape.runner ||
+    outer.arguments.length !== (shape.invocationConsumer === undefined ? 3 : 4)
+  )
+    return false;
+  if (
+    !ts.isIdentifier(outer.arguments[0]) ||
+    outer.arguments[0].text !== "manifest" ||
+    !ts.isIdentifier(outer.arguments[1]) ||
+    outer.arguments[1].text !== "lease"
+  )
+    return false;
   const firstCallback = outer.arguments[2];
-  if (!ts.isArrowFunction(firstCallback) || firstCallback.parameters.length !== 1 || !ts.isIdentifier(firstCallback.parameters[0].name)) return false;
+  if (
+    !ts.isArrowFunction(firstCallback) ||
+    firstCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(firstCallback.parameters[0].name)
+  )
+    return false;
   const admission = firstCallback.parameters[0].name.text;
   const firstBody = ts.isBlock(firstCallback.body)
     ? firstCallback.body.statements.length === 1 && ts.isReturnStatement(firstCallback.body.statements[0])
       ? firstCallback.body.statements[0].expression
       : undefined
     : firstCallback.body;
-  if (!firstBody || !ts.isCallExpression(firstBody) || !ts.isIdentifier(firstBody.expression) || firstBody.expression.text !== shape.consumer || firstBody.arguments.length !== 2 || !ts.isIdentifier(firstBody.arguments[0]) || firstBody.arguments[0].text !== admission) return false;
+  if (
+    !firstBody ||
+    !ts.isCallExpression(firstBody) ||
+    !ts.isIdentifier(firstBody.expression) ||
+    firstBody.expression.text !== shape.consumer ||
+    firstBody.arguments.length !== 2 ||
+    !ts.isIdentifier(firstBody.arguments[0]) ||
+    firstBody.arguments[0].text !== admission
+  )
+    return false;
   const secondCallback = firstBody.arguments[1];
-  if (!ts.isArrowFunction(secondCallback) || secondCallback.parameters.length !== 1 || !ts.isIdentifier(secondCallback.parameters[0].name)) return false;
+  if (
+    !ts.isArrowFunction(secondCallback) ||
+    secondCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(secondCallback.parameters[0].name)
+  )
+    return false;
   const binding = secondCallback.parameters[0].name.text;
   const secondBody = ts.isBlock(secondCallback.body)
     ? secondCallback.body.statements.length === 1 && ts.isReturnStatement(secondCallback.body.statements[0])
@@ -470,12 +531,31 @@ function isExactP4BridgeImplementation(source, shape = Object.freeze({
   if (!exactStoreCall) return false;
   if (shape.invocationConsumer === undefined) return true;
   const observer = outer.arguments[3];
-  if (!ts.isArrowFunction(observer) || observer.parameters.length !== 1 || !ts.isIdentifier(observer.parameters[0].name)) return false;
+  if (
+    !ts.isArrowFunction(observer) ||
+    observer.parameters.length !== 1 ||
+    !ts.isIdentifier(observer.parameters[0].name)
+  )
+    return false;
   const invocation = observer.parameters[0].name.text;
   const observerBody = observer.body;
-  if (!ts.isCallExpression(observerBody) || !ts.isIdentifier(observerBody.expression) || observerBody.expression.text !== shape.invocationConsumer || observerBody.arguments.length !== 2 || !ts.isIdentifier(observerBody.arguments[0]) || observerBody.arguments[0].text !== invocation) return false;
+  if (
+    !ts.isCallExpression(observerBody) ||
+    !ts.isIdentifier(observerBody.expression) ||
+    observerBody.expression.text !== shape.invocationConsumer ||
+    observerBody.arguments.length !== 2 ||
+    !ts.isIdentifier(observerBody.arguments[0]) ||
+    observerBody.arguments[0].text !== invocation
+  )
+    return false;
   const callback = observerBody.arguments[1];
-  return ts.isArrowFunction(callback) && callback.parameters.length === 0 && callback.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true && ts.isIdentifier(callback.body) && callback.body.text === "undefined";
+  return (
+    ts.isArrowFunction(callback) &&
+    callback.parameters.length === 0 &&
+    callback.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true &&
+    ts.isIdentifier(callback.body) &&
+    callback.body.text === "undefined"
+  );
 }
 
 /** P4c may only start an already durable P4b claim through its private scope. */
@@ -488,57 +568,119 @@ function isExactP4cBridgeImplementation(source) {
       if (!ts.isStringLiteral(statement.moduleSpecifier)) return false;
       const clause = statement.importClause;
       if (clause === undefined || clause.isTypeOnly) continue;
-      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings)) return false;
+      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings))
+        return false;
       runtimeImports.set(
         statement.moduleSpecifier.text,
-        clause.namedBindings.elements.filter((entry) => !entry.isTypeOnly).map((entry) => ({
-          name: entry.propertyName?.text ?? entry.name.text,
-          local: entry.name.text,
-        })),
+        clause.namedBindings.elements
+          .filter((entry) => !entry.isTypeOnly)
+          .map((entry) => ({
+            name: entry.propertyName?.text ?? entry.name.text,
+            local: entry.name.text,
+          })),
       );
       continue;
     }
-    if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement) || (ts.isExportDeclaration(statement) && statement.isTypeOnly)) continue;
-    if (ts.isFunctionDeclaration(statement) && implementation === undefined) { implementation = statement; continue; }
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      (ts.isExportDeclaration(statement) && statement.isTypeOnly)
+    )
+      continue;
+    if (ts.isFunctionDeclaration(statement) && implementation === undefined) {
+      implementation = statement;
+      continue;
+    }
     return false;
   }
   const exactImports = (module, expected) => {
     const actual = runtimeImports.get(module) ?? [];
-    return actual.length === expected.length && expected.every(({ name, local }) => actual.some((entry) => entry.name === name && entry.local === local));
+    return (
+      actual.length === expected.length &&
+      expected.every(({ name, local }) => actual.some((entry) => entry.name === name && entry.local === local))
+    );
   };
   if (
     runtimeImports.size !== 2 ||
-    !exactImports("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", [
-      { name: "startMountedP4Attempt", local: "startMountedP4Attempt" },
-      { name: "consumeMountedP4AttemptInvocationAdmission", local: "consumeMountedP4AttemptInvocationAdmission" },
+    !exactImports(
+      "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
+      [
+        { name: "startMountedP4Attempt", local: "startMountedP4Attempt" },
+        { name: "consumeMountedP4AttemptInvocationAdmission", local: "consumeMountedP4AttemptInvocationAdmission" },
+      ],
+    ) ||
+    !exactImports("./p4-provider-start-execution.js", [
+      { name: "runMountedP4ProviderStartLedger", local: "runMountedP4ProviderStartLedger" },
     ]) ||
-    !exactImports("./p4-provider-start-execution.js", [{ name: "runMountedP4ProviderStartLedger", local: "runMountedP4ProviderStartLedger" }]) ||
     implementation === undefined ||
     implementation.name?.text !== "startMountedP4ProviderStartFromFacade" ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
     implementation.parameters.length !== 2 ||
-    implementation.parameters.some((parameter, index) =>
-      parameter.name.kind !== ts.SyntaxKind.Identifier ||
-      parameter.name.getText(file) !== ["manifest", "lease"][index] ||
-      parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined || parameter.questionToken !== undefined ||
-      (parameter.modifiers?.length ?? 0) !== 0,
+    implementation.parameters.some(
+      (parameter, index) =>
+        parameter.name.kind !== ts.SyntaxKind.Identifier ||
+        parameter.name.getText(file) !== ["manifest", "lease"][index] ||
+        parameter.initializer !== undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        parameter.questionToken !== undefined ||
+        (parameter.modifiers?.length ?? 0) !== 0,
     ) ||
-    implementation.body === undefined || implementation.body.statements.length !== 1 ||
-    !ts.isReturnStatement(implementation.body.statements[0]) || implementation.body.statements[0].expression === undefined
-  ) return false;
+    implementation.body === undefined ||
+    implementation.body.statements.length !== 1 ||
+    !ts.isReturnStatement(implementation.body.statements[0]) ||
+    implementation.body.statements[0].expression === undefined
+  )
+    return false;
   const outer = implementation.body.statements[0].expression;
-  if (!ts.isCallExpression(outer) || !ts.isIdentifier(outer.expression) || outer.expression.text !== "startMountedP4Attempt" || outer.arguments.length !== 3) return false;
-  if (!ts.isIdentifier(outer.arguments[0]) || outer.arguments[0].text !== "manifest" || !ts.isIdentifier(outer.arguments[1]) || outer.arguments[1].text !== "lease") return false;
+  if (
+    !ts.isCallExpression(outer) ||
+    !ts.isIdentifier(outer.expression) ||
+    outer.expression.text !== "startMountedP4Attempt" ||
+    outer.arguments.length !== 3
+  )
+    return false;
+  if (
+    !ts.isIdentifier(outer.arguments[0]) ||
+    outer.arguments[0].text !== "manifest" ||
+    !ts.isIdentifier(outer.arguments[1]) ||
+    outer.arguments[1].text !== "lease"
+  )
+    return false;
   const invocationCallback = outer.arguments[2];
-  if (!ts.isArrowFunction(invocationCallback) || invocationCallback.parameters.length !== 1 || !ts.isIdentifier(invocationCallback.parameters[0].name)) return false;
+  if (
+    !ts.isArrowFunction(invocationCallback) ||
+    invocationCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(invocationCallback.parameters[0].name)
+  )
+    return false;
   const invocation = invocationCallback.parameters[0].name.text;
   const invocationBody = invocationCallback.body;
-  if (!ts.isCallExpression(invocationBody) || !ts.isIdentifier(invocationBody.expression) || invocationBody.expression.text !== "consumeMountedP4AttemptInvocationAdmission" || invocationBody.arguments.length !== 2 || !ts.isIdentifier(invocationBody.arguments[0]) || invocationBody.arguments[0].text !== invocation) return false;
+  if (
+    !ts.isCallExpression(invocationBody) ||
+    !ts.isIdentifier(invocationBody.expression) ||
+    invocationBody.expression.text !== "consumeMountedP4AttemptInvocationAdmission" ||
+    invocationBody.arguments.length !== 2 ||
+    !ts.isIdentifier(invocationBody.arguments[0]) ||
+    invocationBody.arguments[0].text !== invocation
+  )
+    return false;
   const scopeCallback = invocationBody.arguments[1];
-  if (!ts.isArrowFunction(scopeCallback) || scopeCallback.parameters.length !== 1 || !ts.isIdentifier(scopeCallback.parameters[0].name)) return false;
+  if (
+    !ts.isArrowFunction(scopeCallback) ||
+    scopeCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(scopeCallback.parameters[0].name)
+  )
+    return false;
   const scope = scopeCallback.parameters[0].name.text;
-  return ts.isCallExpression(scopeCallback.body) && ts.isIdentifier(scopeCallback.body.expression) && scopeCallback.body.expression.text === "runMountedP4ProviderStartLedger" && scopeCallback.body.arguments.length === 1 && ts.isIdentifier(scopeCallback.body.arguments[0]) && scopeCallback.body.arguments[0].text === scope;
+  return (
+    ts.isCallExpression(scopeCallback.body) &&
+    ts.isIdentifier(scopeCallback.body.expression) &&
+    scopeCallback.body.expression.text === "runMountedP4ProviderStartLedger" &&
+    scopeCallback.body.arguments.length === 1 &&
+    ts.isIdentifier(scopeCallback.body.arguments[0]) &&
+    scopeCallback.body.arguments[0].text === scope
+  );
 }
 
 /** P5 has no independent ingress: its bridge may only delegate to P4c's facade. */
@@ -551,18 +693,29 @@ function isExactP5BridgeImplementation(source) {
       if (!ts.isStringLiteral(statement.moduleSpecifier)) return false;
       const clause = statement.importClause;
       if (clause === undefined || clause.isTypeOnly) continue;
-      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings)) return false;
+      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings))
+        return false;
       runtimeImports.set(
         statement.moduleSpecifier.text,
-        clause.namedBindings.elements.filter((entry) => !entry.isTypeOnly).map((entry) => ({
-          name: entry.propertyName?.text ?? entry.name.text,
-          local: entry.name.text,
-        })),
+        clause.namedBindings.elements
+          .filter((entry) => !entry.isTypeOnly)
+          .map((entry) => ({
+            name: entry.propertyName?.text ?? entry.name.text,
+            local: entry.name.text,
+          })),
       );
       continue;
     }
-    if (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement) || (ts.isExportDeclaration(statement) && statement.isTypeOnly)) continue;
-    if (ts.isFunctionDeclaration(statement) && implementation === undefined) { implementation = statement; continue; }
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      (ts.isExportDeclaration(statement) && statement.isTypeOnly)
+    )
+      continue;
+    if (ts.isFunctionDeclaration(statement) && implementation === undefined) {
+      implementation = statement;
+      continue;
+    }
     return false;
   }
   const imports = runtimeImports.get("./p4-provider-start.js") ?? [];
@@ -576,15 +729,21 @@ function isExactP5BridgeImplementation(source) {
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
     implementation.parameters.length !== 2 ||
-    implementation.parameters.some((parameter, index) =>
-      parameter.name.kind !== ts.SyntaxKind.Identifier ||
-      parameter.name.getText(file) !== ["manifest", "lease"][index] ||
-      parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined || parameter.questionToken !== undefined ||
-      (parameter.modifiers?.length ?? 0) !== 0,
+    implementation.parameters.some(
+      (parameter, index) =>
+        parameter.name.kind !== ts.SyntaxKind.Identifier ||
+        parameter.name.getText(file) !== ["manifest", "lease"][index] ||
+        parameter.initializer !== undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        parameter.questionToken !== undefined ||
+        (parameter.modifiers?.length ?? 0) !== 0,
     ) ||
-    implementation.body === undefined || implementation.body.statements.length !== 1 ||
-    !ts.isReturnStatement(implementation.body.statements[0]) || implementation.body.statements[0].expression === undefined
-  ) return false;
+    implementation.body === undefined ||
+    implementation.body.statements.length !== 1 ||
+    !ts.isReturnStatement(implementation.body.statements[0]) ||
+    implementation.body.statements[0].expression === undefined
+  )
+    return false;
   const returned = implementation.body.statements[0].expression;
   return (
     ts.isCallExpression(returned) &&
@@ -594,8 +753,8 @@ function isExactP5BridgeImplementation(source) {
     ts.isIdentifier(returned.expression.expression.expression) &&
     returned.expression.expression.expression.text === "createP4ProviderStartFacade" &&
     returned.expression.expression.arguments.length === 2 &&
-    returned.expression.expression.arguments.every((argument, index) =>
-      ts.isIdentifier(argument) && argument.text === ["manifest", "lease"][index],
+    returned.expression.expression.arguments.every(
+      (argument, index) => ts.isIdentifier(argument) && argument.text === ["manifest", "lease"][index],
     ) &&
     returned.arguments.length === 0
   );
@@ -636,23 +795,31 @@ function staticReferences(source) {
       return ts.isIdentifier(unwrapped) && (unwrapped.text === "globalThis" || unwrapped.text === "global");
     };
     const globalSelfAliasAcquisition =
-      (ts.isPropertyAccessExpression(node) && globalObject(node.expression) &&
+      (ts.isPropertyAccessExpression(node) &&
+        globalObject(node.expression) &&
         (node.name.text === "global" || node.name.text === "globalThis")) ||
-      (ts.isElementAccessExpression(node) && globalObject(node.expression) &&
+      (ts.isElementAccessExpression(node) &&
+        globalObject(node.expression) &&
         ts.isStringLiteral(node.argumentExpression) &&
         (node.argumentExpression.text === "global" || node.argumentExpression.text === "globalThis"));
     const globalProcessPath = (value) => {
       const unwrapped = unwrapTransparentGlobalReceiver(value);
       return (
-        (ts.isPropertyAccessExpression(unwrapped) && globalObject(unwrapped.expression) && unwrapped.name.text === "process") ||
-        (ts.isElementAccessExpression(unwrapped) && globalObject(unwrapped.expression) &&
-          ts.isStringLiteral(unwrapped.argumentExpression) && unwrapped.argumentExpression.text === "process")
+        (ts.isPropertyAccessExpression(unwrapped) &&
+          globalObject(unwrapped.expression) &&
+          unwrapped.name.text === "process") ||
+        (ts.isElementAccessExpression(unwrapped) &&
+          globalObject(unwrapped.expression) &&
+          ts.isStringLiteral(unwrapped.argumentExpression) &&
+          unwrapped.argumentExpression.text === "process")
       );
     };
     const hasGlobalProcessAcquisition =
       (ts.isPropertyAccessExpression(node) && globalObject(node.expression) && node.name.text === "process") ||
-      (ts.isElementAccessExpression(node) && globalObject(node.expression) &&
-        ts.isStringLiteral(node.argumentExpression) && node.argumentExpression.text === "process");
+      (ts.isElementAccessExpression(node) &&
+        globalObject(node.expression) &&
+        ts.isStringLiteral(node.argumentExpression) &&
+        node.argumentExpression.text === "process");
     const hasComputedGlobalMember =
       ts.isElementAccessExpression(node) &&
       globalObject(node.expression) &&
@@ -665,16 +832,15 @@ function staticReferences(source) {
     // runtime reflection. Reject acquisition itself (including extraction):
     // otherwise an alias can postpone the unknown loader call beyond the
     // static scanner.
-    const propertyName =
-      ts.isPropertyAccessExpression(node)
-        ? node.name.text
-        : ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)
-          ? node.argumentExpression.text
-          : ts.isBindingElement(node) && node.propertyName !== undefined
-            ? ts.isIdentifier(node.propertyName) || ts.isStringLiteral(node.propertyName)
-              ? node.propertyName.text
-              : undefined
-            : undefined;
+    const propertyName = ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)
+        ? node.argumentExpression.text
+        : ts.isBindingElement(node) && node.propertyName !== undefined
+          ? ts.isIdentifier(node.propertyName) || ts.isStringLiteral(node.propertyName)
+            ? node.propertyName.text
+            : undefined
+          : undefined;
     const hasComputedGlobalProcessMember =
       ts.isElementAccessExpression(node) &&
       globalProcessPath(node.expression) &&
@@ -684,9 +850,7 @@ function staticReferences(source) {
     // general provenance graph: only a declaration whose initializer itself
     // normalizes to the process capability is rejected.
     const isTransparentProcessAliasAcquisition =
-      ts.isVariableDeclaration(node) &&
-      node.initializer !== undefined &&
-      processCapablePath(node.initializer);
+      ts.isVariableDeclaration(node) && node.initializer !== undefined && processCapablePath(node.initializer);
     const isReflectGet =
       ts.isCallExpression(node) &&
       ((ts.isPropertyAccessExpression(node.expression) &&
@@ -723,8 +887,21 @@ function staticReferences(source) {
             : true;
         return false;
       })();
-    if (propertyName === "getBuiltinModule" || globalSelfAliasAcquisition || hasGlobalProcessAcquisition || hasComputedGlobalMember || hasComputedGlobalProcessMember || isTransparentProcessAliasAcquisition || isReflectGet || isObjectDescriptorOnProcess)
-      result.push({ kind: "dynamic_require", specifier: null, line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1 });
+    if (
+      propertyName === "getBuiltinModule" ||
+      globalSelfAliasAcquisition ||
+      hasGlobalProcessAcquisition ||
+      hasComputedGlobalMember ||
+      hasComputedGlobalProcessMember ||
+      isTransparentProcessAliasAcquisition ||
+      isReflectGet ||
+      isObjectDescriptorOnProcess
+    )
+      result.push({
+        kind: "dynamic_require",
+        specifier: null,
+        line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
+      });
     ts.forEachChild(node, inspectRuntimeLoaders);
   };
   const file = ast;
@@ -920,11 +1097,7 @@ function staticReferences(source) {
     }
   }
   for (let index = 0; index < all.length; index += 1) {
-    if (
-      moduleBindings.has(all[index]?.value) &&
-      all[index + 1]?.value === "[" &&
-      all[index + 2]?.type !== "string"
-    )
+    if (moduleBindings.has(all[index]?.value) && all[index + 1]?.value === "[" && all[index + 2]?.type !== "string")
       result.push({ kind: "dynamic_require", specifier: null, line: all[index].line });
   }
   const addRequireCall = (open, line) => {
@@ -1018,18 +1191,42 @@ function semanticAuthorityModule(root, target) {
 function isExactModule(root, path, module) {
   return sourcePath(root, path).replace(/\.ts$/, "") === module.replace(/\.ts$/, "");
 }
-function isP4Facade(root, path) { return isExactModule(root, path, P4_FACADE_MODULE); }
-function isP4Bridge(root, path) { return isExactModule(root, path, P4_BRIDGE_MODULE); }
-function isP4BFacade(root, path) { return isExactModule(root, path, P4B_FACADE_MODULE); }
-function isP4BBridge(root, path) { return isExactModule(root, path, P4B_BRIDGE_MODULE); }
-function isP4CFacade(root, path) { return isExactModule(root, path, P4C_FACADE_MODULE); }
-function isP4CBridge(root, path) { return isExactModule(root, path, P4C_BRIDGE_MODULE); }
-function isP5Facade(root, path) { return isExactModule(root, path, P5_FACADE_MODULE); }
-function isP5Bridge(root, path) { return isExactModule(root, path, P5_BRIDGE_MODULE); }
-function isAnyP4Bridge(root, path) { return isP4Bridge(root, path) || isP4BBridge(root, path) || isP4CBridge(root, path); }
-function isAnyP4Facade(root, path) { return isP4Facade(root, path) || isP4BFacade(root, path) || isP4CFacade(root, path); }
-function isP4Store(root, path) { return isExactModule(root, path, P4_STORE_MODULE); }
-function isP4P5TransitionAuthorityModule(root, path) { return isExactModule(root, path, P4_P5_TRANSITION_AUTHORITY_MODULE); }
+function isP4Facade(root, path) {
+  return isExactModule(root, path, P4_FACADE_MODULE);
+}
+function isP4Bridge(root, path) {
+  return isExactModule(root, path, P4_BRIDGE_MODULE);
+}
+function isP4BFacade(root, path) {
+  return isExactModule(root, path, P4B_FACADE_MODULE);
+}
+function isP4BBridge(root, path) {
+  return isExactModule(root, path, P4B_BRIDGE_MODULE);
+}
+function isP4CFacade(root, path) {
+  return isExactModule(root, path, P4C_FACADE_MODULE);
+}
+function isP4CBridge(root, path) {
+  return isExactModule(root, path, P4C_BRIDGE_MODULE);
+}
+function isP5Facade(root, path) {
+  return isExactModule(root, path, P5_FACADE_MODULE);
+}
+function isP5Bridge(root, path) {
+  return isExactModule(root, path, P5_BRIDGE_MODULE);
+}
+function isAnyP4Bridge(root, path) {
+  return isP4Bridge(root, path) || isP4BBridge(root, path) || isP4CBridge(root, path);
+}
+function isAnyP4Facade(root, path) {
+  return isP4Facade(root, path) || isP4BFacade(root, path) || isP4CFacade(root, path);
+}
+function isP4Store(root, path) {
+  return isExactModule(root, path, P4_STORE_MODULE);
+}
+function isP4P5TransitionAuthorityModule(root, path) {
+  return isExactModule(root, path, P4_P5_TRANSITION_AUTHORITY_MODULE);
+}
 function isSemanticProductionCoordinatorAuthorityInternal(root, importer) {
   return (
     sourcePath(root, importer).replace(/\.ts$/, "") ===
@@ -1166,7 +1363,10 @@ export function checkHostProductionImportBoundary({
         continue;
       }
       if (!reference.specifier.startsWith(".")) {
-        if (PERMITTED_NODE_BUILTIN_SPECIFIERS.has(reference.specifier) || isDeclaredExternalPackage(reference.specifier, externalPackages))
+        if (
+          PERMITTED_NODE_BUILTIN_SPECIFIERS.has(reference.specifier) ||
+          isDeclaredExternalPackage(reference.specifier, externalPackages)
+        )
           continue;
         violations.push(
           violation(
@@ -1316,7 +1516,15 @@ export function checkHostProductionImportBoundary({
             : P4_COORDINATOR_IMPORTS;
         const invalid = reference.kind === "re_export" || reference.bindings?.some((binding) => !allowed.has(binding));
         if (invalid)
-          violations.push(violation("invalid_p4_bridge_coordinator_edge", shownImporter, reference.specifier, reference.line, "p4_bridge_may_import_only_opaque_runner_and_consumer"));
+          violations.push(
+            violation(
+              "invalid_p4_bridge_coordinator_edge",
+              shownImporter,
+              reference.specifier,
+              reference.line,
+              "p4_bridge_may_import_only_opaque_runner_and_consumer",
+            ),
+          );
       }
       if (isAnyP4Bridge(root, importer) && isP4Store(root, target)) {
         const expectedIngress = isP4BBridge(root, importer)
@@ -1330,7 +1538,15 @@ export function checkHostProductionImportBoundary({
           reference.bindings?.length === 1 &&
           reference.bindings[0] === expectedIngress;
         if (!exactStoreIngress)
-          violations.push(violation("invalid_p4_bridge_store_edge", shownImporter, reference.specifier, reference.line, "p4_bridge_may_import_only_exact_named_store_ingress"));
+          violations.push(
+            violation(
+              "invalid_p4_bridge_store_edge",
+              shownImporter,
+              reference.specifier,
+              reference.line,
+              "p4_bridge_may_import_only_exact_named_store_ingress",
+            ),
+          );
       }
       const banned = isBanned(root, target);
       if (banned)
@@ -1381,7 +1597,13 @@ export function checkHostProductionImportBoundary({
         !isExactP5BridgeImplementation(source)
       )
         violations.push(
-          violation("invalid_p5_bridge_implementation", display(root, importer), null, 1, "p5_bridge_must_delegate_only_to_p4c_facade"),
+          violation(
+            "invalid_p5_bridge_implementation",
+            display(root, importer),
+            null,
+            1,
+            "p5_bridge_must_delegate_only_to_p4c_facade",
+          ),
         );
     }
     if (isAnyP4Bridge(root, importer)) {
@@ -1402,17 +1624,25 @@ export function checkHostProductionImportBoundary({
           })
         : undefined;
       const bridgeExports = p4BridgeRuntimeExports(source);
-      if (
-        bridgeExports.length !== 1 ||
-        bridgeExports[0]?.name !== expectedExport ||
-        bridgeExports[0]?.sensitive
-      )
+      if (bridgeExports.length !== 1 || bridgeExports[0]?.name !== expectedExport || bridgeExports[0]?.sensitive)
         violations.push(
-          violation("invalid_p4_bridge_runtime_export_surface", display(root, importer), null, 1, `p4_bridge_may_export_only_${expectedExport}`),
+          violation(
+            "invalid_p4_bridge_runtime_export_surface",
+            display(root, importer),
+            null,
+            1,
+            `p4_bridge_may_export_only_${expectedExport}`,
+          ),
         );
       if (!(isStartBridge ? isExactP4cBridgeImplementation(source) : isExactP4BridgeImplementation(source, shape)))
         violations.push(
-          violation("invalid_p4_bridge_implementation", display(root, importer), null, 1, "p4_bridge_must_use_exact_coordinator_admission_chain"),
+          violation(
+            "invalid_p4_bridge_implementation",
+            display(root, importer),
+            null,
+            1,
+            "p4_bridge_must_use_exact_coordinator_admission_chain",
+          ),
         );
     }
     for (const token of parsed.tokens) {

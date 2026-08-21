@@ -28,6 +28,9 @@ using GameBuddy.Stardew;
 //                  Windows pipe -> real PortfolioStardewBridgeClient
 //                  enter_mine success terminal correlation (receipt +
 //                  second-drain dequeue proof).
+//   entry_cancel:  accepted-then-cancel through the exact private
+//                  ModEntry.HandlePortfolioMineEntryCancel handler -> compiled
+//                  session/coordinator -> real pipe -> real Host client.
 //   ladder_success: real C# peer -> exact private
 //                  ModEntry.DrainPortfolioMineLadderTerminalDeliveries -> real
 //                  Windows pipe -> real PortfolioStardewBridgeClient
@@ -59,7 +62,7 @@ using GameBuddy.Stardew;
 //      drain runs again and dequeues the delivery (the ack). The success
 //      receipt is delivered to the real Host client as the exact terminal of
 //      its start request.
-//      cancel: the client sends mine_elevator_cancel_request carrying the
+//      cancel / entry_cancel: the client sends the exact family cancel request carrying the
 //      exact accepted execution identity and cancellation token; the peer
 //      feeds that raw frame to the exact compiled private
 //      ModEntry.HandlePortfolioMineElevatorCancel handler, which composes the
@@ -77,6 +80,7 @@ using GameBuddy.Stardew;
 // portfolio_stardew_interop_success_receipt_delivered /
 // portfolio_stardew_interop_cancel_receipt_delivered /
 // portfolio_stardew_interop_entry_success_receipt_delivered /
+// portfolio_stardew_interop_entry_cancel_receipt_delivered /
 // portfolio_stardew_interop_ladder_success_receipt_delivered (after the
 // scenario receipt frame write completed and, for success families, the
 // second drain dequeued the delivery). stderr stays empty on success; any
@@ -135,7 +139,7 @@ internal static class PortfolioStardewInteropProgram
     {
         if (arguments.Length != 2 || string.IsNullOrWhiteSpace(arguments[0]) || string.IsNullOrWhiteSpace(arguments[1]))
         {
-            Console.Error.WriteLine("Usage: PortfolioStardewInterop.Contract <pipe-name> <success|cancel|entry_success|ladder_success>");
+            Console.Error.WriteLine("Usage: PortfolioStardewInterop.Contract <pipe-name> <success|cancel|entry_success|entry_cancel|ladder_success>");
             return 2;
         }
         string pipeName = arguments[0];
@@ -145,9 +149,9 @@ internal static class PortfolioStardewInteropProgram
             Console.Error.WriteLine("Pipe name must be an ASCII identifier.");
             return 2;
         }
-        if (mode != "success" && mode != "cancel" && mode != "entry_success" && mode != "ladder_success")
+        if (mode != "success" && mode != "cancel" && mode != "entry_success" && mode != "entry_cancel" && mode != "ladder_success")
         {
-            Console.Error.WriteLine("Scenario mode must be 'success', 'cancel', 'entry_success' or 'ladder_success'.");
+            Console.Error.WriteLine("Scenario mode must be 'success', 'cancel', 'entry_success', 'entry_cancel' or 'ladder_success'.");
             return 2;
         }
 
@@ -174,7 +178,7 @@ internal static class PortfolioStardewInteropProgram
             SaveId, WorldId, LocalPlayerId, CompanionId, BindingGeneration, InitialRevision, tick: 1);
         string selectedAction = mode switch
         {
-            "entry_success" => PortfolioBridgeProtocol.MineEntryAction,
+            "entry_success" or "entry_cancel" => PortfolioBridgeProtocol.MineEntryAction,
             "ladder_success" => PortfolioBridgeProtocol.MineLadderAction,
             _ => PortfolioBridgeProtocol.MineElevatorAction,
         };
@@ -209,7 +213,7 @@ internal static class PortfolioStardewInteropProgram
             long bootstrapGeneration = await WaitForGenerationAsync(bridge, cancellation.Token);
             if (bootstrapGeneration != 1)
                 return Fail("bootstrap_generation_unexpected");
-            PortfolioPipeInbound bootstrapHello = await WaitForInboundAsync(bridge, cancellation.Token);
+            var bootstrapHello = await WaitForInboundAsync(bridge, cancellation.Token);
             if (!session.TryBootstrapHello(bootstrapGeneration, bootstrapHello.Json,
                     out PortfolioEnvelope<PortfolioHelloAck>? bootstrapAck, out string bootstrapReason)
                 || bootstrapAck is null || bootstrapReason != "accepted")
@@ -220,7 +224,7 @@ internal static class PortfolioStardewInteropProgram
 
             // The client closes the bootstrap socket; only that exact
             // generation-1 disconnect arms the strict successor hello.
-            PortfolioPipeDisconnect bootstrapDisconnect = await WaitForDisconnectAsync(bridge, cancellation.Token);
+            var bootstrapDisconnect = await WaitForDisconnectAsync(bridge, cancellation.Token);
             if (!session.TryConsumeBootstrapDisconnect(bootstrapDisconnect.Generation, activeExecution: false, out string handoffReason))
                 return Fail($"bootstrap_handoff_rejected:{handoffReason}");
 
@@ -228,7 +232,7 @@ internal static class PortfolioStardewInteropProgram
             long generation = await WaitForGenerationAsync(bridge, cancellation.Token);
             if (generation != 2)
                 return Fail("strict_generation_unexpected");
-            PortfolioPipeInbound hello = await WaitForInboundAsync(bridge, cancellation.Token);
+            var hello = await WaitForInboundAsync(bridge, cancellation.Token);
             PortfolioEnvelope<PortfolioHello>? helloEnvelope = Deserialize<PortfolioHello>(hello.Json);
             if (hello.Generation != generation || helloEnvelope is null)
                 return Fail("hello_rejected:invalid_envelope");
@@ -240,7 +244,7 @@ internal static class PortfolioStardewInteropProgram
                 return Fail("hello_ack_enqueue_failed");
 
             // Observe-only snapshot with the fixture world facts.
-            PortfolioPipeInbound observe = await WaitForInboundAsync(bridge, cancellation.Token);
+            var observe = await WaitForInboundAsync(bridge, cancellation.Token);
             PortfolioEnvelope<PortfolioObserveRequest>? observeEnvelope = Deserialize<PortfolioObserveRequest>(observe.Json);
             var snapshot = new PortfolioSnapshot(
                 PortfolioBridgeProtocol.Version, PortfolioBridgeProtocol.IntegrationId, PortfolioBridgeProtocol.Topology,
@@ -266,7 +270,8 @@ internal static class PortfolioStardewInteropProgram
                     scenarioResult = await RunMineElevatorScenarioAsync(bridge, session, config, binding, scope, generation, mode, cancellation.Token);
                     break;
                 case "entry_success":
-                    scenarioResult = await RunMineEntryScenarioAsync(bridge, session, config, scope, generation, cancellation.Token);
+                case "entry_cancel":
+                    scenarioResult = await RunMineEntryScenarioAsync(bridge, session, config, binding, scope, generation, mode, cancellation.Token);
                     break;
                 default:
                     scenarioResult = await RunMineLadderScenarioAsync(bridge, session, config, scope, generation, cancellation.Token);
@@ -278,7 +283,7 @@ internal static class PortfolioStardewInteropProgram
             // Keep the strict connection open until the client disconnects,
             // then exit 0 (the scenario delivery proof line above is already
             // complete).
-            PortfolioPipeDisconnect strictDisconnect = await WaitForDisconnectAsync(bridge, cancellation.Token);
+            var strictDisconnect = await WaitForDisconnectAsync(bridge, cancellation.Token);
             if (strictDisconnect.Generation != generation)
                 return Fail("strict_disconnect_generation_unexpected");
             return 0;
@@ -318,7 +323,7 @@ internal static class PortfolioStardewInteropProgram
         // feeds the authenticated request straight into the coordinator
         // with a structurally terminal test adapter (no native action),
         // matching the documented coordinator contract pattern.
-        PortfolioPipeInbound elevator = await WaitForInboundAsync(bridge, cancellationToken);
+        var elevator = await WaitForInboundAsync(bridge, cancellationToken);
         if (elevator.Generation != generation)
             return Fail("mine_elevator_rejected:generation_mismatch");
         if (!PortfolioBridgeProtocol.TryDeserializeMineElevatorRequest(elevator.Json, scope,
@@ -435,7 +440,7 @@ internal static class PortfolioStardewInteropProgram
 
         // The exact cancel request arrives on the strict generation and
         // must carry the accepted execution identity + cancellation token.
-        PortfolioPipeInbound cancelInbound = await WaitForInboundAsync(bridge, cancellationToken);
+        var cancelInbound = await WaitForInboundAsync(bridge, cancellationToken);
         if (cancelInbound.Generation != generation)
             return Fail("mine_elevator_cancel_rejected:generation_mismatch");
         PortfolioEnvelope<PortfolioMineElevatorActionCancelRequest>? cancelEnvelope = Deserialize<PortfolioMineElevatorActionCancelRequest>(cancelInbound.Json);
@@ -487,8 +492,10 @@ internal static class PortfolioStardewInteropProgram
         PortfolioLocalPipeBridge bridge,
         PortfolioBridgeSession session,
         PortfolioConfig config,
+        PortfolioLocalPlayerBinding binding,
         PortfolioScope scope,
         long generation,
+        string mode,
         CancellationToken cancellationToken)
     {
         var adapter = new InteropEntryAdapter();
@@ -499,7 +506,7 @@ internal static class PortfolioStardewInteropProgram
         // compiled family coordinator over a structurally terminal test
         // adapter (no native action), matching the documented coordinator
         // contract pattern.
-        PortfolioPipeInbound entry = await WaitForInboundAsync(bridge, cancellationToken);
+        var entry = await WaitForInboundAsync(bridge, cancellationToken);
         if (entry.Generation != generation)
             return Fail("enter_mine_rejected:generation_mismatch");
         if (!PortfolioBridgeProtocol.TryDeserializeMineEntryRequest(entry.Json, scope,
@@ -523,6 +530,10 @@ internal static class PortfolioStardewInteropProgram
         if (!PortfolioBridgeProtocol.TrySerialize(phaseEnvelope, out string phaseJson, out _)
             || !await EnqueueAsync(bridge, generation, phaseJson, cancellationToken))
             return Fail("enter_mine_phase_enqueue_failed");
+
+        if (mode == "entry_cancel")
+            return await RunMineEntryCancelScenarioAsync(bridge, session, config, binding, scope, generation,
+                coordinator, request, phase, entryEnvelope, cancellationToken);
 
         // Structurally terminal coordinator lifecycle only: the adapter
         // never crossed a native boundary, so the transition/postcondition
@@ -575,6 +586,82 @@ internal static class PortfolioStardewInteropProgram
         return 0;
     }
 
+    private static async Task<int> RunMineEntryCancelScenarioAsync(
+        PortfolioLocalPipeBridge bridge,
+        PortfolioBridgeSession session,
+        PortfolioConfig config,
+        PortfolioLocalPlayerBinding binding,
+        PortfolioScope scope,
+        long generation,
+        PortfolioMineEntryActionCoordinator coordinator,
+        PortfolioMineEntryActionRequest request,
+        PortfolioMineEntryActionPhase phase,
+        PortfolioEnvelope<PortfolioMineEntryActionRequest> entryEnvelope,
+        CancellationToken cancellationToken)
+    {
+        // The accepted execution has crossed the semantic adapter boundary,
+        // so cancellation must be uncertain. Invoke the exact compiled private
+        // handler: this peer must not recreate bridge-session cancel behavior.
+        var entry = new ModEntry();
+        Type modEntryType = typeof(ModEntry);
+        SetPortfolioField(entry, modEntryType, "portfolioMineEntryCoordinator", coordinator);
+        SetPortfolioField(entry, modEntryType, "portfolioBridgeSession", session);
+        SetPortfolioField(entry, modEntryType, "portfolioBinding", binding);
+        SetPortfolioField(entry, modEntryType, "config", new ModConfig { Portfolio = config });
+        MethodInfo cancelHandler = modEntryType.GetMethod("HandlePortfolioMineEntryCancel", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Compiled ModEntry must declare HandlePortfolioMineEntryCancel.");
+        ParameterInfo[] parameters = cancelHandler.GetParameters();
+        if (cancelHandler.DeclaringType != modEntryType
+            || cancelHandler.DeclaringType!.Assembly.GetName().Name != "GameBuddy.Stardew"
+            || cancelHandler.Name != "HandlePortfolioMineEntryCancel"
+            || cancelHandler.ReturnType != typeof(string)
+            || !cancelHandler.IsPrivate || cancelHandler.IsStatic
+            || parameters.Length != 2
+            || parameters[0].ParameterType != typeof(long)
+            || parameters[1].ParameterType != typeof(string))
+            return Fail("enter_mine_cancel_handler_reflection_invalid");
+
+        var cancelInbound = await WaitForInboundAsync(bridge, cancellationToken);
+        if (cancelInbound.Generation != generation)
+            return Fail("enter_mine_cancel_rejected:generation_mismatch");
+        PortfolioEnvelope<PortfolioMineEntryActionCancelRequest>? cancelEnvelope = Deserialize<PortfolioMineEntryActionCancelRequest>(cancelInbound.Json);
+        if (cancelEnvelope is null
+            || cancelEnvelope.Type != "enter_mine_cancel_request"
+            || cancelEnvelope.Payload is null
+            || cancelEnvelope.Payload.Action != PortfolioBridgeProtocol.MineEntryAction
+            || cancelEnvelope.Payload.RequestId != request.RequestId
+            || cancelEnvelope.Payload.TraceId != request.TraceId
+            || cancelEnvelope.Payload.ExecutionId != phase.ExecutionId
+            || cancelEnvelope.Payload.CancellationToken != request.CancellationToken)
+            return Fail("enter_mine_cancel_rejected:identity_mismatch");
+
+        string? cancelResponse = (string?)cancelHandler.Invoke(entry, new object[] { generation, cancelInbound.Json });
+        if (cancelResponse is null || coordinator.HasActiveExecution || coordinator.TryPeekTerminalDelivery(out _))
+            return Fail("enter_mine_cancel_rejected:no_direct_terminal");
+        PortfolioEnvelope<PortfolioMineEntryActionReceipt>? cancelReceiptEnvelope = Deserialize<PortfolioMineEntryActionReceipt>(cancelResponse);
+        if (cancelReceiptEnvelope is null
+            || cancelReceiptEnvelope.Type != "enter_mine_receipt"
+            || cancelReceiptEnvelope.CorrelationId != cancelEnvelope.CorrelationId
+            || !cancelReceiptEnvelope.Scope.Equals(scope))
+            return Fail("enter_mine_cancel_rejected:response_invalid");
+        PortfolioMineEntryActionReceipt receipt = cancelReceiptEnvelope.Payload;
+        if (receipt.State != "uncertain" || receipt.ReasonCode != "native_operation_uncertain"
+            || receipt.RequestId != request.RequestId || receipt.TraceId != request.TraceId
+            || receipt.ExecutionId != phase.ExecutionId || receipt.Revision != InitialRevision
+            || !receipt.IsStructurallyTerminal
+            || receipt.Evidence.PhaseTrace.Count != 3
+            || receipt.Evidence.PhaseTrace[0].Phase != "fresh_observed"
+            || receipt.Evidence.PhaseTrace[1].Phase != "accepted"
+            || receipt.Evidence.PhaseTrace[2].Phase != "terminal"
+            || receipt.Evidence.PhaseTrace[2].ReasonCode != "native_operation_uncertain")
+            return Fail("enter_mine_cancel_rejected:receipt_invalid");
+
+        if (!await EnqueueAsync(bridge, generation, cancelResponse, cancellationToken))
+            return Fail("enter_mine_cancel_receipt_enqueue_failed");
+        Console.WriteLine("portfolio_stardew_interop_entry_cancel_receipt_delivered");
+        return 0;
+    }
+
     private static async Task<int> RunMineLadderScenarioAsync(
         PortfolioLocalPipeBridge bridge,
         PortfolioBridgeSession session,
@@ -591,7 +678,7 @@ internal static class PortfolioStardewInteropProgram
         // compiled family coordinator over a structurally terminal test
         // adapter (no native action), matching the documented coordinator
         // contract pattern.
-        PortfolioPipeInbound ladder = await WaitForInboundAsync(bridge, cancellationToken);
+        var ladder = await WaitForInboundAsync(bridge, cancellationToken);
         if (ladder.Generation != generation)
             return Fail("mine_ladder_rejected:generation_mismatch");
         if (!PortfolioBridgeProtocol.TryDeserializeMineLadderRequest(ladder.Json, scope,
@@ -673,21 +760,21 @@ internal static class PortfolioStardewInteropProgram
         catch (JsonException) { return null; }
     }
 
-    private static async Task<PortfolioPipeInbound> WaitForInboundAsync(PortfolioLocalPipeBridge bridge, CancellationToken cancellationToken)
+    private static async Task<(long Generation, string Json)> WaitForInboundAsync(PortfolioLocalPipeBridge bridge, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (bridge.TryDequeueInbound(out PortfolioPipeInbound inbound)) return inbound;
+            if (bridge.TryDequeueInbound(out PortfolioPipeInbound inbound)) return (inbound.Generation, inbound.Json);
             await Task.Delay(10, cancellationToken).ConfigureAwait(false);
         }
         throw new OperationCanceledException(cancellationToken);
     }
 
-    private static async Task<PortfolioPipeDisconnect> WaitForDisconnectAsync(PortfolioLocalPipeBridge bridge, CancellationToken cancellationToken)
+    private static async Task<(long Generation, string ReasonCode)> WaitForDisconnectAsync(PortfolioLocalPipeBridge bridge, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            if (bridge.TryConsumeDisconnect(out PortfolioPipeDisconnect? disconnect) && disconnect is not null) return disconnect;
+            if (bridge.TryConsumeDisconnect(out PortfolioPipeDisconnect? disconnect) && disconnect is not null) return (disconnect.Generation, disconnect.ReasonCode);
             await Task.Delay(10, cancellationToken).ConfigureAwait(false);
         }
         throw new OperationCanceledException(cancellationToken);
@@ -832,7 +919,7 @@ internal static class PortfolioStardewInteropProgram
             => new(request.RequestId, request.TraceId, revision, scope,
                 Fresh: true, PlayerAvailable: true, WorldReady: true, PolicyAllowed: true, MineEntryObserved: true,
                 CurrentFloor: 0, LowestMineLevel: SelectedCheckpoint, UnlockedLevelObserved: true, TargetUnlocked: true,
-                ElevatorInteractionAvailable: true, OpaqueElevatorTarget);
+                ElevatorObserved: true, OpaqueElevatorTarget);
 
         public bool RequestElevatorSelection(PortfolioMineElevatorAdapterContext context, out PortfolioMineElevatorAdapterResult? result)
         {
@@ -862,7 +949,7 @@ internal static class PortfolioStardewInteropProgram
             => new(request.RequestId, request.TraceId, revision, scope,
                 Fresh: true, PlayerAvailable: true, WorldReady: true, PolicyAllowed: true, MineEntryObserved: true,
                 CurrentFloor: EntryCurrentFloor, LowestMineLevel: FixtureLowestMineLevel, UnlockedLevelObserved: true,
-                TargetUnlocked: true, EntryInteractionAvailable: true, OpaqueEntryTarget, EntryTargetFloor);
+                TargetUnlocked: true, OpaqueEntryTarget, EntryTargetFloor);
 
         public bool RequestMineEntry(PortfolioMineEntryAdapterContext context, out PortfolioMineEntryAdapterResult? result)
         {
@@ -891,7 +978,7 @@ internal static class PortfolioStardewInteropProgram
             => new(request.RequestId, request.TraceId, revision, scope,
                 Fresh: true, PlayerAvailable: true, WorldReady: true, PolicyAllowed: true, MineEntryObserved: true,
                 CurrentFloor: LadderCurrentFloor, LowestMineLevel: FixtureLowestMineLevel, UnlockedLevelObserved: true,
-                TargetUnlocked: true, LadderInteractionAvailable: true, OpaqueLadderTarget, LadderTargetFloor);
+                TargetUnlocked: true, LadderObserved: true, OpaqueLadderTarget, LadderTargetFloor);
 
         public bool RequestMineLadder(PortfolioMineLadderAdapterContext context, out PortfolioMineLadderAdapterResult? result)
         {

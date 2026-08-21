@@ -40,7 +40,7 @@ function validConfig() {
 function createFakeClient({ landingTile = FIRST_APPROACH, removeOnLastHit = true } = {}) {
   const receipts = [];
   let sequence = 0;
-  let snapshot = {
+  const snapshot = {
     revision: 1,
     location: "FarmHouse",
     tile: FARMHOUSE_TILE,

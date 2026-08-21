@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import path from "node:path";
 /**
  * Read-only preflight for the blocked M2/M5/M6 sleep/day coordination action.
  *
@@ -10,7 +11,6 @@
  * returns BLOCKED rather than accepting a fabricated receipt-shaped payload.
  */
 import process from "node:process";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkStardewPortfolioSleepDaySourceAudit } from "./check-stardew-portfolio-sleep-day-source-audit.mjs";
 

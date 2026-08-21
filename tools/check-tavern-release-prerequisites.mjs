@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const REQUIRED_MUST_FLOWS = Object.freeze([
   "companion-library",

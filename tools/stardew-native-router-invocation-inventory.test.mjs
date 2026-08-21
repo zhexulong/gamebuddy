@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { deriveNativeRouterInvocationInventory } from "./lib/stardew-native-router-invocation-inventory.mjs";
+
 const source = `class Demo { void Route() { before(); target.Call(1); if (ok) { after(); } } void Other() { other(); } }`;
 test("inventories invocation syntax in source order only within the exact router body", async () => {
   const report = await deriveNativeRouterInvocationInventory({

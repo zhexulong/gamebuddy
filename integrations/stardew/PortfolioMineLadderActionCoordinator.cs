@@ -103,14 +103,12 @@ internal sealed class PortfolioMineLadderActionCoordinator
             execution.BeginInProgress = false;
             // The adapter result is untrusted until correlation, scope, target,
             // revision, checkpoint, and deadline are checked again after return.
-            // An action-owned approach is still reversible; only the explicit
-            // native-arm result keeps the execution in irreversible mode.
+            // The direct semantic adapter has no movement/approach phase; only
+            // an explicit native-arm result keeps this execution irreversible.
             if (adapterResult is not null && adapterResult.IsValid)
                 execution.TransitionArmed = adapterResult.TransitionArmed;
             if (active != execution && execution.TerminalReceipt is not null)
                 return TerminalResult(execution.TerminalReceipt);
-            if (adapterResult is not null && adapterResult.IsValid && adapterResult.NativeOperationFailed)
-                return TerminalResult(TerminateActive("failed", "native_operation_failed", enqueue: false));
             if (!armed || adapterResult is null || execution.Cancelled || !IsMatchingAdapterResult(execution, adapterResult)
                 || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= execution.DeadlineMs)
             {
@@ -352,7 +350,7 @@ internal sealed class PortfolioMineLadderActionCoordinator
             && (observation.ExtensionData is null || observation.ExtensionData.Count == 0)
             && observation.Fresh && observation.PlayerAvailable && observation.WorldReady && observation.PolicyAllowed
             && observation.MineEntryObserved && observation.UnlockedLevelObserved
-            && observation.LadderInteractionAvailable
+            && observation.LadderObserved
             && observation.Revision == request.ExpectedRevision && observation.CurrentFloor >= 0
             && observation.CurrentFloor <= MaximumCheckpoint && observation.LowestMineLevel >= 0
             && observation.LowestMineLevel >= observation.CurrentFloor
@@ -370,7 +368,7 @@ internal sealed class PortfolioMineLadderActionCoordinator
         if (!observation.PlayerAvailable || !observation.WorldReady) return "portfolio_world_not_ready";
         if (!observation.PolicyAllowed) return "portfolio_action_not_allowed";
         if (!observation.MineEntryObserved || !observation.UnlockedLevelObserved
-            || !observation.LadderInteractionAvailable)
+            || !observation.LadderObserved)
             return "mine_observation_invalid";
         return "mine_ladder_target_invalid";
     }
@@ -431,7 +429,7 @@ internal sealed class PortfolioMineLadderActionCoordinator
             && execution.Phases.Count > 0
             && execution.Phases[^1].Phase == "accepted"
             && !execution.NativeLadderTransitionObserved
-            && result is not null && result.IsValid && (result.TransitionArmed || result.ApproachPending || result.NativeOperationFailed)
+            && result is not null && result.IsValid && result.TransitionArmed
             && result.RequestId == execution.RequestId && result.TraceId == execution.TraceId
             && result.ExecutionId == execution.ExecutionId && result.Scope.Equals(execution.Scope)
             && result.Revision == execution.Revision

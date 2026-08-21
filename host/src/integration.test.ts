@@ -3,7 +3,13 @@ import test from "node:test";
 
 import { createDeterministicBridgePair } from "./bridge.js";
 import { CompanionIntegrationClient } from "./integration.js";
-import { newEnvelope, validateBridgeMessage, type BridgeMessage, type CancelRequestPayload, type Scope } from "./protocol.js";
+import {
+  type BridgeMessage,
+  type CancelRequestPayload,
+  newEnvelope,
+  type Scope,
+  validateBridgeMessage,
+} from "./protocol.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const scope: Scope = {

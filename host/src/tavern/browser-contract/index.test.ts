@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Compile } from "typebox/compile";
 import {
   BrowserEventV1Schema,
+  composeTavernProfile,
+  isComposedTavernProfile,
   SubmitMessageCommandV1Schema,
   TAVERN_BROWSER_API_V1,
   TAVERN_BROWSER_PROBLEM_CODES_V1,
   TavernBrowserContractV1,
   TavernBrowserFixtureV1,
   TavernBrowserValidatorsV1,
-  composeTavernProfile,
 } from "./index.js";
-import { Compile } from "typebox/compile";
 
 const handle = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
 const idempotencyKey = "ABEiM0RVZneImaq7zN3u_w";
@@ -32,6 +33,10 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "chat.list",
       "chat.rename",
       "chat.cancel",
+      "memory.read",
+      "memory.mutate",
+      "world-info.read",
+      "world-info.bind",
       "events",
     ],
   );
@@ -168,18 +173,192 @@ test("chat list is metadata-only with opaque handles and an exact active status"
     false,
   );
   assert.equal(
-    TavernBrowserValidatorsV1.ChatListV1Schema.Check({ ...list, chats: Array.from({ length: 101 }, () => list.chats[0]) }),
+    TavernBrowserValidatorsV1.ChatListV1Schema.Check({
+      ...list,
+      chats: Array.from({ length: 101 }, () => list.chats[0]),
+    }),
     false,
   );
+  assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1, state: "active" }), true);
+  assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1, state: "trashed" }), false);
+  assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1 }), true);
+});
+
+test("memory read projection contains only safe bounded rows and validates strict shape", () => {
+  const memory = {
+    apiVersion: 1,
+    projectionRevision: handle,
+    memories: [
+      {
+        handle,
+        title: "The farmer loves blueberries",
+        content: "The farmer loves blueberries.",
+        category: "semantic",
+        status: "active",
+        pinned: false,
+      },
+    ],
+  };
+  assert.equal(TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(memory), true);
+  // Raw stateToken is never a projected field.
   assert.equal(
-    TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1, state: "active" }),
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ ...memory.memories[0], stateToken: "tok_abc" }],
+    }),
+    false,
+  );
+  // Handle must be a valid opaque handle.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ ...memory.memories[0], handle: "invalid" }],
+    }),
+    false,
+  );
+  // All six safe fields are required; extra fields are rejected.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ ...memory.memories[0], extra: true }],
+    }),
+    false,
+  );
+  // Missing handle is rejected.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ title: "No handle", content: "content", category: "semantic", status: "active", pinned: false }],
+    }),
+    false,
+  );
+  // Max 200 items.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: Array.from({ length: 201 }, () => ({
+        handle,
+        title: "row",
+        content: "content",
+        category: "semantic" as const,
+        status: "active" as const,
+        pinned: false,
+      })),
+    }),
+    false,
+  );
+  // Exactly 200 items is allowed.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: Array.from({ length: 200 }, (_, i) => ({
+        handle,
+        title: `row ${i}`,
+        content: `content ${i}`,
+        category: "semantic" as const,
+        status: "active" as const,
+        pinned: false,
+      })),
+    }),
     true,
   );
+  // Title length 0 is rejected.
   assert.equal(
-    TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1, state: "trashed" }),
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ ...memory.memories[0], title: "" }],
+    }),
     false,
   );
-  assert.equal(TavernBrowserValidatorsV1.ChatListQueryV1Schema.Check({ apiVersion: 1 }), true);
+  // Title longer than 256 is rejected.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ ...memory.memories[0], title: "x".repeat(257) }],
+    }),
+    false,
+  );
+  // Category must be one of the two frozen values.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ ...memory.memories[0], category: "recent" }],
+    }),
+    false,
+  );
+  // Status must be one of the three frozen values.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      memories: [{ ...memory.memories[0], status: "removed" }],
+    }),
+    false,
+  );
+  // projectionRevision is not a storage revision.
+  assert.equal(TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({ ...memory, projectionRevision: 42 }), false);
+  // Null projectionRevision is rejected (must be opaque handle).
+  assert.equal(TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({ ...memory, projectionRevision: null }), false);
+});
+
+test("memory mutation command is a strict ordinary CRUD CAS command", () => {
+  const create = {
+    apiVersion: 1,
+    operation: "create",
+    expectedProjectionRevision: handle,
+    content: "Player-managed semantic memory",
+  };
+  const update = { ...create, operation: "update", handle };
+  const archive = {
+    apiVersion: 1,
+    operation: "archive",
+    expectedProjectionRevision: handle,
+    handle,
+  };
+  assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check(create), true);
+  assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check(update), true);
+  assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check(archive), true);
+  assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...create, handle }), false);
+  assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...archive, content: "unexpected" }), false);
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...create, expectedProjectionRevision: "opaque-but-not-canonical=" }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...create, content: "cafe\u0301" }),
+    false,
+  );
+});
+
+test("memory state requires a read-backed opaque projection revision before it can advertise CRUD", () => {
+  const state = TavernBrowserFixtureV1.snapshot();
+  assert.equal(state.memory.readAvailable, false);
+  assert.equal(state.memory.mutationAvailable, false);
+  assert.equal(state.memory.projectionRevision, null);
+  assert.equal(TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check(state), true);
+  // When a projectionRevision is available, readAvailable must be true.
+  assert.equal(
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({
+      ...state,
+      memory: { readAvailable: true, mutationAvailable: false, projectionRevision: handle },
+    }),
+    true,
+  );
+  // Mutation cannot be advertised without a successful same-snapshot read.
+  assert.equal(
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({
+      ...state,
+      memory: { readAvailable: false, mutationAvailable: true, projectionRevision: null },
+    }),
+    false,
+  );
+  // Nor can a failed read retain a stale opaque revision.
+  assert.equal(
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({
+      ...state,
+      memory: { readAvailable: false, mutationAvailable: false, projectionRevision: handle },
+    }),
+    false,
+  );
 });
 
 test("title rename binds exact selection, generation, revision and bounded NFC title", () => {
@@ -195,10 +374,7 @@ test("title rename binds exact selection, generation, revision and bounded NFC t
     TavernBrowserValidatorsV1.RenameChatTitleCommandV1Schema.Check({ ...command, selectionGeneration: 0 }),
     false,
   );
-  assert.equal(
-    TavernBrowserValidatorsV1.RenameChatTitleCommandV1Schema.Check({ ...command, chatHandle: "A" }),
-    false,
-  );
+  assert.equal(TavernBrowserValidatorsV1.RenameChatTitleCommandV1Schema.Check({ ...command, chatHandle: "A" }), false);
   assert.equal(
     TavernBrowserValidatorsV1.RenameChatTitleCommandV1Schema.Check({ ...command, expectedManagementRevision: -1 }),
     false,
@@ -390,7 +566,25 @@ test("profiles strictly own contract-declared route, operation, and navigation c
     /duplicated/,
   );
   assert.throws(
-    () => composeTavernProfile({ id: "selected_l3_v1", must: [], later: [], unsupported: [] }), /capability slice/);
+    () => composeTavernProfile({ id: "selected_l3_v1", must: [], later: [], unsupported: [] }),
+    /capability slice/,
+  );
+});
+
+test("composeTavernProfile brands only its own frozen objects; structural clones are not composed", () => {
+  const profile = composeTavernProfile({
+    profileId: "gamebuddy.chat-core.brand",
+    releaseTier: "chat_core",
+    routeIds: ["bootstrap", "state.read"],
+    operationIds: [],
+    navigationItemIds: [],
+  });
+  assert.equal(isComposedTavernProfile(profile), true);
+  assert.equal(isComposedTavernProfile(Object.freeze({ ...profile })), false);
+  assert.equal(isComposedTavernProfile({ ...profile }), false);
+  assert.equal(isComposedTavernProfile(null), false);
+  assert.equal(isComposedTavernProfile({}), false);
+  assert.equal(isComposedTavernProfile([]), false);
 });
 
 test("snapshot event stream permits absent pre-P7 capability but rejects malformed mounted stream", () => {
@@ -402,11 +596,17 @@ test("snapshot event stream permits absent pre-P7 capability but rejects malform
     false,
   );
   assert.equal(
-    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, eventStream: { epoch: handle, cursor: 1 } }),
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({
+      ...state,
+      eventStream: { epoch: handle, cursor: 1 },
+    }),
     false,
   );
   assert.equal(
-    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({ ...state, eventStream: { epoch: handle, cursor: handle, extra: true } }),
+    TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check({
+      ...state,
+      eventStream: { epoch: handle, cursor: handle, extra: true },
+    }),
     false,
   );
 });
@@ -546,9 +746,65 @@ test("every route freezes the exact security, binding, and success policy matrix
       "browser_session",
       "same-origin",
       "required",
-      "required",
-      ["x-csrf-token", "idempotency-key"],
+      "none",
+      ["x-csrf-token"],
       ["turnHandle"],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "memory.read",
+      "GET",
+      "/api/tavern/v1/memory",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "memory.mutate",
+      "PUT",
+      "/api/tavern/v1/memory",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "world-info.read",
+      "GET",
+      "/api/tavern/v1/world-info",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "world-info.bind",
+      "PUT",
+      "/api/tavern/v1/world-info",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
       [],
       200,
       "application/json",

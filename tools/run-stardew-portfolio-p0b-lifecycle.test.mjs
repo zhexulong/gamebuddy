@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runPortfolioP0bLifecycle } from "./run-stardew-portfolio-p0b-lifecycle.mjs";

@@ -6,6 +6,7 @@ import {
   readContainedFile,
 } from "./lib/stardew-portfolio-m10-donate-museum-source-boundary.mjs";
 import { validatePortfolioM10MuseumSourceAudit } from "./lib/stardew-portfolio-m10-museum-source-audit.mjs";
+
 const sha = (b) => createHash("sha256").update(b).digest("hex");
 
 function fail(message, code) {

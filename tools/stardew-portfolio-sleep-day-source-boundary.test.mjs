@@ -1,16 +1,24 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   ANCHORS,
+  assertNoReparsePoint,
+  assertPathBoundary,
   BLOCKER_CODE,
   CANDIDATE_INGRESSES,
+  capturePathBoundary,
+  checkedAtomicWrite,
+  checkedReadFile,
+  configurationDigest,
   ILSPY_EXECUTION_ENVIRONMENT_POLICY,
+  ilspyExecutionEnvironment,
+  methodSlice,
   NON_CLAIM,
   OPTIONS,
   PROHIBITIONS,
@@ -21,24 +29,17 @@ import {
   TOOL_SHA256,
   TOOL_VERSION,
   TRUST_BOUNDARY,
-  WINDOWS_SNAPSHOT_VALIDATOR_SOURCE,
-  assertNoReparsePoint,
-  assertPathBoundary,
-  capturePathBoundary,
-  checkedAtomicWrite,
-  checkedReadFile,
-  configurationDigest,
-  ilspyExecutionEnvironment,
-  methodSlice,
   validate,
   validateWindowsSnapshotAclFacts,
+  WINDOWS_SNAPSHOT_VALIDATOR_SOURCE,
   windowsSnapshotValidatorEnvironment,
   windowsSnapshotValidatorInvocation,
 } from "./lib/stardew-portfolio-sleep-day-source-boundary.mjs";
+
 const exec = promisify(execFile);
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const digest = (files) =>
-  sha(files.map((file) => `${file.relativePath}\t${file.lengthBytes}\t${file.sha256}`).join("\n") + "\n");
+  sha(`${files.map((file) => `${file.relativePath}\t${file.lengthBytes}\t${file.sha256}`).join("\n")}\n`);
 function state() {
   const buffers = {};
   for (const [, relativePath, signature, required] of ANCHORS)

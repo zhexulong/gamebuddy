@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  computePortfolioBindingHash,
+  inspectPortfolioP0b,
+  PORTFOLIO_EVIDENCE_SCHEMA_REVISION,
   PORTFOLIO_TARGET_GAME_SHA256,
   PORTFOLIO_TARGET_SMAPI_VERSION,
   PORTFOLIO_TARGET_VERSION,
-  PORTFOLIO_EVIDENCE_SCHEMA_REVISION,
-  computePortfolioBindingHash,
-  inspectPortfolioP0b,
   signPortfolioStartManifest,
   validatePortfolioInstallationAttestation,
   validatePortfolioStartManifest,

@@ -124,8 +124,7 @@ export function createChatPresentationGate(): ChatPresentationGate {
     if (expression.surface !== "chat") throw new Error("presentation_surface_mismatch");
     const activeBinding = assertActive();
     if (!activeBinding.hostBindings.has(admission.hostBinding)) throw new Error("presentation_admission_unbound");
-    if (activeBinding.consumedBindings.has(admission.hostBinding))
-      throw new Error("presentation_admission_replayed");
+    if (activeBinding.consumedBindings.has(admission.hostBinding)) throw new Error("presentation_admission_replayed");
     // Consume before awaiting the running barrier. A callback that later loses
     // the barrier cannot replay the same captured authority after the lease
     // changes or after another callback commits.

@@ -3,23 +3,22 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
+import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import {
   admitGameplayAction,
+  awaitTaskOwnedTerminalReceipt,
   DEFAULT_GAMEPLAY_TASK_BUDGET,
+  type GameplayTaskBudget,
   GameplayTaskSubagent,
   hasActionPostconditionEvidence,
   hasAuthoritativeCompletion,
   selectTaskOwnedCancellation,
-  awaitTaskOwnedTerminalReceipt,
-  type GameplayTaskBudget,
 } from "./gameplay-task-subagent.js";
-import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { CompanionIntegration } from "./integration-types.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
-import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
-import type { RuntimePaths } from "./runtime.js";
 import type { ExecutionWake } from "./integration-launcher.js";
+import type { CompanionIntegration } from "./integration-types.js";
+import type { RuntimePaths } from "./runtime.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const paths: RuntimePaths = {
   root: tmpdir(),

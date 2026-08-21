@@ -1,0 +1,36 @@
+# Top-most EditorConfig file
+root = true
+
+[*.cs]
+# Standard C# formatting
+indent_style = space
+indent_size = 4
+tab_width = 4
+end_of_line = crlf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+# Code Analysis Rule Severities
+# Formatting and security rules: Error
+dotnet_diagnostic.CA2000.severity = error
+dotnet_diagnostic.CA2007.severity = suggestion
+dotnet_diagnostic.CA1001.severity = warning
+
+# Informational / Performance suggestions (keep as suggestions, not breaking build errors)
+dotnet_diagnostic.CA1305.severity = suggestion
+dotnet_diagnostic.CA1859.severity = suggestion
+dotnet_diagnostic.CA1822.severity = suggestion
+dotnet_diagnostic.CA1865.severity = suggestion
+dotnet_diagnostic.CA1860.severity = suggestion
+dotnet_diagnostic.CA1861.severity = suggestion
+dotnet_diagnostic.CA1806.severity = suggestion
+dotnet_diagnostic.CA1051.severity = suggestion
+dotnet_diagnostic.CA1304.severity = suggestion
+dotnet_diagnostic.CA1310.severity = suggestion
+dotnet_diagnostic.CA1311.severity = suggestion
+dotnet_diagnostic.CA1845.severity = suggestion
+dotnet_diagnostic.CA1846.severity = suggestion
+dotnet_diagnostic.CA1847.severity = suggestion
+dotnet_diagnostic.CA1854.severity = suggestion
+dotnet_diagnostic.CA1852.severity = suggestion

@@ -9,8 +9,6 @@ export type DialogueInput = Readonly<{
   clientMessageId: string;
   text: string;
   locale: string;
-  /** Explicit per-turn player grant; absent means no memory-write delegation. */
-  memoryDelegation?: true;
 }>;
 
 export type DialogueControllerEvent =
@@ -156,13 +154,10 @@ export class DialogueController {
 export function validateDialogueInput(value: unknown): DialogueInput {
   if (
     !isRecord(value) ||
-    !Object.keys(value).every(
-      (key) => key === "clientMessageId" || key === "text" || key === "locale" || key === "memoryDelegation",
-    ) ||
+    !Object.keys(value).every((key) => key === "clientMessageId" || key === "text" || key === "locale") ||
     !isOpaqueId(value.clientMessageId) ||
     typeof value.text !== "string" ||
     typeof value.locale !== "string" ||
-    (value.memoryDelegation !== undefined && value.memoryDelegation !== true) ||
     Buffer.byteLength(value.text, "utf8") < 1 ||
     Buffer.byteLength(value.text, "utf8") > MAX_DIALOGUE_TEXT_BYTES ||
     !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(value.locale)
@@ -173,7 +168,6 @@ export function validateDialogueInput(value: unknown): DialogueInput {
     clientMessageId: value.clientMessageId,
     text: value.text,
     locale: value.locale,
-    ...(value.memoryDelegation === true ? { memoryDelegation: true as const } : {}),
   });
 }
 
@@ -183,7 +177,6 @@ function canonicalPrompt(pending: PendingInput): string {
     clientMessageId: pending.input.clientMessageId,
     text: pending.input.text,
     locale: pending.input.locale,
-    ...(pending.input.memoryDelegation === true ? { memoryDelegation: true } : {}),
     receivedAtMs: pending.receivedAtMs,
   });
 }

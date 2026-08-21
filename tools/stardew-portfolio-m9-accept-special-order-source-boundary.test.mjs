@@ -6,8 +6,14 @@ import path from "node:path";
 import test from "node:test";
 import {
   ANCHORS,
+  assertNoReparsePoint,
   BLOCKER_CODE,
+  configurationDigest,
+  decompile,
   ILSPY_EXECUTION_ENVIRONMENT_POLICY,
+  ilspyExecutionEnvironment,
+  lockedTool,
+  methodSlice,
   OPTIONS,
   TARGET_LENGTH,
   TARGET_SHA256,
@@ -16,18 +22,13 @@ import {
   TOOL_SHA256,
   TOOL_VERSION,
   TRUST_BOUNDARY,
-  assertNoReparsePoint,
-  configurationDigest,
-  decompile,
-  ilspyExecutionEnvironment,
-  lockedTool,
-  methodSlice,
   validate,
 } from "./lib/stardew-portfolio-m9-accept-special-order-source-boundary.mjs";
+
 const authorityHash = "a".repeat(64);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const manifestDigest = (files) =>
-  digest(files.map((f) => `${f.relativePath}\t${f.lengthBytes}\t${f.sha256}`).join("\n") + "\n");
+  digest(`${files.map((f) => `${f.relativePath}\t${f.lengthBytes}\t${f.sha256}`).join("\n")}\n`);
 function sourceText(definition) {
   const [, , signature, required] = definition;
   return `${signature}\n{\n${required.map((value) => `  ${value};`).join("\n")}\n}\n`;

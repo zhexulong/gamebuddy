@@ -1,6 +1,6 @@
 import type { WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource } from "./integration-launcher.js";
-import type { IntegrationExecutionReceipt, GameIntegrationModule, IntegrationStateView } from "./integration-module.js";
+import type { GameIntegrationModule, IntegrationExecutionReceipt, IntegrationStateView } from "./integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
 
 /** Strict, content-free source-owned IPC contract for the operational Game gate. */

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import process from "node:process";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const ACTION = "single_player_sleep_and_advance_day";

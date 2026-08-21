@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { validateNativeNormalPlayerIngressRegister } from "./lib/stardew-native-normal-player-ingress-register.mjs";
+
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const source = "void Entry() { if (input) Target(); } void Target() {}";
 const fileSha = sha(source);

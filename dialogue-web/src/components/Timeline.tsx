@@ -25,7 +25,7 @@ export function Timeline({
     if (sectionRef.current) {
       sectionRef.current.scrollTop = sectionRef.current.scrollHeight;
     }
-  }, [transcript]);
+  }, []);
 
   return (
     <section ref={sectionRef} className="timeline" aria-label={labels.chatTranscript}>

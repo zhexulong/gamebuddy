@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { join, resolve } from "node:path";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 const root = resolve(import.meta.dirname, "..");

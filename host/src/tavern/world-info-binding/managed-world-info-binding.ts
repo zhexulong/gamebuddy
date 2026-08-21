@@ -12,15 +12,34 @@ export type ManagedWorldInfoSource = Readonly<{
 }>;
 
 /**
+ * Exact-revision-only resolver surface. Browser-selected revisions are always
+ * resolved by the exact immutable revision; there is no latest projection.
+ */
+export type ManagedWorldInfoBindingResolver = Readonly<{
+  bindExact(publicTitle: string, revision: number): Promise<TavernStableManagedWorldInfoBinding>;
+  resolve(binding: TavernStableManagedWorldInfoBinding): Promise<ManagedWorldInfoSource>;
+}>;
+
+/**
  * Explicit adapter between the managed public repository and Tavern. It only
  * resolves a revision already named by a thread; it never lists or selects the
- * latest managed artifact.
+ * latest managed artifact, and browser-selected revisions never resolve as
+ * latest.
  */
-export function createManagedWorldInfoBindingResolver(repository: WorldInfoManagementRepository) {
+export function createManagedWorldInfoBindingResolver(
+  repository: WorldInfoManagementRepository,
+): ManagedWorldInfoBindingResolver {
   return Object.freeze({
-    async bind(publicTitle: string): Promise<TavernStableManagedWorldInfoBinding> {
-      const projection = await repository.detail(publicTitle);
-      if (projection === null) throw new Error("managed_world_info_not_found");
+    /**
+     * Binds the exact immutable revision named by the caller. There is no
+     * latest-resolving variant: durable selection must always name a specific
+     * revision so a later repository update can never silently move a binding.
+     */
+    async bindExact(publicTitle: string, revision: number): Promise<TavernStableManagedWorldInfoBinding> {
+      if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("managed_world_info_revision_missing");
+      const history = await repository.history(publicTitle);
+      const projection = history.find((candidate) => candidate.revision === revision);
+      if (projection === undefined) throw new Error("managed_world_info_revision_missing");
       return bindingFor(projection);
     },
     async resolve(binding: TavernStableManagedWorldInfoBinding): Promise<ManagedWorldInfoSource> {

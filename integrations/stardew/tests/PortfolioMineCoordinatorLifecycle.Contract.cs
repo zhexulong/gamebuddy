@@ -517,6 +517,22 @@ internal static class PortfolioMineCoordinatorLifecycleContract
 
         AssertEntryArmFailure("false", new EntryAdapter { ReturnFalse = true });
         AssertEntryArmFailure("throw", new EntryAdapter { ThrowOnRequest = true });
+        AssertEntryDirectTransitionStartsOnAccepted();
+    }
+
+    private static void AssertEntryDirectTransitionStartsOnAccepted()
+    {
+        PortfolioScope scope = Scope();
+        PortfolioMineEntryActionRequest request = new(
+            PortfolioBridgeProtocol.MineEntryAction, "entry-direct-request", "entry-direct-trace",
+            "entry-direct-idempotency", InitialRevision, Deadline(), Token(), scope);
+        var adapter = new EntryAdapter();
+        var coordinator = new PortfolioMineEntryActionCoordinator(adapter);
+        PortfolioMineEntryActionBeginResult begin = coordinator.Begin(request, EntryObservation(request, scope), "entry-direct-correlation");
+        Require(begin.IsAccepted && begin.Phase is not null && adapter.ArmInvocationCount == 1,
+            "entry direct transition must arm during the accepted invocation; it has no private approach phase.");
+        Require(adapter.DiscardedExecutionIds.Count == 0,
+            "entry direct transition must retain its exact pending owner until native transition or terminalization.");
     }
 
     private static void AssertEntryArmFailure(string mode, EntryAdapter adapter)
@@ -555,47 +571,6 @@ internal static class PortfolioMineCoordinatorLifecycleContract
 
         AssertLadderArmFailure("false", new LadderAdapter { ReturnFalse = true });
         AssertLadderArmFailure("throw", new LadderAdapter { ThrowOnRequest = true });
-        AssertLadderNativeOperationFailed();
-        AssertLadderApproachPendingCancellation();
-    }
-
-    private static void AssertLadderNativeOperationFailed()
-    {
-        PortfolioScope scope = Scope();
-        PortfolioMineLadderActionRequest request = new(
-            PortfolioBridgeProtocol.MineLadderAction, "ladder-native-failed-request", "ladder-native-failed-trace",
-            "ladder-native-failed-idempotency", InitialRevision, Deadline(), Token(), scope);
-        var adapter = new LadderAdapter { NativeOperationFailed = true };
-        var coordinator = new PortfolioMineLadderActionCoordinator(adapter);
-        PortfolioMineLadderActionBeginResult begin = coordinator.Begin(request, LadderObservation(request, scope), "ladder-native-failed-correlation");
-        PortfolioMineLadderActionReceipt receipt = begin.Receipt ?? throw new InvalidOperationException("ladder native failure must terminalize.");
-        Require(receipt.State == "failed" && receipt.ReasonCode == "native_operation_failed" && receipt.IsStructurallyTerminal,
-            "ladder pre-arm native failure must be deterministic failed/native_operation_failed.");
-        Require(!coordinator.HasActiveExecution && !coordinator.TryPeekTerminalDelivery(out _),
-            "ladder pre-arm native failure must not retain active execution or queue delivery.");
-        Require(adapter.DiscardedExecutionIds.SequenceEqual(new[] { receipt.ExecutionId }),
-            "ladder pre-arm native failure must release the exact pending owner once.");
-    }
-
-    private static void AssertLadderApproachPendingCancellation()
-    {
-        PortfolioScope scope = Scope();
-        PortfolioMineLadderActionRequest request = new(
-            PortfolioBridgeProtocol.MineLadderAction, "ladder-approach-pending-request", "ladder-approach-pending-trace",
-            "ladder-approach-pending-idempotency", InitialRevision, Deadline(), Token(), scope);
-        var adapter = new LadderAdapter { ApproachPending = true };
-        var coordinator = new PortfolioMineLadderActionCoordinator(adapter);
-        PortfolioMineLadderActionBeginResult begin = coordinator.Begin(request, LadderObservation(request, scope), "ladder-approach-pending-correlation");
-        Require(begin.IsAccepted && begin.Phase is not null,
-            "ladder approach pending must remain accepted on the same execution.");
-        PortfolioMineLadderActionReceipt cancelled = coordinator.Cancel(new(
-            PortfolioBridgeProtocol.MineLadderAction, request.RequestId, request.TraceId, begin.Phase.ExecutionId,
-            request.CancellationToken, scope));
-        Require(cancelled.State == "cancelled" && cancelled.ReasonCode == "cancelled" && cancelled.IsStructurallyTerminal,
-            "ladder approach pending must be cancellable before native arm.");
-        Require(!coordinator.HasActiveExecution && !coordinator.TryPeekTerminalDelivery(out _)
-            && adapter.DiscardedExecutionIds.SequenceEqual(new[] { cancelled.ExecutionId }),
-            "ladder approach cancellation must release pending ownership exactly once without delivery.");
     }
 
     private static void AssertLadderArmFailure(string mode, LadderAdapter adapter)
@@ -2305,7 +2280,7 @@ internal static class PortfolioMineCoordinatorLifecycleContract
     private static void AssertUncertain(string state, string reason, string scenario) => Require(state == "uncertain" && reason == "native_operation_uncertain", $"{scenario} must be uncertain/native_operation_uncertain.");
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 
-    private static PortfolioMineEntryFreshObservation EntryObservation(PortfolioMineEntryActionRequest request, PortfolioScope scope, bool fresh = true) => new(request.RequestId, request.TraceId, InitialRevision, scope, fresh, true, true, true, true, 0, 1, true, true, true, "entry-target", 1);
+    private static PortfolioMineEntryFreshObservation EntryObservation(PortfolioMineEntryActionRequest request, PortfolioScope scope, bool fresh = true) => new(request.RequestId, request.TraceId, InitialRevision, scope, fresh, true, true, true, true, 0, 1, true, true, "entry-target", 1);
     private static PortfolioMineEntryTransitionStartedObservation EntryTransition(PortfolioMineEntryActionRequest request, string executionId, PortfolioScope scope, long revision) => new(request.RequestId, request.TraceId, executionId, revision, scope, true, true, true, true, true, true, "entry-target", 1);
     private static PortfolioMineEntryPostconditionObservation EntryPostcondition(PortfolioMineEntryActionRequest request, string executionId, PortfolioScope scope, long revision, bool valid) => new(request.RequestId, request.TraceId, executionId, revision, scope, true, true, true, true, true, valid ? 1 : 0, 1, true, "entry-target", 1);
     private static void AssertEntryContext(PortfolioMineEntryAdapterContext context, PortfolioMineEntryActionRequest request, string executionId, PortfolioScope scope) => Require(context.RequestId == request.RequestId && context.TraceId == request.TraceId && context.ExecutionId == executionId && context.CancellationToken == request.CancellationToken && context.Scope.Equals(scope) && context.OpaqueEntryTarget == "entry-target" && context.TargetFloor == 1 && context.ExpectedRevision == request.ExpectedRevision && context.DeadlineMs == request.DeadlineMs, "entry adapter context must preserve the immutable authority tuple.");
@@ -2352,7 +2327,8 @@ internal static class PortfolioMineCoordinatorLifecycleContract
             if (ThrowOnRequest)
                 throw new InvalidOperationException("entry adapter throw configured by contract test.");
             result = new(context.RequestId, context.TraceId, context.ExecutionId, context.Scope, context.ExpectedRevision,
-                context.OpaqueEntryTarget, ReturnWrongTuple ? context.TargetFloor + 1 : context.TargetFloor, true);
+                context.OpaqueEntryTarget, ReturnWrongTuple ? context.TargetFloor + 1 : context.TargetFloor,
+                TransitionArmed: true);
             return !ReturnFalse;
         }
         public void DiscardPending(string executionId) => DiscardedExecutionIds.Add(executionId);
@@ -2366,8 +2342,6 @@ internal static class PortfolioMineCoordinatorLifecycleContract
         internal bool Available { get; init; } = true;
         internal bool ReturnFalse { get; init; }
         internal bool ThrowOnRequest { get; init; }
-        internal bool ApproachPending { get; init; }
-        internal bool NativeOperationFailed { get; init; }
         internal Action<PortfolioMineLadderAdapterContext>? OnRequest { get; set; }
         internal Action? OnArm { get; set; }
         internal List<string> DiscardedExecutionIds { get; } = new();
@@ -2382,12 +2356,8 @@ internal static class PortfolioMineCoordinatorLifecycleContract
                 throw new InvalidOperationException("ladder adapter throw configured by contract test.");
             result = new(context.RequestId, context.TraceId, context.ExecutionId, context.Scope, context.ExpectedRevision,
                 context.OpaqueLadderTarget, ReturnWrongTuple ? context.TargetFloor + 1 : context.TargetFloor,
-                TransitionArmed: !ApproachPending && !NativeOperationFailed)
-            {
-                ApproachPending = ApproachPending,
-                NativeOperationFailed = NativeOperationFailed
-            };
-            return !ReturnFalse && !NativeOperationFailed;
+                TransitionArmed: true);
+            return !ReturnFalse;
         }
         public void DiscardPending(string executionId) => DiscardedExecutionIds.Add(executionId);
     }

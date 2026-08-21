@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { validateNativeStateMachineFamilyRegister } from "./lib/stardew-native-state-machine-family-register.mjs";
+
 const text = `void Input() { Owner(); Dynamic(); } void Owner() { state = 1; }`,
   bytes = Buffer.from(text),
   h = createHash("sha256").update(bytes).digest("hex");

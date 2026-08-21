@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { deriveNativeInteractionMechanismFamilyRegister } from "./lib/stardew-native-mechanism-family-register.mjs";
+
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 function report(rows) {
   return {

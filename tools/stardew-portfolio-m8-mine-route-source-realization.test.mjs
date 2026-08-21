@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import {
-  ANCHORS,
-  EXPECTED_MINE_ACTIONS,
-  SNAPSHOT_INPUTS,
-  TARGET,
-  deriveMapRealization,
-  extractAnchors,
-  mint,
-  validateDossier,
-  verify,
-} from "./stardew-portfolio-m8-mine-route-source-realization.mjs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import test from "node:test";
+import {
+  ANCHORS,
+  deriveMapRealization,
+  EXPECTED_MINE_ACTIONS,
+  extractAnchors,
+  mint,
+  SNAPSHOT_INPUTS,
+  TARGET,
+  validateDossier,
+  verify,
+} from "./stardew-portfolio-m8-mine-route-source-realization.mjs";
 
 const farmer = `protected virtual bool MovePositionImpl(
 {

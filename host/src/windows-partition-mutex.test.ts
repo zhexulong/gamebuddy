@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   authorityRootMutexName,
   createWindowsAuthorityRootMutex,
-  WindowsPartitionMutexError,
   type WindowsPartitionMutexBroker,
 } from "./windows-partition-mutex.js";
 

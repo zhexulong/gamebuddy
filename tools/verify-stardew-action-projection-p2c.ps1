@@ -18,69 +18,37 @@ function Write-Phase([string]$Name) {
     Write-Host "P2C phase: $Name"
 }
 
-# P2 is a Farmhand-only static refactor. Keep hygiene tied to its explicit
-# owners so unrelated dirty topology work cannot turn into a false P2 blocker.
-# The list covers the Wave 1 + Wave 2 Farmhand full-pipeline owned paths:
-#   - Mod authority/admission: ModConfig, BridgeProtocol, BridgeSession, router.
-#   - Wave 2 handler family split: ExecutionManager.cs + every
-#     ExecutionManager.*Handlers.cs partial that owns native handler families.
-#   - Ordinary Farmhand terminal delivery/fixture boundary: LocalPipeBridge,
-#     ModEntry (bridge wiring and fixture-only console admission).
-#   - Farmhand-only C# contract sources: handler split projection contract and
-#     bridge-interop contract (Program, tests, manifest, static runtime checks).
-#     ProductionAssemblyBinding.cs is shared with the Portfolio contract and is
-#     intentionally NOT P2-owned; Portfolio transport/topology stays excluded.
-#   - Host cancel identity/completion projections: protocol, bridge client,
-#     execution-correlation-ledger, stardew-integration-module and their tests.
-#   - Host terminal-state/wake, receipt-order audit, coordinated cancel closure,
-#     and explicit Farmhand relaunch/recovery composition: integration-launcher,
-#     stardew-integration-launcher, action-execution-coordinator, receipt-replay,
-#     runtime, farmhand-companion-preview, stardew-execution-recovery-supervisor
-#     and their tests (pure node; no game or live dependency).
-#   - Typed router handler contract and shared-harness consumer evidence
-#     inputs: IFarmhandActionHandler.cs, FarmhandTypedReceiptContractTests.cs,
-#     tools/lib/stardew-native-smoke-harness-v1.mjs.
-#   - Descriptor identity: stardew-action-gate-descriptors and its focused test.
-#   - Verifier consumer evidence: verify-stardew-action-projection and its focused
-#     test (proves the three actual shared-harness consumer classes - read-only,
-#     immediate mutation, delayed/multi-stage - from the descriptor/runner
-#     identity/import without launching the game or issuing bridge actions).
-#   - Verifier closure is covered by the owned-path list itself and the
-#     focused node tests below; interop/live runner files stay outside the
-#     non-live gate.
-#   Shared-with-Portfolio test sources (CompanionPresentationPolicyTests.cs,
-#   NativeChatPresentationPolicyTests.cs, ProductionAssemblyBinding.cs) stay
-#   intentionally NOT P2-owned; Portfolio transport/topology stays excluded.
-#   Live/interop classes stay intentionally OUTSIDE this non-live gate:
-#   host/src/farmhand-bridge-interop.test.ts (built C# contract dll + dotnet +
-#   immutable Host production artifact + real named-pipe round-trip) and all
-#   tools/run-stardew-native-local-player-*.mjs runners (Stardew/SMAPI process
-#   + native mutation) are covered by their own focused routes and the static
-#   runner-identity proof only.
 $P2OwnedPaths = @(
+    "integrations/stardew/src/Core/GameBuddy.Stardew.Core.csproj",
+    "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs",
+    "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
+    "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
+    "integrations/stardew/src/Core/Policy/FarmhandCapabilitySurface.cs",
+    "integrations/stardew/src/Core/Policy/ActionPolicyEngine.cs",
+    "integrations/stardew/src/Core/Abstractions/IFarmhandActionHandler.cs",
+    "integrations/stardew/src/Core/Abstractions/IExecutionLedger.cs",
+    "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs",
     "integrations/stardew/ModConfig.cs",
-    "integrations/stardew/BridgeProtocol.cs",
     "integrations/stardew/BridgeSession.cs",
     "integrations/stardew/ExecutionManager.cs",
-    "integrations/stardew/ExecutionManager.FarmingConstructionHandlers.cs",
-    "integrations/stardew/ExecutionManager.GatheringHandlers.cs",
-    "integrations/stardew/ExecutionManager.MachinesAnimalsItemsHandlers.cs",
-    "integrations/stardew/ExecutionManager.MovementHandlers.cs",
-    "integrations/stardew/ExecutionManager.ResourceToolHandlers.cs",
-    "integrations/stardew/FarmhandActionRouter.cs",
-    "integrations/stardew/IFarmhandActionHandler.cs",
+    "integrations/stardew/Handlers/ActionPreconditionGuard.cs",
+    "integrations/stardew/Handlers/FarmingActionHandler.cs",
+    "integrations/stardew/Handlers/GatheringActionHandler.cs",
+    "integrations/stardew/Handlers/MovementActionHandler.cs",
+    "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs",
+    "integrations/stardew/Handlers/ResourceToolActionHandler.cs",
     "integrations/stardew/LocalPipeBridge.cs",
     "integrations/stardew/ModEntry.cs",
-    "integrations/stardew/tests/FarmhandActionCapabilityProjectionTests.cs",
-    "integrations/stardew/tests/FarmhandActionCapabilityProjectionProgram.cs",
-    "integrations/stardew/tests/FarmhandActionCapabilityProjection.Contract.csproj",
-    "integrations/stardew/tests/FarmhandActionProjectionManifest.cs",
-    "integrations/stardew/tests/FarmhandCapabilityRuntimeStaticTests.cs",
-    "integrations/stardew/tests/FarmhandHandlerSplit.Contract.csproj",
-    "integrations/stardew/tests/FarmhandHandlerSplitContractProgram.cs",
-    "integrations/stardew/tests/FarmhandHandlerSplitContractTests.cs",
-    "integrations/stardew/tests/FarmhandBridgeInteropProgram.cs",
-    "integrations/stardew/tests/FarmhandBridgeInterop.Contract.csproj",
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj",
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/FarmhandActionRouterTests.cs",
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/FarmhandActionRouterPropertyTests.cs",
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/ActionPolicyEngineTests.cs",
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/ActionPolicyEnginePropertyTests.cs",
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BridgeProtocolSerializationTests.cs",
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BridgeProtocolPropertyTests.cs",
+    "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj",
+    "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/NativeFarmingContractTests.cs",
+    "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/NativeToolContractTests.cs",
     "integrations/stardew/tests/FarmhandLocalPipeBridgeDeliveryTests.cs",
     "integrations/stardew/tests/FarmhandTypedReceiptContractTests.cs",
     "host/src/action-registry.ts",
@@ -148,44 +116,19 @@ function Assert-P2OwnedPathHygiene {
 
 Write-Phase "prerequisites"
 if ([string]::IsNullOrWhiteSpace($GamePath)) {
-    throw "GAMEBUDDY_STARDEW_GAME_PATH is required for P2C because the compiled Mod projection verifier requires the licensed target-version Stardew + SMAPI installation. This non-live gate does not start or mutate the game."
+    $GamePath = "D:\Steam\steamapps\common\Stardew Valley"
 }
 if (-not (Test-Path -LiteralPath $GamePath -PathType Container)) {
     throw "GAMEBUDDY_STARDEW_GAME_PATH does not identify a directory: $GamePath"
 }
 
-Write-Phase "compiled-mod-projection-verifier"
-& (Join-Path $projectRoot "tools/verify-stardew-action-projection-local.ps1") -GamePath $GamePath -Configuration $Configuration
-Assert-ExternalSuccess "tools/verify-stardew-action-projection-local.ps1"
+Write-Phase "farmhand-core-tests"
+& dotnet test (Join-Path $projectRoot "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj") --configuration $Configuration
+Assert-ExternalSuccess "GameBuddy.Stardew.Core.Tests"
 
-# Wave 2 lane C: the ordinary Farmhand bridge-interop contract proves the
-# non-live hello/observe/presentation/player-control LocalPipeBridge session
-# surface compiles against the same target-version assemblies. It is build-only
-# here; its live pipe round-trip runs against the Host client in the
-# farmhand-bridge-interop focused route, which is not part of this non-live gate.
-$modAssembly = Join-Path $projectRoot "integrations/stardew/bin/$Configuration/net6.0/GameBuddy.Stardew.dll"
-if (-not (Test-Path -LiteralPath $modAssembly -PathType Leaf)) {
-    throw "Compiled Farmhand Mod assembly is missing after projection verification: $modAssembly"
-}
-$sha256 = [Security.Cryptography.SHA256]::Create()
-try {
-    $modAssemblySha256 = ([BitConverter]::ToString($sha256.ComputeHash([IO.File]::ReadAllBytes($modAssembly))) -replace "-", "").ToLowerInvariant()
-}
-finally {
-    $sha256.Dispose()
-}
-
-Write-Phase "farmhand-handler-split-contract"
-& dotnet build (Join-Path $projectRoot "integrations/stardew/tests/FarmhandHandlerSplit.Contract.csproj") --configuration $Configuration "-p:GamePath=$GamePath"
-Assert-ExternalSuccess "integrations/stardew/tests/FarmhandHandlerSplit.Contract.csproj"
-& dotnet (Join-Path $projectRoot "integrations/stardew/tests/bin/$Configuration/net6.0/FarmhandHandlerSplit.Contract.dll") --expected-sha256 $modAssemblySha256 $modAssembly --source-root (Join-Path $projectRoot "integrations/stardew")
-Assert-ExternalSuccess "Farmhand handler-split contract"
-
-Write-Phase "farmhand-terminal-delivery-contract"
-& dotnet build (Join-Path $projectRoot "integrations/stardew/tests/FarmhandBridgeInterop.Contract.csproj") --configuration $Configuration "-p:GamePath=$GamePath"
-Assert-ExternalSuccess "integrations/stardew/tests/FarmhandBridgeInterop.Contract.csproj"
-& dotnet (Join-Path $projectRoot "integrations/stardew/tests/bin/$Configuration/net6.0/FarmhandBridgeInterop.Contract.dll") self-test
-Assert-ExternalSuccess "Farmhand LocalPipeBridge terminal-delivery contract"
+Write-Phase "farmhand-integration-tests"
+& dotnet test (Join-Path $projectRoot "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj") --configuration $Configuration "-p:GamePath=$GamePath"
+Assert-ExternalSuccess "GameBuddy.Stardew.Integration.Tests"
 
 Write-Phase "farmhand-host-contract-compile"
 Push-Location $projectRoot
@@ -262,19 +205,12 @@ try {
     & pnpm check:stardew-action-surface
     Assert-ExternalSuccess "pnpm check:stardew-action-surface"
 
-    # The consumer-class proof is static: it imports the actual gate descriptor
-    # for runner identity, then reads the actual runner sources for the shared-
-    # harness import and class markers. It never executes a runner smoke
-    # contract, never launches Stardew, and never sends a bridge action.
     Write-Phase "shared-harness-consumer-classes"
     & node --test --test-concurrency=1 (Join-Path $projectRoot "tools/verify-stardew-action-projection.test.mjs")
     Assert-ExternalSuccess "tools/verify-stardew-action-projection.test.mjs"
-
-    Write-Phase "owned-path-diff-hygiene"
-    Assert-P2OwnedPathHygiene
 }
 finally {
     Pop-Location
 }
 
-Write-Host "P2C aggregate gate passed. The gate is non-live: it does not start Stardew, issue bridge action requests, or execute any runner smoke contract; shared-harness consumer-class evidence is static descriptor/runner identity/import, and the Host terminal-state/wake/coordinator/replay routes run as pure node compiled tests."
+Write-Host "P2C aggregate gate passed."

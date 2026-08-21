@@ -20,6 +20,7 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
     private readonly Func<PortfolioMineEntryTransitionStartedObservation, bool> observeTransitionStarted;
     private readonly Func<PortfolioMineEntryPostconditionObservation, PortfolioMineEntryActionReceipt> observePostcondition;
     private readonly Func<string, string, string, string, long, PortfolioScope, PortfolioMineEntryActionReceipt> fail;
+    private readonly Func<string, bool> armNativeTransition;
     private PendingExecution? pending;
 
     internal PortfolioMineEntrySemanticAdapter(
@@ -28,7 +29,8 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
         Func<long> nextRevision,
         Func<PortfolioMineEntryTransitionStartedObservation, bool> observeTransitionStarted,
         Func<PortfolioMineEntryPostconditionObservation, PortfolioMineEntryActionReceipt> observePostcondition,
-        Func<string, string, string, string, long, PortfolioScope, PortfolioMineEntryActionReceipt> fail)
+        Func<string, string, string, string, long, PortfolioScope, PortfolioMineEntryActionReceipt> fail,
+        Func<string, bool> armNativeTransition)
     {
         this.config = config;
         this.isBindingCurrent = isBindingCurrent;
@@ -36,6 +38,7 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
         this.observeTransitionStarted = observeTransitionStarted;
         this.observePostcondition = observePostcondition;
         this.fail = fail;
+        this.armNativeTransition = armNativeTransition;
     }
 
     internal PortfolioMineEntryFreshObservation CreateFreshObservation(
@@ -53,33 +56,19 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
         bool policyAllowed = this.config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.MineEntryAction);
         int currentFloor = 0;
         int lowestMineLevel = 0;
-        bool mineEntryObserved = false;
-        bool entryInteractionAvailable = false;
+        // The typed action's Given is the ordinary Mine exterior. The map's
+        // Action=Mine checkAction ingress is provenance for normal player UI,
+        // not a precondition of the direct Game1.enterMine(1) native seam.
+        bool mineEntryObserved = worldReady && singlePlayer && Game1.player is not null
+            && IsOrdinaryMineExterior(Game1.player);
         if (worldReady && singlePlayer && Game1.player is not null)
-        {
-            entryInteractionAvailable = TryReadOrdinaryMineProducer(Game1.player, out _);
-            // The sole producer is Maps/Mine Buildings Action=Mine at (23,9).
-            // It belongs to the exterior Mine GameLocation, never MineShaft.
-            mineEntryObserved = entryInteractionAvailable;
             lowestMineLevel = MineShaft.lowestLevelReached;
-        }
-        // Native materialization uses Math.Min(lowestLevelReached, 120), so
-        // progress above 120 still materializes the 120 checkpoint.
-        // enter_mine is intentionally zero-argument: native entry always targets floor 1.
         int targetFloor = PortfolioBridgeProtocol.MineEntryMinimumFloor;
         bool checkpointValid = PortfolioMineEntryProjection.IsSelectableCheckpoint(targetFloor);
-        // Probe reports literal current progress. It is informational only: the
-        // first native N→N+1 descent is admitted independently below.
         bool targetUnlocked = mineEntryObserved && checkpointValid;
-        // The selected checkpoint is the native semantic target. Stardew has no
-        // opaque entry object or ID; this value is only a deterministic,
-        // non-secret correlation capability bound to the complete fresh facts.
         string opaqueCorrelationId = BuildOpaqueCorrelationId(
             request.RequestId, request.TraceId, scope, revision, targetFloor,
             currentFloor, lowestMineLevel);
-        // Do not claim ownership of a target during observation. Begin may reject
-        // this request before the semantic boundary, and such a request must not
-        // replace a pending target owned by another execution.
         return new PortfolioMineEntryFreshObservation(
             request.RequestId, request.TraceId, revision, scope,
             Fresh: true,
@@ -91,7 +80,6 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
             LowestMineLevel: lowestMineLevel,
             UnlockedLevelObserved: mineEntryObserved && checkpointValid,
             TargetUnlocked: targetUnlocked,
-            EntryInteractionAvailable: entryInteractionAvailable,
             OpaqueEntryTarget: opaqueCorrelationId,
             TargetFloor: targetFloor);
     }
@@ -102,8 +90,7 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
         floor = null;
         if (request is null || !request.IsValid || !request.Scope.Equals(scope)
             || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= request.DeadlineMs
-            || !this.TryReadLiveFacts(scope, targetFloor, allowSelectedFloor: true,
-                requireEntryInteraction: false, out int currentFloor, out int lowestMineLevel)
+            || !this.TryReadLiveFacts(scope, targetFloor, allowSelectedFloor: true, out int currentFloor, out int lowestMineLevel)
             || currentFloor != targetFloor
             || currentRevision <= request.ExpectedRevision)
             return false;
@@ -124,13 +111,11 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
         if (existing is not null && !Matches(existing, context))
             return false;
         if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= context.DeadlineMs
-            || !this.TryReadLiveFacts(context.Scope, context.TargetFloor, allowSelectedFloor: false,
-                requireEntryInteraction: true, out _, out _))
+            || !this.TryReadLiveFacts(context.Scope, context.TargetFloor, allowSelectedFloor: false, out _, out _))
             return false;
 
         Farmer player = Game1.player!;
-        if (!TryReadOrdinaryMineProducer(player, out GameLocation oldLocation))
-            return false;
+        GameLocation oldLocation = player.currentLocation;
         PendingExecution candidate = existing ?? new PendingExecution(
             context.RequestId, context.TraceId, context.Scope, context.OpaqueEntryTarget,
             context.TargetFloor, context.ExpectedRevision, context.DeadlineMs,
@@ -138,40 +123,59 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
             player, oldLocation, oldLocation.Name, -1, EdgeGeneration: 0) { ExecutionId = context.ExecutionId };
         candidate = candidate with { ExecutionId = context.ExecutionId };
 
-        LocationRequest? previousRequest = Game1.locationRequest;
-        // This is the last admission before the native effect. It re-reads the
-        // live authorization and interaction facts rather than trusting a prior
-        // observation, so revocation rejects without calling enterMine.
-        if (!this.TryReadLiveFacts(context.Scope, context.TargetFloor, allowSelectedFloor: false,
-                requireEntryInteraction: true, out _, out _)
-            || !TryReadOrdinaryMineProducer(player, out GameLocation receiver)
-            || !ReferenceEquals(receiver, oldLocation)
-            || !ReferenceEquals(Game1.currentLocation, Game1.player.currentLocation))
+        this.pending = candidate;
+        if (!this.TryIssueNativeTransition(candidate, context, out _))
+        {
+            this.DiscardPending(context.ExecutionId);
             return false;
+        }
+        result = new PortfolioMineEntryAdapterResult(
+            context.RequestId, context.TraceId, context.ExecutionId, context.Scope,
+            context.ExpectedRevision, context.OpaqueEntryTarget, context.TargetFloor,
+            TransitionArmed: true);
+        return true;
+    }
+
+    private bool TryIssueNativeTransition(PendingExecution candidate, PortfolioMineEntryAdapterContext context, out bool edgeIssued)
+    {
+        edgeIssued = false;
+        if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= context.DeadlineMs
+            || !this.TryReadLiveFacts(context.Scope, context.TargetFloor, allowSelectedFloor: false, out _, out _)
+            || !ReferenceEquals(Game1.currentLocation, candidate.Player.currentLocation))
+            return false;
+
+        LocationRequest? previousRequest = Game1.locationRequest;
+        PendingExecution beforeArm = candidate with { NativeCallInProgress = true };
+        this.pending = beforeArm;
+        if (!this.armNativeTransition(candidate.ExecutionId))
+            return false;
+        // ArmNativeTransition may synchronously re-enter cancellation or
+        // invalidation. Never reconstruct pending state after that callback:
+        // only the exact still-owned, un-cancelled execution may cross the
+        // native call boundary. Once arm succeeded, any failed re-check is
+        // uncertain because the coordinator has reserved the native edge.
+        edgeIssued = true;
+        PendingExecution? armedBeforeNative = this.pending;
+        if (armedBeforeNative is null
+            || !Matches(armedBeforeNative, context)
+            || armedBeforeNative.ExecutionId != candidate.ExecutionId
+            || !armedBeforeNative.NativeCallInProgress
+            || armedBeforeNative.EdgeIssued
+            || !this.isBindingCurrent())
+            return false;
+
+        candidate = armedBeforeNative with
+        {
+            EdgeGeneration = armedBeforeNative.EdgeGeneration + 1,
+            EdgeIssuedTick = Game1.ticks
+        };
         this.pending = candidate;
         try
         {
-            // This is the complete native edge for M8: no menu, input, dispatcher,
-            // direct warp, reflection, or save mutation is involved.
-            candidate = candidate with
-            {
-                EdgeGeneration = candidate.EdgeGeneration + 1,
-                EdgeIssuedTick = Game1.ticks,
-                NativeCallInProgress = true
-            };
-            this.pending = candidate;
-            try
-            {
-                // GameLocation.performAction handles this exact Maps/Mine
-                // Action=Mine producer by playing stairsdown on its receiver,
-                // then entering its omitted optional floor (the native default 1).
-                Game1.currentLocation.playSound("stairsdown");
-                Game1.enterMine(PortfolioBridgeProtocol.MineEntryMinimumFloor);
-            }
-            catch
-            {
-                return false;
-            }
+            // This is the complete native edge for M8: no menu, input,
+            // dispatcher, direct warp, reflection, or save mutation.
+            Game1.currentLocation.playSound("stairsdown");
+            Game1.enterMine(PortfolioBridgeProtocol.MineEntryMinimumFloor);
         }
         catch
         {
@@ -188,9 +192,7 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
             || request is null || ReferenceEquals(request, previousRequest)
             || !MatchesExpectedRequest(request, context.TargetFloor)
             || !ReferenceEquals(Game1.locationRequest, request))
-        {
             return false;
-        }
 
         PendingExecution pending = armed with { NativeCallInProgress = false, NativeRequest = request };
         LocationRequest.Callback? handler = null;
@@ -198,10 +200,6 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
         pending = pending with { NativeRequestHandler = handler };
         this.pending = pending;
         request.OnWarp += handler;
-        result = new PortfolioMineEntryAdapterResult(
-            context.RequestId, context.TraceId, context.ExecutionId, context.Scope,
-            context.ExpectedRevision, context.OpaqueEntryTarget, context.TargetFloor,
-            TransitionArmed: true);
         return true;
     }
 
@@ -296,8 +294,7 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
 
         try
         {
-            if (!this.TryReadLiveFacts(candidate.Scope, candidate.TargetFloor, allowSelectedFloor: true,
-                    requireEntryInteraction: false, out int actualFloor, out int lowestMineLevel)
+            if (!this.TryReadLiveFacts(candidate.Scope, candidate.TargetFloor, allowSelectedFloor: true, out int actualFloor, out int lowestMineLevel)
                 || actualFloor != candidate.TargetFloor
                 || lowestMineLevel < candidate.TargetFloor
                 || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= candidate.DeadlineMs)
@@ -328,20 +325,18 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
     }
 
     private bool TryReadLiveFacts(PortfolioScope scope, int targetFloor, bool allowSelectedFloor,
-        bool requireEntryInteraction, out int currentFloor, out int lowestMineLevel)
+        out int currentFloor, out int lowestMineLevel)
     {
         currentFloor = 0;
         lowestMineLevel = 0;
-        // Re-evaluate the action policy in this game-thread admission immediately
-        // before the native effect. An authorization observed during probe or
-        // request parsing is not authority to enter the mine after revocation.
         if (!this.config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.MineEntryAction)
             || !this.isBindingCurrent() || !Context.IsWorldReady || !Game1.hasLoadedGame
             || Context.IsMultiplayer || !Game1.IsMasterGame
             || Game1.getAllFarmers().Count() != 1 || Game1.player is null
             || Game1.player.UniqueMultiplayerID != Game1.MasterPlayer.UniqueMultiplayerID
             || Game1.player.UniqueMultiplayerID.ToString() != scope.LocalPlayerId
-            || (requireEntryInteraction && !TryReadOrdinaryMineProducer(Game1.player, out _)))
+            || Game1.CurrentEvent is not null || Game1.eventUp || Game1.dialogueUp
+            || Game1.activeClickableMenu is not null || !Game1.player.CanMove)
             return false;
 
         if (allowSelectedFloor)
@@ -349,61 +344,38 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
             if (Game1.player.currentLocation is not MineShaft mine)
                 return false;
             currentFloor = mine.mineLevel;
-            lowestMineLevel = MineShaft.lowestLevelReached;
         }
-        else
+        else if (!IsOrdinaryMineExterior(Game1.player))
         {
-            // The sole producer is the fixed ordinary Maps/Mine Action=Mine
-            // tile. No caller coordinate or action text is accepted, and Mine
-            // 77377, NextMineLevel, and MineElevator cannot pass.
-            if (!TryReadOrdinaryMineProducer(Game1.player, out _))
-                return false;
-            currentFloor = 0;
+            return false;
         }
-        if (!allowSelectedFloor)
-            lowestMineLevel = 0;
         lowestMineLevel = MineShaft.lowestLevelReached;
         if (!PortfolioMineEntryProjection.IsSelectableCheckpoint(targetFloor)
             || currentFloor < 0 || currentFloor > PortfolioBridgeProtocol.MineEntryMaximumFloor
             || lowestMineLevel < currentFloor)
             return false;
-
-        // Before enterMine, the only admissible target is the next floor. After
-        // the native transition, the caller additionally binds the observed
-        // current floor to targetFloor; this path proves progress reached it.
         return allowSelectedFloor
             ? currentFloor == targetFloor && lowestMineLevel >= targetFloor
             : PortfolioMineEntryProjection.IsEntryTarget(targetFloor);
     }
 
-    // Source/map-locked ordinary producer: Maps/Mine Buildings Action=Mine at
-    // (23,9). The producer and both playSound/current-location receivers are
-    // the same fresh GameLocation instance; no MineShaft interaction is used.
-    private static bool TryReadOrdinaryMineProducer(Farmer player, out GameLocation location)
+    private static bool IsOrdinaryMineExterior(Farmer player)
     {
-        location = Game1.currentLocation;
-        if (location is MineShaft || !ReferenceEquals(location, player.currentLocation)
-            || location.Name != "Mine")
-            return false;
-        const int producerX = 23;
-        const int producerY = 9;
-        var grabTile = player.GetGrabTile();
-        if ((int)grabTile.X != producerX || (int)grabTile.Y != producerY)
-            return false;
-        var mapTile = location.Map?.GetLayer("Buildings")?.Tiles[producerX, producerY];
-        string? action = mapTile?.Properties.TryGetValue("Action", out var value) == true ? value?.ToString() : null;
-        return PortfolioMineEntryProjection.IsAccessibleEntryInteraction(
-            player.IsLocalPlayer,
-            Utility.tileWithinRadiusOfPlayer(producerX, producerY, 1, player),
-            action == "Mine");
+        GameLocation location = Game1.currentLocation;
+        return location is not MineShaft
+            && ReferenceEquals(location, player.currentLocation)
+            && String.Equals(location.NameOrUniqueName, "Mine", StringComparison.Ordinal);
     }
 
     private void TryFail(PendingExecution candidate)
     {
         try
         {
+            string reasonCode = candidate.EdgeIssued
+                ? "native_operation_uncertain"
+                : "native_operation_failed";
             _ = this.fail(candidate.RequestId, candidate.TraceId, candidate.ExecutionId,
-                "native_operation_uncertain", this.nextRevision(), candidate.Scope);
+                reasonCode, this.nextRevision(), candidate.Scope);
         }
         catch
         {
@@ -512,4 +484,5 @@ internal sealed class PortfolioMineEntrySemanticAdapter : IPortfolioMineEntrySem
         internal bool NativeRequestCompleted { get; init; }
         internal bool EdgeIssued => EdgeGeneration > 0;
     }
+
 }

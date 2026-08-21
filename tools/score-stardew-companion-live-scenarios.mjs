@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { loadCompanionLiveFixtures, scoreScenarioSuite } from "./lib/stardew-companion-live-scenario.mjs";
+
 const index = process.argv.indexOf("--summary");
 try {
   if (index < 0 || !process.argv[index + 1]) throw new Error("missing_summary");

@@ -5,8 +5,8 @@
  * start Stardew, attach a bridge, or execute an action.
  */
 import { readFile } from "node:fs/promises";
-import process from "node:process";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const APPROVED_TARGET = Object.freeze({
@@ -132,7 +132,7 @@ function exactArray(actual, expected, label, errors) {
     errors.push(`${label} must match the approved bounded policy.`);
 }
 
-function nonEmptyString(value, label, errors) {
+function _nonEmptyString(value, label, errors) {
   if (typeof value !== "string" || value.trim().length === 0) errors.push(`${label} must be a nonempty string.`);
 }
 

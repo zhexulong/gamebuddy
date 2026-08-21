@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { projectGameStatus, type HostGameLifecycleSnapshot } from "./game-status.js";
+import { type HostGameLifecycleSnapshot, projectGameStatus } from "./game-status.js";
 
 const currentActive: HostGameLifecycleSnapshot = {
   availability: "available",

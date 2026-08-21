@@ -88,7 +88,13 @@ function scriptedBridge({ postconditionRefilled = true, capabilities = EXPECTED_
           refillWateringCanTargets: postconditionRefilled ? [] : REFILL_TARGETS,
         };
       }
-      return { requestId: request.requestId, executionId, state: "accepted", reasonCode: "accepted", revision: request.expectedRevision };
+      return {
+        requestId: request.requestId,
+        executionId,
+        state: "accepted",
+        reasonCode: "accepted",
+        revision: request.expectedRevision,
+      };
     },
     onFact: (listener) => {
       listeners.add(listener);

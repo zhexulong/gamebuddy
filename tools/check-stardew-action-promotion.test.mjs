@@ -10,10 +10,16 @@ const root = resolve(import.meta.dirname, "..");
 const sources = await Object.fromEntries(
   await Promise.all(
     [
-      ["modConfig", "integrations/stardew/ModConfig.cs"],
+      ["farmhandActionDefinitions", "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"],
       ["bridgeSession", "integrations/stardew/BridgeSession.cs"],
       ["executionManager", "integrations/stardew/ExecutionManager.cs"],
-      ["farmhandActionRouter", "integrations/stardew/FarmhandActionRouter.cs"],
+      ["farmhandActionRouter", "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs"],
+      ["farmingHandler", "integrations/stardew/Handlers/FarmingActionHandler.cs"],
+      ["gatheringHandler", "integrations/stardew/Handlers/GatheringActionHandler.cs"],
+      ["movementHandler", "integrations/stardew/Handlers/MovementActionHandler.cs"],
+      ["machineHandler", "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs"],
+      ["resourceHandler", "integrations/stardew/Handlers/ResourceToolActionHandler.cs"],
+      ["modConfig", "integrations/stardew/ModConfig.cs"],
       ["registry", "host/src/action-registry.ts"],
       ["gameTools", "host/src/game-tools.ts"],
       ["protocol", "host/src/protocol.ts"],
@@ -23,7 +29,15 @@ const sources = await Object.fromEntries(
 );
 
 function failuresFor(mutated) {
-  return validatePromotionSources({ ...sources, ...mutated }).failures;
+  const merged = { ...sources, ...mutated };
+  const handlerSources = [
+    merged.farmingHandler,
+    merged.gatheringHandler,
+    merged.movementHandler,
+    merged.machineHandler,
+    merged.resourceHandler,
+  ];
+  return validatePromotionSources({ ...merged, handlerSources }).failures;
 }
 
 test("promotion checker accepts the checked projection", () => {
@@ -46,7 +60,7 @@ test("promotion checker rejects independent identity, route, tool, and descripto
   assert.ok(
     failuresFor({
       registry: sources.registry.replace(
-        /"move_to_tile",\r?\n    "movement_navigation",/,
+        /"move_to_tile",\r?\n {4}"movement_navigation",/,
         '"move_to_tile",\n    "inventory_items",',
       ),
     }).includes("published_identity_drift:move_to_tile"),
@@ -54,7 +68,7 @@ test("promotion checker rejects independent identity, route, tool, and descripto
   assert.ok(
     failuresFor({
       registry: sources.registry.replace(
-        /publishedAction\(\r?\n    "move_to_tile",/,
+        /publishedAction\(\r?\n {4}"move_to_tile",/,
         'experimentalAction(\n    "move_to_tile",',
       ),
     }).includes("published_identity_drift:move_to_tile"),
@@ -82,10 +96,7 @@ test("promotion checker rejects independent identity, route, tool, and descripto
   );
   assert.ok(
     failuresFor({
-      farmhandActionRouter: sources.farmhandActionRouter.replace(
-        'new DelegateActionHandler("move_to_tile",',
-        'new DelegateActionHandler("missing_move_route",',
-      ),
+      movementHandler: sources.movementHandler.replace('"move_to_tile",', '"missing_move_route",'),
     }).includes("missing_dispatcher:move_to_tile"),
   );
   assert.ok(
@@ -130,9 +141,9 @@ test("promotion checker rejects independent identity, route, tool, and descripto
     ),
   );
   assert.ok(
-    failuresFor({ schema: sources.schema.replace('"body_settled", "execution_started"', '"execution_started"') }).includes(
-      "schema_missing_semantic_event_kind:body_settled",
-    ),
+    failuresFor({
+      schema: sources.schema.replace('"body_settled", "execution_started"', '"execution_started"'),
+    }).includes("schema_missing_semantic_event_kind:body_settled"),
   );
   assert.ok(
     failuresFor({ protocol: sources.protocol.replace('    | "bait_crab_pot"\n', "") }).includes(
@@ -172,23 +183,17 @@ test("promotion checker rejects independent identity, route, tool, and descripto
   );
   assert.ok(
     failuresFor({
-      farmhandActionRouter: sources.farmhandActionRouter.replace(
-        'this.Register(new DelegateActionHandler("equip_tool",',
-        'this.Register(new DelegateActionHandler("undeclared_dispatcher",',
-      ),
+      resourceHandler: sources.resourceHandler.replace('"equip_tool",', '"undeclared_dispatcher",'),
     }).includes("dispatcher_not_in_definition:undeclared_dispatcher"),
   );
   assert.ok(
     failuresFor({
-      farmhandActionRouter: sources.farmhandActionRouter.replace(
-        'this.Register(new DelegateActionHandler("equip_tool",',
-        'this.Register(new DelegateActionHandler("move_to_tile",',
-      ),
+      resourceHandler: sources.resourceHandler.replace('"equip_tool",', '"move_to_tile",'),
     }).includes("dispatcher_route_duplicates"),
   );
   assert.ok(
     failuresFor({
-      modConfig: sources.modConfig.replace(
+      farmhandActionDefinitions: sources.farmhandActionDefinitions.replace(
         'Definition("move_to_tile", "movement_navigation", 1),',
         'Definition("move_to_tile", "movement_navigation", 1), Definition("move_to_tile", "movement_navigation", 1),',
       ),
@@ -197,7 +202,7 @@ test("promotion checker rejects independent identity, route, tool, and descripto
   assert.ok(
     failuresFor({
       registry: sources.registry.replace(
-        /publishedAction\(\r?\n    "move_to_tile",/,
+        /publishedAction\(\r?\n {4}"move_to_tile",/,
         'publishedAction("move_to_tile", "movement_navigation", 1, "Duplicate", "Duplicate", ["tile"]),\n  publishedAction(\n    "move_to_tile",',
       ),
     }).includes("host_registry_duplicates"),
@@ -217,7 +222,10 @@ test("promotion checker rejects independent identity, route, tool, and descripto
   );
   assert.ok(
     failuresFor({
-      gameTools: sources.gameTools.replace('executeGameAction(\n          integration,', 'executeUnreviewedAction(\n          integration,'),
+      gameTools: sources.gameTools.replace(
+        "executeGameAction(\n          integration,",
+        "executeUnreviewedAction(\n          integration,",
+      ),
     }).includes("host_shared_wrapper_factory_invalid"),
   );
   assert.ok(
@@ -233,41 +241,17 @@ test("promotion checker rejects independent identity, route, tool, and descripto
 test("promotion checker rejects missing or reordered Farmhand router guards", () => {
   assert.ok(
     failuresFor({
-      farmhandActionRouter: sources.farmhandActionRouter.replace(
-        "this.RequireCanonicalDefinitionCoverage();",
-        "// canonical coverage omitted",
-      ),
-    }).includes("router_missing_canonical_coverage_guard"),
-  );
-  const routerWithOutOfMethodCoverageText = `// this.RequireCanonicalDefinitionCoverage();\n// ModConfig.FarmhandActionDefinitions\n${sources.farmhandActionRouter
-    .replace("this.RequireCanonicalDefinitionCoverage();", "// coverage omitted")
-    .replaceAll("ModConfig.FarmhandActionDefinitions", "OtherDefinitions")}`;
-  const coverageFailures = failuresFor({ farmhandActionRouter: routerWithOutOfMethodCoverageText });
-  assert.ok(coverageFailures.includes("router_missing_canonical_coverage_guard"));
-  assert.ok(coverageFailures.includes("router_not_bound_to_mod_definitions"));
-  assert.ok(
-    failuresFor({
-      farmhandActionRouter: sources.farmhandActionRouter.replace(
-        "if (!this.IsOnOwnerThread)",
-        "if (false)",
-      ),
+      farmhandActionRouter: sources.farmhandActionRouter.replace("if (!this.IsOnOwnerThread)", "if (false)"),
     }).includes("router_missing_game_thread_guard"),
   );
   assert.ok(
     failuresFor({
       farmhandActionRouter: sources.farmhandActionRouter.replace(
-        "if (!capabilities.ContainsGameAction(request.Action))",
-        "if (this.handlers.TryGetValue(request.Action, out IFarmhandActionHandler? ignored))",
+        "if (ledger.TryGetExistingReceipt(request.RequestId",
+        "if (false && ledger.TryGetExistingReceipt(request.RequestId",
       ),
-    }).includes("router_missing_live_capability_guard"),
+    }).includes("router_missing_replay_guard"),
   );
-  const routerWithOutOfMethodGuardText = `// if (!this.IsOnOwnerThread)\n// !capabilities.ContainsGameAction(request.Action)\n${sources.farmhandActionRouter.replaceAll(
-    "if (!this.IsOnOwnerThread)",
-    "if (false)",
-  ).replaceAll("if (!capabilities.ContainsGameAction(request.Action))", "if (false)")}`;
-  const routerFailures = failuresFor({ farmhandActionRouter: routerWithOutOfMethodGuardText });
-  assert.ok(routerFailures.includes("router_missing_game_thread_guard"));
-  assert.ok(routerFailures.includes("router_missing_live_capability_guard"));
   assert.ok(
     failuresFor({
       bridgeSession: sources.bridgeSession.replace(
@@ -281,7 +265,9 @@ test("promotion checker rejects missing or reordered Farmhand router guards", ()
     "if (false) return false;",
   )}`;
   assert.ok(
-    failuresFor({ bridgeSession: sessionWithOutOfMethodGuardText }).includes("bridge_session_router_guard_order_invalid"),
+    failuresFor({ bridgeSession: sessionWithOutOfMethodGuardText }).includes(
+      "bridge_session_router_guard_order_invalid",
+    ),
   );
 });
 

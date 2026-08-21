@@ -10,13 +10,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const EXPECTED_CAPABILITIES = [
-  "cancel_active_execution",
-  "harvest_crop",
-  "inspect_self",
-  "move_to_tile",
-  "travel",
-];
+const EXPECTED_CAPABILITIES = ["cancel_active_execution", "harvest_crop", "inspect_self", "move_to_tile", "travel"];
 
 /** Execute the harvest contract against an already-connected bridge session. */
 export async function runHarvestCropSmoke(
@@ -43,14 +37,7 @@ export async function runHarvestCropSmoke(
     snapshot = await observeHarvestActionable(client);
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
-    snapshot = await moveToFreshHarvestTarget(
-      client,
-      receipts,
-      snapshot,
-      trace,
-      stabilizeTimeoutMs,
-      moveTimeoutMs,
-    );
+    snapshot = await moveToFreshHarvestTarget(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs);
 
     // The production snapshot intentionally publishes only in-range, ready Grab
     // crops. Re-read it after every prerequisite and bind the request to the
@@ -170,7 +157,7 @@ async function execute(client, trace, phase, action, args, snapshot) {
   return receipt;
 }
 
-async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
+async function travelToFarm(client, receipts, _snapshot, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
   let fresh = await observeHarvestActionable(client);
   const warp = resolveFarmWarp(fresh);
   if (!adjacent(fresh.tile, { x: warp.sourceX, y: warp.sourceY }))
@@ -212,7 +199,8 @@ async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutM
     minRevision: terminal.revision,
     timeoutMs: stabilizeTimeoutMs,
     requireActionable: true,
-    check: (latest) => latest.location === "Farm" && latest.tile?.x === freshWarp.targetX && latest.tile?.y === freshWarp.targetY,
+    check: (latest) =>
+      latest.location === "Farm" && latest.tile?.x === freshWarp.targetX && latest.tile?.y === freshWarp.targetY,
   });
 }
 

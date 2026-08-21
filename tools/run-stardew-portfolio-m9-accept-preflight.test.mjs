@@ -4,8 +4,8 @@ import {
   readM9AcceptGiven,
   replayM9AcceptResult,
   runM9AcceptPreflight,
-  verifyM9AcceptWhen,
   verifyM9AcceptFailClosedTerminal,
+  verifyM9AcceptWhen,
 } from "./run-stardew-portfolio-m9-accept-preflight.mjs";
 
 const scope = Object.freeze({

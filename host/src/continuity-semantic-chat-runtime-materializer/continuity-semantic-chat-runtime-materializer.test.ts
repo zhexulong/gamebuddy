@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
-  reserveChatRuntimeMaterialization,
-  withConsumedChatRuntimeBinding,
   type ChatRuntimeBindingExecution,
   type ReservedChatRuntimeMaterialization,
+  reserveChatRuntimeMaterialization,
+  withConsumedChatRuntimeBinding,
 } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
-import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.test-support.js";
 import type { ChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.js";
+import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.test-support.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import {
   assertChatStableContextLifecycle,

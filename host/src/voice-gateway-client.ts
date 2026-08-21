@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import {
+  createBoundedUtf8NdjsonDecoder,
   encodeVoiceGatewayMessage,
   isFinalTranscriptEvent,
-  isVoiceGatewayRequest,
   isOpaqueId,
   isSourceEventId,
-  createBoundedUtf8NdjsonDecoder,
+  isVoiceGatewayRequest,
   MAX_NDJSON_FRAME_BYTES,
   parseVoiceGatewayResponse,
   VOICE_PROTOCOL_VERSION,
@@ -15,13 +15,13 @@ import {
   type VoiceGatewayResponse,
 } from "@gamebuddy/voice-protocol";
 
-import {
-  type FinalVoiceInput,
-  type VoiceAudioEpochAdmission,
-  type VoiceAudioEpochBinding,
-  type VoiceEnqueueAdmission,
-  type VoiceExpression,
-  type VoiceSpeechPort,
+import type {
+  FinalVoiceInput,
+  VoiceAudioEpochAdmission,
+  VoiceAudioEpochBinding,
+  VoiceEnqueueAdmission,
+  VoiceExpression,
+  VoiceSpeechPort,
 } from "./voice.js";
 
 /**
@@ -283,7 +283,7 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   }
 
   private captureAudioEpochBinding(): VoiceAudioEpochBinding {
-    const capabilities = this.currentReadyCapabilities();
+    const _capabilities = this.currentReadyCapabilities();
     const binding = Object.freeze({});
     this.#audioEpochBindings.add(binding);
     this.#audioEpochGenerations.set(binding, this.#audioAdmissionGeneration);

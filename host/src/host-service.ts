@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
-
-import { CompanionLoop } from "./companion-loop.js";
 import type { CompanionInterruption, StopAdmission } from "./companion-interruption.js";
-import { type WorldFact } from "./event-pump.js";
-import type { ExecutionReceipt } from "./protocol.js";
-import { type IntegrationEventSource, type IntegrationLifecycleEvent } from "./integration-launcher.js";
-import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
+import type { CompanionLoop } from "./companion-loop.js";
+import type { WorldFact } from "./event-pump.js";
+import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
+import type { ExecutionReceipt } from "./protocol.js";
 import { resolveStopSystemNotice, type StopSystemNotice } from "./system-notices.js";
+import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 
 export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void }>;
 
@@ -332,8 +331,7 @@ export class CompanionHostService {
   public beginPlayerBatch(sourceEventId: string, batchId: string | undefined): void {
     if (this.#closed || !this.#integrationAdmissionOpen) return;
     this.turnTracker.beginPlayerBatch(sourceEventId);
-    this.#activePiBatch =
-      batchId === undefined ? undefined : Object.freeze({ sourceEventId, batchId });
+    this.#activePiBatch = batchId === undefined ? undefined : Object.freeze({ sourceEventId, batchId });
   }
 
   /** Pi delivery settles/aborts: lineage and active-batch proof never leak into a later turn. */

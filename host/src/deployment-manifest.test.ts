@@ -87,7 +87,7 @@ test("rejects duplicate including escaped-equivalent keys, unknown fields, array
     principal: { continuityId: "continuity-01", companionId: "companion-01", playerId: "player-01", extra: true },
   });
   await rejects([valid("/not-used")] as unknown as Record<string, unknown>);
-  await rejects("[".repeat(65) + "0" + "]".repeat(65));
+  await rejects(`${"[".repeat(65)}0${"]".repeat(65)}`);
   await rejects(`{"padding":"${"x".repeat(65_536)}"}`);
 });
 

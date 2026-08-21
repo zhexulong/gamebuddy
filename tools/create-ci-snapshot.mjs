@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -9,7 +9,6 @@ import {
   commitTransactionalOutput,
   createSourceManifest,
   prepareTransactionalOutput,
-  REQUIRED_INPUTS_PATH,
   readRequiredInputs,
   SNAPSHOT_SCHEMA,
   sha256,

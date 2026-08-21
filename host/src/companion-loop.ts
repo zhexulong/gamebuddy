@@ -1,6 +1,6 @@
-import { type AgentSession, type AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { CompanionEventPump, type DeliveryDisposition } from "./event-pump.js";
+import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
+import { CompanionEventPump, type DeliveryDisposition } from "./event-pump.js";
 
 export interface CompanionTurnObserver {
   /**
@@ -265,7 +265,7 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
   return undefined;
 }
 
-function isHeldWorldEvent(event: Readonly<{ kind?: string; payload?: Readonly<{ state?: unknown }> }>): boolean {
+function _isHeldWorldEvent(event: Readonly<{ kind?: string; payload?: Readonly<{ state?: unknown }> }>): boolean {
   return (
     event.kind === "snapshot" ||
     (event.kind === "execution_receipt" &&

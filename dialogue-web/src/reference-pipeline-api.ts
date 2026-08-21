@@ -130,16 +130,14 @@ export type TavernStateSnapshotV1 = Readonly<{
   operations: readonly TavernBrowserOperationV1[];
   navigation: readonly unknown[];
   selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }> | null;
-  chat:
-    | Readonly<{
-        companion: Readonly<{ name: string }>;
-        title: string | null;
-        transcript: readonly BrowserMessageV1[];
-        draft: Readonly<{ revision: number; present: boolean }>;
-        turn: BrowserTurnV1 | null;
-        worldInfo: Readonly<Record<string, unknown>> | null;
-      }>
-    | null;
+  chat: Readonly<{
+    companion: Readonly<{ name: string }>;
+    title: string | null;
+    transcript: readonly BrowserMessageV1[];
+    draft: Readonly<{ revision: number; present: boolean }>;
+    turn: BrowserTurnV1 | null;
+    worldInfo: Readonly<Record<string, unknown>> | null;
+  }> | null;
   memory: Readonly<{ readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null }>;
   eventStream: Readonly<{ epoch: string; cursor: string }> | null;
 }>;
@@ -150,13 +148,19 @@ export type SubmitMessageCommandV1 = Readonly<{
   text: string;
   locale: "en" | "zh-CN";
   expectedDraftRevision?: number;
-  memoryDelegation?: "none" | "read";
 }>;
 
 export type SubmitResultV1 = Readonly<{
   apiVersion: 1;
   disposition: "accepted" | "duplicate";
   message: BrowserMessageV1;
+  turn: BrowserTurnV1;
+}>;
+
+export type CancelTurnCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number }>;
+export type CancelTurnResultV1 = Readonly<{
+  apiVersion: 1;
+  disposition: "cancelled" | "completion_won" | "already_terminal";
   turn: BrowserTurnV1;
 }>;
 
@@ -228,17 +232,15 @@ const MAX_ARRAY_ITEMS = 100;
 
 const MESSAGE_ROLES = ["player", "companion"] as const;
 const MESSAGE_LOCALES = ["en", "zh-CN", "und"] as const;
-const TURN_STATES = [
-  "queued",
-  "running",
-  "response_visible",
-  "stopping",
-  "completed",
-  "cancelled",
-  "failed",
+const TURN_STATES = ["queued", "running", "response_visible", "stopping", "completed", "cancelled", "failed"] as const;
+const TURN_PROBLEM_CODES = [
+  "interrupted",
+  "no_visible_presentation",
+  "runtime_unavailable",
+  "storage_unavailable",
 ] as const;
-const TURN_PROBLEM_CODES = ["interrupted", "no_visible_presentation", "runtime_unavailable", "storage_unavailable"] as const;
 const SUBMIT_DISPOSITIONS = ["accepted", "duplicate"] as const;
+const CANCEL_DISPOSITIONS = ["cancelled", "completion_won", "already_terminal"] as const;
 const STATUS_DISPOSITIONS = ["unknown", "pending", "accepted", "terminal", "expired"] as const;
 const OPERATION_IDS = ["chat.submit", "chat.cancel", "draft.save", "draft.discard"] as const;
 const LABEL_KEYS = [
@@ -253,7 +255,6 @@ const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
 const NAVIGATION_AVAILABILITY = ["available", "unavailable"] as const;
 const WORLD_INFO_STATES = ["none", "selected", "locked", "unavailable"] as const;
-const MEMORY_DELEGATIONS = ["none", "read"] as const;
 const PROBLEM_CODES = [
   "unauthorized",
   "csrf_failed",
@@ -272,8 +273,6 @@ const PROBLEM_CODES = [
   "turn_already_terminal",
   "runtime_unavailable",
   "presentation_unavailable",
-  "memory_mutation_pending",
-  "memory_mutation_unavailable",
   "storage_unavailable",
   "state_reconciliation_required",
 ] as const;
@@ -306,15 +305,12 @@ const CHAT_COMPANION_KEYS = ["name"] as const;
 const CHAT_DRAFT_KEYS = ["revision", "present"] as const;
 const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"] as const;
 const SUBMIT_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "text", "locale"] as const;
-const SUBMIT_COMMAND_KEYS_DRAFT = ["apiVersion", "selectionGeneration", "text", "locale", "expectedDraftRevision"] as const;
-const SUBMIT_COMMAND_KEYS_MEMORY = ["apiVersion", "selectionGeneration", "text", "locale", "memoryDelegation"] as const;
-const SUBMIT_COMMAND_KEYS_FULL = [
+const SUBMIT_COMMAND_KEYS_DRAFT = [
   "apiVersion",
   "selectionGeneration",
   "text",
   "locale",
   "expectedDraftRevision",
-  "memoryDelegation",
 ] as const;
 const SUBMIT_RESULT_KEYS = ["apiVersion", "disposition", "message", "turn"] as const;
 const STATUS_KEYS = ["apiVersion", "disposition"] as const;
@@ -514,32 +510,62 @@ function isChat(value: unknown): boolean {
 }
 
 function isEventStream(value: unknown): value is NonNullable<TavernStateSnapshotV1["eventStream"]> {
-  return isRecord(value) && hasExactKeys(value, EVENT_STREAM_KEYS) && isOpaqueHandle(value.epoch) && isOpaqueHandle(value.cursor);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, EVENT_STREAM_KEYS) &&
+    isOpaqueHandle(value.epoch) &&
+    isOpaqueHandle(value.cursor)
+  );
 }
 
 function isBrowserEvent(value: unknown): value is BrowserEventV1 {
   if (!isRecord(value) || !hasExactKeys(value, EVENT_KEYS)) return false;
-  if (value.apiVersion !== TAVERN_BROWSER_API_VERSION || !isOpaqueHandle(value.epoch) || !isPositiveSafeInteger(value.sequence) || !isPositiveSafeInteger(value.selectionGeneration)) return false;
+  if (
+    value.apiVersion !== TAVERN_BROWSER_API_VERSION ||
+    !isOpaqueHandle(value.epoch) ||
+    !isPositiveSafeInteger(value.sequence) ||
+    !isPositiveSafeInteger(value.selectionGeneration)
+  )
+    return false;
   if (value.eventType === "message.committed") return isBrowserMessage(value.payload);
-  if (value.eventType === "draft.changed") return isRecord(value.payload) && hasExactKeys(value.payload, ["revision", "present"]) && isNonNegativeSafeInteger(value.payload.revision) && typeof value.payload.present === "boolean";
+  if (value.eventType === "draft.changed")
+    return (
+      isRecord(value.payload) &&
+      hasExactKeys(value.payload, ["revision", "present"]) &&
+      isNonNegativeSafeInteger(value.payload.revision) &&
+      typeof value.payload.present === "boolean"
+    );
   if (value.eventType === "turn.state_changed") return isBrowserTurn(value.payload);
-  if (value.eventType === "stream.resync_required") return isRecord(value.payload) && hasExactKeys(value.payload, ["reason"]) && isOneOf(value.payload.reason, ["gap", "epoch_changed", "restart", "ambiguous_cursor"]);
+  if (value.eventType === "stream.resync_required")
+    return (
+      isRecord(value.payload) &&
+      hasExactKeys(value.payload, ["reason"]) &&
+      isOneOf(value.payload.reason, ["gap", "epoch_changed", "restart", "ambiguous_cursor"])
+    );
   if (value.eventType === "memory.changed") {
-    if (!isRecord(value.payload) || !Object.keys(value.payload).every((key) => ["readAvailable", "mutationAvailable", "revision", "summaries", "lastOutcome"].includes(key))) return false;
+    if (
+      !isRecord(value.payload) ||
+      !Object.keys(value.payload).every((key) =>
+        ["readAvailable", "mutationAvailable", "revision", "summaries", "lastOutcome"].includes(key),
+      )
+    )
+      return false;
     return (
       typeof value.payload.readAvailable === "boolean" &&
       typeof value.payload.mutationAvailable === "boolean" &&
       (value.payload.revision === null || isNonNegativeSafeInteger(value.payload.revision)) &&
       Array.isArray(value.payload.summaries) &&
       value.payload.summaries.length <= 200 &&
-      value.payload.summaries.every((summary) =>
-        isRecord(summary) &&
-        hasExactKeys(summary, ["handle", "title", "pinned"]) &&
-        isOpaqueHandle(summary.handle) &&
-        isLengthBoundedString(summary.title, 1, 256) &&
-        typeof summary.pinned === "boolean",
+      value.payload.summaries.every(
+        (summary) =>
+          isRecord(summary) &&
+          hasExactKeys(summary, ["handle", "title", "pinned"]) &&
+          isOpaqueHandle(summary.handle) &&
+          isLengthBoundedString(summary.title, 1, 256) &&
+          typeof summary.pinned === "boolean",
       ) &&
-      (!Object.hasOwn(value.payload, "lastOutcome") || isOneOf(value.payload.lastOutcome, ["committed", "conflict", "unavailable"]))
+      (!Object.hasOwn(value.payload, "lastOutcome") ||
+        isOneOf(value.payload.lastOutcome, ["committed", "conflict", "unavailable"]))
     );
   }
   return false;
@@ -577,7 +603,8 @@ function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
   if (value.selection !== null && !isSelection(value.selection)) return false;
   if (value.chat !== null && !isChat(value.chat)) return false;
   if (!isRecord(value.memory) || !hasExactKeys(value.memory, MEMORY_KEYS)) return false;
-  if (typeof value.memory.readAvailable !== "boolean" || typeof value.memory.mutationAvailable !== "boolean") return false;
+  if (typeof value.memory.readAvailable !== "boolean" || typeof value.memory.mutationAvailable !== "boolean")
+    return false;
   if (value.memory.projectionRevision !== null && !isOpaqueHandle(value.memory.projectionRevision)) return false;
   if (value.eventStream !== null && !isEventStream(value.eventStream)) return false;
   return true;
@@ -586,20 +613,12 @@ function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
 function isSubmitMessageCommand(value: unknown): value is SubmitMessageCommandV1 {
   if (!isRecord(value)) return false;
   const ownKeys = Object.keys(value);
-  const hasDraftRevision = ownKeys.includes("expectedDraftRevision");
-  const hasMemoryDelegation = ownKeys.includes("memoryDelegation");
-  const expectedKeys = hasDraftRevision
-    ? hasMemoryDelegation
-      ? SUBMIT_COMMAND_KEYS_FULL
-      : SUBMIT_COMMAND_KEYS_DRAFT
-    : hasMemoryDelegation
-      ? SUBMIT_COMMAND_KEYS_MEMORY
-      : SUBMIT_COMMAND_KEYS;
+  const expectedKeys = ownKeys.includes("expectedDraftRevision") ? SUBMIT_COMMAND_KEYS_DRAFT : SUBMIT_COMMAND_KEYS;
   if (!hasExactKeys(value, expectedKeys)) return false;
-  if (value.apiVersion !== TAVERN_BROWSER_API_VERSION || !isPositiveSafeInteger(value.selectionGeneration)) return false;
+  if (value.apiVersion !== TAVERN_BROWSER_API_VERSION || !isPositiveSafeInteger(value.selectionGeneration))
+    return false;
   if (!isNfcUtf8Text(value.text) || !isOneOf(value.locale, ["en", "zh-CN"])) return false;
   if ("expectedDraftRevision" in value && !isNonNegativeSafeInteger(value.expectedDraftRevision)) return false;
-  if ("memoryDelegation" in value && !isOneOf(value.memoryDelegation, MEMORY_DELEGATIONS)) return false;
   return true;
 }
 
@@ -610,6 +629,25 @@ function isSubmitResult(value: unknown): value is SubmitResultV1 {
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
     isOneOf(value.disposition, SUBMIT_DISPOSITIONS) &&
     isBrowserMessage(value.message) &&
+    isBrowserTurn(value.turn)
+  );
+}
+
+function isCancelTurnCommand(value: unknown): value is CancelTurnCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["apiVersion", "selectionGeneration"]) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isPositiveSafeInteger(value.selectionGeneration)
+  );
+}
+
+function isCancelTurnResult(value: unknown): value is CancelTurnResultV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["apiVersion", "disposition", "turn"]) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOneOf(value.disposition, CANCEL_DISPOSITIONS) &&
     isBrowserTurn(value.turn)
   );
 }
@@ -684,6 +722,11 @@ export function validateSubmissionStatus(value: unknown): MessageSubmissionStatu
   return value;
 }
 
+export function validateCancelTurnResult(value: unknown): CancelTurnResultV1 {
+  if (!isCancelTurnResult(value)) throw new TavernProtocolError();
+  return value;
+}
+
 /** Validates a frozen RFC-9457-style `TavernProblemV1`; throws `TavernProtocolError`. */
 export function validateProblem(value: unknown): TavernProblemV1 {
   if (!isProblem(value)) throw new TavernProtocolError();
@@ -746,14 +789,18 @@ export type ReferencePipelineApi = Readonly<{
     command: SubmitMessageCommandV1,
     options: Readonly<{ csrfToken: string; idempotencyKey: string }>,
   ): Promise<SubmitResultV1>;
+  /** POST /api/tavern/v1/turns/:turnHandle/cancel with CSRF. */
+  cancel(turnHandle: string, command: CancelTurnCommandV1, csrfToken: string): Promise<CancelTurnResultV1>;
   /** POST /api/tavern/v1/message-submission-status (no CSRF/idempotency headers). */
   readSubmissionStatus(query: MessageSubmissionStatusQueryV1): Promise<MessageSubmissionStatusV1>;
   /** GET /api/tavern/v1/events; events are validated and never merged locally. */
-  openEvents(options: Readonly<{
-    cursor?: string;
-    onEvent(event: BrowserEventV1, lastEventId: string): void;
-    onError(error: Event): void;
-  }>): ReferencePipelineEventSource;
+  openEvents(
+    options: Readonly<{
+      cursor?: string;
+      onEvent(event: BrowserEventV1, lastEventId: string): void;
+      onError(error: Event): void;
+    }>,
+  ): ReferencePipelineEventSource;
 }>;
 
 /**
@@ -807,6 +854,19 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
         command,
       );
     },
+    async cancel(turnHandle: string, command: CancelTurnCommandV1, csrfToken: string): Promise<CancelTurnResultV1> {
+      if (!isOpaqueHandle(turnHandle) || !isCancelTurnCommand(command) || !isOpaqueHandle(csrfToken))
+        throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        `/api/tavern/v1/turns/${turnHandle}/cancel`,
+        200,
+        validateCancelTurnResult,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+    },
     async readSubmissionStatus(query: MessageSubmissionStatusQueryV1): Promise<MessageSubmissionStatusV1> {
       if (!isMessageSubmissionStatusQuery(query)) throw new TavernProtocolError();
       // chat.submission_status is session-authenticated but carries no CSRF
@@ -822,12 +882,25 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
       );
     },
     openEvents(options) {
-      if (typeof EventSource !== "function" || options === null || typeof options !== "object" || typeof options.onEvent !== "function" || typeof options.onError !== "function") throw new TavernProtocolError();
+      if (
+        typeof EventSource !== "function" ||
+        options === null ||
+        typeof options !== "object" ||
+        typeof options.onEvent !== "function" ||
+        typeof options.onError !== "function"
+      )
+        throw new TavernProtocolError();
       if (options.cursor !== undefined && !isOpaqueHandle(options.cursor)) throw new TavernProtocolError();
       const params = new URLSearchParams({ apiVersion: String(TAVERN_BROWSER_API_VERSION) });
       if (options.cursor !== undefined) params.set("cursor", options.cursor);
       const source = new EventSource(`/api/tavern/v1/events?${params.toString()}`, { withCredentials: true });
-      const eventTypes = ["message.committed", "draft.changed", "turn.state_changed", "memory.changed", "stream.resync_required"] as const;
+      const eventTypes = [
+        "message.committed",
+        "draft.changed",
+        "turn.state_changed",
+        "memory.changed",
+        "stream.resync_required",
+      ] as const;
       const handle = (raw: Event): void => {
         const message = raw as MessageEvent<string>;
         let value: unknown;

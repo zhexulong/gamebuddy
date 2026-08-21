@@ -11,10 +11,10 @@
 import { execFile, spawn } from "node:child_process";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { preparePortfolioP0bLifecycleProducer, PORTFOLIO_TOPOLOGY } from "./lib/stardew-portfolio-profile.mjs";
+import { PORTFOLIO_TOPOLOGY, preparePortfolioP0bLifecycleProducer } from "./lib/stardew-portfolio-profile.mjs";
 
 const execFileAsync = promisify(execFile);
 const STARDEW_PROCESS_NAMES = Object.freeze(["StardewModdingAPI.exe", "Stardew Valley.exe"]);
@@ -105,8 +105,6 @@ export async function runPortfolioP0bLifecycle(options = {}) {
       timedOut: false,
       transaction: "retained",
     });
-  } catch (error) {
-    throw error;
   } finally {
     // A naturally closed process needs no kill. Timeout and child errors are
     // explicitly tree-terminated and awaited.
@@ -253,7 +251,7 @@ async function defaultProcessList(processNames) {
       if (lines.length === 0) throw new Error("portfolio_p0b_process_query_ambiguous");
       for (const line of lines) {
         if (/^INFO:\s+No tasks are running/i.test(line)) continue;
-        const match = /^\"([^\"]+)\",/.exec(line);
+        const match = /^"([^"]+)",/.exec(line);
         if (!match) throw new Error("portfolio_p0b_process_query_ambiguous");
         if (match[1].toLowerCase() === imageName.toLowerCase()) found.push(imageName);
       }
@@ -286,7 +284,7 @@ async function verifyArmedConfig(input) {
   if (!producer || JSON.stringify(producer) !== JSON.stringify(expected))
     throw new Error("portfolio_p0b_config_reread_mismatch");
   for (const key of ["SigningKey", "SigningKeyValue", "HostAutomation", "EnableLocalBridge"])
-    if (Object.prototype.hasOwnProperty.call(config, key) || Object.prototype.hasOwnProperty.call(portfolio, key))
+    if (Object.hasOwn(config, key) || Object.hasOwn(portfolio, key))
       throw new Error("portfolio_p0b_config_nonsecret_boundary_violation");
 }
 

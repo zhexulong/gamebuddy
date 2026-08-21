@@ -1,7 +1,8 @@
-import { readFile, readdir, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { createHash } from "node:crypto";
+import { readdir, readFile, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { deriveNativeVirtualMemberInvocationRegister } from "./lib/stardew-native-virtual-member-invocation-register.mjs";
+
 function fail(code, message) {
   const error = new Error(message);
   error.code = code;

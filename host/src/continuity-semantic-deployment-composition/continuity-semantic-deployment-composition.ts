@@ -1,14 +1,10 @@
-import { loadHostDeploymentManifest, type HostDeploymentManifest } from "../deployment-manifest.js";
 import {
   createFreshSemanticProductionAuthorityFromDeploymentManifest,
   createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest,
-  type SemanticProductionAuthority,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { ProductionSagaReadback } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import {
-  createManifestDerivedInitialChatExactContentPort,
-  type InitialChatExactContentPort,
-} from "../tavern/initial-chat-exact-content-port.js";
+import { type HostDeploymentManifest, loadHostDeploymentManifest } from "../deployment-manifest.js";
+import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
 
 /** No holder, raw authority, store identity, or mutex escapes the Dialogue facade. */
 export type UnmountedDialogueSemanticFacade = Readonly<{

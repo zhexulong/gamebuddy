@@ -1,20 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { request as httpRequest } from "node:http";
-import { composeTavernProfile } from "./tavern/browser-contract/index.js";
+import test from "node:test";
 import { startDialogueWebServer } from "./dialogue-web.js";
-import type {
-  ChatPipelineService,
-  SubmitResultV1,
-} from "./tavern/chat-pipeline-service.js";
-import type {
-  ReferencePipelineState,
-  ReferencePipelineStateFacade,
-} from "./tavern/reference-pipeline-state.js";
-import type {
-  P3ExactChatState,
-  P3ExactChatStateFacade,
-} from "./tavern/p3-exact-chat-state.js";
+import { composeTavernProfile } from "./tavern/browser-contract/index.js";
+import type { P3ExactChatState, P3ExactChatStateFacade } from "./tavern/p3-exact-chat-state.js";
 
 const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const handle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -48,9 +37,7 @@ function state(revision = 2, text: string | null = "draft"): P3ExactChatState {
     draft: Object.freeze({ revision, text }),
   });
 }
-function fakeFacade(
-  read: () => Promise<P3ExactChatState>,
-): P3ExactChatStateFacade {
+function fakeFacade(read: () => Promise<P3ExactChatState>): P3ExactChatStateFacade {
   return Object.freeze({ read });
 }
 function bootstrapUrl(server: { origin: string }): string {
@@ -130,21 +117,12 @@ test("P3 mounts only profile-authorized v1 bootstrap, state, and draft reads", a
       text: "draft",
     });
     assert.equal(reads, 3);
-    for (const path of [
-      "/bootstrap",
-      "/events",
-      "/message",
-      "/memories",
-      "/api/tavern/v1/events",
-    ]) {
+    for (const path of ["/bootstrap", "/events", "/message", "/memories", "/api/tavern/v1/events"]) {
       const response = await fetch(`${origin}${path}`, {
         headers: { Origin: origin, Cookie: cookie },
       });
       assert.equal(response.status, 404);
-      assert.equal(
-        ((await response.json()) as { code: string }).code,
-        "profile_operation_unavailable",
-      );
+      assert.equal(((await response.json()) as { code: string }).code, "profile_operation_unavailable");
     }
   } finally {
     await server.close();
@@ -169,10 +147,7 @@ test("P3 bootstrap is strict and one-time; subsequent reads require same-origin 
       }),
     });
     assert.equal(malformed.status, 400);
-    assert.equal(
-      ((await malformed.json()) as { code: string }).code,
-      "invalid_request",
-    );
+    assert.equal(((await malformed.json()) as { code: string }).code, "invalid_request");
     const bootstrap = await fetch(bootstrapUrl(server), {
       method: "POST",
       headers: { Origin: origin, "Content-Type": "application/json" },
@@ -245,10 +220,7 @@ test("P3 rejects every query and GET body, and bootstrap malformed input is v1 i
       }),
     ]) {
       assert.equal(response.status, 400);
-      assert.equal(
-        ((await response.json()) as { code: string }).code,
-        "invalid_request",
-      );
+      assert.equal(((await response.json()) as { code: string }).code, "invalid_request");
     }
     const bootstrap = await fetch(bootstrapUrl(server), {
       method: "POST",
@@ -256,18 +228,12 @@ test("P3 rejects every query and GET body, and bootstrap malformed input is v1 i
       body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
     });
     const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
-    for (const path of [
-      "/api/tavern/v1/state?unexpected=1",
-      "/api/tavern/v1/draft?unexpected=1",
-    ]) {
+    for (const path of ["/api/tavern/v1/state?unexpected=1", "/api/tavern/v1/draft?unexpected=1"]) {
       const response = await fetch(`${origin}${path}`, {
         headers: { Origin: origin, Cookie: cookie },
       });
       assert.equal(response.status, 400);
-      assert.equal(
-        ((await response.json()) as { code: string }).code,
-        "invalid_request",
-      );
+      assert.equal(((await response.json()) as { code: string }).code, "invalid_request");
     }
     for (const path of ["/api/tavern/v1/state", "/api/tavern/v1/draft"]) {
       const response = await rawRequest(
@@ -277,10 +243,7 @@ test("P3 rejects every query and GET body, and bootstrap malformed input is v1 i
         "{}",
       );
       assert.equal(response.status, 400);
-      assert.equal(
-        (JSON.parse(response.body) as { code: string }).code,
-        "invalid_request",
-      );
+      assert.equal((JSON.parse(response.body) as { code: string }).code, "invalid_request");
     }
   } finally {
     await server.close();

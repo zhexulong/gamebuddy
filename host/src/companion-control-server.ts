@@ -1,13 +1,13 @@
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import {
   CONTROL_PROTOCOL_VERSION,
   ControlProtocolError,
-  ControlRequestFramer,
   type ControlRequest,
+  ControlRequestFramer,
 } from "./companion-control-protocol.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -18,9 +18,7 @@ const TOKEN = /^[A-Za-z0-9_-]{16,256}$/;
 export type ProductControlLaunch = Readonly<{ pipeName: string; launchToken: string }>;
 export type ProductControlTarget = Readonly<{
   acceptPlayerInput(input: Readonly<{ sourceEventId: string; text: string; locale: string }>): Promise<void>;
-  stopAll(
-    input: Readonly<{ stopId: string; sourceEventId: string; reasonCode: string }>,
-  ): Readonly<{
+  stopAll(input: Readonly<{ stopId: string; sourceEventId: string; reasonCode: string }>): Readonly<{
     admission: Readonly<{ accepted: boolean }>;
     /** Present for the Host-owned Pi lifecycle implementation; absent only in legacy test doubles. */
     outcome?: "active_turn_cancelled" | "queued_turn_cancelled" | "no_active_turn";
@@ -317,10 +315,10 @@ export function startCompanionControlServer(
               : stopped.outcome === "active_turn_cancelled"
                 ? "active_turn_cancelled"
                 : stopped.outcome === "queued_turn_cancelled"
-                ? "queued_turn_cancelled"
-                : stopped.outcome === "no_active_turn"
-                  ? "no_active_turn"
-                  : "stop_all",
+                  ? "queued_turn_cancelled"
+                  : stopped.outcome === "no_active_turn"
+                    ? "no_active_turn"
+                    : "stop_all",
           };
         }
       }

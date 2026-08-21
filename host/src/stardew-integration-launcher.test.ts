@@ -4,9 +4,9 @@ import { createServer, type Server, type Socket } from "node:net";
 import test from "node:test";
 
 import { TERMINAL_EXECUTION_STATES } from "./execution-correlation-ledger.js";
-import { type MoveCapableIntegration } from "./game-tools.js";
-import { type ExecutionWake } from "./integration-launcher.js";
-import { type BridgeMessage, type ExecutionState, type Scope } from "./protocol.js";
+import type { MoveCapableIntegration } from "./game-tools.js";
+import type { ExecutionWake } from "./integration-launcher.js";
+import type { BridgeMessage, ExecutionState, Scope } from "./protocol.js";
 import { parseStardewLauncherConfig, STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
 
 const base = { pipeName: "gamebuddy_fixture", bridgeToken: "a".repeat(32) };
@@ -328,7 +328,7 @@ function isPipeListenerNotReady(error: unknown): boolean {
   return error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
 }
 
-async function connectAfterPipeListen<T>(pipeName: string, connect: () => Promise<T>): Promise<T> {
+async function connectAfterPipeListen<T>(_pipeName: string, connect: () => Promise<T>): Promise<T> {
   const deadlineMs = Date.now() + 5_000;
   let lastError: unknown;
   while (Date.now() < deadlineMs) {

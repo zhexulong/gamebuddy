@@ -1,5 +1,5 @@
-import { readFile, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { readFile, realpath } from "node:fs/promises";
 import { win32 } from "node:path";
 import { superviseStardewCompanionAdmissionProbe } from "../../host/scripts/supervise-stardew-companion-live-session.mjs";
 

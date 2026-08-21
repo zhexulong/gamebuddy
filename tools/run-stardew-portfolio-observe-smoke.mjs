@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { PortfolioStardewBridgeClient } from "../host/dist-portfolio/portfolio-stardew-bridge.js";
 /**
  * P1c live gate for the isolated single-player Portfolio topology.
  *
@@ -19,7 +20,6 @@
  */
 import { computePortfolioBindingHash, inspectPortfolioP0b } from "./lib/stardew-portfolio-p0b.mjs";
 import { PORTFOLIO_TOPOLOGY } from "./lib/stardew-portfolio-profile.mjs";
-import { PortfolioStardewBridgeClient } from "../host/dist-portfolio/portfolio-stardew-bridge.js";
 
 const P1C_PHASE = "P1c_live_observe_only";
 const lifecycleEvent = readOption("--lifecycle-event");

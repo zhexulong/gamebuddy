@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { DEFAULT_COMPANION_MODEL_CONFIG, createCompanionRuntime } from "./runtime.js";
+import { createCompanionRuntime, DEFAULT_COMPANION_MODEL_CONFIG } from "./runtime.js";
 
 const identity = { playerId: "player_01", saveId: "save_01", worldId: "world_01", companionId: "companion_01" };
 

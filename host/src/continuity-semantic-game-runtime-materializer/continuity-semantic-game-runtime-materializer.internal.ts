@@ -8,12 +8,12 @@ import type {
   ProductionGamePermit,
   ProductionGameTerminalReceipt,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
-import type { CompanionHostService } from "../host-service.js";
 import type {
   GameOperationalGateEvidence,
   GameOperationalGateEvidenceProjection,
 } from "../game-operational-gate-evidence.js";
+import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
+import type { CompanionHostService } from "../host-service.js";
 
 /**
  * The connected Host surface retained by the exact Game runtime. It deliberately

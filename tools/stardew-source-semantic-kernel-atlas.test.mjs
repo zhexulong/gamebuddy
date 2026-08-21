@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import { deriveStardewSemanticKernelAtlas } from "./lib/stardew-source-semantic-kernel-atlas.mjs";
 
 function inspectionFixture(overrides = {}) {

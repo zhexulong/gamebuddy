@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { validateNativeTransitionFamilyUniverse } from "./lib/stardew-native-transition-family-universe.mjs";
+
 const text = "void Input() { Owner(); Dynamic(); } void Owner() { state = 1; }";
 const bytes = Buffer.from(text);
 const fileSha = createHash("sha256").update(bytes).digest("hex");

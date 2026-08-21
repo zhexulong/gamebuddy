@@ -2,8 +2,8 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { validateNativeTransitionFamilyUniverse } from "./lib/stardew-native-transition-family-universe.mjs";
 import { collectCSharpSources, fileSha256, sourceManifestSha256 } from "./lib/stardew-native-source-attestation.mjs";
+import { validateNativeTransitionFamilyUniverse } from "./lib/stardew-native-transition-family-universe.mjs";
 
 function fail(code, message) {
   const error = new Error(message);

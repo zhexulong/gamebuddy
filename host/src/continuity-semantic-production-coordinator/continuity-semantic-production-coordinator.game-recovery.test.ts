@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import type { ProductionGameRecoveryTarget } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { createTestWindowsOwnerDeathVerification } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.test-support.js";
+import type { ProductionGameRecoveryTarget } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { orchestrateExplicitGameRecovery } from "./continuity-semantic-production-coordinator.internal.js";
 
 const owner = Object.freeze({

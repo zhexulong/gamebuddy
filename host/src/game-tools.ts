@@ -1,16 +1,16 @@
-import { defineTool } from "@earendil-works/pi-coding-agent";
-import { Type, type Static, type TObject } from "typebox";
 import { randomUUID } from "node:crypto";
-import { type CompanionIntegration } from "./integration-types.js";
-import { type ExecutionReceipt, type ExecutionRequest, validateExecutionRequest } from "./protocol.js";
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import { type Static, type TObject, Type } from "typebox";
 import {
+  type ActionPolicy,
   PUBLISHED_PRIMITIVE_TOOL_NAMES,
+  type PublishedPrimitiveActionId,
   searchVisibleActions,
   visiblePublishedActions,
-  type ActionPolicy,
-  type PublishedPrimitiveActionId,
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./integration-module.js";
+import type { CompanionIntegration } from "./integration-types.js";
+import { type ExecutionReceipt, type ExecutionRequest, validateExecutionRequest } from "./protocol.js";
 
 type IntegrationDispatchAdmissionFactory = () => IntegrationDispatchAdmission;
 
@@ -334,7 +334,12 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "refill_watering_can",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
       }),
     );
   }
@@ -571,7 +576,12 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "collect_animal_product",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
       }),
     );
   }
@@ -591,7 +601,12 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "feed_animal",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
       }),
     );
   }
@@ -654,7 +669,12 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "chop_tree_source",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
       }),
     );
   }
@@ -674,7 +694,12 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "dig_artifact_spot",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
       }),
     );
   }
@@ -694,7 +719,12 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "clear_hoedirt",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
       }),
     );
   }
@@ -714,7 +744,12 @@ export function createStardewActionTools(
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "break_rock_source",
-        toArgs: (params) => ({ slot: params.slot, x: params.x, y: params.y, expectedTargetId: params.expectedTargetId }),
+        toArgs: (params) => ({
+          slot: params.slot,
+          x: params.x,
+          y: params.y,
+          expectedTargetId: params.expectedTargetId,
+        }),
       }),
     );
   }

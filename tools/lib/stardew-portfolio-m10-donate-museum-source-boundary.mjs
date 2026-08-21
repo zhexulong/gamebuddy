@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { chmod, lstat, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, lstat, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 export const TARGET_VERSION = "1.6.15.24356";
@@ -103,7 +103,7 @@ function exact(value, keys, name) {
     fail("schema_invalid", `${name} fields are not exact.`);
 }
 function digestManifest(files) {
-  return sha(files.map((file) => `${file.relativePath}\t${file.lengthBytes}\t${file.sha256}`).join("\n") + "\n");
+  return sha(`${files.map((file) => `${file.relativePath}\t${file.lengthBytes}\t${file.sha256}`).join("\n")}\n`);
 }
 function inside(root, candidate) {
   const relative = path.relative(root, candidate);
@@ -496,7 +496,7 @@ export function derive(target, state, contractHash, extractedAtUtc) {
     },
   };
 }
-export function validate(model, contractHash, state, root) {
+export function validate(model, contractHash, state, _root) {
   exact(
     model,
     [
