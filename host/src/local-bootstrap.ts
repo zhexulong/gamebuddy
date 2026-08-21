@@ -3,10 +3,10 @@ import { type LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import { connectIntegrationCompanion, disconnectIntegrationCompanion, type ConnectedIntegrationCompanion } from "./integration-bootstrap.js";
 import { STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
 import { type WorldBookBinding } from "./worldbook.js";
-import { type GameCompanionIdentity, type CompanionModelConfig } from "./runtime.js";
+import { type GameCompanionIdentity, type CompanionModelConfig } from "./runtime-core.js";
 import { type IntegrationActionPolicy } from "./integration-module.js";
 import { type CompanionTextPort, type PresentationProfile } from "./presentation.js";
-import { type VoiceSpeechPort } from "./voice.js";
+import { type CompanionSpeechPort } from "./presentation-types.js";
 
 /**
  * Stardew compatibility bootstrap. New integrations use
@@ -25,7 +25,7 @@ export type LocalStardewConnection = Readonly<{
   gameplaySubagent?: boolean;
   presentationProfile?: PresentationProfile;
   textPort?: CompanionTextPort;
-  speechPort?: VoiceSpeechPort;
+  speechPort?: CompanionSpeechPort;
   surfaceSessionId?: string;
   worldBook?: WorldBookBinding;
 }>;

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { endContinuitySession, MAX_CONTINUITY_EVENTS, MAX_CONTINUITY_SESSIONS, selectContinuitySession } from "./continuity.js";
-import { resolveRuntimePaths } from "./runtime.js";
+import { resolveRuntimePaths } from "./runtime-core.js";
 
 const identity = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" } as const;
 

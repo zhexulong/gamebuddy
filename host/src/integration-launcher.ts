@@ -1,5 +1,5 @@
 import type { WorldFact } from "./event-pump.js";
-import type { CompanionIdentity } from "./runtime.js";
+import type { CompanionIdentity } from "./runtime-core.js";
 import { assertIntegrationModule, type GameIntegrationModule } from "./integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
 

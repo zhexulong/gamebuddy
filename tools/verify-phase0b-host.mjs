@@ -4,10 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  createCompanionRuntime,
-  PHASE_0B_ALLOWED_TOOL_NAMES,
-} from "../host/dist/runtime.js";
+import { CHAT_PHASE_0B_ALLOWED_TOOL_NAMES, createChatCompanionRuntime } from "../host/dist/runtime-chat.js";
 
 const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-smoke-"));
 const identity = {
@@ -18,9 +15,9 @@ const identity = {
 };
 
 try {
-  const runtime = await createCompanionRuntime(identity, root);
+  const runtime = await createChatCompanionRuntime({ identity, root });
   try {
-    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort());
+    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [...CHAT_PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort());
     assert.equal(runtime.extensions.length, 1);
     assert.match(runtime.extensions[0], /vendor[\\/]magic-context[\\/]packages[\\/]pi-plugin[\\/]dist[\\/]index\.js$/);
   } finally {

@@ -16,7 +16,7 @@ import {
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { CompanionIntegration } from "./integration-types.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
-import type { RuntimePaths } from "./runtime.js";
+import type { RuntimePaths } from "./runtime-core.js";
 
 const paths: RuntimePaths = {
   root: tmpdir(),

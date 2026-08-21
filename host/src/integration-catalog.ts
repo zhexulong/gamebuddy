@@ -1,5 +1,5 @@
 import { type IntegrationLauncher } from "./integration-launcher.js";
-import type { GameCompanionIdentity } from "./runtime.js";
+import type { GameCompanionIdentity } from "./runtime-core.js";
 
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 

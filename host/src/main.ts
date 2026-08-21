@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { connectIntegrationCompanion, disconnectIntegrationCompanion } from "./integration-bootstrap.js";
 import { bindIntegrationIdentity } from "./integration-catalog.js";
 import { PRODUCT_INTEGRATION_CATALOG } from "./integration-catalog-product.js";
-import { DEFAULT_COMPANION_MODEL_CONFIG } from "./runtime.js";
+import { DEFAULT_COMPANION_MODEL_CONFIG } from "./runtime-core.js";
 import { connectHealthyVoiceGateway } from "./voice-bootstrap.js";
 import { validateLocalHostConfig } from "./local-host-config.js";
 import type { PresentationProfile } from "./presentation.js";

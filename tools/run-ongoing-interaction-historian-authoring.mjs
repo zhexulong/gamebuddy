@@ -16,28 +16,22 @@ const root = await mkdtemp(join(tmpdir(), "gamebuddy-ongoing-historian-authoring
 const priorNodeEnv = process.env.NODE_ENV;
 process.env.NODE_ENV = "test";
 try {
-  const [{ createCompanionRuntime, DEFAULT_COMPANION_MODEL_CONFIG, MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED }, { runEmbeddedHistorianAuthoringGateInMemoryForTest }] = await Promise.all([
-    import("../host/dist/runtime.js"),
+  const [{ createChatCompanionRuntime }, { DEFAULT_COMPANION_MODEL_CONFIG, MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED }, { runEmbeddedHistorianAuthoringGateInMemoryForTest }] = await Promise.all([
+    import("../host/dist/runtime-chat.js"),
+    import("../host/dist/runtime-core.js"),
     import("../vendor/magic-context/packages/pi-plugin/dist/embedded-historian-gate.js"),
   ]);
   const runtime = await Promise.race([
-    createCompanionRuntime(
-    {
-      playerId: "historian_gate_player",
-      companionId: "historian_gate_companion",
-      continuityId: "historian_gate_continuity",
-    },
-    root,
-    undefined,
-    DEFAULT_COMPANION_MODEL_CONFIG,
-    undefined,
-    undefined,
-    false,
-    undefined,
-    "historian_gate_surface",
-    undefined,
-    "chat",
-    ),
+    createChatCompanionRuntime({
+      identity: {
+        playerId: "historian_gate_player",
+        companionId: "historian_gate_companion",
+        continuityId: "historian_gate_continuity",
+      },
+      root,
+      modelConfig: DEFAULT_COMPANION_MODEL_CONFIG,
+      surfaceSessionId: "historian_gate_surface",
+    }),
     new Promise((_, reject) => setTimeout(() => reject(new Error("runtime_boot_timeout")), 20_000)),
   ]);
   try {

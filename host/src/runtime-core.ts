@@ -8,21 +8,14 @@ import { homedir } from "node:os";
 import {
   createAgentSession,
   DefaultResourceLoader,
-  defineTool,
   ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
-  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-
-import { createCompanionPresentationTools, type PresentationRuntime } from "./presentation.js";
-import { assertIntegrationModule, DEFAULT_INTEGRATION_ACTION_POLICY, type GameIntegrationModule, type IntegrationActionPolicy } from "./integration-module.js";
-import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
-import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
-import { type IntegrationConnection } from "./integration-types.js";
-import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
+import { writeOrVerifyRunManifest } from "./run-manifest.js";
+import type { PresentationProfile } from "./presentation-types.js";
+import type { WorldBookMetadata } from "./worldbook.js";
 import {
   assertProfileMatchesBinding,
   buildChatCompanionSystemPrompt,
@@ -98,39 +91,6 @@ async function reloadMagicContextInRuntimeRoot(loader: DefaultResourceLoader, ru
 }
 
 /**
- * The base Companion tool is read-only and never creates game authority. Its
- * status is sourced from the mounted integration when one exists.
- */
-export function createCompanionStatusTool(integration?: IntegrationConnection) {
-  return defineTool({
-    name: "companion_status",
-    label: "Companion Status",
-    description: "Report the local Companion Host and mounted game integration status.",
-    parameters: Type.Object({}),
-    execute: async () => {
-      const details = integration === undefined ? undefined : integration.module.status(integration);
-      const fullDetails = {
-        host: "ready",
-        integrationId: integration?.scope.integrationId ?? null,
-        connected: details?.connected ?? false,
-        capabilities: details === undefined ? [] : [...details.capabilities],
-        snapshotRevision: details?.snapshotRevision ?? null,
-        latestReceiptState: details?.latestReceiptState ?? null,
-        latestReasonCode: details?.latestReasonCode ?? null,
-      } as const;
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(fullDetails) }],
-        details: fullDetails,
-      };
-    },
-  });
-}
-
-/** Backward-compatible offline base tool for callers that do not mount an integration. */
-export const companionStatusTool = createCompanionStatusTool();
-export const PHASE_0B_ALLOWED_TOOL_NAMES = Object.freeze(["companion_status"]);
-
-/**
  * A Host-owned companion identity. `continuityId` is the logical shared
  * experience key; legacy game-only callers may omit it and remain partitioned
  * by their exact save/world pair. A dialogue surface has no live world.
@@ -197,7 +157,6 @@ export type RuntimeSession = Readonly<{
   identityProfile: IdentityProfileMetadata;
   profile: IdentityProfile;
   extensions: readonly string[];
-  gameplaySubagent?: GameplayTaskSubagent;
 }>;
 
 function requireOpaqueSegment(label: string, value: string): string {
@@ -222,18 +181,6 @@ export function identityKey(identity: CompanionIdentity): string {
       requireOpaqueSegment("continuityId", identity.continuityId),
     ];
   return createHash("sha256").update(canonical.join("\u001f")).digest("hex");
-}
-
-function gateIntegrationTool(tool: ToolDefinition, connection: IntegrationConnection): ToolDefinition {
-  return {
-    ...tool,
-    execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-      if (connection.executionGate?.executable === false) {
-        throw new Error("integration_not_ready");
-      }
-      return tool.execute(toolCallId, params, signal, onUpdate, ctx);
-    },
-  };
 }
 
 function requiredGameId(label: "saveId" | "worldId", value: string | undefined): string {
@@ -265,21 +212,35 @@ export function resolveRuntimePaths(identity: CompanionIdentity, root = join(hom
  * pinned Magic Context extension can load; built-ins, project/user extensions,
  * skills, templates, context files, and coding prompts are excluded.
  */
-export async function createCompanionRuntime(identity: CompanionIdentity, root?: string, integration?: IntegrationConnection, modelConfig?: CompanionModelConfig, actionPolicy?: IntegrationActionPolicy, presentation?: PresentationRuntime, gameplaySubagentEnabled = false, initialProfile?: IdentityProfile, surfaceSessionId?: string, worldBook?: WorldBookBinding, surface?: "chat" | "game", internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride): Promise<RuntimeSession> {
-  // A surface session ID identifies a persistent session; it must never be
-  // used to infer the product surface because both Chat and Game have them.
-  const runtimeSurface = surface ?? presentation?.surface ?? "game";
-  const integrationModule: GameIntegrationModule | undefined = integration?.module;
-  if (integration !== undefined && integrationModule === undefined) throw new Error("integration_module_required");
-  if (integration !== undefined) {
-    assertIntegrationModule(integration.module, integration.scope.integrationId);
-    integration.module.assertIdentityBinding(integration, identity);
-  }
-  const mountedPolicy = actionPolicy === undefined
-    ? integrationModule?.defaultPolicy ?? DEFAULT_INTEGRATION_ACTION_POLICY
-    : integrationModule === undefined
-      ? actionPolicy
-      : integrationModule.parsePolicy(actionPolicy);
+/** @internal Core-only policy projection; Game policy authority remains in runtime-game. */
+export type InternalRuntimeActionPolicy = Readonly<{ policyVersion: 1; deniedActions: readonly string[]; deniedFamilies: readonly string[] }>;
+/** @internal Core-only composition assembled exclusively by surface factories. */
+export type InternalRuntimeToolComposition = Readonly<{
+  tools: readonly import("@earendil-works/pi-coding-agent").ToolDefinition[];
+  actionRegistryRevision: string;
+  actionPolicy: InternalRuntimeActionPolicy;
+  knowledge: Readonly<{ mounted: boolean; gameVersion: string | null; bundleVersion: number | null }>;
+  gameplaySubagentModel: Readonly<{ provider: string; modelId: string; thinkingLevel: string }> | null;
+  featureFlags?: Readonly<{ gameplaySubagent: boolean }>;
+  worldBook: WorldBookMetadata | null;
+  presentation: PresentationProfile | null;
+}>;
+/** @internal Core-only bootstrap options; product callers use surface factories. */
+export type InternalCreateRuntimeCoreOptions = Readonly<{
+  identity: CompanionIdentity;
+  root?: string;
+  modelConfig?: CompanionModelConfig;
+  initialProfile?: IdentityProfile;
+  surfaceSessionId?: string;
+  surface: "chat" | "game";
+  internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride;
+  toolComposition: InternalRuntimeToolComposition;
+}>;
+
+/** @internal Core-only runtime bootstrap. Surface factories exclusively compose its tools. */
+export async function createInternalRuntimeCore(options: InternalCreateRuntimeCoreOptions): Promise<RuntimeSession> {
+  const { identity, root, modelConfig, initialProfile, surfaceSessionId, surface, internalMagicContextFeatureTestOverride, toolComposition } = options;
+  const runtimeSurface = surface;
   const paths = resolveRuntimePaths(identity, root, surfaceSessionId);
   const identityProfileAlreadyExists = await pathExists(paths.identityProfilePath);
   await Promise.all([
@@ -414,38 +375,8 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
   const model = modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
   if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
 
-  const companionStatus = createCompanionStatusTool(integration);
-  const integrationToolSet = integration !== undefined && integrationModule !== undefined
-    ? integrationModule.createToolSet({ connection: integration, knowledge: integration.knowledge, gameVersion: integration.gameVersion, policy: mountedPolicy })
-    : undefined;
-  const rawIntegrationTools = integrationToolSet === undefined ? [] : [
-    ...integrationToolSet.observation,
-    ...integrationToolSet.actions,
-    ...integrationToolSet.knowledge,
-  ];
-  // Tool definitions remain mounted for the lifetime of a Pi session. Every
-  // adapter tool therefore receives a Host-owned execution fence so a later
-  // lifecycle loss revokes stale closures rather than trusting the adapter to
-  // remember to check its own disconnected state.
-  const integrationTools = integration === undefined
-    ? rawIntegrationTools
-    : rawIntegrationTools.map((tool) => gateIntegrationTool(tool, integration));
-  const presentationTools = presentation === undefined ? [] : createCompanionPresentationTools(presentation);
-  const worldBookScope = integration === undefined ? null : integration.module.worldScope(integration);
-  const worldBookTools = worldBook === undefined ? [] : createWorldBookTools(worldBook, worldBookScope ?? undefined);
-  const gameplaySubagent = gameplaySubagentEnabled
-    ? integration !== undefined && modelConfig !== undefined
-      ? new GameplayTaskSubagent(paths, integration, mountedPolicy)
-      : (() => { throw new Error("gameplay_subagent_requires_model_and_integration"); })()
-    : undefined;
-  const rawGameplayTools = gameplaySubagent === undefined ? [] : [gameplaySubagent.createDelegateTool()];
-  // The delegate itself is an execution entry point. Fence it as well as the
-  // module-owned action tools so a terminal adapter lifecycle cannot start a
-  // new worker task through an already-mounted Pi session.
-  const gameplayTools = integration === undefined
-    ? rawGameplayTools
-    : rawGameplayTools.map((tool) => gateIntegrationTool(tool, integration));
-  const allowedToolNames = [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite", ...integrationTools.map((tool) => tool.name), ...worldBookTools.map((tool) => tool.name), ...presentationTools.map((tool) => tool.name), ...gameplayTools.map((tool) => tool.name)].sort();
+  const customTools = [...toolComposition.tools];
+  const allowedToolNames = ["todowrite", ...customTools.map((tool) => tool.name)].sort();
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {
     ({ session } = await createAgentSession({
@@ -458,7 +389,7 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
       model,
       noTools: "all",
       tools: allowedToolNames,
-      customTools: [companionStatus, ...integrationTools, ...worldBookTools, ...presentationTools, ...gameplayTools],
+      customTools,
       thinkingLevel: modelConfig?.thinkingLevel ?? "off",
     }));
   } finally {
@@ -488,18 +419,16 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     identity,
     runtime: RUNTIME_PACKAGE_VERSIONS,
     model: { provider: modelConfig?.provider ?? null, modelId: modelConfig?.modelId ?? null, thinkingLevel: modelConfig?.thinkingLevel ?? null },
-    gameplaySubagentModel: gameplaySubagent === undefined ? null : gameplaySubagent.modelConfig,
-    actionRegistryRevision: actionRegistryRevision(integrationModule?.actionCatalog.entries ?? []),
-    actionPolicy: mountedPolicy,
+    gameplaySubagentModel: toolComposition.gameplaySubagentModel,
+    actionRegistryRevision: toolComposition.actionRegistryRevision,
+    actionPolicy: toolComposition.actionPolicy,
     mountedTools: activeTools,
-    knowledge: integrationModule === undefined
-      ? { mounted: false, gameVersion: null, bundleVersion: null }
-      : integrationModule.knowledgeMetadata({ connection: integration, knowledge: integration?.knowledge, gameVersion: integration?.gameVersion }),
+    knowledge: toolComposition.knowledge,
     identityProfile: profileMetadata,
-    worldBook: worldBook === undefined ? null : worldBook.metadata,
-    presentation: presentation?.profile ?? null,
+    worldBook: toolComposition.worldBook,
+    presentation: toolComposition.presentation,
     featureFlags: {
-      gameplaySubagent: gameplaySubagent !== undefined,
+      gameplaySubagent: toolComposition.featureFlags?.gameplaySubagent ?? false,
       magicContextMemoryDomain: MAGIC_CONTEXT_MEMORY_DOMAIN,
       magicContextMemoryEnabled: MAGIC_CONTEXT_MEMORY_ENABLED,
       magicContextAutoPromoteEnabled: MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED,
@@ -515,7 +444,6 @@ export async function createCompanionRuntime(identity: CompanionIdentity, root?:
     identityProfile: profileMetadata,
     profile,
     extensions: loader.getExtensions().extensions.map((extension) => extension.path),
-    ...(gameplaySubagent === undefined ? {} : { gameplaySubagent }),
   };
 }
 

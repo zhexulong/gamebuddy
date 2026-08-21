@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { RuntimePaths } from "./runtime.js";
+import type { RuntimePaths } from "./runtime-core.js";
 import { withPathLock } from "./path-lock.js";
 
 export const CHAT_TRANSCRIPT_SCHEMA_VERSION = 1 as const;

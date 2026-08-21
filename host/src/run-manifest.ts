@@ -2,8 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { withPathLock } from "./path-lock.js";
-import type { IntegrationActionPolicy } from "./integration-module.js";
-import type { CompanionIdentity, CompanionModelConfig, RuntimePaths } from "./runtime.js";
+import type { CompanionIdentity, CompanionModelConfig, RuntimePaths } from "./runtime-core.js";
+
+type IntegrationActionPolicy = Readonly<{ policyVersion: 1; deniedActions: readonly string[]; deniedFamilies: readonly string[] }>;
 import type { PresentationProfile } from "./presentation.js";
 import type { IdentityProfileMetadata } from "./identity-profile.js";
 import type { WorldBookMetadata } from "./worldbook.js";
