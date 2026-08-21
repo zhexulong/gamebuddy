@@ -20,13 +20,4 @@ internal static class PortfolioMineElevatorProjection
             && IsSelectableCheckpoint(selectedCheckpoint)
             && lowestLevelReached >= selectedCheckpoint;
 
-    internal static bool IsAccessibleElevatorInteraction(
-        bool isLocalPlayer,
-        bool grabTileReachable,
-        int mineLevel,
-        int buildingsTileIndex)
-        => isLocalPlayer
-            && grabTileReachable
-            && mineLevel <= MaximumCheckpoint
-            && buildingsTileIndex == 112;
 }

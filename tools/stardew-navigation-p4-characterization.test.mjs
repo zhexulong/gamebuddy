@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 import {
+  correlateP4CTelemetry,
   createP4DCharacterizationIssuer,
   deriveNavigationCharacterization,
-  P4A_TARGET_BINDING_V1,
-  correlateP4CTelemetry,
   findDestination,
   findDestinationWithPolicy,
+  P4A_TARGET_BINDING_V1,
   SEARCH_POLICY_V1,
   validateP4CTelemetryEvent,
 } from "./stardew-navigation-p4-characterization.mjs";
@@ -171,12 +171,26 @@ test("P4C separates below-threshold not_found, low-margin candidates, and exact 
 });
 test("P4C v2 private checker executes semantic corpus cases and redacts aggregates", async () => {
   await assert.rejects(checkPrivateRealSelection(), /private_real_selection_input_unavailable/);
-  const dir = await mkdtemp(join(tmpdir(), "p4c-")), path = join(dir, "private.json");
+  const dir = await mkdtemp(join(tmpdir(), "p4c-")),
+    path = join(dir, "private.json");
   const fixture = () => {
-    const alpha = "p4c-entry-alpha", beta = "p4c-entry-beta", nearA = "p4c-entry-near-a", nearB = "p4c-entry-near-b", duplicateA = "p4c-entry-duplicate-a", duplicateB = "p4c-entry-duplicate-b";
+    const alpha = "p4c-entry-alpha",
+      beta = "p4c-entry-beta",
+      nearA = "p4c-entry-near-a",
+      nearB = "p4c-entry-near-b",
+      duplicateA = "p4c-entry-duplicate-a",
+      duplicateB = "p4c-entry-duplicate-b";
     const entries = [
-      { key: alpha, labels: { "en-US": "Private Alpha Hall", "zh-CN": "私密阿尔法厅", "ja-JP": "プライベートアルファホール" }, aliases: [{ text: "Private Old Alpha", provenance: "explicit_content_former_name" }] },
-      { key: beta, labels: { "en-US": "Private Beta Hall", "zh-CN": "私密贝塔厅", "ja-JP": "プライベートベータホール" }, aliases: [{ text: "Private Alias Beta", provenance: "explicit_content_alias" }] },
+      {
+        key: alpha,
+        labels: { "en-US": "Private Alpha Hall", "zh-CN": "私密阿尔法厅", "ja-JP": "プライベートアルファホール" },
+        aliases: [{ text: "Private Old Alpha", provenance: "explicit_content_former_name" }],
+      },
+      {
+        key: beta,
+        labels: { "en-US": "Private Beta Hall", "zh-CN": "私密贝塔厅", "ja-JP": "プライベートベータホール" },
+        aliases: [{ text: "Private Alias Beta", provenance: "explicit_content_alias" }],
+      },
       { key: nearA, labels: { "en-US": "Near Hall", "zh-CN": "近厅甲", "ja-JP": "ニアホール甲" }, aliases: [] },
       { key: nearB, labels: { "en-US": "Near Hail", "zh-CN": "近厅乙", "ja-JP": "ニアホール乙" }, aliases: [] },
       { key: duplicateA, labels: { "en-US": "Shared Venue", "zh-CN": "共享场地甲", "ja-JP": "共有会場" }, aliases: [] },
@@ -184,49 +198,183 @@ test("P4C v2 private checker executes semantic corpus cases and redacts aggregat
     ];
     const result = (kind, stage, canonicalKey, candidates) => ({ kind, stage, canonicalKey, candidates });
     const cases = [
-      { id: "p4c-case-exact", category: "exact", query: "Private Alpha Hall", currentLocale: "en-US", fallbackLocale: "en-US", expected: result("resolved", "current_locale_exact", alpha, [alpha]) },
-      { id: "p4c-case-paraphrase", category: "natural_paraphrase", query: "Private Alpha Hal", currentLocale: "en-US", fallbackLocale: "en-US", expected: result("resolved", "fuzzy", alpha, [alpha]) },
-      { id: "p4c-case-punctuation", category: "case_whitespace_punctuation", query: " PRIVATE Alpha Hall! ", currentLocale: "en-US", fallbackLocale: "en-US", expected: result("resolved", "current_locale_exact", alpha, [alpha]) },
-      { id: "p4c-case-zh", category: "zh", query: "私密阿尔法厅", currentLocale: "zh-CN", fallbackLocale: "zh-CN", expected: result("resolved", "current_locale_exact", alpha, [alpha]) },
-      { id: "p4c-case-fallback", category: "fallback", query: "Private Beta Hall", currentLocale: "zh-CN", fallbackLocale: "en-US", expected: result("resolved", "fallback_locale_exact", beta, [beta]) },
-      { id: "p4c-case-alias", category: "explicit_alias", query: "Private Old Alpha", currentLocale: "ja-JP", fallbackLocale: "en-US", expected: result("resolved", "alias_exact", alpha, [alpha]) },
-      { id: "p4c-case-typo", category: "typo", query: "Private Alpha Hlllll", currentLocale: "en-US", fallbackLocale: "en-US", expected: result("resolved", "fuzzy", alpha, [alpha]) },
-      { id: "p4c-case-short", category: "short_query", query: "x", currentLocale: "ja-JP", fallbackLocale: "ja-JP", expected: result("not_found", "short_query", null, []) },
-      { id: "p4c-case-duplicate", category: "duplicate_name", query: "Shared Venue", currentLocale: "en-US", fallbackLocale: "en-US", expected: result("ambiguous", "current_locale_exact", null, [duplicateA, duplicateB]) },
-      { id: "p4c-case-near", category: "near_name", query: "Near Hal", currentLocale: "en-US", fallbackLocale: "en-US", expected: result("candidates", "fuzzy_low_margin", null, [nearA, nearB, alpha]) },
-      { id: "p4c-case-control", category: "control_path_shaped", query: "warp: private", currentLocale: "en-US", fallbackLocale: "en-US", expected: result("invalid_query", null, null, []) },
-      { id: "p4c-case-below", category: "below_threshold", query: "zzzzzz", currentLocale: "zh-CN", fallbackLocale: "zh-CN", expected: result("not_found", "fuzzy_below_threshold", null, []) },
-      { id: "p4c-case-tie", category: "tie", query: "共有会場", currentLocale: "ja-JP", fallbackLocale: "en-US", expected: result("ambiguous", "current_locale_exact", null, [duplicateA, duplicateB]) },
+      {
+        id: "p4c-case-exact",
+        category: "exact",
+        query: "Private Alpha Hall",
+        currentLocale: "en-US",
+        fallbackLocale: "en-US",
+        expected: result("resolved", "current_locale_exact", alpha, [alpha]),
+      },
+      {
+        id: "p4c-case-paraphrase",
+        category: "natural_paraphrase",
+        query: "Private Alpha Hal",
+        currentLocale: "en-US",
+        fallbackLocale: "en-US",
+        expected: result("resolved", "fuzzy", alpha, [alpha]),
+      },
+      {
+        id: "p4c-case-punctuation",
+        category: "case_whitespace_punctuation",
+        query: " PRIVATE Alpha Hall! ",
+        currentLocale: "en-US",
+        fallbackLocale: "en-US",
+        expected: result("resolved", "current_locale_exact", alpha, [alpha]),
+      },
+      {
+        id: "p4c-case-zh",
+        category: "zh",
+        query: "私密阿尔法厅",
+        currentLocale: "zh-CN",
+        fallbackLocale: "zh-CN",
+        expected: result("resolved", "current_locale_exact", alpha, [alpha]),
+      },
+      {
+        id: "p4c-case-fallback",
+        category: "fallback",
+        query: "Private Beta Hall",
+        currentLocale: "zh-CN",
+        fallbackLocale: "en-US",
+        expected: result("resolved", "fallback_locale_exact", beta, [beta]),
+      },
+      {
+        id: "p4c-case-alias",
+        category: "explicit_alias",
+        query: "Private Old Alpha",
+        currentLocale: "ja-JP",
+        fallbackLocale: "en-US",
+        expected: result("resolved", "alias_exact", alpha, [alpha]),
+      },
+      {
+        id: "p4c-case-typo",
+        category: "typo",
+        query: "Private Alpha Hlllll",
+        currentLocale: "en-US",
+        fallbackLocale: "en-US",
+        expected: result("resolved", "fuzzy", alpha, [alpha]),
+      },
+      {
+        id: "p4c-case-short",
+        category: "short_query",
+        query: "x",
+        currentLocale: "ja-JP",
+        fallbackLocale: "ja-JP",
+        expected: result("not_found", "short_query", null, []),
+      },
+      {
+        id: "p4c-case-duplicate",
+        category: "duplicate_name",
+        query: "Shared Venue",
+        currentLocale: "en-US",
+        fallbackLocale: "en-US",
+        expected: result("ambiguous", "current_locale_exact", null, [duplicateA, duplicateB]),
+      },
+      {
+        id: "p4c-case-near",
+        category: "near_name",
+        query: "Near Hal",
+        currentLocale: "en-US",
+        fallbackLocale: "en-US",
+        expected: result("candidates", "fuzzy_low_margin", null, [nearA, nearB, alpha]),
+      },
+      {
+        id: "p4c-case-control",
+        category: "control_path_shaped",
+        query: "warp: private",
+        currentLocale: "en-US",
+        fallbackLocale: "en-US",
+        expected: result("invalid_query", null, null, []),
+      },
+      {
+        id: "p4c-case-below",
+        category: "below_threshold",
+        query: "zzzzzz",
+        currentLocale: "zh-CN",
+        fallbackLocale: "zh-CN",
+        expected: result("not_found", "fuzzy_below_threshold", null, []),
+      },
+      {
+        id: "p4c-case-tie",
+        category: "tie",
+        query: "共有会場",
+        currentLocale: "ja-JP",
+        fallbackLocale: "en-US",
+        expected: result("ambiguous", "current_locale_exact", null, [duplicateA, duplicateB]),
+      },
     ];
-    return { artifactKind: "stardew_navigation_p4c_private_corpus", schemaVersion: 2, targetVersion: P4A_TARGET_BINDING_V1.gameAssemblyVersion, p4aInputDigest: P4A_TARGET_BINDING_V1.inputDigest, claimedTargetContentDigest: "a".repeat(64), claimedTargetProvenanceDigest: "b".repeat(64), callerClaimedLabelProvenance: "target_private", entries, cases, expectedPolicy: { fuzzyThreshold: .82, fuzzyMargin: .08 } };
+    return {
+      artifactKind: "stardew_navigation_p4c_private_corpus",
+      schemaVersion: 2,
+      targetVersion: P4A_TARGET_BINDING_V1.gameAssemblyVersion,
+      p4aInputDigest: P4A_TARGET_BINDING_V1.inputDigest,
+      claimedTargetContentDigest: "a".repeat(64),
+      claimedTargetProvenanceDigest: "b".repeat(64),
+      callerClaimedLabelProvenance: "target_private",
+      entries,
+      cases,
+      expectedPolicy: { fuzzyThreshold: 0.82, fuzzyMargin: 0.08 },
+    };
   };
-  const check = async (value) => { await writeFile(path, JSON.stringify(value)); return checkPrivateRealSelection(path); };
-  const valid = fixture(), report = await check(valid), serialized = JSON.stringify(report);
+  const check = async (value) => {
+    await writeFile(path, JSON.stringify(value));
+    return checkPrivateRealSelection(path);
+  };
+  const valid = fixture(),
+    report = await check(valid),
+    serialized = JSON.stringify(report);
   assert.equal(report.metrics.correct, report.metrics.total);
   assert.equal(report.provenanceStatus, "caller_unverified_requires_independent_attestation");
   assert.equal(report.partitions.category.exact.total, 1);
-  const privateEntries = valid.entries.map((entry) => ({ id: entry.key, labels: entry.labels, aliases: entry.aliases.map((alias) => alias.text) }));
+  const privateEntries = valid.entries.map((entry) => ({
+    id: entry.key,
+    labels: entry.labels,
+    aliases: entry.aliases.map((alias) => alias.text),
+  }));
   const fuzzyCase = valid.cases.find((item) => item.category === "typo");
-  const alternate = findDestinationWithPolicy(privateEntries, fuzzyCase.query, fuzzyCase.currentLocale, fuzzyCase.fallbackLocale, { ...SEARCH_POLICY_V1, fuzzyThreshold: .86, fuzzyMargin: .08 });
+  const alternate = findDestinationWithPolicy(
+    privateEntries,
+    fuzzyCase.query,
+    fuzzyCase.currentLocale,
+    fuzzyCase.fallbackLocale,
+    { ...SEARCH_POLICY_V1, fuzzyThreshold: 0.86, fuzzyMargin: 0.08 },
+  );
   const fixed = findDestination(privateEntries, fuzzyCase.query, fuzzyCase.currentLocale, fuzzyCase.fallbackLocale);
   assert.notDeepEqual(alternate, fixed);
   assert.ok(report.policy.candidateMetrics.some((candidate) => candidate.metrics.correct !== report.metrics.correct));
-  for (const secret of ["Private Alpha Hall", "私密阿尔法厅", "p4c-entry-alpha", "p4c-case-exact", "Private Old Alpha"]) assert.doesNotMatch(serialized, new RegExp(secret));
+  for (const secret of ["Private Alpha Hall", "私密阿尔法厅", "p4c-entry-alpha", "p4c-case-exact", "Private Old Alpha"])
+    assert.doesNotMatch(serialized, new RegExp(secret));
   await assert.rejects(check({ ...fixture(), targetVersion: "wrong" }), /input_invalid/);
   await assert.rejects(check({ ...fixture(), extra: true }), /input_invalid/);
-  const noCategory = fixture(); noCategory.cases = noCategory.cases.slice(1); await assert.rejects(check(noCategory), /input_invalid/);
-  const noLocale = fixture(); noLocale.cases = noLocale.cases.map((item) => ({ ...item, currentLocale: "en-US", fallbackLocale: "en-US" })); await assert.rejects(check(noLocale), /input_invalid/);
-  const unsafe = fixture(); unsafe.cases[0].query = "warp: private"; await assert.rejects(check(unsafe), /input_invalid/);
-  const categoryMismatch = fixture(); categoryMismatch.cases[9].expected.stage = "fuzzy"; await assert.rejects(check(categoryMismatch), /input_invalid/);
-  const stageMismatch = fixture(); stageMismatch.cases[0].expected.stage = "fallback_locale_exact"; await assert.rejects(check(stageMismatch), /input_invalid/);
+  const noCategory = fixture();
+  noCategory.cases = noCategory.cases.slice(1);
+  await assert.rejects(check(noCategory), /input_invalid/);
+  const noLocale = fixture();
+  noLocale.cases = noLocale.cases.map((item) => ({ ...item, currentLocale: "en-US", fallbackLocale: "en-US" }));
+  await assert.rejects(check(noLocale), /input_invalid/);
+  const unsafe = fixture();
+  unsafe.cases[0].query = "warp: private";
+  await assert.rejects(check(unsafe), /input_invalid/);
+  const categoryMismatch = fixture();
+  categoryMismatch.cases[9].expected.stage = "fuzzy";
+  await assert.rejects(check(categoryMismatch), /input_invalid/);
+  const stageMismatch = fixture();
+  stageMismatch.cases[0].expected.stage = "fallback_locale_exact";
+  await assert.rejects(check(stageMismatch), /input_invalid/);
   await assert.rejects(check({ ...fixture(), claimedTargetProvenanceDigest: "not-a-hash" }), /input_invalid/);
-  const wrongExpected = fixture(); wrongExpected.cases[0].expected.canonicalKey = "p4c-entry-beta"; wrongExpected.cases[0].expected.candidates = ["p4c-entry-beta"]; await assert.rejects(check(wrongExpected), /policy_or_match_mismatch/);
-  await assert.rejects(check({ ...fixture(), expectedPolicy: { fuzzyThreshold: .8, fuzzyMargin: .08 } }), /policy_or_match_mismatch/);
+  const wrongExpected = fixture();
+  wrongExpected.cases[0].expected.canonicalKey = "p4c-entry-beta";
+  wrongExpected.cases[0].expected.candidates = ["p4c-entry-beta"];
+  await assert.rejects(check(wrongExpected), /policy_or_match_mismatch/);
+  await assert.rejects(
+    check({ ...fixture(), expectedPolicy: { fuzzyThreshold: 0.8, fuzzyMargin: 0.08 } }),
+    /policy_or_match_mismatch/,
+  );
   await rm(dir, { recursive: true });
 });
 test("P4D later execution first-use, binding and trusted-only advance never grant permission", () => {
-  let clock = 100;
-  let state = {
+  const clock = 100;
+  const state = {
     issuer: "issuer",
     runtimeInstance: "runtime-1",
     scope: "scope",

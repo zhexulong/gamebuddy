@@ -2,13 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runBreakRockSourceSmoke } from "./run-stardew-native-local-player-break-rock-source-smoke.mjs";
 
-const CAPABILITIES = [
-  "cancel_active_execution",
-  "inspect_self",
-  "move_to_tile",
-  "travel",
-  "break_rock_source",
-];
+const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "break_rock_source"];
 
 const ROCK = {
   targetId: "rock-target",
@@ -156,7 +150,12 @@ test("break-rock runner rejects an invalid fixture scenario", async () => {
     runBreakRockSourceSmoke(
       client,
       [],
-      fixtureConfig({ NativeLocalPlayerFixture: { ...fixtureConfig().NativeLocalPlayerFixture, FixtureScenario: "native_chop_tree_source_v1" } }),
+      fixtureConfig({
+        NativeLocalPlayerFixture: {
+          ...fixtureConfig().NativeLocalPlayerFixture,
+          FixtureScenario: "native_chop_tree_source_v1",
+        },
+      }),
     ),
     (error) => error?.message === "native_local_break_rock_source_fixture_config_invalid",
   );

@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { applyDocumentLocale, type Locale, messages, persistLocale, resolveLocale } from "../i18n";
 import {
-  redeemP3Bootstrap,
-  submitMessage,
   cancelTurn,
-  saveDraft,
+  createTavernEventStream,
+  discardDraft,
+  fetchChatList,
   type P3Message,
+  redeemP3Bootstrap,
+  renameChatTitle,
+  submitMessage,
 } from "../p3-browser-api";
 import type {
   ActivePanel,
@@ -19,15 +22,15 @@ import type {
 import { AppBar } from "./AppBar";
 import { Composer } from "./Composer";
 import { DraftSection } from "./DraftSection";
-import { ProblemView } from "./ProblemView";
-import { SettingsDrawer } from "./SettingsDrawer";
-import { SkipLink } from "./SkipLink";
-import { Timeline } from "./Timeline";
 import { CharactersDrawer } from "./drawers/CharactersDrawer";
 import { ChatsDrawer } from "./drawers/ChatsDrawer";
 import { MemoryDrawer } from "./drawers/MemoryDrawer";
 import { PersonaDrawer } from "./drawers/PersonaDrawer";
 import { WorldInfoDrawer } from "./drawers/WorldInfoDrawer";
+import { ProblemView } from "./ProblemView";
+import { SettingsDrawer } from "./SettingsDrawer";
+import { SkipLink } from "./SkipLink";
+import { Timeline } from "./Timeline";
 
 export function App() {
   const [locale, setLocale] = useState<Locale>(() => resolveLocale());
@@ -55,6 +58,7 @@ export function App() {
 
   const initialBootTokenRef = useRef<string | null>(null);
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const currentDraftRevisionRef = useRef<number>(1);
   const labels = messages(locale);
 
   useEffect(() => {
@@ -90,6 +94,10 @@ export function App() {
           snapshot,
           draft,
         });
+        currentDraftRevisionRef.current = draft.revision;
+        if (draft.text) {
+          setInputText(draft.text);
+        }
         setTranscript([...snapshot.chat.transcript]);
         const companionName = snapshot.chat.companion.name || "Companion";
         const companionSummary: CompanionSummary = {
@@ -107,8 +115,40 @@ export function App() {
             title: snapshot.chat.title || companionName,
             updatedAtMs: Date.now(),
             messageCount: snapshot.chat.transcript.length,
+            managementRevision: 1,
           },
         ]);
+
+        if (snapshot.chat.worldInfo) {
+          const wi = snapshot.chat.worldInfo as Record<string, unknown>;
+          const rawItems = Array.isArray(wi.items) ? wi.items : Array.isArray(wi.entries) ? wi.entries : [];
+          const entries = (rawItems as Array<Record<string, unknown>>).map((e, idx) => ({
+            id: String(e.handle ?? e.id ?? `wi-${idx}`),
+            key: String(e.handle ?? e.key ?? `entry-${idx + 1}`),
+            title: String(e.title ?? e.key ?? `Entry ${idx + 1}`),
+            content: String(e.summary ?? e.content ?? ""),
+            enabled: Boolean(e.enabled ?? true),
+          }));
+          setWorldInfoEntries(entries);
+        }
+
+        if (snapshot.memory) {
+          const mem = snapshot.memory as Record<string, unknown>;
+          const rawSummaries = Array.isArray(mem.summaries)
+            ? mem.summaries
+            : Array.isArray(mem.entries)
+              ? mem.entries
+              : [];
+          const memList = (rawSummaries as Array<Record<string, unknown>>).map((m, idx) => ({
+            id: String(m.handle ?? m.id ?? `mem-${idx}`),
+            fact: String(m.title ?? m.fact ?? m.text ?? ""),
+            status: (m.pinned ? "permanent" : m.status === "permanent" ? "permanent" : "active") as
+              | "active"
+              | "permanent",
+            recordedAtMs: typeof m.recordedAtMs === "number" ? m.recordedAtMs : Date.now(),
+          }));
+          setMemories(memList);
+        }
 
         const url = new URL(window.location.href);
         url.hash = "";
@@ -139,6 +179,67 @@ export function App() {
       isSubscribed = false;
     };
   }, []);
+
+  // SSE Live Event Stream Binding
+  useEffect(() => {
+    if (state.kind !== "ready") return;
+    const stream = createTavernEventStream(
+      (event) => {
+        if (event.event === "message.committed" && event.payload && typeof event.payload.message === "object") {
+          const msg = event.payload.message as P3Message;
+          setTranscript((prev) => (prev.some((m) => m.handle === msg.handle) ? prev : [...prev, msg]));
+        } else if (event.event === "draft.changed" && event.payload && typeof event.payload.revision === "number") {
+          currentDraftRevisionRef.current = event.payload.revision as number;
+        } else if (event.event === "turn.state_changed") {
+          if (
+            event.payload &&
+            (event.payload.state === "completed" ||
+              event.payload.state === "cancelled" ||
+              event.payload.state === "failed")
+          ) {
+            setIsGenerating(false);
+          }
+        } else if (event.event === "memory.changed" && event.payload && Array.isArray(event.payload.entries)) {
+          const memList = (event.payload.entries as Array<Record<string, unknown>>).map((m, idx) => ({
+            id: String(m.id ?? `mem-${idx}`),
+            fact: String(m.fact ?? m.text ?? ""),
+            status: (m.status === "permanent" ? "permanent" : "active") as "active" | "permanent",
+            recordedAtMs: typeof m.recordedAtMs === "number" ? m.recordedAtMs : Date.now(),
+          }));
+          setMemories(memList);
+        }
+      },
+      () => {
+        // EventSource stream closed/reconnecting
+      },
+    );
+    return () => {
+      stream.close();
+    };
+  }, [state.kind]);
+
+  // Real Persistent Chat List Sync when opening Chats Drawer
+  useEffect(() => {
+    if (activePanel === "chats" && state.kind === "ready") {
+      fetchChatList()
+        .then((list) => {
+          if (list.chats && list.chats.length > 0) {
+            setChats(
+              list.chats.map((c) => ({
+                chatHandle: c.handle,
+                title: c.title || activeCompanion.name,
+                managementRevision: c.managementRevision,
+                updatedAtMs: Date.now(),
+                messageCount: 0,
+              })),
+            );
+          }
+        })
+        .catch(() => {
+          // Keep local chat list when route is unmounted in profile
+        });
+    }
+  }, [activePanel, state.kind, activeCompanion.name]);
 
   const handleSelectLocale = (next: Locale) => {
     setLocale(next);
@@ -184,9 +285,15 @@ export function App() {
       if (submitResult.message) {
         setTranscript((prev) => [...prev, submitResult.message]);
       }
+
+      // Discard server draft after successful submission
+      discardDraft(generation, currentDraftRevisionRef.current, csrfToken)
+        .then((res) => {
+          currentDraftRevisionRef.current = res.revision;
+        })
+        .catch(() => {});
     } catch (err: unknown) {
-      const errorMessage =
-        err instanceof Error ? err.message : "Message submission failed";
+      const errorMessage = err instanceof Error ? err.message : "Message submission failed";
       setActiveError(errorMessage);
     } finally {
       setIsGenerating(false);
@@ -194,7 +301,11 @@ export function App() {
   };
 
   const handleStop = async () => {
-    if (state.kind === "ready" && state.snapshot.chat?.turn && typeof (state.snapshot.chat.turn as Record<string, unknown>).handle === "string") {
+    if (
+      state.kind === "ready" &&
+      state.snapshot.chat?.turn &&
+      typeof (state.snapshot.chat.turn as Record<string, unknown>).handle === "string"
+    ) {
       const turnHandle = (state.snapshot.chat.turn as Record<string, unknown>).handle as string;
       const generation = state.snapshot.selection?.generation ?? 1;
       const csrfToken = state.snapshot.csrfToken ?? "";
@@ -249,9 +360,7 @@ export function App() {
   };
 
   const handleToggleWorldInfo = (id: string, enabled: boolean) => {
-    setWorldInfoEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, enabled } : e)),
-    );
+    setWorldInfoEntries((prev) => prev.map((e) => (e.id === id ? { ...e, enabled } : e)));
   };
 
   const handleNewChat = () => {
@@ -261,6 +370,7 @@ export function App() {
       title: `${activeCompanion.name} Session ${chats.length + 1}`,
       updatedAtMs: Date.now(),
       messageCount: 1,
+      managementRevision: 1,
     };
     setChats((prev) => [newChat, ...prev]);
     setCurrentChatHandle(newChatHandle);
@@ -281,9 +391,39 @@ export function App() {
   };
 
   const handleRenameChat = (handle: string, newTitle: string) => {
-    setChats((prev) =>
-      prev.map((c) => (c.chatHandle === handle ? { ...c, title: newTitle } : c)),
-    );
+    const target = chats.find((c) => c.chatHandle === handle);
+    const expectedRevision = target?.managementRevision ?? 1;
+    const generation = state.kind === "ready" ? (state.snapshot.selection?.generation ?? 1) : 1;
+    const csrfToken = state.kind === "ready" ? (state.snapshot.csrfToken ?? "") : "";
+
+    setChats((prev) => prev.map((c) => (c.chatHandle === handle ? { ...c, title: newTitle } : c)));
+
+    renameChatTitle(handle, newTitle, expectedRevision, generation, csrfToken)
+      .then((res) => {
+        setChats((prev) =>
+          prev.map((c) =>
+            c.chatHandle === handle ? { ...c, title: res.title, managementRevision: res.managementRevision } : c,
+          ),
+        );
+      })
+      .catch(() => {
+        // Rollback / refetch on server conflict
+        fetchChatList()
+          .then((list) => {
+            if (list.chats && list.chats.length > 0) {
+              setChats(
+                list.chats.map((c) => ({
+                  chatHandle: c.handle,
+                  title: c.title || activeCompanion.name,
+                  managementRevision: c.managementRevision,
+                  updatedAtMs: Date.now(),
+                  messageCount: 0,
+                })),
+              );
+            }
+          })
+          .catch(() => {});
+      });
   };
 
   const handleExportChat = (handle: string) => {
@@ -360,7 +500,11 @@ export function App() {
               <DraftSection draft={state.draft} labels={labels} />
             ) : (
               <>
-                {activeError && <div className="error-banner" role="alert">{activeError}</div>}
+                {activeError && (
+                  <div className="error-banner" role="alert">
+                    {activeError}
+                  </div>
+                )}
                 <Composer
                   value={inputText}
                   onChange={setInputText}

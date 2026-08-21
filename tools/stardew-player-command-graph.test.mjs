@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  classifyIngressReachableCall,
+  classifyWorldDispatcherCall,
+} from "./lib/stardew-player-command-classification.mjs";
+import {
   buildPlayerCommandGraph,
   extractDirectCallEdges,
   extractPlayerIngressRoots,
@@ -11,10 +15,6 @@ import {
   toolEndUsingBranchCandidates,
   toolOverrideBranchCandidates,
 } from "./lib/stardew-player-command-graph.mjs";
-import {
-  classifyIngressReachableCall,
-  classifyWorldDispatcherCall,
-} from "./lib/stardew-player-command-classification.mjs";
 
 const updateControlInput = `
   private void UpdateControlInput(GameTime time) {

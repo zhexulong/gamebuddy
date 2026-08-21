@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { atomicWriteFile, withPathLock } from "./path-lock.js";
-import { readStrictJsonFile } from "./strict-json-reader.js";
-import type { IntegrationActionPolicy } from "./integration-module.js";
-import type { CompanionIdentity, CompanionModelConfig, RuntimePaths } from "./runtime.js";
-import type { PresentationProfile } from "./presentation.js";
 import type { IdentityProfileMetadata } from "./identity-profile.js";
+import type { IntegrationActionPolicy } from "./integration-module.js";
+import { atomicWriteFile, withPathLock } from "./path-lock.js";
+import type { PresentationProfile } from "./presentation.js";
+import type { CompanionIdentity, RuntimePaths } from "./runtime.js";
+import { readStrictJsonFile } from "./strict-json-reader.js";
 import type { WorldBookMetadata } from "./worldbook.js";
 
 export type CompanionRunManifest = Readonly<{

@@ -1,5 +1,5 @@
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   recheckProductionEntry,
   resolveProductionEntry,

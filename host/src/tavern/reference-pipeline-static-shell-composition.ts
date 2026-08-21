@@ -6,10 +6,10 @@ import {
 } from "../reference-pipeline-dialogue-web.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
 import {
-  TAVERN_BROWSER_CONTRACT,
   createTavernStaticArtifactRequestHandler,
-  verifyTavernStaticArtifact,
+  TAVERN_BROWSER_CONTRACT,
   type TavernStaticArtifactIdentity,
+  verifyTavernStaticArtifact,
 } from "./static-artifact/index.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -19,18 +19,16 @@ const LOOPBACK_HOST = "127.0.0.1";
  * API profile. The reference profile must not introduce a second static
  * identity or a second listener.
  */
-export const REFERENCE_PIPELINE_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIdentity =
-  Object.freeze({
-    browserContract: TAVERN_BROWSER_CONTRACT,
-    profileId: "gamebuddy.tavern.browser.v1",
-  });
+export const REFERENCE_PIPELINE_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIdentity = Object.freeze({
+  browserContract: TAVERN_BROWSER_CONTRACT,
+  profileId: "gamebuddy.tavern.browser.v1",
+});
 
-export type ReferencePipelineStaticShellCompositionOptions =
-  ReferencePipelineDialogueWebOptions &
-    Readonly<{
-      artifactRoot: string;
-      inspector?: WindowsReparseInspectorCapability;
-    }>;
+export type ReferencePipelineStaticShellCompositionOptions = ReferencePipelineDialogueWebOptions &
+  Readonly<{
+    artifactRoot: string;
+    inspector?: WindowsReparseInspectorCapability;
+  }>;
 
 export type ReferencePipelineStaticShellComposition = Readonly<{
   origin: string;
@@ -67,8 +65,7 @@ export async function startReferencePipelineStaticShellComposition(
       response.end();
       return;
     }
-    if (pathname.startsWith("/api/"))
-      apiHandler.handle(request, response, origin);
+    if (pathname.startsWith("/api/")) apiHandler.handle(request, response, origin);
     else staticHandler.handle(request, response);
   });
   const port = await listenLoopback(server);
@@ -102,9 +99,7 @@ export async function startReferencePipelineStaticShellComposition(
 
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolveClose, rejectClose) =>
-    server.close((error) =>
-      error === undefined ? resolveClose() : rejectClose(error),
-    ),
+    server.close((error) => (error === undefined ? resolveClose() : rejectClose(error))),
   );
 }
 
@@ -117,11 +112,7 @@ async function listenLoopback(server: Server): Promise<number> {
     });
   });
   const address = server.address();
-  if (
-    !address ||
-    typeof address === "string" ||
-    address.address !== LOOPBACK_HOST
-  )
+  if (!address || typeof address === "string" || address.address !== LOOPBACK_HOST)
     throw new Error("dialogue_loopback_bind_failed");
   return address.port;
 }

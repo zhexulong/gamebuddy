@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { validatePortfolioM2CropActionContract } from "./stardew-portfolio-m2-crop-action-contract.mjs";
+
 const load = async () => JSON.parse(await readFile("tools/stardew-portfolio-m2-crop-action-contract.json", "utf8"));
 test("M2 BDD batch binds exact finite primitives to its fail-closed source blocker", async () => {
   assert.deepEqual(validatePortfolioM2CropActionContract(await load()), {

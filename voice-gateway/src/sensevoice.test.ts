@@ -8,8 +8,8 @@ import test from "node:test";
 import {
   auditSenseVoiceAssets,
   extractTranscript,
-  SenseVoiceCliAsrProvider,
   type SenseVoiceAssetManifest,
+  SenseVoiceCliAsrProvider,
   validateAssets,
 } from "./sensevoice.js";
 

@@ -236,7 +236,7 @@ test("submit rejects non-canonical csrf/idempotency and invalid commands before 
     api.submit({ ...COMMAND, text: "e\u0301" }, { csrfToken: HANDLE, idempotencyKey: KEY }),
   );
   await assertProtocolError(
-    api.submit({ ...COMMAND, memoryDelegation: "write" }, { csrfToken: HANDLE, idempotencyKey: KEY }),
+    api.submit({ ...COMMAND, retiredOption: "read" }, { csrfToken: HANDLE, idempotencyKey: KEY }),
   );
   assert.equal(calls.length, 0);
 });

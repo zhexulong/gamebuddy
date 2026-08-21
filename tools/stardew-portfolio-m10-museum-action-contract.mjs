@@ -1,11 +1,11 @@
 #!/usr/bin/env node
+import path from "node:path";
 /**
  * Static, fail-closed Batch B2 contract for the M10 Museum transitions.
  * It describes the implementation and unprovisioned fixture boundary only;
  * it never launches Stardew, grants capability, invokes UI, or writes a save.
  */
 import { fileURLToPath } from "node:url";
-import path from "node:path";
 import { readContainedFile as readHardenedContainedFile } from "./lib/stardew-portfolio-m10-donate-museum-source-boundary.mjs";
 import { validatePortfolioM10MuseumSourceAudit } from "./lib/stardew-portfolio-m10-museum-source-audit.mjs";
 

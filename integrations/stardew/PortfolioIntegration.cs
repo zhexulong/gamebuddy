@@ -13,6 +13,8 @@ public sealed partial class ModEntry
     private PortfolioMineEntrySemanticAdapter? portfolioMineEntryAdapter;
     private PortfolioMineLadderActionCoordinator? portfolioMineLadderCoordinator;
     private PortfolioMineLadderSemanticAdapter? portfolioMineLadderAdapter;
+    private PortfolioSkipEventActionCoordinator? portfolioSkipEventCoordinator;
+    private PortfolioSkipEventSemanticAdapter? portfolioSkipEventAdapter;
     private void TryInitializePortfolioBinding()
     {
         PortfolioConfig? config = this.config.Portfolio;
@@ -30,6 +32,12 @@ public sealed partial class ModEntry
             this.InvalidatePortfolioState("portfolio_configuration_invalid");
             return;
         }
+        if (!this.TryPreparePortfolioMineEntryGivenFixture())
+            return;
+        if (!this.TryPreparePortfolioMineLadderGivenFixture())
+            return;
+        if (!this.TryPreparePortfolioMineElevatorGivenFixture())
+            return;
         if (!Context.IsWorldReady || !Game1.hasLoadedGame || Game1.player is null || Context.IsMultiplayer || !Game1.IsMasterGame)
         {
             this.InvalidatePortfolioState(Context.IsWorldReady ? "portfolio_single_player_required" : "portfolio_world_not_ready");
@@ -65,7 +73,8 @@ public sealed partial class ModEntry
                     ?? throw new InvalidOperationException("portfolio_mine_elevator_not_armed"),
                 (requestId, traceId, executionId, reasonCode, revision, scope) => this.portfolioMineElevatorCoordinator?.Fail(
                     requestId, traceId, executionId, reasonCode, revision, scope)
-                    ?? throw new InvalidOperationException("portfolio_mine_elevator_not_armed"));
+                    ?? throw new InvalidOperationException("portfolio_mine_elevator_not_armed"),
+                executionId => this.portfolioMineElevatorCoordinator?.ArmNativeTransition(executionId) == true);
             this.portfolioMineElevatorCoordinator = new PortfolioMineElevatorActionCoordinator(this.portfolioMineElevatorAdapter);
             this.portfolioMineEntryAdapter = new PortfolioMineEntrySemanticAdapter(
                 config,
@@ -76,7 +85,8 @@ public sealed partial class ModEntry
                     ?? throw new InvalidOperationException("portfolio_enter_mine_not_armed"),
                 (requestId, traceId, executionId, reasonCode, revision, scope) => this.portfolioMineEntryCoordinator?.Fail(
                     requestId, traceId, executionId, reasonCode, revision, scope)
-                    ?? throw new InvalidOperationException("portfolio_enter_mine_not_armed"));
+                    ?? throw new InvalidOperationException("portfolio_enter_mine_not_armed"),
+                executionId => this.portfolioMineEntryCoordinator?.ArmNativeTransition(executionId) == true);
             this.portfolioMineEntryCoordinator = new PortfolioMineEntryActionCoordinator(this.portfolioMineEntryAdapter);
             this.portfolioMineLadderAdapter = new PortfolioMineLadderSemanticAdapter(
                 config,
@@ -90,6 +100,17 @@ public sealed partial class ModEntry
                     ?? throw new InvalidOperationException("portfolio_mine_ladder_not_armed"),
                 executionId => this.portfolioMineLadderCoordinator?.ArmNativeTransition(executionId) == true);
             this.portfolioMineLadderCoordinator = new PortfolioMineLadderActionCoordinator(this.portfolioMineLadderAdapter);
+            this.portfolioSkipEventAdapter = new PortfolioSkipEventSemanticAdapter(
+                config,
+                () => this.IsPortfolioBindingCurrent(out _),
+                () => ++this.portfolioLastObservedRevision,
+                observation => this.portfolioSkipEventCoordinator?.ObserveNativeSkip(observation) == true,
+                observation => this.portfolioSkipEventCoordinator?.ObservePostcondition(observation)
+                    ?? throw new InvalidOperationException("portfolio_skip_event_not_armed"),
+                (requestId, traceId, executionId, reasonCode, revision, scope) => this.portfolioSkipEventCoordinator?.Fail(
+                    requestId, traceId, executionId, reasonCode, revision, scope)
+                    ?? throw new InvalidOperationException("portfolio_skip_event_not_armed"));
+            this.portfolioSkipEventCoordinator = new PortfolioSkipEventActionCoordinator(this.portfolioSkipEventAdapter);
             this.portfolioPipeBridge = config.EnableObserveBridge ? new PortfolioLocalPipeBridge(config.PipeName) : null;
             string sleepDayMutationState = config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.SleepDayAction)
                 ? "authorized"
@@ -111,8 +132,16 @@ public sealed partial class ModEntry
             bool activeExecution = (this.portfolioSleepDayCoordinator?.HasActiveExecution ?? false)
                 || (this.portfolioMineElevatorCoordinator?.HasActiveExecution ?? false)
                 || (this.portfolioMineEntryCoordinator?.HasActiveExecution ?? false)
-                || (this.portfolioMineLadderCoordinator?.HasActiveExecution ?? false);
-            if (!this.portfolioBridgeSession!.TryConsumeBootstrapDisconnect(disconnect.Generation, activeExecution, out _))
+                || (this.portfolioMineLadderCoordinator?.HasActiveExecution ?? false)
+                || (this.portfolioSkipEventCoordinator?.HasActiveExecution ?? false);
+            bool bootstrapDisconnectAccepted = this.portfolioBridgeSession!.TryConsumeBootstrapDisconnect(
+                disconnect.Generation,
+                activeExecution,
+                out string bootstrapDisconnectReason);
+            this.Monitor.Log(
+                $"GameBuddy Portfolio bootstrap disconnect decision: generation={disconnect.Generation}; active_execution={activeExecution}; accepted={bootstrapDisconnectAccepted}; reason={bootstrapDisconnectReason}.",
+                LogLevel.Debug);
+            if (!bootstrapDisconnectAccepted)
             {
                 this.ClearPortfolioState(disconnect.ReasonCode);
                 return;
@@ -120,11 +149,16 @@ public sealed partial class ModEntry
             return;
         }
         this.portfolioMineElevatorAdapter?.Watchdog(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        // Direct entry has no private approach, but its armed native transition
+        // still needs deadline settlement if its exact native continuation never arrives.
         this.portfolioMineEntryAdapter?.Watchdog(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         this.portfolioMineLadderAdapter?.Watchdog(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        this.portfolioSkipEventAdapter?.Watchdog(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        this.portfolioSkipEventAdapter?.ObserveAfterEventUpdate();
         this.DrainPortfolioMineElevatorTerminalDeliveries();
         this.DrainPortfolioMineEntryTerminalDeliveries();
         this.DrainPortfolioMineLadderTerminalDeliveries();
+        this.DrainPortfolioSkipEventTerminalDeliveries();
         if (this.portfolioBinding.BindingGeneration != this.portfolioBindingGeneration)
         {
             this.InvalidatePortfolioState("portfolio_binding_generation_invalid");
@@ -219,6 +253,9 @@ public sealed partial class ModEntry
                         "enter_mine_fresh_floor_request" => this.HandlePortfolioMineEntryFreshFloor(inbound.Generation, inbound.Json),
                         "enter_mine_request" => this.HandlePortfolioMineEntry(inbound.Generation, inbound.Json),
                         "enter_mine_cancel_request" => this.HandlePortfolioMineEntryCancel(inbound.Generation, inbound.Json),
+                        "skip_event_probe_request" => this.HandlePortfolioSkipEventProbe(inbound.Generation, inbound.Json),
+                        "skip_event_request" => this.HandlePortfolioSkipEvent(inbound.Generation, inbound.Json),
+                        "skip_event_cancel_request" => this.HandlePortfolioSkipEventCancel(inbound.Generation, inbound.Json),
                         _ => this.SerializePortfolioError(correlationId, "portfolio_message_type_rejected"),
                     };
                 }
@@ -647,6 +684,91 @@ public sealed partial class ModEntry
             : this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), "response_serialization_failed");
     }
 
+    private string? HandlePortfolioSkipEventProbe(long generation, string json)
+    {
+        if (this.portfolioBridgeSession is null || this.portfolioSkipEventAdapter is null || this.portfolioBinding is null)
+            return this.SerializePortfolioError(null, "portfolio_skip_event_not_armed");
+        if (this.config.Portfolio is not { } config
+            || !config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.SkipEventAction))
+            return this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), "invalid_request");
+        long currentRevision = this.portfolioLastObservedRevision;
+        if (!this.portfolioBridgeSession.TrySkipEventProbe(generation, json, this.portfolioSkipEventCoordinator!, this.portfolioSkipEventAdapter,
+                currentRevision, out string? response, out string reasonCode))
+            return this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), reasonCode);
+        return response ?? this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), "response_serialization_failed");
+    }
+
+    private string? HandlePortfolioSkipEvent(long generation, string json)
+    {
+        if (this.portfolioBridgeSession is null || this.portfolioSkipEventCoordinator is null
+            || this.portfolioSkipEventAdapter is null || this.portfolioBinding is null)
+            return this.SerializePortfolioError(null, "portfolio_skip_event_not_armed");
+        if (this.config.Portfolio is not { } config
+            || !config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.SkipEventAction))
+            return this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), "invalid_request");
+        if (!this.portfolioBridgeSession.TrySkipEvent(generation, json, this.portfolioSkipEventCoordinator,
+                this.portfolioSkipEventAdapter, this.portfolioLastObservedRevision,
+                out string? response, out string reasonCode))
+            return this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), reasonCode);
+        return response ?? this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), "response_serialization_failed");
+    }
+
+    private string? HandlePortfolioSkipEventCancel(long generation, string json)
+    {
+        if (this.portfolioBridgeSession is null || this.portfolioSkipEventCoordinator is null || this.portfolioBinding is null)
+            return this.SerializePortfolioError(null, "portfolio_skip_event_not_armed");
+        if (this.config.Portfolio is not { } config
+            || !config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.SkipEventAction))
+            return this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), "invalid_request");
+        if (!this.portfolioBridgeSession.TryCancelSkipEvent(generation, json, this.portfolioSkipEventCoordinator,
+                this.portfolioSkipEventAdapter!, out string? response, out string reasonCode))
+            return this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), reasonCode);
+        return response ?? this.SerializePortfolioError(TryReadPortfolioCorrelationId(json), "response_serialization_failed");
+    }
+
+    private void DrainPortfolioSkipEventTerminalDeliveries()
+    {
+        if (this.portfolioSkipEventCoordinator is null || this.portfolioBridgeSession is null || this.portfolioPipeBridge is null)
+            return;
+        long generation = this.portfolioPipeBridge.CurrentGeneration;
+        if (generation == 0 || !this.portfolioBridgeSession.IsAuthenticatedGeneration(generation))
+            return;
+        for (int index = 0; index < 8 && this.portfolioSkipEventCoordinator.TryPeekTerminalDelivery(out PortfolioSkipEventTerminalDelivery? delivery); index++)
+        {
+            bool completionFailed = false;
+            if (delivery is not null && this.portfolioSkipEventCoordinator.TryCompleteTerminalDelivery(delivery, generation, out completionFailed))
+                continue;
+            if (completionFailed)
+            {
+                this.InvalidatePortfolioState("portfolio_bridge_disconnected");
+                return;
+            }
+            if (delivery is not null && this.portfolioSkipEventCoordinator.IsTerminalDeliveryPending(delivery))
+                break;
+            if (delivery is null || !delivery.Receipt.IsStructurallyTerminal)
+            {
+                if (delivery is not null)
+                    this.portfolioSkipEventCoordinator.TryAcknowledgeTerminalDelivery(delivery);
+                continue;
+            }
+            PortfolioEnvelope<PortfolioSkipEventActionReceipt> envelope = new(
+                PortfolioBridgeProtocol.Version, Guid.NewGuid().ToString("N"), delivery.CorrelationId,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), delivery.Scope, "skip_event_receipt", delivery.Receipt);
+            if (!PortfolioBridgeProtocol.TrySerialize(envelope, out string serialized, out _))
+            {
+                this.InvalidatePortfolioState("response_serialization_failed");
+                return;
+            }
+            if (!this.portfolioPipeBridge.TryEnqueueOutbound(generation, serialized, out PortfolioPipeOutboundCompletion completion)
+                || !this.portfolioSkipEventCoordinator.TryArmTerminalDelivery(delivery, completion))
+            {
+                this.InvalidatePortfolioState("portfolio_bridge_disconnected");
+                return;
+            }
+            break;
+        }
+    }
+
     private void DrainPortfolioMineEntryTerminalDeliveries()
     {
         if (this.portfolioMineEntryCoordinator is null || this.portfolioBridgeSession is null || this.portfolioPipeBridge is null)
@@ -732,7 +854,7 @@ public sealed partial class ModEntry
             using JsonDocument document = JsonDocument.Parse(json);
             return document.RootElement.TryGetProperty("type", out JsonElement type)
                 && type.ValueKind == JsonValueKind.String
-                && (type.GetString() == "mine_elevator_phase" || type.GetString() == "mine_ladder_phase" || type.GetString() == "enter_mine_phase")
+                && (type.GetString() == "mine_elevator_phase" || type.GetString() == "mine_ladder_phase" || type.GetString() == "enter_mine_phase" || type.GetString() == "skip_event_phase")
                 && document.RootElement.TryGetProperty("payload", out JsonElement payload)
                 && payload.ValueKind == JsonValueKind.Object
                 && payload.TryGetProperty("phase", out JsonElement phase)
@@ -867,6 +989,10 @@ public sealed partial class ModEntry
         this.portfolioMineLadderCoordinator = null;
         this.portfolioMineLadderAdapter?.DiscardPendingForInvalidation();
         this.portfolioMineLadderAdapter = null;
+        this.portfolioSkipEventCoordinator?.Invalidate(reasonCode);
+        this.portfolioSkipEventCoordinator = null;
+        this.portfolioSkipEventAdapter?.DiscardPendingForInvalidation();
+        this.portfolioSkipEventAdapter = null;
         this.Monitor.Log($"GameBuddy invalidated Portfolio observe binding: {reasonCode}; final_snapshot={finalQueued}.", LogLevel.Warn);
     }
 
@@ -914,6 +1040,10 @@ public sealed partial class ModEntry
         this.portfolioMineLadderCoordinator = null;
         this.portfolioMineLadderAdapter?.DiscardPendingForInvalidation();
         this.portfolioMineLadderAdapter = null;
+        this.portfolioSkipEventCoordinator?.Invalidate(reasonCode);
+        this.portfolioSkipEventCoordinator = null;
+        this.portfolioSkipEventAdapter?.DiscardPendingForInvalidation();
+        this.portfolioSkipEventAdapter = null;
         this.Monitor.Log($"GameBuddy cleared Portfolio observe binding: {reasonCode}.", LogLevel.Warn);
     }
 }

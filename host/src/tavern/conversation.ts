@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import type { CompanionTextExpression } from "../presentation.js";
-import { guardTavernCausalMutation, type TavernResponseMutation } from "./effect-aware-causal-guard.js";
 import type {
   ChatThreadMessage,
   ChatThreadState,
@@ -8,6 +7,7 @@ import type {
   TavernStableArtifactBinding,
   TavernStableWorldBookBinding,
 } from "./chat-thread-store.js";
+import { guardTavernCausalMutation, type TavernResponseMutation } from "./effect-aware-causal-guard.js";
 
 /**
  * Chat-only lifecycle adapter for a Tavern thread. It deliberately owns no

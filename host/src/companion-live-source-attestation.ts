@@ -47,7 +47,9 @@ export interface CompanionLiveSourceEvidenceSink {
   ): void;
   stopSealed(input: Readonly<{ stopId: string; sourceEventId: string; batchId: string | null; epoch: number }>): void;
   stopSettled(input: Readonly<{ stopId: string; sourceEventId: string; batchId: string | null; epoch: number }>): void;
-  stopUncertain(input: Readonly<{ stopId: string; sourceEventId: string; batchId: string | null; epoch: number }>): void;
+  stopUncertain(
+    input: Readonly<{ stopId: string; sourceEventId: string; batchId: string | null; epoch: number }>,
+  ): void;
   oldEpochQuiet(
     input: Readonly<{
       stopId: string;
@@ -152,8 +154,9 @@ export function createLiveSourceAttester(
       emit("stop_sealed", value.sourceEventId, value.batchId, value.stopId, value.epoch, null),
     stopSettled: (value: Readonly<{ stopId: string; sourceEventId: string; batchId: string | null; epoch: number }>) =>
       emit("stop_settled", value.sourceEventId, value.batchId, value.stopId, value.epoch, null),
-    stopUncertain: (value: Readonly<{ stopId: string; sourceEventId: string; batchId: string | null; epoch: number }>) =>
-      emit("stop_uncertain", value.sourceEventId, value.batchId, value.stopId, value.epoch, null),
+    stopUncertain: (
+      value: Readonly<{ stopId: string; sourceEventId: string; batchId: string | null; epoch: number }>,
+    ) => emit("stop_uncertain", value.sourceEventId, value.batchId, value.stopId, value.epoch, null),
     oldEpochQuiet: (
       value: Readonly<{
         stopId: string;
@@ -256,10 +259,7 @@ export function parseLiveSourceAttestation(value: unknown): LiveSourceAttestatio
     (observationRevision !== null &&
       (!Number.isSafeInteger(observationRevision) || (observationRevision as number) < 0)) ||
     (observation &&
-      (stopIdSha256 === null ||
-        epoch === null ||
-        disposition !== null ||
-        observationRevision === null)) ||
+      (stopIdSha256 === null || epoch === null || disposition !== null || observationRevision === null)) ||
     (!observation && observationRevision !== null) ||
     (pi && (batchIdSha256 === null || stopIdSha256 !== null || epoch !== null || disposition === null)) ||
     (nativeInput && (batchIdSha256 !== null || stopIdSha256 !== null || epoch !== null || disposition !== null)) ||

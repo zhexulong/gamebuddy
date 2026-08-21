@@ -205,7 +205,16 @@ async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutM
   const warp = fresh.warps?.find((entry) => entry.targetLocation === "Farm");
   if (!warp) throw new Error("farm_warp_missing");
   if (!adjacent(fresh.tile, { x: warp.sourceX, y: warp.sourceY }))
-    fresh = await move(client, receipts, fresh, { x: warp.sourceX, y: warp.sourceY }, "move_to_farm_warp", trace, stabilizeTimeoutMs, terminalTimeoutMs);
+    fresh = await move(
+      client,
+      receipts,
+      fresh,
+      { x: warp.sourceX, y: warp.sourceY },
+      "move_to_farm_warp",
+      trace,
+      stabilizeTimeoutMs,
+      terminalTimeoutMs,
+    );
   const accepted = await execute(client, trace, "travel", "travel", { x: warp.sourceX, y: warp.sourceY }, fresh);
   if (accepted.state !== "accepted") throw new Error(`travel_not_accepted:${accepted.reasonCode}`);
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
@@ -244,7 +253,16 @@ async function moveToReachableCrop(client, receipts, snapshot, trace, stabilizeT
           candidates.push({ x: snapshot.tile.x + dx, y: snapshot.tile.y + dy });
     for (const waypoint of candidates) {
       try {
-        const moved = await move(client, receipts, snapshot, waypoint, "move_to_native_water_crop_fixture", trace, stabilizeTimeoutMs, moveTimeoutMs);
+        const moved = await move(
+          client,
+          receipts,
+          snapshot,
+          waypoint,
+          "move_to_native_water_crop_fixture",
+          trace,
+          stabilizeTimeoutMs,
+          moveTimeoutMs,
+        );
         if (chooseOnlyReachableCropOrNull(moved)) return moved;
         snapshot = moved;
       } catch (error) {

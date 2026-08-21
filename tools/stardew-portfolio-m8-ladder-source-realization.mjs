@@ -1,18 +1,19 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 /** Exact-target source realization for the bounded existing-ladder M8 primitive. */
 import { createHash } from "node:crypto";
-import { readFile, readdir, rm, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
-  targetAssembly,
   disposeTargetAssembly,
   resolveLockedToolPath,
+  targetAssembly,
   verifySnapshot,
 } from "./stardew-portfolio-m8-elevator-source-realization.mjs";
+
 const exec = promisify(execFile);
 const ACTION = "use_mine_ladder",
   TOPOLOGY = "single_player_native_companion";
@@ -79,7 +80,7 @@ function bodyEnd(s, b) {
   let d = 0,
     state = "code";
   for (let i = b; i < s.length; i++) {
-    let c = s[i],
+    const c = s[i],
       n = s[i + 1];
     if (state === "line") {
       if (c === "\n") state = "code";
@@ -117,13 +118,13 @@ function bodyEnd(s, b) {
   fail("anchor declaration unterminated");
 }
 function slice(bytes, locate) {
-  let s = bytes.toString(),
+  const s = bytes.toString(),
     at = s.indexOf(locate);
   if (at < 0 || s.indexOf(locate, at + locate.length) >= 0)
     fail(`required declaration missing or non-unique: ${locate}`);
-  let b = s.indexOf("{", at);
+  const b = s.indexOf("{", at);
   if (b < 0) fail(`required declaration has no body: ${locate}`);
-  let e = bodyEnd(s, b);
+  const e = bodyEnd(s, b);
   return [at, e];
 }
 export function extractAnchors(files) {
@@ -156,10 +157,10 @@ export function extractAnchors(files) {
   });
 }
 async function sourceTree(root) {
-  let out = {};
+  const out = {};
   async function walk(dir, rel = "") {
     for (const e of await readdir(path.join(dir, rel), { withFileTypes: true })) {
-      let r = rel ? `${rel}/${e.name}` : e.name;
+      const r = rel ? `${rel}/${e.name}` : e.name;
       if (e.isSymbolicLink()) fail("decompiler output reparse point");
       if (e.isDirectory()) await walk(dir, r);
       else if (r.endsWith(".cs")) out[r] = await readFile(path.join(dir, r));
@@ -170,7 +171,7 @@ async function sourceTree(root) {
 }
 async function decompile(target) {
   await verifySnapshot(target);
-  let out = await mkdtemp(path.join(os.tmpdir(), "gamebuddy-m8-ladder-"));
+  const out = await mkdtemp(path.join(os.tmpdir(), "gamebuddy-m8-ladder-"));
   try {
     await exec(
       resolveLockedToolPath(),
@@ -192,15 +193,24 @@ export function validateDossier(d) {
   )
     fail("invalid or unauthorized ladder realization dossier");
   if (!Array.isArray(d.anchors) || d.anchors.length !== ANCHORS.length) fail("ladder anchor count drift");
+  const boundary = d.semanticBoundary?.contextualEquivalence;
+  if (
+    typeof boundary !== "string" ||
+    !boundary.includes("current MineShaft Buildings layer") ||
+    !boundary.includes("exactly mineLevel + 1") ||
+    !boundary.includes("without UI ingress pose") ||
+    /\b(?:adjacent|adjacency|proximity|grab[ -]?tile|facing|standing)\b/i.test(boundary)
+  )
+    fail("ladder direct facility boundary invalid");
   return true;
 }
 export async function mint({ gamePath, output }) {
   if (!output) fail("output required");
-  let t = await targetAssembly(gamePath);
+  const t = await targetAssembly(gamePath);
   try {
-    let r = await decompile(t);
+    const r = await decompile(t);
     try {
-      let anchors = extractAnchors(r.files),
+      const anchors = extractAnchors(r.files),
         d = {
           schemaVersion: 1,
           artifactKind: "portfolio_primitive_exact_target_source_realization",
@@ -211,16 +221,16 @@ export async function mint({ gamePath, output }) {
           sourceManifest: {
             csharpFileCount: Object.keys(r.files).length,
             canonicalSha256: sha256(
-              Object.keys(r.files)
+              `${Object.keys(r.files)
                 .sort()
                 .map((k) => `${k}\t${sha256(r.files[k])}`)
-                .join("\n") + "\n",
+                .join("\n")}\n`,
             ),
           },
           anchors,
           semanticBoundary: {
             contextualEquivalence:
-              "A fresh existing ladder target in the current MineShaft is equivalent to normal case-173 interaction only when the local player is adjacent and the ladder remains present; native commit enters exactly mineLevel + 1 and delegates the normal mine warp.",
+              "A fresh existing ladder facility in the current MineShaft Buildings layer supports the bounded direct ladder semantic: it derives exactly mineLevel + 1 without UI ingress pose, player movement, or arbitrary enterMine authority; normal case-173 interaction remains provenance only.",
             excluded: EXCLUDED,
           },
           conclusion: {
@@ -231,7 +241,7 @@ export async function mint({ gamePath, output }) {
           },
         };
       validateDossier(d);
-      await writeFile(path.resolve(output), JSON.stringify(d, null, 2) + "\n");
+      await writeFile(path.resolve(output), `${JSON.stringify(d, null, 2)}\n`);
       return d;
     } finally {
       await rm(r.out, { recursive: true, force: true });

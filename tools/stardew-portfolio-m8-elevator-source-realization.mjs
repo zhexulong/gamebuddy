@@ -1,12 +1,12 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 /** Exact-target, redacted source realization for the M8 elevator primitive only. */
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 
 const ACTION = "select_mine_elevator_floor";
 const TOPOLOGY = "single_player_native_companion";
@@ -596,9 +596,9 @@ export function validateDossier(dossier, authority) {
   exact(dossier.semanticBoundary, ["contextualEquivalence", "guardCommitContinuation", "excluded"], "semanticBoundary");
   if (
     dossier.semanticBoundary.contextualEquivalence !==
-      "Choosing one freshly observed materialized elevator checkpoint is equivalent to the native elevator selection semantic commit only while the local player's current reachable grab tile is MineShaft checkAction case 112 and mineLevel is at most 120; UI/click mechanics are presentation and are not bridge inputs, and this does not grant arbitrary enterMine authority." ||
+      "A fresh current MineShaft Buildings-layer elevator facility supports selecting one materialized checkpoint in 5..120 without UI ingress pose; the checkpoint must be a non-current multiple of five no greater than Math.Min(lowestLevelReached, 120), and this does not grant arbitrary enterMine authority." ||
     dossier.semanticBoundary.guardCommitContinuation !==
-      "MineShaft checkAction permits only reachable case-112 elevator interaction at mineLevel <= 120; the native menu materializes five-floor checkpoints through Math.Min(lowestLevelReached, 120), rejects non-materialized/current-floor selection, sets ridingMineElevator, then enters the selected mine; enterMine delegates the native warp." ||
+      "MineShaft checkAction case 112 and MineElevatorMenu are provenance for the ordinary UI ingress; the direct typed seam independently verifies facility presence and bounded unlocked checkpoint, sets ridingMineElevator, then enters the selected mine." ||
     canonical(dossier.semanticBoundary.excluded) !==
       canonical(["ladders", "combat", "route discovery", "new-depth progression", "persistence"])
   )
@@ -661,9 +661,9 @@ export async function mint({ gamePath, output, root = process.cwd() }) {
         anchors: extractAnchors(await anchorFiles(result)),
         semanticBoundary: {
           contextualEquivalence:
-            "Choosing one freshly observed materialized elevator checkpoint is equivalent to the native elevator selection semantic commit only while the local player's current reachable grab tile is MineShaft checkAction case 112 and mineLevel is at most 120; UI/click mechanics are presentation and are not bridge inputs, and this does not grant arbitrary enterMine authority.",
+            "A fresh current MineShaft Buildings-layer elevator facility supports selecting one materialized checkpoint in 5..120 without UI ingress pose; the checkpoint must be a non-current multiple of five no greater than Math.Min(lowestLevelReached, 120), and this does not grant arbitrary enterMine authority.",
           guardCommitContinuation:
-            "MineShaft checkAction permits only reachable case-112 elevator interaction at mineLevel <= 120; the native menu materializes five-floor checkpoints through Math.Min(lowestLevelReached, 120), rejects non-materialized/current-floor selection, sets ridingMineElevator, then enters the selected mine; enterMine delegates the native warp.",
+            "MineShaft checkAction case 112 and MineElevatorMenu are provenance for the ordinary UI ingress; the direct typed seam independently verifies facility presence and bounded unlocked checkpoint, sets ridingMineElevator, then enters the selected mine.",
           excluded: ["ladders", "combat", "route discovery", "new-depth progression", "persistence"],
         },
         conclusion: {

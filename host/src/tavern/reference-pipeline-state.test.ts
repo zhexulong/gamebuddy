@@ -5,9 +5,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
-import { composeTavernProfile, TavernBrowserValidatorsV1, type BrowserTurnV1 } from "./browser-contract/index.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { type BrowserTurnV1, composeTavernProfile, TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
 import {
   assertReferencePipelineLeaseAfterDurableRead,
   createReferencePipelineStateFacade,
@@ -73,9 +73,7 @@ test("reference post-read lease guard rejects when a controlled durable-read com
     resolveRead = resolve;
   });
   let current = true;
-  const postRead = durableRead.then(() =>
-    assertReferencePipelineLeaseAfterDurableRead(inertLease, () => current),
-  );
+  const postRead = durableRead.then(() => assertReferencePipelineLeaseAfterDurableRead(inertLease, () => current));
   current = false;
   resolveRead();
   return assert.rejects(postRead, /reference_pipeline_state_unavailable/);
@@ -99,7 +97,7 @@ const mountPreamble = `
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", storeUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href);
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
-  const profile = composeTavernProfile({ profileId: "gamebuddy.chat-core.reference-pipeline", releaseTier: "chat_core", routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.submission_status"], operationIds: ["chat.submit"], navigationItemIds: ["chat"] });
+  const profile = composeTavernProfile({ profileId: "gamebuddy.chat-core.reference-pipeline", releaseTier: "chat_core", routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status"], operationIds: ["chat.submit", "chat.cancel"], navigationItemIds: ["chat"] });
   const noSubmitProfile = composeTavernProfile({ profileId: "gamebuddy.p3-chat", releaseTier: "chat_core", routeIds: ["bootstrap", "state.read", "draft.read"], operationIds: [], navigationItemIds: ["chat"] });
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const nextTime = async () => { await sleep(2); return Date.now(); };
@@ -155,17 +153,37 @@ const mountPreamble = `
 async function mounted(body: string): Promise<Record<string, unknown>> {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-reference-state-"));
   const facadeUrl = new URL("./reference-pipeline-state.js", import.meta.url).href;
-  const coordinatorUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js", import.meta.url).href;
+  const coordinatorUrl = new URL(
+    "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",
+    import.meta.url,
+  ).href;
   const deploymentUrl = new URL("../deployment-manifest.js", import.meta.url).href;
   const storeUrl = new URL("./chat-thread-store.js", import.meta.url).href;
   const runtimeUrl = new URL("../runtime.js", import.meta.url).href;
   const contractUrl = new URL("./browser-contract/index.js", import.meta.url).href;
   const p4aUrl = new URL("./p4-durable-turn-acceptance.js", import.meta.url).href;
   const p4bUrl = new URL("./p4-provider-attempt.js", import.meta.url).href;
-  const internalUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", import.meta.url).href;
+  const internalUrl = new URL(
+    "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
+    import.meta.url,
+  ).href;
   const child = spawn(
     process.execPath,
-    ["--input-type=module", "--eval", mountPreamble + body, facadeUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, contractUrl, p4aUrl, p4bUrl, internalUrl, root],
+    [
+      "--input-type=module",
+      "--eval",
+      mountPreamble + body,
+      facadeUrl,
+      coordinatorUrl,
+      deploymentUrl,
+      storeUrl,
+      runtimeUrl,
+      contractUrl,
+      p4aUrl,
+      p4bUrl,
+      internalUrl,
+      root,
+    ],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
   const output: Buffer[] = [];
@@ -201,8 +219,8 @@ test(
     const results = (await mounted(`
   const cases = [
     ["none", null], ["accepted_queued", "queued"], ["attempt_starting", "queued"], ["running", "running"],
-    ["presentation_committed", "response_visible"], ["completion_claimed", "response_visible"],
-    ["cancel_claimed", "stopping"], ["completed", "completed"], ["cancelled", "cancelled"], ["failed", "failed"],
+    ["presentation_committed", "running"], ["completion_claimed", "running"],
+    ["cancel_claimed", "running"], ["completed", "completed"], ["cancelled", "cancelled"], ["failed", "failed"],
   ];
   const results = [];
   for (const [target, expected] of cases) {
@@ -236,21 +254,37 @@ test(
       if (entry.turn !== null) {
         assert.equal(TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(entry.turn), true, entry.target);
         assert.equal(entry.turn.projectionRevision, 1, entry.target);
-        assert.equal(entry.turn.canCancel, false, entry.target);
+        assert.equal(
+          entry.turn.canCancel,
+          entry.target === "running",
+          entry.target,
+        );
         assert.match(entry.turn.handle, /^[A-Za-z0-9_-]{43}$/, entry.target);
         assert.notEqual(entry.turn.handle, entry.turnId, entry.target);
       }
       // The projected transcript, turn and operations all satisfy their frozen contract schemas.
       for (const message of entry.readable.transcript)
         assert.equal(TavernBrowserValidatorsV1.BrowserMessageV1Schema.Check(message), true, entry.target);
-      assert.deepEqual(entry.readable.operations, [
-        {
-          operationId: "chat.submit",
-          labelKey: "tavern.operation.submit",
-          availability: entry.turn === null ? "available" : "busy",
-          routeId: "chat.submit",
-        },
-      ], entry.target);
+      assert.deepEqual(
+        entry.readable.operations,
+        [
+          {
+            operationId: "chat.submit",
+            labelKey: "tavern.operation.submit",
+            availability: entry.turn === null || ["completed", "cancelled", "failed"].includes(entry.target)
+              ? "available"
+              : "busy",
+            routeId: "chat.submit",
+          },
+          {
+            operationId: "chat.cancel",
+            labelKey: "tavern.operation.cancel",
+            availability: entry.target === "running" ? "available" : "unavailable",
+            routeId: "chat.cancel",
+          },
+        ],
+        entry.target,
+      );
       for (const operation of entry.readable.operations)
         assert.equal(TavernBrowserValidatorsV1.TavernBrowserOperationV1Schema.Check(operation), true, entry.target);
       // Raw durable identities never leak into the browser projection.
@@ -282,7 +316,10 @@ test(
   // projection may escape while the lease is still current.
   const key = identityKey(principal);
   const fs = await import("node:fs/promises");
-  await fs.writeFile(fx.root + "/tavern/v1/continuities/" + key + "/threads/" + fx.lease.chatThreadId + "/messages.json", "{ corrupted", "utf8");
+  // ChatThreadStore's sole durable authority is the per-continuity SQLite
+  // database. Corrupt that actual authority—not an inert legacy path—so the
+  // read must fail closed with no browser projection.
+  await fs.writeFile(fx.root + "/tavern/v1/continuities/" + key + "/tavern.sqlite", "{ corrupted", "utf8");
   let corruptRejection = "none";
   try { await reopenedFacade.read(); } catch (error) { corruptRejection = String(error); }
   let corruptDraftRejection = "none";
@@ -314,10 +351,18 @@ test(
     assert.match(reopened.turn!.handle, /^[A-Za-z0-9_-]{43}$/);
     assert.notEqual(reopened.turn!.handle, result.turnId);
     const serialized = JSON.stringify(reopened);
-    for (const raw of [result.turnId, result.chatThreadId, result.chatSurfaceSessionId, ...(result.messageIds as string[])])
+    for (const raw of [
+      result.turnId,
+      result.chatThreadId,
+      result.chatSurfaceSessionId,
+      ...(result.messageIds as string[]),
+    ])
       assert.equal(serialized.includes(raw as string), false);
     for (const rawMessageId of result.messageIds as string[])
-      assert.equal(reopened.transcript.some((message) => message.handle === rawMessageId), false);
+      assert.equal(
+        reopened.transcript.some((message) => message.handle === rawMessageId),
+        false,
+      );
     // Corrupt durable state and revoked-after-await leases both fail closed
     // with the exact facade code; no partial snapshot is produced.
     assert.equal(result.corruptRejection, "Error: reference_pipeline_state_unavailable");
@@ -351,7 +396,18 @@ test(
     const queued = result.queued as ReferencePipelineState;
     assert.equal(pristine.turn, null);
     assert.deepEqual(pristine.operations, [
-      { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
+      {
+        operationId: "chat.submit",
+        labelKey: "tavern.operation.submit",
+        availability: "available",
+        routeId: "chat.submit",
+      },
+      {
+        operationId: "chat.cancel",
+        labelKey: "tavern.operation.cancel",
+        availability: "unavailable",
+        routeId: "chat.cancel",
+      },
     ]);
     // A profile that excludes chat.submit exposes no submit operation at all.
     assert.deepEqual(without.operations, []);
@@ -360,6 +416,7 @@ test(
     assert.equal(queued.turn?.state, "queued");
     assert.deepEqual(queued.operations, [
       { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "busy", routeId: "chat.submit" },
+      { operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "unavailable", routeId: "chat.cancel" },
     ]);
     for (const operation of [...pristine.operations, ...queued.operations])
       assert.equal(TavernBrowserValidatorsV1.TavernBrowserOperationV1Schema.Check(operation), true);

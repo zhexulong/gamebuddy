@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { summarizeNativeToolUpdateDispatchBoundary } from "./lib/stardew-native-tool-update-dispatch-boundary.mjs";
+
 test("reports exact source-visible Tool.Update implementation closure without inferring runtime receiver construction", () => {
   const report = summarizeNativeToolUpdateDispatchBoundary({
     schemaVersion: 1,

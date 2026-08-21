@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { lstat, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 export const TARGET_VERSION = "1.6.15.24356";
@@ -36,7 +36,7 @@ export const TRUST_BOUNDARY = Object.freeze({
 });
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const payloadDigest = (files) =>
-  sha(files.map((f) => `${f.relativePath}\t${f.lengthBytes}\t${f.sha256}`).join("\n") + "\n");
+  sha(`${files.map((f) => `${f.relativePath}\t${f.lengthBytes}\t${f.sha256}`).join("\n")}\n`);
 export const configurationDigest = sha(
   JSON.stringify({
     tool: "ilspycmd",
@@ -159,7 +159,7 @@ export async function assertNoReparseAncestors(file, options = {}) {
     current = path.dirname(current);
   }
 }
-async function assertNoReparse(file, code) {
+async function _assertNoReparse(file, code) {
   return assertNoReparsePoint(file, { missingCode: code, reparseCode: code });
 }
 async function assertNoReparseTreePath(file, code) {

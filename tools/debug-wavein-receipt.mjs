@@ -1,7 +1,7 @@
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 
 const directory = await mkdtemp(join(tmpdir(), "gamebuddy-wavein-receipt-debug-"));
 const eventName = `GameBuddyWaveInDebug_${Date.now()}`;

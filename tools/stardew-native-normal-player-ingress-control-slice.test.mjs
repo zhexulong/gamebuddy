@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { deriveNativeNormalPlayerControlSlice } from "./lib/stardew-native-normal-player-ingress-control-slice.mjs";
 import { validateNativeNormalPlayerIngressRegister } from "./lib/stardew-native-normal-player-ingress-register.mjs";
+
 const h = (value) => createHash("sha256").update(value).digest("hex");
 const game = `protected override void Update(GameTime gameTime) { _update(gameTime2); }
 private void _update(GameTime gameTime) { UpdateControlInput(gameTime); }

@@ -1,6 +1,6 @@
 import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
-import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ProductionGamePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
+import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 
 type WorkerRequest =
   | Readonly<{ type: "attempt"; manifestPath: string }>

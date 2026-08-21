@@ -1,20 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
-import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 import {
-  withConsumedChatRuntimeBinding,
   type ChatRuntimeBindingExecution,
+  withConsumedChatRuntimeBinding,
 } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.test-support.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import { createChatThreadStore } from "../tavern/chat-thread-store.js";
-import { identityKey } from "../runtime.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { identityKey } from "../runtime.js";
+import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
+import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
@@ -87,10 +86,7 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     // Construction registers the Chat tool surface but keeps its coordinator
     // admission unbound until the exact P4 invocation activates it.
     assert.equal(typeof prepared.presentation.admissionProvider?.capture, "function");
-    assert.throws(
-      () => prepared.presentation.admissionProvider!.capture(),
-      /presentation_admission_unbound/,
-    );
+    assert.throws(() => prepared.presentation.admissionProvider!.capture(), /presentation_admission_unbound/);
     const stableContext = await prepared.materializeStableContextForPiSession("pi_session_genuine");
     assert.equal(stableContext.continuityId, principal.continuityId);
     assert.equal(stableContext.sessionId, "pi_session_genuine");

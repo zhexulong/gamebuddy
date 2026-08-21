@@ -1,23 +1,23 @@
-import type { HostDeploymentManifest } from "../../deployment-manifest.js";
-import { identityKey } from "../../runtime.js";
 import {
   isCurrentMountedChatRuntimeLease,
   type MountedChatRuntimeLease,
 } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../../deployment-manifest.js";
+import { identityKey } from "../../runtime.js";
 import {
-  TAVERN_BROWSER_API_VERSION,
-  TavernBrowserValidatorsV1,
+  type BrowserDraftV1,
   type ChatListEntryV1,
   type ChatListQueryV1,
-  type BrowserDraftV1,
   type ChatListV1,
   type ChatTitleV1,
   type ComposedTavernProfile,
   type DiscardDraftCommandV1,
   type RenameChatTitleCommandV1,
   type SaveDraftCommandV1,
+  TAVERN_BROWSER_API_VERSION,
+  TavernBrowserValidatorsV1,
 } from "../browser-contract/index.js";
-import { createChatThreadStore, type ChatThread } from "../chat-thread-store.js";
+import { type ChatThread, createChatThreadStore } from "../chat-thread-store.js";
 import { createChatTitleManagementService } from "./chat-title-management.js";
 
 /**
@@ -60,7 +60,12 @@ export function createChatManagementService(options: ChatManagementServiceOption
   const { manifest, lease, profile } = options;
   if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
   assertComposedProfile(profile);
-  if (!profile.operationIds.includes("chat.rename") || !profile.operationIds.includes("draft.save") || !profile.operationIds.includes("draft.discard")) throw unavailable();
+  if (
+    !profile.operationIds.includes("chat.rename") ||
+    !profile.operationIds.includes("draft.save") ||
+    !profile.operationIds.includes("draft.discard")
+  )
+    throw unavailable();
   if (!identifier(lease.chatThreadId) || !identifier(lease.chatSurfaceSessionId)) throw unavailable();
 
   const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
@@ -68,7 +73,13 @@ export function createChatManagementService(options: ChatManagementServiceOption
   const listThreads = store.listThreads;
   const saveDraftMutation = store.saveDraft;
   const discardDraftMutation = store.discardDraft;
-  if (renameThreadTitle === undefined || listThreads === undefined || saveDraftMutation === undefined || discardDraftMutation === undefined) throw unavailable();
+  if (
+    renameThreadTitle === undefined ||
+    listThreads === undefined ||
+    saveDraftMutation === undefined ||
+    discardDraftMutation === undefined
+  )
+    throw unavailable();
   const titleService = createChatTitleManagementService(
     Object.freeze({
       resumeThread: store.resumeThread,
@@ -124,7 +135,11 @@ export function createChatManagementService(options: ChatManagementServiceOption
     try {
       const state = await store.resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
       assertLeaseAfterDurableRead();
-      const result = Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, revision: state.draft.revision, text: state.draft.text });
+      const result = Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        revision: state.draft.revision,
+        text: state.draft.text,
+      });
       if (!TavernBrowserValidatorsV1.BrowserDraftV1Schema.Check(result)) throw unavailable();
       return result;
     } catch (error) {
@@ -221,7 +236,7 @@ function validateListQuery(query: ChatListQueryV1): void {
   if (query.state !== undefined && query.state !== "active") throw unavailable();
 }
 
-function validateSelectionGeneration(selectionGeneration: number, lease: MountedChatRuntimeLease): void {
+function _validateSelectionGeneration(selectionGeneration: number, lease: MountedChatRuntimeLease): void {
   if (!Number.isSafeInteger(selectionGeneration) || selectionGeneration < 1) throw unavailable();
   if (selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
 }
@@ -232,9 +247,13 @@ function validateDraftCommand(
   saving: boolean,
 ): void {
   if (command === null || typeof command !== "object" || Array.isArray(command)) throw unavailable();
-  if (command.apiVersion !== TAVERN_BROWSER_API_VERSION || command.selectionGeneration !== lease.browserProjection.selectionGeneration)
+  if (
+    command.apiVersion !== TAVERN_BROWSER_API_VERSION ||
+    command.selectionGeneration !== lease.browserProjection.selectionGeneration
+  )
     throw selectionConflict();
-  if (!Number.isSafeInteger(command.expectedRevision) || command.expectedRevision < 0) throw new Error("invalid_request");
+  if (!Number.isSafeInteger(command.expectedRevision) || command.expectedRevision < 0)
+    throw new Error("invalid_request");
   if (saving && typeof (command as SaveDraftCommandV1).text !== "string") throw new Error("invalid_request");
 }
 
@@ -250,7 +269,8 @@ function validateRenameCommand(command: RenameChatTitleCommandV1, lease: Mounted
   if (!Number.isSafeInteger(command.selectionGeneration) || command.selectionGeneration < 1) throw unavailable();
   if (!Number.isSafeInteger(command.expectedManagementRevision) || command.expectedManagementRevision < 0)
     throw unavailable();
-  if (typeof command.title !== "string" || command.title.length === 0 || command.title.length > 120) throw unavailable();
+  if (typeof command.title !== "string" || command.title.length === 0 || command.title.length > 120)
+    throw unavailable();
   // Exact-binding selection: browser input can never name another generation
   // or another Chat than the one mounted by the coordinator.
   if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
@@ -274,10 +294,7 @@ function rethrowDraftError(error: unknown): Error {
 
 function rethrowRenameError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
-  if (
-    error.message === "chat_thread_management_revision_conflict" ||
-    error.message === "chat_thread_title_unchanged"
-  )
+  if (error.message === "chat_thread_management_revision_conflict" || error.message === "chat_thread_title_unchanged")
     // Existing player-visible revision-CAS conflict semantics: the browser
     // expectation does not match durable management state; re-read and retry.
     return new Error("chat_management_revision_conflict");

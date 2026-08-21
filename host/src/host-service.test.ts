@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import { type WorldFact } from "./event-pump.js";
+import { createCompanionInterruption } from "./companion-interruption.js";
+import { CompanionLoop } from "./companion-loop.js";
+import type { WorldFact } from "./event-pump.js";
 import {
   CompanionHostService,
   createGamePresentationAdmissionProvider,
   GameTurnLineageTracker,
 } from "./host-service.js";
-import { CompanionLoop } from "./companion-loop.js";
-import { createCompanionInterruption } from "./companion-interruption.js";
 
 function reducedSession(sendUserMessage: (text: string) => Promise<void> | void) {
   return { sendUserMessage, async abort() {}, clearQueue() {}, async waitForIdle() {} };
@@ -881,7 +880,11 @@ test("STOP distinguishes an active Pi batch from a queued authenticated player t
 
   const active = createService();
   active.beginPlayerBatch("source_active", "batch_active");
-  const activeStop = active.stopAll({ stopId: "stop_active", sourceEventId: "source_stop_active", reasonCode: "player_stop_all" });
+  const activeStop = active.stopAll({
+    stopId: "stop_active",
+    sourceEventId: "source_stop_active",
+    reasonCode: "player_stop_all",
+  });
   assert.equal(activeStop.outcome, "active_turn_cancelled");
   await activeStop.settled;
   active.close();
@@ -913,7 +916,11 @@ test("STOP distinguishes an active Pi batch from a queued authenticated player t
   queued.close();
 
   const idle = createService();
-  const idleStop = idle.stopAll({ stopId: "stop_idle", sourceEventId: "source_stop_idle", reasonCode: "player_stop_all" });
+  const idleStop = idle.stopAll({
+    stopId: "stop_idle",
+    sourceEventId: "source_stop_idle",
+    reasonCode: "player_stop_all",
+  });
   assert.equal(idleStop.outcome, "no_active_turn");
   await idleStop.settled;
   idle.close();
@@ -1057,7 +1064,11 @@ test("an older STOP cannot reopen admission after a newer STOP takes over", asyn
   );
   service.attachVoiceStopper(async () => undefined);
   const first = service.stopAll({ stopId: "stop_first", sourceEventId: "source_first", reasonCode: "player_stop_all" });
-  const second = service.stopAll({ stopId: "stop_second", sourceEventId: "source_second", reasonCode: "player_stop_all" });
+  const second = service.stopAll({
+    stopId: "stop_second",
+    sourceEventId: "source_second",
+    reasonCode: "player_stop_all",
+  });
 
   releaseFirst();
   await first.settled;

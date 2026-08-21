@@ -1,16 +1,16 @@
-import { createHmac, createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { createHmac, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
+  canonicalJson,
+  computePortfolioBindingHash,
+  hashPortfolioCanonicalJson,
   PORTFOLIO_EVIDENCE_SCHEMA_REVISION,
+  PORTFOLIO_TARGET_BUILD_NUMBER,
   PORTFOLIO_TARGET_GAME_SHA256,
   PORTFOLIO_TARGET_SMAPI_VERSION,
   PORTFOLIO_TARGET_VERSION,
-  PORTFOLIO_TARGET_BUILD_NUMBER,
   PORTFOLIO_TOPOLOGY,
-  computePortfolioBindingHash,
-  hashPortfolioCanonicalJson,
-  canonicalJson,
 } from "./stardew-portfolio-contract-primitives.mjs";
 
 export {
@@ -1090,7 +1090,7 @@ function validateFreshPortfolioObservation(value, receipt) {
     errors.push("portfolio_monitor_observation_not_after_receipt");
   if (
     value.provenance !== "target_version_native_field_adapter" ||
-    !/^[A-Za-z][A-Za-z0-9_.\[\]-]{0,127}$/.test(value.sourceField ?? "") ||
+    !/^[A-Za-z][A-Za-z0-9_.[\]-]{0,127}$/.test(value.sourceField ?? "") ||
     !isPlainObject(value.fields)
   )
     errors.push("portfolio_monitor_observation_provenance_invalid");

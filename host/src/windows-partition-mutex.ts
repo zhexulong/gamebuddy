@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import {
-  windowsNamedMutexName,
   type WindowsNamedMutexAcquireOptions,
   type WindowsNamedMutexLeaseAcquisitionDisposition,
+  windowsNamedMutexName,
 } from "./windows-named-mutex-broker.js";
 
 export type PartitionMutexDisposition = WindowsNamedMutexLeaseAcquisitionDisposition;

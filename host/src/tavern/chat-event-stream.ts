@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { TavernBrowserValidatorsV1, type BrowserEventV1 } from "./browser-contract/index.js";
+import { type BrowserEventV1, TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
 
 const HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/u;
 const DEFAULT_WINDOW = 64;
@@ -58,7 +58,8 @@ export function createChatEventStream(windowSize = DEFAULT_WINDOW): ChatEventStr
     if (typeof value !== "string" || value.length < 1 || value.length > 128) return null;
     try {
       const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
-      if (!Array.isArray(parsed) || parsed.length !== 2 || !isValidEpoch(parsed[0]) || !isNonnegative(parsed[1])) return null;
+      if (!Array.isArray(parsed) || parsed.length !== 2 || !isValidEpoch(parsed[0]) || !isNonnegative(parsed[1]))
+        return null;
       return Object.freeze({ epoch: parsed[0], sequence: parsed[1] });
     } catch {
       return null;
@@ -75,13 +76,16 @@ export function createChatEventStream(windowSize = DEFAULT_WINDOW): ChatEventStr
       subscription.after < 0 ||
       !Number.isSafeInteger(subscription.generation) ||
       subscription.generation < 1
-    ) return resync("ambiguous_cursor");
+    )
+      return resync("ambiguous_cursor");
     if (subscription.epoch !== epoch) return resync("epoch_changed");
     if (subscription.after > sequence) return resync("ambiguous_cursor");
     if (subscription.after === sequence) return Object.freeze({ kind: "replay", events: Object.freeze([]) });
     const first = events[0]?.sequence ?? sequence + 1;
     if (subscription.after < first - 1) return resync("gap");
-    const replay = events.filter((event) => event.sequence > subscription.after && event.selectionGeneration === subscription.generation);
+    const replay = events.filter(
+      (event) => event.sequence > subscription.after && event.selectionGeneration === subscription.generation,
+    );
     if (replay.length !== events.filter((event) => event.sequence > subscription.after).length)
       return resync("epoch_changed");
     return Object.freeze({ kind: "replay", events: Object.freeze(replay) });
@@ -97,11 +101,7 @@ export function createChatEventStream(windowSize = DEFAULT_WINDOW): ChatEventStr
     publish(input) {
       if (input === null || typeof input !== "object" || Array.isArray(input))
         throw new Error("chat_event_stream_event_invalid");
-      if (
-        Object.hasOwn(input, "apiVersion") ||
-        Object.hasOwn(input, "epoch") ||
-        Object.hasOwn(input, "sequence")
-      )
+      if (Object.hasOwn(input, "apiVersion") || Object.hasOwn(input, "epoch") || Object.hasOwn(input, "sequence"))
         // Stream-owned fields are minted here and must never be overridable
         // by caller input; a forged-but-schema-valid epoch/sequence would
         // otherwise corrupt the monotonic cursor of every subscriber.
@@ -134,8 +134,7 @@ export function createChatEventStream(windowSize = DEFAULT_WINDOW): ChatEventStr
       });
     },
     resync(reason, generation) {
-      if (!Number.isSafeInteger(generation) || generation < 1)
-        throw new Error("chat_event_stream_generation_invalid");
+      if (!Number.isSafeInteger(generation) || generation < 1) throw new Error("chat_event_stream_generation_invalid");
       sequence += 1;
       const event = Object.freeze({
         apiVersion: 1 as const,

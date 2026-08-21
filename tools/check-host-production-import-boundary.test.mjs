@@ -87,13 +87,24 @@ test("follows static relative imports and re-exports, reporting each banned lega
 test("allows declared external package roots and slash subpaths without accepting lookalike prefixes", async () => {
   await withFixture(
     {
-      "host/production-artifact.config.json": JSON.stringify({ externalRuntimeClosure: { packages: ["typebox", "@scope/declared"], dynamicExternalImports: [] } }),
-      "host/src/main.ts": ['import "typebox/compile";', 'import "typebox/format";', 'import "typebox-untrusted/compile";', 'import "typeboxx/compile";', 'import "@scope/sibling";'].join("\n"),
+      "host/production-artifact.config.json": JSON.stringify({
+        externalRuntimeClosure: { packages: ["typebox", "@scope/declared"], dynamicExternalImports: [] },
+      }),
+      "host/src/main.ts": [
+        'import "typebox/compile";',
+        'import "typebox/format";',
+        'import "typebox-untrusted/compile";',
+        'import "typeboxx/compile";',
+        'import "@scope/sibling";',
+      ].join("\n"),
       "host/src/dialogue-web-main.ts": "export {};\n",
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.deepEqual(report.violations.map(({ specifier }) => specifier), ["typebox-untrusted/compile", "typeboxx/compile", "@scope/sibling"]);
+      assert.deepEqual(
+        report.violations.map(({ specifier }) => specifier),
+        ["typebox-untrusted/compile", "typeboxx/compile", "@scope/sibling"],
+      );
     },
   );
 });
@@ -331,7 +342,7 @@ test("blocks createRequire assignment aliases without mistaking ordinary text", 
         'require("node:fs");',
         'require("external-package");',
         "require(dynamicSpecifier);",
-        'const text = "require(\\\"external-package\\\")";',
+        'const text = "require(\\"external-package\\")";',
         'const api = { require() {} }; api.require("external-package");',
       ].join("\n"),
       "host/src/dialogue-web-main.ts": "export {};\n",
@@ -433,7 +444,7 @@ test("blocks module.require aliases in direct CommonJS sources while allowing bu
         'const { require: destructuredLoad } = module; destructuredLoad("./continuity");',
         'const builtinLoad = module.require; builtinLoad("node:fs");',
         "const dynamicLoad = module.require; dynamicLoad(dynamicSpecifier);",
-        'const text = "const load = module.require; load(\\\"./continuity\\\")";',
+        'const text = "const load = module.require; load(\\"./continuity\\")";',
         'const api = { require() {} }; api.require("./continuity");',
       ].join("\n"),
       "host/src/dialogue-web-main.ts": "export {};\n",
@@ -487,7 +498,7 @@ test("blocks module namespace createRequire aliases from ESM and CommonJS ingres
         'Module["createRequire"](import.meta.url)("./continuity");',
         'const computedFactory = Module["createRequire"](import.meta.url); computedFactory("./continuity");',
         'CommonJsModule.createRequire(import.meta.url)("node:fs");',
-        'const text = "CommonJsModule.createRequire(import.meta.url)(\\\"./continuity\\\")";',
+        'const text = "CommonJsModule.createRequire(import.meta.url)(\\"./continuity\\")";',
         'const api = { createRequire() {} }; api.createRequire(import.meta.url)("./continuity");',
       ].join("\n"),
       "host/src/dialogue-web-main.ts": "export {};\n",
@@ -717,7 +728,11 @@ test("excludes erased TypeScript type references while retaining mixed runtime a
   await withFixture(erasedOnly, (root) => {
     const report = checkHostProductionImportBoundary({ root, roots });
     assert.equal(report.verdict, "passed", JSON.stringify(report.violations));
-    assert.deepEqual(report.inspectedFiles, ["host/src/consumer.ts", "host/src/dialogue-web-main.ts", "host/src/main.ts"]);
+    assert.deepEqual(report.inspectedFiles, [
+      "host/src/consumer.ts",
+      "host/src/dialogue-web-main.ts",
+      "host/src/main.ts",
+    ]);
   });
   await withFixture(
     {
@@ -733,8 +748,18 @@ test("excludes erased TypeScript type references while retaining mixed runtime a
       assert.deepEqual(
         report.violations.map(({ kind, importer, specifier, line }) => ({ kind, importer, specifier, line })),
         [
-          { kind: "unauthorized_semantic_authority_import", importer: "host/src/consumer.ts", specifier: "./continuity-semantic-store/continuity-semantic-production-store", line: 1 },
-          { kind: "unauthorized_semantic_authority_import", importer: "host/src/consumer.ts", specifier: "./continuity-semantic-store/continuity-semantic-production-store", line: 2 },
+          {
+            kind: "unauthorized_semantic_authority_import",
+            importer: "host/src/consumer.ts",
+            specifier: "./continuity-semantic-store/continuity-semantic-production-store",
+            line: 1,
+          },
+          {
+            kind: "unauthorized_semantic_authority_import",
+            importer: "host/src/consumer.ts",
+            specifier: "./continuity-semantic-store/continuity-semantic-production-store",
+            line: 2,
+          },
         ],
       );
     },
@@ -746,7 +771,8 @@ test("treats runtime dynamic-import member access as an ingress, not an erased t
     {
       "host/src/main.ts": 'import "./consumer";\n',
       "host/src/dialogue-web-main.ts": "export {};\n",
-      "host/src/consumer.ts": 'import("./tavern/chat-thread-store").then(({ acceptP4MountedPlayerMessage }) => void acceptP4MountedPlayerMessage);\n',
+      "host/src/consumer.ts":
+        'import("./tavern/chat-thread-store").then(({ acceptP4MountedPlayerMessage }) => void acceptP4MountedPlayerMessage);\n',
       "host/src/tavern/chat-thread-store.ts": "export const acceptP4MountedPlayerMessage = 1;\n",
     },
     (root) => {
@@ -916,7 +942,7 @@ test("does not mistake comments, ordinary strings, or unrooted tests for imports
   await withFixture(
     {
       "host/src/main.ts":
-        '// import "./continuity"; adoptLegacyPartition()\nconst text = "import(\\\"./missing\\\") game-surface-lease";\nexport {};\n',
+        '// import "./continuity"; adoptLegacyPartition()\nconst text = "import(\\"./missing\\") game-surface-lease";\nexport {};\n',
       "host/src/dialogue-web-main.ts": "export {};\n",
       "host/src/ignored.test.ts": 'import "./continuity"; adoptLegacyPartition();\n',
     },
@@ -1059,7 +1085,8 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
   const p5Facade = "host/src/tavern/p5-presentation-commit.ts";
   const p5Bridge = "host/src/tavern/p5-presentation-commit.internal.ts";
   const transitionAuthority = "host/src/tavern/chat-thread-store.p4-p5-transition-authority.internal.ts";
-  const coordinator = "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts";
+  const coordinator =
+    "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts";
   const store = "host/src/tavern/chat-thread-store.ts";
   const intended = {
     "host/src/main.ts": "export {};\n",
@@ -1070,10 +1097,10 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
       'import { acceptMountedP4DurableTurn, consumeMountedP4Admission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
       'import { acceptP4MountedPlayerMessage, type AcceptedQueuedTurn } from "./chat-thread-store.js";',
-      'type P4MountedAcceptanceCommand = Readonly<{ text: string; locale: string; idempotencyKey: string; expectedDraftRevision: number }>;',
-      'export async function acceptMountedP4DurableTurnFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, command: P4MountedAcceptanceCommand): Promise<AcceptedQueuedTurn> {',
-      '  return acceptMountedP4DurableTurn(manifest, lease, admission => consumeMountedP4Admission(admission, binding => acceptP4MountedPlayerMessage(binding, command)));',
-      '}',
+      "type P4MountedAcceptanceCommand = Readonly<{ text: string; locale: string; idempotencyKey: string; expectedDraftRevision: number }>;",
+      "export async function acceptMountedP4DurableTurnFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, command: P4MountedAcceptanceCommand): Promise<AcceptedQueuedTurn> {",
+      "  return acceptMountedP4DurableTurn(manifest, lease, admission => consumeMountedP4Admission(admission, binding => acceptP4MountedPlayerMessage(binding, command)));",
+      "}",
     ].join("\n"),
     [p4bFacade]: 'import "./p4-provider-attempt.internal";\n',
     [p4bBridge]: [
@@ -1081,9 +1108,9 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
       'import { claimMountedP4Attempt, consumeMountedP4AttemptAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
       'import { claimP4MountedAttempt, type AttemptStartingTurn } from "./chat-thread-store.js";',
-      'export async function claimMountedP4ProviderAttemptFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease): Promise<AttemptStartingTurn> {',
-      '  return claimMountedP4Attempt(manifest, lease, admission => consumeMountedP4AttemptAdmission(admission, binding => claimP4MountedAttempt(binding)));',
-      '}',
+      "export async function claimMountedP4ProviderAttemptFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease): Promise<AttemptStartingTurn> {",
+      "  return claimMountedP4Attempt(manifest, lease, admission => consumeMountedP4AttemptAdmission(admission, binding => claimP4MountedAttempt(binding)));",
+      "}",
     ].join("\n"),
     [p4cFacade]: 'import "./p4-provider-start.internal";\n',
     [p5Facade]: 'import "./p5-presentation-commit.internal";\n',
@@ -1091,9 +1118,9 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
       'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
       'import { createP4ProviderStartFacade } from "./p4-provider-start.js";',
-      'export async function startMountedP5PresentationCommitFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease) {',
-      '  return createP4ProviderStartFacade(manifest, lease).start();',
-      '}',
+      "export async function startMountedP5PresentationCommitFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease) {",
+      "  return createP4ProviderStartFacade(manifest, lease).start();",
+      "}",
     ].join("\n"),
     [transitionAuthority]: "export const transitionAuthority = 1;\n",
     [p4cBridge]: [
@@ -1101,12 +1128,14 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
       'import { startMountedP4Attempt, consumeMountedP4AttemptInvocationAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
       'import { runMountedP4ProviderStartLedger } from "./p4-provider-start-execution.js";',
-      'export async function startMountedP4ProviderStartFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease) {',
-      '  return startMountedP4Attempt(manifest, lease, invocation => consumeMountedP4AttemptInvocationAdmission(invocation, scope => runMountedP4ProviderStartLedger(scope)));',
-      '} ',
+      "export async function startMountedP4ProviderStartFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease) {",
+      "  return startMountedP4Attempt(manifest, lease, invocation => consumeMountedP4AttemptInvocationAdmission(invocation, scope => runMountedP4ProviderStartLedger(scope)));",
+      "} ",
     ].join("\n"),
-    "host/src/tavern/p4-provider-start-execution.ts": "export async function runMountedP4ProviderStartLedger(scope: unknown) { return scope; }\n",
-    [coordinator]: "export const acceptMountedP4DurableTurn = 1; export const consumeMountedP4Admission = 2; export const claimMountedP4Attempt = 3; export const consumeMountedP4AttemptAdmission = 4; export const startMountedP4Attempt = 5; export const consumeMountedP4AttemptInvocationAdmission = 6;\n",
+    "host/src/tavern/p4-provider-start-execution.ts":
+      "export async function runMountedP4ProviderStartLedger(scope: unknown) { return scope; }\n",
+    [coordinator]:
+      "export const acceptMountedP4DurableTurn = 1; export const consumeMountedP4Admission = 2; export const claimMountedP4Attempt = 3; export const consumeMountedP4AttemptAdmission = 4; export const startMountedP4Attempt = 5; export const consumeMountedP4AttemptInvocationAdmission = 6;\n",
     [store]: "export const acceptP4MountedPlayerMessage = 3; export const claimP4MountedAttempt = 4;\n",
   };
   await withFixture(intended, (root) => {
@@ -1131,15 +1160,38 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
   for (const [name, consumerSource, expectedKind] of [
     ["bridge", 'import "./tavern/p4-durable-turn-acceptance.internal";\n', "unauthorized_p4_bridge_import"],
     ["attempt-bridge", 'import "./tavern/p4-provider-attempt.internal";\n', "unauthorized_p4_bridge_import"],
-    ["coordinator", 'import "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal";\n', "unauthorized_coordinator_internal_import"],
-    ["store", 'import { acceptP4MountedPlayerMessage } from "./tavern/chat-thread-store";\n', "unauthorized_p4_store_ingress_import"],
-    ["attempt-store", 'import { claimP4MountedAttempt } from "./tavern/chat-thread-store";\n', "unauthorized_p4_store_ingress_import"],
-    ["transition-authority", 'import "./tavern/chat-thread-store.p4-p5-transition-authority.internal";\n', "unauthorized_p4_p5_transition_authority_import"],
-    ["string-named-store", 'import { "acceptP4MountedPlayerMessage" as raw } from "./tavern/chat-thread-store";\nvoid raw;\n', "unauthorized_p4_store_ingress_import"],
+    [
+      "coordinator",
+      'import "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal";\n',
+      "unauthorized_coordinator_internal_import",
+    ],
+    [
+      "store",
+      'import { acceptP4MountedPlayerMessage } from "./tavern/chat-thread-store";\n',
+      "unauthorized_p4_store_ingress_import",
+    ],
+    [
+      "attempt-store",
+      'import { claimP4MountedAttempt } from "./tavern/chat-thread-store";\n',
+      "unauthorized_p4_store_ingress_import",
+    ],
+    [
+      "transition-authority",
+      'import "./tavern/chat-thread-store.p4-p5-transition-authority.internal";\n',
+      "unauthorized_p4_p5_transition_authority_import",
+    ],
+    [
+      "string-named-store",
+      'import { "acceptP4MountedPlayerMessage" as raw } from "./tavern/chat-thread-store";\nvoid raw;\n',
+      "unauthorized_p4_store_ingress_import",
+    ],
   ]) {
     await withFixture({ ...intended, "host/src/main.ts": consumerSource }, (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(report.violations.some((item) => item.kind === expectedKind), name);
+      assert.ok(
+        report.violations.some((item) => item.kind === expectedKind),
+        name,
+      );
     });
   }
   for (const [name, consumerSource] of [
@@ -1170,13 +1222,21 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
     });
   }
   for (const [name, facadeSource, expectedKind] of [
-    ["coordinator", 'import "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal";\n', "unauthorized_coordinator_internal_import"],
-    ["store", 'import { acceptP4MountedPlayerMessage } from "./chat-thread-store";\n', "unauthorized_p4_store_ingress_import"],
+    [
+      "coordinator",
+      'import "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal";\n',
+      "unauthorized_coordinator_internal_import",
+    ],
+    [
+      "store",
+      'import { acceptP4MountedPlayerMessage } from "./chat-thread-store";\n',
+      "unauthorized_p4_store_ingress_import",
+    ],
     [
       "computed-object-descriptor-loader",
       [
         'const descriptor = Object[("getOwn" + "PropertyDescriptor") as "getOwnPropertyDescriptor"](process, "getBuiltinModule");',
-        'const builtin = descriptor!.value as typeof process.getBuiltinModule;',
+        "const builtin = descriptor!.value as typeof process.getBuiltinModule;",
         'const raw = builtin("node:module")[("create" + "Require") as "createRequire"](import.meta.url)("./chat-thread-store.js");',
         "void raw;",
       ].join("\\n"),
@@ -1264,7 +1324,10 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
   ]) {
     await withFixture({ ...intended, [p4Facade]: facadeSource }, (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(report.violations.some((item) => item.kind === expectedKind), name);
+      assert.ok(
+        report.violations.some((item) => item.kind === expectedKind),
+        name,
+      );
     });
   }
   for (const p5BridgeSource of [
@@ -1300,9 +1363,15 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       assert.ok(report.violations.some((item) => item.kind === "invalid_p4_bridge_runtime_export_surface"));
     });
   }
-  await withFixture({ ...intended, [p4Bridge]: `${intended[p4Bridge]}\nexport type { AcceptedQueuedTurn } from "./chat-thread-store.js";` }, (root) => {
-    assert.equal(checkHostProductionImportBoundary({ root, roots }).verdict, "passed");
-  });
+  await withFixture(
+    {
+      ...intended,
+      [p4Bridge]: `${intended[p4Bridge]}\nexport type { AcceptedQueuedTurn } from "./chat-thread-store.js";`,
+    },
+    (root) => {
+      assert.equal(checkHostProductionImportBoundary({ root, roots }).verdict, "passed");
+    },
+  );
   for (const [name, bridgeSource, expectedKind] of [
     [
       "direct-raw-wrapper",
@@ -1310,10 +1379,10 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
         'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
         'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
         'import { acceptP4MountedPlayerMessage, type AcceptedQueuedTurn } from "./chat-thread-store.js";',
-        'type P4MountedAcceptanceCommand = Readonly<{ text: string; locale: string; idempotencyKey: string; expectedDraftRevision: number }>;',
-        'export async function acceptMountedP4DurableTurnFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, command: P4MountedAcceptanceCommand): Promise<AcceptedQueuedTurn> {',
-        '  return acceptP4MountedPlayerMessage({ runtimeRoot: manifest.runtimeRoot, playerId: manifest.principal.playerId, companionId: manifest.principal.companionId, continuityId: manifest.principal.continuityId, chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId, selectionGeneration: lease.browserProjection.selectionGeneration }, command);',
-        '}',
+        "type P4MountedAcceptanceCommand = Readonly<{ text: string; locale: string; idempotencyKey: string; expectedDraftRevision: number }>;",
+        "export async function acceptMountedP4DurableTurnFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, command: P4MountedAcceptanceCommand): Promise<AcceptedQueuedTurn> {",
+        "  return acceptP4MountedPlayerMessage({ runtimeRoot: manifest.runtimeRoot, playerId: manifest.principal.playerId, companionId: manifest.principal.companionId, continuityId: manifest.principal.continuityId, chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId, selectionGeneration: lease.browserProjection.selectionGeneration }, command);",
+        "}",
       ].join("\\n"),
       "invalid_p4_bridge_implementation",
     ],
@@ -1323,7 +1392,7 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
         'import * as Module from "node:module";',
         'const member = "createRequire";',
         'const raw = Module[member](import.meta.url)("./chat-thread-store.js");',
-        'export async function acceptMountedP4DurableTurnFromFacade() { return raw; }',
+        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
       ].join("\\n"),
       "unresolved_dynamic_require",
     ],
@@ -1331,16 +1400,16 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       "process-builtin-loader",
       [
         'const raw = process.getBuiltinModule("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        'export async function acceptMountedP4DurableTurnFromFacade() { return raw; }',
+        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
       ].join("\\n"),
       "unresolved_dynamic_require",
     ],
     [
       "process-builtin-loader-alias",
       [
-        'const { getBuiltinModule: builtin } = process;',
+        "const { getBuiltinModule: builtin } = process;",
         'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        'export async function acceptMountedP4DurableTurnFromFacade() { return raw; }',
+        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
       ].join("\\n"),
       "unresolved_dynamic_require",
     ],
@@ -1348,7 +1417,7 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       "reflect-process-builtin-loader",
       [
         'const raw = Reflect.get(process, "getBuiltinModule")("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        'export async function acceptMountedP4DurableTurnFromFacade() { return raw; }',
+        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
       ].join("\\n"),
       "unresolved_dynamic_require",
     ],
@@ -1356,7 +1425,7 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       "reflect-computed-process-builtin-loader",
       [
         'const raw = Reflect["get"](process, "getBuiltinModule")("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        'export async function acceptMountedP4DurableTurnFromFacade() { return raw; }',
+        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
       ].join("\\n"),
       "unresolved_dynamic_require",
     ],
@@ -1365,7 +1434,7 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       [
         'import * as Module from "node:module";',
         'const raw = Reflect.get(Module, "createRequire")(import.meta.url)("./chat-thread-store.js");',
-        'export async function acceptMountedP4DurableTurnFromFacade() { return raw; }',
+        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
       ].join("\\n"),
       "unresolved_dynamic_require",
     ],
@@ -1373,16 +1442,19 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
       "computed-object-descriptor-process-loader",
       [
         'const descriptor = Object[("getOwn" + "PropertyDescriptor") as "getOwnPropertyDescriptor"](process, "getBuiltinModule");',
-        'const builtin = descriptor!.value as typeof process.getBuiltinModule;',
+        "const builtin = descriptor!.value as typeof process.getBuiltinModule;",
         'const raw = builtin("node:module")[("create" + "Require") as "createRequire"](import.meta.url)("./chat-thread-store.js");',
-        'export async function acceptMountedP4DurableTurnFromFacade() { return raw; }',
+        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
       ].join("\\n"),
       "unresolved_dynamic_require",
     ],
   ]) {
     await withFixture({ ...intended, [p4Bridge]: bridgeSource }, (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(report.violations.some((item) => item.kind === expectedKind), name);
+      assert.ok(
+        report.violations.some((item) => item.kind === expectedKind),
+        name,
+      );
     });
   }
   await withFixture(
@@ -1434,7 +1506,10 @@ test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/sto
   ]) {
     await withFixture({ ...intended, [p4Bridge]: bridgeSource }, (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(report.violations.some((item) => item.kind === "invalid_p4_bridge_store_edge"), name);
+      assert.ok(
+        report.violations.some((item) => item.kind === "invalid_p4_bridge_store_edge"),
+        name,
+      );
     });
   }
 });

@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { type CompanionInterruption, createCompanionInterruption } from "../companion-interruption.js";
 import {
   createChatRuntimeBinding,
   type OpaqueChatRuntimeBindingToken,
@@ -7,8 +8,12 @@ import {
   reserveChatRuntimeMaterialization,
   withConsumedChatRuntimeBinding,
 } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
-import { createHostChatRuntimeMaterializer } from "../continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.js";
 import type { MaterializedChatRuntime } from "../continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.internal.js";
+import { createHostChatRuntimeMaterializer } from "../continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.js";
+import {
+  createWindowsOwnerDeathVerifier,
+  type WindowsOwnerDeathVerifier,
+} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.js";
 import {
   createCanonicalProductionAuthorityAdmission,
   type FreshContinuityProvision,
@@ -20,48 +25,39 @@ import type {
   ProductionChatCatalog,
   ProductionChatCommandReadback,
   ProductionChatLifecycleInput,
-  ProductionChatRuntimeFailureInput,
   ProductionChatRuntimeOwner,
-  ProductionChatRuntimePrepareOutcome,
   ProductionChatRuntimeReadback,
   ProductionChatRuntimeReceipt,
   ProductionChatRuntimeRequest,
   ProductionChatRuntimeTeardownPermit,
-  ProductionChatRuntimeTeardownReadback,
   ProductionChatRuntimeTeardownReceipt,
   ProductionChatRuntimeTeardownRequest,
-  ProductionChatRuntimeTerminalInput,
   ProductionGameOwner,
   ProductionGamePermit,
-  ProductionGamePrepareOutcome,
-  ProductionGameRecoveryTarget,
   ProductionGameReadback,
+  ProductionGameRecoveryTarget,
   ProductionGameTerminalReceipt,
   ProductionGameWorld,
   ProductionSagaReadback,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { identityKey, type RuntimeSession } from "../runtime.js";
-import {
-  createCompanionInterruption,
-  type CompanionInterruption,
-} from "../companion-interruption.js";
 import type { CompanionTextExpression } from "../presentation.js";
+import { identityKey, type RuntimeSession } from "../runtime.js";
 import type {
   ChatPresentationGate,
   ChatPresentationStartActivation,
 } from "../tavern/chat-presentation-gate.internal.js";
-import {
-  createP4P5MountedTransitionAuthority,
-  type P4P5MountedTransitionAuthorityLease,
-  type P4P5MountedTransitionOperationAuthorityLease,
-} from "../tavern/chat-thread-store.p4-p5-transition-authority.internal.js";
 import type { CreateChatThreadRequest } from "../tavern/chat-thread-store.js";
 import {
   createChatThreadStore,
   transitionP4MountedProviderStart,
   transitionP5MountedPresentation,
 } from "../tavern/chat-thread-store.js";
+import {
+  createP4P5MountedTransitionAuthority,
+  type P4P5MountedTransitionAuthorityLease,
+  type P4P5MountedTransitionOperationAuthorityLease,
+} from "../tavern/chat-thread-store.p4-p5-transition-authority.internal.js";
 import {
   createManifestDerivedInitialChatExactContentPort,
   type InitialChatExactContentPort,
@@ -71,10 +67,6 @@ import {
 import { WindowsNamedMutexBroker, WindowsNamedMutexBrokerError } from "../windows-named-mutex-broker.js";
 import type { WindowsAuthorityRootMutex, WindowsPartitionMutexLease } from "../windows-partition-mutex.js";
 import { createWindowsAuthorityRootMutex } from "../windows-partition-mutex.js";
-import {
-  createWindowsOwnerDeathVerifier,
-  type WindowsOwnerDeathVerifier,
-} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.js";
 export class SemanticProductionCoordinatorError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -91,7 +83,19 @@ export class SemanticProductionCoordinatorError extends Error {
 export const P4C_PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS = 120_000;
 /** This is deliberately opaque outside this module.  Its identity, not its shape, is the capability. */
 type DialogueSagaHolder = object;
-type Brand = Readonly<{ digest: string; operations: readonly string[] }>;
+type SagaFacts = Readonly<{
+  principal: FreshContinuityProvision["principal"];
+  bootstrapOperationId: string;
+  authorityGeneration: number;
+  storeId: string;
+  schemaVersion: number;
+  authorityRootIdentity: string;
+}>;
+type Brand = Readonly<{
+  digest: string;
+  operations: readonly string[];
+  facts: SagaFacts;
+}>;
 const brands = new WeakMap<object, Brand>();
 
 /**
@@ -117,21 +121,24 @@ export type MountedChatBrowserProjection = Readonly<{
   projectChatHandle(chatThreadId: string, chatSurfaceSessionId: string): string;
 }>;
 export type MountedChatRuntimeLease = Readonly<{
-  /** Immutable session projection; the controlling AgentSession remains coordinator-private. */
-  runtimeSession: Pick<RuntimeSession, "piSessionId" | "profile">;
+  /**
+   * Browser/Host-consumer-safe runtime projection. The actual Pi session ID is
+   * an evidence-binding fact and remains in the coordinator-private record.
+   */
+  runtimeSession: Pick<RuntimeSession, "profile">;
   chatThreadId: string;
   chatSurfaceSessionId: string;
   browserProjection: MountedChatBrowserProjection;
   attachPresentation(listener: (expression: CompanionTextExpression) => void | Promise<void>): () => void;
+  /**
+   * Cancels only the current exact in-flight Pi prompt without exposing the Pi
+   * session. A stale turn/attempt pair cannot abort a later prompt.
+   */
+  abortActivePrompt(expected: Readonly<{ turnId: string; attemptId: string }>): Promise<"aborted" | "not_active" | "mismatch">;
   close(): Promise<void>;
 }>;
 export type SemanticChatRuntimeMountOptions = Readonly<{
   tavernNarrativeGateNonceSha256?: string;
-  /** Host-owned source marker callback for the Chat-only exact-next Memory gate. */
-  playerMemoryNextRoundEvidence?: Readonly<{
-    nonceSha256: string;
-    onSourceMarker(marker: unknown): void;
-  }>;
 }>;
 type MountedChatRuntimeLeaseRecord = {
   active: boolean;
@@ -165,7 +172,9 @@ type MountedChatRuntimeLeaseRecord = {
   readonly p5PresentationEpoch: CompanionInterruption;
   /** The exact live P4c gate activation, if its prompt is currently in flight. */
   p5PresentationActivation?: ChatPresentationStartActivation;
-  /** The durable cancel-claim drain for the current stopped epoch, if any. */
+  /** The sole Pi prompt currently executing under this mounted lease. */
+  activePrompt?: Readonly<{ turnId: string; attemptId: string; aborting: boolean }>;
+  /** Retained legacy P4/P5 cancellation state; new browser Stop bypasses it. */
   p5Cancellation?: Promise<P5CancelResult>;
   readonly begin: <T>(work: () => Promise<T>) => Promise<T>;
   close(): Promise<void>;
@@ -237,14 +246,16 @@ export type P4ProviderStartExecutionScope = Readonly<{
   runtimeSession: RuntimeSession;
   /**
    * The sole store-writer port for this exact attempt's arm/not_started/running
-   * transitions. It is callback-scoped and bound to the mounted runtime root
-   * and full origin tuple; the store remains the only durable writer.
+   * transitions and provider-rejection failure. It is callback-scoped and
+   * bound to the mounted runtime root and full origin tuple.
    */
   transitionStore(
     command: import("../tavern/chat-thread-store.js").P4ProviderStartTransition,
   ): Promise<
     | import("../tavern/chat-thread-store.js").AttemptStartingTurn
     | import("../tavern/chat-thread-store.js").RunningTurn
+    | import("../tavern/chat-thread-store.js").FailedTurn
+    | import("../tavern/chat-thread-store.js").CancelledTurn
   >;
   /**
    * The sole P5 durable writer port for this exact running attempt. It remains
@@ -256,10 +267,18 @@ export type P4ProviderStartExecutionScope = Readonly<{
   ): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger>;
   /** Reads the exact durable accepted player message text for the canonical envelope. */
   readAcceptedMessageText(): Promise<string>;
+  /** Fresh exact durable ledger read for ordinary Stop/completion race recovery. */
+  readCurrentTurnLedger(): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger>;
   /**
    * Fail-closed linearization point: exact active scope + lease + deadline.
    */
   assertAdmission(): void;
+  /**
+   * Marks the exact sole prompt as active until the returned release function
+   * runs. This is ordinary lifecycle bookkeeping for Stop, not a provider or
+   * presentation authority.
+   */
+  beginActivePrompt(): () => void;
   /**
    * Coordinator-private binding of the Chat presentation gate to this exact P4
    * invocation. It returns the narrow one-shot activation: the running barrier
@@ -293,6 +312,16 @@ type P5CancelResult = Exclude<
   | import("../tavern/chat-thread-store.js").RunningTurn
   | import("../tavern/chat-thread-store.js").PresentationCommittedTurn
 >;
+
+function isTurnWithExactAttempt(
+  ledger: import("../tavern/chat-thread-store.js").ChatTurnLedger,
+  attemptId: string,
+): ledger is Exclude<
+  import("../tavern/chat-thread-store.js").ChatTurnLedger,
+  import("../tavern/chat-thread-store.js").AcceptedQueuedTurn
+> {
+  return ledger.status !== "accepted_queued" && ledger.attempt.attemptId === attemptId;
+}
 
 async function readExactP5Ledger(record: MountedChatRuntimeLeaseRecord): Promise<P5ExactLedger> {
   const binding = record.p4AttemptBinding;
@@ -381,7 +410,9 @@ export async function acceptMountedP4DurableTurn(
 export async function claimMountedP4Attempt(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
-  claim: (admission: MountedP4AttemptAdmission) => Promise<import("../tavern/chat-thread-store.js").AttemptStartingTurn>,
+  claim: (
+    admission: MountedP4AttemptAdmission,
+  ) => Promise<import("../tavern/chat-thread-store.js").AttemptStartingTurn>,
 ): Promise<import("../tavern/chat-thread-store.js").AttemptStartingTurn> {
   const record = mountedChatRuntimeLeases.get(lease);
   if (
@@ -395,7 +426,8 @@ export async function claimMountedP4Attempt(
   )
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
   return record.begin(async () => {
-    if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
+    if (!record.active)
+      throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
     const active = { value: true };
     const consuming = { value: false };
     const admission = Object.freeze({}) as MountedP4AttemptAdmission;
@@ -414,17 +446,19 @@ export async function claimMountedP4Attempt(
 /** Tavern-private P4b consumption seam; it produces only durable claim facts. */
 export async function consumeMountedP4AttemptAdmission<T>(
   admission: MountedP4AttemptAdmission,
-  callback: (facts: Readonly<{
-    runtimeRoot: string;
-    playerId: string;
-    companionId: string;
-    continuityId: string;
-    chatThreadId: string;
-    chatSurfaceSessionId: string;
-    selectionGeneration: number;
-    runtimeBindingDigest: string;
-    runtimeOwner: MountedP4AttemptBinding["runtimeOwner"];
-  }>) => Promise<T>,
+  callback: (
+    facts: Readonly<{
+      runtimeRoot: string;
+      playerId: string;
+      companionId: string;
+      continuityId: string;
+      chatThreadId: string;
+      chatSurfaceSessionId: string;
+      selectionGeneration: number;
+      runtimeBindingDigest: string;
+      runtimeOwner: MountedP4AttemptBinding["runtimeOwner"];
+    }>,
+  ) => Promise<T>,
 ): Promise<T> {
   const record = mountedP4AttemptAdmissions.get(admission);
   if (record === undefined || !record.active.value || !record.lease.active || record.consuming.value)
@@ -432,17 +466,19 @@ export async function consumeMountedP4AttemptAdmission<T>(
   record.consuming.value = true;
   try {
     const mounted = record.lease;
-    return await callback(Object.freeze({
-      runtimeRoot: mounted.runtimeRoot,
-      playerId: mounted.principal.playerId,
-      companionId: mounted.principal.companionId,
-      continuityId: mounted.principal.continuityId,
-      chatThreadId: mounted.chatThreadId,
-      chatSurfaceSessionId: mounted.chatSurfaceSessionId,
-      selectionGeneration: mounted.selectionGeneration,
-      runtimeBindingDigest: record.binding.runtimeBindingDigest,
-      runtimeOwner: record.binding.runtimeOwner,
-    }));
+    return await callback(
+      Object.freeze({
+        runtimeRoot: mounted.runtimeRoot,
+        playerId: mounted.principal.playerId,
+        companionId: mounted.principal.companionId,
+        continuityId: mounted.principal.continuityId,
+        chatThreadId: mounted.chatThreadId,
+        chatSurfaceSessionId: mounted.chatSurfaceSessionId,
+        selectionGeneration: mounted.selectionGeneration,
+        runtimeBindingDigest: record.binding.runtimeBindingDigest,
+        runtimeOwner: record.binding.runtimeOwner,
+      }),
+    );
   } finally {
     record.active.value = false;
     record.consuming.value = false;
@@ -505,6 +541,8 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
     ): Promise<
       | import("../tavern/chat-thread-store.js").AttemptStartingTurn
       | import("../tavern/chat-thread-store.js").RunningTurn
+      | import("../tavern/chat-thread-store.js").FailedTurn
+      | import("../tavern/chat-thread-store.js").CancelledTurn
     > => {
       assertScopeActive();
       return transitionP4MountedProviderStart(
@@ -548,92 +586,111 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
       );
     };
     const readAcceptedMessageText = async (): Promise<string> => {
-      const store = createChatThreadStore(
-        mounted.runtimeRoot,
-        identityKey(Object.freeze({ ...mounted.principal })),
-      );
+      const store = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
       const state = await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
       const message = state.messages.find(
         (candidate) =>
-          candidate.messageId === record.turn.messageId &&
-          candidate.role === "player" &&
-          candidate.kind === "player",
+          candidate.messageId === record.turn.messageId && candidate.role === "player" && candidate.kind === "player",
       );
       if (message === undefined)
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_provider_start_message_unavailable");
       return message.text;
     };
-    const activatePresentation = (): import("../tavern/chat-presentation-gate.internal.js").ChatPresentationStartActivation => {
-      if (!record.active.value || !mounted.active)
-        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_invocation_rejected");
-      const gate = mounted.p4PresentationGate;
-      if (gate === undefined || mounted.p5PresentationActivation !== undefined)
-        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_gate_unavailable");
-      const observationEpoch = mounted.p5PresentationEpoch.capture();
-      let commitReserved = false;
-      const reserveCommit = (candidate: import("../companion-interruption.js").InterruptionSnapshot): (() => void) | undefined => {
-        if (
-          commitReserved ||
-          candidate !== observationEpoch ||
-          !mounted.p5PresentationEpoch.isCurrent(candidate) ||
-          !record.active.value ||
-          !mounted.active
-        )
-          return undefined;
-        commitReserved = true;
-        return () => undefined;
+    const readCurrentTurnLedger = async (): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger> => {
+      const store = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
+      const ledger = (await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).turnLedger;
+      if (
+        ledger === null ||
+        ledger.turnId !== facts.turnId ||
+        !isTurnWithExactAttempt(ledger, facts.attemptId)
+      )
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_turn_unavailable");
+      return ledger;
+    };
+    const beginActivePrompt = (): (() => void) => {
+      assertAdmission();
+      if (mounted.activePrompt !== undefined)
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_prompt_already_active");
+      const activePrompt = Object.freeze({ turnId: facts.turnId, attemptId: facts.attemptId, aborting: false });
+      mounted.activePrompt = activePrompt;
+      return () => {
+        if (mounted.activePrompt === activePrompt) mounted.activePrompt = undefined;
       };
-      const commitPresentation = async (expression: CompanionTextExpression): Promise<void> => {
-        assertScopeActive();
-        const observedAtMs = Date.now();
-        const committed = await transitionP5MountedPresentation(
-          Object.freeze({
-            authority: mounted.p4P5TransitionAuthority.authority,
-            operationAuthority: scopedOperationAuthority.authority,
-            runtimeRoot: mounted.runtimeRoot,
-            playerId: mounted.principal.playerId,
-            companionId: mounted.principal.companionId,
-            continuityId: mounted.principal.continuityId,
-            chatThreadId: mounted.chatThreadId,
-            chatSurfaceSessionId: mounted.chatSurfaceSessionId,
-            selectionGeneration: attempt.selectionGeneration,
-            runtimeBindingDigest: attempt.runtimeBindingDigest,
-            runtimeOwner: attempt.runtimeOwner,
-            attemptId: attempt.attemptId,
-          }),
-          Object.freeze({
-            operation: "commit_presentation",
-            cancelEpoch: observationEpoch.epoch,
-            message: Object.freeze({
-              messageId: expression.expressionId,
-              text: expression.text,
-              occurredAtMs: observedAtMs,
+    };
+    const activatePresentation =
+      (): import("../tavern/chat-presentation-gate.internal.js").ChatPresentationStartActivation => {
+        if (!record.active.value || !mounted.active)
+          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_invocation_rejected");
+        const gate = mounted.p4PresentationGate;
+        if (gate === undefined || mounted.p5PresentationActivation !== undefined)
+          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_gate_unavailable");
+        const observationEpoch = mounted.p5PresentationEpoch.capture();
+        let commitReserved = false;
+        const reserveCommit = (
+          candidate: import("../companion-interruption.js").InterruptionSnapshot,
+        ): (() => void) | undefined => {
+          if (
+            commitReserved ||
+            candidate !== observationEpoch ||
+            !mounted.p5PresentationEpoch.isCurrent(candidate) ||
+            !record.active.value ||
+            !mounted.active
+          )
+            return undefined;
+          commitReserved = true;
+          return () => undefined;
+        };
+        const commitPresentation = async (expression: CompanionTextExpression): Promise<void> => {
+          assertScopeActive();
+          const observedAtMs = Date.now();
+          const committed = await transitionP5MountedPresentation(
+            Object.freeze({
+              authority: mounted.p4P5TransitionAuthority.authority,
+              operationAuthority: scopedOperationAuthority.authority,
+              runtimeRoot: mounted.runtimeRoot,
+              playerId: mounted.principal.playerId,
+              companionId: mounted.principal.companionId,
+              continuityId: mounted.principal.continuityId,
+              chatThreadId: mounted.chatThreadId,
+              chatSurfaceSessionId: mounted.chatSurfaceSessionId,
+              selectionGeneration: attempt.selectionGeneration,
+              runtimeBindingDigest: attempt.runtimeBindingDigest,
+              runtimeOwner: attempt.runtimeOwner,
+              attemptId: attempt.attemptId,
             }),
-            committedAtMs: observedAtMs,
+            Object.freeze({
+              operation: "commit_presentation",
+              cancelEpoch: observationEpoch.epoch,
+              message: Object.freeze({
+                messageId: expression.expressionId,
+                text: expression.text,
+                occurredAtMs: observedAtMs,
+              }),
+              committedAtMs: observedAtMs,
+            }),
+          );
+          // The exact read-back is the postcondition: listeners are only ever
+          // reached after this durable presentation commit.
+          if (committed.status !== "presentation_committed")
+            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_commit_rejected");
+        };
+        const activation = gate.activate(
+          Object.freeze({
+            epoch: mounted.p5PresentationEpoch,
+            observationEpoch,
+            reserveCommit,
+            commitPresentation,
           }),
         );
-        // The exact read-back is the postcondition: listeners are only ever
-        // reached after this durable presentation commit.
-        if (committed.status !== "presentation_committed")
-          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_commit_rejected");
+        mounted.p5PresentationActivation = activation;
+        return Object.freeze({
+          ...activation,
+          deactivate: async () => {
+            await activation.deactivate();
+            if (mounted.p5PresentationActivation === activation) mounted.p5PresentationActivation = undefined;
+          },
+        });
       };
-      const activation = gate.activate(
-        Object.freeze({
-          epoch: mounted.p5PresentationEpoch,
-          observationEpoch,
-          reserveCommit,
-          commitPresentation,
-        }),
-      );
-      mounted.p5PresentationActivation = activation;
-      return Object.freeze({
-        ...activation,
-        deactivate: async () => {
-          await activation.deactivate();
-          if (mounted.p5PresentationActivation === activation) mounted.p5PresentationActivation = undefined;
-        },
-      });
-    };
     const finalizeCancellation = async (): Promise<
       | import("../tavern/chat-thread-store.js").CompletionClaimedTurn
       | import("../tavern/chat-thread-store.js").CompletedTurn
@@ -664,7 +721,9 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
         transitionStore,
         transitionPresentation,
         readAcceptedMessageText,
+        readCurrentTurnLedger,
         assertAdmission,
+        beginActivePrompt,
         activatePresentation,
         finalizeCancellation,
       }),
@@ -685,7 +744,9 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
 export async function startMountedP4Attempt(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
-  start: (invocation: MountedP4AttemptInvocationAdmission) => Promise<
+  start: (
+    invocation: MountedP4AttemptInvocationAdmission,
+  ) => Promise<
     | import("../tavern/chat-thread-store.js").AttemptStartingTurn
     | import("../tavern/chat-thread-store.js").CompletedTurn
     | import("../tavern/chat-thread-store.js").CancelledTurn
@@ -709,9 +770,11 @@ export async function startMountedP4Attempt(
   )
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
   return record.begin(async () => {
-    if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
+    if (!record.active)
+      throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
     const binding = record.p4AttemptBinding;
-    if (binding === undefined) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
+    if (binding === undefined)
+      throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
     const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
     const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
     const turn = state.turnLedger;
@@ -757,7 +820,8 @@ export async function startMountedP4Attempt(
           readBackTurn.attempt.runtimeOwner.ownerToken === turn.attempt.runtimeOwner.ownerToken &&
           readBackTurn.attempt.runtimeOwner.runtimeInstanceId === turn.attempt.runtimeOwner.runtimeInstanceId &&
           readBackTurn.attempt.runtimeOwner.ownerPid === turn.attempt.runtimeOwner.ownerPid &&
-          readBackTurn.attempt.runtimeOwner.ownerProcessStartIdentity === turn.attempt.runtimeOwner.ownerProcessStartIdentity
+          readBackTurn.attempt.runtimeOwner.ownerProcessStartIdentity ===
+            turn.attempt.runtimeOwner.ownerProcessStartIdentity
         )
           record.p4ProviderStartAttemptIds.delete(turn.attempt.attemptId);
       } catch {
@@ -773,15 +837,17 @@ export async function startMountedP4Attempt(
 
 export async function consumeMountedP4Admission<T>(
   admission: MountedP4Admission,
-  callback: (facts: Readonly<{
-    runtimeRoot: string;
-    playerId: string;
-    companionId: string;
-    continuityId: string;
-    chatThreadId: string;
-    chatSurfaceSessionId: string;
-    selectionGeneration: number;
-  }>) => Promise<T>,
+  callback: (
+    facts: Readonly<{
+      runtimeRoot: string;
+      playerId: string;
+      companionId: string;
+      continuityId: string;
+      chatThreadId: string;
+      chatSurfaceSessionId: string;
+      selectionGeneration: number;
+    }>,
+  ) => Promise<T>,
 ): Promise<T> {
   const record = mountedP4Admissions.get(admission);
   if (record === undefined || !record.active.value || record.consuming.value)
@@ -789,15 +855,17 @@ export async function consumeMountedP4Admission<T>(
   record.consuming.value = true;
   try {
     const mounted = record.lease;
-    return await callback(Object.freeze({
-      runtimeRoot: mounted.runtimeRoot,
-      playerId: mounted.principal.playerId,
-      companionId: mounted.principal.companionId,
-      continuityId: mounted.principal.continuityId,
-      chatThreadId: mounted.chatThreadId,
-      chatSurfaceSessionId: mounted.chatSurfaceSessionId,
-      selectionGeneration: mounted.selectionGeneration,
-    }));
+    return await callback(
+      Object.freeze({
+        runtimeRoot: mounted.runtimeRoot,
+        playerId: mounted.principal.playerId,
+        companionId: mounted.principal.companionId,
+        continuityId: mounted.principal.continuityId,
+        chatThreadId: mounted.chatThreadId,
+        chatSurfaceSessionId: mounted.chatSurfaceSessionId,
+        selectionGeneration: mounted.selectionGeneration,
+      }),
+    );
   } finally {
     record.active.value = false;
     record.consuming.value = false;
@@ -834,10 +902,26 @@ export async function stopMountedChatPresentationEpoch(
     return readP5CancellationResult(record);
   }
 
-  // Preflight must be entirely durable and side-effect free. In particular,
-  // an early STOP against an unarmed/armed attempt must not close the epoch and
-  // poison the later exact P4c presentation activation.
-  const preflight = await readExactP5Ledger(record);
+  // Preflight is durable and side-effect free. A queued turn cannot be
+  // cancelled, but an armed prompt may be aborted and terminalized directly
+  // without waiting for a provider-response observation.
+  const preflight = await readExactP5Ledger(record).catch(async (error) => {
+    const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
+    const ledger = (await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId)).turnLedger;
+    if (
+      ledger?.status === "attempt_starting" &&
+      ledger.observation?.phase === "armed" &&
+      record.p4AttemptBinding !== undefined &&
+      ledger.attempt.selectionGeneration === record.selectionGeneration &&
+      ledger.attempt.runtimeBindingDigest === record.p4AttemptBinding.runtimeBindingDigest &&
+      ledger.attempt.runtimeOwner.ownerToken === record.p4AttemptBinding.runtimeOwner.ownerToken &&
+      ledger.attempt.runtimeOwner.runtimeInstanceId === record.p4AttemptBinding.runtimeOwner.runtimeInstanceId &&
+      ledger.attempt.runtimeOwner.ownerPid === record.p4AttemptBinding.runtimeOwner.ownerPid &&
+      ledger.attempt.runtimeOwner.ownerProcessStartIdentity === record.p4AttemptBinding.runtimeOwner.ownerProcessStartIdentity
+    )
+      return ledger;
+    throw error;
+  });
   switch (preflight.status) {
     case "completion_claimed":
     case "completed":
@@ -847,6 +931,10 @@ export async function stopMountedChatPresentationEpoch(
       return preflight;
     case "running":
     case "presentation_committed":
+      break;
+    case "attempt_starting":
+      if (preflight.observation?.phase !== "armed")
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
       break;
     default:
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
@@ -872,6 +960,10 @@ export async function stopMountedChatPresentationEpoch(
   // later drain and final `cancelled` transition. In particular STOP must not
   // await gate.drain(): a listener may itself await STOP while it is pending.
   record.p5PresentationActivation?.revoke();
+  // Claim the durable winner before awaiting Pi abort. `abort()` may settle the
+  // prompt synchronously, so awaiting it first would let rejection terminalize
+  // the turn as failed even though STOP already won its linearization point.
+  const abort = record.p4ProviderStartRuntimeSession?.session?.abort;
   const cancellation: Promise<P5CancelResult> = (async (): Promise<P5CancelResult> => {
     const binding = record.p4AttemptBinding;
     if (binding === undefined)
@@ -902,11 +994,34 @@ export async function stopMountedChatPresentationEpoch(
       default:
         break;
     }
-    if (ledger.status !== "running" && ledger.status !== "presentation_committed")
-      throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
-
     const operationAuthority = record.p4P5TransitionAuthority.mintOperation();
     try {
+      if (ledger.status === "attempt_starting") {
+        if (ledger.observation?.phase !== "armed")
+          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
+        const cancelled = await transitionP4MountedProviderStart(
+          Object.freeze({
+            authority: record.p4P5TransitionAuthority.authority,
+            operationAuthority: operationAuthority.authority,
+            runtimeRoot: record.runtimeRoot,
+            playerId: record.principal.playerId,
+            companionId: record.principal.companionId,
+            continuityId: record.principal.continuityId,
+            chatThreadId: record.chatThreadId,
+            chatSurfaceSessionId: record.chatSurfaceSessionId,
+            selectionGeneration: ledger.attempt.selectionGeneration,
+            runtimeBindingDigest: ledger.attempt.runtimeBindingDigest,
+            runtimeOwner: ledger.attempt.runtimeOwner,
+            attemptId: ledger.attempt.attemptId,
+          }),
+          Object.freeze({ operation: "cancel", observedAtMs: Date.now(), cancelledAtMs: Date.now() }),
+        );
+        if (cancelled.status !== "cancelled")
+          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
+        return cancelled;
+      }
+      if (ledger.status !== "running" && ledger.status !== "presentation_committed")
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
       const cancelled = await transitionP5MountedPresentation(
         Object.freeze({
           authority: record.p4P5TransitionAuthority.authority,
@@ -945,7 +1060,22 @@ export async function stopMountedChatPresentationEpoch(
       operationAuthority.revoke();
     }
   })();
+  // Publish the durable winner promise before aborting. A synchronous abort
+  // rejection then observes this promise in P4c and cannot replace STOP with
+  // a failed terminal state.
   record.p5Cancellation = cancellation;
+  // Stop's browser-visible winner is the durable cancellation, not the
+  // provider transport's eventual abort settlement. Invoke the exact mounted
+  // session once but do not let a stuck/slow provider abort hold the HTTP
+  // request or its authoritative reread hostage. Any rejection is deliberately
+  // ignored: SQLite already selected the terminal winner before this call.
+  if (typeof abort === "function") {
+    try {
+      void Promise.resolve(abort.call(record.p4ProviderStartRuntimeSession!.session)).catch(() => undefined);
+    } catch {
+      // Synchronous transport failure also cannot replace the durable winner.
+    }
+  }
   return cancellation;
 }
 
@@ -976,7 +1106,8 @@ function createMountedChatBrowserProjection(
     selectionGeneration: selectionRevision,
     selectionStateRevision: project("selection-state", String(selectionRevision)),
     projectMessageHandle(messageId: string): string {
-      if (!validId(messageId)) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_message_id_rejected");
+      if (!validId(messageId))
+        throw new SemanticProductionCoordinatorError("semantic_chat_runtime_message_id_rejected");
       return project("message", messageId);
     },
     projectTurnHandle(turnId: string): string {
@@ -1090,7 +1221,7 @@ function isThenable(value: unknown): boolean {
 
 function createDialogueSagaHolder(p: FreshContinuityProvision): DialogueSagaHolder {
   const holder = Object.freeze({});
-  const facts = Object.freeze({
+  const facts: SagaFacts = Object.freeze({
     principal: p.principal,
     bootstrapOperationId: p.bootstrapOperationId,
     authorityGeneration: p.authorityGeneration,
@@ -1098,18 +1229,17 @@ function createDialogueSagaHolder(p: FreshContinuityProvision): DialogueSagaHold
     schemaVersion: p.schemaVersion,
     authorityRootIdentity: p.authorityRootIdentity,
   });
-  const digest = createHash("sha256")
-    .update(JSON.stringify(Object.fromEntries(Object.entries(facts).sort())))
-    .digest("hex");
+  const digest = p.authorityRootIdentity;
   brands.set(
     holder,
     Object.freeze({
       digest,
       operations: Object.freeze(
-        ["claim_empty", "register_exact", "verify_exact_content", "select_open"].map((step) =>
-          createHash("sha256").update(`${digest}\0${step}`).digest("hex"),
+        ["claim_empty", "register_exact", "verify_exact_content", "select_open"].map(
+          (step) => `${digest.slice(0, 16)}-${step}`,
         ),
       ),
+      facts,
     }),
   );
   return holder;
@@ -1396,7 +1526,13 @@ async function createFreshChatRuntimeAuthority(
         permit = prepared.permit;
         let materialized: MaterializedChatRuntime;
         try {
-          materialized = await createHostChatRuntimeMaterializer(options).materialize(reservation, permit);
+          materialized = await createHostChatRuntimeMaterializer(
+            Object.freeze({
+              ...(options.tavernNarrativeGateNonceSha256 === undefined
+                ? {}
+                : { tavernNarrativeGateNonceSha256: options.tavernNarrativeGateNonceSha256 }),
+            }),
+          ).materialize(reservation, permit);
         } catch (error) {
           await failChatRuntimeAfterError(locked, provision, permit, error);
           throw error;
@@ -1458,8 +1594,7 @@ async function createFreshChatRuntimeAuthority(
       mountedStartPromise = startChatRuntime().then((readback) => {
         // startChatRuntime may have been accepted before a concurrent close.
         // Recheck after its asynchronous work, immediately before lease minting.
-        if (closing || closed)
-          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed");
+        if (closing || closed) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_authority_closed");
         const record = liveByBootstrapOperation.get(readback.operationId);
         const runtimeSession = record?.runtime.runtimeSession;
         if (
@@ -1474,6 +1609,10 @@ async function createFreshChatRuntimeAuthority(
           readback.chatSurfaceSessionId !== record.bootstrapReceipt.chatSurfaceSessionId
         )
           throw new SemanticProductionCoordinatorError("semantic_chat_runtime_mount_readback_rejected");
+        // The live-gate-only reporter is emitted after the exact runtime has
+        // been committed active but before the browser server can accept input.
+        // Normal consumers still receive only the safe lease projection.
+        runtimeSession.reportTavernNarrativeGateRuntime?.();
         const browserProjection = createMountedChatBrowserProjection(
           readback.chatThreadId,
           readback.chatSurfaceSessionId,
@@ -1481,9 +1620,17 @@ async function createFreshChatRuntimeAuthority(
         );
         let lease!: MountedChatRuntimeLease;
         lease = Object.freeze({
+          // The lease never exposes the raw Pi session to browser callers, but
+          // P4c requires this exact mounted runtime's private provider and
+          // presentation authority. The coordinator holds that authority in
+          // its private WeakMap record below rather than projecting it here.
           runtimeSession: Object.freeze({
-            piSessionId: runtimeSession.piSessionId,
             profile: runtimeSession.profile,
+            // This private start surface is never returned to browser code:
+            // `MountedChatRuntimeLease` is held in the coordinator WeakMap and
+            // only P4c obtains the actual runtime session from that record.
+            session: runtimeSession.session,
+            installTavernProviderStartObserver: runtimeSession.installTavernProviderStartObserver,
           }),
           chatThreadId: readback.chatThreadId,
           chatSurfaceSessionId: readback.chatSurfaceSessionId,
@@ -1495,6 +1642,38 @@ async function createFreshChatRuntimeAuthority(
             if (this !== lease || !isCurrentMountedChatRuntimeLease(lease))
               throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
             return record.runtime.attachPresentation!(listener);
+          },
+          async abortActivePrompt(
+            this: unknown,
+            expected: Readonly<{ turnId: string; attemptId: string }>,
+          ): Promise<"aborted" | "not_active" | "mismatch"> {
+            if (this !== lease || !isCurrentMountedChatRuntimeLease(lease))
+              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
+            if (
+              expected === null ||
+              typeof expected !== "object" ||
+              !/^[A-Za-z0-9_-]{1,128}$/u.test(expected.turnId) ||
+              !/^[A-Za-z0-9_-]{1,128}$/u.test(expected.attemptId)
+            )
+              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_abort_request_rejected");
+            const leaseRecord = mountedChatRuntimeLeases.get(lease);
+            if (leaseRecord === undefined || !leaseRecord.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
+            const activePrompt = leaseRecord.activePrompt;
+            if (activePrompt === undefined) return "not_active";
+            if (activePrompt.turnId !== expected.turnId || activePrompt.attemptId !== expected.attemptId)
+              return "mismatch";
+            if (activePrompt.aborting) return "not_active";
+            leaseRecord.activePrompt = Object.freeze({ ...activePrompt, aborting: true });
+            const session = record.runtime.runtimeSession?.session;
+            const abort = session?.abort;
+            if (typeof abort !== "function") return "not_active";
+            try {
+              await abort.call(session);
+            } catch {
+              // A failed transport abort does not change the ordinary SQLite
+              // terminal winner selected by the authenticated Stop request.
+            }
+            return "aborted";
           },
           close(this: unknown): Promise<void> {
             if (this !== lease || !isCurrentMountedChatRuntimeLease(lease))
@@ -1516,9 +1695,7 @@ async function createFreshChatRuntimeAuthority(
             runtimeBindingDigest: record.bootstrapPermit.runtimeBindingDigest,
             runtimeOwner: Object.freeze({ ...record.bootstrapPermit.owner }),
           }),
-          ...(runtimeSession === undefined
-            ? {}
-            : { p4ProviderStartRuntimeSession: runtimeSession }),
+          ...(runtimeSession === undefined ? {} : { p4ProviderStartRuntimeSession: runtimeSession }),
           ...(record.runtime.presentationGate === undefined
             ? {}
             : { p4PresentationGate: record.runtime.presentationGate }),
@@ -1812,11 +1989,7 @@ async function openProvisionWithAdmission(
       provision = open();
     } catch (error) {
       if (lease.disposition === "abandoned") {
-        try {
-          await seal();
-        } catch (sealError) {
-          throw sealError;
-        }
+        await seal();
       }
       throw error;
     }
@@ -1827,21 +2000,13 @@ async function openProvisionWithAdmission(
         if (!state.quarantined || state.reason !== "abandoned_windows_root_mutex")
           throw new Error("quarantine_readback_mismatch");
       } catch (error) {
-        try {
-          await seal();
-        } catch (sealError) {
-          throw sealError;
-        }
+        await seal();
         throw error;
       }
       try {
         await release(lease);
       } catch (error) {
-        try {
-          await seal();
-        } catch (sealError) {
-          throw sealError;
-        }
+        await seal();
         throw error;
       }
       throw new SemanticProductionCoordinatorError("semantic_production_abandoned_mutex_quarantined");
@@ -1907,14 +2072,10 @@ function create(
   const locked = async <T>(work: () => T): Promise<T> => {
     if (poisoned) throw new SemanticProductionCoordinatorError("semantic_production_abandoned_mutex_quarantined");
     let lease: WindowsPartitionMutexLease;
-    try {
-      lease = await requireLease(mutex, provision.authorityRootIdentity, provision, () => {
-        poisoned = true;
-        closing = true;
-      });
-    } catch (error) {
-      throw error;
-    }
+    lease = await requireLease(mutex, provision.authorityRootIdentity, provision, () => {
+      poisoned = true;
+      closing = true;
+    });
     let value: T | undefined;
     let failure: unknown;
     let asyncRejected = false;
@@ -2655,22 +2816,14 @@ async function requireLease(
     if (!state.quarantined || state.reason !== "abandoned_windows_root_mutex")
       throw new Error("quarantine_readback_mismatch");
   } catch (error) {
-    try {
-      await lease.safetySealAfterAbandonedQuarantineFailure();
-    } catch (sealError) {
-      throw sealError;
-    }
+    await lease.safetySealAfterAbandonedQuarantineFailure();
     throw error;
   }
   poisonBeforeVerifiedRelease?.();
   try {
     await lease.release();
   } catch (error) {
-    try {
-      await lease.safetySealAfterAbandonedQuarantineFailure();
-    } catch (sealError) {
-      throw sealError;
-    }
+    await lease.safetySealAfterAbandonedQuarantineFailure();
     throw error;
   }
   throw new SemanticProductionCoordinatorError("semantic_production_abandoned_mutex_quarantined");

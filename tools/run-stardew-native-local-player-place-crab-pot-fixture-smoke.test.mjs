@@ -79,10 +79,7 @@ test("fixture runner fails closed on capability profile and capability surface",
       throw new Error("must not dispatch");
     },
   };
-  await assert.rejects(
-    runPlaceCrabPotFixtureSmoke(client2, config),
-    /native_local_place_crab_pot_capability_missing/,
-  );
+  await assert.rejects(runPlaceCrabPotFixtureSmoke(client2, config), /native_local_place_crab_pot_capability_missing/);
 });
 
 test("fixture runner fails closed on actionability, item, and target misses", async () => {
@@ -159,7 +156,10 @@ test("fixture session uses the shared harness and tears down exactly once", asyn
   assert.equal(instance.closed, 1);
   assert.equal(instance.listeners.size, 0);
 
-  const source = await readFile(new URL("./run-stardew-native-local-player-place-crab-pot-fixture-smoke.mjs", import.meta.url), "utf8");
+  const source = await readFile(
+    new URL("./run-stardew-native-local-player-place-crab-pot-fixture-smoke.mjs", import.meta.url),
+    "utf8",
+  );
   assert.match(source, /connectNativeLocalClient\(config\)/);
   assert.match(source, /finally \{\s+session\.close\(\);\s+\}/);
   assert.doesNotMatch(source, /LocalStardewBridgeClient\.connect/);

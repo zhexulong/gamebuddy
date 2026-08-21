@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 const apiKey = process.env.CPA_OAI_API_KEY;
 if (!apiKey) throw new Error("CPA_OAI_API_KEY_required");

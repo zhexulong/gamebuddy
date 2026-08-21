@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+
 const PRIMITIVES = ["till", "plant", "water", "harvest"];
 const FORBIDDEN = [
   "UI/input",

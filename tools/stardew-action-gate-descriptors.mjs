@@ -25,7 +25,13 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   ),
   gate("water_crop", 1, "run-stardew-native-local-player-water-crop-smoke.mjs", "crop_watered", "native_water_crop_v1"),
   gate("plant_seed", 1, "run-stardew-native-local-player-plant-seed-smoke.mjs", "seed_planted", "native_plant_seed_v1"),
-  gate("fertilize_tile", 1, "run-stardew-native-local-player-fertilize-tile-smoke.mjs", "fertilizer_applied", "native_fertilize_tile_v1"),
+  gate(
+    "fertilize_tile",
+    1,
+    "run-stardew-native-local-player-fertilize-tile-smoke.mjs",
+    "fertilizer_applied",
+    "native_fertilize_tile_v1",
+  ),
   gate(
     "machine_inspect",
     1,

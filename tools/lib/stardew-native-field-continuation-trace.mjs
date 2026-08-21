@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+
 const SHA256 = /^[a-f0-9]{64}$/;
 function fail(code, message, details = {}) {
   const error = new Error(message);

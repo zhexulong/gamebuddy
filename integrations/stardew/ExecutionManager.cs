@@ -1,4 +1,7 @@
 using System.Globalization;
+using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -12,7 +15,7 @@ namespace GameBuddy.Stardew;
 /// native Game1.player and replays a request's current receipt on duplicates;
 /// it never starts a second body process for the same request.
 /// </summary>
-internal sealed partial class ExecutionManager
+internal sealed partial class ExecutionManager : IExecutionLedger
 {
     private const int DefaultDeadlineTicks = 60 * 20;
     private const int AnimalProductDiscoveryRadius = 1;
@@ -29,6 +32,11 @@ internal sealed partial class ExecutionManager
     private readonly FarmhandCapabilitySurface capabilitySurface;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
     private readonly Action<ExecutionTrace>? tracePublished;
+    public sealed record PendingActionEntry(
+        string RequestId,
+        string Action,
+        Func<LocalExecutionReceipt> Execute);
+    private readonly Queue<PendingActionEntry> pendingActionQueue = new();
     private LocalMoveSpec? active;
     private LocalTravelSpec? activeTravel;
     private LocalPettingSpec? activePet;
@@ -82,7 +90,73 @@ internal sealed partial class ExecutionManager
         && this.activeItemPickup is null
         && !this.controller.HasActiveExecution;
 
+    public long CurrentRevision => this.revision;
+    public bool IsBodyBusy => !this.IsBodySettled;
+    public int PendingActionCount => this.pendingActionQueue.Count;
+    public bool HasPendingActions => this.pendingActionQueue.Count > 0;
     public IReadOnlyList<ExecutionTrace> Trace => this.trace;
+    public bool TryGetExistingReceipt(string requestId, out LocalExecutionReceipt receipt) => this.TryGetReceipt(requestId, out receipt);
+
+    public LocalExecutionReceipt EnqueueAction(string requestId, string action, Func<LocalExecutionReceipt> execute, bool forceQueue = false)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+            return existing;
+
+        if (!forceQueue && this.IsBodySettled && this.pendingActionQueue.Count == 0)
+        {
+            return execute();
+        }
+
+        string executionId = Guid.NewGuid().ToString("N");
+        this.revision++;
+        LocalExecutionReceipt queuedReceipt = new(
+            executionId,
+            requestId,
+            ExecutionState.Accepted,
+            "queued",
+            this.revision,
+            $"action={action};queue_depth={this.pendingActionQueue.Count + 1}");
+        this.Remember(queuedReceipt);
+        this.AddTrace(queuedReceipt);
+        this.pendingActionQueue.Enqueue(new PendingActionEntry(requestId, action, execute));
+        return queuedReceipt;
+    }
+
+    public void Halt(string reasonCode = "halted")
+    {
+        this.controller.Halt();
+        this.active = null;
+        this.activeTravel = null;
+        this.activePet = null;
+        this.activeAnimalProduct = null;
+        this.activeItemUse = null;
+        this.activeItemPickup = null;
+        while (this.pendingActionQueue.Count > 0)
+        {
+            PendingActionEntry pending = this.pendingActionQueue.Dequeue();
+            this.revision++;
+            LocalExecutionReceipt cancelled = new(
+                Guid.NewGuid().ToString("N"),
+                pending.RequestId,
+                ExecutionState.Cancelled,
+                reasonCode,
+                this.revision,
+                $"action={pending.Action};queue_cleared=true");
+            this.Remember(cancelled);
+            this.AddTrace(cancelled);
+        }
+    }
+
+    LocalExecutionReceipt IExecutionLedger.Remember(LocalExecutionReceipt receipt)
+    {
+        this.Remember(receipt);
+        return receipt;
+    }
+
+    LocalExecutionReceipt IExecutionLedger.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence) =>
+        this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+
+    void IExecutionLedger.AddTrace(LocalExecutionReceipt receipt) => this.AddTrace(receipt);
 
     /// <summary>Returns the latest authoritative receipt for idempotent bridge replay.</summary>
     public bool TryGetReceipt(string requestId, out LocalExecutionReceipt receipt) => this.receiptsByRequestId.TryGetValue(requestId, out receipt!);
@@ -374,6 +448,16 @@ internal sealed partial class ExecutionManager
         // Controller success releases its native ownership only after its
         // transition callback returns; drain pending idle after that boundary.
         this.DrainPendingIdleAfterRelease();
+
+        // If the body is settled and there are pending queued actions, drive the next action
+        if (this.IsBodySettled && this.pendingActionQueue.Count > 0)
+        {
+            PendingActionEntry nextAction = this.pendingActionQueue.Dequeue();
+            if (!this.receiptsByRequestId.TryGetValue(nextAction.RequestId, out LocalExecutionReceipt? existing) || existing.State == ExecutionState.Accepted)
+            {
+                nextAction.Execute();
+            }
+        }
     }
 
     public void InvalidateForLifecycle(string reasonCode)
@@ -382,6 +466,20 @@ internal sealed partial class ExecutionManager
         this.InvalidateCrabPotResult();
         this.InvalidateBaitCrabPotResult();
         this.InvalidateArtifactSpotResult();
+        while (this.pendingActionQueue.Count > 0)
+        {
+            PendingActionEntry pending = this.pendingActionQueue.Dequeue();
+            this.revision++;
+            LocalExecutionReceipt queueReceipt = new(
+                Guid.NewGuid().ToString("N"),
+                pending.RequestId,
+                ExecutionState.Invalidated,
+                reasonCode,
+                this.revision,
+                $"action={pending.Action};queue_invalidated=true");
+            this.Remember(queueReceipt);
+            this.AddTrace(queueReceipt);
+        }
         if (this.active is not null)
             this.controller.Invalidate(reasonCode);
         if (this.activeTravel is not null)
@@ -1330,7 +1428,7 @@ internal sealed partial class ExecutionManager
             .ToArray();
     }
 
-    private static string BuildForageTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Object forage)
+    internal static string BuildForageTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Object forage)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{forage.QualifiedItemId}:{forage.Stack}:{forage.IsSpawnedObject}";
         return $"forage_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -1612,7 +1710,7 @@ internal sealed partial class ExecutionManager
             .ToArray();
     }
 
-    private static string BuildCropTargetId(StardewValley.GameLocation location, int x, int y, string? seedId, string? harvestId)
+    internal static string BuildCropTargetId(StardewValley.GameLocation location, int x, int y, string? seedId, string? harvestId)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{seedId ?? ""}:{harvestId ?? ""}";
         return $"crop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";

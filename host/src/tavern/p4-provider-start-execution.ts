@@ -1,8 +1,8 @@
 import type { P4ProviderStartExecutionScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type {
   AttemptStartingTurn,
-  ChatTurnLedger,
   CancelledTurn,
+  ChatTurnLedger,
   CompletedTurn,
   FailedTurn,
   RunningTurn,
@@ -72,21 +72,21 @@ export async function runMountedP4ProviderStartLedger(
 }
 
 function isDeadlineExpired(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    /semantic_chat_runtime_p4_provider_start_deadline_expired/.test(error.message)
-  );
+  return error instanceof Error && /semantic_chat_runtime_p4_provider_start_deadline_expired/.test(error.message);
 }
 
 function requireAttemptStarting(
-  ledger: AttemptStartingTurn | RunningTurn,
+  ledger: AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn,
   operation: string,
 ): AttemptStartingTurn {
   if (ledger.status !== "attempt_starting") throw new Error(`p4_provider_start_unexpected_${operation}`);
   return ledger;
 }
 
-function requireRunning(ledger: AttemptStartingTurn | RunningTurn, operation: string): RunningTurn {
+function requireRunning(
+  ledger: AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn,
+  operation: string,
+): RunningTurn {
   if (ledger.status !== "running") throw new Error(`p4_provider_start_unexpected_${operation}`);
   return ledger;
 }
@@ -96,54 +96,26 @@ function requireCompleted(ledger: ChatTurnLedger, operation: string): CompletedT
   return ledger;
 }
 
-function requireCancelled(ledger: ChatTurnLedger): CancelledTurn {
-  if (ledger.status !== "cancelled") throw new Error("p5_presentation_unexpected_cancelled");
+function requireFailed(ledger: ChatTurnLedger, reasonCode: FailedTurn["reasonCode"]): FailedTurn {
+  if (ledger.status !== "failed" || ledger.reasonCode !== reasonCode)
+    throw new Error(`p4_p5_unexpected_failed_${reasonCode}`);
   return ledger;
 }
 
 function requireFailedNoVisiblePresentation(ledger: ChatTurnLedger): FailedTurn {
-  if (ledger.status !== "failed" || ledger.reasonCode !== "no_visible_presentation")
-    throw new Error("p5_presentation_unexpected_no_visible_presentation");
-  return ledger;
+  return requireFailed(ledger, "no_visible_presentation");
 }
 
 function isPresentationMissing(error: unknown): boolean {
   return error instanceof Error && /p5_presentation_completion_source_required/.test(error.message);
 }
 
-async function settleP5Winner(
-  scope: P4ProviderStartExecutionScope,
-  winner: ChatTurnLedger,
-): Promise<P4ProviderStartResult> {
-  switch (winner.status) {
-    case "cancel_claimed": {
-      const cancelled = requireCancelled(
-        await scope.transitionPresentation({
-          operation: "cancel",
-          cancelledAtMs: Date.now(),
-        }),
-      );
-      return { outcome: "cancelled", ledger: cancelled };
-    }
-    case "cancelled":
-      return { outcome: "cancelled", ledger: winner };
-    case "completion_claimed": {
-      const completed = requireCompleted(
-        await scope.transitionPresentation({
-          operation: "complete",
-          completedAtMs: Date.now(),
-        }),
-        "complete",
-      );
-      return { outcome: "completed", ledger: completed };
-    }
-    case "completed":
-      return { outcome: "completed", ledger: winner };
-    case "failed":
-      return { outcome: "failed", ledger: winner };
-    default:
-      throw new Error("p5_presentation_unexpected_cancellation_winner");
-  }
+async function currentTerminalResult(scope: P4ProviderStartExecutionScope): Promise<P4ProviderStartResult | undefined> {
+  const ledger = await scope.readCurrentTurnLedger();
+  if (ledger.status === "cancelled") return { outcome: "cancelled", ledger };
+  if (ledger.status === "completed") return { outcome: "completed", ledger };
+  if (ledger.status === "failed") return { outcome: "failed", ledger };
+  return undefined;
 }
 
 /**
@@ -157,13 +129,13 @@ async function settleP5Winner(
  *   -> first after_provider_response observation -> running linearization ->
  *   durable running write/read-back.
  *
- * A prompt settlement without an `after_provider_response` never creates a
- * `not_started`; the durable `armed` record remains and reopens uncertain.
- * There is no second Host invocation and no generation 2 on any path.
+ * A fulfilled prompt settlement without an `after_provider_response` never
+ * creates a `not_started`; the durable `armed` record remains and reopens
+ * uncertain. A rejected or synchronously thrown prompt persists `failed`, so
+ * the browser can reread the normal failure state and submit again. There is
+ * no second Host invocation and no generation 2 on any path.
  */
-export async function runMountedP4ProviderStart(
-  scope: P4ProviderStartExecutionScope,
-): Promise<P4ProviderStartResult> {
+export async function runMountedP4ProviderStart(scope: P4ProviderStartExecutionScope): Promise<P4ProviderStartResult> {
   // Pre-arm linearization: an expired or revoked admission rejects with zero
   // store mutation and no Host prompt invocation.
   scope.assertAdmission();
@@ -172,12 +144,10 @@ export async function runMountedP4ProviderStart(
     typeof runtimeSession.installTavernProviderStartObserver === "function"
       ? runtimeSession.installTavernProviderStartObserver
       : undefined;
-  const promptFn =
-    typeof runtimeSession.session?.prompt === "function" ? runtimeSession.session.prompt : undefined;
+  const promptFn = typeof runtimeSession.session?.prompt === "function" ? runtimeSession.session.prompt : undefined;
   let unregister: (() => void) | undefined;
-  let presentationActivation:
-    | Awaited<ReturnType<P4ProviderStartExecutionScope["activatePresentation"]>>
-    | undefined;
+  let presentationActivation: Awaited<ReturnType<P4ProviderStartExecutionScope["activatePresentation"]>> | undefined;
+  let releaseActivePrompt: (() => void) | undefined;
   let promptPromise: Promise<void> | undefined;
   let observationSettled = false;
   const observationReady = new Promise<"success" | "error">((resolve) => {
@@ -193,7 +163,7 @@ export async function runMountedP4ProviderStart(
       // Arm linearization: the exact session surface is unavailable before a
       // Host invocation, so the durable record may safely classify not_started.
       scope.assertAdmission();
-      const armed = requireAttemptStarting(
+      const _armed = requireAttemptStarting(
         await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() }),
         "arm",
       );
@@ -256,22 +226,32 @@ export async function runMountedP4ProviderStart(
     // The construction-time Chat gate is now already bound to this exact
     // invocation. Its companion_text callback remains behind the running
     // barrier until the observer transition below succeeds.
+    // Record the exact active prompt immediately before its one invocation so
+    // an authenticated Stop cannot abort a successor turn.
+    releaseActivePrompt = scope.beginActivePrompt();
     // Exactly one Host session.prompt invocation per exact attempt. Pi-owned
     // transport retries and agent-loop continuations are never counted or
-    // re-invoked by Host.
-    promptPromise = promptFn.call(runtimeSession.session, envelope, {
-      expandPromptTemplates: false,
-      source: "rpc",
-    }).then(
-      () => undefined,
-      () => {
-        // Settlement is never negative provider evidence; it must not create
-        // a not_started or an unhandled rejection.
-      },
-    );
+    // re-invoked by Host. Preserve its settlement class so provider rejection
+    // becomes the ordinary durable failure outcome rather than an uncertain
+    // queued turn; a synchronous throw is equivalent to rejection.
+    const settlePrompt = (): Promise<"fulfilled" | "rejected"> => {
+      try {
+        return promptFn.call(runtimeSession.session, envelope, {
+          expandPromptTemplates: false,
+          source: "rpc",
+        }).then(
+          () => "fulfilled" as const,
+          () => "rejected" as const,
+        );
+      } catch {
+        return Promise.resolve("rejected");
+      }
+    };
+    const promptSettled = settlePrompt();
+    promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([
       observationReady.then((statusClass) => ({ phase: "observation" as const, statusClass })),
-      promptPromise.then(() => ({ phase: "prompt" as const })),
+      promptSettled.then((settlement) => ({ phase: "prompt" as const, settlement })),
     ]);
     if (first.phase === "observation") {
       // Running linearization: a late/expired observer authorizes no running
@@ -300,25 +280,35 @@ export async function runMountedP4ProviderStart(
         throw error;
       }
       presentationActivation?.resolveRunning();
-      await promptPromise;
+      const settlement = await promptSettled;
       // Settlement closes new tool admissions and drains callbacks that have
       // already won their presentation reservation. Terminalization below is
       // based solely on the durable ledger CAS, never on gate-local state.
       await presentationActivation?.deactivate();
       presentationActivation = undefined;
-      const winner = await scope.finalizeCancellation();
-      if (winner !== undefined) return await settleP5Winner(scope, winner);
+      const terminal = await currentTerminalResult(scope);
+      if (terminal !== undefined) return terminal;
+      if (settlement === "rejected") {
+        const failed = requireFailed(
+          await scope.transitionPresentation({
+            operation: "fail",
+            reasonCode: "runtime_unavailable",
+            failedAtMs: Date.now(),
+          }),
+          "runtime_unavailable",
+        );
+        return { outcome: "failed", ledger: failed };
+      }
       try {
         await scope.transitionPresentation({
           operation: "claim_completion",
           claimedAtMs: Date.now(),
         });
       } catch (error) {
-        // STOP can win between the first winner read and this completion CAS.
-        // Re-read its durable result before treating the absence of a committed
-        // bubble as the terminal no-visible-presentation case.
-        const racedWinner = await scope.finalizeCancellation();
-        if (racedWinner !== undefined) return await settleP5Winner(scope, racedWinner);
+        // Ordinary SQLite Stop may win between the terminal read and this
+        // completion transition. Reread it before classifying no presentation.
+        const terminal = await currentTerminalResult(scope);
+        if (terminal !== undefined) return terminal;
         if (!isPresentationMissing(error)) throw error;
         const failed = requireFailedNoVisiblePresentation(
           await scope.transitionPresentation({
@@ -338,11 +328,31 @@ export async function runMountedP4ProviderStart(
       );
       return { outcome: "completed", ledger: completed };
     }
-    // Prompt settlement without after_provider_response: no new durable write.
+    // A provider rejection without observer is an ordinary terminal failure;
+    // a fulfilled settlement without observer remains uncertain because Pi may
+    // have run without producing a visible response observation.
+    if (first.settlement === "rejected") {
+      // An ordinary Stop may have committed the durable terminal winner while
+      // aborting the prompt. Never overwrite it with transport failure.
+      const terminal = await currentTerminalResult(scope);
+      if (terminal !== undefined) return terminal;
+      const observedAtMs = Date.now();
+      const failed = requireFailed(
+        await scope.transitionStore({
+          operation: "fail",
+          reasonCode: "runtime_unavailable",
+          observedAtMs,
+          failedAtMs: observedAtMs,
+        }),
+        "runtime_unavailable",
+      );
+      return { outcome: "failed", ledger: failed };
+    }
     return { outcome: "armed", ledger: armed };
   } finally {
     unregister?.();
     if (promptPromise !== undefined) await promptPromise;
+    releaseActivePrompt?.();
     if (presentationActivation !== undefined) await presentationActivation.deactivate();
   }
 }

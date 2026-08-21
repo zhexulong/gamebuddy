@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { checkTavernReleasePrerequisites } from "./check-tavern-release-prerequisites.mjs";
 
 export const TAVERN_LIVE_RECORD_SCHEMA_VERSION = 1;
@@ -97,7 +97,7 @@ export async function runTavernReleaseLiveGate({ record, prerequisites = checkTa
       "chat_thread_id",
       "surface_session_id",
     ]) {
-      check(opaque(metadata[field]), "metadata_" + field, `metadata_${field}_must_be_opaque_id`, checks);
+      check(opaque(metadata[field]), `metadata_${field}`, `metadata_${field}_must_be_opaque_id`, checks);
     }
     check(
       typeof metadata.started_at === "string" && !Number.isNaN(Date.parse(metadata.started_at)),
@@ -120,7 +120,7 @@ export async function runTavernReleaseLiveGate({ record, prerequisites = checkTa
     ]) {
       check(
         typeof metadata[field] === "string" && HASH.test(metadata[field]),
-        "metadata_" + field,
+        `metadata_${field}`,
         `metadata_${field}_must_be_sha256`,
         checks,
       );

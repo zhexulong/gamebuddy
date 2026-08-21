@@ -1,22 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, resolveLocale } from "../i18n";
 import {
-  createReferencePipelineApi,
-  TavernProblemError,
-  TavernProtocolError,
   type BrowserDraftV1,
   type BrowserEventV1,
   type BrowserTurnV1,
+  createReferencePipelineApi,
+  TavernProblemError,
+  TavernProtocolError,
   type TavernStateSnapshotV1,
 } from "../reference-pipeline-api";
 import {
   applyStatus,
   createReferencePipelineSession,
-  pendingSubmission,
-  ReferencePipelineSessionError,
   type PendingSubmission,
+  pendingSubmission,
   type ReferencePipelineSession,
+  ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
 import { Composer } from "./Composer";
 import { ProblemView } from "./ProblemView";
@@ -60,7 +60,10 @@ type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
 function newIdempotencyKey(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 function terminalTurn(turn: BrowserTurnV1 | null): boolean {
@@ -77,10 +80,10 @@ export function ReferenceApp() {
   const pollActiveRef = useRef(false);
   const eventSourceRef = useRef<{ close(): void } | null>(null);
 
-  const commit = (next: ViewState): void => {
+  const commit = useCallback((next: ViewState): void => {
     viewRef.current = next;
     setView(next);
-  };
+  }, []);
 
   const labels = () => {
     const locale = view.kind === "ready" ? view.locale : localeRef.current;
@@ -134,7 +137,9 @@ export function ReferenceApp() {
       active = false;
       cancelledRef.current = true;
     };
-  }, []);
+  }, [commit]);
+
+  const eventStreamEpoch = view.kind === "ready" ? view.session.snapshot.eventStream?.epoch : undefined;
 
   useEffect(() => {
     if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return;
@@ -148,28 +153,49 @@ export function ReferenceApp() {
       eventSourceRef.current = null;
     };
 
-    const recover = async (): Promise<void> => {
+    let pendingResetCursor = false;
+    const recover = async (resetCursor = false): Promise<void> => {
+      if (resetCursor) pendingResetCursor = true;
       if (disposed || recovering) return;
       recovering = true;
       closeSource();
       try {
+        const doReset = pendingResetCursor;
+        pendingResetCursor = false;
         const snapshot = await apiRef.current.readState();
         const draft = await apiRef.current.readDraft();
         if (disposed) return;
         const current = viewRef.current;
         if (current.kind !== "ready") return;
-        const next = current.session.applySnapshot(snapshot);
-        if (snapshot.chat === null || draft.revision !== snapshot.chat.draft.revision || (draft.text !== null) !== snapshot.chat.draft.present) {
+        const epochChanged = snapshot.eventStream?.epoch !== current.session.snapshot.eventStream?.epoch;
+        let next = current.session.applySnapshot(snapshot);
+        if (
+          snapshot.chat === null ||
+          draft.revision !== snapshot.chat.draft.revision ||
+          (draft.text !== null) !== snapshot.chat.draft.present
+        ) {
           throw new ReferencePipelineSessionError("state_reconciliation_required");
         }
-        // Keep the last received SSE cursor during recovery. Advancing it from
-        // /state would skip events published between disconnect and reconnect.
+        // Ordinary transport loss preserves the last received cursor so that
+        // events published between disconnect and reconnect replay. A resync
+        // control event (or changed stream epoch) proves that cursor is no
+        // longer admissible: /state then becomes authoritative for both the
+        // reconnect cursor and the volatile sequence checkpoint.
+        if (doReset || epochChanged) {
+          if (snapshot.eventStream === null) throw new ReferencePipelineSessionError("stream_resync_required");
+          cursor = snapshot.eventStream.cursor;
+          next = next.resetEventCheckpoint();
+        }
         commit({ kind: "ready", session: next, draft, locale: current.locale });
       } catch (error) {
         if (!disposed) commit(problemView(error, messages(localeRef.current)));
       } finally {
         recovering = false;
-        if (!disposed && viewRef.current.kind === "ready") connect();
+        if (pendingResetCursor && !disposed) {
+          void recover(true);
+        } else if (!disposed && viewRef.current.kind === "ready") {
+          connect();
+        }
       }
     };
 
@@ -184,13 +210,20 @@ export function ReferenceApp() {
           const snapshot = await apiRef.current.readState();
           const draft = await apiRef.current.readDraft();
           if (disposed) return;
-          if (snapshot.chat === null || draft.revision !== snapshot.chat.draft.revision || (draft.text !== null) !== snapshot.chat.draft.present) {
+          if (
+            snapshot.chat === null ||
+            draft.revision !== snapshot.chat.draft.revision ||
+            (draft.text !== null) !== snapshot.chat.draft.present
+          ) {
             throw new ReferencePipelineSessionError("state_reconciliation_required");
           }
           const next = checkpointed.applySnapshot(snapshot);
           commit({ kind: "ready", session: next, draft, locale: current.locale });
         } catch {
-          await recover();
+          // Any invalid, non-contiguous, stale-generation, or explicit
+          // resync event invalidates the prior cursor. Recover only from the
+          // authoritative snapshot; never retry that cursor in a loop.
+          await recover(true);
         }
       });
     };
@@ -215,7 +248,7 @@ export function ReferenceApp() {
       disposed = true;
       closeSource();
     };
-  }, [view.kind]);
+  }, [view.kind, commit, eventStreamEpoch]);
 
   const startPolling = (): void => {
     if (pollActiveRef.current) return;
@@ -286,7 +319,9 @@ export function ReferenceApp() {
           return;
         }
         // Retryable transport/problem: exponential-ish backoff 1/2/4/5s.
-        const backoff = POLL_BACKOFF_MS[Math.min(attempts, POLL_BACKOFF_MS.length) - 1] ?? POLL_BACKOFF_MS[POLL_BACKOFF_MS.length - 1];
+        const backoff =
+          POLL_BACKOFF_MS[Math.min(attempts, POLL_BACKOFF_MS.length) - 1] ??
+          POLL_BACKOFF_MS[POLL_BACKOFF_MS.length - 1];
         schedule(backoff);
       }
     };
@@ -325,10 +360,7 @@ export function ReferenceApp() {
       // The 202 accepted representation is never appended locally; the
       // bounded /state + /status poll owns all subsequent read-back.
     } catch (error) {
-      if (
-        error instanceof TavernProblemError &&
-        !error.retryable
-      ) {
+      if (error instanceof TavernProblemError && !error.retryable) {
         // Durable rejection (draft/idempotency/selection conflict): the
         // attempt is not in flight; clear the pending key and surface the
         // problem. Never retry with the same key automatically.
@@ -342,10 +374,55 @@ export function ReferenceApp() {
     startPolling();
   };
 
+  const reread = async (): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    const snapshot = await apiRef.current.readState();
+    const draft = await apiRef.current.readDraft();
+    if (snapshot.chat === null || draft.revision !== snapshot.chat.draft.revision)
+      throw new ReferencePipelineSessionError("state_reconciliation_required");
+    commit({ ...current, session: current.session.applySnapshot(snapshot), draft });
+  };
+
+  const handleStop = async (): Promise<void> => {
+    const current = viewRef.current;
+    const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
+    const operation = current.kind === "ready"
+      ? current.session.snapshot.operations.find((op) => op.operationId === "chat.cancel")
+      : undefined;
+    if (current.kind !== "ready" || turn == null || operation?.availability !== "available" || !turn.canCancel) return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    try {
+      await apiRef.current.cancel(
+        turn.handle,
+        { apiVersion: 1, selectionGeneration: selection.generation },
+        current.session.snapshot.csrfToken,
+      );
+      await reread();
+    } catch (error) {
+      try {
+        await reread();
+      } catch {
+        commit(problemView(error, messages(current.locale)));
+      }
+    }
+  };
+
   const submitAvailable =
     view.kind === "ready" &&
     view.session.pending === null &&
     view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
+  const stopAvailable =
+    view.kind === "ready" &&
+    view.session.snapshot.chat?.turn?.canCancel === true &&
+    view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
+  const terminalTurnNotice =
+    view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
+      ? labels().chatStopped
+      : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed"
+        ? labels().chatFailed
+        : null;
 
   return (
     <div className="tavern-app-shell" data-profile="reference-pipeline">
@@ -373,6 +450,9 @@ export function ReferenceApp() {
               chatTitle={view.session.snapshot.chat.title}
               labels={labels()}
             />
+            {terminalTurnNotice !== null && (
+              <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>
+            )}
             <section className="reference-draft-section" aria-label={labels().savedDraft}>
               {view.session.snapshot.chat.draft.present && view.draft.text !== null ? (
                 <p>{view.draft.text}</p>
@@ -386,11 +466,10 @@ export function ReferenceApp() {
               onSend={() => {
                 void handleSend();
               }}
-              // The reference profile mounts no chat.cancel operation, so the
-              // stop surface is never enabled; isGenerating stays false and
-              // the built-in stop button is never rendered.
-              onStop={() => undefined}
-              isGenerating={false}
+              onStop={() => {
+                void handleStop();
+              }}
+              isGenerating={stopAvailable}
               disabled={!submitAvailable}
               labels={labels()}
             />

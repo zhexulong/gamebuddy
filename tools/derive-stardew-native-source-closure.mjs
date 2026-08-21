@@ -2,9 +2,9 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { collectCSharpSources, fileSha256, sourceManifestSha256 } from "./lib/stardew-native-source-attestation.mjs";
 import { validateNativeSourceClosure } from "./lib/stardew-native-source-closure.mjs";
 import { validateNativeTransitionFamilyUniverse } from "./lib/stardew-native-transition-family-universe.mjs";
-import { collectCSharpSources, fileSha256, sourceManifestSha256 } from "./lib/stardew-native-source-attestation.mjs";
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");

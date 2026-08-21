@@ -1,0 +1,55 @@
+using FluentAssertions;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Protocol;
+using Xunit;
+
+namespace GameBuddy.Stardew.Core.Tests;
+
+public sealed class BridgeProtocolSerializationTests
+{
+    private static readonly BridgeScope SampleScope = new("stardew", "save_1", "world_1", "player_1", "companion_1");
+
+    [Fact]
+    public void TryDeserializeExecutionRequest_ValidPayload_DeserializesCorrectly()
+    {
+        var request = new BridgeExecutionRequest("req_100", "idemp_100", "till_soil", new BridgeExecutionArgs { X = 12f, Y = 34f }, 1, 5000);
+        var envelope = new BridgeEnvelope<BridgeExecutionRequest>(1, "msg_1", "corr_1", 1000L, SampleScope, "execution_request", request);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue();
+        serializeReason.Should().Be("accepted");
+
+        bool deserialized = BridgeProtocol.TryDeserializeExecutionRequest(json, out var roundTripEnvelope, out string deserializeReason);
+        deserialized.Should().BeTrue();
+        deserializeReason.Should().Be("accepted");
+        roundTripEnvelope.Should().NotBeNull();
+        roundTripEnvelope!.Payload.Action.Should().Be("till_soil");
+        roundTripEnvelope.Payload.Args.X.Should().Be(12f);
+        roundTripEnvelope.Payload.Args.Y.Should().Be(34f);
+    }
+
+    [Fact]
+    public void TryDeserializeExecutionRequest_CorruptedEnvelope_FailsClosedWithInvalidEnvelope()
+    {
+        string malformedJson = "{\"protocolVersion\": 1, \"type\": \"execution_request\", \"payload\": {}}";
+        bool deserialized = BridgeProtocol.TryDeserializeExecutionRequest(malformedJson, out var envelope, out string reasonCode);
+
+        deserialized.Should().BeFalse();
+        reasonCode.Should().Be("invalid_envelope");
+        envelope.Should().BeNull();
+    }
+
+    [Fact]
+    public void TryDeserializeExecutionReceiptQuery_ValidQuery_DeserializesCorrectly()
+    {
+        var query = new BridgeExecutionReceiptQuery("req_100", "idemp_100");
+        var envelope = new BridgeEnvelope<BridgeExecutionReceiptQuery>(1, "msg_1", "corr_1", 1000L, SampleScope, "execution_receipt_query", query);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out _).Should().BeTrue();
+        bool deserialized = BridgeProtocol.TryDeserializeExecutionReceiptQuery(json, out var roundTrip, out string reason);
+
+        deserialized.Should().BeTrue();
+        reason.Should().Be("accepted");
+        roundTrip!.Payload.RequestId.Should().Be("req_100");
+        roundTrip.Payload.IdempotencyKey.Should().Be("idemp_100");
+    }
+}

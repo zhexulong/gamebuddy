@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { summarizeRuntimeAttestation, validateRuntimeAttestation } from "./stardew-navigation-p4-runtime-validator.mjs";
+
 const terminal = (state, detail) => ({
   artifactKind: "stardew_navigation_p4_runtime_attestation",
   schemaVersion: 2,
@@ -176,8 +177,9 @@ test("rejects incomplete WorldMap proof, nonordinary location, raw sensitive fie
     false,
   );
   assert.equal(
-    validateRuntimeAttestation(terminal("world_map_completed", { general: { ...general, mineWorldMapNameMatchesCanonical: false } }))
-      .valid,
+    validateRuntimeAttestation(
+      terminal("world_map_completed", { general: { ...general, mineWorldMapNameMatchesCanonical: false } }),
+    ).valid,
     false,
   );
   assert.equal(

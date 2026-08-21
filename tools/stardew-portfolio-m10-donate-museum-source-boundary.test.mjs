@@ -6,9 +6,17 @@ import path from "node:path";
 import test from "node:test";
 import {
   ANCHORS,
+  actionContractAuthorityHash,
+  assertContainedNoReparse,
+  assertNoReparseAncestors,
+  assertNoReparsePoint,
   BLOCKER_CODE,
+  configurationDigest,
+  derive,
   NON_CLAIM,
   OPTIONS,
+  readContainedFile,
+  resolveLockedToolPath,
   TARGET_LENGTH,
   TARGET_SHA256,
   TOOL_CLOSURE_SHA256,
@@ -16,19 +24,12 @@ import {
   TOOL_LAUNCHER_SHA256,
   TOOL_PAYLOAD_RELATIVE_PATH,
   TOOL_VERSION,
-  actionContractAuthorityHash,
-  assertContainedNoReparse,
-  assertNoReparseAncestors,
-  assertNoReparsePoint,
-  configurationDigest,
-  derive,
-  readContainedFile,
-  resolveLockedToolPath,
   validate,
   verifySnapshot,
   verifyToolClosure,
   writeVerifiedAtomicJson,
 } from "./lib/stardew-portfolio-m10-donate-museum-source-boundary.mjs";
+
 const contract = await readFile("tools/stardew-portfolio-m10-museum-action-contract.json");
 const contractHash = actionContractAuthorityHash(contract);
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -77,9 +78,9 @@ test("M10 boundary rejects a deleted unanchored source file from the complete ma
   candidate.sourceManifest.files.pop();
   candidate.sourceManifest.fileCount--;
   candidate.sourceManifest.sha256 = digest(
-    candidate.sourceManifest.files
+    `${candidate.sourceManifest.files
       .map((file) => `${file.relativePath}\t${file.lengthBytes}\t${file.sha256}`)
-      .join("\n") + "\n",
+      .join("\n")}\n`,
   );
   assert.throws(() => validate(candidate, contractHash, sources, "/decompile"), { code: "source_manifest_incomplete" });
 });

@@ -1,11 +1,11 @@
 import type { ChatRuntimeBindingExecution } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import {
-  materializeAndPublishChatStableContext,
-  materializeExactChatRuntime,
   type ChatRuntimeDisposal,
   type ChatRuntimeMaterializer,
   type ChatRuntimeStableContextLifecycle,
+  materializeAndPublishChatStableContext,
+  materializeExactChatRuntime,
 } from "./continuity-semantic-chat-runtime-materializer.internal.js";
 
 /** Test-build-only runtime factory. Production has no caller-injectable factory seam. */

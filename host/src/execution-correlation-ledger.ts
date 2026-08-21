@@ -1,4 +1,4 @@
-import { type ExecutionReceipt, type ExecutionState } from "./protocol.js";
+import type { ExecutionReceipt, ExecutionState } from "./protocol.js";
 
 export type ExecutionCorrelationOwner = Readonly<{
   ownerId: string;
@@ -153,8 +153,9 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
   uncertainDispatches(): readonly RecoverableExecutionDispatch[] {
     return Object.freeze(
       [...this.#byRequestId.values()]
-        .filter((correlation): correlation is Correlation & { idempotencyKey: string } =>
-          correlation.uncertain && validText(correlation.idempotencyKey ?? ""),
+        .filter(
+          (correlation): correlation is Correlation & { idempotencyKey: string } =>
+            correlation.uncertain && validText(correlation.idempotencyKey ?? ""),
         )
         .map(({ ownerId, epoch, requestId, idempotencyKey }) =>
           Object.freeze({ ownerId, epoch, requestId, idempotencyKey }),

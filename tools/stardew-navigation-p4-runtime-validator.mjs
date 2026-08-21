@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+
 const SHA256 = /^[a-f0-9]{64}$/;
 const TERMINAL = new Set([
   "world_map_completed",

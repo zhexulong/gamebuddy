@@ -1,9 +1,10 @@
 import {
+  type ActionPolicy,
   DEFAULT_ACTION_POLICY,
   parseActionPolicy,
   STARDEW_ACTION_REGISTRY,
-  type ActionPolicy,
 } from "./action-registry.js";
+import { createStardewActionTools, createStardewObservationTools } from "./game-tools.js";
 import {
   createIntegrationActionCatalog,
   DEFAULT_INTEGRATION_ACTION_POLICY,
@@ -16,9 +17,8 @@ import {
   type IntegrationStatusDetails,
   type IntegrationToolContext,
 } from "./integration-module.js";
-import { createStardewActionTools, createStardewObservationTools } from "./game-tools.js";
-import { createStardewKnowledgeTools, type KnowledgeBundle } from "./knowledge.js";
 import type { CompanionIntegration } from "./integration-types.js";
+import { createStardewKnowledgeTools, type KnowledgeBundle } from "./knowledge.js";
 import type { ExecutionReceipt, Scope } from "./protocol.js";
 
 const STARDew_ACTION_ENTRIES = STARDEW_ACTION_REGISTRY.map((entry) => ({ ...entry }));
@@ -431,7 +431,7 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
   const expectedKeys = ["target", "slot", "can", "water_before", "water_after", "water_max"];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
-  const slot = integerEvidenceValue(evidence.slot);
+  const _slot = integerEvidenceValue(evidence.slot);
   const before = integerEvidenceValue(evidence.water_before);
   const after = integerEvidenceValue(evidence.water_after);
   const max = integerEvidenceValue(evidence.water_max);
@@ -461,7 +461,7 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
-  const slot = integerEvidenceValue(evidence.slot);
+  const _slot = integerEvidenceValue(evidence.slot);
   return (
     hasOpaqueIdEvidenceValue(evidence.target) &&
     evidence.tool === "pickaxe" &&
@@ -620,7 +620,7 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
-  const slot = integerEvidenceValue(evidence.slot);
+  const _slot = integerEvidenceValue(evidence.slot);
   return (
     hasOpaqueIdEvidenceValue(evidence.target) &&
     evidence.tool === "axe" &&
@@ -876,13 +876,24 @@ function hasPlaceCrabPotCompletionEvidence(detail: string): boolean {
  */
 function hasCrabPotOverlayEvidence(value: string | undefined): boolean {
   if (value === undefined) return false;
-  return /^(?:0|[1-9][0-9]*),(?:0|[1-9][0-9]*):[1-9][0-9]*(?:\|(?:0|[1-9][0-9]*),(?:0|[1-9][0-9]*):[1-9][0-9]*)*$/.test(value);
+  return /^(?:0|[1-9][0-9]*),(?:0|[1-9][0-9]*):[1-9][0-9]*(?:\|(?:0|[1-9][0-9]*),(?:0|[1-9][0-9]*):[1-9][0-9]*)*$/.test(
+    value,
+  );
 }
 
 function hasMachineInspectCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
-  const expectedKeys = ["location", "target", "tile", "machine", "ready_for_harvest", "minutes_until_ready", "held", "last_input"];
+  const expectedKeys = [
+    "location",
+    "target",
+    "tile",
+    "machine",
+    "ready_for_harvest",
+    "minutes_until_ready",
+    "held",
+    "last_input",
+  ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
   const minutes = signedIntegerEvidenceValue(evidence.minutes_until_ready);

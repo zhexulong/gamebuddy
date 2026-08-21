@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { createServer, type Server, type Socket } from "node:net";
-import { PortfolioStardewBridgeClient } from "./portfolio-stardew-bridge.js";
+import test from "node:test";
 import {
   computePortfolioBindingHash,
   PORTFOLIO_INTEGRATION_ID,
   PORTFOLIO_MINE_LADDER_PHASES,
+  PORTFOLIO_SKIP_EVENT_PHASES,
   PORTFOLIO_SLEEP_DAY_PHASES,
   PORTFOLIO_TOPOLOGY,
   type PortfolioMessage,
 } from "./portfolio-protocol.js";
+import { PortfolioStardewBridgeClient } from "./portfolio-stardew-bridge.js";
 
 const scope = {
   integrationId: PORTFOLIO_INTEGRATION_ID,
@@ -189,7 +190,10 @@ function ladderReceipt(
     },
   };
 }
-function ladderSuccessReceipt(request: Record<string, any>, executionId = "execution_ladder_wire"): Record<string, any> {
+function ladderSuccessReceipt(
+  request: Record<string, any>,
+  executionId = "execution_ladder_wire",
+): Record<string, any> {
   // Host wire-consumer characterization shape only: a protocol-shaped test
   // server frame, not a C# producer, native action, SMAPI/Game1, or live
   // evidence. Mirrors the structurally valid succeeded receipt contract in
@@ -714,6 +718,7 @@ test("M8 probe correlates facts and cannot become a mutation request", async () 
                 currentFloor: 5,
                 lowestMineLevel: 10,
                 targetUnlocked: true,
+                elevatorObserved: true,
                 selectedCheckpoint: request.payload.selectedCheckpoint,
               },
             }),
@@ -1745,7 +1750,8 @@ test("Entry cancel write callback error closes pending lifecycle exactly once", 
               payload: { sessionId: "session_entry_write_error", bindingGeneration: 1, bindingHash: scope.bindingHash },
             }),
           );
-        else if (request.type === "observe_request") socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
+        else if (request.type === "observe_request")
+          socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
         else if (request.type === "enter_mine_request")
           socket.write(
             frame({
@@ -1768,17 +1774,26 @@ test("Entry cancel write callback error closes pending lifecycle exactly once", 
     await new Promise<void>((resolve, reject) =>
       server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolve()).once("error", reject),
     );
-    const client = await (PortfolioStardewBridgeClient as any).connectForTest(scope, pipeName, token, (socket: Socket) => ({
-      write(frameBytes: Uint8Array, callback: (error?: Error | null) => void): boolean {
-        const length = Buffer.from(frameBytes).readInt32LE(0);
-        const outbound = JSON.parse(Buffer.from(frameBytes).subarray(4, length + 4).toString()) as PortfolioMessage;
-        if (outbound.type === "enter_mine_cancel_request") {
-          callback(new Error("controlled_cancel_write_error"));
-          return true;
-        }
-        return socket.write(frameBytes, callback);
-      },
-    }));
+    const client = await (PortfolioStardewBridgeClient as any).connectForTest(
+      scope,
+      pipeName,
+      token,
+      (socket: Socket) => ({
+        write(frameBytes: Uint8Array, callback: (error?: Error | null) => void): boolean {
+          const length = Buffer.from(frameBytes).readInt32LE(0);
+          const outbound = JSON.parse(
+            Buffer.from(frameBytes)
+              .subarray(4, length + 4)
+              .toString(),
+          ) as PortfolioMessage;
+          if (outbound.type === "enter_mine_cancel_request") {
+            callback(new Error("controlled_cancel_write_error"));
+            return true;
+          }
+          return socket.write(frameBytes, callback);
+        },
+      }),
+    );
     await client.observe();
     const started = await client.startMineEntry(entryRequest() as any);
     let terminalRejections = 0;
@@ -1802,6 +1817,59 @@ test("Entry cancel write callback error closes pending lifecycle exactly once", 
       authenticated: false,
       snapshot: null,
       latestReasonCode: "pipe_write_error",
+    });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("Entry request with a stuck local write callback closes rather than hanging the runner", async () => {
+  const pipeName = `gamebuddy-stardew-portfolio-entry-write-timeout_${process.pid}_${Date.now()}`;
+  const server = createServer((socket) => {
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < length + 4) return;
+        const request = JSON.parse(buffer.subarray(4, length + 4).toString()) as PortfolioMessage;
+        buffer = buffer.subarray(length + 4);
+        if (request.type === "hello")
+          socket.write(
+            frame({
+              ...request,
+              type: "hello_ack",
+              payload: { sessionId: "session_entry_write_timeout", bindingGeneration: 1, bindingHash: scope.bindingHash },
+            }),
+          );
+        else if (request.type === "observe_request") socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
+      }
+    });
+  });
+  try {
+    await new Promise<void>((resolve, reject) =>
+      server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolve()).once("error", reject),
+    );
+    const client = await (PortfolioStardewBridgeClient as any).connectForTest(
+      scope,
+      pipeName,
+      token,
+      (socket: Socket) => ({
+        write(frameBytes: Uint8Array, callback: (error?: Error | null) => void): boolean {
+          const length = Buffer.from(frameBytes).readInt32LE(0);
+          const outbound = JSON.parse(Buffer.from(frameBytes).subarray(4, length + 4).toString()) as PortfolioMessage;
+          if (outbound.type === "enter_mine_request") return true;
+          return socket.write(frameBytes, callback);
+        },
+      }),
+    );
+    await client.observe();
+    await assert.rejects(() => client.startMineEntry(entryRequest() as any), /portfolio_pipe_write_timeout/);
+    assert.deepEqual(client.state, {
+      connected: false,
+      authenticated: false,
+      snapshot: null,
+      latestReasonCode: "pipe_write_timeout",
     });
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -1849,7 +1917,9 @@ test("P1 ladder wire consumer characterizes outbound request, accepted phase, an
               },
             }),
           );
-          socket.write(frame({ ...request, type: "mine_ladder_receipt", payload: ladderSuccessReceipt(request.payload) }));
+          socket.write(
+            frame({ ...request, type: "mine_ladder_receipt", payload: ladderSuccessReceipt(request.payload) }),
+          );
         }
       }
     });
@@ -1923,7 +1993,8 @@ test("P1 ladder wire consumer fails closed on a delayed duplicate terminal after
               payload: { sessionId: "session_ladder_duplicate", bindingGeneration: 1, bindingHash: scope.bindingHash },
             }),
           );
-        else if (request.type === "observe_request") socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
+        else if (request.type === "observe_request")
+          socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
         else if (request.type === "mine_ladder_request") {
           const receipt = ladderSuccessReceipt(request.payload, "execution_ladder_duplicate");
           socket.write(
@@ -2036,14 +2107,270 @@ test("P1 ladder wire consumer fails closed on a mismatched lifecycle receipt aft
       settlements++;
       return receipt;
     });
-    await assert.rejects(
-      () => terminal,
-      /portfolio_bridge_closed:portfolio_mine_elevator_correlation_mismatch/,
-    );
+    await assert.rejects(() => terminal, /portfolio_bridge_closed:portfolio_mine_elevator_correlation_mismatch/);
     assert.equal(settlements, 0);
     assert.equal(client.state.connected, false);
     assert.equal(client.state.authenticated, false);
     assert.equal(client.state.latestReasonCode, "portfolio_mine_elevator_correlation_mismatch");
+  } finally {
+    client?.close();
+    await close(server);
+  }
+});
+
+function skipEventRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: "skip_event",
+    requestId: "request_skip_test",
+    traceId: "trace_skip_test",
+    idempotencyKey: "idem_skip_test",
+    expectedRevision: 1,
+    deadlineMs: Date.now() + 10_000,
+    cancellationToken: "cancel_skip_test_1",
+    scope,
+    ...overrides,
+  };
+}
+function skipEventSuccessReceipt(
+  request: Record<string, any>,
+  executionId = "execution_skip_wire",
+): Record<string, any> {
+  // Host wire-consumer characterization shape only: a protocol-shaped test
+  // server frame, not a C# producer, native action, SMAPI/Game1, or live
+  // evidence. Mirrors the structurally valid succeeded skip_event receipt
+  // contract in portfolio-protocol.test.ts with wire phase names.
+  const phases = [
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId,
+      phase: "fresh_observed",
+      revision: 1,
+      reasonCode: "fresh_observed",
+    },
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId,
+      phase: "accepted",
+      revision: 1,
+      reasonCode: "accepted",
+    },
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId,
+      phase: "native_skip",
+      revision: 2,
+      reasonCode: "skip_event_native_skip",
+    },
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId,
+      phase: "postcondition",
+      revision: 3,
+      reasonCode: "postcondition_observed",
+    },
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId,
+      phase: "terminal",
+      revision: 3,
+      reasonCode: "skip_event_completed",
+    },
+  ];
+  return {
+    requestId: request.requestId,
+    traceId: request.traceId,
+    executionId,
+    state: "succeeded",
+    revision: 3,
+    reasonCode: "skip_event_completed",
+    evidence: {
+      scope,
+      phaseTrace: phases,
+      eventObserved: true,
+      eventSkippable: true,
+      opaqueEventTarget: "spring_event_01",
+      nativeEventId: "event_01",
+      nativeSkipObserved: true,
+      eventCleared: true,
+      postEventStateClean: true,
+    },
+    postcondition: {
+      postEventStateClean: true,
+      freshObservation: true,
+      sameExecution: true,
+    },
+  };
+}
+
+test("P1 skip-event wire consumer characterizes outbound request, accepted phase, and exactly-once terminal settlement", async () => {
+  const pipeName = `gamebuddy-stardew-portfolio-skip-event-success_${process.pid}_${Date.now()}`;
+  const outbound: string[] = [];
+  let skipEventRequestFrame: Record<string, any> | undefined;
+  const server = createServer((socket) => {
+    socket.on("error", () => undefined);
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.length < length + 4) return;
+        const request = JSON.parse(buffer.subarray(4, length + 4).toString()) as PortfolioMessage;
+        buffer = buffer.subarray(length + 4);
+        outbound.push(request.type);
+        if (request.type === "hello")
+          socket.write(
+            frame({
+              ...request,
+              type: "hello_ack",
+              payload: { sessionId: "session_01", bindingGeneration: 1, bindingHash: scope.bindingHash },
+            }),
+          );
+        else if (request.type === "observe_request")
+          socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
+        else if (request.type === "skip_event_request") {
+          skipEventRequestFrame = request;
+          socket.write(
+            frame({
+              ...request,
+              type: "skip_event_phase",
+              payload: {
+                requestId: request.payload.requestId,
+                traceId: request.payload.traceId,
+                executionId: "execution_skip_wire",
+                phase: "accepted",
+                revision: 1,
+                reasonCode: "accepted",
+              },
+            }),
+          );
+          socket.write(
+            frame({ ...request, type: "skip_event_receipt", payload: skipEventSuccessReceipt(request.payload) }),
+          );
+        }
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolve()).once("error", reject),
+  );
+  let client: PortfolioStardewBridgeClient | undefined;
+  try {
+    client = await PortfolioStardewBridgeClient.connect(scope, pipeName, token);
+    await client.observe();
+    const request = skipEventRequest();
+    const started = await client.startSkipEvent(request as any);
+    // Assert the actual outbound skip_event_request frame shape.
+    assert.equal(skipEventRequestFrame?.type, "skip_event_request");
+    assert.deepEqual(skipEventRequestFrame?.payload, request);
+    assert.deepEqual(skipEventRequestFrame?.scope, scope);
+    // Accepted phase exposes the exact execution identity.
+    assert.equal(started.executionId, "execution_skip_wire");
+    let settlements = 0;
+    const terminal = started.terminal.then((receipt) => {
+      settlements++;
+      return receipt;
+    });
+    const receipt = await terminal;
+    assert.equal(settlements, 1);
+    assert.equal(receipt.state, "succeeded");
+    assert.equal(receipt.reasonCode, "skip_event_completed");
+    assert.equal(receipt.executionId, "execution_skip_wire");
+    assert.equal(receipt.revision, 3);
+    assert.deepEqual(
+      receipt.evidence.phaseTrace.map(({ phase }) => phase),
+      [...PORTFOLIO_SKIP_EVENT_PHASES],
+    );
+    assert.equal(receipt.evidence.nativeSkipObserved, true);
+    assert.equal(receipt.evidence.eventCleared, true);
+    assert.equal(receipt.evidence.postEventStateClean, true);
+    assert.equal(receipt.postcondition.postEventStateClean, true);
+    assert.equal(receipt.postcondition.freshObservation, true);
+    assert.equal(receipt.postcondition.sameExecution, true);
+    // The original terminal settled exactly once and the authenticated
+    // consumer remains usable on the same pipe for a fresh round-trip.
+    assert.equal(client.state.connected, true);
+    assert.equal(client.state.authenticated, true);
+    const again = await client.observe();
+    assert.equal(again.state, "ready");
+    assert.deepEqual(outbound, ["hello", "observe_request", "skip_event_request", "observe_request"]);
+  } finally {
+    client?.close();
+    await close(server);
+  }
+});
+
+test("P1 skip-event wire consumer fails closed on an invalid succeed receipt after acceptance", async () => {
+  const pipeName = `gamebuddy-stardew-portfolio-skip-event-invalid_${process.pid}_${Date.now()}`;
+  const server = createServer((socket) => {
+    socket.on("error", () => undefined);
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.length < length + 4) return;
+        const request = JSON.parse(buffer.subarray(4, length + 4).toString()) as PortfolioMessage;
+        buffer = buffer.subarray(length + 4);
+        if (request.type === "hello")
+          socket.write(
+            frame({
+              ...request,
+              type: "hello_ack",
+              payload: { sessionId: "session_01", bindingGeneration: 1, bindingHash: scope.bindingHash },
+            }),
+          );
+        else if (request.type === "observe_request")
+          socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
+        else if (request.type === "skip_event_request") {
+          socket.write(
+            frame({
+              ...request,
+              type: "skip_event_phase",
+              payload: {
+                requestId: request.payload.requestId,
+                traceId: request.payload.traceId,
+                executionId: "execution_skip_invalid",
+                phase: "accepted",
+                revision: 1,
+                reasonCode: "accepted",
+              },
+            }),
+          );
+          // Structurally shaped succeed receipt with a broken cleanup/postcondition:
+          // after acceptance this must fail closed and reject the original
+          // terminal without resolving it.
+          const receipt = skipEventSuccessReceipt(request.payload, "execution_skip_invalid");
+          receipt.evidence.eventCleared = false;
+          receipt.evidence.postEventStateClean = false;
+          receipt.postcondition.postEventStateClean = false;
+          socket.write(frame({ ...request, type: "skip_event_receipt", payload: receipt }));
+        }
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolve()).once("error", reject),
+  );
+  let client: PortfolioStardewBridgeClient | undefined;
+  try {
+    client = await PortfolioStardewBridgeClient.connect(scope, pipeName, token);
+    await client.observe();
+    const started = await client.startSkipEvent(skipEventRequest() as any);
+    let settlements = 0;
+    const terminal = started.terminal.then((receipt) => {
+      settlements++;
+      return receipt;
+    });
+    await assert.rejects(() => terminal, /portfolio_bridge_closed:invalid_portfolio_skip_event_receipt/);
+    assert.equal(settlements, 0);
+    assert.equal(client.state.connected, false);
+    assert.equal(client.state.authenticated, false);
+    assert.equal(client.state.latestReasonCode, "invalid_portfolio_skip_event_receipt");
   } finally {
     client?.close();
     await close(server);

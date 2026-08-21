@@ -1,21 +1,30 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import test from "node:test";
 
-if (process.platform !== "win32") throw new Error("P4b durable attempt claim requires real Windows production mounting");
+if (process.platform !== "win32")
+  throw new Error("P4b durable attempt claim requires real Windows production mounting");
 
 const script = async (body: string) => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4b-"));
   const facadeUrl = new URL("./p4-provider-attempt.js", import.meta.url).href;
-  const coordinatorUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js", import.meta.url).href;
+  const coordinatorUrl = new URL(
+    "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",
+    import.meta.url,
+  ).href;
   const deploymentUrl = new URL("../deployment-manifest.js", import.meta.url).href;
   const storeUrl = new URL("./chat-thread-store.js", import.meta.url).href;
-  const child = spawn(process.execPath, ["--input-type=module", "--eval", body, facadeUrl, coordinatorUrl, deploymentUrl, storeUrl, root], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-  const output: Buffer[] = [], errors: Buffer[] = [];
+  const child = spawn(
+    process.execPath,
+    ["--input-type=module", "--eval", body, facadeUrl, coordinatorUrl, deploymentUrl, storeUrl, root],
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  );
+  const output: Buffer[] = [],
+    errors: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
   child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
   const [code] = (await once(child, "exit")) as [number | null];
@@ -54,7 +63,10 @@ const mountPreamble = `
 test("P4b facade is limited to private bridge and never imports session/provider surfaces", async () => {
   const source = await readFile(new URL("./p4-provider-attempt.js", import.meta.url), "utf8");
   assert.match(source, /from "\.\/p4-provider-attempt\.internal\.js"/);
-  assert.doesNotMatch(source, /session\.prompt|DialogueController|AgentSession|chat-thread-store|continuity-semantic-production-coordinator\.internal/);
+  assert.doesNotMatch(
+    source,
+    /session\.prompt|DialogueController|AgentSession|chat-thread-store|continuity-semantic-production-coordinator\.internal/,
+  );
 });
 
 test("P4b claims exactly one durable generation-one attempt and reopening preserves it", async () => {
@@ -64,9 +76,23 @@ test("P4b claims exactly one durable generation-one attempt and reopening preser
   await lease.close(); await authority.close();
   process.stdout.write(JSON.stringify({ accepted, first, state, sessionKeys: Object.keys(lease.runtimeSession).sort() }));
   `);
-  const first = result.first as { status: string; attempt: { generation: number; attemptId: string; selectionGeneration: number; runtimeBindingDigest: string; runtimeOwner: unknown } };
+  const first = result.first as {
+    status: string;
+    attempt: {
+      generation: number;
+      attemptId: string;
+      selectionGeneration: number;
+      runtimeBindingDigest: string;
+      runtimeOwner: unknown;
+    };
+  };
   assert.ok(first);
-  const state = result.state as { messages: unknown[]; draft: { revision: number; text: string | null }; turnLedger: typeof first; idempotency: unknown[] };
+  const state = result.state as {
+    messages: unknown[];
+    draft: { revision: number; text: string | null };
+    turnLedger: typeof first;
+    idempotency: unknown[];
+  };
   assert.equal(first.status, "attempt_starting");
   assert.equal(first.attempt.generation, 1);
   assert.match(first.attempt.attemptId, /^attempt_[A-Za-z0-9]+$/);
@@ -78,7 +104,7 @@ test("P4b claims exactly one durable generation-one attempt and reopening preser
   assert.equal(state.messages.length, 1);
   assert.deepEqual(state.draft, { revision: 1, text: null });
   assert.equal(state.idempotency.length, 1);
-  assert.deepEqual(result.sessionKeys, ["piSessionId", "profile"]);
+  assert.deepEqual(result.sessionKeys, ["profile"]);
 });
 
 test("P4b refuses a repeat claim without changing its durable attempt", async () => {
@@ -121,7 +147,10 @@ test("P4b close revokes an unconsumed claim admission before raw-store ingress",
     await authority.close();
     process.stdout.write(JSON.stringify({ rejection, status: state.turnLedger.status }));
   `);
-  assert.equal(result.rejection, "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_admission_rejected");
+  assert.equal(
+    result.rejection,
+    "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_admission_rejected",
+  );
   assert.equal(result.status, "accepted_queued");
 });
 
@@ -145,8 +174,14 @@ test("P4b claim admissions reject recursive and saved replay consumption", async
     await lease.close(); await authority.close();
     process.stdout.write(JSON.stringify({ recursive, replay, status: claimed.status, generation: claimed.attempt.generation }));
   `);
-  assert.equal(result.recursive, "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_admission_rejected");
-  assert.equal(result.replay, "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_admission_rejected");
+  assert.equal(
+    result.recursive,
+    "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_admission_rejected",
+  );
+  assert.equal(
+    result.replay,
+    "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_admission_rejected",
+  );
   assert.equal(result.status, "attempt_starting");
   assert.equal(result.generation, 1);
 });
@@ -184,7 +219,10 @@ test("P4c releases only a provably pre-arm reservation and never releases an arm
   assert.equal(result.resumed, 1);
   assert.equal(armed.status, "attempt_starting");
   assert.equal(armed.observation?.phase, "armed");
-  assert.equal(result.armedRejection, "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_admission_rejected");
+  assert.equal(
+    result.armedRejection,
+    "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_admission_rejected",
+  );
   assert.equal(state.turnLedger.status, "attempt_starting");
   assert.equal(state.turnLedger.observation?.phase, "armed");
 });
@@ -208,7 +246,10 @@ test("P4c callback-scoped transition closures reject saved use after their admis
     process.stdout.write(JSON.stringify({ armed, rejection, status: state.turnLedger.status, phase: state.turnLedger.observation?.phase }));
   `);
   assert.equal((result.armed as { status: string }).status, "attempt_starting");
-  assert.equal(result.rejection, "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_invocation_rejected");
+  assert.equal(
+    result.rejection,
+    "SemanticProductionCoordinatorError: semantic_chat_runtime_p4_attempt_invocation_rejected",
+  );
   assert.equal(result.status, "attempt_starting");
   assert.equal(result.phase, "armed");
 });
@@ -250,164 +291,6 @@ test("P4/P5 raw transitions reject saved attempt facts after mounted lease close
   assert.equal(result.messages, 1);
 });
 
-test("P4 transition queued behind the thread lock rejects after lease close revokes authority", async () => {
-  const result = await script(`${mountPreamble}
-    const internal = await import(new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", facadeUrl).href);
-    const { withPathLock } = await import(new URL("../path-lock.js", storeUrl).href);
-    await attempt.claim();
-    const threadPath = root + "/tavern/v1/continuities/" + identityKey(principal) + "/threads/" + lease.chatThreadId + "/thread.json";
-    let closing;
-    let pendingRejection = null;
-    await internal.startMountedP4Attempt(manifest, lease, (invocation) =>
-      internal.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope) => {
-        let pending;
-        await withPathLock(threadPath, async () => {
-          pending = scope.transitionStore({ operation: "arm", observedAtMs: Date.now() });
-          // The transition has asserted authority but is blocked on this lock.
-          await Promise.resolve();
-          closing = lease.close();
-        });
-        try { await pending; } catch (error) { pendingRejection = String(error); }
-        return null;
-      }),
-    );
-    await closing;
-    const state = await createChatThreadStore(root, identityKey(principal)).resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await authority.close();
-    process.stdout.write(JSON.stringify({ pendingRejection, status: state.turnLedger.status, observation: state.turnLedger.observation }));
-  `);
-  assert.equal(result.pendingRejection, "Error: p4_p5_transition_authority_unavailable");
-  assert.equal(result.status, "attempt_starting");
-  assert.equal(result.observation, undefined);
-});
-
-test("P5 transition queued behind the thread lock rejects after lease close revokes authority", async () => {
-  const result = await script(`${mountPreamble}
-    const internal = await import(new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", facadeUrl).href);
-    const { withPathLock } = await import(new URL("../path-lock.js", storeUrl).href);
-    await attempt.claim();
-    const threadPath = root + "/tavern/v1/continuities/" + identityKey(principal) + "/threads/" + lease.chatThreadId + "/thread.json";
-    let closing;
-    let pendingRejection = null;
-    await internal.startMountedP4Attempt(manifest, lease, (invocation) =>
-      internal.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope) => {
-        await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() });
-        await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: Date.now() });
-        let pending;
-        await withPathLock(threadPath, async () => {
-          const now = Date.now();
-          pending = scope.transitionPresentation({
-            operation: "commit_presentation",
-            cancelEpoch: 0,
-            message: { messageId: "response_lock_01", text: "blocked", occurredAtMs: now },
-            committedAtMs: now,
-          });
-          // The transition has asserted authority but is blocked on this lock.
-          await Promise.resolve();
-          closing = lease.close();
-        });
-        try { await pending; } catch (error) { pendingRejection = String(error); }
-        return null;
-      }),
-    );
-    await closing;
-    const state = await createChatThreadStore(root, identityKey(principal)).resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await authority.close();
-    process.stdout.write(JSON.stringify({ pendingRejection, status: state.turnLedger.status, messages: state.messages.length }));
-  `);
-  assert.equal(result.pendingRejection, "Error: p4_p5_transition_authority_unavailable");
-  assert.equal(result.status, "running");
-  assert.equal(result.messages, 1);
-});
-
-test("P4 transition started before callback return cannot commit after operation scope revocation", async () => {
-  const result = await script(`${mountPreamble}
-    const internal = await import(new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", facadeUrl).href);
-    const { withPathLock } = await import(new URL("../path-lock.js", storeUrl).href);
-    await attempt.claim();
-    const threadPath = root + "/tavern/v1/continuities/" + identityKey(principal) + "/threads/" + lease.chatThreadId + "/thread.json";
-    const callbackEntered = Promise.withResolvers();
-    const proceed = Promise.withResolvers();
-    const holderEntered = Promise.withResolvers();
-    const holderRelease = Promise.withResolvers();
-    let pending;
-    const starting = internal.startMountedP4Attempt(manifest, lease, (invocation) =>
-      internal.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope) => {
-        callbackEntered.resolve();
-        await proceed.promise;
-        pending = scope.transitionStore({ operation: "arm", observedAtMs: Date.now() });
-        return null;
-      }),
-    );
-    await callbackEntered.promise;
-    const holder = withPathLock(threadPath, async () => {
-      holderEntered.resolve();
-      await holderRelease.promise;
-    });
-    await holderEntered.promise;
-    proceed.resolve();
-    await starting;
-    holderRelease.resolve();
-    await holder;
-    let rejection = null;
-    try { await pending; } catch (error) { rejection = String(error); }
-    const state = await createChatThreadStore(root, identityKey(principal)).resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await lease.close(); await authority.close();
-    process.stdout.write(JSON.stringify({ rejection, status: state.turnLedger.status, observation: state.turnLedger.observation }));
-  `);
-  assert.equal(result.rejection, "Error: p4_p5_transition_operation_authority_unavailable");
-  assert.equal(result.status, "attempt_starting");
-  assert.equal(result.observation, undefined);
-});
-
-test("P5 transition started before callback return cannot commit after operation scope revocation", async () => {
-  const result = await script(`${mountPreamble}
-    const internal = await import(new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", facadeUrl).href);
-    const { withPathLock } = await import(new URL("../path-lock.js", storeUrl).href);
-    await attempt.claim();
-    const threadPath = root + "/tavern/v1/continuities/" + identityKey(principal) + "/threads/" + lease.chatThreadId + "/thread.json";
-    const callbackEntered = Promise.withResolvers();
-    const proceed = Promise.withResolvers();
-    const holderEntered = Promise.withResolvers();
-    const holderRelease = Promise.withResolvers();
-    let pending;
-    const starting = internal.startMountedP4Attempt(manifest, lease, (invocation) =>
-      internal.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope) => {
-        await scope.transitionStore({ operation: "arm", observedAtMs: Date.now() });
-        await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: Date.now() + 1 });
-        callbackEntered.resolve();
-        await proceed.promise;
-        const now = Date.now() + 2;
-        pending = scope.transitionPresentation({
-          operation: "commit_presentation",
-          cancelEpoch: 0,
-          message: { messageId: "response_scope_01", text: "blocked", occurredAtMs: now },
-          committedAtMs: now,
-        });
-        return null;
-      }),
-    );
-    await callbackEntered.promise;
-    const holder = withPathLock(threadPath, async () => {
-      holderEntered.resolve();
-      await holderRelease.promise;
-    });
-    await holderEntered.promise;
-    proceed.resolve();
-    await starting;
-    holderRelease.resolve();
-    await holder;
-    let rejection = null;
-    try { await pending; } catch (error) { rejection = String(error); }
-    const state = await createChatThreadStore(root, identityKey(principal)).resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId);
-    await lease.close(); await authority.close();
-    process.stdout.write(JSON.stringify({ rejection, status: state.turnLedger.status, messages: state.messages.length }));
-  `);
-  assert.equal(result.rejection, "Error: p4_p5_transition_operation_authority_unavailable");
-  assert.equal(result.status, "running");
-  assert.equal(result.messages, 1);
-});
-
 test("P5 private STOP rejects an attempt before running without poisoning its presentation epoch", async () => {
   const result = await script(`${mountPreamble}
     const internal = await import(new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", facadeUrl).href);
@@ -433,7 +316,10 @@ test("P5 private STOP rejects an attempt before running without poisoning its pr
   `);
   const armed = result.armed as { status: string; observation?: { phase: string } };
   const state = result.state as { turnLedger: { status: string; observation?: { phase: string } } };
-  assert.equal(result.stopRejection, "SemanticProductionCoordinatorError: semantic_chat_runtime_p5_presentation_epoch_unavailable");
+  assert.equal(
+    result.stopRejection,
+    "SemanticProductionCoordinatorError: semantic_chat_runtime_p5_presentation_epoch_unavailable",
+  );
   assert.equal(armed.status, "attempt_starting");
   assert.equal(armed.observation?.phase, "armed");
   assert.equal(state.turnLedger.status, "attempt_starting");

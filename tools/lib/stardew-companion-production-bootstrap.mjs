@@ -4,7 +4,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 /** Independent deterministic-only verifier; it has no game, runner, or mutation dependency. */
 export function verifyDeterministicBootstrapComposition(input) {
   try {
-    const { handoffs, hello, secondHello, evidence, challengeSha256, mutationCalls = 0 } = input ?? {};
+    const { handoffs, challengeSha256, mutationCalls = 0 } = input ?? {};
     if (!Array.isArray(handoffs) || handoffs.length !== 1 || mutationCalls !== 0 || !SHA256.test(challengeSha256 ?? ""))
       throw new Error();
     const handoff = handoffs[0];
@@ -49,6 +49,6 @@ export function verifyDeterministicBootstrapComposition(input) {
 export function blockedDeterministicBootstrapComposition() {
   return "deterministic_bootstrap_composition_blocked";
 }
-function digest(value) {
+function _digest(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }

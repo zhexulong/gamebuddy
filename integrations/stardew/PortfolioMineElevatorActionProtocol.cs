@@ -98,7 +98,7 @@ internal sealed record PortfolioMineElevatorProbe(
     int CurrentFloor,
     int LowestMineLevel,
     bool TargetUnlocked,
-    bool ElevatorInteractionAvailable,
+    bool ElevatorObserved,
     int SelectedCheckpoint)
 {
     [JsonExtensionData]
@@ -119,7 +119,7 @@ internal sealed record PortfolioMineElevatorFreshObservation(
     int LowestMineLevel,
     bool UnlockedLevelObserved,
     bool TargetUnlocked,
-    bool ElevatorInteractionAvailable,
+    bool ElevatorObserved,
     string OpaqueElevatorTarget)
 {
     [JsonExtensionData]

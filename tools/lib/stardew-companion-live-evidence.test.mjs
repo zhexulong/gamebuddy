@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { createHash } from "node:crypto";
+import test from "node:test";
 import {
   evaluateCompanionLiveEvidence,
   gateProductionCompanionLiveEvidence,
@@ -16,21 +16,19 @@ const identity = {
 };
 function artifact(events) {
   let previousSha256 = "0".repeat(64);
-  return (
-    events
-      .map((event, sequence) => {
-        const record = sealCompanionLiveEvidenceRecord({
-          schema: "gamebuddy-stardew-companion-live-evidence/v1",
-          sequence,
-          identity,
-          event,
-          previousSha256,
-        });
-        previousSha256 = record.recordSha256;
-        return JSON.stringify(record);
-      })
-      .join("\n") + "\n"
-  );
+  return `${events
+    .map((event, sequence) => {
+      const record = sealCompanionLiveEvidenceRecord({
+        schema: "gamebuddy-stardew-companion-live-evidence/v1",
+        sequence,
+        identity,
+        event,
+        previousSha256,
+      });
+      previousSha256 = record.recordSha256;
+      return JSON.stringify(record);
+    })
+    .join("\n")}\n`;
 }
 const event = (kind, source = hash("source"), values = {}) => ({
   kind,

@@ -1,8 +1,8 @@
 import {
-  consumeReservedChatRuntimeMaterialization,
-  releaseReservedChatRuntimeMaterialization,
   type ChatRuntimeBindingExecution,
+  consumeReservedChatRuntimeMaterialization,
   type ReservedChatRuntimeMaterialization,
+  releaseReservedChatRuntimeMaterialization,
 } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import type {
   ProductionChatRuntimePermit,
@@ -15,8 +15,6 @@ export type ChatRuntimeDisposal = Readonly<{
   session: Readonly<{ dispose(): void }>;
   /** Optional only for deterministic test fakes that never published stable context. */
   clearPublishedStableContext?: () => Promise<void>;
-  /** Clears the Chat-only exact-next Memory marker before Pi session disposal. */
-  clearPlayerMemoryNextRoundMarker?: () => void;
 }>;
 export type ChatRuntimeStableContextLifecycle = Readonly<{
   publishTavernStableContext(snapshot: unknown): Promise<void>;
@@ -69,14 +67,6 @@ export async function materializeAndPublishChatStableContext(
     return Object.freeze({
       session,
       clearPublishedStableContext,
-      ...(typeof (runtime as { clearPlayerMemoryNextRoundMarker?: unknown }).clearPlayerMemoryNextRoundMarker ===
-      "function"
-        ? {
-            clearPlayerMemoryNextRoundMarker: (
-              runtime as unknown as { clearPlayerMemoryNextRoundMarker(): void }
-            ).clearPlayerMemoryNextRoundMarker.bind(runtime),
-          }
-        : {}),
     });
   } catch (error) {
     const errors: unknown[] = [error];
@@ -230,13 +220,6 @@ export async function closeMaterializedChatRuntime(runtime: ChatRuntimeDisposal)
   if (typeof runtime.clearPublishedStableContext === "function") {
     try {
       await runtime.clearPublishedStableContext();
-    } catch (error) {
-      errors.push(error);
-    }
-  }
-  if (typeof runtime.clearPlayerMemoryNextRoundMarker === "function") {
-    try {
-      runtime.clearPlayerMemoryNextRoundMarker();
     } catch (error) {
       errors.push(error);
     }

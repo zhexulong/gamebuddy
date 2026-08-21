@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import nodeTest from "node:test";
 import { promisify } from "node:util";
 import {
@@ -41,7 +41,7 @@ async function fixture() {
   await writeFile(join(root, "src", "main.txt"), "base source\n");
   await writeFile(
     join(root, REQUIRED_INPUTS_PATH),
-    JSON.stringify({ schema: REQUIRED_INPUTS_SCHEMA, inputs: [] }) + "\n",
+    `${JSON.stringify({ schema: REQUIRED_INPUTS_SCHEMA, inputs: [] })}\n`,
   );
   await git(root, ["add", "."]);
   await git(root, ["commit", "-m", "base"]);
@@ -363,7 +363,7 @@ test("preserves a tracked deletion in its source identity and materialized index
     });
     await assert.rejects(readFile(join(materialized, "src", "main.txt")), /ENOENT/);
     const { stdout } = await git(materialized, ["status", "--porcelain=v1"]);
-    assert.match(stdout, /D  src\/main\.txt/);
+    assert.match(stdout, /D {2}src\/main\.txt/);
     await rm(snapshot, { recursive: true, force: true });
     await rm(materialized, { recursive: true, force: true });
   }));

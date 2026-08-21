@@ -124,7 +124,8 @@ test("collect-animal-product runner blocks on mismatched evidence", async () => 
         state: "succeeded",
         reasonCode: "animal_product_collected",
         evidence: {
-          detail: "target=other;produce=(O)999;tool=shears;produce_stack=2;produce_cleared=true;inventory_gained=true;animation_complete=true",
+          detail:
+            "target=other;produce=(O)999;tool=shears;produce_stack=2;produce_cleared=true;inventory_gained=true;animation_complete=true",
         },
       });
       return accepted;

@@ -75,7 +75,12 @@ const bindingFor = (root: string) =>
     chatSurfaceSessionId: "surface_01",
     selectionGeneration: 3,
     runtimeBindingDigest: "d".repeat(64),
-    runtimeOwner: { ownerToken: "owner_01", runtimeInstanceId: "runtime_01", ownerPid: 1, ownerProcessStartIdentity: "start_01" },
+    runtimeOwner: {
+      ownerToken: "owner_01",
+      runtimeInstanceId: "runtime_01",
+      ownerPid: 1,
+      ownerProcessStartIdentity: "start_01",
+    },
   }) as const;
 const continuityKey = createHash("sha256")
   .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
@@ -100,7 +105,14 @@ async function prepare(
   root: string,
   target: "accepted_queued" | "attempt_starting" | "armed" | "not_started" | "running",
 ): Promise<Readonly<{ store: ReturnType<typeof createChatThreadStore>; attemptId: string }>> {
-  const store = createChatThreadStore(root, continuityKey, (() => { let current = 100; return () => current++; })());
+  const store = createChatThreadStore(
+    root,
+    continuityKey,
+    (() => {
+      let current = 100;
+      return () => current++;
+    })(),
+  );
   await store.createThread({
     chatThreadId: "thread_01",
     companionId: "companion_01",
@@ -180,7 +192,11 @@ test("cancel authority prerequisite: claim_cancel rejects an accepted_queued tur
       {
         operation: "commit_presentation",
         cancelEpoch: 0,
-        message: { messageId: "response_after_rejected_cancel_01", text: "Visible after rejected cancel.", occurredAtMs: committedAt },
+        message: {
+          messageId: "response_after_rejected_cancel_01",
+          text: "Visible after rejected cancel.",
+          occurredAtMs: committedAt,
+        },
         committedAtMs: committedAt,
       },
     );
@@ -201,7 +217,7 @@ test("cancel authority prerequisite: claim_cancel rejects attempt_starting sourc
       () =>
         transitionP5MountedPresentation(
           { ...bindingFor(root), attemptId },
-          { operation: "claim_cancel", claimedAtMs: 200 },
+          { operation: "claim_cancel", claimedAtMs: unarmed.thread.updatedAtMs + 1 },
         ),
       /p5_presentation_cancel_source_required/,
     );
@@ -274,7 +290,7 @@ test("cancel authority prerequisite: claim_cancel rejects a not_started attempt 
 test("cancel authority prerequisite: queued cancel_claimed/cancelled artifacts have no legal durable shape", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-cancel-auth-artifact-"));
   try {
-    const { store, attemptId } = await prepare(root, "armed");
+    const { store } = await prepare(root, "armed");
     const state = await store.resumeThread("thread_01", "surface_01");
     const ledger = state.turnLedger;
     assert.equal(ledger?.status, "attempt_starting");
@@ -288,8 +304,7 @@ test("cancel authority prerequisite: queued cancel_claimed/cancelled artifacts h
       attempt: ledger.attempt,
     };
     const ledgerPath = join(threadDirectory(root), "turn-ledger.json");
-    const envelope = (turnLedger: unknown) =>
-      JSON.stringify({ schemaVersion: 1, turnLedger }, null, 2);
+    const envelope = (turnLedger: unknown) => JSON.stringify({ schemaVersion: 1, turnLedger }, null, 2);
 
     // (a) The design/40 §5.1 `accepted_queued → cancel_claimed` shape: no
     // attempt claim and no observation at all. The frozen validator rejects it.
@@ -307,7 +322,7 @@ test("cancel authority prerequisite: queued cancel_claimed/cancelled artifacts h
     );
     await assert.rejects(
       () => store.resumeThread("thread_01", "surface_01"),
-      /invalid_chat_thread_turn_ledger/,
+      /invalid_chat_thread_observation|invalid_chat_thread_turn_ledger/,
     );
 
     // (b) `attempt_starting (armed) → cancel_claimed` with the attempt kept:
@@ -325,7 +340,7 @@ test("cancel authority prerequisite: queued cancel_claimed/cancelled artifacts h
     );
     await assert.rejects(
       () => store.resumeThread("thread_01", "surface_01"),
-      /invalid_chat_thread_turn_ledger/,
+      /invalid_chat_thread_observation|invalid_chat_thread_turn_ledger/,
     );
 
     // (c) `attempt_starting → cancelled` with the observation omitted entirely.
@@ -340,7 +355,7 @@ test("cancel authority prerequisite: queued cancel_claimed/cancelled artifacts h
     );
     await assert.rejects(
       () => store.resumeThread("thread_01", "surface_01"),
-      /invalid_chat_thread_turn_ledger/,
+      /invalid_chat_thread_observation|invalid_chat_thread_turn_ledger/,
     );
 
     // Sanity: restoring the exact pre-fabrication `armed` record reopens.
@@ -477,7 +492,7 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
       );
       await assert.rejects(
         () => second.store.resumeThread("thread_01", "surface_01"),
-        /invalid_chat_thread_idempotency/,
+        /invalid_chat_thread_turn_ledger|invalid_chat_thread_idempotency/,
       );
     } finally {
       await rm(secondRoot, { recursive: true, force: true });

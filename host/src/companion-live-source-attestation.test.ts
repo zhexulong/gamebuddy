@@ -3,8 +3,8 @@ import test from "node:test";
 
 import {
   createLiveSourceAttester,
-  parseLiveSourceAttestation,
   LIVE_SOURCE_ATTESTATION_SCHEMA,
+  parseLiveSourceAttestation,
 } from "./companion-live-source-attestation.js";
 
 const binding = "a".repeat(64);

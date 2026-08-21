@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { newEnvelope, validateBridgeMessage, type Scope } from "./protocol.js";
+import { newEnvelope, type Scope, validateBridgeMessage } from "./protocol.js";
 
 const scope: Scope = {
   integrationId: "stardew",

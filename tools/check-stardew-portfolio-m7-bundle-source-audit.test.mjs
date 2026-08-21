@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import test from "node:test";
+
 const root = resolve(".");
 const script = resolve("tools/check-stardew-portfolio-m7-bundle-source-audit.mjs");
 function run() {

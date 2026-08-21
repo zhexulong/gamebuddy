@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { validatePortfolioM4ResourceSourceAudit } from "./lib/stardew-portfolio-m4-resource-source-audit.mjs";
 
 const ACTION = "break_rock_source";
 const BLOCKER = "m4_target_version_decompilation_correlation";

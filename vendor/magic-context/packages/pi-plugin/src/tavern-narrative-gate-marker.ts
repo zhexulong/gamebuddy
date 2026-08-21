@@ -212,6 +212,7 @@ function consumeProviderStartObserver(sessionId: string, statusClass: "success" 
     }
 }
 
+
 /** Test helper; it drives the exact consumed source-owned path with a bounded class. */
 export function fireTavernProviderStartObservationForTest(
     sessionId: string,

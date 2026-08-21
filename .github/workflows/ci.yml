@@ -33,6 +33,9 @@ jobs:
       - run: pnpm check:stardew-action-surface
       # P2C additionally requires GAMEBUDDY_STARDEW_GAME_PATH and licensed
       # target-version Stardew/SMAPI assemblies, so it is intentionally local-only.
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm check:host-production-import-boundary
       - run: pnpm typecheck
       - run: pnpm build
       # Requires the freshly assembled Host production generation: it launches

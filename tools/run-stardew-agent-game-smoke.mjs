@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
 import { hasMatchingEquipToolEvidence } from "./lib/stardew-receipt-evidence.mjs";
 
@@ -34,7 +34,7 @@ const prompt = option(
 );
 
 let connected;
-let cleanupRuntime = !process.argv.includes("--keep-runtime");
+const cleanupRuntime = !process.argv.includes("--keep-runtime");
 const factTypes = [];
 const agentTools = [];
 const toolResults = [];

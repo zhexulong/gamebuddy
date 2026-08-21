@@ -35,7 +35,8 @@ export async function runClearHoeDirtSmoke(
     let snapshot = await observeFresh(client, { actionable: true });
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
     if (snapshot.location === "FarmHouse") snapshot = await travelToFarm(snapshot);
-    else if (snapshot.location !== "Farm") throw new Error("clear_hoedirt_route_must_start_at_farmhouse_or_fixture_farm");
+    else if (snapshot.location !== "Farm")
+      throw new Error("clear_hoedirt_route_must_start_at_farmhouse_or_fixture_farm");
     const target = chooseHoeDirt(snapshot);
     const pickaxe = choosePickaxe(snapshot);
     const equipped = await execute("equip_pickaxe", "equip_tool", { slot: pickaxe.slot }, snapshot);

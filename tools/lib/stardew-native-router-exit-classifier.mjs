@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 const SHA256 = /^[a-f0-9]{64}$/;
 const EXIT_KINDS = new Set([
   "direct_source_handoff",

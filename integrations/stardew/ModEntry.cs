@@ -1,4 +1,11 @@
 using System.Reflection;
+using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Handlers;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core.Protocol;
+using GameBuddy.Stardew.Core.Routing;
+using GameBuddy.Stardew.Handlers;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
@@ -1823,8 +1830,16 @@ public sealed partial class ModEntry : Mod
             && BridgeProtocol.IsOpaqueId(this.config.PipeName)
             && this.config.BridgeToken.Length is >= 16 and <= 256
             && new BridgeScope("stardew", saveId, worldId, playerId, companionId).IsValid;
+        FarmhandActionRouter router = new();
+        router.Register(new FarmingActionHandler(state.Executions));
+        router.Register(new GatheringActionHandler(state.Executions));
+        router.Register(new MovementActionHandler(state.Executions));
+        router.Register(new MachineAndAnimalActionHandler(state.Executions));
+        router.Register(new ResourceToolActionHandler(state.Executions));
+        router.Register(new SopCompositeActionHandler(new SmapiLiveStepRunner(state.Executions)));
+
         state.BridgeSession = bridgeConfigValid && scopeMatchesWorld
-            ? new BridgeSession(state.Executions, new BridgeScope("stardew", saveId, worldId, playerId, companionId), this.config.BridgeToken, capabilitySurface)
+            ? new BridgeSession(state.Executions, router, new BridgeScope("stardew", saveId, worldId, playerId, companionId), this.config.BridgeToken, capabilitySurface)
             : null;
         state.PlayerControlReplayGuard = state.BridgeSession is null ? null : new PlayerControlReplayGuard();
         state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
@@ -2910,6 +2925,11 @@ public sealed partial class ModEntry : Mod
 
     private void OnWarped(object? sender, WarpedEventArgs e)
     {
+        // The internal Given fixture must settle before Portfolio binding can
+        // open; action adapters still observe the same native lifecycle below.
+        this.ObservePortfolioMineEntryGivenWarped(e);
+        this.ObservePortfolioMineLadderGivenWarped(e);
+        this.ObservePortfolioMineElevatorGivenWarped(e);
         // M8 consumes only the fresh native Player.Warped lifecycle callback;
         // the adapter and coordinator remain the sole owners of postcondition.
         this.portfolioMineElevatorAdapter?.ObserveWarped(e);
@@ -2964,7 +2984,7 @@ public sealed partial class ModEntry : Mod
         {
             if (e.NewLocation is Farm farm
                 && string.Equals(farm.NameOrUniqueName, artifactPending.FarmName, StringComparison.Ordinal)
-                && farm.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590") >= 1
+                && farm.objects.Pairs.Any(pair => pair.Value.QualifiedItemId == "(O)590")
                 && farm.objects.TryGetValue(artifactPending.ArtifactTile, out StardewValley.Object? artifact)
                 && artifact.QualifiedItemId == "(O)590"
                 && farm.isTileOnMap(artifactPending.ArtifactTile)
@@ -3090,6 +3110,8 @@ public sealed partial class ModEntry : Mod
         // P0b retains only its frozen initial scope across this invalidation.
         // It must never consult the live Portfolio binding during save lifecycle.
         this.InvalidatePortfolioState("portfolio_saving");
+        this.ResetPortfolioMineLadderGivenFixture("saving");
+        this.ResetPortfolioMineElevatorGivenFixture("saving");
         this.OnPortfolioP0bSaving();
         this.hostFarmhandProvisioner?.OnSaving();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
@@ -3114,6 +3136,8 @@ public sealed partial class ModEntry : Mod
         // P0b reload is authorized by its frozen initial scope and derived slot,
         // never by a binding that survived a title transition.
         this.InvalidatePortfolioState("portfolio_returned_to_title");
+        this.ResetPortfolioMineLadderGivenFixture("returned_to_title");
+        this.ResetPortfolioMineElevatorGivenFixture("returned_to_title");
         this.OnPortfolioP0bReturnedToTitle();
         this.hostFarmhandProvisioner?.OnReturnedToTitle();
         this.hostAutomationSaveMenuOpened = false;

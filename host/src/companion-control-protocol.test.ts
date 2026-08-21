@@ -5,11 +5,11 @@ import {
   CONTROL_PROTOCOL_VERSION,
   ControlProtocolError,
   ControlRequestFramer,
+  decodeControlRequestLine,
+  encodeControlRequest,
   MAX_CONTROL_IDENTIFIER_BYTES,
   MAX_CONTROL_LINE_BYTES,
   MAX_CONTROL_TEXT_BYTES,
-  decodeControlRequestLine,
-  encodeControlRequest,
   validateControlRequest,
 } from "./companion-control-protocol.js";
 

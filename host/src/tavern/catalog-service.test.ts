@@ -239,7 +239,7 @@ test("stable materialization accepts only exact resolved managed World Info cont
     entries: [{ scope: "setting", publicTitle: "Square", summary: "Town center." }],
   });
   const resolver = createManagedWorldInfoBindingResolver(repository);
-  const managedBinding = await resolver.bind("Pelican Town");
+  const managedBinding = await resolver.bindExact("Pelican Town", 1);
   const threads = createChatThreadStore(root, "continuity-key");
   const thread = await threads.createThread({
     chatThreadId: "thread",

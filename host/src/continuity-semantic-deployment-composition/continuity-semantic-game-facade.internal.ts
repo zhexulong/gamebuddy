@@ -13,9 +13,9 @@ import type {
   LiveSemanticGame,
   SemanticGameProductionAuthority,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { GameOperationalGateEvidence } from "../game-operational-gate-evidence.js";
 import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
 import type { CompanionHostService } from "../host-service.js";
-import type { GameOperationalGateEvidence } from "../game-operational-gate-evidence.js";
 
 /**
  * Commit-gated connected ingress. Its brand and backing live authority remain

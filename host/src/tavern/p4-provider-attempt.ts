@@ -1,8 +1,8 @@
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import {
   isCurrentMountedChatRuntimeLease,
   type MountedChatRuntimeLease,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { AttemptStartingTurn } from "./chat-thread-store.js";
 import { claimMountedP4ProviderAttemptFromFacade } from "./p4-provider-attempt.internal.js";
 

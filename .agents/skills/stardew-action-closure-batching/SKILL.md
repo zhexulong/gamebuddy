@@ -86,6 +86,41 @@ setup mechanism may establish starting facts, but it may not silently cause the
 result claimed by the action. A follow-on claim belongs to the action or
 composition that the governing design assigns it to.
 
+### Effect envelope
+
+Freeze every player- or world-visible effect that may occur before the action's
+declared native commit and terminal receipt. The default is no such effect.
+Movement, world mutation, and opening or closing UI are visible effects, not
+incidental plumbing. An effect before commit is admissible only when either:
+
+1. it is explicitly part of this action's declared result, with its own
+   cancellation, failure, evidence, and no-rollback semantics; or
+2. it belongs to a separately owned action or setup mechanism that establishes
+   only the declared Given.
+
+Name the direct native seam for each declared result and cite the target/source
+fact establishing its actual admission requirements. Normal-player UI ingress
+conditions are provenance only unless that source fact shows the direct seam
+requires the same condition. Do not turn an ingress-only pose, target, or UI
+state into an action authorization gate, then add hidden preparation to satisfy
+that invented gate.
+
+### Staged-save Given fixture
+
+When the governing design explicitly authorizes a transaction-owned staged-save
+fixture, treat it as a separate setup owner rather than as action behavior. The
+frozen scenario must name the fixture ID, the exact Given facts it may establish,
+the canonical slot integrity proof, the fresh in-game observation that rechecks
+those facts, and the owned-stage cleanup rule.
+
+The fixture may establish only declared starting world/player/inventory/progress
+facts in a new transaction-owned staged slot. It must not write canonical saves,
+accept Agent/Host/bridge/caller patch data, widen an action's inputs or policy,
+produce UI/input/raw-native effects, or alter action requests, executions,
+receipts, evidence, native correlations, results, or postconditions. Serialized
+setup is never action proof: the normal action owner must freshly observe and
+revalidate its Given before its own native commit.
+
 An unknown required source, check, or owner is a board blocker. It is not
 permission to create a broad implementation or divide one action into
 unapproved public actions.
@@ -119,6 +154,16 @@ Owned scope
 
 Scope boundary
 - Existing behavior left with its current owner and behavior this brief may add.
+
+Effect envelope and native-seam basis
+- Every pre-commit player/world-visible effect, or an explicit declaration that
+  there is none.
+- The direct native seam and target/source basis for its actual admission
+  requirements.
+- The separately owned action or setup mechanism for any effect outside this
+  action's declared result.
+- When applicable, the named staged-save fixture's allowed Given facts,
+  canonical-integrity proof, live re-observation, and owned-stage cleanup.
 
 Cost evidence
 - Current baseline and expected files, handwritten work, and time delta.
@@ -168,7 +213,11 @@ board state; it never authorizes an irreversible runtime check.
 Before any destructive or otherwise irreversible runtime check, create the
 current non-mutating preflight required by the governing design. It must cover
 the declared starting facts, exact invocation boundary, expected result and
-checks, required evidence, and cleanup or restoration obligations.
+checks, required evidence, cleanup or restoration obligations, and the frozen
+effect envelope. Verify that setup establishes only declared Given facts, any
+staged-save fixture preserves canonical integrity and is freshly re-observed in
+the game, and the planned action cannot produce an undeclared visible effect
+before its native commit.
 
 A failed or missing item yields a precise blocked preflight; it does not spend or
 relabel the runtime check. After the complete static path and final review pass,

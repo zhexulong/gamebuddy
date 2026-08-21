@@ -5,10 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { createChatThreadStore } from "../chat-thread-store.js";
 import {
-  createChatLifecycleService,
-  createInternalChatLifecycleService,
   type ChatLifecycleAtomicGuard,
   type ChatLifecycleMutationReader,
+  createChatLifecycleService,
+  createInternalChatLifecycleService,
 } from "./chat-lifecycle-service.js";
 
 async function fixture() {
@@ -16,7 +16,7 @@ async function fixture() {
   let time = 10;
   const store = createChatThreadStore(root, "a".repeat(64), () => time++);
   const create = async (id: string, title?: string) => {
-    const state = await store.createThread({
+    const _state = await store.createThread({
       chatThreadId: id,
       companionId: "companion_01",
       continuityId: "continuity_01",

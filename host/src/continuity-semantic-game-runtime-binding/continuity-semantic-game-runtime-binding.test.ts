@@ -1,25 +1,25 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createIntegrationActionCatalog, type GameIntegrationModule } from "../integration-module.js";
-import { RECEIPT_BACKED_INTEGRATION_AUTHORITY, type IntegrationLaunchHandle } from "../integration-launcher.js";
+import { type HostDeploymentManifest, loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
+import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
+import { createIntegrationActionCatalog, type GameIntegrationModule } from "../integration-module.js";
 import type { IntegrationConnection } from "../integration-types.js";
-import { loadHostDeploymentManifest, type HostDeploymentManifest } from "../deployment-manifest.js";
-import {
-  createGameRuntimeBinding,
-  createWindowsRuntimeOwnerIdentityPort,
-} from "./continuity-semantic-game-runtime-binding.js";
 import {
   consumeBindingToken,
   reserveGameRuntimeMaterialization,
   withConsumedBindingExecution,
 } from "./continuity-semantic-game-runtime-binding.internal.js";
+import {
+  createGameRuntimeBinding,
+  createWindowsRuntimeOwnerIdentityPort,
+} from "./continuity-semantic-game-runtime-binding.js";
 
 const principal = { continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" } as const;
 

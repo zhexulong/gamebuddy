@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  provisionFreshProductionContinuity,
-  openKnownProductionContinuity,
-} from "./continuity-semantic-provisioning.internal.js";
 import { PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION } from "../continuity-semantic-store/continuity-semantic-production-store.js";
+import {
+  openKnownProductionContinuity,
+  provisionFreshProductionContinuity,
+} from "./continuity-semantic-provisioning.internal.js";
+
 const principal = { continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" };
 const input = (runtimeCwd: string) => ({
   runtimeCwd,
@@ -23,7 +24,7 @@ test("production provisioning is fresh-only and malformed store is byte-preserve
     fresh.close();
     assert.throws(() => provisionFreshProductionContinuity(input(root)));
     const path = join(root, ".gamebuddy-semantic-continuity-v1", "gamebuddy-continuity-v1.sqlite"),
-      before = readFileSync(path);
+      _before = readFileSync(path);
     writeFileSync(path, Buffer.from("malformed-production-store"));
     const poisoned = readFileSync(path);
     assert.throws(() => openKnownProductionContinuity(input(root)));

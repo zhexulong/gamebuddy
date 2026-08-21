@@ -3,13 +3,13 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  isProductionChatRuntimeDeadlineCancellation,
-  type ProductionChatRuntimeDeadlineCancellationInput,
-} from "./continuity-semantic-deadline-cancellation.internal.js";
-import {
   readWindowsOwnerDeathVerification,
   type WindowsOwnerDeathVerification,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.internal.js";
+import {
+  isProductionChatRuntimeDeadlineCancellation,
+  type ProductionChatRuntimeDeadlineCancellationInput,
+} from "./continuity-semantic-deadline-cancellation.internal.js";
 
 /** Production-only, fresh-only S4a substrate. It intentionally has no adoption or legacy imports. */
 export const PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION = 42;
@@ -491,7 +491,7 @@ function exactPlainDataObject(value: unknown, keys: readonly string[]): value is
 function exactFrozenPlainDataObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   return Object.isFrozen(value) && exactPlainDataObject(value, keys);
 }
-function exactReceiptDataObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+function _exactReceiptDataObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   // Runtime receipts are Host-minted immutable records.  Their ingress shape
   // must be exact, but rejecting frozen data would reject the only legitimate
   // producer as well as untrusted mutable payloads.
@@ -839,7 +839,7 @@ const expectedColumns = new Map<string, any[]>();
 const approvedTables = new Map<string, Readonly<{ sql: string; foreignKeys: any[] }>>();
 const approvedIndexes = new Map<string, any>();
 function normalizeSql(value: unknown): string {
-  return typeof value === "string" ? value.replace(/[\s\"`]/g, "").toLowerCase() : "";
+  return typeof value === "string" ? value.replace(/[\s"`]/g, "").toLowerCase() : "";
 }
 function approvedTableSignature(table: string): Readonly<{ sql: string; foreignKeys: any[] }> {
   let value = approvedTables.get(table);
@@ -1114,7 +1114,7 @@ function validateMaterialization(db: DatabaseSync): void {
     selection = db.prepare("SELECT * FROM production_active_selection").all() as any[];
   const games = db.prepare("SELECT * FROM production_game_session").all() as any[];
   const leases = db.prepare("SELECT * FROM production_game_lease").all() as any[];
-  const intents = db.prepare("SELECT * FROM production_game_intent").all() as any[];
+  const _intents = db.prepare("SELECT * FROM production_game_intent").all() as any[];
   const chatRuntimeIntents = db.prepare("SELECT * FROM production_chat_runtime_intent").all() as any[];
   const bootstrap = db
     .prepare("SELECT continuity_id,companion_id,player_id FROM production_bootstrap WHERE singleton=1")
@@ -1294,7 +1294,7 @@ function sagaVector(db: DatabaseSync): SagaVector {
     selectionRevision: p.selection_revision,
   });
 }
-function chatReadback(db: DatabaseSync, operationId: string, thread: any): ProductionChatCommandReadback {
+function _chatReadback(db: DatabaseSync, operationId: string, thread: any): ProductionChatCommandReadback {
   const metadata = db
     .prepare("SELECT management_revision FROM production_chat_lifecycle_metadata WHERE chat_surface_session_id=?")
     .get(thread.chat_surface_session_id) as any;
@@ -1785,9 +1785,9 @@ function validateV35ChatExtension(
   metadataRows: any[],
   events: any[],
   selection: any[],
-  liveGameState: any,
-  successorActive: boolean,
-  successorEnter: boolean,
+  _liveGameState: any,
+  _successorActive: boolean,
+  _successorEnter: boolean,
   chatRuntimeState: "pending" | "recovery_required" | "active" | "closed" | null,
   bootstrap: any,
 ): void {
@@ -1932,7 +1932,7 @@ function exactKeys(value: unknown, keys: readonly string[]): value is Record<str
     !Array.isArray(value) &&
     Object.getPrototypeOf(value) === Object.prototype &&
     Reflect.ownKeys(value).length === keys.length &&
-    keys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+    keys.every((key) => Object.hasOwn(value, key))
   );
 }
 function sameSagaVector(left: SagaVector, right: SagaVector): boolean {
@@ -1944,7 +1944,7 @@ function sameSagaVector(left: SagaVector, right: SagaVector): boolean {
 }
 /** Replays only the v37 Chat command ledger; Game transitions may create partition/fence gaps, never selection gaps. */
 function validateV35ChatCommandTrail(
-  db: DatabaseSync,
+  _db: DatabaseSync,
   saga: any,
   partition: any,
   threads: any[],
@@ -2253,7 +2253,7 @@ function validChatRuntimeRequestRecord(
     vectorValidator(value.expected)
   );
 }
-function validChatRuntimePermitRequest(input: unknown): input is ProductionChatRuntimeRequest {
+function _validChatRuntimePermitRequest(input: unknown): input is ProductionChatRuntimeRequest {
   if (!input || typeof input !== "object" || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as ProductionChatRuntimeRequest;
   return (
@@ -3240,7 +3240,7 @@ function validPersistedChatRuntimeTeardownIntents(db: DatabaseSync, partition: a
   }
   return true;
 }
-function rowContinuity(db: DatabaseSync): string {
+function _rowContinuity(db: DatabaseSync): string {
   return (db.prepare("SELECT continuity_id FROM production_partition WHERE singleton=1").get() as any)?.continuity_id;
 }
 function teardownReceiptMatches(
@@ -3433,7 +3433,7 @@ function validPersistedChatRuntimeIntent(db: DatabaseSync, row: any, partition: 
         })
       );
     })(),
-    closedByTerminalTeardown =
+    _closedByTerminalTeardown =
       terminalTeardown?.status === "terminal" &&
       terminalTeardown.bootstrap_operation_id === row.operation_id &&
       terminalTeardown.chat_surface_session_id === row.chat_surface_session_id &&

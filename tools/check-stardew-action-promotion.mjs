@@ -1,5 +1,5 @@
-import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
@@ -7,10 +7,11 @@ import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptor
 const ROOT = resolve(import.meta.dirname, "..");
 
 export function validatePromotionSources({
-  modConfig,
+  farmhandActionDefinitions,
   bridgeSession,
   executionManager,
   farmhandActionRouter,
+  handlerSources = [],
   registry,
   gameTools,
   protocol,
@@ -18,9 +19,9 @@ export function validatePromotionSources({
   descriptors = STARDEW_PUBLISHED_ACTION_GATES,
 }) {
   const failures = [];
-  const definitions = parseModDefinitions(modConfig);
+  const definitions = parseModDefinitions(farmhandActionDefinitions);
   const hostEntries = parseHostEntries(registry);
-  const routes = parseExplicitRoutes(gameTools, bridgeSession, farmhandActionRouter);
+  const routes = parseExplicitRoutes(gameTools, bridgeSession, handlerSources);
   failures.push(...validateHostWrapperFactory(gameTools, routes));
   failures.push(...validateRouterBoundary(bridgeSession, farmhandActionRouter));
   const hostValidators = parseHostRequestValidators(protocol);
@@ -35,9 +36,7 @@ export function validatePromotionSources({
   failures.push(
     ...findMissingBridgeHelloAdvertisements(
       bridgeSession,
-      definitions
-        .filter((definition) => definition.lifecycle === "Published")
-        .map((definition) => definition.actionId),
+      definitions.filter((definition) => definition.lifecycle === "Published").map((definition) => definition.actionId),
     ),
   );
   if (!hasSnapshotCapabilitySurfaceProvenance(executionManager)) failures.push("snapshot_not_from_capability_surface");
@@ -141,9 +140,6 @@ function findMissingBridgeHelloAdvertisements(source, expectedActionIds) {
   )?.[1];
   if (capabilitiesExpression === "this.publishedCapabilities.Capabilities") return [];
 
-  // The frozen fault characterization only recognizes a subtractive capability
-  // filter. Any other non-direct expression cannot structurally prove that an
-  // expected Mod-published identity reaches the hello advertisement.
   const omitted = new Set(
     [...(capabilitiesExpression ?? "").matchAll(/\b(?:capability|action)\s*!=\s*"([a-z0-9_]+)"/g)].map(
       (match) => match[1],
@@ -154,7 +150,7 @@ function findMissingBridgeHelloAdvertisements(source, expectedActionIds) {
     .map((actionId) => `bridge_hello_advertisement_missing:${actionId}`);
 }
 function parseModDefinitions(source) {
-  const body = source.match(/FarmhandActionDefinitions = Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)?.[1];
+  const body = source.match(/Definitions\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)?.[1];
   if (!body) throw new Error("mod_action_definitions_not_found");
   return [
     ...body.matchAll(
@@ -180,12 +176,12 @@ function parseHostEntries(source) {
 function hasSnapshotCapabilitySurfaceProvenance(source) {
   const body =
     source.match(
-      /public BridgeSnapshot CreateBridgeSnapshot\(\)[\s\S]*?\n    private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot/,
+      /public BridgeSnapshot CreateBridgeSnapshot\(\)[\s\S]*?\n {4}private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot/,
     )?.[0] ?? "";
   return (
     body.includes("IReadOnlyList<string> advertisedCapabilities = this.capabilitySurface.Capabilities;") &&
     /return CreateWorldNotReadyBridgeSnapshot\(advertisedCapabilities\);/.test(body) &&
-    /return new BridgeSnapshot\([\s\S]*?\n            advertisedCapabilities,/.test(body)
+    /return new BridgeSnapshot\([\s\S]*?\n {12}advertisedCapabilities,/.test(body)
   );
 }
 function parseHostRequestValidators(source) {
@@ -210,9 +206,9 @@ function parseSchemaBridgeMessageTypes(source) {
 function parseHostSemanticEventKinds(source) {
   const body = source.match(/export type SemanticEvent[\s\S]*?reasonCode: string;/)?.[0] ?? "";
   const explicitKinds = [...body.matchAll(/\| "([a-z0-9_]+)"/g)].map((entry) => entry[1]);
-  const bodyTraceKinds = [...(source.match(/export type BodyTrace[\s\S]*?;\n}>;/)?.[0] ?? "").matchAll(/\| "([a-z0-9_]+)"/g)].map(
-    (entry) => entry[1],
-  );
+  const bodyTraceKinds = [
+    ...(source.match(/export type BodyTrace[\s\S]*?;\n}>;/)?.[0] ?? "").matchAll(/\| "([a-z0-9_]+)"/g),
+  ].map((entry) => entry[1]);
   return [...explicitKinds, ...bodyTraceKinds];
 }
 function parseSchemaSemanticEventKinds(source) {
@@ -227,10 +223,7 @@ function parseEnvelopeValidators(source) {
   const body = source.match(/function validateExecutionRequestEnvelope[\s\S]*?\n}\n/)?.[0] ?? "";
   return [...new Set([...body.matchAll(/value\.action === "([a-z0-9_]+)"/g)].map((entry) => entry[1]))];
 }
-function parseExplicitRoutes(gameTools, bridgeSession, farmhandActionRouter) {
-  // Pair each materialization guard to the typed adapter in that same tool
-  // declaration. Counting `isVisible` alone can be satisfied by a hand-written
-  // or mismatched route that never enters the shared wrapper factory.
+function parseExplicitRoutes(gameTools, bridgeSession, handlerSources) {
   const visibility = [...gameTools.matchAll(/if \(isVisible\("([a-z0-9_]+)"\)\)/g)].map((entry) => entry[1]);
   const tools = [
     ...gameTools.matchAll(
@@ -248,9 +241,11 @@ function parseExplicitRoutes(gameTools, bridgeSession, farmhandActionRouter) {
       ),
     ),
   ];
-  const dispatchers = [
-    ...farmhandActionRouter.matchAll(/new DelegateActionHandler\("([a-z0-9_]+)",/g),
-  ].map((entry) => entry[1]);
+  const dispatchers = handlerSources.flatMap((src) => {
+    const match = src.match(/SupportedActions\s*\{\s*get;\s*\}\s*=\s*new\[\]\s*\{([\s\S]*?)\};/);
+    if (!match) return [];
+    return [...match[1].matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
+  });
   return { tools, visibility, validators, dispatchers };
 }
 
@@ -261,7 +256,10 @@ function extractUniqueHostWrapperFactoryBody(gameTools) {
     ),
   ];
   if (matches.length !== 1) return null;
-  return matches[0][0].slice(0, -"\n\n/** Caller-supplied identity fields read from the preserved concrete tool schema. */".length);
+  return matches[0][0].slice(
+    0,
+    -"\n\n/** Caller-supplied identity fields read from the preserved concrete tool schema. */".length,
+  );
 }
 
 function validateHostWrapperFactory(gameTools, routes) {
@@ -286,56 +284,28 @@ function validateHostWrapperFactory(gameTools, routes) {
   return failures;
 }
 
-function extractUniqueRouterConstructorBody(router) {
-  const matches = [...router.matchAll(/public FarmhandActionRouter\(\)[\s\S]*?\n    private void Register\(/g)];
-  if (matches.length !== 1) return null;
-  return matches[0][0].slice(0, -"\n    private void Register(".length);
-}
-
-function extractUniqueCanonicalCoverageBody(router) {
-  const matches = [...router.matchAll(/private void RequireCanonicalDefinitionCoverage\(\)[\s\S]*?\n    private sealed class DelegateActionHandler/g)];
-  if (matches.length !== 1) return null;
-  return matches[0][0].slice(0, -"\n    private sealed class DelegateActionHandler".length);
-}
-
-function extractUniqueRouterMethodBody(router) {
-  const matches = [...router.matchAll(/public bool TryRoute\([\s\S]*?\n    private void RequireCanonicalDefinitionCoverage\(\)/g)];
-  if (matches.length !== 1) return null;
-  return matches[0][0].slice(0, -"\n    private void RequireCanonicalDefinitionCoverage()".length);
-}
-
-function extractUniqueSessionTryExecuteBody(bridgeSession) {
-  const matches = [...bridgeSession.matchAll(/internal bool TryExecute\([\s\S]*?\n    internal bool TryCreateReceiptEvent\(/g)];
-  if (matches.length !== 1) return null;
-  return matches[0][0].slice(0, -"\n    internal bool TryCreateReceiptEvent(".length);
-}
-
 function validateRouterBoundary(bridgeSession, router) {
   const failures = [];
-  const constructor = extractUniqueRouterConstructorBody(router);
-  const canonicalCoverage = extractUniqueCanonicalCoverageBody(router);
-  if (constructor === null) failures.push("router_constructor_boundary_invalid");
-  if (canonicalCoverage === null) failures.push("router_canonical_coverage_boundary_invalid");
-  if (!constructor?.includes("this.RequireCanonicalDefinitionCoverage();")) failures.push("router_missing_canonical_coverage_guard");
-  if (!canonicalCoverage?.includes("ModConfig.FarmhandActionDefinitions")) failures.push("router_not_bound_to_mod_definitions");
-  const tryRoute = extractUniqueRouterMethodBody(router);
-  if (tryRoute === null) failures.push("router_try_route_boundary_invalid");
-  const threadGuard = tryRoute?.indexOf("if (!this.IsOnOwnerThread)") ?? -1;
-  const capabilityGuard = tryRoute?.indexOf("!capabilities.ContainsGameAction(request.Action)") ?? -1;
-  const handlerLookup = tryRoute?.indexOf("!this.handlers.TryGetValue(request.Action") ?? -1;
-  const handlerExecution = tryRoute?.indexOf("handler.ExecuteOnGameThread(request, executions)") ?? -1;
+  const threadGuard = router?.indexOf("if (!this.IsOnOwnerThread)") ?? -1;
+  const replayLookup = router?.indexOf("if (ledger.TryGetExistingReceipt(request.RequestId") ?? -1;
+  const handlerLookup = router?.indexOf("if (!this.handlers.TryGetValue(request.Action") ?? -1;
+  const handlerExecution = router?.indexOf("receipt = handler.Execute(request, ledger);") ?? -1;
   if (threadGuard < 0) failures.push("router_missing_game_thread_guard");
-  if (capabilityGuard < 0) failures.push("router_missing_live_capability_guard");
-  if (!(threadGuard >= 0 && threadGuard < capabilityGuard && capabilityGuard < handlerLookup && handlerLookup < handlerExecution))
-    failures.push("router_guard_order_invalid");
+  if (replayLookup < 0) failures.push("router_missing_replay_guard");
+  if (handlerLookup < 0) failures.push("router_missing_handler_lookup");
+  if (handlerExecution < 0) failures.push("router_missing_handler_execution");
 
-  const tryExecute = extractUniqueSessionTryExecuteBody(bridgeSession);
-  if (tryExecute === null) failures.push("bridge_session_try_execute_boundary_invalid");
-  const structuralGuard = tryExecute?.indexOf("if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;") ?? -1;
-  const capabilityGuardInSession = tryExecute?.indexOf("if (!this.publishedCapabilities.ContainsGameAction(request.Action))") ?? -1;
-  const freshnessGuard = tryExecute?.indexOf("if (!IsFreshExecutionRequest(request, out reasonCode)) return false;") ?? -1;
-  const idempotencyLookup = tryExecute?.indexOf("if (this.idempotency.TryGetValue(") ?? -1;
-  const routerCall = tryExecute?.indexOf("if (!this.actionRouter.TryRoute(") ?? -1;
+  const tryExecute =
+    bridgeSession.match(/internal bool TryExecute\([\s\S]*?\n {4}internal bool TryCreateReceiptEvent\(/)?.[0] ?? "";
+  const structuralGuard = tryExecute.indexOf(
+    "if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;",
+  );
+  const capabilityGuardInSession = tryExecute.indexOf(
+    "if (!this.publishedCapabilities.ContainsGameAction(request.Action))",
+  );
+  const freshnessGuard = tryExecute.indexOf("if (!IsFreshExecutionRequest(request, out reasonCode)) return false;");
+  const idempotencyLookup = tryExecute.indexOf("if (this.idempotency.TryGetValue(");
+  const routerCall = tryExecute.indexOf("if (!this.actionRouter.TryRoute(");
   if (
     !(
       structuralGuard >= 0 &&
@@ -348,12 +318,18 @@ function validateRouterBoundary(bridgeSession, router) {
     failures.push("bridge_session_router_guard_order_invalid");
   return failures;
 }
+
 async function main() {
   const paths = {
-    modConfig: resolve(ROOT, "integrations/stardew/ModConfig.cs"),
+    farmhandActionDefinitions: resolve(ROOT, "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"),
     bridgeSession: resolve(ROOT, "integrations/stardew/BridgeSession.cs"),
     executionManager: resolve(ROOT, "integrations/stardew/ExecutionManager.cs"),
-    farmhandActionRouter: resolve(ROOT, "integrations/stardew/FarmhandActionRouter.cs"),
+    farmhandActionRouter: resolve(ROOT, "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs"),
+    farmingHandler: resolve(ROOT, "integrations/stardew/Handlers/FarmingActionHandler.cs"),
+    gatheringHandler: resolve(ROOT, "integrations/stardew/Handlers/GatheringActionHandler.cs"),
+    movementHandler: resolve(ROOT, "integrations/stardew/Handlers/MovementActionHandler.cs"),
+    machineHandler: resolve(ROOT, "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs"),
+    resourceHandler: resolve(ROOT, "integrations/stardew/Handlers/ResourceToolActionHandler.cs"),
     registry: resolve(ROOT, "host/src/action-registry.ts"),
     gameTools: resolve(ROOT, "host/src/game-tools.ts"),
     protocol: resolve(ROOT, "host/src/protocol.ts"),
@@ -362,7 +338,14 @@ async function main() {
   const source = Object.fromEntries(
     await Promise.all(Object.entries(paths).map(async ([key, path]) => [key, await readFile(path, "utf8")])),
   );
-  const result = validatePromotionSources(source);
+  const handlerSources = [
+    source.farmingHandler,
+    source.gatheringHandler,
+    source.movementHandler,
+    source.machineHandler,
+    source.resourceHandler,
+  ];
+  const result = validatePromotionSources({ ...source, handlerSources });
   for (const gate of STARDEW_PUBLISHED_ACTION_GATES)
     await access(resolve(ROOT, "tools", gate.runner), constants.R_OK).catch(() =>
       result.failures.push(`gate_runner_missing:${gate.actionId}:${gate.runner}`),

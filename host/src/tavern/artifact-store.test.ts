@@ -3,8 +3,8 @@ import { lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { TavernArtifactStore, TavernRevisionConflict, canonicalHash, canonicalJson } from "./artifact-store.js";
-import { validateTavernArtifact, type TavernArtifact } from "./types.js";
+import { canonicalHash, canonicalJson, TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
+import { type TavernArtifact, validateTavernArtifact } from "./types.js";
 
 test("artifact store canonicalizes, atomically read-backs, and rejects revision conflicts", async () => {
   const root = await mkdtemp(join(tmpdir(), "tavern-store-"));

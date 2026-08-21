@@ -52,9 +52,8 @@ test("event stream drops events from a foreign selection generation", () => {
 test("event stream delivers live publications and removes listeners on close", () => {
   const stream = createChatEventStream();
   const received: number[] = [];
-  const connection = stream.listen(
-    { epoch: stream.epoch, after: 0, generation: 1 },
-    (event) => received.push(event.sequence),
+  const connection = stream.listen({ epoch: stream.epoch, after: 0, generation: 1 }, (event) =>
+    received.push(event.sequence),
   );
   assert.equal(connection.result.kind, "replay");
   assert.deepEqual(connection.result.events, []);
@@ -70,12 +69,9 @@ test("event stream delivers live publications and removes listeners on close", (
 test("event stream never binds a listener for a resync subscription", () => {
   const stream = createChatEventStream();
   let received = 0;
-  const connection = stream.listen(
-    { epoch: stream.epoch, after: 1, generation: 1 },
-    () => {
-      received += 1;
-    },
-  );
+  const connection = stream.listen({ epoch: stream.epoch, after: 1, generation: 1 }, () => {
+    received += 1;
+  });
   assert.equal(connection.result.kind, "resync");
   assert.equal(connection.result.reason, "ambiguous_cursor");
   connection.close();
@@ -134,13 +130,11 @@ test("event stream delivers live publications to two concurrent readers and clos
   const stream = createChatEventStream();
   const left: number[] = [];
   const right: number[] = [];
-  const first = stream.listen(
-    { epoch: stream.epoch, after: 0, generation: 1 },
-    (publication) => left.push(publication.sequence),
+  const first = stream.listen({ epoch: stream.epoch, after: 0, generation: 1 }, (publication) =>
+    left.push(publication.sequence),
   );
-  const second = stream.listen(
-    { epoch: stream.epoch, after: 0, generation: 1 },
-    (publication) => right.push(publication.sequence),
+  const second = stream.listen({ epoch: stream.epoch, after: 0, generation: 1 }, (publication) =>
+    right.push(publication.sequence),
   );
   assert.equal(first.result.kind, "replay");
   assert.equal(second.result.kind, "replay");

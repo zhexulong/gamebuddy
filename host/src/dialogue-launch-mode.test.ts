@@ -20,12 +20,26 @@ test("dialogue launch mode defaults to fresh and permits only an explicit Host r
     profile: "management",
     manifestPath: "C:/synthetic/manifest.json",
   });
+  assert.deepEqual(
+    parseDialogueLaunchMode([
+      `--tavern-narrative-gate-nonce-sha256=${"a".repeat(64)}`,
+      "C:/synthetic/manifest.json",
+    ]),
+    {
+      mode: "fresh",
+      profile: "reference",
+      manifestPath: "C:/synthetic/manifest.json",
+      tavernNarrativeGateNonceSha256: "a".repeat(64),
+    },
+  );
 });
 
 test("dialogue launch mode rejects duplicate, unknown, and malformed process arguments", () => {
   for (const args of [
     ["--known-root-recovery", "--known-root-recovery"],
     ["--tavern-management", "--tavern-management"],
+    ["--tavern-narrative-gate-nonce-sha256=invalid"],
+    [`--tavern-narrative-gate-nonce-sha256=${"a".repeat(64)}`, "--tavern-management"],
     ["--unknown"],
     ["manifest.json", "other.json"],
     [""],

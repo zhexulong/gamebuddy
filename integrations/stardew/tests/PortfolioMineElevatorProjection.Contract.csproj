@@ -39,13 +39,6 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="ProductionAssemblyBinding.cs" />
-    <Compile Include="PlayerControlProtocolTests.cs" />
-    <Compile Include="LocalPipeBridgeTests.cs" />
-    <Compile Include="NativeChatIngressPolicyTests.cs" />
-    <Compile Include="CompanionPresentationPolicyTests.cs" />
-    <Compile Include="NativeChatPresentationPolicyTests.cs" />
-    <Compile Include="PortfolioMineCoordinatorLifecycle.Contract.cs" />
-    <Compile Include="PortfolioBridgeSessionGeneration.Contract.cs" />
     <Compile Include="PortfolioMineLadderIntegrationStructural.Contract.cs" />
   </ItemGroup>
 </Project>

@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { VoiceGatewayProbeClient } from "./lib/voice-gateway-probe-client.mjs";
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { VoiceGatewayProbeClient } from "./lib/voice-gateway-probe-client.mjs";
 
 const manifestPath = option("--manifest");
 const device = option("--device", "default");

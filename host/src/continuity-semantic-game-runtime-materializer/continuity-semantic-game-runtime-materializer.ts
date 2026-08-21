@@ -1,20 +1,19 @@
+import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
 import { CompanionLoop } from "../companion-loop.js";
+import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
 import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
 import {
   CompanionHostService,
   createGamePresentationAdmissionProvider,
   GameTurnLineageTracker,
 } from "../host-service.js";
-import type { PresentationRuntime } from "../presentation.js";
+import type { GameIntegrationModule, IntegrationActionPolicy, IntegrationStateView } from "../integration-module.js";
+import type { IntegrationConnection } from "../integration-types.js";
+import { createGameCompanionRuntime, type RuntimeSession } from "../runtime.js";
 import {
   consumeGameVoicePresentationAttachment,
   type GameVoicePresentationAttachment,
 } from "../voice-gateway-client.js";
-import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
-import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
-import type { IntegrationActionPolicy, GameIntegrationModule, IntegrationStateView } from "../integration-module.js";
-import type { IntegrationConnection } from "../integration-types.js";
-import { createGameCompanionRuntime, type RuntimeSession } from "../runtime.js";
 import {
   type GameRuntimeMaterializer,
   type MaterializedGameRuntime,

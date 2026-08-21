@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { validateNativeFarmerSpriteCallbackBoundary } from "./lib/stardew-native-farmer-sprite-callback-boundary.mjs";
+
 const text = `void Store() { endOfAnimationFunction = value; } void Tick() { endOfAnimationBehavior callback = endOfAnimationFunction; callback(owner); }`,
   bytes = Buffer.from(text),
   h = createHash("sha256").update(bytes).digest("hex");

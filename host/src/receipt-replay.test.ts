@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import type { ExecutionReceipt } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
-import { type ExecutionReceipt } from "./protocol.js";
 
 function receipt(
   state: ExecutionReceipt["state"],

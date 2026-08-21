@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 
 import { auditSenseVoiceAssets, SenseVoiceCliAsrProvider } from "../../voice-gateway/dist/sensevoice.js";
-import { WindowsPttCapture } from "../../voice-gateway/dist/windows-capture.js";
 import { startVoiceGateway } from "../../voice-gateway/dist/server.js";
+import { WindowsPttCapture } from "../../voice-gateway/dist/windows-capture.js";
 
 const [manifestPath, portText] = process.argv.slice(2);
 const token = process.env.GAMEBUDDY_VOICE_TOKEN;

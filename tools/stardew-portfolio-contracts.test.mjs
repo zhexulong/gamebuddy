@@ -4,13 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
-  PORTFOLIO_CONTRACT_PROTOCOL_VERSION,
-  PORTFOLIO_EVIDENCE_SCHEMA_REVISION,
-  PORTFOLIO_MILESTONE_MONITORS,
-  PORTFOLIO_TARGET_GAME_SHA256,
-  PORTFOLIO_TARGET_SMAPI_VERSION,
-  PORTFOLIO_TARGET_VERSION,
-  PORTFOLIO_TOPOLOGY,
   admitCandidateClosureReceipt,
   admitCandidateRegistry,
   admitPortfolioCheckpoint,
@@ -22,6 +15,13 @@ import {
   getCandidateRegistry,
   getPortfolioRegistry,
   hashPortfolioCanonicalJson,
+  PORTFOLIO_CONTRACT_PROTOCOL_VERSION,
+  PORTFOLIO_EVIDENCE_SCHEMA_REVISION,
+  PORTFOLIO_MILESTONE_MONITORS,
+  PORTFOLIO_TARGET_GAME_SHA256,
+  PORTFOLIO_TARGET_SMAPI_VERSION,
+  PORTFOLIO_TARGET_VERSION,
+  PORTFOLIO_TOPOLOGY,
   signCandidateClosureManifest,
   signPortfolioCcm,
   signPortfolioDsm,

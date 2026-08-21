@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { deriveNativeVirtualMemberInvocationRegister } from "./lib/stardew-native-virtual-member-invocation-register.mjs";
 import { validateNativeToolOwnerSlice } from "./lib/stardew-native-tool-owner-slice.mjs";
+import { deriveNativeVirtualMemberInvocationRegister } from "./lib/stardew-native-virtual-member-invocation-register.mjs";
+
 const h = (text) => createHash("sha256").update(text).digest("hex");
 const tool = `class Tool { public virtual bool beginUsing(GameLocation l, int x, int y, Farmer who) { who.Halt(); return false; } }`;
 const pan = `class Pan : Tool { public override bool beginUsing(GameLocation l, int x, int y, Farmer who) { who.Halt(); return true; } }`;

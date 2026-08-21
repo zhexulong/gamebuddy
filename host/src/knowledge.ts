@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type CompanionIntegration } from "./integration-types.js";
-import { type ExecutionReceipt, type Snapshot } from "./protocol.js";
-import { visiblePublishedActions, type ActionPolicy } from "./action-registry.js";
+import { type ActionPolicy, visiblePublishedActions } from "./action-registry.js";
+import type { CompanionIntegration } from "./integration-types.js";
+import type { ExecutionReceipt, Snapshot } from "./protocol.js";
 
 export type KnowledgeRule = Readonly<{
   id: string;

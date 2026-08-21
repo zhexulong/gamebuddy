@@ -68,7 +68,8 @@ export async function runPickupItemSmoke(
     const evidence = parseEvidence(terminal.evidence);
     const inventoryBefore = parseSafeInteger(evidence.inventory_before);
     const inventoryAfter = parseSafeInteger(evidence.inventory_after);
-    const inventoryDelta = inventoryBefore !== null && inventoryAfter !== null ? inventoryAfter - inventoryBefore : null;
+    const inventoryDelta =
+      inventoryBefore !== null && inventoryAfter !== null ? inventoryAfter - inventoryBefore : null;
     const targetGone = after.itemTargets.every((entry) => entry?.targetId !== target.targetId);
     const passed =
       terminal.executionId === accepted.executionId &&

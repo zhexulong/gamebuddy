@@ -1,13 +1,13 @@
 import { createServer, type Server } from "node:http";
 
 import { createP3DialogueWebRequestHandler, type DialogueWebOptions } from "../dialogue-web.js";
-import {
-  TAVERN_BROWSER_CONTRACT,
-  createTavernStaticArtifactRequestHandler,
-  verifyTavernStaticArtifact,
-  type TavernStaticArtifactIdentity,
-} from "./static-artifact/index.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
+import {
+  createTavernStaticArtifactRequestHandler,
+  TAVERN_BROWSER_CONTRACT,
+  type TavernStaticArtifactIdentity,
+  verifyTavernStaticArtifact,
+} from "./static-artifact/index.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 export const P3_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIdentity = Object.freeze({
@@ -15,10 +15,11 @@ export const P3_BROWSER_ARTIFACT_IDENTITY: TavernStaticArtifactIdentity = Object
   profileId: "gamebuddy.tavern.browser.v1",
 });
 
-export type P3StaticShellCompositionOptions = DialogueWebOptions & Readonly<{
-  artifactRoot: string;
-  inspector?: WindowsReparseInspectorCapability;
-}>;
+export type P3StaticShellCompositionOptions = DialogueWebOptions &
+  Readonly<{
+    artifactRoot: string;
+    inspector?: WindowsReparseInspectorCapability;
+  }>;
 export type P3StaticShellComposition = Readonly<{
   origin: string;
   launchUrl: string;
@@ -34,7 +35,11 @@ export type P3StaticShellComposition = Readonly<{
 export async function startP3StaticShellComposition(
   options: P3StaticShellCompositionOptions,
 ): Promise<P3StaticShellComposition> {
-  const artifact = await verifyTavernStaticArtifact(options.artifactRoot, P3_BROWSER_ARTIFACT_IDENTITY, options.inspector);
+  const artifact = await verifyTavernStaticArtifact(
+    options.artifactRoot,
+    P3_BROWSER_ARTIFACT_IDENTITY,
+    options.inspector,
+  );
   const staticHandler = createTavernStaticArtifactRequestHandler(artifact);
   const apiHandler = createP3DialogueWebRequestHandler(options);
   let closed = false;
@@ -42,8 +47,13 @@ export async function startP3StaticShellComposition(
     const port = (server.address() as { port: number }).port;
     const origin = `http://${LOOPBACK_HOST}:${port}`;
     let pathname: string;
-    try { pathname = new URL(request.url ?? "/", origin).pathname; }
-    catch { response.writeHead(404, { "Cache-Control": "no-store" }); response.end(); return; }
+    try {
+      pathname = new URL(request.url ?? "/", origin).pathname;
+    } catch {
+      response.writeHead(404, { "Cache-Control": "no-store" });
+      response.end();
+      return;
+    }
     if (pathname.startsWith("/api/")) apiHandler.handle(request, response, origin);
     else staticHandler.handle(request, response);
   });

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 /**
  * Derive bounded effect summaries for selected native tool families from the
  * exact pinned local Stardew assembly. Audit only: no game launch, UI or action.
  */
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { deriveStardewToolEffectLedger } from "./lib/stardew-tool-effect-ledger.mjs";
 
 const execFileAsync = promisify(execFile);

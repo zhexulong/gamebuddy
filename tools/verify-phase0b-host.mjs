@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { loadHostProductionModule } from "./lib/host-production-module.mjs";
 
 const { createCompanionRuntime, PHASE_0B_ALLOWED_TOOL_NAMES } = await loadHostProductionModule("runtime.js");

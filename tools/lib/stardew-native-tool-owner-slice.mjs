@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+
 const SHA256 = /^[a-f0-9]{64}$/;
 const KINDS = new Set([
   "source_local_state_write",

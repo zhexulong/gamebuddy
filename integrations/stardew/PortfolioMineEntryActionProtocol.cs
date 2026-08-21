@@ -96,7 +96,6 @@ internal sealed record PortfolioMineEntryProbe(
     int CurrentFloor,
     int LowestMineLevel,
     bool TargetUnlocked,
-    bool EntryInteractionAvailable,
     int TargetFloor)
 {
     [JsonExtensionData]
@@ -117,7 +116,6 @@ internal sealed record PortfolioMineEntryFreshObservation(
     int LowestMineLevel,
     bool UnlockedLevelObserved,
     bool TargetUnlocked,
-    bool EntryInteractionAvailable,
     string OpaqueEntryTarget,
     int TargetFloor)
 {
@@ -228,6 +226,7 @@ internal sealed record PortfolioMineEntryAdapterResult(
     public Dictionary<string, JsonElement>? ExtensionData { get; init; }
 
     internal bool IsValid => Scope is not null && Scope.IsValid
+        && TransitionArmed
         && PortfolioBridgeProtocol.IsOpaqueId(RequestId)
         && PortfolioBridgeProtocol.IsOpaqueId(TraceId)
         && PortfolioBridgeProtocol.IsOpaqueId(ExecutionId)

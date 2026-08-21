@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  bindIntegrationIdentity,
-  createIntegrationCatalog,
-  type ConfigurableIntegrationLauncher,
-} from "./integration-catalog.js";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+  bindIntegrationIdentity,
+  type ConfigurableIntegrationLauncher,
+  createIntegrationCatalog,
+} from "./integration-catalog.js";
 import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
-import type { IntegrationConnection } from "./integration-types.js";
-import { STARDEW_INTEGRATION_LAUNCHER, parseStardewOperatorConfig } from "./stardew-integration-launcher.js";
+import { parseStardewOperatorConfig, STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
 
 function launcher(id = "arcade"): ConfigurableIntegrationLauncher {
   const action = defineTool({

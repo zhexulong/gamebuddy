@@ -3,18 +3,20 @@
  * composition; this module exposes no caller-supplied mutex, store, provision,
  * or coordinator constructor.
  */
-export {
-  SemanticProductionCoordinatorError,
-  createKnownSemanticGameProductionAuthorityFromDeploymentManifest,
-  createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
-  createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
-  isCurrentMountedChatRuntimeLease,
-} from "./continuity-semantic-production-coordinator.internal.js";
+
 export type {
   GameEffectFacts,
   LiveSemanticGame,
-  SemanticGameProductionAuthority,
-  SemanticChatRuntimeProductionAuthority,
-  SemanticChatRuntimeMountOptions,
   MountedChatRuntimeLease,
+  SemanticChatRuntimeMountOptions,
+  SemanticChatRuntimeProductionAuthority,
+  SemanticGameProductionAuthority,
+} from "./continuity-semantic-production-coordinator.internal.js";
+export {
+  createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
+  createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
+  createKnownSemanticGameProductionAuthorityFromDeploymentManifest,
+  isCurrentMountedChatRuntimeLease,
+  stopMountedChatPresentationEpoch,
+  SemanticProductionCoordinatorError,
 } from "./continuity-semantic-production-coordinator.internal.js";

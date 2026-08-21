@@ -1,4 +1,4 @@
-import { type ExecutionReceipt, type ExecutionState } from "./protocol.js";
+import type { ExecutionReceipt, ExecutionState } from "./protocol.js";
 
 const TERMINAL_STATES = new Set<ExecutionState>([
   "succeeded",

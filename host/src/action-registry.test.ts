@@ -3,14 +3,14 @@ import test from "node:test";
 
 import {
   DEFAULT_ACTION_POLICY,
-  PUBLISHED_STARDEW_ACTIONS,
-  STARDEW_ACTION_REGISTRY,
-  parseActionPolicy,
   isMaterializablePublishedAction,
+  PUBLISHED_STARDEW_ACTIONS,
+  type PublishedAction,
+  parseActionPolicy,
   RETIRED_ACTION_POLICY_MIGRATIONS,
+  STARDEW_ACTION_REGISTRY,
   searchVisibleActions,
   visiblePublishedActions,
-  type PublishedAction,
 } from "./action-registry.js";
 
 test("default consent exposes only published live capabilities", () => {

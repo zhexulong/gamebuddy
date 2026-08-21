@@ -48,7 +48,22 @@ export function scoreDestinationMatch(query, label) {
 const idOf = (entry) => entry.id ?? entry.destinationId;
 const byCanonicalId = (left, right) => idOf(left).localeCompare(idOf(right));
 function validateCharacterizationPolicy(policy) {
-  if (!policy || typeof policy !== "object" || !Number.isFinite(policy.fuzzyThreshold) || !Number.isFinite(policy.fuzzyMargin) || policy.fuzzyThreshold < 0 || policy.fuzzyThreshold > 1 || policy.fuzzyMargin < 0 || policy.fuzzyMargin > 1 || policy.maximumCandidates !== SEARCH_POLICY_V1.maximumCandidates || policy.unicodeForm !== SEARCH_POLICY_V1.unicodeForm || policy.casePolicy !== SEARCH_POLICY_V1.casePolicy || policy.fuzzyScorer !== SEARCH_POLICY_V1.fuzzyScorer || policy.scalarLength !== SEARCH_POLICY_V1.scalarLength) throw new Error("invalid_characterization_search_policy");
+  if (
+    !policy ||
+    typeof policy !== "object" ||
+    !Number.isFinite(policy.fuzzyThreshold) ||
+    !Number.isFinite(policy.fuzzyMargin) ||
+    policy.fuzzyThreshold < 0 ||
+    policy.fuzzyThreshold > 1 ||
+    policy.fuzzyMargin < 0 ||
+    policy.fuzzyMargin > 1 ||
+    policy.maximumCandidates !== SEARCH_POLICY_V1.maximumCandidates ||
+    policy.unicodeForm !== SEARCH_POLICY_V1.unicodeForm ||
+    policy.casePolicy !== SEARCH_POLICY_V1.casePolicy ||
+    policy.fuzzyScorer !== SEARCH_POLICY_V1.fuzzyScorer ||
+    policy.scalarLength !== SEARCH_POLICY_V1.scalarLength
+  )
+    throw new Error("invalid_characterization_search_policy");
   return Object.freeze(policy);
 }
 function result(kind, stage, entries, destinationId, policy) {

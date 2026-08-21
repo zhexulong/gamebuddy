@@ -26,9 +26,7 @@ export function resolveStopSystemNotice(outcome: StopOutcome, locale: string): S
   if (outcome === "active_turn_cancelled" || outcome === "queued_turn_cancelled") {
     const text = isSimplifiedChinesePreview ? "已停止生成。" : "Generation stopped.";
     const key =
-      outcome === "active_turn_cancelled"
-        ? "system.stop.active_turn_cancelled"
-        : "system.stop.queued_turn_cancelled";
+      outcome === "active_turn_cancelled" ? "system.stop.active_turn_cancelled" : "system.stop.queued_turn_cancelled";
     return Object.freeze({ key, locale, text });
   }
   const text = isSimplifiedChinesePreview ? "当前没有正在生成的回复。" : "No reply is currently being generated.";

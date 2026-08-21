@@ -238,6 +238,75 @@ test("applyEvent accepts ordered same-epoch events, ignores duplicates, and fail
   assertRejected(() => second.applyEvent(event(3, { eventType: "stream.resync_required", payload: { reason: "gap" } })), "stream_resync_required");
 });
 
+test("a valid event with a different selectionGeneration is a stream resync, never accepted, and recovery reset adopts the authoritative cursor", () => {
+  const session = createReferencePipelineSession(makeSnapshot());
+  const pending = pendingSubmission(KEY, session.snapshot);
+  const withPending = session.withPending(pending);
+  const event = (sequence, overrides = {}) => ({
+    apiVersion: 1,
+    epoch: "E".repeat(43),
+    sequence,
+    selectionGeneration: 3,
+    eventType: "draft.changed",
+    payload: { revision: sequence, present: true },
+    ...overrides,
+  });
+
+  // schema-valid events that disagree with the mounted selection generation are
+  // stream resync (stale or forged), never a state/identity switch
+  assertRejected(() => withPending.applyEvent(event(1, { selectionGeneration: 4 })), "stream_resync_required");
+  assertRejected(() => withPending.applyEvent(event(1, { selectionGeneration: 2 })), "stream_resync_required");
+  assertRejected(() => withPending.applyEvent(event(1, { selectionGeneration: 4, epoch: "F".repeat(43) })), "stream_resync_required");
+
+  // the original identity, snapshot and pending stay untouched by reference
+  assert.equal(withPending.snapshot, session.snapshot);
+  assert.equal(withPending.pending, pending);
+  assert.deepEqual(withPending.snapshot, makeSnapshot());
+
+  // a rejected event must not corrupt the volatile checkpoint: the next
+  // correctly-generated event is still accepted in order
+  const accepted = withPending.applyEvent(event(1));
+  assert.equal(accepted.snapshot, session.snapshot);
+  assert.equal(accepted.pending, pending);
+  assertRejected(() => accepted.applyEvent(event(2, { selectionGeneration: 5 })), "stream_resync_required");
+  const advanced = accepted.applyEvent(event(2));
+  assert.equal(advanced.snapshot, session.snapshot);
+
+  // recovery reset adopts the mounted snapshot's authoritative cursor and
+  // accepts the next durable event in that epoch
+  const recovered = advanced.resetEventCheckpoint();
+  assert.equal(recovered.snapshot, session.snapshot);
+  assert.equal(recovered.pending, pending);
+  assert.equal(recovered.applyEvent(event(3)).snapshot, session.snapshot);
+
+  // an authoritative /state snapshot with the same identity but a fresh
+  // authoritative cursor is adoptable; the stale epoch is then rejected
+  const authoritative = makeSnapshot({ eventStream: { epoch: "F".repeat(43), cursor: "B".repeat(43) } });
+  const reanchored = recovered.applySnapshot(authoritative).resetEventCheckpoint();
+  assertRejected(() => reanchored.applyEvent(event(1, { epoch: "E".repeat(43) })), "stream_resync_required");
+  const inNewEpoch = reanchored.applyEvent(event(1, { epoch: "F".repeat(43) }));
+  assert.equal(inNewEpoch.snapshot, authoritative);
+});
+
+test("resetEventCheckpoint allows authoritative snapshot recovery to accept the next event", () => {
+  const session = createReferencePipelineSession(makeSnapshot());
+  const event = (sequence) => ({
+    apiVersion: 1,
+    epoch: "E".repeat(43),
+    sequence,
+    selectionGeneration: 3,
+    eventType: "draft.changed",
+    payload: { revision: sequence, present: true },
+  });
+  const checkpointed = session.applyEvent(event(1));
+  assertRejected(() => checkpointed.applyEvent(event(3)), "stream_resync_required");
+  const recovered = checkpointed.resetEventCheckpoint();
+  assert.equal(recovered.snapshot, checkpointed.snapshot);
+  assert.equal(recovered.applyEvent(event(1)).snapshot, recovered.snapshot);
+  assert.equal(recovered.applyEvent(event(1)).pending, null);
+  assert.equal(recovered.applyEvent(event(2)).snapshot, recovered.snapshot);
+});
+
 test("applyStatus preserves pending except for a terminal disposition and never mutates snapshot or turn", () => {
   const session = createReferencePipelineSession(makeSnapshot());
   const pending = pendingSubmission(KEY, session.snapshot);

@@ -114,7 +114,7 @@ const CONTINUATION_PATTERNS = Object.freeze([
   Object.freeze({
     id: "continuation:delegate-event",
     expression:
-      /\b(?:Delegate\.CreateDelegate|\.onEvent\s*[+\-]=|\.Fire\s*\(|Register(?:Command|Action|TileAction)\s*\()\b/g,
+      /\b(?:Delegate\.CreateDelegate|\.onEvent\s*[+-]=|\.Fire\s*\(|Register(?:Command|Action|TileAction)\s*\()\b/g,
   }),
   Object.freeze({
     id: "continuation:dynamic-construction",

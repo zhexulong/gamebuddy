@@ -187,7 +187,7 @@ export class VoicePollingSupervisor {
           } else {
             const backoff = Math.min(
               this.#maxBackoffMs,
-              Math.max(this.#minBackoffMs, this.#intervalMs * Math.pow(2, Math.min(10, this.#consecutiveFailures - 1))),
+              Math.max(this.#minBackoffMs, this.#intervalMs * 2 ** Math.min(10, this.#consecutiveFailures - 1)),
             );
             this.#scheduleNext(backoff);
           }

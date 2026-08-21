@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { decodeStCard, type StCardImportDisposition, type StCardImportReport } from "../st-card-import.js";
-import { TavernArtifactStore, type ArtifactEnvelope } from "./artifact-store.js";
-import { tavernImportPath, type TavernPaths } from "./tavern-paths.js";
+import type { ArtifactEnvelope, TavernArtifactStore } from "./artifact-store.js";
+import { createNewCompanionService, type NewCompanionReview } from "./new-companion-service.js";
+import { type TavernPaths, tavernImportPath } from "./tavern-paths.js";
 import {
-  validateTavernArtifact,
   type CandidateReviewRecord,
   type CharacterCandidate,
   type StCardImportRecord,
+  validateTavernArtifact,
 } from "./types.js";
-import { createNewCompanionService, type NewCompanionReview } from "./new-companion-service.js";
 
 export type PersistedStCardImport = Readonly<{
   candidate: ArtifactEnvelope<CharacterCandidate>;

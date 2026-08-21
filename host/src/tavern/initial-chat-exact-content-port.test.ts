@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  type CreateChatThreadRequest,
   createChatThreadStore,
   createInitialChatExactContentCapability,
-  type CreateChatThreadRequest,
 } from "./chat-thread-store.js";
 import {
-  TavernInitialChatExactContentPortError,
   createInitialChatExactContentPort,
   isTrustedTavernExactContentReceipt,
+  TavernInitialChatExactContentPortError,
 } from "./initial-chat-exact-content-port.js";
 
 const binding = Object.freeze({
@@ -169,7 +169,7 @@ test("collision does not fall back and broad not-found Error text cannot create"
       ),
     );
     const missing = { ...binding, chatThreadId: "missing_01" };
-    const missingRequest = { ...request, chatThreadId: "missing_01" };
+    const _missingRequest = { ...request, chatThreadId: "missing_01" };
     const threadDir = join(fixture.root, "tavern", "v1", "continuities", "a".repeat(64), "threads", "missing_01");
     await writeFile(join(threadDir, "thread.json"), "{ broken", "utf8").catch(async () => {
       await (await import("node:fs/promises")).mkdir(threadDir, { recursive: true });

@@ -37,11 +37,42 @@ export type P3Snapshot = Readonly<{
   eventStream: Readonly<Record<string, unknown>> | null;
 }>;
 
-export type P3Draft = Readonly<{
+export type BrowserDraftV1 = Readonly<{
   apiVersion: 1;
   revision: number;
   text: string | null;
 }>;
+
+export type P3Draft = BrowserDraftV1;
+
+export type ChatListEntry = Readonly<{
+  handle: string;
+  title: string | null;
+  status: "active" | "archived";
+  managementRevision: number;
+  isSelected: boolean;
+}>;
+
+export type ChatListV1 = Readonly<{
+  apiVersion: 1;
+  chats: readonly ChatListEntry[];
+}>;
+
+export type ChatTitleV1 = Readonly<{
+  apiVersion: 1;
+  chatHandle: string;
+  title: string;
+  managementRevision: number;
+}>;
+
+export type BrowserEventV1 = Readonly<{
+  apiVersion: 1;
+  event: "message.committed" | "draft.changed" | "turn.state_changed" | "memory.changed" | "stream.resync_required";
+  chatHandle: string;
+  selectionGeneration: number;
+  payload?: Readonly<Record<string, unknown>>;
+}>;
+
 export type P3Problem = Readonly<{
   title: string;
   status: number;
@@ -147,7 +178,6 @@ export type SubmitMessageCommand = Readonly<{
   locale: "en" | "zh-CN";
   selectionGeneration: number;
   expectedDraftRevision?: number;
-  memoryDelegation?: "none" | "read";
 }>;
 
 export type SubmitResult = Readonly<{
@@ -160,7 +190,7 @@ export type SubmitResult = Readonly<{
 export async function submitMessage(
   command: SubmitMessageCommand,
   csrfToken: string,
-  idempotencyKey: string = "idemp-" + Date.now() + "-" + Math.random().toString(36).slice(2, 9),
+  idempotencyKey: string = `idemp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
 ): Promise<SubmitResult> {
   const response = await fetch("/api/tavern/v1/messages", {
     method: "POST",
@@ -180,11 +210,7 @@ export async function submitMessage(
   return body as SubmitResult;
 }
 
-export async function cancelTurn(
-  turnHandle: string,
-  selectionGeneration: number,
-  csrfToken: string,
-): Promise<void> {
+export async function cancelTurn(turnHandle: string, selectionGeneration: number, csrfToken: string): Promise<void> {
   const response = await fetch(`/api/tavern/v1/turns/${encodeURIComponent(turnHandle)}/cancel`, {
     method: "POST",
     headers: {
@@ -223,8 +249,91 @@ export async function saveDraft(
   });
   const body = await readBody(response);
   if (!response.ok) throw problemFrom(body, response.status);
-  if (!isP3Draft(body)) throw new P3BrowserProblem("state_reconciliation_required", "State reconciliation required", 409, false);
+  if (!isP3Draft(body))
+    throw new P3BrowserProblem("state_reconciliation_required", "State reconciliation required", 409, false);
   return body;
+}
+
+export async function discardDraft(
+  selectionGeneration: number,
+  expectedRevision: number,
+  csrfToken: string,
+): Promise<BrowserDraftV1> {
+  const response = await fetch("/api/tavern/v1/draft", {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    credentials: "same-origin",
+    body: JSON.stringify({
+      apiVersion: 1,
+      selectionGeneration,
+      expectedRevision,
+    }),
+  });
+  const body = await readBody(response);
+  if (!response.ok) throw problemFrom(body, response.status);
+  if (!isP3Draft(body))
+    throw new P3BrowserProblem("state_reconciliation_required", "State reconciliation required", 409, false);
+  return body;
+}
+
+export async function fetchChatList(): Promise<ChatListV1> {
+  const response = await fetch("/api/tavern/v1/chats", {
+    credentials: "same-origin",
+  });
+  const body = await readBody(response);
+  if (!response.ok) throw problemFrom(body, response.status);
+  return body as ChatListV1;
+}
+
+export async function renameChatTitle(
+  chatHandle: string,
+  title: string,
+  expectedManagementRevision: number,
+  selectionGeneration: number,
+  csrfToken: string,
+): Promise<ChatTitleV1> {
+  const response = await fetch("/api/tavern/v1/chat/title", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    credentials: "same-origin",
+    body: JSON.stringify({
+      apiVersion: 1,
+      selectionGeneration,
+      chatHandle,
+      expectedManagementRevision,
+      title,
+    }),
+  });
+  const body = await readBody(response);
+  if (!response.ok) throw problemFrom(body, response.status);
+  return body as ChatTitleV1;
+}
+
+export function createTavernEventStream(
+  onEvent: (event: BrowserEventV1) => void,
+  onError?: (err: unknown) => void,
+): { close(): void } {
+  const source = new EventSource("/api/tavern/v1/events", { withCredentials: true });
+  source.onmessage = (messageEvent) => {
+    try {
+      const data = JSON.parse(messageEvent.data);
+      onEvent(data as BrowserEventV1);
+    } catch (e) {
+      onError?.(e);
+    }
+  };
+  source.onerror = (e) => {
+    onError?.(e);
+  };
+  return {
+    close: () => source.close(),
+  };
 }
 
 async function requestSnapshot(path: string, init: RequestInit): Promise<P3Snapshot> {

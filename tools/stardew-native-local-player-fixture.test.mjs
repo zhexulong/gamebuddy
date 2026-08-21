@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import test from "node:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 
 import {
   prepareNativeLocalPlayerFixture,
   restoreNativeLocalPlayerFixture,
 } from "./lib/stardew-native-local-player-fixture.mjs";
 
-const BUNDLE_FILES = ["GameBuddy.Stardew.dll", "manifest.json", "GameBuddy.Stardew.deps.json"];
+const BUNDLE_FILES = [
+  "GameBuddy.Stardew.dll",
+  "GameBuddy.Stardew.Core.dll",
+  "manifest.json",
+  "GameBuddy.Stardew.deps.json",
+];
 const saveName = "GameBuddyFixture_445094166";
 const binding = Object.freeze({
   version: 1,
@@ -35,11 +40,13 @@ const EXECUTION_MANAGER_SOURCE_FILES = Object.freeze([
 ]);
 
 async function readExecutionManagerSources() {
-  return (await Promise.all(
-    EXECUTION_MANAGER_SOURCE_FILES.map((file) =>
-      readFile(new URL(`../integrations/stardew/${file}`, import.meta.url), "utf8"),
-    ),
-  )).join("\n");
+  return (
+    await Promise.all(
+      EXECUTION_MANAGER_SOURCE_FILES.map((file) =>
+        readFile(new URL(`../integrations/stardew/${file}`, import.meta.url), "utf8"),
+      ),
+    )
+  ).join("\n");
 }
 
 async function createFixture(t, suffix) {
@@ -461,7 +468,9 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
   );
   assert.match(bootstrap, /native_place_crab_pot_v1/);
   assert.doesNotMatch(bootstrap, /place_crab_pot.*PublishedActions|PublishedActions.*place_crab_pot/s);
-  const definitionsStart = config.indexOf("internal static readonly IReadOnlyList<FarmhandActionDefinition> FarmhandActionDefinitions");
+  const definitionsStart = config.indexOf(
+    "internal static readonly IReadOnlyList<FarmhandActionDefinition> FarmhandActionDefinitions",
+  );
   const definitions = config.slice(
     definitionsStart,
     config.indexOf("private static FarmhandActionDefinition Definition", definitionsStart),
@@ -654,7 +663,10 @@ test("native-local clear-debris fixture establishes one intact native resource c
   assert.match(runner, /evidence\.health_before === String\(expectedHealth\)/);
   assert.match(runner, /connectWithRetry\(config, 15_000\)/);
   assert.match(runner, /error\.code === "ENOENT"/);
-  assert.match(runner, /const fixtureApproaches = \[\s*\{ x: 61, y: 17 \},\s*\{ x: 64, y: 17 \},\s*\{ x: 62, y: 19 \},\s*\]/);
+  assert.match(
+    runner,
+    /const fixtureApproaches = \[\s*\{ x: 61, y: 17 \},\s*\{ x: 64, y: 17 \},\s*\{ x: 62, y: 19 \},\s*\]/,
+  );
   assert.match(runner, /fixtureTargets\(snapshot\)\.length === 1/);
   assert.match(runner, /move_to_clear_debris_fixture_anchor/);
   assert.match(runner, /clear_debris_fixture_target_not_at_bounded_anchor/);
@@ -783,7 +795,7 @@ test("native-local chop-tree-source fixture establishes only the terminal-tree p
 
 test("native-local refill-watering-can fixture remains isolated and pre-action only", async (t) => {
   const options = { ...(await createFixture(t, "refill-watering-can")), action: "refill_watering_can" };
-  const prepared = await prepareNativeLocalPlayerFixture(options);
+  const _prepared = await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
   assert.deepEqual(configured.EnabledActions, ["move_to_tile", "equip_tool", "refill_watering_can"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_refill_watering_can_v1");

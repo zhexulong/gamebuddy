@@ -49,7 +49,14 @@ test("language-neutral schema accepts all production presentation and system-not
   const frames = [
     {
       type: "companion_presentation_request",
-      payload: { expressionId: "expression_01", sourceEventId: "source_01", text: "Hello", locale: "en-US", expectedRevision: 0, presentationEpoch: 0 },
+      payload: {
+        expressionId: "expression_01",
+        sourceEventId: "source_01",
+        text: "Hello",
+        locale: "en-US",
+        expectedRevision: 0,
+        presentationEpoch: 0,
+      },
     },
     {
       type: "companion_presentation_receipt",
@@ -65,14 +72,26 @@ test("language-neutral schema accepts all production presentation and system-not
     },
   ];
   for (const frame of frames)
-    assert.equal(validate({ ...base, messageId: `${frame.type}_01`, correlationId: "correlation_01", ...frame }), true, `${frame.type}: ${JSON.stringify(validate.errors)}`);
+    assert.equal(
+      validate({ ...base, messageId: `${frame.type}_01`, correlationId: "correlation_01", ...frame }),
+      true,
+      `${frame.type}: ${JSON.stringify(validate.errors)}`,
+    );
   assert.equal(
     validate({
       ...base,
       messageId: "presentation_extra_01",
       correlationId: "correlation_01",
       type: "companion_presentation_request",
-      payload: { expressionId: "expression_01", sourceEventId: "source_01", text: "Hello", locale: "en-US", expectedRevision: 0, presentationEpoch: 0, extra: true },
+      payload: {
+        expressionId: "expression_01",
+        sourceEventId: "source_01",
+        text: "Hello",
+        locale: "en-US",
+        expectedRevision: 0,
+        presentationEpoch: 0,
+        extra: true,
+      },
     }),
     false,
   );
@@ -95,10 +114,7 @@ test("language-neutral schema accepts body_settled only with its exact stop obse
     },
   };
   assert.equal(validate(bodySettled), true, JSON.stringify(validate.errors));
-  assert.equal(
-    validate({ ...bodySettled, payload: { ...bodySettled.payload, stopObservation: undefined } }),
-    false,
-  );
+  assert.equal(validate({ ...bodySettled, payload: { ...bodySettled.payload, stopObservation: undefined } }), false);
   assert.equal(
     validate({
       ...bodySettled,
@@ -138,26 +154,179 @@ test("language-neutral schema and Host share closed shapes for every published s
     ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", stack: 1 }],
     ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", stack: 1 }],
     ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24" }],
-    ["harvestTargets", { targetId: "harvest_deadbeef", x: 10, y: 12, cropId: "24", qualifiedHarvestItemId: "(O)24", regrowsAfterHarvest: false }],
+    [
+      "harvestTargets",
+      {
+        targetId: "harvest_deadbeef",
+        x: 10,
+        y: 12,
+        cropId: "24",
+        qualifiedHarvestItemId: "(O)24",
+        regrowsAfterHarvest: false,
+      },
+    ],
     ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472" }],
     ["fertilizerTargets", { targetId: "fertilizer_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)368" }],
-    ["woodFenceTargets", { targetId: "fence_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)322" }],
-    ["woodFenceResultTargets", { targetId: "fence_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)322", isFence: true, isGate: false, health: 10, maxHealth: 10 }],
-    ["crabPotTargets", { targetId: "crab_pot_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)710" }],
-    ["crabPotResultTargets", { targetId: "crab_pot_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)710", ownerId: 1, offsetX: 0, offsetY: 0, overlayTiles: [] }],
-    ["baitCrabPotTargets", { targetId: "crab_pot_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)710", baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
-    ["baitCrabPotResultTargets", { targetId: "crab_pot_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)710", baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
-    ["debrisTargets", { targetId: "debris_deadbeef", slot: 2, x: 10, y: 12, parentSheetIndex: 752, toolKind: "pickaxe", requiredUpgradeLevel: 0, health: 8 }],
-    ["rockSourceTargets", { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", health: 1 }],
+    [
+      "woodFenceTargets",
+      { targetId: "fence_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)322" },
+    ],
+    [
+      "woodFenceResultTargets",
+      {
+        targetId: "fence_deadbeef",
+        location: "Farm",
+        slot: 2,
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)322",
+        isFence: true,
+        isGate: false,
+        health: 10,
+        maxHealth: 10,
+      },
+    ],
+    [
+      "crabPotTargets",
+      { targetId: "crab_pot_deadbeef", location: "Farm", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)710" },
+    ],
+    [
+      "crabPotResultTargets",
+      {
+        targetId: "crab_pot_deadbeef",
+        location: "Farm",
+        slot: 2,
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)710",
+        ownerId: 1,
+        offsetX: 0,
+        offsetY: 0,
+        overlayTiles: [],
+      },
+    ],
+    [
+      "baitCrabPotTargets",
+      {
+        targetId: "crab_pot_deadbeef",
+        location: "Farm",
+        slot: 2,
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)710",
+        baitQualifiedItemId: "(O)685",
+        ownerId: "1",
+        baitStack: 1,
+      },
+    ],
+    [
+      "baitCrabPotResultTargets",
+      {
+        targetId: "crab_pot_deadbeef",
+        location: "Farm",
+        slot: 2,
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)710",
+        baitQualifiedItemId: "(O)685",
+        ownerId: "1",
+        baitStack: 1,
+      },
+    ],
+    [
+      "debrisTargets",
+      {
+        targetId: "debris_deadbeef",
+        slot: 2,
+        x: 10,
+        y: 12,
+        parentSheetIndex: 752,
+        toolKind: "pickaxe",
+        requiredUpgradeLevel: 0,
+        health: 8,
+      },
+    ],
+    [
+      "rockSourceTargets",
+      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", health: 1 },
+    ],
     ["clearHoeDirtTargets", { targetId: "dirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
-    ["artifactSpotTargets", { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" }],
-    ["artifactSpotResultTargets", { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
-    ["machineTargets", { targetId: "machine_deadbeef", x: 10, y: 12, qualifiedItemId: "(BC)12", readyForHarvest: false, minutesUntilReady: 10 }],
-    ["treeChopSourceTargets", { targetId: "tree_deadbeef", location: "Farm", x: 10, y: 12, treeType: "Oak", growthStage: 5, health: 1, stump: false, moss: false, tapped: false }],
-    ["treeChopResultTargets", { targetId: "tree_deadbeef", location: "Farm", x: 10, y: 12, treeType: "Oak", health: 5, stump: true, moss: false, tapped: false }],
-    ["npcRelationshipTargets", { targetId: "npc_deadbeef", x: 10, y: 12, npcName: "Abigail", friendshipPoints: 0, friendshipStatus: "Neutral", talkedToToday: false, giftsToday: 0, giftsThisWeek: 0 }],
+    [
+      "artifactSpotTargets",
+      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" },
+    ],
+    [
+      "artifactSpotResultTargets",
+      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true },
+    ],
+    [
+      "machineTargets",
+      {
+        targetId: "machine_deadbeef",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(BC)12",
+        readyForHarvest: false,
+        minutesUntilReady: 10,
+      },
+    ],
+    [
+      "treeChopSourceTargets",
+      {
+        targetId: "tree_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        treeType: "Oak",
+        growthStage: 5,
+        health: 1,
+        stump: false,
+        moss: false,
+        tapped: false,
+      },
+    ],
+    [
+      "treeChopResultTargets",
+      {
+        targetId: "tree_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        treeType: "Oak",
+        health: 5,
+        stump: true,
+        moss: false,
+        tapped: false,
+      },
+    ],
+    [
+      "npcRelationshipTargets",
+      {
+        targetId: "npc_deadbeef",
+        x: 10,
+        y: 12,
+        npcName: "Abigail",
+        friendshipPoints: 0,
+        friendshipStatus: "Neutral",
+        talkedToToday: false,
+        giftsToday: 0,
+        giftsThisWeek: 0,
+      },
+    ],
     ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false }],
-    ["animalProductTargets", { targetId: "animal_deadbeef", slot: 2, x: 10, y: 12, animalType: "Cow", qualifiedProduceItemId: "(O)184", toolKind: "milk_pail", produceStack: 1 }],
+    [
+      "animalProductTargets",
+      {
+        targetId: "animal_deadbeef",
+        slot: 2,
+        x: 10,
+        y: 12,
+        animalType: "Cow",
+        qualifiedProduceItemId: "(O)184",
+        toolKind: "milk_pail",
+        produceStack: 1,
+      },
+    ],
     ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 2, x: 10, y: 12, hayStack: 1 }],
     ["inventoryItemFacts", { slot: 2, qualifiedItemId: "(O)184", stack: 1 }],
     ["foodTargets", { slot: 2, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
@@ -165,7 +334,11 @@ test("language-neutral schema and Host share closed shapes for every published s
   for (const [field, target] of targets) {
     const payload = { ...(snapshot.payload as Record<string, unknown>), [field]: [target] };
     assert.equal(validate({ ...snapshot, payload }), true, `${field}: ${JSON.stringify(validate.errors)}`);
-    assert.equal(validate({ ...snapshot, payload: { ...payload, [field]: [{ ...target, unexpected: true }] } }), false, field);
+    assert.equal(
+      validate({ ...snapshot, payload: { ...payload, [field]: [{ ...target, unexpected: true }] } }),
+      false,
+      field,
+    );
   }
 });
 
@@ -216,7 +389,7 @@ test("language-neutral schema requires positive ResourceClump health in debris s
 
 test("language-neutral schema validates exact Wood Fence request and result target facts", async () => {
   const validate = await schemaValidator();
-  const [message] = (await fixture("golden-sequence.json")).messages;
+  const [_message] = (await fixture("golden-sequence.json")).messages;
   const executionMessage = (await fixture("golden-sequence.json")).messages.find(
     (entry) => (entry as Record<string, unknown>).type === "execution_request",
   ) as Record<string, unknown>;

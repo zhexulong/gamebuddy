@@ -1,32 +1,33 @@
 import {
-  readReservedChatRuntimeMaterializationFacts,
-  reserveChatRuntimeMaterialization,
-  withConsumedChatRuntimeBinding,
-  releaseReservedChatRuntimeMaterialization,
   type ChatRuntimeBinding,
   type ChatRuntimeBindingFacts,
   type OpaqueChatRuntimeBindingToken,
   type ReservedChatRuntimeMaterialization,
+  readReservedChatRuntimeMaterializationFacts,
+  releaseReservedChatRuntimeMaterialization,
+  reserveChatRuntimeMaterialization,
+  withConsumedChatRuntimeBinding,
 } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import type {
   ChatRuntimeMaterializer,
   MaterializedChatRuntime,
 } from "../continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.internal.js";
 import type {
-  ProductionChatRuntimePrepareOutcome,
-  ProductionChatRuntimeReceipt,
   ProductionChatRuntimePermit,
+  ProductionChatRuntimePrepareOutcome,
   ProductionChatRuntimeReadback,
+  ProductionChatRuntimeReceipt,
   ProductionChatRuntimeTeardownPermit,
-  ProductionChatRuntimeTeardownReceipt,
   ProductionChatRuntimeTeardownReadback,
+  ProductionChatRuntimeTeardownReceipt,
   ProductionChatRuntimeTeardownRequest,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import { SemanticProductionCoordinatorError } from "./continuity-semantic-production-coordinator.internal.js";
 import type { RuntimeSession } from "../runtime.js";
+import { SemanticProductionCoordinatorError } from "./continuity-semantic-production-coordinator.internal.js";
 
 export type TestMountedChatRuntimeLease = Readonly<{
-  runtimeSession: RuntimeSession;
+  /** Mirrors production's safe lease projection; Pi session identity stays private. */
+  runtimeSession: Pick<RuntimeSession, "profile">;
   chatThreadId: string;
   chatSurfaceSessionId: string;
   close(): Promise<void>;
@@ -118,11 +119,7 @@ export function createTestSemanticChatRuntimeCoordinator(
         try {
           materialized = await options.materializer.materialize(reservation, permit);
         } catch (error) {
-          try {
-            await attemptDurableFail(options, permit, error);
-          } catch (failure) {
-            throw failure;
-          }
+          await attemptDurableFail(options, permit, error);
           throw error;
         }
         reservation = undefined;
@@ -130,20 +127,12 @@ export function createTestSemanticChatRuntimeCoordinator(
         try {
           committed = await options.locked(() => options.store.commit(permit, materialized.receipt));
         } catch (error) {
-          try {
-            await closeAndFail(options, permit, materialized, error);
-          } catch (failure) {
-            throw failure;
-          }
+          await closeAndFail(options, permit, materialized, error);
           throw error;
         }
         if (committed.status !== "terminal" || committed.runtimeState !== "active") {
           const recoveryRequired = new SemanticProductionCoordinatorError("semantic_chat_runtime_recovery_required");
-          try {
-            await closeAndFail(options, permit, materialized, recoveryRequired);
-          } catch (failure) {
-            throw failure;
-          }
+          await closeAndFail(options, permit, materialized, recoveryRequired);
           throw recoveryRequired;
         }
         live = { runtime: materialized, bootstrapPermit: permit, vector: committed.vector, physicallyClosed: false };
@@ -174,7 +163,7 @@ export function createTestSemanticChatRuntimeCoordinator(
           throw new SemanticProductionCoordinatorError("semantic_chat_runtime_mount_readback_rejected");
         let lease!: TestMountedChatRuntimeLease;
         lease = Object.freeze({
-          runtimeSession,
+          runtimeSession: Object.freeze({ profile: runtimeSession.profile }),
           chatThreadId: readback.chatThreadId,
           chatSurfaceSessionId: readback.chatSurfaceSessionId,
           close(this: unknown): Promise<void> {

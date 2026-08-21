@@ -21,21 +21,17 @@
  */
 
 import { createRequire } from "node:module";
-import { registerPlayerMemoryNextRoundMarkerHook } from "./player-memory-next-round-marker";
 import { registerTavernNarrativeGateMarkerHook } from "./tavern-narrative-gate-marker";
 
-export {
-    createGameBuddyPlayerMemoryEvidenceFacade,
-    type GameBuddyPlayerMemoryCommitReceipt,
-    type GameBuddyPlayerMemoryEvidence,
-    type GameBuddyPlayerMemoryEvidenceFacade,
-    type GameBuddyPlayerMemoryMutationResult,
-} from "./gamebuddy-player-memory-evidence";
 export {
     createGameBuddyPlayerMemoryReadProjection,
     type GameBuddyPlayerMemoryReadProjection,
     type GameBuddyPlayerMemoryReadView,
 } from "./gamebuddy-player-memory-read-projection";
+export {
+    createGameBuddyPlayerMemoryCrudFacade,
+    type GameBuddyPlayerMemoryCrudFacade,
+} from "./gamebuddy-player-memory-crud-facade";
 export {
     clearPublishedGameBuddyStableContext,
     GAMEBUDDY_STABLE_CONTEXT_SOURCE_VERSION,
@@ -56,16 +52,6 @@ export {
     type MemorySourceRef,
     validateMemorySourceRef,
 } from "./memory-source-exclusion";
-export {
-    clearPlayerMemoryNextRoundMarker,
-    PLAYER_MEMORY_NEXT_ROUND_MARKER_SCHEMA,
-    type PlayerMemoryNextRoundProviderBinding,
-    recordPlayerMemoryNextRoundMaterialization,
-    registerPlayerMemoryNextRoundMarker,
-    registerPlayerMemoryNextRoundMarkerHook,
-    resetPlayerMemoryNextRoundMarkersForTest,
-    setPlayerMemoryNextRoundDebugObserverForTests,
-} from "./player-memory-next-round-marker";
 export {
     clearTavernNarrativeGateMarker,
     countTavernProviderStartObserversForTest,
@@ -825,7 +811,6 @@ async function startPiMagicContextRuntime(
     // This narrow marker is inert unless the Host installs a per-session binding.
     // It never inspects provider payloads and does not alter normal configs.
     registerTavernNarrativeGateMarkerHook(pi);
-    registerPlayerMemoryNextRoundMarkerHook(pi);
 
     info(
         `loaded v${PLUGIN_VERSION} | harness=pi | db=${dbPath} | ` +

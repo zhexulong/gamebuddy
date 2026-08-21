@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
-import { decodeStCard, previewStCard } from "./st-card-import.js";
+import { buildCompanionSystemPrompt, validateIdentityProfile } from "./identity-profile.js";
+import { candidateToIdentityProfile, decodeStCard, previewStCard } from "./st-card-import.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
+import fc from "./test-support/fast-check.js";
 
 function pngWithChara(json: string, keyword = "chara"): Uint8Array {
   const signature = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -66,6 +68,36 @@ test("ST card parsing creates reviewable Profile and WorldBook candidates withou
   assert.deepEqual(preview.unsupportedFields, ["extensions", "system_prompt"]);
   assert.equal(preview.profileCandidate.profileId, "gamebuddy.companion.rin");
   assert.equal(preview.worldBookCandidates[0]!.provenance, "st-card-import");
+});
+
+test("candidateToIdentityProfile creates valid IdentityProfile for 100% prefix caching", () => {
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Abigail",
+      description: "Loves amethyst and gaming.",
+      personality: "Adventurous and spirited.",
+      scenario: "Living in Pelican Town.",
+      mes_example: "{{user}}: Want to play Journey of the Prairie King?\n{{char}}: Always! Let's beat level 1 together.",
+    },
+  });
+
+  const profile = candidateToIdentityProfile(preview, 1);
+  assert.equal(profile.schemaVersion, 1);
+  assert.equal(profile.identity.name, "Abigail");
+  assert.equal(profile.persona?.core, "Loves amethyst and gaming.");
+  assert.equal(profile.persona?.interactionStyle, "Adventurous and spirited.");
+  assert.equal(profile.examples?.length, 1);
+
+  // Verifies that the IdentityProfile conforms to runtime contracts
+  const validated = validateIdentityProfile(profile);
+  assert.equal(validated.profileId, "gamebuddy.companion.abigail");
+
+  // Verifies system prompt rendering for prefix caching (m[0])
+  const prompt = buildCompanionSystemPrompt(profile);
+  assert.ok(prompt.includes("gamebuddy_companion_identity"));
+  assert.ok(prompt.includes("Abigail"));
+  assert.ok(prompt.includes("Loves amethyst and gaming."));
 });
 
 test("safe decoder classifies accepted, opaque, and executable card fields without interpreting them", () => {
@@ -185,22 +217,10 @@ test("safe decoder preserves multiline formatting in description, personality, s
     preview.profileCandidate.persona?.core,
     "Line 1: A gamer.\r\nLine 2: Loves amethyst.\nLine 3: Adventurous.",
   );
-  assert.equal(
-    preview.profileCandidate.persona?.interactionStyle,
-    "Paragraph 1: Bold.\n\nParagraph 2: Mysterious.",
-  );
-  assert.equal(
-    preview.profileCandidate.identity.continuity,
-    "Setting:\n- Pelican Town\n- Pierre's General Store",
-  );
-  assert.equal(
-    preview.profileCandidate.firstGreeting,
-    "Hey there!\nWhat are you up to today?",
-  );
-  assert.equal(
-    preview.worldBookCandidates[0]?.content,
-    "First line of lore.\r\nSecond line of lore with\ttabs.",
-  );
+  assert.equal(preview.profileCandidate.persona?.interactionStyle, "Paragraph 1: Bold.\n\nParagraph 2: Mysterious.");
+  assert.equal(preview.profileCandidate.identity.continuity, "Setting:\n- Pelican Town\n- Pierre's General Store");
+  assert.equal(preview.profileCandidate.firstGreeting, "Hey there!\nWhat are you up to today?");
+  assert.equal(preview.worldBookCandidates[0]?.content, "First line of lore.\r\nSecond line of lore with\ttabs.");
 });
 
 test("safe decoder parses zTXt compressed PNG chunks and ccv3 keyword", () => {
@@ -230,4 +250,128 @@ test("safe decoder parses zTXt compressed PNG chunks and ccv3 keyword", () => {
   const ztxtCcv3Report = decodeStCard(pngWithZtxt(JSON.stringify(cardData), "ccv3"));
   assert.equal(ztxtCcv3Report.source, "png");
   assert.equal(ztxtCcv3Report.candidate?.profileCandidate.identity.name, "Compressed Rin");
+});
+
+test("previewStCard and decodeStCard recognize spec ccv3 as st-v3 format", () => {
+  const cardWithTopLevelSpec = {
+    spec: "ccv3",
+    data: {
+      name: "CCV3 Companion",
+      description: "A companion defined with spec ccv3",
+      character_book: { entries: [{ comment: "CCV3 Lore", content: "Lore content" }] },
+    },
+  };
+  const preview1 = previewStCard(cardWithTopLevelSpec);
+  assert.equal(preview1.format, "st-v3");
+  assert.equal(preview1.worldBookCandidates[0]?.entryId, "st-st-v3-1");
+
+  const cardWithDataSpec = {
+    data: {
+      spec: "ccv3",
+      name: "Data CCV3 Companion",
+      description: "A companion with spec inside data",
+    },
+  };
+  const preview2 = previewStCard(cardWithDataSpec);
+  assert.equal(preview2.format, "st-v3");
+
+  const report = decodeStCard(JSON.stringify(cardWithTopLevelSpec));
+  assert.equal(report.format, "st-v3");
+  assert.equal(report.candidate?.worldBookCandidates[0]?.entryId, "st-st-v3-1");
+});
+
+// =========================================================================
+// Property-Based Tests (PBT via fast-check)
+// =========================================================================
+
+test("PBT Property 1: Fuzzing arbitrary JSON strings never crashes decodeStCard", () => {
+  fc.assert(
+    fc.property(fc.json(), (jsonStr) => {
+      // Must never throw an unhandled error
+      const report = decodeStCard(jsonStr);
+      assert.ok(report);
+      assert.equal(typeof report.source, "string");
+      assert.ok(Array.isArray(report.dispositions));
+
+      for (const d of report.dispositions) {
+        assert.ok(
+          ["accepted_typed", "preserved_opaque", "dropped_unsupported", "rejected_invalid"].includes(d.classification),
+        );
+      }
+    }),
+    { numRuns: 100 },
+  );
+});
+
+test("PBT Property 2: Multiline formatting and newline preservation under fuzzing", () => {
+  const multilineArb = fc.multilineString({ minLength: 1, maxLength: 80 });
+
+  fc.assert(
+    fc.property(multilineArb, multilineArb, (desc, greeting) => {
+      const card = {
+        spec: "chara_card_v3",
+        data: {
+          name: "TestCompanion",
+          description: desc,
+          first_mes: greeting,
+        },
+      };
+
+      const preview = previewStCard(card);
+      // Description must either be exactly preserved or undefined if it contains invalid control chars
+      if (preview.profileCandidate.persona?.core) {
+        assert.equal(preview.profileCandidate.persona.core, desc);
+      }
+      if (preview.profileCandidate.firstGreeting) {
+        assert.equal(preview.profileCandidate.firstGreeting, greeting);
+      }
+    }),
+    { numRuns: 100 },
+  );
+});
+
+test("PBT Property 3: Arbitrary byte payload never crashes PNG decoder", () => {
+  const bytesArb = fc.array(fc.integer({ min: 0, max: 255 }), { minLength: 0, maxLength: 200 }).map(
+    (arr) => new Uint8Array(arr),
+  );
+
+  fc.assert(
+    fc.property(bytesArb, (bytes) => {
+      const report = decodeStCard(bytes);
+      assert.ok(report);
+      assert.ok(Array.isArray(report.dispositions));
+    }),
+    { numRuns: 100 },
+  );
+});
+
+test("PBT Property 4: Generated Card Preview maps to valid IdentityProfile with Prefix Caching", () => {
+  const cardArb = fc.record({
+    name: fc.asciiString({ minLength: 1, maxLength: 30 }),
+    description: fc.multilineString({ minLength: 1, maxLength: 100 }),
+    personality: fc.multilineString({ minLength: 1, maxLength: 100 }),
+    scenario: fc.multilineString({ minLength: 1, maxLength: 100 }),
+  });
+
+  fc.assert(
+    fc.property(cardArb, (cardData) => {
+      const card = {
+        spec: "chara_card_v3",
+        data: cardData,
+      };
+      const preview = previewStCard(card);
+      const profile = candidateToIdentityProfile(preview, 1);
+
+      // Invariant: candidateToIdentityProfile produces a structurally valid IdentityProfile
+      assert.equal(profile.schemaVersion, 1);
+      assert.equal(profile.revision, 1);
+      assert.ok(profile.profileId.startsWith("gamebuddy.companion."));
+      assert.equal(profile.identity.name, preview.profileCandidate.identity.name);
+
+      // Invariant: Prompt rendering succeeds for m[0] prefix caching
+      const prompt = buildCompanionSystemPrompt(profile);
+      assert.ok(prompt.includes(profile.identity.name));
+    }),
+    { numRuns: 100 },
+  );
 });

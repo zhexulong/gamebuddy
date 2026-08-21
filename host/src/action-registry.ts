@@ -1,4 +1,4 @@
-import { type ActionClass } from "./action-class.js";
+import type { ActionClass } from "./action-class.js";
 
 export type ActionLifecycle = "published" | "experimental" | "diagnostic" | "planned";
 
@@ -380,20 +380,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function resolveCapabilityPullback(
+  registry: readonly PublishedAction[],
+  liveCapabilities: readonly string[],
+  policy: ActionPolicy = DEFAULT_ACTION_POLICY,
+): readonly PublishedAction[] {
+  if (!registry || registry.length === 0) return Object.freeze([]);
+  if (!liveCapabilities || liveCapabilities.length === 0) return Object.freeze([]);
+
+  const liveSet = new Set(liveCapabilities);
+  const deniedActionSet = new Set(policy.deniedActions);
+  const deniedFamilySet = new Set(policy.deniedFamilies);
+
+  return Object.freeze(
+    registry.filter((action) => {
+      if (!isMaterializablePublishedAction(action)) return false;
+      if (!liveSet.has(action.requiredCapability)) return false;
+      if (deniedActionSet.has(action.actionId)) return false;
+      if (deniedFamilySet.has(action.familyId)) return false;
+      return true;
+    }),
+  );
+}
+
 export function visiblePublishedActions(
   capabilities: readonly string[],
   policy: ActionPolicy = DEFAULT_ACTION_POLICY,
 ): readonly PublishedAction[] {
-  const capabilitySet = new Set(capabilities);
-  const deniedActions = new Set(policy.deniedActions);
-  const deniedFamilies = new Set(policy.deniedFamilies);
-  return PUBLISHED_STARDEW_ACTIONS.filter(
-    (entry) =>
-      isMaterializablePublishedAction(entry) &&
-      capabilitySet.has(entry.requiredCapability) &&
-      !deniedActions.has(entry.actionId) &&
-      !deniedFamilies.has(entry.familyId),
-  );
+  return resolveCapabilityPullback(PUBLISHED_STARDEW_ACTIONS, capabilities, policy);
 }
 
 export function searchVisibleActions(

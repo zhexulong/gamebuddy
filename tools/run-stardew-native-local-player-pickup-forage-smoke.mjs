@@ -32,7 +32,8 @@ export async function runPickupForageSmoke(
     let snapshot = await observeForageActionable(client);
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
-    if (snapshot.location !== "Farm") snapshot = await travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, travelTimeoutMs);
+    if (snapshot.location !== "Farm")
+      snapshot = await travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, travelTimeoutMs);
     snapshot = await observeForageActionable(client);
     assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
     assertNoGoldenScytheOverride(snapshot);
@@ -130,7 +131,15 @@ async function travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, tr
   const warp = snapshot.warps.find((entry) => validWarp(entry) && entry.targetLocation === "Farm");
   if (!warp) throw new Error("farm_warp_missing");
   if (!adjacent(snapshot.tile, { x: warp.sourceX, y: warp.sourceY }))
-    snapshot = await move(client, receipts, trace, snapshot, { x: warp.sourceX, y: warp.sourceY }, "move_to_farm_warp", moveTimeoutMs);
+    snapshot = await move(
+      client,
+      receipts,
+      trace,
+      snapshot,
+      { x: warp.sourceX, y: warp.sourceY },
+      "move_to_farm_warp",
+      moveTimeoutMs,
+    );
   snapshot = await observeForageActionable(client);
   assertExactCapabilities(snapshot, EXPECTED_CAPABILITIES);
   const freshWarp = snapshot.warps.find(
@@ -144,7 +153,14 @@ async function travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, tr
   );
   if (!freshWarp || !adjacent(snapshot.tile, { x: freshWarp.sourceX, y: freshWarp.sourceY }))
     throw new Error("fresh_farm_warp_unavailable");
-  const accepted = await execute(client, trace, "travel_to_farm", "travel", { x: freshWarp.sourceX, y: freshWarp.sourceY }, snapshot);
+  const accepted = await execute(
+    client,
+    trace,
+    "travel_to_farm",
+    "travel",
+    { x: freshWarp.sourceX, y: freshWarp.sourceY },
+    snapshot,
+  );
   if (accepted.state !== "accepted") throw new Error(`travel_not_accepted:${accepted.reasonCode}`);
   const terminal = await waitForTerminal(receipts, accepted, travelTimeoutMs);
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "travel_completed")

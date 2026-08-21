@@ -1,11 +1,11 @@
 #!/usr/bin/env node
+import { PortfolioStardewBridgeClient } from "../host/dist-portfolio/portfolio-stardew-bridge.js";
 /**
  * Attach-only M8 `use_mine_ladder` runner. It reads one fresh native ladder
  * Given, then performs at most one typed ladder request. The target-version
  * Mod owns every native observation and mutation.
  */
 import { PORTFOLIO_TOPOLOGY } from "./lib/stardew-portfolio-profile.mjs";
-import { PortfolioStardewBridgeClient } from "../host/dist-portfolio/portfolio-stardew-bridge.js";
 
 const ACTION = "use_mine_ladder";
 
@@ -195,7 +195,7 @@ function ladderGivenCode(probe, request, snapshot, scope) {
   )
     return "m8_ladder_probe_correlation_invalid";
   if (probe.entryObserved !== true) return "m8_ladder_mine_entry_not_observed";
-  if (probe.ladderInteractionAvailable !== true) return "m8_ladder_interaction_unavailable";
+  if (probe.ladderObserved !== true) return "m8_ladder_not_observed";
   if (!Number.isSafeInteger(probe.currentFloor) || probe.currentFloor < 0) return "m8_ladder_current_floor_invalid";
   if (!Number.isSafeInteger(probe.targetFloor) || probe.targetFloor !== probe.currentFloor + 1)
     return "m8_ladder_target_invalid";
@@ -203,7 +203,7 @@ function ladderGivenCode(probe, request, snapshot, scope) {
 }
 
 function waitableGivenCode(code) {
-  return code === "m8_ladder_mine_entry_not_observed" || code === "m8_ladder_interaction_unavailable";
+  return code === "m8_ladder_mine_entry_not_observed" || code === "m8_ladder_not_observed";
 }
 
 function terminalView(terminal) {

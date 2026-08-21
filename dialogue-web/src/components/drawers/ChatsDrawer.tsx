@@ -1,4 +1,4 @@
-import { Download, MessageSquare, MessageSquarePlus, X } from "lucide-react";
+import { Download, MessageSquare, MessageSquarePlus, Pencil, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Messages } from "../../i18n";
 import type { ChatSummary } from "../../types";
@@ -84,78 +84,86 @@ export function ChatsDrawer({
             ) : (
               chats.map((chat) => {
                 const isSelected = chat.chatHandle === currentChatHandle;
-              return (
-                <div key={chat.chatHandle} role="listitem" className={`chat-item-card ${isSelected ? "selected" : ""}`}>
-                  {editingHandle === chat.chatHandle && onRenameChat !== undefined ? (
-                    <div className="chat-rename-form">
-                      <input
-                        type="text"
-                        className="form-input"
-                        value={editingTitle}
-                        onChange={(e) => setEditingTitle(e.target.value)}
-                        autoFocus
-                      />
-                      <div className="button-group">
-                        <button
-                          type="button"
-                          className="small-button primary"
-                          onClick={() => {
-                            if (editingTitle.trim()) {
-                              onRenameChat(chat.chatHandle, editingTitle.trim());
-                            }
-                            setEditingHandle(null);
-                          }}
-                        >
-                          {labels.save}
-                        </button>
-                        <button type="button" className="small-button" onClick={() => setEditingHandle(null)}>
-                          {labels.close}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="chat-item-main">
-                      {onSelectChat !== undefined ? (
-                        <button type="button" className="chat-select-btn" onClick={() => onSelectChat(chat.chatHandle)}>
-                          <div className="chat-item-title">{chat.title}</div>
-                          {chat.messageCount !== undefined && (
-                            <div className="chat-item-meta">{chat.messageCount} messages</div>
-                          )}
-                        </button>
-                      ) : (
-                        <div className="chat-item-title">{chat.title}</div>
-                      )}
-                      <div className="chat-item-actions">
-                        {onRenameChat !== undefined && (
+                return (
+                  <div
+                    key={chat.chatHandle}
+                    role="listitem"
+                    className={`chat-item-card ${isSelected ? "selected" : ""}`}
+                  >
+                    {editingHandle === chat.chatHandle && onRenameChat !== undefined ? (
+                      <div className="chat-rename-form">
+                        <input
+                          type="text"
+                          className="form-input"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          autoFocus
+                        />
+                        <div className="button-group">
                           <button
                             type="button"
-                            className="icon-button-small"
-                            title={labels.renameChat}
+                            className="small-button primary"
                             onClick={() => {
-                              setEditingHandle(chat.chatHandle);
-                              setEditingTitle(chat.title);
+                              if (editingTitle.trim()) {
+                                onRenameChat(chat.chatHandle, editingTitle.trim());
+                              }
+                              setEditingHandle(null);
                             }}
                           >
-                            ✏️
+                            {labels.save}
                           </button>
-                        )}
-                        {onExportChat !== undefined && (
+                          <button type="button" className="small-button" onClick={() => setEditingHandle(null)}>
+                            {labels.close}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="chat-item-main">
+                        {onSelectChat !== undefined ? (
                           <button
                             type="button"
-                            className="icon-button-small"
-                            title={labels.exportChat}
-                            onClick={() => onExportChat(chat.chatHandle)}
+                            className="chat-select-btn"
+                            onClick={() => onSelectChat(chat.chatHandle)}
                           >
-                            <Download size={14} aria-hidden="true" />
+                            <div className="chat-item-title">{chat.title}</div>
+                            {chat.messageCount !== undefined && (
+                              <div className="chat-item-meta">{chat.messageCount} messages</div>
+                            )}
                           </button>
+                        ) : (
+                          <div className="chat-item-title">{chat.title}</div>
                         )}
+                        <div className="chat-item-actions">
+                          {onRenameChat !== undefined && (
+                            <button
+                              type="button"
+                              className="icon-button-small"
+                              title={labels.renameChat}
+                              onClick={() => {
+                                setEditingHandle(chat.chatHandle);
+                                setEditingTitle(chat.title);
+                              }}
+                            >
+                              <Pencil size={14} aria-hidden="true" />
+                            </button>
+                          )}
+                          {onExportChat !== undefined && (
+                            <button
+                              type="button"
+                              className="icon-button-small"
+                              title={labels.exportChat}
+                              onClick={() => onExportChat(chat.chatHandle)}
+                            >
+                              <Download size={14} aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </aside>

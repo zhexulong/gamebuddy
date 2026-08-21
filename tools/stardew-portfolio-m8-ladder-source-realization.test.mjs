@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { extractAnchors, validateDossier } from "./stardew-portfolio-m8-ladder-source-realization.mjs";
+
 const game = `public override bool checkAction(Location t, Rectangle v, Farmer who) { if (who.IsLocalPlayer) { switch (x) { case 173: Game1.enterMine(mineLevel + 1); playSound("stairsdown"); return true; } } }`;
 const warp = `public static void enterMine(int whatLevel, int? forceLayout = null) { warpFarmer(MineShaft.GetLevelName(whatLevel, forceLayout), 6, 6, 2); }`;
 const spawn = `public void createLadderDown(int x, int y, bool forceShaft = false) { createLadderDownEvent[new Point(x, y)] = forceShaft; }`;
@@ -19,7 +20,7 @@ test("M8 ladder extraction requires exact local-player case-173 commit and nativ
 test("M8 ladder extraction fails closed when case-173 or local-player guard drifts", () => {
   const bad = files();
   bad["StardewValley/Locations/MineShaft.cs"] = Buffer.from(
-    game.replace("who.IsLocalPlayer", "who.IsNotLocalPlayer") + "\n" + spawn,
+    `${game.replace("who.IsLocalPlayer", "who.IsNotLocalPlayer")}\n${spawn}`,
   );
   assert.throws(() => extractAnchors(bad), /ladder interaction guard incomplete/);
 });
@@ -35,9 +36,17 @@ test("M8 ladder dossier rejects promotion or target drift", () => {
     actionId: "use_mine_ladder",
     topology: "single_player_native_companion",
     anchors: [1, 2, 3, 4],
+    semanticBoundary: {
+      contextualEquivalence:
+        "A fresh existing ladder facility in the current MineShaft Buildings layer supports the bounded direct ladder semantic: it derives exactly mineLevel + 1 without UI ingress pose, player movement, or arbitrary enterMine authority; normal case-173 interaction remains provenance only.",
+    },
     conclusion: { primitiveSourceRealizationStatus: "realized" },
   };
   assert.equal(validateDossier(d), true);
+  assert.throws(
+    () => validateDossier({ ...d, semanticBoundary: { contextualEquivalence: "A fresh existing ladder in the current MineShaft Buildings layer derives exactly mineLevel + 1 only when adjacent." } }),
+    /direct facility boundary invalid/,
+  );
   assert.throws(() => validateDossier({ ...d, actionId: "select_mine_elevator_floor" }), /invalid/);
   assert.throws(
     () => validateDossier({ ...d, conclusion: { primitiveSourceRealizationStatus: "unknown" } }),

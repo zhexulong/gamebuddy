@@ -1,5 +1,5 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import { deriveStardewToolEffectLedger } from "./lib/stardew-tool-effect-ledger.mjs";
 
 function method(name, fragments) {

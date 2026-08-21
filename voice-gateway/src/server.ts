@@ -226,7 +226,7 @@ async function dispatch(
   captureCoordinator: CaptureCoordinator,
   admittedEpoch: number,
   admittedCaptureGeneration: number,
-  sequence: number,
+  _sequence: number,
   preCancelled: boolean,
   isInvalidated: () => boolean,
   isAuthenticated: () => boolean,

@@ -10,8 +10,15 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_dig_artifact_spot_v1";
-const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"];
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "dig_artifact_spot", "equip_tool", "inspect_self", "move_to_tile", "travel"];
+const _EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"];
+const EXPECTED_CAPABILITIES = [
+  "cancel_active_execution",
+  "dig_artifact_spot",
+  "equip_tool",
+  "inspect_self",
+  "move_to_tile",
+  "travel",
+];
 // Evidence values are serialized with up to four decimal places; allow rounding plus binary floating-point noise.
 const DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON = 0.011;
 
@@ -89,7 +96,8 @@ export async function runDigArtifactSpotSmoke(
           parseFiniteDecimal(evidence.stamina_before) -
           parseFiniteDecimal(evidence.stamina_delta),
       ) <= 0.001 &&
-      Math.abs((-parseFiniteDecimal(evidence.stamina_delta)) - parseFiniteDecimal(evidence.expected_stamina_cost)) <= DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON &&
+      Math.abs(-parseFiniteDecimal(evidence.stamina_delta) - parseFiniteDecimal(evidence.expected_stamina_cost)) <=
+        DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON &&
       parseFiniteDecimal(evidence.stamina_delta) <= 0 &&
       parseFiniteDecimal(evidence.expected_stamina_cost) >= 0 &&
       evidence.qualified_item_id === "(O)590" &&
@@ -215,11 +223,11 @@ function parseStrictEvidence(receiptEvidence) {
     const i = part.indexOf("=");
     if (i <= 0 || i === part.length - 1) return {};
     const key = part.slice(0, i);
-    if (Object.prototype.hasOwnProperty.call(result, key)) return {};
+    if (Object.hasOwn(result, key)) return {};
     result[key] = part.slice(i + 1);
   }
   return Object.keys(result).length === expected.length &&
-    expected.every((key) => Object.prototype.hasOwnProperty.call(result, key)) &&
+    expected.every((key) => Object.hasOwn(result, key)) &&
     ["stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"].every(
       (key) => parseFiniteDecimal(result[key]) !== null,
     )

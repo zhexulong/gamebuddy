@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { join } from "node:path";
+import test from "node:test";
 import { resolveTavernPaths, tavernRevisionPath, tavernThreadPath } from "./tavern-paths.js";
+
 test("tavern paths derive opaque partitions and reject traversal", () => {
   const paths = resolveTavernPaths(
     {

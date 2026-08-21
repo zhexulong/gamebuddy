@@ -105,7 +105,9 @@ test("target-gated portfolio interop contract keeps inventory complete as action
     "target-gated interop contract must not become a static leaf",
   );
   assert.deepEqual(
-    portfolio.scripts.filter((candidate) => candidate.class === "blocked_target_live").map((candidate) => candidate.script),
+    portfolio.scripts
+      .filter((candidate) => candidate.class === "blocked_target_live")
+      .map((candidate) => candidate.script),
     ["run:stardew-companion-live"],
   );
 });
@@ -298,7 +300,13 @@ test("compiled contracts receive a SHA-256 for the exact post-build production a
   assert.equal(report.state, "failed");
   assert.equal(report.summary.failed, 1);
   assert.deepEqual(
-    contracts.map(({ command, options }) => ({ entrypoint: command[1], expectedFlag: command[2], digest: command[3], assembly: command[4], options })),
+    contracts.map(({ command, options }) => ({
+      entrypoint: command[1],
+      expectedFlag: command[2],
+      digest: command[3],
+      assembly: command[4],
+      options,
+    })),
     [
       {
         entrypoint: "integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll",
@@ -361,10 +369,7 @@ test("rejects missing, non-file, and changed production assemblies before launch
     hashProductionAssembly({ path: resolve(root, "missing-production.dll") }),
     /static_portfolio_production_assembly_invalid/,
   );
-  await assert.rejects(
-    hashProductionAssembly({ path: root }),
-    /static_portfolio_production_assembly_invalid/,
-  );
+  await assert.rejects(hashProductionAssembly({ path: root }), /static_portfolio_production_assembly_invalid/);
   const file = { isFile: () => true, dev: 1, ino: 1, size: 1, mtimeMs: 1, ctimeMs: 1 };
   const changed = { ...file, size: 2 };
   let statCalls = 0;
@@ -463,7 +468,10 @@ test("both compiled contracts require and validate a supplied GameBuddy.Stardew 
     assert.match(source, /private static void AssertTypedReferenceBindsToLoadedAssembly\(Assembly loadedAssembly\)/);
     assert.match(source, /ProductionAssemblyBinding\.AssertTypedReferenceBindsToLoadedAssembly\(/);
     assert.match(source, /MethodImpl\(MethodImplOptions\.NoInlining\)/);
-    assert.match(source, /ProductionAssemblyBinding\.AssertByteAlteredAssemblyRejectedBeforeTypeLoad\(expectedSha256, fullProductionAssemblyPath\)/);
+    assert.match(
+      source,
+      /ProductionAssemblyBinding\.AssertByteAlteredAssemblyRejectedBeforeTypeLoad\(expectedSha256, fullProductionAssemblyPath\)/,
+    );
     assert.match(source, /reader\.GetAssemblyDefinition\(\)/);
     assert.match(source, /assemblyName == "GameBuddy\.Stardew"/);
   }

@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCompanionInterruption } from "../companion-interruption.js";
-import { createChatPresentationGate, type ChatPresentationStartActivation } from "./chat-presentation-gate.internal.js";
 import type { P4ProviderStartExecutionScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+import { type ChatPresentationStartActivation, createChatPresentationGate } from "./chat-presentation-gate.internal.js";
 import type {
   AttemptObservationV1,
   AttemptStartingTurn,
-  ChatTurnLedger,
   CancelledTurn,
+  ChatTurnLedger,
   P4ProviderStartTransition,
   P5PresentationTransition,
+  FailedTurn,
   RunningTurn,
 } from "./chat-thread-store.js";
 import {
@@ -88,15 +89,15 @@ function cancelled(): CancelledTurn {
 type Observer = (fact: Readonly<{ statusClass: "success" | "error" }>) => void;
 type ScopeOverrides = Readonly<{
   assertAdmission?: () => void;
+  beginActivePrompt?: () => () => void;
   readAcceptedMessageText?: () => Promise<string>;
+  readCurrentTurnLedger?: () => Promise<ChatTurnLedger>;
   runtimeSession?: object;
   activatePresentation?: () => ChatPresentationStartActivation;
   presentationCommitted?: () => boolean;
-  /** Simulates STOP winning the durable CAS immediately before completion claim. */
+  /** Simulates an ordinary SQLite Stop winning just before completion. */
   stopWinsCompletionClaim?: boolean;
-  finalizeCancellation?: () => Promise<
-    Extract<ChatTurnLedger, { status: "completion_claimed" | "completed" | "cancel_claimed" | "cancelled" | "failed" }> | undefined
-  >;
+  terminalLedger?: () => ChatTurnLedger | undefined;
 }>;
 
 function createScope(overrides: ScopeOverrides = {}) {
@@ -109,7 +110,7 @@ function createScope(overrides: ScopeOverrides = {}) {
   let durablePresentation: ChatTurnLedger | undefined;
   const transitionStore = async (
     command: P4ProviderStartTransition,
-  ): Promise<AttemptStartingTurn | RunningTurn> => {
+  ): Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn> => {
     transitions.push(command);
     if (command.operation === "running") {
       durableRunning = running(
@@ -131,6 +132,28 @@ function createScope(overrides: ScopeOverrides = {}) {
           observedAtMs: command.observedAtMs,
         }),
       );
+    }
+    if (command.operation === "cancel") {
+      return Object.freeze({
+        ...attemptStarting(Object.freeze({ phase: "armed" as const, observedAtMs: command.observedAtMs })),
+        status: "cancelled" as const,
+        observation: Object.freeze({ phase: "armed" as const, observedAtMs: command.observedAtMs }),
+        presentation: null,
+        cancelClaimedAtMs: command.observedAtMs,
+        cancelledAtMs: command.cancelledAtMs,
+      });
+    }
+    if (command.operation === "fail") {
+      const failed = Object.freeze({
+        ...attemptStarting(Object.freeze({ phase: "armed", observedAtMs: command.observedAtMs })),
+        status: "failed" as const,
+        observation: Object.freeze({ phase: "armed" as const, observedAtMs: command.observedAtMs }),
+        presentation: null,
+        reasonCode: command.reasonCode,
+        failedAtMs: command.failedAtMs,
+      });
+      durablePresentation = failed;
+      return failed;
     }
     return attemptStarting(Object.freeze({ phase: "armed", observedAtMs: command.observedAtMs }));
   };
@@ -191,8 +214,7 @@ function createScope(overrides: ScopeOverrides = {}) {
       return durablePresentation;
     }
     if (command.operation === "cancel") {
-      if (durablePresentation.status !== "cancel_claimed")
-        throw new Error("p5_presentation_cancel_source_required");
+      if (durablePresentation.status !== "cancel_claimed") throw new Error("p5_presentation_cancel_source_required");
       durablePresentation = Object.freeze({
         ...durablePresentation,
         status: "cancelled" as const,
@@ -201,8 +223,7 @@ function createScope(overrides: ScopeOverrides = {}) {
       return durablePresentation;
     }
     if (command.operation === "fail") {
-      if (durablePresentation.status !== "running")
-        throw new Error("p5_presentation_terminal_immutable");
+      if (durablePresentation.status !== "running") throw new Error("p5_presentation_terminal_immutable");
       durablePresentation = Object.freeze({
         ...durableRunning,
         status: "failed" as const,
@@ -222,27 +243,25 @@ function createScope(overrides: ScopeOverrides = {}) {
     transitionPresentation,
     readAcceptedMessageText: overrides.readAcceptedMessageText ?? (async () => "Hello"),
     assertAdmission: overrides.assertAdmission ?? (() => undefined),
+    beginActivePrompt: overrides.beginActivePrompt ?? (() => () => undefined),
+    readCurrentTurnLedger:
+      overrides.readCurrentTurnLedger ??
+      (async () => {
+        const terminal = overrides.terminalLedger?.();
+        if (terminal !== undefined) return terminal;
+        if (durablePresentation === undefined) return attemptStarting(Object.freeze({ phase: "armed", observedAtMs: 1 }));
+        return durablePresentation;
+      }),
     activatePresentation:
       overrides.activatePresentation ??
       (() =>
         fallbackGate.activate({
           epoch: fallbackEpoch,
           observationEpoch: fallbackSnapshot,
-          reserveCommit: (candidate) =>
-            fallbackEpoch.isCurrent(candidate) ? () => undefined : undefined,
+          reserveCommit: (candidate) => (fallbackEpoch.isCurrent(candidate) ? () => undefined : undefined),
           commitPresentation: async () => undefined,
         })),
-    finalizeCancellation:
-      overrides.finalizeCancellation ??
-      (async () =>
-        durablePresentation !== undefined &&
-        (durablePresentation.status === "completion_claimed" ||
-          durablePresentation.status === "completed" ||
-          durablePresentation.status === "cancel_claimed" ||
-          durablePresentation.status === "cancelled" ||
-          durablePresentation.status === "failed")
-          ? durablePresentation
-          : undefined),
+    // Retired P4/P5 STOP arbitration deliberately has no runner seam.
   }) as P4ProviderStartExecutionScope;
   return { scope, transitions, presentationTransitions };
 }
@@ -292,8 +311,14 @@ test("P4c terminalizes an observed prompt without a durable presentation as fail
   assert.equal(result.outcome, "failed");
   assert.equal(result.ledger.status, "failed");
   assert.equal(result.ledger.status === "failed" && result.ledger.reasonCode, "no_visible_presentation");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
-  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), ["claim_completion", "fail"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "running"],
+  );
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["claim_completion", "fail"],
+  );
   assert.deepEqual(receivedEnvelope, JSON.parse(renderCanonicalDialogueEnvelope(facts, "Hello")));
 });
 
@@ -314,8 +339,7 @@ test("P5 activates the construction gate before prompt and terminalizes one dura
       activation = gate.activate({
         epoch: interruption,
         observationEpoch,
-        reserveCommit: (candidate) =>
-          interruption.isCurrent(candidate) ? () => undefined : undefined,
+        reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
         commitPresentation: async () => {
           commitCount += 1;
         },
@@ -340,12 +364,9 @@ test("P5 activates the construction gate before prompt and terminalizes one dura
           const delivery = gate.textPort.present(expression, captured.admission);
           queueMicrotask(() => observer?.(Object.freeze({ statusClass: "success" as const })));
           await delivery;
-          await assert.rejects(
-            async () => {
-              await gate.textPort.present(expression, captured.admission);
-            },
-            /presentation_admission_replayed|presentation_admission_unbound/,
-          );
+          await assert.rejects(async () => {
+            await gate.textPort.present(expression, captured.admission);
+          }, /presentation_admission_replayed|presentation_admission_unbound/);
         },
       }),
     }),
@@ -355,17 +376,114 @@ test("P5 activates the construction gate before prompt and terminalizes one dura
 
   assert.equal(result.outcome, "completed");
   assert.equal(result.ledger.status, "completed");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
-  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), ["claim_completion", "complete"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "running"],
+  );
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["claim_completion", "complete"],
+  );
   assert.equal(commitCount, 1);
   assert.equal(sinkCount, 1);
   assert.equal(activation !== undefined, true);
 });
 
-test("P4c terminalizes a STOP winner that races its completion claim", async () => {
+test("P4c terminalizes a rejected prompt after an observation as durable runtime failure", async () => {
+  const interruption = createCompanionInterruption();
+  const gate = createChatPresentationGate();
+  const observationEpoch = interruption.capture();
   let observer: Observer | undefined;
+  let promptCalls = 0;
+  let commitCount = 0;
+  const { scope, transitions, presentationTransitions } = createScope({
+    activatePresentation: () =>
+      gate.activate({
+        epoch: interruption,
+        observationEpoch,
+        reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
+        commitPresentation: async () => {
+          commitCount += 1;
+        },
+      }),
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver(onStart: Observer) {
+        observer = onStart;
+        return () => undefined;
+      },
+      session: Object.freeze({
+        async prompt() {
+          promptCalls += 1;
+          const captured = gate.admissionProvider.capture();
+          const delivery = gate.textPort.present(
+            Object.freeze({
+              surface: "chat" as const,
+              expressionId: "expression_rejected",
+              sessionId: "surface_01",
+              text: "Visible before transport rejection.",
+              locale: "en",
+            }),
+            captured.admission,
+          );
+          observer?.(Object.freeze({ statusClass: "success" as const }));
+          await delivery;
+          throw new Error("transport_rejected_after_observation");
+        },
+      }),
+    }),
+  });
+
+  const result = await runMountedP4ProviderStart(scope);
+
+  assert.equal(promptCalls, 1);
+  assert.equal(result.outcome, "failed");
+  assert.equal(result.ledger.status, "failed");
+  assert.equal(result.ledger.reasonCode, "runtime_unavailable");
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "running"],
+  );
+  assert.deepEqual(
+    presentationTransitions.map(({ operation }) => operation),
+    ["fail"],
+  );
+  assert.equal(commitCount, 1);
+});
+
+test("P4c returns a normal durable Stop winner when an aborted prompt rejects", async () => {
+  let promptCalls = 0;
+  let stopped = false;
+  const { scope, transitions, presentationTransitions } = createScope({
+    terminalLedger: () => (stopped ? cancelled() : undefined),
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver() {
+        return () => undefined;
+      },
+      session: Object.freeze({
+        async prompt() {
+          promptCalls += 1;
+          stopped = true;
+          throw new Error("aborted_by_stop");
+        },
+      }),
+    }),
+  });
+
+  const result = await runMountedP4ProviderStart(scope);
+
+  assert.equal(promptCalls, 1);
+  assert.equal(result.outcome, "cancelled");
+  assert.equal(result.ledger.status, "cancelled");
+  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm"]);
+  assert.deepEqual(presentationTransitions, []);
+});
+
+test("P4c rereads a normal Stop winner that races completion", async () => {
+  let observer: Observer | undefined;
+  let stopped = false;
   const { scope, presentationTransitions } = createScope({
     stopWinsCompletionClaim: true,
+    terminalLedger: () => (stopped ? cancelled() : undefined),
     runtimeSession: Object.freeze({
       installTavernProviderStartObserver(onStart: Observer) {
         observer = onStart;
@@ -374,6 +492,7 @@ test("P4c terminalizes a STOP winner that races its completion claim", async () 
       session: Object.freeze({
         prompt() {
           observer?.(Object.freeze({ statusClass: "success" as const }));
+          stopped = true;
           return Promise.resolve();
         },
       }),
@@ -384,21 +503,15 @@ test("P4c terminalizes a STOP winner that races its completion claim", async () 
 
   assert.equal(result.outcome, "cancelled");
   assert.equal(result.ledger.status, "cancelled");
-  assert.deepEqual(
-    presentationTransitions.map(({ operation }) => operation),
-    ["claim_completion", "cancel"],
-  );
+  assert.deepEqual(presentationTransitions, []);
 });
 
-test("P4c terminalizes a durable cancel winner after prompt and presentation drain", async () => {
+test("P4c rereads a normal Stop winner after provider settlement", async () => {
   let observer: Observer | undefined;
   let promptCalls = 0;
-  let finalizeCalls = 0;
+  let stopped = false;
   const { scope, transitions, presentationTransitions } = createScope({
-    finalizeCancellation: async () => {
-      finalizeCalls += 1;
-      return cancelled();
-    },
+    terminalLedger: () => (stopped ? cancelled() : undefined),
     runtimeSession: Object.freeze({
       installTavernProviderStartObserver(onStart: Observer) {
         observer = onStart;
@@ -408,6 +521,7 @@ test("P4c terminalizes a durable cancel winner after prompt and presentation dra
         prompt() {
           promptCalls += 1;
           observer?.(Object.freeze({ statusClass: "success" as const }));
+          stopped = true;
           return Promise.resolve();
         },
       }),
@@ -417,7 +531,6 @@ test("P4c terminalizes a durable cancel winner after prompt and presentation dra
   const result = await runMountedP4ProviderStart(scope);
 
   assert.equal(promptCalls, 1);
-  assert.equal(finalizeCalls, 1);
   assert.equal(result.outcome, "cancelled");
   assert.equal(result.ledger.status, "cancelled");
   assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
@@ -432,8 +545,7 @@ test("P5 Chat gate rejects a Game expression before durable commit", async () =>
   const activation = gate.activate({
     epoch: interruption,
     observationEpoch,
-    reserveCommit: (candidate) =>
-      interruption.isCurrent(candidate) ? () => undefined : undefined,
+    reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
     commitPresentation: async () => {
       commitCount += 1;
     },
@@ -468,15 +580,20 @@ test("P5 stop before commit reservation rejects with zero durable presentation w
   const activation = gate.activate({
     epoch: interruption,
     observationEpoch,
-    reserveCommit: (candidate) =>
-      interruption.isCurrent(candidate) ? () => undefined : undefined,
+    reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
     commitPresentation: async () => {
       commitCount += 1;
     },
   });
   const captured = gate.admissionProvider.capture();
   const delivery = gate.textPort.present(
-    Object.freeze({ surface: "chat" as const, expressionId: "expression_stopped", sessionId: "surface_01", text: "Late.", locale: "zh-CN" }),
+    Object.freeze({
+      surface: "chat" as const,
+      expressionId: "expression_stopped",
+      sessionId: "surface_01",
+      text: "Late.",
+      locale: "zh-CN",
+    }),
     captured.admission,
   );
   interruption.stop("stop_first", "source_first", "player_stop_all");
@@ -496,8 +613,7 @@ test("P5 commit reservation orders a racing stop after the reserved durable comm
   const activation = gate.activate({
     epoch: interruption,
     observationEpoch,
-    reserveCommit: (candidate) =>
-      interruption.isCurrent(candidate) ? () => undefined : undefined,
+    reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
     commitPresentation: async () => {
       commitStarted = true;
       await new Promise<void>((resolve) => {
@@ -508,7 +624,13 @@ test("P5 commit reservation orders a racing stop after the reserved durable comm
   });
   const captured = gate.admissionProvider.capture();
   const delivery = gate.textPort.present(
-    Object.freeze({ surface: "chat" as const, expressionId: "expression_race", sessionId: "surface_01", text: "Visible.", locale: "zh-CN" }),
+    Object.freeze({
+      surface: "chat" as const,
+      expressionId: "expression_race",
+      sessionId: "surface_01",
+      text: "Visible.",
+      locale: "zh-CN",
+    }),
     captured.admission,
   );
   activation.resolveRunning();
@@ -540,26 +662,28 @@ test("P5 activation exposes no direct commit and deactivation drains a reserved 
   const activation = gate.activate({
     epoch: interruption,
     observationEpoch,
-    reserveCommit: (candidate) =>
-      interruption.isCurrent(candidate) ? () => undefined : undefined,
+    reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
     commitPresentation: async () => undefined,
   });
   assert.equal("commitPresentation" in activation, false);
   const captured = gate.admissionProvider.capture();
   const delivery = gate.textPort.present(
-    Object.freeze({ surface: "chat" as const, expressionId: "expression_drain", sessionId: "surface_01", text: "Visible.", locale: "zh-CN" }),
+    Object.freeze({
+      surface: "chat" as const,
+      expressionId: "expression_drain",
+      sessionId: "surface_01",
+      text: "Visible.",
+      locale: "zh-CN",
+    }),
     captured.admission,
   );
   activation.resolveRunning();
   while (!listenerStarted) await new Promise<void>((resolve) => queueMicrotask(resolve));
 
   const deactivation = activation.deactivate();
-  await assert.rejects(
-    async () => {
-      gate.admissionProvider.capture();
-    },
-    /presentation_admission_revoked/,
-  );
+  await assert.rejects(async () => {
+    gate.admissionProvider.capture();
+  }, /presentation_admission_revoked/);
   assert.throws(
     () =>
       gate.activate({
@@ -608,7 +732,72 @@ test("P4c leaves the durable attempt armed when prompt settles without a provide
   assert.equal(result.outcome, "armed");
   assert.equal(result.ledger.status, "attempt_starting");
   assert.equal(result.ledger.observation?.phase, "armed");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm"],
+  );
+});
+
+test("P4c records a synchronously-throwing provider prompt as durable failure", async () => {
+  let promptCalls = 0;
+  let unregisterCalls = 0;
+  const { scope, transitions } = createScope({
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver() {
+        return () => {
+          unregisterCalls += 1;
+        };
+      },
+      session: Object.freeze({
+        prompt() {
+          promptCalls += 1;
+          // A transport failure may throw synchronously before the promise is
+          // formed. It must become the same durable retryable failure as an
+          // asynchronous provider rejection.
+          throw new Error("sync_transport_failure");
+        },
+      }),
+    }),
+  });
+
+  const result = await runMountedP4ProviderStart(scope);
+
+  assert.equal(promptCalls, 1);
+  assert.equal(unregisterCalls, 1);
+  assert.equal(result.outcome, "failed");
+  assert.equal(result.ledger.status, "failed");
+  assert.equal(result.ledger.reasonCode, "runtime_unavailable");
+  assert.equal(result.ledger.observation.phase, "armed");
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "fail"],
+  );
+});
+
+test("P4c persists an asynchronously rejected provider prompt as retryable failure", async () => {
+  let promptCalls = 0;
+  const { scope, transitions } = createScope({
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver() {
+        return () => undefined;
+      },
+      session: Object.freeze({
+        async prompt() {
+          promptCalls += 1;
+          throw new Error("async_transport_failure");
+        },
+      }),
+    }),
+  });
+
+  const result = await runMountedP4ProviderStart(scope);
+
+  assert.equal(promptCalls, 1);
+  assert.equal(result.outcome, "failed");
+  assert.equal(result.ledger.status, "failed");
+  assert.equal(result.ledger.reasonCode, "runtime_unavailable");
+  assert.equal(result.ledger.observation.phase, "armed");
+  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "fail"]);
 });
 
 test("P4c revalidates after asynchronous message read and records local pre-invocation revocation without prompting", async () => {
@@ -640,8 +829,14 @@ test("P4c revalidates after asynchronous message read and records local pre-invo
   assert.equal(promptCalls, 0);
   assert.equal(result.outcome, "not_started");
   assert.equal(result.ledger.observation?.phase, "not_started");
-  assert.equal(result.ledger.observation?.phase === "not_started" && result.ledger.observation.reasonCode, "admission_revoked");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "not_started"]);
+  assert.equal(
+    result.ledger.observation?.phase === "not_started" && result.ledger.observation.reasonCode,
+    "admission_revoked",
+  );
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "not_started"],
+  );
 });
 
 test("P4c ignores a late provider observation once running admission is no longer active", async () => {
@@ -672,7 +867,10 @@ test("P4c ignores a late provider observation once running admission is no longe
   const result = await runMountedP4ProviderStart(scope);
 
   assert.equal(result.outcome, "armed");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm"],
+  );
 });
 
 test("P4c records session_unavailable only before a Host prompt invocation", async () => {
@@ -682,6 +880,12 @@ test("P4c records session_unavailable only before a Host prompt invocation", asy
 
   assert.equal(result.outcome, "not_started");
   assert.equal(result.ledger.observation?.phase, "not_started");
-  assert.equal(result.ledger.observation?.phase === "not_started" && result.ledger.observation.reasonCode, "session_unavailable");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "not_started"]);
+  assert.equal(
+    result.ledger.observation?.phase === "not_started" && result.ledger.observation.reasonCode,
+    "session_unavailable",
+  );
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "not_started"],
+  );
 });

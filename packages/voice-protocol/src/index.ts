@@ -146,3 +146,5 @@ function isOneOf(value: unknown, values: readonly string[]): boolean { return ty
 function isBase64(value: unknown): value is string { return typeof value === "string" && value.length % 4 === 0 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value); }
 function isPositiveSafeInteger(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value > 0; }
 function concat(left: Uint8Array, right: Uint8Array): Uint8Array<ArrayBufferLike> { const result = new Uint8Array(left.byteLength + right.byteLength); result.set(left); result.set(right, left.byteLength); return result; }
+
+export * from "./lifecycle-fsm.js";

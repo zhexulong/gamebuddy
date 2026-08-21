@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { type ChildProcess, fork, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { spawn, fork, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   WindowsNamedMutexBroker,
   WindowsNamedMutexBrokerError,

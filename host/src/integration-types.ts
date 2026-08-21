@@ -1,6 +1,6 @@
-import { type ExecutionReceipt, type Scope as StardewScope, type Snapshot } from "./protocol.js";
-import { type KnowledgeBundle } from "./knowledge.js";
-import { type GameIntegrationModule } from "./integration-module.js";
+import type { GameIntegrationModule } from "./integration-module.js";
+import type { KnowledgeBundle } from "./knowledge.js";
+import type { ExecutionReceipt, Snapshot, Scope as StardewScope } from "./protocol.js";
 
 /**
  * Compatibility state exposed by the first Stardew bridge adapter. Other

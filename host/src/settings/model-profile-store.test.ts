@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { type CompanionModelConfig } from "../runtime.js";
+import type { CompanionModelConfig } from "../runtime.js";
 import {
+  type ModelProfile,
   ModelProfileRevisionConflict,
   ModelProfileStore,
   resolveModelProfileConfig,
-  type ModelProfile,
 } from "./model-profile-store.js";
 
 async function withStore(run: (path: string, store: ModelProfileStore) => Promise<void>): Promise<void> {

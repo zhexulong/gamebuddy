@@ -1,11 +1,10 @@
 import { readFile } from "node:fs/promises";
-
+import type { Mixer, TtsProvider } from "./gateway.js";
 import { MimoTtsProvider } from "./mimo.js";
-import { type Mixer, type TtsProvider } from "./gateway.js";
-import { createWindowsAudioMixer, type WindowsOutputSelection } from "./windows-audio.js";
-import { WindowsPttCapture, type WindowsInputSelection } from "./windows-capture.js";
-import { auditSenseVoiceAssets, SenseVoiceCliAsrProvider, type SenseVoiceAssetManifest } from "./sensevoice.js";
+import { auditSenseVoiceAssets, type SenseVoiceAssetManifest, SenseVoiceCliAsrProvider } from "./sensevoice.js";
 import { startVoiceGateway } from "./server.js";
+import { createWindowsAudioMixer, type WindowsOutputSelection } from "./windows-audio.js";
+import { type WindowsInputSelection, WindowsPttCapture } from "./windows-capture.js";
 
 // Windows output is opt-in. `default` asks Windows to resolve its current
 // multimedia output device for every open; an explicit `waveout:N` endpoint

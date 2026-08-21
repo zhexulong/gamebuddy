@@ -1,61 +1,124 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
-import { PassThrough } from "node:stream";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
-import type { ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-import { assertNoWindowsReparse, inspectWindowsReparse } from "./index.js";
+import {
+  assertNoWindowsReparse,
+  createBuildWindowsReparseInspector,
+  createPublishedWindowsReparseInspector,
+  inspectWindowsReparse,
+} from "./index.js";
 import { createTestWindowsReparseInspector } from "./index.test-support.js";
 
-type Outcome = "regular" | "reparse" | "malformed" | "unavailable" | "timeout" | "nonzero" | "stderr" | "overflow";
-
-for (const outcome of ["regular", "reparse", "malformed", "unavailable", "timeout", "nonzero", "stderr", "overflow"] as const) {
-  test(`inspectWindowsReparse ${outcome} child behavior`, async () => {
-    const capability = createTestWindowsReparseInspector(() => syntheticChild(outcome));
-    const inspected = inspectWindowsReparse(capability, "/absolute/test-path");
-    if (outcome === "regular" || outcome === "reparse") assert.equal(await inspected, outcome);
-    else await assert.rejects(inspected, /windows_reparse_inspection_unavailable/);
-  });
+async function fixture(): Promise<{ root: string; dispose(): Promise<void> }> {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-reparse-test-"));
+  return { root, dispose: () => rm(root, { recursive: true, force: true }) };
 }
 
-test("assertNoWindowsReparse rejects an exact reparse result", async () => {
-  const capability = createTestWindowsReparseInspector(() => syntheticChild("reparse"));
-  await assert.rejects(assertNoWindowsReparse(capability, "/absolute/test-path"), /windows_reparse_inspection_unavailable/);
+test("inspectWindowsReparse returns regular for regular files and directories", async () => {
+  const item = await fixture();
+  try {
+    const filePath = join(item.root, "file.txt");
+    const dirPath = join(item.root, "subdir");
+    await writeFile(filePath, "test", "utf8");
+    await mkdir(dirPath);
+
+    const capability = await createBuildWindowsReparseInspector();
+    assert.equal(await inspectWindowsReparse(capability, filePath), "regular");
+    assert.equal(await inspectWindowsReparse(capability, dirPath), "regular");
+    await assertNoWindowsReparse(capability, filePath);
+    await assertNoWindowsReparse(capability, dirPath);
+  } finally {
+    await item.dispose();
+  }
 });
 
-test("inspectWindowsReparse rejects invalid capabilities and relative paths", async () => {
-  await assert.rejects(inspectWindowsReparse(undefined, "/absolute/test-path"), /windows_reparse_inspection_unavailable/);
-  const capability = createTestWindowsReparseInspector(() => syntheticChild("regular"));
-  await assert.rejects(inspectWindowsReparse(capability, "relative/test-path"), /windows_reparse_inspection_unavailable/);
+test("inspectWindowsReparse returns reparse for symbolic links", async (t) => {
+  const item = await fixture();
+  try {
+    const targetPath = join(item.root, "target.txt");
+    const linkPath = join(item.root, "link.txt");
+    await writeFile(targetPath, "target content", "utf8");
+    try {
+      await symlink(targetPath, linkPath, "file");
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM" || (error as NodeJS.ErrnoException).code === "EACCES") {
+        t.skip("symbolic links are not permitted in this environment");
+        return;
+      }
+      throw error;
+    }
+
+    const capability = await createBuildWindowsReparseInspector();
+    assert.equal(await inspectWindowsReparse(capability, linkPath), "reparse");
+    await assert.rejects(
+      assertNoWindowsReparse(capability, linkPath),
+      /windows_reparse_inspection_unavailable/,
+    );
+  } finally {
+    await item.dispose();
+  }
+});
+
+test("inspectWindowsReparse rejects missing paths, invalid capabilities, and relative paths", async () => {
+  const item = await fixture();
+  try {
+    const capability = await createBuildWindowsReparseInspector();
+    await assert.rejects(
+      inspectWindowsReparse(capability, join(item.root, "non-existent.txt")),
+      /windows_reparse_inspection_unavailable/,
+    );
+    await assert.rejects(
+      inspectWindowsReparse(undefined, join(item.root, "file.txt")),
+      /windows_reparse_inspection_unavailable/,
+    );
+    await assert.rejects(
+      inspectWindowsReparse(capability, "relative/path.txt"),
+      /windows_reparse_inspection_unavailable/,
+    );
+  } finally {
+    await item.dispose();
+  }
+});
+
+test("createPublishedWindowsReparseInspector creates capability with absolute path and rejects relative path", async () => {
+  const item = await fixture();
+  try {
+    const capability = await createPublishedWindowsReparseInspector(item.root);
+    assert.ok(capability);
+    await assert.rejects(
+      createPublishedWindowsReparseInspector("relative/path"),
+      /windows_reparse_inspection_unavailable/,
+    );
+  } finally {
+    await item.dispose();
+  }
+});
+
+test("createTestWindowsReparseInspector supports custom inspection behavior", async () => {
+  const reparseCapability = createTestWindowsReparseInspector(() => "reparse");
+  assert.equal(await inspectWindowsReparse(reparseCapability, "/mock/path"), "reparse");
+  await assert.rejects(
+    assertNoWindowsReparse(reparseCapability, "/mock/path"),
+    /windows_reparse_inspection_unavailable/,
+  );
+
+  const errorCapability = createTestWindowsReparseInspector(() => {
+    throw new Error("fail");
+  });
+  await assert.rejects(
+    inspectWindowsReparse(errorCapability, "/mock/path"),
+    /windows_reparse_inspection_unavailable/,
+  );
 });
 
 test("public policy entry does not expose test-only capability minting", async () => {
-  const source = await readFile(resolve(fileURLToPath(new URL("../..", import.meta.url)), "src", "windows-reparse-inspector", "index.ts"), "utf8");
+  const source = await readFile(
+    resolve(fileURLToPath(new URL("../..", import.meta.url)), "src", "windows-reparse-inspector", "index.ts"),
+    "utf8",
+  );
   assert.doesNotMatch(source, /__testOnly|test-support/);
 });
-
-function syntheticChild(outcome: Outcome): ChildProcess {
-  if (outcome === "unavailable") throw new Error("spawn unavailable");
-  const child = Object.assign(new EventEmitter(), {
-    stdin: new PassThrough(),
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    kill: () => {
-      if (outcome === "timeout") queueMicrotask(() => child.emit("close", null, "SIGTERM"));
-      return true;
-    },
-  });
-  child.stdin.on("data", () => {
-    if (outcome === "timeout") return;
-    if (outcome === "overflow") child.stdout.end(Buffer.alloc(64 * 1024 + 1));
-    else if (outcome === "malformed") child.stdout.end('{"schemaVersion":1,"result":"other"}\n');
-    else child.stdout.end(`{"schemaVersion":1,"result":"${outcome}"}\n`);
-    if (outcome === "stderr") child.stderr.end("unexpected");
-    else child.stderr.end();
-    queueMicrotask(() => child.emit("close", outcome === "nonzero" ? 1 : 0, null));
-  });
-  return child as unknown as ChildProcess;
-}

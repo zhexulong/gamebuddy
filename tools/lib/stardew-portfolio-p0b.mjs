@@ -1,9 +1,8 @@
-import { createHash, createHmac } from "node:crypto";
 import { execFile } from "node:child_process";
+import { createHash, createHmac } from "node:crypto";
 import { lstat, open, realpath } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { PORTFOLIO_TOPOLOGY, inspectPortfolioModBundle } from "./stardew-portfolio-profile.mjs";
 import {
   computePortfolioBindingHash as computeContractBindingHash,
   PORTFOLIO_EVIDENCE_SCHEMA_REVISION as PORTFOLIO_CONTRACT_EVIDENCE_SCHEMA_REVISION,
@@ -12,6 +11,7 @@ import {
   PORTFOLIO_TARGET_VERSION as PORTFOLIO_CONTRACT_TARGET_VERSION,
   PORTFOLIO_TARGET_BUILD_NUMBER,
 } from "./stardew-portfolio-contract-primitives.mjs";
+import { inspectPortfolioModBundle, PORTFOLIO_TOPOLOGY } from "./stardew-portfolio-profile.mjs";
 
 export const PORTFOLIO_TARGET_VERSION = `${PORTFOLIO_CONTRACT_TARGET_VERSION}.${PORTFOLIO_TARGET_BUILD_NUMBER}`;
 export const PORTFOLIO_TARGET_GAME_VERSION = PORTFOLIO_CONTRACT_TARGET_VERSION;
@@ -169,7 +169,7 @@ export function validatePortfolioInstallationAttestation(value, expected = {}) {
   return Object.freeze({ valid: errors.length === 0, errors: Object.freeze([...new Set(errors)].sort()) });
 }
 
-async function inspectInstallationAttestation(context, options) {
+async function inspectInstallationAttestation(context, _options) {
   const reasons = [];
   const attestation = await readJsonIfPresent(
     context.installationAttestationPath,
@@ -268,7 +268,12 @@ async function inspectModBundle(profileRoot, expected) {
     });
   const root = bundle.directory;
   const files = [];
-  for (const fileName of ["GameBuddy.Stardew.dll", "manifest.json", "GameBuddy.Stardew.deps.json"]) {
+  for (const fileName of [
+    "GameBuddy.Stardew.dll",
+    "GameBuddy.Stardew.Core.dll",
+    "manifest.json",
+    "GameBuddy.Stardew.deps.json",
+  ]) {
     const observed = await hashAndVersion(join(root, fileName), false);
     files.push(observed);
     if (!observed.exists) reasons.push(`portfolio_mod_file_missing:${fileName}`);
@@ -601,13 +606,14 @@ function validateModAttestation(value, errors) {
   }
   rejectUnknownFields(
     value,
-    ["version", "dllSha256", "manifestSha256", "depsSha256"],
+    ["version", "dllSha256", "coreDllSha256", "manifestSha256", "depsSha256"],
     "portfolio_installation_mod_unknown_field",
     errors,
   );
   if (
     typeof value.version !== "string" ||
     !SHA256.test(value.dllSha256 ?? "") ||
+    !SHA256.test(value.coreDllSha256 ?? "") ||
     !SHA256.test(value.manifestSha256 ?? "") ||
     !SHA256.test(value.depsSha256 ?? "")
   )
@@ -903,9 +909,11 @@ async function readStableJsonFile(filePath) {
 function fileKey(fileName) {
   return fileName === "GameBuddy.Stardew.dll"
     ? "dllSha256"
-    : fileName === "manifest.json"
-      ? "manifestSha256"
-      : "depsSha256";
+    : fileName === "GameBuddy.Stardew.Core.dll"
+      ? "coreDllSha256"
+      : fileName === "manifest.json"
+        ? "manifestSha256"
+        : "depsSha256";
 }
 function normalizeSmapiVersion(value) {
   const match = /^([0-9]+\.[0-9]+\.[0-9]+)/.exec(value ?? "");

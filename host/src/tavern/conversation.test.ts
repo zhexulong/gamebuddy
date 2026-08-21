@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import type { ChatThreadStore } from "./chat-thread-store.js";
 import {
-  TavernExactContentError,
   createTavernConversation,
   createTavernSemanticChatContentPort,
   resumeExactTavernConversation,
+  TavernExactContentError,
 } from "./conversation.js";
-import type { ChatThreadStore } from "./chat-thread-store.js";
 
 const state = Object.freeze({
   thread: Object.freeze({
@@ -34,7 +34,13 @@ const binding = {
 } as const;
 const selectionMethods = {
   async acceptPlayerMessage() {
-    return Object.freeze({ turnId: "turn_01", status: "accepted_queued" as const, idempotencyKey: "abcdefghijklmnopqrstuv", messageId: "player_01", acceptedAtMs: 1 });
+    return Object.freeze({
+      turnId: "turn_01",
+      status: "accepted_queued" as const,
+      idempotencyKey: "abcdefghijklmnopqrstuv",
+      messageId: "player_01",
+      acceptedAtMs: 1,
+    });
   },
   async readActiveThreadSelection() {
     return null;

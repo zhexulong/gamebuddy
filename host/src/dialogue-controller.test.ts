@@ -162,13 +162,13 @@ test("DialogueController reports a failed turn without exposing provider detail"
   assert.doesNotMatch(events.join("\n"), /provider secret/);
 });
 
-test("DialogueController accepts only an explicit boolean per-turn memory delegation flag", () => {
+test("DialogueController accepts only canonical player dialogue fields", () => {
   assert.deepEqual(
-    validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN", memoryDelegation: true }),
-    { clientMessageId: "input", text: "hello", locale: "zh-CN", memoryDelegation: true },
+    validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN" }),
+    { clientMessageId: "input", text: "hello", locale: "zh-CN" },
   );
   assert.throws(
-    () => validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN", memoryDelegation: false }),
+    () => validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN", retiredOption: true }),
     /invalid_dialogue_input/,
   );
   assert.throws(

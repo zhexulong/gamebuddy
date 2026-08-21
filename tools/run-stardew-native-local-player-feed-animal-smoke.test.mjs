@@ -3,14 +3,7 @@ import test from "node:test";
 import { runFeedAnimalSmoke } from "./run-stardew-native-local-player-feed-animal-smoke.mjs";
 
 const BARN_LOCATION = "Barn3aaaaaaaa-0000-0000-0000-000000000000";
-const CAPABILITIES = [
-  "cancel_active_execution",
-  "inspect_self",
-  "move_to_tile",
-  "travel",
-  "enter_exit",
-  "feed_animal",
-];
+const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "enter_exit", "feed_animal"];
 const FARM_WARP = { sourceX: 1, sourceY: 2, targetLocation: "Farm", targetX: 3, targetY: 4 };
 const BARN_DOOR = { sourceX: 17, sourceY: 12, targetX: 0, targetY: 0, targetLocation: BARN_LOCATION };
 const TARGET = { targetId: "trough_0123456789abcdef", slot: 1, x: 20, y: 19, hayStack: 5 };
@@ -52,7 +45,7 @@ function createFake({ startLocation = BARN_LOCATION, capabilities = CAPABILITIES
   let revision = 1;
   let location = startLocation;
   let tile = { x: 20, y: 20 };
-  let warps = startLocation === "FarmHouse" ? [FARM_WARP] : [];
+  const warps = startLocation === "FarmHouse" ? [FARM_WARP] : [];
   let doorTargets = location === "Farm" ? [BARN_DOOR] : [];
   let feedTroughTargets = location === BARN_LOCATION ? [TARGET] : [];
   const snapshotOf = () => ({
@@ -105,7 +98,13 @@ function createFake({ startLocation = BARN_LOCATION, capabilities = CAPABILITIES
       if (action === "enter_exit") {
         revision += 1;
         // A stale fact with the wrong executionId must never satisfy the wait.
-        publish({ ...receipt, executionId: "stale-execution", state: "succeeded", reasonCode: "enter_exit_completed", revision });
+        publish({
+          ...receipt,
+          executionId: "stale-execution",
+          state: "succeeded",
+          reasonCode: "enter_exit_completed",
+          revision,
+        });
         publish({ ...receipt, state: "succeeded", reasonCode: "enter_exit_completed", revision });
         location = BARN_LOCATION;
         tile = { x: 20, y: 20 };
@@ -155,7 +154,10 @@ test("feed-animal runner passes when the fixture pre-positions the player inside
   assert.equal(result.evidence.hay_before, "5");
   assert.equal(result.evidence.hay_after, "4");
   assert.equal(result.after.feedTroughTargets, 0);
-  assert.deepEqual(result.trace.map((entry) => entry.phase), ["feed"]);
+  assert.deepEqual(
+    result.trace.map((entry) => entry.phase),
+    ["feed"],
+  );
 });
 
 test("feed-animal runner navigates Farm to the SetupBigFarm Deluxe Barn door, enters, and feeds", async () => {
@@ -186,7 +188,9 @@ test("feed-animal runner navigates Farm to the SetupBigFarm Deluxe Barn door, en
 });
 
 test("feed-animal runner blocks on a non-isolated capability surface", async () => {
-  const client = createFake({ capabilities: ["cancel_active_execution", "inspect_self", "move_to_tile", "enter_exit", "feed_animal"] });
+  const client = createFake({
+    capabilities: ["cancel_active_execution", "inspect_self", "move_to_tile", "enter_exit", "feed_animal"],
+  });
   const receipts = collectReceipts(client);
   const result = await runFeedAnimalSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "blocked");

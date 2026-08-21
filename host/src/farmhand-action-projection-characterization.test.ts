@@ -219,7 +219,11 @@ test("every materialized published Farmhand tool routes its exact action-specifi
   const expectedToolNames = PUBLISHED_STARDEW_ACTIONS.map((entry) => `stardew_${entry.actionId}`).sort();
 
   assert.deepEqual(Object.keys(fixtures).sort(), PUBLISHED_STARDEW_ACTIONS.map((entry) => entry.actionId).sort());
-  assert.deepEqual([...tools.keys()].sort(), expectedToolNames, "materialized tool names must exactly match published actions");
+  assert.deepEqual(
+    [...tools.keys()].sort(),
+    expectedToolNames,
+    "materialized tool names must exactly match published actions",
+  );
   for (const [toolName, tool] of tools) {
     assert.ok(toolName.startsWith("stardew_"));
     assert.ok(tool.label.trim().length > 0, `${toolName} must expose a nonempty label`);

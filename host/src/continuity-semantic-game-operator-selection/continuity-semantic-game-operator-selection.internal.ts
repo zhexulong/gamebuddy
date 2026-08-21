@@ -1,7 +1,9 @@
 import { realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-
-import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
+import {
+  type ConstructedUnmountedGameSemanticFacade,
+  constructKnownUnmountedGameSemanticFacade,
+} from "../continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
 import { createGameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import {
   createHostGameRuntimeMaterializer,
@@ -9,12 +11,9 @@ import {
 } from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
-import { readStrictJsonFile } from "../strict-json-reader.js";
-import {
-  constructKnownUnmountedGameSemanticFacade,
-  type ConstructedUnmountedGameSemanticFacade,
-} from "../continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
+import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
+import { readStrictJsonFile } from "../strict-json-reader.js";
 
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const TOP_LEVEL_KEYS = ["schemaVersion", "manifestPath", "integrationId", "integration"] as const;
@@ -146,7 +145,7 @@ async function loadHostSemanticGameOperatorConfig(operatorConfigPath: string): P
     value === null ||
     value.schemaVersion !== 1 ||
     !identifier(value.integrationId) ||
-    !Object.prototype.hasOwnProperty.call(value, "integration")
+    !Object.hasOwn(value, "integration")
   ) {
     throw new Error("invalid_semantic_game_operator_config");
   }

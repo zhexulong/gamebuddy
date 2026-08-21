@@ -121,7 +121,10 @@ test("pickup item runner passes on Farm with one fresh live target", async () =>
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "item_picked_up");
   assert.equal(result.receipt.reasonCode, "item_picked_up");
-  assert.deepEqual(result.trace.map((entry) => entry.action), ["pickup_item"]);
+  assert.deepEqual(
+    result.trace.map((entry) => entry.action),
+    ["pickup_item"],
+  );
   assert.equal(result.before.location, "Farm");
   assert.deepEqual(result.after.itemTargets, []);
   assert.equal(result.inventoryDelta, 2);
@@ -137,7 +140,10 @@ test("pickup item runner travels from FarmHouse before picking up", async () => 
   const result = await runPickupItemSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "item_picked_up");
-  assert.deepEqual(result.trace.map((entry) => entry.action), ["move_to_tile", "travel", "pickup_item"]);
+  assert.deepEqual(
+    result.trace.map((entry) => entry.action),
+    ["move_to_tile", "travel", "pickup_item"],
+  );
   assert.equal(result.after.location, "Farm");
 });
 

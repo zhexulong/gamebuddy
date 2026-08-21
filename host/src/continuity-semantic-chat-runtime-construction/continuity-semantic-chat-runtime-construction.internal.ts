@@ -1,17 +1,15 @@
 import { join } from "node:path";
-
-import type { CompanionIdentity, CompanionModelConfig } from "../runtime.js";
-import { resolveRuntimePaths } from "../runtime.js";
-import type { CompanionTextExpression, PresentationRuntime } from "../presentation.js";
-import { createChatPresentationGate, type ChatPresentationGate } from "../tavern/chat-presentation-gate.internal.js";
-import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import type { ChatRuntimeBindingExecution } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import { createChatThreadStore } from "../tavern/chat-thread-store.js";
-import { materializeTavernStableContext, type TavernStableContextSnapshot } from "../tavern/catalog-service.js";
+import type { CompanionTextExpression, PresentationRuntime } from "../presentation.js";
+import type { CompanionIdentity, CompanionModelConfig } from "../runtime.js";
+import { identityKey, resolveRuntimePaths } from "../runtime.js";
+import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import { TavernArtifactStore } from "../tavern/artifact-store.js";
+import { materializeTavernStableContext, type TavernStableContextSnapshot } from "../tavern/catalog-service.js";
+import { type ChatPresentationGate, createChatPresentationGate } from "../tavern/chat-presentation-gate.internal.js";
+import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
-import { identityKey } from "../runtime.js";
 
 /**
  * Immutable construction facts for exactly one selected Chat runtime. This is
@@ -34,19 +32,11 @@ export type ExactChatRuntimeConstruction = Readonly<{
   /** Construction-owned re-materialization for the actual Pi session. */
   materializeStableContextForPiSession(piSessionId: string): Promise<TavernStableContextSnapshot>;
   tavernNarrativeGateNonceSha256?: string;
-  playerMemoryNextRoundEvidence?: Readonly<{
-    nonceSha256: string;
-    onSourceMarker(marker: unknown): void;
-  }>;
   attachPresentation(listener: (expression: CompanionTextExpression) => void | Promise<void>): () => void;
 }>;
 
 export type ChatRuntimeConstructionOptions = Readonly<{
   tavernNarrativeGateNonceSha256?: string;
-  playerMemoryNextRoundEvidence?: Readonly<{
-    nonceSha256: string;
-    onSourceMarker(marker: unknown): void;
-  }>;
 }>;
 
 const CHAT_PRESENTATION_PROFILE = Object.freeze({ locale: "zh-CN", text: true, speech: null });
@@ -130,9 +120,6 @@ export async function prepareExactChatRuntimeConstruction(
     ...(options.tavernNarrativeGateNonceSha256 === undefined
       ? {}
       : { tavernNarrativeGateNonceSha256: options.tavernNarrativeGateNonceSha256 }),
-    ...(options.playerMemoryNextRoundEvidence === undefined
-      ? {}
-      : { playerMemoryNextRoundEvidence: options.playerMemoryNextRoundEvidence }),
     attachPresentation: presentationGate.attach.bind(presentationGate),
   });
 }

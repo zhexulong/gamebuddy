@@ -1,20 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import { createActionExecutionCoordinator } from "./action-execution-coordinator.internal.js";
 import {
   FARMHAND_COMPANION_PREVIEW_READY_MARKER,
+  type FarmhandCompanionPreview,
+  type FarmhandCompanionPreviewDependencies,
   parseFarmhandCompanionPreviewConfig,
   relaunchFarmhandCompanionPreviewForTest,
   startFarmhandCompanionPreviewForTest,
-  type FarmhandCompanionPreview,
-  type FarmhandCompanionPreviewDependencies,
 } from "./farmhand-companion-preview.js";
-import { createActionExecutionCoordinator } from "./action-execution-coordinator.internal.js";
-import { RECEIPT_BACKED_INTEGRATION_AUTHORITY, type IntegrationLaunchHandle } from "./integration-launcher.js";
+import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "./integration-launcher.js";
 import type { IntegrationConnection } from "./integration-types.js";
 import {
-  StardewExecutionRecoverySupervisor,
   type ExactReceiptRecoveryPort,
+  StardewExecutionRecoverySupervisor,
 } from "./stardew-execution-recovery-supervisor.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
@@ -83,7 +82,15 @@ function dependencies(
         return launch;
       },
     },
-    createRuntime: async (_identity, _root, _connection, presentationBridge, _sessionId, turnTracker, presentationLocale) => {
+    createRuntime: async (
+      _identity,
+      _root,
+      _connection,
+      presentationBridge,
+      _sessionId,
+      turnTracker,
+      presentationLocale,
+    ) => {
       events.push("runtime");
       assert.equal(typeof presentationBridge.presentCompanionText, "function");
       assert.ok(turnTracker instanceof Object);
@@ -118,8 +125,7 @@ test("preview config rejects untrusted capability, legacy bridge expiry, and inv
     /invalid_farmhand_companion_preview_config/,
   );
   assert.throws(
-    () =>
-      parseFarmhandCompanionPreviewConfig({ ...config, bridge: { ...config.bridge, expiresAtUnixMs: 1_060_000 } }),
+    () => parseFarmhandCompanionPreviewConfig({ ...config, bridge: { ...config.bridge, expiresAtUnixMs: 1_060_000 } }),
     /invalid_farmhand_companion_preview_config/,
   );
   assert.throws(
@@ -128,7 +134,10 @@ test("preview config rejects untrusted capability, legacy bridge expiry, and inv
   );
   assert.throws(
     () =>
-      parseFarmhandCompanionPreviewConfig({ ...config, identity: { ...config.identity, continuityId: "semantic_memory_partition" } }),
+      parseFarmhandCompanionPreviewConfig({
+        ...config,
+        identity: { ...config.identity, continuityId: "semantic_memory_partition" },
+      }),
     /invalid_farmhand_companion_preview_config/,
   );
   assert.throws(
@@ -140,14 +149,28 @@ test("preview config rejects untrusted capability, legacy bridge expiry, and inv
 test("preview launches observed bridge before runtime and binds initial snapshot only after STOP/worker wiring", async () => {
   const events: string[] = [];
   await startFarmhandCompanionPreviewForTest(config, dependencies(events));
-  assert.deepEqual(events, ["launch", "runtime", "bind-worker", "bind-stop", "bind-stop-system-notice", "initial-facts"]);
+  assert.deepEqual(events, [
+    "launch",
+    "runtime",
+    "bind-worker",
+    "bind-stop",
+    "bind-stop-system-notice",
+    "initial-facts",
+  ]);
 });
 
 test("preview accepts the release-verified en-US locale and rejects an observed locale mismatch", async () => {
   const englishConfig = { ...config, requiredPresentationLocale: "en-US" as const };
   const englishEvents: string[] = [];
   await startFarmhandCompanionPreviewForTest(englishConfig, dependencies(englishEvents, handle("en-US")));
-  assert.deepEqual(englishEvents, ["launch", "runtime", "bind-worker", "bind-stop", "bind-stop-system-notice", "initial-facts"]);
+  assert.deepEqual(englishEvents, [
+    "launch",
+    "runtime",
+    "bind-worker",
+    "bind-stop",
+    "bind-stop-system-notice",
+    "initial-facts",
+  ]);
 
   const events: string[] = [];
   const bad = handle("en-US");
@@ -262,9 +285,16 @@ function gameRuntimeWithCoordinator(events: string[]) {
   return { runtime, uncertain: () => coordinator.uncertainDispatches() };
 }
 
-function predecessorPreview(events: string[]): FarmhandCompanionPreview {
+function _predecessorPreview(events: string[]): FarmhandCompanionPreview {
   const { runtime } = gameRuntimeWithCoordinator(events);
-  return { host: {} as never, runtime, identity: config.identity, close: async () => { events.push("close"); } };
+  return {
+    host: {} as never,
+    runtime,
+    identity: config.identity,
+    close: async () => {
+      events.push("close");
+    },
+  };
 }
 
 test("relaunch is explicit only: a non-game predecessor never reaches the launcher", async () => {
@@ -273,7 +303,9 @@ test("relaunch is explicit only: a non-game predecessor never reaches the launch
     host: {} as never,
     runtime: { session: { dispose: () => events.push("dispose") } } as never,
     identity: config.identity,
-    close: async () => { events.push("close"); },
+    close: async () => {
+      events.push("close");
+    },
   };
   await assert.rejects(
     relaunchFarmhandCompanionPreviewForTest(predecessor, config, dependencies(events)),
@@ -285,7 +317,14 @@ test("relaunch is explicit only: a non-game predecessor never reaches the launch
 test("relaunch rejects a different game identity before opening a new binding", async () => {
   const events: string[] = [];
   const { runtime, uncertain } = gameRuntimeWithCoordinator(events);
-  const predecessor = { host: {} as never, runtime, identity: config.identity, close: async () => { events.push("close"); } };
+  const predecessor = {
+    host: {} as never,
+    runtime,
+    identity: config.identity,
+    close: async () => {
+      events.push("close");
+    },
+  };
   const foreignConfig = {
     ...config,
     identity: { ...config.identity, saveId: "save_02", worldId: "world_02" },
@@ -301,7 +340,14 @@ test("relaunch rejects a different game identity before opening a new binding", 
 test("relaunch fails closed before recovery when the new launch is not receipt-backed", async () => {
   const events: string[] = [];
   const { runtime, uncertain } = gameRuntimeWithCoordinator(events);
-  const predecessor = { host: {} as never, runtime, identity: config.identity, close: async () => { events.push("close"); } };
+  const predecessor = {
+    host: {} as never,
+    runtime,
+    identity: config.identity,
+    close: async () => {
+      events.push("close");
+    },
+  };
   const bad = handle();
   const launch = { ...bad, initialFacts: [], close: () => events.push("close"), revoke: () => events.push("revoke") };
   await assert.rejects(
@@ -315,7 +361,14 @@ test("relaunch fails closed before recovery when the new launch is not receipt-b
 test("relaunch rejects a new binding without the narrow receiptRecovery capability and closes it", async () => {
   const events: string[] = [];
   const { runtime, uncertain } = gameRuntimeWithCoordinator(events);
-  const predecessor = { host: {} as never, runtime, identity: config.identity, close: async () => { events.push("close"); } };
+  const predecessor = {
+    host: {} as never,
+    runtime,
+    identity: config.identity,
+    close: async () => {
+      events.push("close");
+    },
+  };
   const launch = { ...handle(), close: () => events.push("close"), revoke: () => events.push("revoke") };
   await assert.rejects(
     relaunchFarmhandCompanionPreviewForTest(predecessor, config, dependencies(events, launch)),
@@ -328,7 +381,14 @@ test("relaunch rejects a new binding without the narrow receiptRecovery capabili
 test("one explicit relaunch launches once, recovers the private coordinator once, and never reissues an action", async () => {
   const events: string[] = [];
   const { runtime, uncertain } = gameRuntimeWithCoordinator(events);
-  const predecessor = { host: {} as never, runtime, identity: config.identity, close: async () => { events.push("close"); } };
+  const predecessor = {
+    host: {} as never,
+    runtime,
+    identity: config.identity,
+    close: async () => {
+      events.push("close");
+    },
+  };
   assert.equal(uncertain().length, 1, "the predecessor coordinator must hold one uncertain dispatch");
   const queries: Array<{ requestId: string; idempotencyKey: string }> = [];
   let actionExecuted = false;
@@ -379,7 +439,14 @@ test("one explicit relaunch launches once, recovers the private coordinator once
 test("relaunch is single-flight; a concurrent explicit relaunch fails closed", async () => {
   const events: string[] = [];
   const { runtime } = gameRuntimeWithCoordinator(events);
-  const predecessor = { host: {} as never, runtime, identity: config.identity, close: async () => { events.push("close"); } };
+  const predecessor = {
+    host: {} as never,
+    runtime,
+    identity: config.identity,
+    close: async () => {
+      events.push("close");
+    },
+  };
   let releaseLaunch!: () => void;
   const gate = new Promise<void>((resolvePromise) => {
     releaseLaunch = resolvePromise;

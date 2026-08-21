@@ -5,8 +5,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
 import { assertCurrentMountedLeaseAfterDurableRead, createP3ExactChatStateFacade } from "./p3-exact-chat-state.js";
 
@@ -56,9 +56,7 @@ test("P3 post-read lease guard rejects when a controlled durable-read completion
     resolveRead = resolve;
   });
   let current = true;
-  const postRead = durableRead.then(() =>
-    assertCurrentMountedLeaseAfterDurableRead(inertLease, () => current),
-  );
+  const postRead = durableRead.then(() => assertCurrentMountedLeaseAfterDurableRead(inertLease, () => current));
   current = false;
   resolveRead();
   return assert.rejects(postRead, /p3_exact_chat_state_unavailable/);
@@ -70,7 +68,10 @@ test(
   async () => {
     const root = await mkdtemp(join(tmpdir(), "gamebuddy-p3-mounted-"));
     try {
-      const coordinatorUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js", import.meta.url).href;
+      const coordinatorUrl = new URL(
+        "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",
+        import.meta.url,
+      ).href;
       const facadeUrl = new URL("./p3-exact-chat-state.js", import.meta.url).href;
       const runtimeUrl = new URL("../runtime.js", import.meta.url).href;
       const deploymentUrl = new URL("../deployment-manifest.js", import.meta.url).href;
@@ -110,10 +111,22 @@ test(
       `;
       const child = spawn(
         process.execPath,
-        ["--input-type=module", "--eval", script, coordinatorUrl, facadeUrl, runtimeUrl, deploymentUrl, threadsUrl, identityUrl, root],
+        [
+          "--input-type=module",
+          "--eval",
+          script,
+          coordinatorUrl,
+          facadeUrl,
+          runtimeUrl,
+          deploymentUrl,
+          threadsUrl,
+          identityUrl,
+          root,
+        ],
         { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
       );
-      const output: Buffer[] = [], errors: Buffer[] = [];
+      const output: Buffer[] = [],
+        errors: Buffer[] = [];
       child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
       const [code] = (await once(child, "exit")) as [number | null];
@@ -141,13 +154,30 @@ test(
         stateRevision: result.expected.stateRevision,
       });
       assert.deepEqual(result.state.transcript, [
-        { handle: result.expected.messageHandles[0], role: "player", text: "Hello", locale: "und", order: 0, revision: 1 },
-        { handle: result.expected.messageHandles[1], role: "player", text: "Again", locale: "und", order: 1, revision: 1 },
+        {
+          handle: result.expected.messageHandles[0],
+          role: "player",
+          text: "Hello",
+          locale: "und",
+          order: 0,
+          revision: 1,
+        },
+        {
+          handle: result.expected.messageHandles[1],
+          role: "player",
+          text: "Again",
+          locale: "und",
+          order: 1,
+          revision: 1,
+        },
       ]);
       assert.equal(TavernBrowserValidatorsV1.BrowserMessageV1Schema.Check(result.state.transcript[0]), true);
       assert.equal(TavernBrowserValidatorsV1.BrowserMessageV1Schema.Check(result.state.transcript[1]), true);
       assert.equal(JSON.stringify(result.state).includes(result.raw.chatThreadId), false);
-      assert.equal(result.raw.messageIds.some((messageId) => JSON.stringify(result.state).includes(messageId)), false);
+      assert.equal(
+        result.raw.messageIds.some((messageId) => JSON.stringify(result.state).includes(messageId)),
+        false,
+      );
       assert.equal(result.rootBindingAccepted, false);
       assert.equal(result.sessionBindingAccepted, true);
     } finally {

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
 /**
  * Strict, non-executing validator for the narrow P1.8 test portfolio.
  *
@@ -8,7 +7,6 @@ import { spawn } from "node:child_process";
  */
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 
 export const MANIFEST_SCHEMA = "gamebuddy-test-portfolio/v1";
 const ROOT_KEYS = new Set(["schema", "version", "entries"]);
@@ -81,7 +79,7 @@ function checkCommand(value, label, errors) {
     return;
   }
   // Commands are data for the repository-owned runner, never shell source.
-  if (/[^\x20-\x7e]/.test(value) || /[;&|<>`$()\\'\"]/.test(value) || hasTraversal(value)) {
+  if (/[^\x20-\x7e]/.test(value) || /[;&|<>`$()\\'"]/.test(value) || hasTraversal(value)) {
     errors.push(`${label}_unsafe_command`);
     return;
   }
@@ -280,7 +278,7 @@ async function validateTriggerFiles(manifest, repositoryRoot) {
           }
         }
         if (state === null) continue;
-      } catch (error) {
+      } catch (_error) {
         errors.push(`${label}_must_exist_as_regular_file`);
         continue;
       }

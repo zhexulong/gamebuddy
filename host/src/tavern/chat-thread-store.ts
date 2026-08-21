@@ -1,21 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile as fsReadFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   assertP4P5MountedTransitionAuthority,
   assertP4P5MountedTransitionOperationAuthority,
   type P4P5MountedTransitionAuthority,
   type P4P5MountedTransitionOperationAuthority,
 } from "./chat-thread-store.p4-p5-transition-authority.internal.js";
-import { readStrictJsonFile, STRICT_JSON_READER_DEFAULT_BUDGET_BYTES } from "../strict-json-reader.js";
-import {
-  atomicWriteFile,
-  captureSafeFileIdentity,
-  withPathLock as lockedPath,
-  readSafeDirectory,
-  removeOwnedSafeFile,
-  verifySafePathBoundary,
-} from "../path-lock.js";
 
 /**
  * Scoped Tavern persistence seam. It owns only a ChatThread's visible opening
@@ -32,10 +24,7 @@ export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
  *
  * The message/journal budgets cover at most 500 total persisted transcript
  * entries (including an opening), each NFC, control-free, and at most 16,384
- * UTF-8 bytes including JSON escaping and bounded metadata. The prepared
- * transaction budget is also the enforced maximum for the state response
- * envelope: the frozen complete-snapshot projection must either fit entirely
- * or fail closed; it never silently truncates.
+ * UTF-8 bytes including JSON escaping and bounded metadata.
  */
 export const MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES = 500 as const;
 export const MAX_CHAT_MESSAGE_TEXT_UTF8_BYTES = 16_384 as const;
@@ -214,15 +203,37 @@ export type CancelClaimedTurn = Omit<RunningTurn, "status"> &
     presentation: PresentationCommitV1 | null;
     cancelClaimedAtMs: number;
   }>;
-export type CancelledTurn = Omit<CancelClaimedTurn, "status"> &
-  Readonly<{ status: "cancelled"; cancelledAtMs: number }>;
-export type FailedTurn = Omit<RunningTurn, "status"> &
-  Readonly<{
-    status: "failed";
-    presentation: PresentationCommitV1 | null;
-    reasonCode: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
-    failedAtMs: number;
-  }>;
+/**
+ * A STOP can terminalize either a durable P5 cancel claim (after `running`) or
+ * an already-invoked P4 attempt that is still merely `armed`. In both cases it
+ * preserves the exact attempt and has no visible presentation unless one was
+ * durably committed before the P5 claim.
+ */
+export type CancelledTurn = Readonly<{
+  turnId: string;
+  status: "cancelled";
+  idempotencyKey: string;
+  messageId: string;
+  acceptedAtMs: number;
+  attempt: AttemptClaimV1;
+  observation: AttemptObservationV1 & { phase: "armed" | "running" };
+  presentation: PresentationCommitV1 | null;
+  cancelClaimedAtMs: number;
+  cancelledAtMs: number;
+}>;
+/** A provider rejection may fail directly from the durable armed state; P5 failures follow running. */
+export type FailedTurn = Readonly<{
+  turnId: string;
+  status: "failed";
+  idempotencyKey: string;
+  messageId: string;
+  acceptedAtMs: number;
+  attempt: AttemptClaimV1;
+  observation: AttemptObservationV1;
+  presentation: PresentationCommitV1 | null;
+  reasonCode: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
+  failedAtMs: number;
+}>;
 
 export type ChatTurnLedger =
   | AcceptedQueuedTurn
@@ -234,6 +245,7 @@ export type ChatTurnLedger =
   | CancelClaimedTurn
   | CancelledTurn
   | FailedTurn;
+
 type MountedP4AcceptanceInput = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
@@ -246,6 +258,7 @@ type MountedP4AcceptanceInput = Readonly<{
   idempotencyKey: string;
   expectedDraftRevision: number;
 }>;
+
 /** Player-controlled fields only. Binding facts come solely from a consumed mounted admission. */
 type P4MountedAcceptanceCommand = Readonly<{
   text: string;
@@ -253,6 +266,7 @@ type P4MountedAcceptanceCommand = Readonly<{
   idempotencyKey: string;
   expectedDraftRevision: number;
 }>;
+
 export type ChatThreadState = Readonly<{
   thread: ChatThread;
   messages: readonly ChatThreadMessage[];
@@ -329,6 +343,21 @@ export type ChatThreadStore = Readonly<{
       occurredAtMs: number;
     }>,
   ): Promise<ChatThreadState>;
+  /**
+   * Ordinary exact-turn Stop mutation. It is intentionally independent from
+   * the retired P4/P5 transition authority: the service supplies a current
+   * mounted turn/attempt pair, SQLite decides the terminal winner, and the
+   * returned value is a fresh durable read-back.
+   */
+  cancelActiveTurn?(
+    input: Readonly<{
+      chatThreadId: string;
+      chatSurfaceSessionId: string;
+      expectedTurnId: string;
+      expectedAttemptId: string;
+      cancelledAtMs: number;
+    }>,
+  ): Promise<ChatThreadState>;
   /** Exact pristine-thread only WorldBook binding mutation with optimistic revision guard. */
   setWorldBookBinding?(
     input: Readonly<{
@@ -377,21 +406,22 @@ export type ChatThreadStore = Readonly<{
       operation: "archive" | "restore" | "trash";
     }>,
   ): Promise<ChatThread>;
+  /** Closes the SQLite database connection if open. */
+  close?(): void;
 }>;
 
-type StoredMessages = Readonly<{
-  schemaVersion: typeof CHAT_THREAD_SCHEMA_VERSION;
-  chatThreadId: string;
-  messages: readonly ChatThreadMessage[];
-}>;
-type StoredDraft = Readonly<{ schemaVersion: typeof CHAT_THREAD_SCHEMA_VERSION; revision: number; text: string | null }>;
-type StoredTurnLedger = Readonly<{ schemaVersion: typeof CHAT_THREAD_SCHEMA_VERSION; turnLedger: ChatTurnLedger | null }>;
 type IdempotencyRecord = Readonly<{ key: string; fingerprint: string; result: AcceptedQueuedTurn }>;
-type StoredIdempotency = Readonly<{ schemaVersion: typeof CHAT_THREAD_SCHEMA_VERSION; idempotency: readonly IdempotencyRecord[] }>;
-type PreparedTransaction = Readonly<{
-  schemaVersion: typeof CHAT_THREAD_SCHEMA_VERSION;
-  state: ChatThreadState;
-}>;
+
+type ThreadMetadata = {
+  chatSurfaceSessionId: string;
+  stableArtifactBindings?: readonly TavernStableArtifactBinding[];
+  worldBookBinding?: TavernStableWorldInfoBinding;
+  trashRestoreStatus?: "active" | "archived";
+  openingLockedAtEventId?: string | null;
+  turnLedger?: ChatTurnLedger | null;
+  idempotency?: readonly IdempotencyRecord[];
+  messages?: readonly ChatThreadMessage[];
+};
 
 const genuineChatThreadStores = new WeakSet<object>();
 const p4AcceptanceByStore = new WeakMap<object, (input: MountedP4AcceptanceInput) => Promise<AcceptedQueuedTurn>>();
@@ -405,7 +435,10 @@ type MountedP4AttemptClaimInput = Readonly<{
   runtimeBindingDigest: string;
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
 }>;
-const p4AttemptClaimByStore = new WeakMap<object, (input: MountedP4AttemptClaimInput) => Promise<AttemptStartingTurn>>();
+const p4AttemptClaimByStore = new WeakMap<
+  object,
+  (input: MountedP4AttemptClaimInput) => Promise<AttemptStartingTurn>
+>();
 
 /** P4c's three frozen store transitions: arm, local pre-invocation not_started, running. */
 export type P4ProviderStartTransition =
@@ -415,7 +448,9 @@ export type P4ProviderStartTransition =
       reasonCode: "admission_revoked" | "session_unavailable" | "invocation_deadline_expired";
       observedAtMs: number;
     }>
-  | Readonly<{ operation: "running"; statusClass: "success" | "error"; observedAtMs: number }>;
+  | Readonly<{ operation: "running"; statusClass: "success" | "error"; observedAtMs: number }>
+  | Readonly<{ operation: "fail"; reasonCode: "runtime_unavailable"; observedAtMs: number; failedAtMs: number }>
+  | Readonly<{ operation: "cancel"; observedAtMs: number; cancelledAtMs: number }>;
 
 /** P5 frozen terminalization reason codes (design/71 §4.1). */
 export type P5TerminalFailureReason =
@@ -477,7 +512,7 @@ const p4ProviderStartByStore = new WeakMap<
   (
     input: MountedP4ProviderStartInput,
     command: P4ProviderStartTransition,
-  ) => Promise<AttemptStartingTurn | RunningTurn>
+  ) => Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn>
 >();
 
 /**
@@ -503,7 +538,11 @@ export async function acceptP4MountedPlayerMessage(
   );
   const accept = p4AcceptanceByStore.get(store);
   if (accept === undefined) throw new Error("p4_acceptance_port_unavailable");
-  return accept(Object.freeze({ ...binding, ...command }));
+  try {
+    return await accept(Object.freeze({ ...binding, ...command }));
+  } finally {
+    store.close?.();
+  }
 }
 
 /**
@@ -529,7 +568,11 @@ export async function claimP4MountedAttempt(
   );
   const claim = p4AttemptClaimByStore.get(store);
   if (claim === undefined) throw new Error("p4_attempt_claim_port_unavailable");
-  return claim(Object.freeze({ ...binding }));
+  try {
+    return await claim(Object.freeze({ ...binding }));
+  } finally {
+    store.close?.();
+  }
 }
 
 /**
@@ -553,7 +596,7 @@ export async function transitionP4MountedProviderStart(
     attemptId: string;
   }>,
   command: P4ProviderStartTransition,
-): Promise<AttemptStartingTurn | RunningTurn> {
+): Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn> {
   assertP4P5MountedTransitionAuthority(binding.authority);
   assertP4P5MountedTransitionOperationAuthority(binding.operationAuthority);
   const store = createChatThreadStore(
@@ -562,7 +605,11 @@ export async function transitionP4MountedProviderStart(
   );
   const transition = p4ProviderStartByStore.get(store);
   if (transition === undefined) throw new Error("p4_provider_start_port_unavailable");
-  return transition(Object.freeze({ ...binding }), validateProviderStartTransition(command));
+  try {
+    return await transition(Object.freeze({ ...binding }), validateProviderStartTransition(command));
+  } finally {
+    store.close?.();
+  }
 }
 
 /**
@@ -595,7 +642,11 @@ export async function transitionP5MountedPresentation(
   );
   const transition = p5PresentationByStore.get(store);
   if (transition === undefined) throw new Error("p5_presentation_port_unavailable");
-  return transition(asMountedP5PresentationInput(binding), validatePresentationTransition(command));
+  try {
+    return await transition(asMountedP5PresentationInput(binding), validatePresentationTransition(command));
+  } finally {
+    store.close?.();
+  }
 }
 
 function asMountedP5PresentationInput(
@@ -620,7 +671,9 @@ function asMountedP5PresentationInput(
 function identityKeyForP4(playerId: string, companionId: string, continuityId: string): string {
   return createHash("sha256").update([playerId, companionId, continuityId].join("\u001f")).digest("hex");
 }
+
 const initialExactContentCapabilities = new WeakSet<object>();
+const initialExactContentCapabilityByStore = new WeakMap<object, InitialChatExactContentCapability>();
 
 /** Only a store created by this module can mint this unmounted capability. */
 export function createInitialChatExactContentCapability(store: ChatThreadStore): InitialChatExactContentCapability {
@@ -641,7 +694,6 @@ export function classifyInitialChatExactContentFailure(error: unknown): "not_fou
   return undefined;
 }
 
-const initialExactContentCapabilityByStore = new WeakMap<object, InitialChatExactContentCapability>();
 class ExactThreadNotFoundError extends Error {
   constructor() {
     super("chat_thread_not_found");
@@ -650,6 +702,56 @@ class ExactThreadNotFoundError extends Error {
 class ExactThreadAlreadyExistsError extends Error {
   constructor() {
     super("chat_thread_already_exists");
+  }
+}
+
+function initSchema(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tavern_threads (
+      thread_id TEXT PRIMARY KEY,
+      companion_id TEXT NOT NULL,
+      continuity_id TEXT NOT NULL,
+      session_file TEXT,
+      title TEXT,
+      persona_id TEXT,
+      scenario_id TEXT,
+      lifecycle_status TEXT NOT NULL DEFAULT 'active' CHECK(lifecycle_status IN ('active', 'archived', 'trashed')),
+      management_revision INTEGER NOT NULL DEFAULT 1 CHECK(management_revision >= 1),
+      created_at_ms INTEGER NOT NULL,
+      updated_at_ms INTEGER NOT NULL,
+      opening_selection_json TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS tavern_drafts (
+      thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      draft_content TEXT,
+      revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+      updated_at_ms INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tavern_active_selection (
+      singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+      chat_thread_id TEXT NOT NULL,
+      chat_surface_session_id TEXT NOT NULL,
+      selected_at_ms INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tavern_threads_continuity ON tavern_threads(continuity_id, thread_id);
+  `);
+}
+
+function runInTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {}
+    throw error;
   }
 }
 
@@ -665,60 +767,49 @@ export function createChatThreadStore(
 ): ChatThreadStore {
   assertId("continuityKey", continuityKey);
   const continuityRoot = join(root, "tavern", "v1", "continuities", continuityKey);
-  const threadRoot = join(continuityRoot, "threads");
-  const activeSelectionPath = join(continuityRoot, "active-chat-thread.json");
-  const containmentRoot = join(root, "tavern", "v1");
-  const withPathLock = <T>(path: string, work: () => Promise<T>): Promise<T> =>
-    lockedPath(path, work, { containmentRoot });
+  const dbPath = join(continuityRoot, "tavern.sqlite");
 
-  const pathsFor = (chatThreadId: string) => {
-    assertId("chatThreadId", chatThreadId);
-    const directory = join(threadRoot, chatThreadId);
-    return Object.freeze({
-      directory,
-      thread: join(directory, "thread.json"),
-      messages: join(directory, "messages.json"),
-      draft: join(directory, "draft.json"),
-      turnLedger: join(directory, "turn-ledger.json"),
-      idempotency: join(directory, "idempotency.json"),
-      journal: join(directory, "transaction.json"),
-    });
-  };
-
-  const mutate = async (
-    chatThreadId: string,
-    change: (current: ChatThreadState) => ChatThreadState,
-  ): Promise<ChatThreadState> => {
-    const paths = pathsFor(chatThreadId);
-    return withPathLock(paths.thread, async () => {
-      const current = await readState(paths, containmentRoot);
-      const next = freezeState(change(current));
-      await commitState(paths, next, containmentRoot);
-      return next;
-    });
-  };
+  function withDb<T>(fn: (db: DatabaseSync) => T): T {
+    mkdirSync(continuityRoot, { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(
+        "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;",
+      );
+      initSchema(db);
+      return runInTransaction(db, () => fn(db));
+    } finally {
+      try {
+        db.close();
+      } catch {}
+    }
+  }
 
   const store: ChatThreadStore = Object.freeze({
     async createThread(request): Promise<ChatThreadState> {
       validateCreate(request);
-      const paths = pathsFor(request.chatThreadId);
-      return withPathLock(paths.thread, async () => {
-        if (
-          (await exists(paths.thread, containmentRoot)) ||
-          (await exists(paths.messages, containmentRoot)) ||
-          (await exists(paths.draft, containmentRoot)) ||
-          (await exists(paths.turnLedger, containmentRoot)) ||
-          (await exists(paths.idempotency, containmentRoot)) ||
-          (await exists(paths.journal, containmentRoot))
-        )
+      return withDb((db) => {
+        const existing = db.prepare("SELECT 1 FROM tavern_threads WHERE thread_id = ?").get(request.chatThreadId);
+        if (existing) {
           throw new ExactThreadAlreadyExistsError();
+        }
         const timestamp = now();
         const opening = normalizeOpening(request.opening);
-        const messages =
+        const openingSelectionJson = JSON.stringify(
+          opening === "blank"
+            ? { kind: "blank" as const }
+            : {
+                kind: "greeting" as const,
+                messageId: opening.messageId,
+                source: opening.source,
+              },
+        );
+
+        const initialMessages: ChatThreadMessage[] =
           opening === "blank"
             ? []
             : [
-                freezeMessage({
+                validateMessage({
                   messageId: opening.messageId,
                   role: "companion",
                   kind: "opening",
@@ -727,75 +818,75 @@ export function createChatThreadStore(
                   greetingSource: opening.source,
                 }),
               ];
-        const thread = freezeThread({
-          schemaVersion: CHAT_THREAD_SCHEMA_VERSION,
-          chatThreadId: request.chatThreadId,
-          companionId: request.companionId,
-          continuityId: request.continuityId,
-          ...(request.personaId === undefined ? {} : { personaId: request.personaId }),
-          ...(request.scenarioId === undefined ? {} : { scenarioId: request.scenarioId }),
-          stableArtifactBindings: freezeStableArtifactBindings(request.stableArtifactBindings ?? []),
-          ...(request.worldBookBinding === undefined
-            ? {}
-            : {
-                worldBookBinding: freezeStableWorldBookBinding(request.worldBookBinding),
-              }),
+
+        const initialMetadata: ThreadMetadata = {
           chatSurfaceSessionId: request.chatSurfaceSessionId,
-          createdAtMs: timestamp,
-          updatedAtMs: timestamp,
-          openingSelection:
-            opening === "blank"
-              ? Object.freeze({ kind: "blank" as const })
-              : Object.freeze({
-                  kind: "greeting" as const,
-                  messageId: opening.messageId,
-                  source: opening.source,
-                }),
-          title: null,
-          lifecycleStatus: "active",
-          managementRevision: 1,
+          stableArtifactBindings: request.stableArtifactBindings ?? [],
+          worldBookBinding: request.worldBookBinding,
           openingLockedAtEventId: null,
-        });
-        const state = freezeState({ thread, messages, draft: freezeDraft({ revision: 0, text: null }), turnLedger: null, idempotency: [] });
-        await commitState(paths, state, containmentRoot);
-        return state;
+          turnLedger: null,
+          idempotency: [],
+          messages: initialMessages,
+        };
+
+        const sessionFile = `${request.chatThreadId}.jsonl`;
+
+        db.prepare(
+          `INSERT INTO tavern_threads (
+            thread_id, companion_id, continuity_id, session_file, title,
+            persona_id, scenario_id, lifecycle_status, management_revision,
+            created_at_ms, updated_at_ms, opening_selection_json, metadata_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          request.chatThreadId,
+          request.companionId,
+          request.continuityId,
+          sessionFile,
+          null,
+          request.personaId ?? null,
+          request.scenarioId ?? null,
+          "active",
+          1,
+          timestamp,
+          timestamp,
+          openingSelectionJson,
+          JSON.stringify(initialMetadata),
+        );
+
+        db.prepare(
+          `INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms)
+          VALUES (?, NULL, 0, ?)`,
+        ).run(request.chatThreadId, timestamp);
+
+        return readStateFromDb(db, request.chatThreadId);
       });
     },
 
     async listThreads(): Promise<readonly ChatThread[]> {
-      let entries: readonly string[];
-      try {
-        entries = await readSafeDirectory(threadRoot, join(root, "tavern", "v1"));
-      } catch (error) {
-        if (isNodeError(error) && error.code === "ENOENT") return Object.freeze([]);
-        throw error;
-      }
-      const threads = await Promise.all(
-        [...entries].sort().map(async (chatThreadId) => {
-          if (!isId(chatThreadId)) throw new Error("invalid_chat_thread_directory");
-          const paths = pathsFor(chatThreadId);
-          return withPathLock(paths.thread, async () => (await readState(paths, containmentRoot)).thread);
-        }),
-      );
-      return Object.freeze(threads);
+      return withDb((db) => {
+        const rows = db.prepare("SELECT * FROM tavern_threads ORDER BY thread_id ASC").all() as any[];
+        return Object.freeze(rows.map(rowToThread));
+      });
     },
 
     async readActiveThreadSelection(): Promise<ActiveChatThreadSelection | null> {
-      return withPathLock(activeSelectionPath, async () => {
-        try {
-          return validateActiveSelection(await safeReadJson(activeSelectionPath, containmentRoot));
-        } catch (error) {
-          if (isNodeError(error) && error.code === "ENOENT") return null;
-          throw error;
-        }
+      return withDb((db) => {
+        const row = db.prepare("SELECT * FROM tavern_active_selection WHERE singleton = 1").get() as any;
+        if (!row) return null;
+        return validateActiveSelection({
+          schemaVersion: CHAT_THREAD_SELECTION_SCHEMA_VERSION,
+          chatThreadId: row.chat_thread_id,
+          chatSurfaceSessionId: row.chat_surface_session_id,
+          selectedAtMs: row.selected_at_ms,
+        });
       });
     },
 
     async readActiveThreadBinding(): Promise<ChatThreadState | null> {
-      const first = await readSelection();
+      const first = await store.readActiveThreadSelection();
       if (first === null) return null;
-      const state = await resumeExact(first.chatThreadId, first.chatSurfaceSessionId);
-      const final = await readSelection();
+      const state = await store.resumeThread(first.chatThreadId, first.chatSurfaceSessionId);
+      const final = await store.readActiveThreadSelection();
       if (
         final === null ||
         final.chatThreadId !== first.chatThreadId ||
@@ -808,87 +899,238 @@ export function createChatThreadStore(
 
     async selectActiveThread(chatThreadId, chatSurfaceSessionId): Promise<ActiveChatThreadSelection> {
       assertId("chatSurfaceSessionId", chatSurfaceSessionId);
-      const paths = pathsFor(chatThreadId);
-      // Read the exact durable mapping before publishing it. Lock ordering is
-      // thread then selector everywhere this operation needs both resources.
-      return withPathLock(paths.thread, async () => {
-        const state = await readState(paths, containmentRoot);
-        if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId) throw new Error("chat_thread_surface_mismatch");
-        return withPathLock(activeSelectionPath, async () => {
-          const selection = freezeActiveSelection({
-            schemaVersion: CHAT_THREAD_SELECTION_SCHEMA_VERSION,
-            chatThreadId,
-            chatSurfaceSessionId,
-            selectedAtMs: now(),
-          });
-          await atomicWriteFile(activeSelectionPath, JSON.stringify(selection, null, 2), containmentRoot);
-          // Read back and validate so callers never claim durable selection
-          // based solely on a successful write.
-          return validateActiveSelection(await safeReadJson(activeSelectionPath, containmentRoot));
+      assertId("chatThreadId", chatThreadId);
+      return withDb((db) => {
+        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
+        if (!threadRow) throw new ExactThreadNotFoundError();
+        const thread = rowToThread(threadRow);
+        if (thread.chatSurfaceSessionId !== chatSurfaceSessionId)
+          throw new Error("chat_thread_surface_mismatch");
+
+        const selectedAtMs = now();
+        db.prepare(
+          `INSERT INTO tavern_active_selection (singleton, chat_thread_id, chat_surface_session_id, selected_at_ms)
+          VALUES (1, ?, ?, ?)
+          ON CONFLICT(singleton) DO UPDATE SET
+            chat_thread_id = excluded.chat_thread_id,
+            chat_surface_session_id = excluded.chat_surface_session_id,
+            selected_at_ms = excluded.selected_at_ms`,
+        ).run(chatThreadId, chatSurfaceSessionId, selectedAtMs);
+
+        const selRow = db.prepare("SELECT * FROM tavern_active_selection WHERE singleton = 1").get() as any;
+        return validateActiveSelection({
+          schemaVersion: CHAT_THREAD_SELECTION_SCHEMA_VERSION,
+          chatThreadId: selRow.chat_thread_id,
+          chatSurfaceSessionId: selRow.chat_surface_session_id,
+          selectedAtMs: selRow.selected_at_ms,
         });
       });
     },
 
     async resumeThread(chatThreadId, chatSurfaceSessionId): Promise<ChatThreadState> {
       assertId("chatSurfaceSessionId", chatSurfaceSessionId);
-      const paths = pathsFor(chatThreadId);
-      return withPathLock(paths.thread, async () => {
-        const state = await readState(paths, containmentRoot);
-        if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId) throw new Error("chat_thread_surface_mismatch");
+      assertId("chatThreadId", chatThreadId);
+      return withDb((db) => {
+        const state = readStateFromDb(db, chatThreadId);
+        if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId)
+          throw new Error("chat_thread_surface_mismatch");
         return state;
       });
     },
 
     async commitOpening(chatThreadId, requestedOpening): Promise<ChatThreadState> {
+      assertId("chatThreadId", chatThreadId);
       const opening = normalizeOpening(requestedOpening);
-      return mutate(chatThreadId, (current) => {
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
         if (
           current.thread.openingLockedAtEventId !== null ||
           current.messages.some((message) => message.kind !== "opening")
         )
           throw new Error("chat_thread_opening_locked");
-        const messages =
+
+        const updatedAt = now();
+        const openingSelectionJson = JSON.stringify(
+          opening === "blank"
+            ? { kind: "blank" as const }
+            : {
+                kind: "greeting" as const,
+                messageId: opening.messageId,
+                source: opening.source,
+              },
+        );
+
+        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
+        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+        const messages: ChatThreadMessage[] =
           opening === "blank"
             ? []
             : [
-                freezeMessage({
+                validateMessage({
                   messageId: opening.messageId,
                   role: "companion",
                   kind: "opening",
                   text: opening.text,
-                  occurredAtMs: now(),
+                  occurredAtMs: updatedAt,
                   greetingSource: opening.source,
                 }),
               ];
-        return {
-          thread: freezeThread({
-            ...current.thread,
-            updatedAtMs: now(),
-            openingSelection:
-              opening === "blank"
-                ? Object.freeze({ kind: "blank" as const })
-                : Object.freeze({
-                    kind: "greeting" as const,
-                    messageId: opening.messageId,
-                    source: opening.source,
-                  }),
-          }),
-          messages,
-          draft: current.draft,
-          turnLedger: current.turnLedger,
-          idempotency: current.idempotency,
-        };
+
+        metadata.messages = messages;
+
+        db.prepare(
+          "UPDATE tavern_threads SET opening_selection_json = ?, updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?",
+        ).run(openingSelectionJson, updatedAt, JSON.stringify(metadata), chatThreadId);
+
+        return readStateFromDb(db, chatThreadId);
       });
     },
 
     async appendPlayer(chatThreadId, message): Promise<ChatThreadState> {
-      return appendNormal(chatThreadId, "player", message);
+      validateNormalMessage(message);
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
+        const existing = current.messages.find((m) => m.messageId === message.messageId);
+        if (existing !== undefined) {
+          if (existing.kind !== "player" || existing.text !== message.text)
+            throw new Error("chat_thread_message_id_conflict");
+          return current;
+        }
+        if (current.messages.length >= MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES)
+          throw new Error("chat_thread_capacity_exceeded");
+
+        const lockedAt = current.thread.openingLockedAtEventId ?? message.messageId;
+        const updatedAt = now();
+
+        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
+        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+        const messages: ChatThreadMessage[] = Array.isArray(metadata.messages) ? [...metadata.messages] : [];
+
+        messages.push(
+          validateMessage({
+            messageId: message.messageId,
+            role: "player",
+            kind: "player",
+            text: message.text,
+            occurredAtMs: message.occurredAtMs,
+            greetingSource: null,
+          }),
+        );
+
+        metadata.messages = messages;
+        metadata.openingLockedAtEventId = lockedAt;
+
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
+          updatedAt,
+          JSON.stringify(metadata),
+          chatThreadId,
+        );
+
+        return readStateFromDb(db, chatThreadId);
+      });
     },
 
     async commitResponse(chatThreadId, response): Promise<ChatThreadState> {
-      // This method is the response publication boundary: callers must await
-      // it before SSE/UI display. No in-memory-only response is returned.
-      return appendNormal(chatThreadId, "response", response);
+      validateNormalMessage(response);
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
+        const existing = current.messages.find((m) => m.messageId === response.messageId);
+        if (existing !== undefined) {
+          if (existing.kind !== "response" || existing.text !== response.text)
+            throw new Error("chat_thread_message_id_conflict");
+          return current;
+        }
+        if (current.messages.length >= MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES)
+          throw new Error("chat_thread_capacity_exceeded");
+
+        const lockedAt = current.thread.openingLockedAtEventId ?? response.messageId;
+        const updatedAt = now();
+
+        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
+        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+        const messages: ChatThreadMessage[] = Array.isArray(metadata.messages) ? [...metadata.messages] : [];
+
+        messages.push(
+          validateMessage({
+            messageId: response.messageId,
+            role: "companion",
+            kind: "response",
+            text: response.text,
+            occurredAtMs: response.occurredAtMs,
+            greetingSource: null,
+          }),
+        );
+
+        metadata.messages = messages;
+        metadata.openingLockedAtEventId = lockedAt;
+
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
+          updatedAt,
+          JSON.stringify(metadata),
+          chatThreadId,
+        );
+
+        return readStateFromDb(db, chatThreadId);
+      });
+    },
+
+    async cancelActiveTurn(input): Promise<ChatThreadState> {
+      assertId("chatThreadId", input.chatThreadId);
+      assertId("chatSurfaceSessionId", input.chatSurfaceSessionId);
+      assertId("expectedTurnId", input.expectedTurnId);
+      assertId("expectedAttemptId", input.expectedAttemptId);
+      assertTimestamp(input.cancelledAtMs);
+      return withDb((db) => {
+        const current = readStateFromDb(db, input.chatThreadId);
+        const thread = current.thread;
+        if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
+          throw new Error("chat_thread_surface_mismatch");
+        if ((thread.lifecycleStatus ?? "active") !== "active")
+          throw new Error("chat_thread_lifecycle_not_active");
+        const ledger = current.turnLedger;
+        if (ledger === null || ledger.turnId !== input.expectedTurnId)
+          throw new Error("chat_turn_not_current");
+        if (isTerminalLedger(ledger)) {
+          if (!isTurnWithAttempt(ledger) || ledger.attempt.attemptId !== input.expectedAttemptId)
+            throw new Error("chat_turn_not_current");
+          return current;
+        }
+        if (!isTurnWithAttempt(ledger) || ledger.attempt.attemptId !== input.expectedAttemptId)
+          throw new Error("chat_turn_not_current");
+        if (input.cancelledAtMs < thread.updatedAtMs) throw new Error("chat_turn_time_regression");
+        const observation = ledger.observation;
+        if (ledger.status === "attempt_starting" && observation?.phase !== "armed")
+          throw new Error("chat_turn_not_cancellable");
+        if (ledger.status !== "attempt_starting" && ledger.status !== "running")
+          throw new Error("chat_turn_not_cancellable");
+        const cancellableObservation = observation;
+        if (
+          cancellableObservation === undefined ||
+          (cancellableObservation.phase !== "armed" && cancellableObservation.phase !== "running")
+        )
+          throw new Error("chat_turn_not_cancellable");
+        if (input.cancelledAtMs < thread.updatedAtMs) throw new Error("chat_turn_time_regression");
+        const nextLedger = freezeCancelledTurn({
+          ...ledger,
+          status: "cancelled",
+          observation: cancellableObservation,
+          presentation: null,
+          cancelClaimedAtMs: input.cancelledAtMs,
+          cancelledAtMs: input.cancelledAtMs,
+        });
+        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
+        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+        metadata.turnLedger = nextLedger;
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
+          input.cancelledAtMs,
+          JSON.stringify(metadata),
+          input.chatThreadId,
+        );
+        const readBack = readStateFromDb(db, input.chatThreadId);
+        if (readBack.turnLedger?.status !== "cancelled" || readBack.turnLedger.turnId !== input.expectedTurnId)
+          throw new Error("chat_turn_cancel_readback_mismatch");
+        return readBack;
+      });
     },
 
     async setWorldBookBinding(input): Promise<ChatThreadState> {
@@ -897,7 +1139,8 @@ export function createChatThreadStore(
       assertId("continuityId", input.continuityId);
       assertTimestamp(input.expectedUpdatedAtMs);
       if (input.binding !== undefined) freezeStableWorldBookBinding(input.binding);
-      return mutate(input.chatThreadId, (current) => {
+      return withDb((db) => {
+        const current = readStateFromDb(db, input.chatThreadId);
         if (
           current.thread.chatSurfaceSessionId !== input.chatSurfaceSessionId ||
           current.thread.companionId !== input.companionId ||
@@ -906,17 +1149,19 @@ export function createChatThreadStore(
           throw new Error("chat_thread_scope_mismatch");
         if (current.thread.updatedAtMs !== input.expectedUpdatedAtMs) throw new Error("chat_thread_revision_conflict");
         if (current.messages.length !== 0) throw new Error("chat_thread_worldbook_locked");
-        return {
-          thread: freezeThread({
-            ...current.thread,
-            ...(input.binding === undefined ? { worldBookBinding: undefined } : { worldBookBinding: input.binding }),
-            updatedAtMs: now(),
-          }),
-          messages: current.messages,
-          draft: current.draft,
-          turnLedger: current.turnLedger,
-          idempotency: current.idempotency,
-        };
+
+        const updatedAt = now();
+        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
+        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+        metadata.worldBookBinding = input.binding ? freezeStableWorldBookBinding(input.binding) : undefined;
+
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
+          updatedAt,
+          JSON.stringify(metadata),
+          input.chatThreadId,
+        );
+
+        return readStateFromDb(db, input.chatThreadId);
       });
     },
 
@@ -927,9 +1172,8 @@ export function createChatThreadStore(
       assertManagementRevision(input.expectedManagementRevision);
       if (input.operation !== "archive" && input.operation !== "restore" && input.operation !== "trash")
         throw new Error("invalid_chat_thread_lifecycle_operation");
-      const paths = pathsFor(input.chatThreadId);
-      return withPathLock(paths.thread, async () => {
-        const current = await readState(paths, containmentRoot);
+      return withDb((db) => {
+        const current = readStateFromDb(db, input.chatThreadId);
         const thread = current.thread;
         if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId) throw new Error("chat_thread_surface_mismatch");
         if (thread.companionId !== input.companionId || thread.continuityId !== input.continuityId)
@@ -942,22 +1186,17 @@ export function createChatThreadStore(
           thread.trashRestoreStatus,
           input.operation,
         );
-        const next = freezeState({
-          thread: freezeThread({
-            ...thread,
-            lifecycleStatus: transition.status,
-            ...(transition.trashRestoreStatus === undefined
-              ? { trashRestoreStatus: undefined }
-              : { trashRestoreStatus: transition.trashRestoreStatus }),
-            managementRevision: currentManagementRevision + 1,
-          }),
-          messages: current.messages,
-          draft: current.draft,
-          turnLedger: current.turnLedger,
-          idempotency: current.idempotency,
-        });
-        await commitState(paths, next, containmentRoot);
-        return (await readState(paths, containmentRoot)).thread;
+        const nextRevision = currentManagementRevision + 1;
+
+        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
+        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+        metadata.trashRestoreStatus = transition.trashRestoreStatus;
+
+        db.prepare(
+          "UPDATE tavern_threads SET lifecycle_status = ?, management_revision = ?, metadata_json = ? WHERE thread_id = ?",
+        ).run(transition.status, nextRevision, JSON.stringify(metadata), input.chatThreadId);
+
+        return (readStateFromDb(db, input.chatThreadId)).thread;
       });
     },
 
@@ -965,28 +1204,23 @@ export function createChatThreadStore(
       assertId("chatSurfaceSessionId", input.chatSurfaceSessionId);
       assertManagementRevision(input.expectedManagementRevision);
       const title = normalizeThreadTitle(input.title);
-      const paths = pathsFor(input.chatThreadId);
-      return withPathLock(paths.thread, async () => {
-        const current = await readState(paths, containmentRoot);
+      return withDb((db) => {
+        const current = readStateFromDb(db, input.chatThreadId);
         const managementRevision = current.thread.managementRevision ?? 1;
         if (current.thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
           throw new Error("chat_thread_surface_mismatch");
         if (managementRevision !== input.expectedManagementRevision)
           throw new Error("chat_thread_management_revision_conflict");
         if (current.thread.title === title) throw new Error("chat_thread_title_unchanged");
-        const next = freezeState({
-          thread: freezeThread({
-            ...current.thread,
-            title,
-            managementRevision: managementRevision + 1,
-          }),
-          messages: current.messages,
-          draft: current.draft,
-          turnLedger: current.turnLedger,
-          idempotency: current.idempotency,
-        });
-        await commitState(paths, next, containmentRoot);
-        return (await readState(paths, containmentRoot)).thread;
+
+        const nextRevision = managementRevision + 1;
+        db.prepare("UPDATE tavern_threads SET title = ?, management_revision = ? WHERE thread_id = ?").run(
+          title,
+          nextRevision,
+          input.chatThreadId,
+        );
+
+        return (readStateFromDb(db, input.chatThreadId)).thread;
       });
     },
 
@@ -999,9 +1233,13 @@ export function createChatThreadStore(
       validateDraftMutation(input);
       return mutateDraft(input, null);
     },
+
+    close(): void {
+      // With per-operation withDb lifecycle, connections are closed after every operation.
+    },
   });
 
-  async function mutateDraft(
+  function mutateDraft(
     input: Readonly<{
       chatThreadId: string;
       chatSurfaceSessionId: string;
@@ -1009,28 +1247,34 @@ export function createChatThreadStore(
     }>,
     text: string | null,
   ): Promise<ChatDraft> {
-    const paths = pathsFor(input.chatThreadId);
-    return withPathLock(paths.thread, async () => {
-      const current = await readState(paths, containmentRoot);
-      if (current.thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
-        throw new Error("chat_thread_surface_mismatch");
-      if ((current.thread.lifecycleStatus ?? "active") !== "active")
-        throw new Error("chat_thread_lifecycle_not_active");
-      if (current.draft.revision !== input.expectedDraftRevision)
-        throw new Error("chat_draft_revision_conflict");
-      const next = freezeState({
-        thread: current.thread,
-        messages: current.messages,
-        draft: freezeDraft({ revision: current.draft.revision + 1, text }),
-        turnLedger: current.turnLedger,
-        idempotency: current.idempotency,
-      });
-      await commitState(paths, next, containmentRoot);
-      return (await readState(paths, containmentRoot)).draft;
-    });
+    return Promise.resolve().then(() =>
+      withDb((db) => {
+        const current = readStateFromDb(db, input.chatThreadId);
+        if (current.thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
+          throw new Error("chat_thread_surface_mismatch");
+        if ((current.thread.lifecycleStatus ?? "active") !== "active")
+          throw new Error("chat_thread_lifecycle_not_active");
+        if (current.draft.revision !== input.expectedDraftRevision) throw new Error("chat_draft_revision_conflict");
+
+        const nextRevision = current.draft.revision + 1;
+        const updatedAt = now();
+        db.prepare(
+          "UPDATE tavern_drafts SET revision = ?, draft_content = ?, updated_at_ms = ? WHERE thread_id = ?",
+        ).run(nextRevision, text, updatedAt, input.chatThreadId);
+
+        return (readStateFromDb(db, input.chatThreadId)).draft;
+      }),
+    );
   }
 
-  function validateDraftMutation(input: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string; expectedDraftRevision: number; text?: string }>): void {
+  function validateDraftMutation(
+    input: Readonly<{
+      chatThreadId: string;
+      chatSurfaceSessionId: string;
+      expectedDraftRevision: number;
+      text?: string;
+    }>,
+  ): void {
     assertId("chatThreadId", input.chatThreadId);
     assertId("chatSurfaceSessionId", input.chatSurfaceSessionId);
     if (!Number.isSafeInteger(input.expectedDraftRevision) || input.expectedDraftRevision < 0)
@@ -1042,13 +1286,14 @@ export function createChatThreadStore(
 
   const initialCapability: InitialChatExactContentCapability = Object.freeze({
     async resumeExact(chatThreadId, chatSurfaceSessionId): Promise<ChatThreadState> {
-      return resumeExact(chatThreadId, chatSurfaceSessionId);
+      return store.resumeThread(chatThreadId, chatSurfaceSessionId);
     },
     async createExplicit(request): Promise<ChatThreadState> {
       await store.createThread(request);
-      return resumeExact(request.chatThreadId, request.chatSurfaceSessionId);
+      return store.resumeThread(request.chatThreadId, request.chatSurfaceSessionId);
     },
   });
+
   genuineChatThreadStores.add(store);
   initialExactContentCapabilities.add(initialCapability);
   initialExactContentCapabilityByStore.set(store, initialCapability);
@@ -1060,9 +1305,8 @@ export function createChatThreadStore(
 
   async function acceptMounted(input: MountedP4AcceptanceInput): Promise<AcceptedQueuedTurn> {
     validateAcceptanceInput(input);
-    const paths = pathsFor(input.chatThreadId);
-    return withPathLock(paths.thread, async () => {
-      const current = await readState(paths, containmentRoot);
+    return withDb((db) => {
+      const current = readStateFromDb(db, input.chatThreadId);
       const thread = current.thread;
       if (
         thread.chatSurfaceSessionId !== input.chatSurfaceSessionId ||
@@ -1071,22 +1315,69 @@ export function createChatThreadStore(
       )
         throw new Error("chat_thread_scope_mismatch");
       if (thread.lifecycleStatus !== "active") throw new Error("chat_thread_lifecycle_not_active");
+
       const fingerprint = acceptanceFingerprint(input);
       const existing = current.idempotency.find((record) => record.key === input.idempotencyKey);
       if (existing !== undefined) {
         if (existing.fingerprint !== fingerprint) throw new Error("idempotency_conflict");
         return existing.result;
       }
-      if (current.turnLedger !== null) throw new Error("turn_busy");
+      if (
+        current.turnLedger !== null &&
+        current.turnLedger.status !== "completed" &&
+        current.turnLedger.status !== "cancelled" &&
+        current.turnLedger.status !== "failed"
+      )
+        throw new Error("turn_busy");
       if (current.draft.revision !== input.expectedDraftRevision) throw new Error("chat_draft_revision_conflict");
       if (current.messages.length >= MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES)
         throw new Error("chat_thread_capacity_exceeded");
+
       const acceptedAtMs = now();
       const messageId = `player_${randomUUID().replace(/-/gu, "")}`;
-      const result = freezeAcceptedTurn({ turnId: `turn_${randomUUID().replace(/-/gu, "")}`, status: "accepted_queued", idempotencyKey: input.idempotencyKey, messageId, acceptedAtMs });
-      const next = freezeState({ thread: freezeThread({ ...thread, updatedAtMs: acceptedAtMs, openingLockedAtEventId: thread.openingLockedAtEventId ?? messageId }), messages: [...current.messages, freezeMessage({ messageId, role: "player", kind: "player", text: input.text, occurredAtMs: acceptedAtMs, greetingSource: null })], draft: freezeDraft({ revision: current.draft.revision + 1, text: null }), turnLedger: result, idempotency: [...current.idempotency, Object.freeze({ key: input.idempotencyKey, fingerprint, result })] });
-      await commitState(paths, next, containmentRoot);
-      const readBack = await readState(paths, containmentRoot);
+      const turnId = `turn_${randomUUID().replace(/-/gu, "")}`;
+      const result = freezeAcceptedTurn({
+        turnId,
+        status: "accepted_queued",
+        idempotencyKey: input.idempotencyKey,
+        messageId,
+        acceptedAtMs,
+      });
+
+      const lockedAt = thread.openingLockedAtEventId ?? messageId;
+      const nextIdempotency = [...current.idempotency, Object.freeze({ key: input.idempotencyKey, fingerprint, result })];
+
+      const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
+      const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+      const messages: ChatThreadMessage[] = Array.isArray(metadata.messages) ? [...metadata.messages] : [];
+
+      messages.push(
+        validateMessage({
+          messageId,
+          role: "player",
+          kind: "player",
+          text: input.text,
+          occurredAtMs: acceptedAtMs,
+          greetingSource: null,
+        }),
+      );
+
+      metadata.messages = messages;
+      metadata.openingLockedAtEventId = lockedAt;
+      metadata.turnLedger = result;
+      metadata.idempotency = nextIdempotency;
+
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
+        acceptedAtMs,
+        JSON.stringify(metadata),
+        input.chatThreadId,
+      );
+
+      db.prepare(
+        "UPDATE tavern_drafts SET revision = ?, draft_content = NULL, updated_at_ms = ? WHERE thread_id = ?",
+      ).run(current.draft.revision + 1, acceptedAtMs, input.chatThreadId);
+
+      const readBack = readStateFromDb(db, input.chatThreadId);
       const durable = readBack.idempotency.find((record) => record.key === input.idempotencyKey);
       if (!durable || durable.fingerprint !== fingerprint) throw new Error("chat_turn_readback_mismatch");
       return durable.result;
@@ -1095,9 +1386,8 @@ export function createChatThreadStore(
 
   async function claimMountedAttempt(input: MountedP4AttemptClaimInput): Promise<AttemptStartingTurn> {
     validateAttemptClaimInput(input);
-    const paths = pathsFor(input.chatThreadId);
-    return withPathLock(paths.thread, async () => {
-      const current = await readState(paths, containmentRoot);
+    return withDb((db) => {
+      const current = readStateFromDb(db, input.chatThreadId);
       const thread = current.thread;
       if (
         thread.chatSurfaceSessionId !== input.chatSurfaceSessionId ||
@@ -1108,6 +1398,7 @@ export function createChatThreadStore(
       if (thread.lifecycleStatus !== "active") throw new Error("chat_thread_lifecycle_not_active");
       if (current.turnLedger === null || current.turnLedger.status !== "accepted_queued")
         throw new Error("attempt_already_claimed");
+
       const claimedAtMs = now();
       const attempt = freezeAttemptClaim({
         generation: 1,
@@ -1122,15 +1413,18 @@ export function createChatThreadStore(
         status: "attempt_starting",
         attempt,
       });
-      const next = freezeState({
-        thread: freezeThread({ ...thread, updatedAtMs: claimedAtMs }),
-        messages: current.messages,
-        draft: current.draft,
-        turnLedger: claimed,
-        idempotency: current.idempotency,
-      });
-      await commitState(paths, next, containmentRoot);
-      const readBack = await readState(paths, containmentRoot);
+
+      const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
+      const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+      metadata.turnLedger = claimed;
+
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
+        claimedAtMs,
+        JSON.stringify(metadata),
+        input.chatThreadId,
+      );
+
+      const readBack = readStateFromDb(db, input.chatThreadId);
       if (
         readBack.turnLedger === null ||
         readBack.turnLedger.status !== "attempt_starting" ||
@@ -1145,16 +1439,12 @@ export function createChatThreadStore(
   async function transitionMountedProviderStart(
     input: MountedP4ProviderStartInput,
     command: P4ProviderStartTransition,
-  ): Promise<AttemptStartingTurn | RunningTurn> {
+  ): Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn> {
     validateProviderStartInput(input);
-    const paths = pathsFor(input.chatThreadId);
-    return withPathLock(paths.thread, async () => {
-      // A transition can queue behind another writer while either its mounted
-      // lease or its callback-scoped operation is revoked. Recheck both at
-      // the durable-write boundary.
+    return withDb((db) => {
       assertP4P5MountedTransitionAuthority(input.authority);
       assertP4P5MountedTransitionOperationAuthority(input.operationAuthority);
-      const current = await readState(paths, containmentRoot);
+      const current = readStateFromDb(db, input.chatThreadId);
       const thread = current.thread;
       if (
         thread.chatSurfaceSessionId !== input.chatSurfaceSessionId ||
@@ -1169,9 +1459,8 @@ export function createChatThreadStore(
       const observation = ledger.observation;
       const observedAtMs = command.observedAtMs;
       if (observedAtMs < thread.updatedAtMs) throw new Error("provider_start_observation_time_regression");
-      let nextLedger: AttemptStartingTurn | RunningTurn;
+      let nextLedger: AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn;
       if (command.operation === "arm") {
-        // Frozen CAS: no observation or `armed` is the only arm source state.
         if (observation !== undefined && observation.phase !== "armed")
           throw new Error("provider_start_observation_conflict");
         nextLedger = freezeAttemptStartingTurn({
@@ -1179,7 +1468,6 @@ export function createChatThreadStore(
           observation: Object.freeze({ phase: "armed" as const, observedAtMs }),
         });
       } else if (command.operation === "not_started") {
-        // `not_started` is only a surviving-process, pre-invocation local proof.
         if (observation === undefined || observation.phase !== "armed")
           throw new Error("provider_start_observation_conflict");
         nextLedger = freezeAttemptStartingTurn({
@@ -1190,8 +1478,7 @@ export function createChatThreadStore(
             observedAtMs,
           }),
         });
-      } else {
-        // `running` is reachable only from a durable `armed` record.
+      } else if (command.operation === "running") {
         if (observation === undefined || observation.phase !== "armed")
           throw new Error("provider_start_observation_conflict");
         nextLedger = freezeRunningTurn({
@@ -1204,21 +1491,51 @@ export function createChatThreadStore(
             observedAtMs,
           }),
         });
+      } else if (command.operation === "fail") {
+        if (observation === undefined || observation.phase !== "armed" || command.failedAtMs < observedAtMs)
+          throw new Error("provider_start_observation_conflict");
+        nextLedger = freezeFailedTurn({
+          ...ledger,
+          status: "failed",
+          observation,
+          presentation: null,
+          reasonCode: command.reasonCode,
+          failedAtMs: command.failedAtMs,
+        });
+      } else {
+        if (observation === undefined || observation.phase !== "armed" || command.cancelledAtMs < observedAtMs)
+          throw new Error("provider_start_observation_conflict");
+        nextLedger = freezeCancelledTurn({
+          ...ledger,
+          status: "cancelled",
+          observation,
+          presentation: null,
+          cancelClaimedAtMs: observedAtMs,
+          cancelledAtMs: command.cancelledAtMs,
+        });
       }
-      const next = freezeState({
-        thread: freezeThread({ ...thread, updatedAtMs: observedAtMs }),
-        messages: current.messages,
-        draft: current.draft,
-        turnLedger: nextLedger,
-        idempotency: current.idempotency,
-      });
-      await commitState(paths, next, containmentRoot);
-      const readBack = await readState(paths, containmentRoot);
+
+      const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
+      const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+      metadata.turnLedger = nextLedger;
+
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
+        observedAtMs,
+        JSON.stringify(metadata),
+        input.chatThreadId,
+      );
+
+      const readBack = readStateFromDb(db, input.chatThreadId);
       const readBackLedger = readBack.turnLedger;
       assertProviderStartReadBack(readBackLedger, command, input);
       if (readBackLedger === null || readBackLedger.status === "accepted_queued")
         throw new Error("chat_provider_start_readback_mismatch");
-      if (readBackLedger.status !== "attempt_starting" && readBackLedger.status !== "running")
+      if (
+        readBackLedger.status !== "attempt_starting" &&
+        readBackLedger.status !== "running" &&
+        readBackLedger.status !== "failed" &&
+        readBackLedger.status !== "cancelled"
+      )
         throw new Error("chat_provider_start_readback_mismatch");
       return readBackLedger;
     });
@@ -1229,14 +1546,10 @@ export function createChatThreadStore(
     command: P5PresentationTransition,
   ): Promise<ChatTurnLedger> {
     validatePresentationInput(input);
-    const paths = pathsFor(input.chatThreadId);
-    return withPathLock(paths.thread, async () => {
-      // A P5 transition can queue behind another writer after either its
-      // lease or callback operation was revoked; do not carry pre-queue
-      // authority across that boundary.
+    return withDb((db) => {
       assertP4P5MountedTransitionAuthority(input.authority);
       assertP4P5MountedTransitionOperationAuthority(input.operationAuthority);
-      const current = await readState(paths, containmentRoot);
+      const current = readStateFromDb(db, input.chatThreadId);
       const thread = current.thread;
       if (
         thread.chatSurfaceSessionId !== input.chatSurfaceSessionId ||
@@ -1250,21 +1563,18 @@ export function createChatThreadStore(
       assertExactP5Attempt(ledger.attempt, input);
       const atMs = timestampFor(command);
       if (atMs < thread.updatedAtMs) throw new Error("p5_presentation_time_regression");
+
+      const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
+      const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+      const messages: ChatThreadMessage[] = Array.isArray(metadata.messages) ? [...metadata.messages] : [];
+
       let nextLedger: ChatTurnLedger;
-      let nextMessages: readonly ChatThreadMessage[] = current.messages;
       switch (command.operation) {
         case "commit_presentation": {
           validateNormalMessage(command.message);
-          const existing = current.messages.find((message) => message.messageId === command.message.messageId);
+          const existing = messages.find((message) => message.messageId === command.message.messageId);
           if (existing !== undefined) {
-            // A Pi transport retry must never double-commit. A retried callback
-            // with the identical response message is an idempotent no-op only
-            // when the ledger already carries the exact same presentation.
-            if (
-              existing.kind !== "response" ||
-              existing.role !== "companion" ||
-              existing.text !== command.message.text
-            )
+            if (existing.kind !== "response" || existing.role !== "companion" || existing.text !== command.message.text)
               throw new Error("chat_thread_message_id_conflict");
             if (
               current.turnLedger?.status !== "presentation_committed" ||
@@ -1275,24 +1585,23 @@ export function createChatThreadStore(
             nextLedger = current.turnLedger;
             break;
           }
-          // The running source check is deliberately below the idempotency
-          // no-op: a retried callback after the durable commit read-back is
-          // accepted as a durable no-op, never as a live running commit.
           if (ledger.status !== "running") throw new Error("p5_presentation_source_running_required");
-          const presentation = freezePresentationCommit(Object.freeze({
-            expressionId: command.message.messageId,
-            messageId: command.message.messageId,
-            cancelEpoch: command.cancelEpoch,
-            committedAtMs: command.committedAtMs,
-          }));
+          const presentation = freezePresentationCommit(
+            Object.freeze({
+              expressionId: command.message.messageId,
+              messageId: command.message.messageId,
+              cancelEpoch: command.cancelEpoch,
+              committedAtMs: command.committedAtMs,
+            }),
+          );
           nextLedger = freezePresentationCommittedTurn({
             ...ledger,
             status: "presentation_committed",
             presentation,
           });
-          nextMessages = [
-            ...nextMessages,
-            freezeMessage({
+
+          messages.push(
+            validateMessage({
               messageId: command.message.messageId,
               role: "companion",
               kind: "response",
@@ -1300,12 +1609,12 @@ export function createChatThreadStore(
               occurredAtMs: command.message.occurredAtMs,
               greetingSource: null,
             }),
-          ];
+          );
+          metadata.messages = messages;
           break;
         }
         case "claim_completion": {
-          if (ledger.status !== "presentation_committed")
-            throw new Error("p5_presentation_completion_source_required");
+          if (ledger.status !== "presentation_committed") throw new Error("p5_presentation_completion_source_required");
           nextLedger = freezeCompletionClaimedTurn({
             ...ledger,
             status: "completion_claimed",
@@ -1320,7 +1629,6 @@ export function createChatThreadStore(
         }
         case "claim_cancel": {
           if (ledger.status === "cancel_claimed" || ledger.status === "cancelled") {
-            // Idempotent repeat cancel: return the existing durable representation.
             return ledger;
           }
           if (ledger.status !== "running" && ledger.status !== "presentation_committed")
@@ -1328,8 +1636,7 @@ export function createChatThreadStore(
           nextLedger = freezeCancelClaimedTurn({
             ...ledger,
             status: "cancel_claimed",
-            presentation:
-              ledger.status === "presentation_committed" ? ledger.presentation : null,
+            presentation: ledger.status === "presentation_committed" ? ledger.presentation : null,
             cancelClaimedAtMs: command.claimedAtMs,
           });
           break;
@@ -1341,7 +1648,6 @@ export function createChatThreadStore(
           break;
         }
         default: {
-          // operation === "fail"
           if (ledger.status === "attempt_starting" || isTerminalLedger(ledger))
             throw new Error("p5_presentation_terminal_immutable");
           nextLedger = freezeFailedTurn({
@@ -1359,175 +1665,79 @@ export function createChatThreadStore(
           break;
         }
       }
-      const next = freezeState({
-        thread: freezeThread({ ...thread, updatedAtMs: atMs }),
-        messages: nextMessages,
-        draft: current.draft,
-        turnLedger: nextLedger,
-        idempotency: current.idempotency,
-      });
-      await commitState(paths, next, containmentRoot);
-      const readBack = await readState(paths, containmentRoot);
+
+      metadata.turnLedger = nextLedger;
+
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
+        atMs,
+        JSON.stringify(metadata),
+        input.chatThreadId,
+      );
+
+      const readBack = readStateFromDb(db, input.chatThreadId);
       assertP5ReadBack(readBack.turnLedger, command, input);
       if (readBack.turnLedger === null) throw new Error("chat_p5_readback_mismatch");
       return readBack.turnLedger;
     });
   }
-
-  async function readSelection(): Promise<ActiveChatThreadSelection | null> {
-    return withPathLock(activeSelectionPath, async () => {
-      try {
-        return validateActiveSelection(await safeReadJson(activeSelectionPath, containmentRoot));
-      } catch (error) {
-        if (isNodeError(error) && error.code === "ENOENT") return null;
-        throw error;
-      }
-    });
-  }
-  async function resumeExact(chatThreadId: string, chatSurfaceSessionId: string): Promise<ChatThreadState> {
-    const paths = pathsFor(chatThreadId);
-    return withPathLock(paths.thread, async () => {
-      const state = await readState(paths, containmentRoot);
-      if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId) throw new Error("chat_thread_surface_mismatch");
-      return state;
-    });
-  }
-
-  async function appendNormal(
-    chatThreadId: string,
-    kind: "player" | "response",
-    input: Readonly<{ messageId: string; text: string; occurredAtMs: number }>,
-  ): Promise<ChatThreadState> {
-    validateNormalMessage(input);
-    return mutate(chatThreadId, (current) => {
-      const existing = current.messages.find((message) => message.messageId === input.messageId);
-      if (existing !== undefined) {
-        if (existing.kind !== kind || existing.text !== input.text) throw new Error("chat_thread_message_id_conflict");
-        return current;
-      }
-      if (current.messages.length >= MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES)
-        throw new Error("chat_thread_capacity_exceeded");
-      const message = freezeMessage({
-        messageId: input.messageId,
-        role: kind === "player" ? "player" : "companion",
-        kind,
-        text: input.text,
-        occurredAtMs: input.occurredAtMs,
-        greetingSource: null,
-      });
-      const lockedAt = current.thread.openingLockedAtEventId ?? input.messageId;
-      return {
-        thread: freezeThread({
-          ...current.thread,
-          updatedAtMs: now(),
-          openingLockedAtEventId: lockedAt,
-        }),
-        messages: [...current.messages, message],
-        draft: current.draft,
-        turnLedger: current.turnLedger,
-        idempotency: current.idempotency,
-      };
-    });
-  }
 }
 
-async function readState(
-  paths: Readonly<{ thread: string; messages: string; draft: string; turnLedger: string; idempotency: string; journal: string }>, containmentRoot: string,
-): Promise<ChatThreadState> {
-  if (await exists(paths.journal, containmentRoot)) {
-    const expectedChatThreadId = paths.thread.split(/[\\/]/u).at(-2);
-    if (expectedChatThreadId === undefined) throw new Error("chat_thread_directory_mismatch");
-    const prepared = validatePrepared(await safeReadJson(paths.journal, containmentRoot, MAX_TRANSACTION_ARTIFACT_BYTES), expectedChatThreadId);
-    const journalIdentity = await captureSafeFileIdentity(paths.journal, containmentRoot);
-    if (journalIdentity === undefined) throw new Error("chat_thread_journal_disappeared");
-    await writeStateFiles(paths, prepared.state, containmentRoot);
-    const recovered = await readArtifacts(paths, containmentRoot);
-    await removeOwnedSafeFile(paths.journal, journalIdentity, containmentRoot);
-    return recovered;
-  }
-  return readArtifacts(paths, containmentRoot);
+function rowToThread(row: any): ChatThread {
+  const openingSelection = JSON.parse(row.opening_selection_json);
+  const metadata: ThreadMetadata = row.metadata_json ? JSON.parse(row.metadata_json) : {};
+  const thread: ChatThread = {
+    schemaVersion: CHAT_THREAD_SCHEMA_VERSION,
+    chatThreadId: row.thread_id,
+    companionId: row.companion_id,
+    continuityId: row.continuity_id,
+    ...(row.persona_id ? { personaId: row.persona_id } : {}),
+    ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}),
+    stableArtifactBindings: freezeStableArtifactBindings(metadata.stableArtifactBindings ?? []),
+    ...(metadata.worldBookBinding ? { worldBookBinding: freezeStableWorldBookBinding(metadata.worldBookBinding) } : {}),
+    chatSurfaceSessionId: metadata.chatSurfaceSessionId ?? row.thread_id,
+    createdAtMs: row.created_at_ms,
+    updatedAtMs: row.updated_at_ms,
+    openingSelection: validateOpeningSelection(openingSelection),
+    title: validateStoredThreadTitle(row.title),
+    lifecycleStatus: validateLifecycleStatus(row.lifecycle_status),
+    managementRevision: validateManagementRevision(row.management_revision),
+    ...(metadata.trashRestoreStatus ? { trashRestoreStatus: validateTrashRestoreStatus(metadata.trashRestoreStatus) } : {}),
+    openingLockedAtEventId: metadata.openingLockedAtEventId ?? null,
+  };
+  return freezeThread(thread);
 }
-async function readArtifacts(
-  paths: Readonly<{ thread: string; messages: string; draft: string; turnLedger: string; idempotency: string }>, containmentRoot: string,
-): Promise<ChatThreadState> {
-  let rawThread: unknown;
-  try { rawThread = await safeReadJson(paths.thread, containmentRoot); } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
-      if (!(await exists(paths.messages, containmentRoot)) && !(await exists(paths.draft, containmentRoot)) && !(await exists(paths.turnLedger, containmentRoot)) && !(await exists(paths.idempotency, containmentRoot))) throw new ExactThreadNotFoundError();
-      throw new Error("chat_thread_incomplete_artifacts");
-    }
-    throw error;
+
+function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadState {
+  assertId("chatThreadId", chatThreadId);
+  const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
+  if (!threadRow) {
+    throw new ExactThreadNotFoundError();
   }
-  const thread = validateThread(rawThread);
-  const directoryId = paths.thread.split(/[\\/]/u).at(-2);
-  if (directoryId !== thread.chatThreadId) throw new Error("chat_thread_directory_mismatch");
-  try {
-    const [messages, draft, ledger, idempotency] = await Promise.all([safeReadJson(paths.messages, containmentRoot, MAX_MESSAGES_ARTIFACT_BYTES), safeReadJson(paths.draft, containmentRoot, MAX_DRAFT_ARTIFACT_BYTES), safeReadJson(paths.turnLedger, containmentRoot, MAX_TURN_LEDGER_ARTIFACT_BYTES), safeReadJson(paths.idempotency, containmentRoot, MAX_IDEMPOTENCY_ARTIFACT_BYTES)]);
-    if (!isRecord(ledger) || !onlyKeys(ledger, ["schemaVersion", "turnLedger"]) || ledger.schemaVersion !== CHAT_THREAD_SCHEMA_VERSION) throw new Error("invalid_chat_thread_turn_ledger");
-    if (!isRecord(idempotency) || !onlyKeys(idempotency, ["schemaVersion", "idempotency"]) || idempotency.schemaVersion !== CHAT_THREAD_SCHEMA_VERSION || !Array.isArray(idempotency.idempotency)) throw new Error("invalid_chat_thread_idempotency");
-    if (!isRecord(draft) || !onlyKeys(draft, ["schemaVersion", "revision", "text"]) || draft.schemaVersion !== CHAT_THREAD_SCHEMA_VERSION) throw new Error("invalid_chat_thread_draft");
-    return validateState({ thread, messages: validateMessages(messages, thread.chatThreadId).messages, draft: { revision: draft.revision, text: draft.text }, turnLedger: ledger.turnLedger, idempotency: idempotency.idempotency });
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") throw new Error("chat_thread_incomplete_artifacts");
-    throw error;
-  }
-}
-async function commitState(
-  paths: Readonly<{ thread: string; messages: string; draft: string; turnLedger: string; idempotency: string; journal: string }>, state: ChatThreadState, containmentRoot: string,
-): Promise<void> {
-  const journalJson = JSON.stringify({ schemaVersion: CHAT_THREAD_SCHEMA_VERSION, state } satisfies PreparedTransaction, null, 2);
-  assertArtifactBudget(paths.journal, MAX_TRANSACTION_ARTIFACT_BYTES, journalJson);
-  await atomicWriteFile(paths.journal, journalJson, containmentRoot);
-  const journalIdentity = await captureSafeFileIdentity(paths.journal, containmentRoot);
-  if (journalIdentity === undefined) throw new Error("chat_thread_journal_disappeared");
-  await writeStateFiles(paths, state, containmentRoot);
-  await readArtifacts(paths, containmentRoot);
-  await removeOwnedSafeFile(paths.journal, journalIdentity, containmentRoot);
-}
-async function writeStateFiles(
-  paths: Readonly<{ thread: string; messages: string; draft: string; turnLedger: string; idempotency: string }>, state: ChatThreadState, containmentRoot: string,
-): Promise<void> {
-  // Every named artifact budget is enforced before any file is touched, so an
-  // over-budget state can never leave a partially repaired artifact set.
-  const artifacts = [
-    [paths.messages, MAX_MESSAGES_ARTIFACT_BYTES, { schemaVersion: CHAT_THREAD_SCHEMA_VERSION, chatThreadId: state.thread.chatThreadId, messages: state.messages } satisfies StoredMessages],
-    [paths.draft, MAX_DRAFT_ARTIFACT_BYTES, { schemaVersion: CHAT_THREAD_SCHEMA_VERSION, revision: state.draft.revision, text: state.draft.text } satisfies StoredDraft],
-    [paths.turnLedger, MAX_TURN_LEDGER_ARTIFACT_BYTES, { schemaVersion: CHAT_THREAD_SCHEMA_VERSION, turnLedger: state.turnLedger } satisfies StoredTurnLedger],
-    [paths.idempotency, MAX_IDEMPOTENCY_ARTIFACT_BYTES, { schemaVersion: CHAT_THREAD_SCHEMA_VERSION, idempotency: state.idempotency } satisfies StoredIdempotency],
-    [paths.thread, MAX_THREAD_ARTIFACT_BYTES, state.thread],
-  ] as const satisfies readonly (readonly [string, number, unknown])[];
-  const encoded = artifacts.map(([path, budget, value]) => {
-    const json = JSON.stringify(value, null, 2);
-    assertArtifactBudget(path, budget, json);
-    return [path, json] as const;
+  const thread = rowToThread(threadRow);
+  const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
+
+  const rawMessages: unknown[] = Array.isArray(metadata.messages) ? metadata.messages : [];
+  const messages: ChatThreadMessage[] = rawMessages.map(validateMessage);
+
+  const draftRow = db.prepare("SELECT * FROM tavern_drafts WHERE thread_id = ?").get(chatThreadId) as any;
+  const draft = draftRow
+    ? validateDraft({ revision: draftRow.revision, text: draftRow.draft_content ?? null })
+    : validateDraft({ revision: 0, text: null });
+
+  const turnLedger = metadata.turnLedger ? validateTurnLedger(metadata.turnLedger) : null;
+  const idempotencyRaw = Array.isArray(metadata.idempotency) ? metadata.idempotency : [];
+  const idempotency = idempotencyRaw.map(validateIdempotency);
+
+  validateOpeningConsistency(thread, messages);
+  validateTurnIntegrity(messages, turnLedger, idempotency);
+
+  return freezeState({
+    thread,
+    messages,
+    draft,
+    turnLedger,
+    idempotency,
   });
-  for (const [path, json] of encoded) await atomicWriteFile(path, json, containmentRoot);
-}
-
-function assertArtifactBudget(path: string, budgetBytes: number, json: string): void {
-  if (Buffer.byteLength(json, "utf8") > budgetBytes) throw new Error("chat_thread_artifact_budget_exceeded");
-}
-async function safeReadFile(path: string, containmentRoot: string): Promise<string> {
-  // The lock's boundary check is not a read capability. Reverify immediately
-  // before every filesystem read so a replaced parent fails closed.
-  await verifySafePathBoundary(path, containmentRoot);
-  return fsReadFile(path, "utf8");
-}
-async function safeReadJson(path: string, containmentRoot: string, maxBytes: number = STRICT_JSON_READER_DEFAULT_BUDGET_BYTES): Promise<unknown> {
-  // The strict reader owns stable-file, duplicate-key, UTF-8, reparse and
-  // byte-budget rejection; preserve this store's containment boundary
-  // immediately before each persisted read.
-  await verifySafePathBoundary(path, containmentRoot);
-  return readStrictJsonFile(path, maxBytes);
-}
-async function exists(path: string, containmentRoot: string): Promise<boolean> {
-  try {
-    await safeReadFile(path, containmentRoot);
-    return true;
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return false;
-    throw error;
-  }
 }
 
 function validateActiveSelection(value: unknown): ActiveChatThreadSelection {
@@ -1547,9 +1757,11 @@ function validateActiveSelection(value: unknown): ActiveChatThreadSelection {
     selectedAtMs: value.selectedAtMs,
   });
 }
+
 function freezeActiveSelection(value: ActiveChatThreadSelection): ActiveChatThreadSelection {
   return Object.freeze({ ...value });
 }
+
 function validateCreate(request: CreateChatThreadRequest): void {
   assertId("chatThreadId", request.chatThreadId);
   assertId("companionId", request.companionId);
@@ -1561,6 +1773,7 @@ function validateCreate(request: CreateChatThreadRequest): void {
   if (request.worldBookBinding !== undefined) freezeStableWorldBookBinding(request.worldBookBinding);
   normalizeOpening(request.opening);
 }
+
 function normalizeOpening(
   opening: CreateChatThreadRequest["opening"],
 ): "blank" | Readonly<{ messageId: string; text: string; source: GreetingSource }> {
@@ -1575,11 +1788,13 @@ function normalizeOpening(
     source: freezeGreetingSource(opening.source),
   });
 }
+
 function validateNormalMessage(message: Readonly<{ messageId: string; text: string; occurredAtMs: number }>): void {
   assertId("messageId", message.messageId);
   assertText(message.text);
   assertTimestamp(message.occurredAtMs);
 }
+
 function validateGreetingSource(value: unknown): asserts value is GreetingSource {
   if (
     !isRecord(value) ||
@@ -1601,108 +1816,7 @@ function validateGreetingSource(value: unknown): asserts value is GreetingSource
     throw new Error("invalid_greeting_source");
   if (!isHash(value.canonicalHash)) throw new Error("invalid_greeting_source");
 }
-function validatePrepared(value: unknown, expectedChatThreadId: string): PreparedTransaction {
-  if (
-    !isRecord(value) ||
-    !onlyKeys(value, ["schemaVersion", "state"]) ||
-    value.schemaVersion !== CHAT_THREAD_SCHEMA_VERSION
-  )
-    throw new Error("invalid_chat_thread_transaction");
-  const state = validateState(value.state);
-  // Prepared recovery is scoped to the exact directory selected before any
-  // recovery write; an internally coherent foreign transaction must remain untouched.
-  if (state.thread.chatThreadId !== expectedChatThreadId) throw new Error("chat_thread_directory_mismatch");
-  return Object.freeze({ schemaVersion: CHAT_THREAD_SCHEMA_VERSION, state });
-}
-function validateState(value: unknown): ChatThreadState {
-  if (!isRecord(value) || !onlyKeys(value, ["thread", "messages", "draft", "turnLedger", "idempotency"])) throw new Error("invalid_chat_thread_state");
-  const thread = validateThread(value.thread);
-  if (!Array.isArray(value.messages)) throw new Error("invalid_chat_thread_state");
-  const messages = value.messages.map(validateMessage);
-  if (messages.length > MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES) throw new Error("chat_thread_capacity_exceeded");
-  const draft = validateDraft(value.draft);
-  const turnLedger = value.turnLedger === null ? null : validateTurnLedger(value.turnLedger);
-  if (!Array.isArray(value.idempotency)) throw new Error("invalid_chat_thread_state");
-  const idempotency = value.idempotency.map(validateIdempotency);
-  validateOpeningConsistency(thread, messages);
-  validateTurnIntegrity(messages, turnLedger, idempotency);
-  return freezeState({ thread, messages, draft, turnLedger, idempotency });
-}
-function validateThread(value: unknown): ChatThread {
-  if (
-    !isRecord(value) ||
-    !onlyKeys(value, [
-      "schemaVersion",
-      "chatThreadId",
-      "companionId",
-      "continuityId",
-      "personaId",
-      "scenarioId",
-      "stableArtifactBindings",
-      "worldBookBinding",
-      "chatSurfaceSessionId",
-      "createdAtMs",
-      "updatedAtMs",
-      "openingSelection",
-      "title",
-      "lifecycleStatus",
-      "managementRevision",
-      "trashRestoreStatus",
-      "openingLockedAtEventId",
-    ]) ||
-    value.schemaVersion !== CHAT_THREAD_SCHEMA_VERSION
-  )
-    throw new Error("invalid_chat_thread");
-  const chatThreadId = value.chatThreadId;
-  const companionId = value.companionId;
-  const continuityId = value.continuityId;
-  const personaId = value.personaId;
-  const scenarioId = value.scenarioId;
-  const chatSurfaceSessionId = value.chatSurfaceSessionId;
-  assertId("chatThreadId", chatThreadId);
-  assertId("companionId", companionId);
-  assertId("continuityId", continuityId);
-  if (personaId !== undefined && !isId(personaId)) throw new Error("invalid_chat_thread");
-  if (scenarioId !== undefined && !isId(scenarioId)) throw new Error("invalid_chat_thread");
-  assertId("chatSurfaceSessionId", chatSurfaceSessionId);
-  const stableArtifactBindings = freezeStableArtifactBindings(value.stableArtifactBindings);
-  const worldBookBinding =
-    value.worldBookBinding === undefined ? undefined : freezeStableWorldBookBinding(value.worldBookBinding);
-  const createdAtMs = value.createdAtMs;
-  const updatedAtMs = value.updatedAtMs;
-  assertTimestamp(createdAtMs);
-  assertTimestamp(updatedAtMs);
-  if (updatedAtMs < createdAtMs) throw new Error("invalid_chat_thread");
-  const title = validateStoredThreadTitle(value.title);
-  const lifecycleStatus = validateLifecycleStatus(value.lifecycleStatus);
-  const managementRevision = validateManagementRevision(value.managementRevision);
-  const trashRestoreStatus =
-    value.trashRestoreStatus === undefined ? undefined : validateTrashRestoreStatus(value.trashRestoreStatus);
-  if (lifecycleStatus === "trashed" ? trashRestoreStatus === undefined : trashRestoreStatus !== undefined)
-    throw new Error("invalid_chat_thread_trash_restore_status");
-  const locked = value.openingLockedAtEventId;
-  if (locked !== null) assertId("openingLockedAtEventId", locked);
-  const opening = validateOpeningSelection(value.openingSelection);
-  return freezeThread({
-    schemaVersion: CHAT_THREAD_SCHEMA_VERSION,
-    chatThreadId,
-    companionId,
-    continuityId,
-    ...(personaId === undefined ? {} : { personaId }),
-    ...(scenarioId === undefined ? {} : { scenarioId }),
-    stableArtifactBindings,
-    ...(worldBookBinding === undefined ? {} : { worldBookBinding }),
-    chatSurfaceSessionId,
-    createdAtMs,
-    updatedAtMs,
-    openingSelection: opening,
-    title,
-    lifecycleStatus,
-    managementRevision,
-    ...(trashRestoreStatus === undefined ? {} : { trashRestoreStatus }),
-    openingLockedAtEventId: locked,
-  });
-}
+
 function validateOpeningSelection(value: unknown): OpeningSelection {
   if (!isRecord(value)) throw new Error("invalid_chat_thread_opening");
   const kind = value.kind;
@@ -1720,23 +1834,7 @@ function validateOpeningSelection(value: unknown): OpeningSelection {
   }
   throw new Error("invalid_chat_thread_opening");
 }
-function validateMessages(value: unknown, chatThreadId: string): StoredMessages {
-  if (
-    !isRecord(value) ||
-    !onlyKeys(value, ["schemaVersion", "chatThreadId", "messages"]) ||
-    value.schemaVersion !== CHAT_THREAD_SCHEMA_VERSION ||
-    value.chatThreadId !== chatThreadId ||
-    !Array.isArray(value.messages)
-  )
-    throw new Error("invalid_chat_thread_messages");
-  const messages = Object.freeze(value.messages.map(validateMessage));
-  if (messages.length > MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES) throw new Error("chat_thread_capacity_exceeded");
-  return Object.freeze({
-    schemaVersion: CHAT_THREAD_SCHEMA_VERSION,
-    chatThreadId,
-    messages,
-  });
-}
+
 function validateMessage(value: unknown): ChatThreadMessage {
   if (!isRecord(value) || !onlyKeys(value, ["messageId", "role", "kind", "text", "occurredAtMs", "greetingSource"]))
     throw new Error("invalid_chat_thread_message");
@@ -1776,6 +1874,7 @@ function validateMessage(value: unknown): ChatThreadMessage {
     greetingSource,
   });
 }
+
 function validateOpeningConsistency(thread: ChatThread, messages: readonly ChatThreadMessage[]): void {
   const opening = messages.filter((message) => message.kind === "opening");
   if (
@@ -1793,6 +1892,7 @@ function validateOpeningConsistency(thread: ChatThread, messages: readonly ChatT
   )
     throw new Error("invalid_chat_thread_duplicate_message");
 }
+
 function sameSource(left: GreetingSource | null, right: GreetingSource): boolean {
   return (
     left !== null &&
@@ -1804,21 +1904,42 @@ function sameSource(left: GreetingSource | null, right: GreetingSource): boolean
     left.scenarioRevision === right.scenarioRevision
   );
 }
+
 function validateDraft(value: unknown): ChatDraft {
   if (!isRecord(value) || !onlyKeys(value, ["revision", "text"])) throw new Error("invalid_chat_thread_draft");
   return freezeDraft({ revision: value.revision as number, text: value.text as string | null });
 }
+
 function freezeDraft(value: ChatDraft): ChatDraft {
-  if (!Number.isSafeInteger(value.revision) || value.revision < 0 || (value.text !== null && !isText(value.text))) throw new Error("invalid_chat_thread_draft");
+  if (!Number.isSafeInteger(value.revision) || value.revision < 0 || (value.text !== null && !isText(value.text)))
+    throw new Error("invalid_chat_thread_draft");
   return Object.freeze({ revision: value.revision, text: value.text });
 }
+
 function validateAcceptedTurn(value: unknown): AcceptedQueuedTurn {
-  if (!isRecord(value) || !onlyKeys(value, ["turnId", "status", "idempotencyKey", "messageId", "acceptedAtMs"]) || value.status !== "accepted_queued")
+  if (
+    !isRecord(value) ||
+    !onlyKeys(value, ["turnId", "status", "idempotencyKey", "messageId", "acceptedAtMs"]) ||
+    value.status !== "accepted_queued"
+  )
     throw new Error("invalid_chat_thread_turn_ledger");
-  assertId("turnId", value.turnId); assertId("messageId", value.messageId); assertIdempotencyKey(value.idempotencyKey); assertTimestamp(value.acceptedAtMs);
-  return Object.freeze({ turnId: value.turnId, status: "accepted_queued", idempotencyKey: value.idempotencyKey, messageId: value.messageId, acceptedAtMs: value.acceptedAtMs });
+  assertId("turnId", value.turnId);
+  assertId("messageId", value.messageId);
+  assertIdempotencyKey(value.idempotencyKey);
+  assertTimestamp(value.acceptedAtMs);
+  return Object.freeze({
+    turnId: value.turnId,
+    status: "accepted_queued",
+    idempotencyKey: value.idempotencyKey,
+    messageId: value.messageId,
+    acceptedAtMs: value.acceptedAtMs,
+  });
 }
-function freezeAcceptedTurn(value: AcceptedQueuedTurn): AcceptedQueuedTurn { return validateAcceptedTurn(value); }
+
+function freezeAcceptedTurn(value: AcceptedQueuedTurn): AcceptedQueuedTurn {
+  return validateAcceptedTurn(value);
+}
+
 function validateTurnLedger(value: unknown): ChatTurnLedger {
   if (!isRecord(value)) throw new Error("invalid_chat_thread_turn_ledger");
   if (value.status === "accepted_queued") return validateAcceptedTurn(value);
@@ -1862,6 +1983,33 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
     value.status === "failed"
   ) {
     const common = validateP5TerminalishCommon(value);
+    if (value.status === "failed")
+      return freezeFailedTurn({
+        turnId: value.turnId as string,
+        status: "failed",
+        idempotencyKey: value.idempotencyKey as string,
+        messageId: value.messageId as string,
+        acceptedAtMs: value.acceptedAtMs as number,
+        attempt: value.attempt as AttemptClaimV1,
+        observation: common.observation,
+        presentation: common.presentation ?? null,
+        reasonCode: common.reasonCode!,
+        failedAtMs: common.failedAtMs!,
+      });
+    if (value.status === "cancelled")
+      return freezeCancelledTurn({
+        turnId: value.turnId as string,
+        status: "cancelled",
+        idempotencyKey: value.idempotencyKey as string,
+        messageId: value.messageId as string,
+        acceptedAtMs: value.acceptedAtMs as number,
+        attempt: value.attempt as AttemptClaimV1,
+        observation: common.observation as AttemptObservationV1 & { phase: "armed" | "running" },
+        presentation: common.presentation ?? null,
+        cancelClaimedAtMs: common.cancelClaimedAtMs!,
+        cancelledAtMs: common.cancelledAtMs!,
+      });
+    if (common.observation.phase !== "running") throw new Error("invalid_chat_thread_turn_ledger");
     const base = freezeRunningTurn({
       turnId: value.turnId as string,
       status: "running",
@@ -1872,7 +2020,11 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
       observation: common.observation,
     });
     if (value.status === "presentation_committed")
-      return freezePresentationCommittedTurn({ ...base, status: "presentation_committed", presentation: common.presentation! });
+      return freezePresentationCommittedTurn({
+        ...base,
+        status: "presentation_committed",
+        presentation: common.presentation!,
+      });
     if (value.status === "completion_claimed")
       return freezeCompletionClaimedTurn({
         ...base,
@@ -1895,26 +2047,13 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         presentation: common.presentation ?? null,
         cancelClaimedAtMs: common.cancelClaimedAtMs!,
       });
-    if (value.status === "cancelled")
-      return freezeCancelledTurn({
-        ...base,
-        status: "cancelled",
-        presentation: common.presentation ?? null,
-        cancelClaimedAtMs: common.cancelClaimedAtMs!,
-        cancelledAtMs: common.cancelledAtMs!,
-      });
-    return freezeFailedTurn({
-      ...base,
-      status: "failed",
-      presentation: common.presentation ?? null,
-      reasonCode: common.reasonCode!,
-      failedAtMs: common.failedAtMs!,
-    });
+    throw new Error("invalid_chat_thread_turn_ledger");
   }
   throw new Error("invalid_chat_thread_turn_ledger");
 }
+
 function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
-  observation: AttemptObservationV1 & { phase: "running" };
+  observation: AttemptObservationV1;
   presentation: PresentationCommitV1 | null;
   completionClaimedAtMs?: number;
   completedAtMs?: number;
@@ -1924,7 +2063,16 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
   reasonCode?: P5TerminalFailureReason;
 }> {
   const status = value.status;
-  const commonKeys = ["turnId", "status", "idempotencyKey", "messageId", "acceptedAtMs", "attempt", "observation", "presentation"];
+  const commonKeys = [
+    "turnId",
+    "status",
+    "idempotencyKey",
+    "messageId",
+    "acceptedAtMs",
+    "attempt",
+    "observation",
+    "presentation",
+  ];
   const keys =
     status === "presentation_committed"
       ? commonKeys
@@ -1939,18 +2087,19 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
               : [...commonKeys, "reasonCode", "failedAtMs"];
   if (!onlyKeys(value, keys)) throw new Error("invalid_chat_thread_turn_ledger");
   const observation = validateAttemptObservation(value.observation);
-  if (observation.phase !== "running") throw new Error("invalid_chat_thread_turn_ledger");
+  if (status !== "failed" && status !== "cancelled" && observation.phase !== "running")
+    throw new Error("invalid_chat_thread_turn_ledger");
+  if ((status === "failed" || status === "cancelled") && observation.phase !== "armed" && observation.phase !== "running")
+    throw new Error("invalid_chat_thread_turn_ledger");
   const presentation = value.presentation === null ? null : validatePresentationCommit(value.presentation);
   if (status === "completion_claimed" || status === "completed") {
     if (presentation === null || !isTimestamp(value.completionClaimedAtMs))
       throw new Error("invalid_chat_thread_turn_ledger");
-    if (status === "completed" && !isTimestamp(value.completedAtMs))
-      throw new Error("invalid_chat_thread_turn_ledger");
+    if (status === "completed" && !isTimestamp(value.completedAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
   }
   if (status === "cancel_claimed" || status === "cancelled") {
     if (!isTimestamp(value.cancelClaimedAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
-    if (status === "cancelled" && !isTimestamp(value.cancelledAtMs))
-      throw new Error("invalid_chat_thread_turn_ledger");
+    if (status === "cancelled" && !isTimestamp(value.cancelledAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
   }
   if (status === "failed") {
     if (!isTimestamp(value.failedAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
@@ -1979,6 +2128,7 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
       : {}),
   });
 }
+
 function freezeAttemptStartingTurn(value: AttemptStartingTurn): AttemptStartingTurn {
   const accepted = validateAcceptedTurn({
     turnId: value.turnId,
@@ -1988,8 +2138,7 @@ function freezeAttemptStartingTurn(value: AttemptStartingTurn): AttemptStartingT
     acceptedAtMs: value.acceptedAtMs,
   });
   const observation = value.observation === undefined ? undefined : validateAttemptObservation(value.observation);
-  if (observation !== undefined && observation.phase === "running")
-    throw new Error("invalid_chat_thread_turn_ledger");
+  if (observation !== undefined && observation.phase === "running") throw new Error("invalid_chat_thread_turn_ledger");
   return Object.freeze({
     ...accepted,
     status: "attempt_starting",
@@ -1997,6 +2146,7 @@ function freezeAttemptStartingTurn(value: AttemptStartingTurn): AttemptStartingT
     ...(observation === undefined ? {} : { observation }),
   });
 }
+
 function validateAttemptObservation(value: unknown): AttemptObservationV1 {
   if (!isRecord(value) || !isTimestamp(value.observedAtMs)) throw new Error("invalid_chat_thread_observation");
   if (value.phase === "armed") {
@@ -2033,6 +2183,7 @@ function validateAttemptObservation(value: unknown): AttemptObservationV1 {
   }
   throw new Error("invalid_chat_thread_observation");
 }
+
 function freezeRunningTurn(value: RunningTurn): RunningTurn {
   const accepted = validateAcceptedTurn({
     turnId: value.turnId,
@@ -2050,21 +2201,25 @@ function freezeRunningTurn(value: RunningTurn): RunningTurn {
     observation,
   });
 }
+
 function freezePresentationCommittedTurn(value: PresentationCommittedTurn): PresentationCommittedTurn {
   const base = freezeRunningTurn({ ...value, status: "running" });
   const presentation = validatePresentationCommit(value.presentation);
   return Object.freeze({ ...base, status: "presentation_committed", presentation });
 }
+
 function freezeCompletionClaimedTurn(value: CompletionClaimedTurn): CompletionClaimedTurn {
   const base = freezePresentationCommittedTurn({ ...value, status: "presentation_committed" });
   if (!isTimestamp(value.completionClaimedAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
   return Object.freeze({ ...base, status: "completion_claimed", completionClaimedAtMs: value.completionClaimedAtMs });
 }
+
 function freezeCompletedTurn(value: CompletedTurn): CompletedTurn {
   const base = freezeCompletionClaimedTurn({ ...value, status: "completion_claimed" });
   if (!isTimestamp(value.completedAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
   return Object.freeze({ ...base, status: "completed", completedAtMs: value.completedAtMs });
 }
+
 function freezeCancelClaimedTurn(value: CancelClaimedTurn): CancelClaimedTurn {
   const base = freezeRunningTurn({ ...value, status: "running" });
   if (!isTimestamp(value.cancelClaimedAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
@@ -2075,13 +2230,46 @@ function freezeCancelClaimedTurn(value: CancelClaimedTurn): CancelClaimedTurn {
     cancelClaimedAtMs: value.cancelClaimedAtMs,
   });
 }
+
 function freezeCancelledTurn(value: CancelledTurn): CancelledTurn {
-  const base = freezeCancelClaimedTurn({ ...value, status: "cancel_claimed" });
-  if (!isTimestamp(value.cancelledAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
-  return Object.freeze({ ...base, status: "cancelled", cancelledAtMs: value.cancelledAtMs });
+  const accepted = validateAcceptedTurn({
+    turnId: value.turnId,
+    status: "accepted_queued",
+    idempotencyKey: value.idempotencyKey,
+    messageId: value.messageId,
+    acceptedAtMs: value.acceptedAtMs,
+  });
+  const observation = validateAttemptObservation(value.observation);
+  if (observation.phase !== "armed" && observation.phase !== "running")
+    throw new Error("invalid_chat_thread_turn_ledger");
+  if (
+    !isTimestamp(value.cancelClaimedAtMs) ||
+    !isTimestamp(value.cancelledAtMs) ||
+    value.cancelledAtMs < value.cancelClaimedAtMs
+  )
+    throw new Error("invalid_chat_thread_turn_ledger");
+  return Object.freeze({
+    ...accepted,
+    status: "cancelled",
+    attempt: freezeAttemptClaim(value.attempt),
+    observation,
+    presentation: value.presentation === null ? null : validatePresentationCommit(value.presentation),
+    cancelClaimedAtMs: value.cancelClaimedAtMs,
+    cancelledAtMs: value.cancelledAtMs,
+  });
 }
+
 function freezeFailedTurn(value: FailedTurn): FailedTurn {
-  const base = freezeRunningTurn({ ...value, status: "running" });
+  const accepted = validateAcceptedTurn({
+    turnId: value.turnId,
+    status: "accepted_queued",
+    idempotencyKey: value.idempotencyKey,
+    messageId: value.messageId,
+    acceptedAtMs: value.acceptedAtMs,
+  });
+  const observation = validateAttemptObservation(value.observation);
+  if (observation.phase !== "armed" && observation.phase !== "running")
+    throw new Error("invalid_chat_thread_turn_ledger");
   if (!isTimestamp(value.failedAtMs)) throw new Error("invalid_chat_thread_turn_ledger");
   const reasonCode = value.reasonCode;
   if (
@@ -2092,66 +2280,151 @@ function freezeFailedTurn(value: FailedTurn): FailedTurn {
   )
     throw new Error("invalid_chat_thread_turn_ledger");
   return Object.freeze({
-    ...base,
+    ...accepted,
     status: "failed",
+    attempt: freezeAttemptClaim(value.attempt),
+    observation,
     presentation: value.presentation === null ? null : validatePresentationCommit(value.presentation),
     reasonCode,
     failedAtMs: value.failedAtMs,
   });
 }
+
 function freezeAttemptClaim(value: AttemptClaimV1): AttemptClaimV1 {
-  if (!isRecord(value) || !onlyKeys(value, ["generation", "attemptId", "claimedAtMs", "selectionGeneration", "runtimeBindingDigest", "runtimeOwner"]) || value.generation !== 1)
+  if (
+    !isRecord(value) ||
+    !onlyKeys(value, [
+      "generation",
+      "attemptId",
+      "claimedAtMs",
+      "selectionGeneration",
+      "runtimeBindingDigest",
+      "runtimeOwner",
+    ]) ||
+    value.generation !== 1
+  )
     throw new Error("invalid_chat_thread_attempt_claim");
-  assertId("attemptId", value.attemptId); assertTimestamp(value.claimedAtMs);
-  if (!isRevision(value.selectionGeneration) || !isHash(value.runtimeBindingDigest) || !isRecord(value.runtimeOwner) || !onlyKeys(value.runtimeOwner, ["ownerToken", "runtimeInstanceId", "ownerPid", "ownerProcessStartIdentity"]))
+  assertId("attemptId", value.attemptId);
+  assertTimestamp(value.claimedAtMs);
+  if (
+    !isRevision(value.selectionGeneration) ||
+    !isHash(value.runtimeBindingDigest) ||
+    !isRecord(value.runtimeOwner) ||
+    !onlyKeys(value.runtimeOwner, ["ownerToken", "runtimeInstanceId", "ownerPid", "ownerProcessStartIdentity"])
+  )
     throw new Error("invalid_chat_thread_attempt_claim");
-  assertId("ownerToken", value.runtimeOwner.ownerToken); assertId("runtimeInstanceId", value.runtimeOwner.runtimeInstanceId); assertId("ownerProcessStartIdentity", value.runtimeOwner.ownerProcessStartIdentity);
-  if (!Number.isSafeInteger(value.runtimeOwner.ownerPid) || value.runtimeOwner.ownerPid < 1) throw new Error("invalid_chat_thread_attempt_claim");
-  return Object.freeze({ generation: 1, attemptId: value.attemptId, claimedAtMs: value.claimedAtMs, selectionGeneration: value.selectionGeneration, runtimeBindingDigest: value.runtimeBindingDigest, runtimeOwner: Object.freeze({ ...value.runtimeOwner }) });
+  assertId("ownerToken", value.runtimeOwner.ownerToken);
+  assertId("runtimeInstanceId", value.runtimeOwner.runtimeInstanceId);
+  assertId("ownerProcessStartIdentity", value.runtimeOwner.ownerProcessStartIdentity);
+  if (!Number.isSafeInteger(value.runtimeOwner.ownerPid) || value.runtimeOwner.ownerPid < 1)
+    throw new Error("invalid_chat_thread_attempt_claim");
+  return Object.freeze({
+    generation: 1,
+    attemptId: value.attemptId,
+    claimedAtMs: value.claimedAtMs,
+    selectionGeneration: value.selectionGeneration,
+    runtimeBindingDigest: value.runtimeBindingDigest,
+    runtimeOwner: Object.freeze({ ...value.runtimeOwner }),
+  });
 }
+
 function validateIdempotency(value: unknown): IdempotencyRecord {
-  if (!isRecord(value) || !onlyKeys(value, ["key", "fingerprint", "result"]) || !isHash(value.fingerprint)) throw new Error("invalid_chat_thread_idempotency");
+  if (!isRecord(value) || !onlyKeys(value, ["key", "fingerprint", "result"]) || !isHash(value.fingerprint))
+    throw new Error("invalid_chat_thread_idempotency");
   assertIdempotencyKey(value.key);
   const result = validateAcceptedTurn(value.result);
   if (result.idempotencyKey !== value.key) throw new Error("invalid_chat_thread_idempotency");
   return Object.freeze({ key: value.key, fingerprint: value.fingerprint, result });
 }
+
 function validateAcceptanceInput(value: MountedP4AcceptanceInput): void {
-  assertId("chatThreadId", value.chatThreadId); assertId("chatSurfaceSessionId", value.chatSurfaceSessionId); assertId("playerId", value.playerId); assertId("companionId", value.companionId); assertId("continuityId", value.continuityId);
-  if (!isRevision(value.selectionGeneration) || !Number.isSafeInteger(value.expectedDraftRevision) || value.expectedDraftRevision < 0) throw new Error("invalid_chat_message_acceptance");
-  if (typeof value.locale !== "string" || !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u.test(value.locale)) throw new Error("invalid_chat_message_locale");
+  assertId("chatThreadId", value.chatThreadId);
+  assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
+  assertId("playerId", value.playerId);
+  assertId("companionId", value.companionId);
+  assertId("continuityId", value.continuityId);
+  if (
+    !isRevision(value.selectionGeneration) ||
+    !Number.isSafeInteger(value.expectedDraftRevision) ||
+    value.expectedDraftRevision < 0
+  )
+    throw new Error("invalid_chat_message_acceptance");
+  if (typeof value.locale !== "string" || !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/u.test(value.locale))
+    throw new Error("invalid_chat_message_locale");
   if (!isText(value.text)) throw new Error("invalid_chat_message_text");
   assertIdempotencyKey(value.idempotencyKey);
 }
+
 function validateAttemptClaimInput(value: MountedP4AttemptClaimInput): void {
-  assertId("chatThreadId", value.chatThreadId); assertId("chatSurfaceSessionId", value.chatSurfaceSessionId); assertId("playerId", value.playerId); assertId("companionId", value.companionId); assertId("continuityId", value.continuityId);
-  freezeAttemptClaim({ generation: 1, attemptId: "attempt_validation", claimedAtMs: 1, selectionGeneration: value.selectionGeneration, runtimeBindingDigest: value.runtimeBindingDigest, runtimeOwner: value.runtimeOwner });
+  assertId("chatThreadId", value.chatThreadId);
+  assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
+  assertId("playerId", value.playerId);
+  assertId("companionId", value.companionId);
+  assertId("continuityId", value.continuityId);
+  freezeAttemptClaim({
+    generation: 1,
+    attemptId: "attempt_validation",
+    claimedAtMs: 1,
+    selectionGeneration: value.selectionGeneration,
+    runtimeBindingDigest: value.runtimeBindingDigest,
+    runtimeOwner: value.runtimeOwner,
+  });
 }
+
 function validateProviderStartInput(value: MountedP4ProviderStartInput): void {
-  assertId("chatThreadId", value.chatThreadId); assertId("chatSurfaceSessionId", value.chatSurfaceSessionId); assertId("playerId", value.playerId); assertId("companionId", value.companionId); assertId("continuityId", value.continuityId);
+  assertId("chatThreadId", value.chatThreadId);
+  assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
+  assertId("playerId", value.playerId);
+  assertId("companionId", value.companionId);
+  assertId("continuityId", value.continuityId);
   assertId("attemptId", value.attemptId);
-  freezeAttemptClaim({ generation: 1, attemptId: "attempt_validation", claimedAtMs: 1, selectionGeneration: value.selectionGeneration, runtimeBindingDigest: value.runtimeBindingDigest, runtimeOwner: value.runtimeOwner });
+  freezeAttemptClaim({
+    generation: 1,
+    attemptId: "attempt_validation",
+    claimedAtMs: 1,
+    selectionGeneration: value.selectionGeneration,
+    runtimeBindingDigest: value.runtimeBindingDigest,
+    runtimeOwner: value.runtimeOwner,
+  });
 }
+
 function validatePresentationInput(value: MountedP5PresentationInput): void {
-  assertId("chatThreadId", value.chatThreadId); assertId("chatSurfaceSessionId", value.chatSurfaceSessionId); assertId("playerId", value.playerId); assertId("companionId", value.companionId); assertId("continuityId", value.continuityId);
+  assertId("chatThreadId", value.chatThreadId);
+  assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
+  assertId("playerId", value.playerId);
+  assertId("companionId", value.companionId);
+  assertId("continuityId", value.continuityId);
   assertId("attemptId", value.attemptId);
-  freezeAttemptClaim({ generation: 1, attemptId: "attempt_validation", claimedAtMs: 1, selectionGeneration: value.selectionGeneration, runtimeBindingDigest: value.runtimeBindingDigest, runtimeOwner: value.runtimeOwner });
+  freezeAttemptClaim({
+    generation: 1,
+    attemptId: "attempt_validation",
+    claimedAtMs: 1,
+    selectionGeneration: value.selectionGeneration,
+    runtimeBindingDigest: value.runtimeBindingDigest,
+    runtimeOwner: value.runtimeOwner,
+  });
 }
+
 function isTurnWithAttempt(ledger: ChatTurnLedger): ledger is Exclude<ChatTurnLedger, AcceptedQueuedTurn> {
   return ledger.status !== "accepted_queued";
 }
+
 function isTerminalLedger(ledger: ChatTurnLedger): boolean {
   return ledger.status === "completed" || ledger.status === "cancelled" || ledger.status === "failed";
 }
-function presentationOf(
-  ledger: Exclude<ChatTurnLedger, AcceptedQueuedTurn>,
-): PresentationCommitV1 | null {
-  if (ledger.status === "presentation_committed" || ledger.status === "completion_claimed" || ledger.status === "completed")
+
+function presentationOf(ledger: Exclude<ChatTurnLedger, AcceptedQueuedTurn>): PresentationCommitV1 | null {
+  if (
+    ledger.status === "presentation_committed" ||
+    ledger.status === "completion_claimed" ||
+    ledger.status === "completed"
+  )
     return ledger.presentation;
   if (ledger.status === "cancel_claimed" || ledger.status === "cancelled" || ledger.status === "failed")
     return ledger.presentation;
   return null;
 }
+
 function timestampFor(command: P5PresentationTransition): number {
   if (command.operation === "commit_presentation") return command.committedAtMs;
   if (command.operation === "claim_completion") return command.claimedAtMs;
@@ -2160,6 +2433,7 @@ function timestampFor(command: P5PresentationTransition): number {
   if (command.operation === "cancel") return command.cancelledAtMs;
   return command.failedAtMs;
 }
+
 function assertExactP5Attempt(attempt: AttemptClaimV1, input: MountedP5PresentationInput): void {
   if (
     attempt.attemptId !== input.attemptId ||
@@ -2173,6 +2447,7 @@ function assertExactP5Attempt(attempt: AttemptClaimV1, input: MountedP5Presentat
   )
     throw new Error("p5_presentation_attempt_mismatch");
 }
+
 function validatePresentationTransition(value: P5PresentationTransition): P5PresentationTransition {
   if (!isRecord(value)) throw new Error("invalid_chat_thread_observation");
   switch (value.operation) {
@@ -2189,13 +2464,19 @@ function validatePresentationTransition(value: P5PresentationTransition): P5Pres
         !onlyKeys(message, ["messageId", "text", "occurredAtMs"])
       )
         break;
-      validateNormalMessage({ messageId: message.messageId as string, text: message.text as string, occurredAtMs: message.occurredAtMs as number });
-      freezePresentationCommit(Object.freeze({
-        expressionId: message.messageId as string,
+      validateNormalMessage({
         messageId: message.messageId as string,
-        cancelEpoch: cancelEpoch as number,
-        committedAtMs: committedAtMs as number,
-      }));
+        text: message.text as string,
+        occurredAtMs: message.occurredAtMs as number,
+      });
+      freezePresentationCommit(
+        Object.freeze({
+          expressionId: message.messageId as string,
+          messageId: message.messageId as string,
+          cancelEpoch: cancelEpoch as number,
+          committedAtMs: committedAtMs as number,
+        }),
+      );
       return Object.freeze({
         operation: "commit_presentation",
         cancelEpoch: cancelEpoch as number,
@@ -2243,6 +2524,7 @@ function validatePresentationTransition(value: P5PresentationTransition): P5Pres
   }
   throw new Error("invalid_chat_thread_observation");
 }
+
 function assertP5ReadBack(
   ledger: ChatTurnLedger | null,
   command: P5PresentationTransition,
@@ -2270,6 +2552,7 @@ function assertP5ReadBack(
   if (operation === "fail" && ledger.status === "failed" && ledger.reasonCode !== command.reasonCode)
     throw new Error("chat_p5_readback_mismatch");
 }
+
 function freezePresentationCommit(value: PresentationCommitV1): PresentationCommitV1 {
   if (
     !isId(value.expressionId) ||
@@ -2282,6 +2565,7 @@ function freezePresentationCommit(value: PresentationCommitV1): PresentationComm
     throw new Error("invalid_presentation_commit");
   return Object.freeze({ ...value });
 }
+
 function validatePresentationCommit(value: unknown): PresentationCommitV1 {
   if (!isRecord(value) || !onlyKeys(value, ["expressionId", "messageId", "cancelEpoch", "committedAtMs"]))
     throw new Error("invalid_presentation_commit");
@@ -2292,6 +2576,7 @@ function validatePresentationCommit(value: unknown): PresentationCommitV1 {
     committedAtMs: value.committedAtMs as number,
   });
 }
+
 function validateProviderStartTransition(value: P4ProviderStartTransition): P4ProviderStartTransition {
   if (!isRecord(value) || !isTimestamp(value.observedAtMs)) throw new Error("invalid_chat_thread_observation");
   if (value.operation === "arm" && onlyKeys(value, ["operation", "observedAtMs"]))
@@ -2310,8 +2595,33 @@ function validateProviderStartTransition(value: P4ProviderStartTransition): P4Pr
     (value.statusClass === "success" || value.statusClass === "error")
   )
     return Object.freeze({ operation: "running", statusClass: value.statusClass, observedAtMs: value.observedAtMs });
+  if (
+    value.operation === "fail" &&
+    onlyKeys(value, ["operation", "reasonCode", "observedAtMs", "failedAtMs"]) &&
+    value.reasonCode === "runtime_unavailable" &&
+    isTimestamp(value.failedAtMs) &&
+    value.failedAtMs >= value.observedAtMs
+  )
+    return Object.freeze({
+      operation: "fail",
+      reasonCode: "runtime_unavailable",
+      observedAtMs: value.observedAtMs,
+      failedAtMs: value.failedAtMs,
+    });
+  if (
+    value.operation === "cancel" &&
+    onlyKeys(value, ["operation", "observedAtMs", "cancelledAtMs"]) &&
+    isTimestamp(value.cancelledAtMs) &&
+    value.cancelledAtMs >= value.observedAtMs
+  )
+    return Object.freeze({
+      operation: "cancel",
+      observedAtMs: value.observedAtMs,
+      cancelledAtMs: value.cancelledAtMs,
+    });
   throw new Error("invalid_chat_thread_observation");
 }
+
 function assertExactProviderStartAttempt(attempt: AttemptClaimV1, input: MountedP4ProviderStartInput): void {
   if (
     attempt.attemptId !== input.attemptId ||
@@ -2324,6 +2634,7 @@ function assertExactProviderStartAttempt(attempt: AttemptClaimV1, input: Mounted
   )
     throw new Error("provider_start_attempt_mismatch");
 }
+
 function assertProviderStartReadBack(
   ledger: ChatTurnLedger | null,
   command: P4ProviderStartTransition,
@@ -2349,6 +2660,27 @@ function assertProviderStartReadBack(
       throw new Error("chat_provider_start_readback_mismatch");
     return;
   }
+  if (command.operation === "fail") {
+    if (
+      ledger.status !== "failed" ||
+      ledger.attempt.attemptId !== input.attemptId ||
+      ledger.observation.phase !== "armed" ||
+      ledger.reasonCode !== command.reasonCode ||
+      ledger.failedAtMs !== command.failedAtMs
+    )
+      throw new Error("chat_provider_start_readback_mismatch");
+    return;
+  }
+  if (command.operation === "cancel") {
+    if (
+      ledger.status !== "cancelled" ||
+      ledger.attempt.attemptId !== input.attemptId ||
+      ledger.observation.phase !== "armed" ||
+      ledger.cancelledAtMs !== command.cancelledAtMs
+    )
+      throw new Error("chat_provider_start_readback_mismatch");
+    return;
+  }
   if (
     ledger.status !== "running" ||
     ledger.attempt.attemptId !== input.attemptId ||
@@ -2357,24 +2689,66 @@ function assertProviderStartReadBack(
   )
     throw new Error("chat_provider_start_readback_mismatch");
 }
-function assertIdempotencyKey(value: unknown): asserts value is string { if (typeof value !== "string" || !/^[A-Za-z0-9_-]{22}$/u.test(value)) throw new Error("invalid_idempotency_key"); }
+
+function assertIdempotencyKey(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{22}$/u.test(value)) throw new Error("invalid_idempotency_key");
+}
+
 function acceptanceFingerprint(input: MountedP4AcceptanceInput): string {
-  const fields = ["chat.message.submit", input.chatThreadId, input.chatSurfaceSessionId, input.playerId, input.companionId, input.continuityId, String(input.selectionGeneration), input.text, input.locale, String(input.expectedDraftRevision)];
+  const fields = [
+    "chat.message.submit",
+    input.chatThreadId,
+    input.chatSurfaceSessionId,
+    input.playerId,
+    input.companionId,
+    input.continuityId,
+    String(input.selectionGeneration),
+    input.text,
+    input.locale,
+    String(input.expectedDraftRevision),
+  ];
   const canonical = fields.map((field) => `${Buffer.byteLength(field, "utf8")}:${field}`).join("");
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
-function validateTurnIntegrity(messages: readonly ChatThreadMessage[], turnLedger: ChatTurnLedger | null, idempotency: readonly IdempotencyRecord[]): void {
-  if (new Set(idempotency.map((record) => record.key)).size !== idempotency.length) throw new Error("invalid_chat_thread_idempotency");
-  if (new Set(idempotency.map((record) => record.result.turnId)).size !== idempotency.length || new Set(idempotency.map((record) => record.result.messageId)).size !== idempotency.length) throw new Error("invalid_chat_thread_idempotency");
+
+function validateTurnIntegrity(
+  messages: readonly ChatThreadMessage[],
+  turnLedger: ChatTurnLedger | null,
+  idempotency: readonly IdempotencyRecord[],
+): void {
+  if (new Set(idempotency.map((record) => record.key)).size !== idempotency.length)
+    throw new Error("invalid_chat_thread_idempotency");
+  if (
+    new Set(idempotency.map((record) => record.result.turnId)).size !== idempotency.length ||
+    new Set(idempotency.map((record) => record.result.messageId)).size !== idempotency.length
+  )
+    throw new Error("invalid_chat_thread_idempotency");
   for (const record of idempotency) {
-    if (!messages.some((message) => message.messageId === record.result.messageId && message.role === "player" && message.kind === "player")) throw new Error("invalid_chat_thread_idempotency");
+    if (
+      !messages.some(
+        (message) =>
+          message.messageId === record.result.messageId && message.role === "player" && message.kind === "player",
+      )
+    )
+      throw new Error("invalid_chat_thread_idempotency");
   }
   if (turnLedger === null) {
     if (idempotency.length !== 0) throw new Error("invalid_chat_thread_idempotency");
     return;
   }
-  if (!messages.some((message) => message.messageId === turnLedger.messageId && message.role === "player" && message.kind === "player")) throw new Error("invalid_chat_thread_turn_ledger");
-  const matching = idempotency.filter((record) => record.key === turnLedger.idempotencyKey && record.result.turnId === turnLedger.turnId && record.result.messageId === turnLedger.messageId && record.result.acceptedAtMs === turnLedger.acceptedAtMs);
+  if (
+    !messages.some(
+      (message) => message.messageId === turnLedger.messageId && message.role === "player" && message.kind === "player",
+    )
+  )
+    throw new Error("invalid_chat_thread_turn_ledger");
+  const matching = idempotency.filter(
+    (record) =>
+      record.key === turnLedger.idempotencyKey &&
+      record.result.turnId === turnLedger.turnId &&
+      record.result.messageId === turnLedger.messageId &&
+      record.result.acceptedAtMs === turnLedger.acceptedAtMs,
+  );
   if (matching.length !== 1) throw new Error("invalid_chat_thread_turn_ledger");
   if (isTurnWithAttempt(turnLedger)) {
     const presentation = presentationOf(turnLedger);
@@ -2385,11 +2759,19 @@ function validateTurnIntegrity(messages: readonly ChatThreadMessage[], turnLedge
     }
   }
 }
+
 function freezeState(state: ChatThreadState): ChatThreadState {
   validateOpeningConsistency(state.thread, state.messages);
   validateTurnIntegrity(state.messages, state.turnLedger, state.idempotency);
-  return Object.freeze({ thread: state.thread, messages: Object.freeze([...state.messages]), draft: freezeDraft(state.draft), turnLedger: state.turnLedger === null ? null : validateTurnLedger(state.turnLedger), idempotency: Object.freeze(state.idempotency.map(validateIdempotency)) });
+  return Object.freeze({
+    thread: state.thread,
+    messages: Object.freeze([...state.messages]),
+    draft: freezeDraft(state.draft),
+    turnLedger: state.turnLedger === null ? null : validateTurnLedger(state.turnLedger),
+    idempotency: Object.freeze(state.idempotency.map(validateIdempotency)),
+  });
 }
+
 function freezeThread(thread: ChatThread): ChatThread {
   const lifecycleStatus = validateLifecycleStatus(thread.lifecycleStatus);
   const trashRestoreStatus =
@@ -2418,6 +2800,7 @@ function freezeThread(thread: ChatThread): ChatThread {
           }),
   });
 }
+
 function freezeStableArtifactBindings(values: unknown): readonly TavernStableArtifactBinding[] {
   if (!Array.isArray(values) || values.length > 3) throw new Error("invalid_tavern_stable_binding");
   const bindings = values.map((value) => {
@@ -2441,6 +2824,7 @@ function freezeStableArtifactBindings(values: unknown): readonly TavernStableArt
     throw new Error("invalid_tavern_stable_binding");
   return Object.freeze(bindings);
 }
+
 function freezeStableWorldBookBinding(value: unknown): TavernStableWorldInfoBinding {
   if (!isRecord(value) || !isRevision(value.revision) || !isHash(value.canonicalHash))
     throw new Error("invalid_tavern_worldbook_binding");
@@ -2468,35 +2852,43 @@ function freezeStableWorldBookBinding(value: unknown): TavernStableWorldInfoBind
     provenance: value.provenance,
   });
 }
+
 function freezeMessage(message: ChatThreadMessage): ChatThreadMessage {
   return Object.freeze({
     ...message,
     greetingSource: message.greetingSource === null ? null : freezeGreetingSource(message.greetingSource),
   });
 }
+
 function freezeGreetingSource(source: GreetingSource): GreetingSource {
   return Object.freeze({ ...source });
 }
+
 function assertId(label: string, value: unknown): asserts value is string {
   if (!isId(value)) throw new Error(`invalid_${label}`);
 }
+
 function isHash(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 }
+
 function assertText(value: unknown): asserts value is string {
   if (!isText(value)) throw new Error("invalid_chat_thread_text");
 }
+
 function normalizeThreadTitle(value: unknown): string {
   if (typeof value !== "string") throw new Error("invalid_chat_thread_title");
   const title = value.trim();
   if (!isThreadTitle(title)) throw new Error("invalid_chat_thread_title");
   return title;
 }
+
 function validateStoredThreadTitle(value: unknown): string | null {
   if (value === null) return null;
   if (!isThreadTitle(value)) throw new Error("invalid_chat_thread_title");
   return value;
 }
+
 function isThreadTitle(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -2506,14 +2898,17 @@ function isThreadTitle(value: unknown): value is string {
     value === value.trim()
   );
 }
+
 function validateLifecycleStatus(value: unknown): "active" | "archived" | "trashed" {
   if (value === "active" || value === "archived" || value === "trashed") return value;
   throw new Error("invalid_chat_thread_lifecycle_status");
 }
+
 function validateTrashRestoreStatus(value: unknown): "active" | "archived" {
   if (value === "active" || value === "archived") return value;
   throw new Error("invalid_chat_thread_trash_restore_status");
 }
+
 function resolveLifecycleTransition(
   status: "active" | "archived" | "trashed",
   restoreStatus: "active" | "archived" | undefined,
@@ -2530,24 +2925,26 @@ function resolveLifecycleTransition(
     return Object.freeze({ status: restoreStatus });
   throw new Error("chat_thread_lifecycle_transition_invalid");
 }
+
 function validateManagementRevision(value: unknown): number {
   assertManagementRevision(value);
   return value;
 }
+
 function assertManagementRevision(value: unknown): asserts value is number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)
     throw new Error("invalid_chat_thread_management_revision");
 }
+
 function assertTimestamp(value: unknown): asserts value is number {
   if (!isTimestamp(value)) throw new Error("invalid_chat_thread_timestamp");
 }
+
 function isId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
+
 function isText(value: unknown): value is string {
-  // All persisted normal message text shares the P4 player-input policy: NFC,
-  // no C0/C1 controls, and at most 16,384 UTF-8 bytes. Response/opening paths
-  // must not retain a looser character-count-only rule.
   return (
     typeof value === "string" &&
     value.length > 0 &&
@@ -2556,18 +2953,19 @@ function isText(value: unknown): value is string {
     Buffer.byteLength(value, "utf8") <= MAX_CHAT_MESSAGE_TEXT_UTF8_BYTES
   );
 }
+
 function isTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
+
 function isRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
 function onlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   return Object.keys(value).every((key) => keys.includes(key));
-}
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && typeof error.code === "string";
 }

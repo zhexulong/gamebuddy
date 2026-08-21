@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
+import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
-import type { ChildProcess } from "node:child_process";
 import {
+  type AtomicWriteFileDependencies,
   bindWindowsStaleLockReclaimer,
   captureSafeFileIdentity,
   createAtomicWriteFile,
+  type PathLockRecoveryResult,
   pathLockPath,
   readSafeDirectory,
   reclaimStaleLock,
@@ -17,8 +19,6 @@ import {
   removeOwnedSafeFile,
   verifySafePathBoundary,
   withPathLock,
-  type AtomicWriteFileDependencies,
-  type PathLockRecoveryResult,
 } from "./path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import type { WindowsStaleLockReclaimerCapability } from "./windows-stale-lock-reclaimer/internal.js";
@@ -57,7 +57,14 @@ type SimulatedReclaimerRequest = Readonly<{
   segments: readonly string[];
 }>;
 type SimulatedOwner = Readonly<{ token: string; pid: number; createdAtMs: number }>;
-type SimulatedObservation = Readonly<{ dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint; isRegularFile: boolean }>;
+type SimulatedObservation = Readonly<{
+  dev: bigint;
+  ino: bigint;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  isRegularFile: boolean;
+}>;
 
 /**
  * Test-only simulated native reclaimer. It mirrors the frozen helper behavior
@@ -167,7 +174,14 @@ function classifySimulatedOwner(bytes: Buffer): { kind: "valid" | "malformed" | 
     typeof record.createdAtMs === "number" &&
     Number.isSafeInteger(record.createdAtMs);
   return valid
-    ? { kind: "valid", owner: Object.freeze({ token: record.token as string, pid: record.pid as number, createdAtMs: record.createdAtMs as number }) }
+    ? {
+        kind: "valid",
+        owner: Object.freeze({
+          token: record.token as string,
+          pid: record.pid as number,
+          createdAtMs: record.createdAtMs as number,
+        }),
+      }
     : { kind: "malformed", owner: null };
 }
 
@@ -301,7 +315,7 @@ test("atomic writer cleans its original temporary when rename fails", async () =
 test("atomic writer preserves a primary write failure when temporary cleanup fails", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamebuddy-atomic-write-"));
   const path = join(directory, "artifact.json");
-  const uuid = "00000000-0000-4000-8000-000000000004";
+  const _uuid = "00000000-0000-4000-8000-000000000004";
   const writeFailure = new Error("write failed");
   const cleanupFailure = new Error("cleanup failed");
   try {
@@ -718,20 +732,74 @@ test("path lock maps every native reclaim category to the typed recovery result"
       path: string;
       expected: PathLockRecoveryResult;
     }> = [
-      { category: "reclaimed", policy: "stale_malformed", path: malformedPath, expected: { outcome: "reclaimed", reason: "malformed_stale_identity_stable" } },
-      { category: "reclaimed", policy: "stale_valid_dead", path: validPath, expected: { outcome: "reclaimed", reason: "valid_owner_stale_and_dead" } },
-      { category: "missing", policy: "stale_malformed", path: malformedPath, expected: { outcome: "kept", reason: "lock_disappeared" } },
-      { category: "kept_malformed_fresh", policy: "stale_malformed", path: malformedPath, expected: { outcome: "kept", reason: "malformed_fresh" } },
-      { category: "kept_valid_fresh", policy: "stale_valid_dead", path: validPath, expected: { outcome: "kept", reason: "valid_owner_fresh" } },
-      { category: "kept_policy_mismatch", policy: "stale_malformed", path: malformedPath, expected: { outcome: "kept", reason: "identity_changed_during_observation" } },
-      { category: "kept_identity_changed", policy: "stale_malformed", path: malformedPath, expected: { outcome: "kept", reason: "identity_changed_during_observation" } },
-      { category: "kept_path_replaced", policy: "stale_malformed", path: malformedPath, expected: { outcome: "kept", reason: "identity_changed_during_observation" } },
-      { category: "kept_not_regular", policy: "stale_malformed", path: malformedPath, expected: { outcome: "unsafe", reason: "reparse_or_link" } },
-      { category: "indeterminate", policy: "stale_malformed", path: malformedPath, expected: { outcome: "kept", reason: "windows_reclaimer_unavailable" } },
+      {
+        category: "reclaimed",
+        policy: "stale_malformed",
+        path: malformedPath,
+        expected: { outcome: "reclaimed", reason: "malformed_stale_identity_stable" },
+      },
+      {
+        category: "reclaimed",
+        policy: "stale_valid_dead",
+        path: validPath,
+        expected: { outcome: "reclaimed", reason: "valid_owner_stale_and_dead" },
+      },
+      {
+        category: "missing",
+        policy: "stale_malformed",
+        path: malformedPath,
+        expected: { outcome: "kept", reason: "lock_disappeared" },
+      },
+      {
+        category: "kept_malformed_fresh",
+        policy: "stale_malformed",
+        path: malformedPath,
+        expected: { outcome: "kept", reason: "malformed_fresh" },
+      },
+      {
+        category: "kept_valid_fresh",
+        policy: "stale_valid_dead",
+        path: validPath,
+        expected: { outcome: "kept", reason: "valid_owner_fresh" },
+      },
+      {
+        category: "kept_policy_mismatch",
+        policy: "stale_malformed",
+        path: malformedPath,
+        expected: { outcome: "kept", reason: "identity_changed_during_observation" },
+      },
+      {
+        category: "kept_identity_changed",
+        policy: "stale_malformed",
+        path: malformedPath,
+        expected: { outcome: "kept", reason: "identity_changed_during_observation" },
+      },
+      {
+        category: "kept_path_replaced",
+        policy: "stale_malformed",
+        path: malformedPath,
+        expected: { outcome: "kept", reason: "identity_changed_during_observation" },
+      },
+      {
+        category: "kept_not_regular",
+        policy: "stale_malformed",
+        path: malformedPath,
+        expected: { outcome: "unsafe", reason: "reparse_or_link" },
+      },
+      {
+        category: "indeterminate",
+        policy: "stale_malformed",
+        path: malformedPath,
+        expected: { outcome: "kept", reason: "windows_reclaimer_unavailable" },
+      },
     ];
     for (const entry of cases) {
       bindWindowsStaleLockReclaimer(scriptedReclaimer(entry.category));
-      await writeFile(pathLockPath(entry.path), entry.policy === "stale_malformed" ? "partial write" : staleOwner(999_999_999), "utf8");
+      await writeFile(
+        pathLockPath(entry.path),
+        entry.policy === "stale_malformed" ? "partial write" : staleOwner(999_999_999),
+        "utf8",
+      );
       await makeStale(pathLockPath(entry.path));
       assert.deepEqual(await reclaimStaleLock(pathLockPath(entry.path)), entry.expected, entry.category);
     }
@@ -750,9 +818,16 @@ test("release requires the exact owner token through the capability and fails cl
     // The capability observes the request token and the current bytes; only an
     // exact match may produce "released".
     const seen: SimulatedReclaimerRequest[] = [];
-    bindWindowsStaleLockReclaimer(scriptedReclaimer("released", async (request) => { seen.push(request); }));
+    bindWindowsStaleLockReclaimer(
+      scriptedReclaimer("released", async (request) => {
+        seen.push(request);
+      }),
+    );
     await writeFile(lockPath, ownerRecord, "utf8");
-    assert.deepEqual(await releaseOwnedPathLock(lockPath, token), { outcome: "released", reason: "exact_token_released" });
+    assert.deepEqual(await releaseOwnedPathLock(lockPath, token), {
+      outcome: "released",
+      reason: "exact_token_released",
+    });
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.token, token);
     assert.equal(resolve(seen[0]!.root, ...seen[0]!.segments), resolve(lockPath));
@@ -768,7 +843,10 @@ test("release requires the exact owner token through the capability and fails cl
 
     // A disappeared lock is a vacuous release success, never a barrier.
     bindWindowsStaleLockReclaimer(scriptedReclaimer("missing"));
-    assert.deepEqual(await releaseOwnedPathLock(lockPath, token), { outcome: "released", reason: "lock_already_missing" });
+    assert.deepEqual(await releaseOwnedPathLock(lockPath, token), {
+      outcome: "released",
+      reason: "lock_already_missing",
+    });
     assert.equal(await readFile(lockPath, "utf8"), ownerRecord);
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -17,8 +17,8 @@ import {
   createGameRuntimeBinding,
   type GameRuntimeBinding,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ProductionGamePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
+import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
 import { createIntegrationActionCatalog, type GameIntegrationModule } from "../integration-module.js";

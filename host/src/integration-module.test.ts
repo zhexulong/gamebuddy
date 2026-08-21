@@ -10,8 +10,8 @@ import {
   type GameIntegrationModule,
   type IntegrationToolContext,
 } from "./integration-module.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const scope = { integrationId: "test-arcade" } as const;
 

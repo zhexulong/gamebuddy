@@ -24,7 +24,10 @@ test("launcher rejects caller bridge credentials and requires an existing Host-o
   assert.match(launcher, /\[ValidateSet\("zh-CN", "en-US"\)\] \[string\]\$PresentationLocale = "zh-CN"/);
   assert.match(launcher, /Assert-PresentationStartupPreference/);
   assert.match(launcher, /live_locale_required/);
-  assert.match(launcher, /\$expectedLanguageCode = if \(\$RequiredLocale -eq "zh-CN"\) \{ "zh" \} elseif \(\$RequiredLocale -eq "en-US"\) \{ "en" \}/);
+  assert.match(
+    launcher,
+    /\$expectedLanguageCode = if \(\$RequiredLocale -eq "zh-CN"\) \{ "zh" \} elseif \(\$RequiredLocale -eq "en-US"\) \{ "en" \}/,
+  );
   assert.match(launcher, /--require-fixture-live-locale", \$PresentationLocale/);
   assert.match(launcher, /Initialize-PrivateRunRoot/);
   assert.match(launcher, /preview_run_root_private_acl_failed/);
@@ -45,7 +48,10 @@ test("launcher rebuilds the current Release Mod before it can prepare a fixture 
   const rebuild = launcher.indexOf("-t:Rebuild");
   const prepare = launcher.indexOf("prepare-stardew-fixture-profile.mjs");
   assert.ok(rebuild >= 0 && rebuild < prepare);
-  assert.match(launcher, /\$stardewProject = Join-Path \$repositoryRoot "integrations\\stardew\\GameBuddy\.Stardew\.csproj"/);
+  assert.match(
+    launcher,
+    /\$stardewProject = Join-Path \$repositoryRoot "integrations\\stardew\\GameBuddy\.Stardew\.csproj"/,
+  );
   assert.match(launcher, /dotnet build \$stardewProject/);
   assert.doesNotMatch(launcher, /dotnet build \(Join-Path \$repositoryRoot "GameBuddy\.sln"\)/);
   assert.match(launcher, /--configuration Release --no-restore "-p:GamePath=\$GamePath" -t:Rebuild/);
@@ -86,8 +92,8 @@ test("Preview command has only immutable entry and private config arguments", ()
   assert.match(launcher, /farmhand-companion-preview\.js/);
   assert.match(launcher, /Start-Process -FilePath "node\.exe" -ArgumentList \$previewCommandLine/);
   assert.doesNotMatch(launcher, /Start-Process -FilePath "pnpm\.cmd"/);
-  assert.match(launcher, /\("--mods-path", \('\"\{0\}\"' -f \$hostModsPath\)\)/);
-  assert.match(launcher, /\("--mods-path", \('\"\{0\}\"' -f \$aiModsPath\)\)/);
+  assert.match(launcher, /\("--mods-path", \('"\{0\}"' -f \$hostModsPath\)\)/);
+  assert.match(launcher, /\("--mods-path", \('"\{0\}"' -f \$aiModsPath\)\)/);
   assert.doesNotMatch(launcher, /GAMEBUDDY_CONTROL_PIPE|GAMEBUDDY_CONTROL_TOKEN|local-bootstrap|semantic/i);
   assert.match(launcher, /evidenceKinds = @\(\)/);
   assert.match(launcher, /\$previewStdoutPath = \$null/);
@@ -122,14 +128,20 @@ test("launcher keeps secret config and child output private", () => {
   assert.match(launcher, /RedirectStandardOutput/);
   assert.match(launcher, /RedirectStandardError/);
   assert.doesNotMatch(launcher, /Write-Host|Write-Output.*bridgeToken/);
-  assert.doesNotMatch(launcher, /BridgeLeaseExpiresAtUnixMs|bridgeLeaseExpiresAtUnixMs|leaseExpiry|leaseStartupDeadline/);
+  assert.doesNotMatch(
+    launcher,
+    /BridgeLeaseExpiresAtUnixMs|bridgeLeaseExpiresAtUnixMs|leaseExpiry|leaseStartupDeadline/,
+  );
   assert.match(launcher, /Write-PrivateJson \$previewConfigPath \$previewConfig/);
   assert.match(launcher, /state = "closed"/);
   assert.match(launcher, /function Invoke-NodeQuiet/);
   assert.match(launcher, /privateOutputPath/);
   assert.match(launcher, /privateErrorPath/);
   assert.match(launcher, /\$commandLine = \[string\]::Join\(" ", @\(\$Arguments \| ForEach-Object/);
-  assert.match(launcher, /Start-Process -FilePath "node\.exe" -ArgumentList \$commandLine -NoNewWindow -Wait -PassThru -RedirectStandardOutput \$privateOutputPath -RedirectStandardError \$privateErrorPath/);
+  assert.match(
+    launcher,
+    /Start-Process -FilePath "node\.exe" -ArgumentList \$commandLine -NoNewWindow -Wait -PassThru -RedirectStandardOutput \$privateOutputPath -RedirectStandardError \$privateErrorPath/,
+  );
   assert.match(launcher, /stardew_\[a-z0-9_\]\+/);
   assert.match(launcher, /fixture_\[a-z0-9_\]\+/);
   assert.match(launcher, /throw \("\{0\}:\{1\}" -f \$FailureCode, \$detail\)/);
@@ -156,11 +168,17 @@ test("launcher reads a live Preview readiness marker through the redirect-compat
 test("active STOP proof starts its manual interaction phase only after Preview ready and never applies the startup timeout", () => {
   assert.match(launcher, /while \(-not \$previewReady\)/);
   assert.match(launcher, /if \(\$hasReadySignal\) \{[\s\S]*?\$previewReady = \$true[\s\S]*?break/);
-  assert.match(launcher, /if \(\$RequireActiveStopProof -and -not \$activeStopProofVerified\) \{[\s\S]*?while \(-not \$activeStopProofVerified\)/);
+  assert.match(
+    launcher,
+    /if \(\$RequireActiveStopProof -and -not \$activeStopProofVerified\) \{[\s\S]*?while \(-not \$activeStopProofVerified\)/,
+  );
   assert.match(launcher, /Manual interaction phase\. Do not apply the startup deadline here/);
   assert.doesNotMatch(launcher, /active_stop_proof_unverified/);
   assert.match(launcher, /if \(\$previewProcess\.HasExited\) \{ throw "preview_exited_before_active_stop_proof" \}/);
-  assert.match(launcher, /if \(Test-ActiveStopProofSignal \$previewStdoutPath\) \{[\s\S]*?\$activeStopProofVerified = \$true/);
+  assert.match(
+    launcher,
+    /if \(Test-ActiveStopProofSignal \$previewStdoutPath\) \{[\s\S]*?\$activeStopProofVerified = \$true/,
+  );
   assert.match(launcher, /A proof receipt is deliberately not process completion[\s\S]*?Keep every owned/);
   assert.doesNotMatch(launcher, /if \(\$RequireActiveStopProof\) \{ return \}/);
 });
@@ -181,10 +199,7 @@ test("launcher keeps a receipt-backed Preview alive only after its redacted read
 });
 
 test("launcher retries only the bounded AI pipe-listener connect race before the startup deadline", () => {
-  assert.match(
-    launcher,
-    /\$previewDeadline = \[DateTimeOffset\]::UtcNow\.AddSeconds\(\$StartupTimeoutSeconds\)/,
-  );
+  assert.match(launcher, /\$previewDeadline = \[DateTimeOffset\]::UtcNow\.AddSeconds\(\$StartupTimeoutSeconds\)/);
   assert.match(
     launcher,
     /if \(\[DateTimeOffset\]::UtcNow -ge \$previewDeadline\) \{\s*throw "preview_start_or_run_failed:\$lastPreviewFailureCode"/,

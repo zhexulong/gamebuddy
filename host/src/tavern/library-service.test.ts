@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { TavernArtifactStore, canonicalHash, canonicalJson } from "./artifact-store.js";
+import { canonicalHash, canonicalJson, TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { resolveTavernPaths, tavernRevisionPath } from "./tavern-paths.js";

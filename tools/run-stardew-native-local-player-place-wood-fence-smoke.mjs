@@ -27,7 +27,8 @@ export async function runPlaceWoodFenceSmoke(
     validateConfig(config);
     let snapshot = await actionableSnapshot(client);
     requireCapabilities(snapshot);
-    if (snapshot.location !== "Farm") snapshot = await travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, transitionTimeoutMs);
+    if (snapshot.location !== "Farm")
+      snapshot = await travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, transitionTimeoutMs);
     snapshot = await waitForActionable(client, snapshot, 5_000);
     snapshot = await moveToReachableTarget(client, receipts, trace, snapshot, moveTimeoutMs);
     snapshot = await waitForActionable(client, snapshot, 3_000);
@@ -35,13 +36,20 @@ export async function runPlaceWoodFenceSmoke(
       throw new Error("player_not_actionable_before_place");
     const target = chooseReachableWoodFenceTarget(snapshot);
     if (!target) throw new Error("no_adjacent_live_wood_fence_target");
-    const accepted = await dispatch(client, trace, "place", ACTION, {
-      slot: target.slot,
-      x: target.x,
-      y: target.y,
-      expectedQualifiedItemId: target.qualifiedItemId,
-      expectedTargetId: target.targetId,
-    }, snapshot);
+    const accepted = await dispatch(
+      client,
+      trace,
+      "place",
+      ACTION,
+      {
+        slot: target.slot,
+        x: target.x,
+        y: target.y,
+        expectedQualifiedItemId: target.qualifiedItemId,
+        expectedTargetId: target.targetId,
+      },
+      snapshot,
+    );
     const terminal = await waitForTerminal(receipts, accepted, postconditionTimeoutMs);
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "wood_fence_placed")
       throw new Error(`wood_fence_failed:${terminal.reasonCode}`);
@@ -149,7 +157,8 @@ async function dispatch(client, trace, phase, action, args, snapshot) {
 async function travelToFarm(client, receipts, trace, snapshot, moveTimeoutMs, transitionTimeoutMs) {
   const warp = snapshot.warps?.find((entry) => entry.targetLocation === "Farm");
   if (!warp) throw new Error("farm_warp_missing");
-  if (!adjacent(snapshot.tile, warp)) snapshot = await move(client, receipts, trace, snapshot, warp, "move_to_farm_warp", moveTimeoutMs);
+  if (!adjacent(snapshot.tile, warp))
+    snapshot = await move(client, receipts, trace, snapshot, warp, "move_to_farm_warp", moveTimeoutMs);
   const accepted = await dispatch(client, trace, "travel", "travel", { x: warp.sourceX, y: warp.sourceY }, snapshot);
   const terminal = await waitForTerminal(receipts, accepted, transitionTimeoutMs);
   if (terminal.state !== "succeeded") throw new Error(`navigation_failed:${terminal.reasonCode}`);
@@ -178,19 +187,28 @@ async function move(client, receipts, trace, snapshot, target, phase, timeoutMs)
 async function moveToReachableTarget(client, receipts, trace, snapshot, moveTimeoutMs) {
   if (chooseReachableWoodFenceTarget(snapshot)) return snapshot;
   for (let radius = 2; radius <= 12; radius++) {
-    for (let dx = -radius; dx <= radius; dx++) for (let dy = -radius; dy <= radius; dy++) {
-      if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
-      try {
-        const moved = await move(client, receipts, trace, snapshot, { x: snapshot.tile.x + dx, y: snapshot.tile.y + dy }, "move_to_native_place_wood_fence_fixture", moveTimeoutMs);
-        if (chooseReachableWoodFenceTarget(moved)) return moved;
-        snapshot = moved;
-      } catch (error) {
-        const reason = String(error instanceof Error ? error.message : error);
-        if (!reason.endsWith("no_native_path") && !reason.startsWith("navigation_failed:no_native_path")) throw error;
-        snapshot = await observeFresh(client, { actionable: true });
-        if (chooseReachableWoodFenceTarget(snapshot)) return snapshot;
+    for (let dx = -radius; dx <= radius; dx++)
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        try {
+          const moved = await move(
+            client,
+            receipts,
+            trace,
+            snapshot,
+            { x: snapshot.tile.x + dx, y: snapshot.tile.y + dy },
+            "move_to_native_place_wood_fence_fixture",
+            moveTimeoutMs,
+          );
+          if (chooseReachableWoodFenceTarget(moved)) return moved;
+          snapshot = moved;
+        } catch (error) {
+          const reason = String(error instanceof Error ? error.message : error);
+          if (!reason.endsWith("no_native_path") && !reason.startsWith("navigation_failed:no_native_path")) throw error;
+          snapshot = await observeFresh(client, { actionable: true });
+          if (chooseReachableWoodFenceTarget(snapshot)) return snapshot;
+        }
       }
-    }
   }
   throw new Error("no_reachable_native_place_wood_fence_fixture_target");
 }
@@ -213,18 +231,31 @@ function validateConfig(config) {
     throw new Error("native_local_fixture_topology_not_isolated");
 }
 function requireCapabilities(snapshot) {
-  for (const action of REQUIRED_CAPABILITIES) if (!snapshot.capabilities?.includes(action))
-    throw new Error(`native_local_${action}_capability_missing`);
+  for (const action of REQUIRED_CAPABILITIES)
+    if (!snapshot.capabilities?.includes(action)) throw new Error(`native_local_${action}_capability_missing`);
 }
 function chooseReachableWoodFenceTarget(snapshot) {
-  return snapshot.woodFenceTargets?.find((target) =>
-    Number.isInteger(target?.slot) && Number.isInteger(target?.x) && Number.isInteger(target?.y) &&
-    typeof target.targetId === "string" && typeof target.qualifiedItemId === "string" && adjacent(snapshot.tile, target),
-  ) ?? null;
+  return (
+    snapshot.woodFenceTargets?.find(
+      (target) =>
+        Number.isInteger(target?.slot) &&
+        Number.isInteger(target?.x) &&
+        Number.isInteger(target?.y) &&
+        typeof target.targetId === "string" &&
+        typeof target.qualifiedItemId === "string" &&
+        adjacent(snapshot.tile, target),
+    ) ?? null
+  );
 }
 function adjacent(left, right) {
-  return Number.isInteger(left?.x) && Number.isInteger(left?.y) && Number.isInteger(right?.x) && Number.isInteger(right?.y) &&
-    Math.abs(left.x - right.x) <= 1 && Math.abs(left.y - right.y) <= 1;
+  return (
+    Number.isInteger(left?.x) &&
+    Number.isInteger(left?.y) &&
+    Number.isInteger(right?.x) &&
+    Number.isInteger(right?.y) &&
+    Math.abs(left.x - right.x) <= 1 &&
+    Math.abs(left.y - right.y) <= 1
+  );
 }
 function parseStrictEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
@@ -236,11 +267,30 @@ function parseStrictEvidence(evidence) {
       throw new Error("malformed_or_duplicate_fence_evidence");
     result[key] = field.slice(index + 1);
   }
-  const expectedKeys = ["source", "location", "x", "y", "target", "item", "slot", "source_empty_before", "is_fence", "is_gate", "health", "max_health", "inventory_before", "inventory_after"];
+  const expectedKeys = [
+    "source",
+    "location",
+    "x",
+    "y",
+    "target",
+    "item",
+    "slot",
+    "source_empty_before",
+    "is_fence",
+    "is_gate",
+    "health",
+    "max_health",
+    "inventory_before",
+    "inventory_after",
+  ];
   if (Object.keys(result).length !== expectedKeys.length || !expectedKeys.every((key) => result[key] !== undefined))
     throw new Error("unknown_or_incomplete_fence_evidence");
   return result;
 }
 function summarize(snapshot) {
-  return { ...summarizeSnapshot(snapshot), woodFenceTargets: snapshot.woodFenceTargets?.length ?? 0, woodFenceResultTargets: snapshot.woodFenceResultTargets?.length ?? 0 };
+  return {
+    ...summarizeSnapshot(snapshot),
+    woodFenceTargets: snapshot.woodFenceTargets?.length ?? 0,
+    woodFenceResultTargets: snapshot.woodFenceResultTargets?.length ?? 0,
+  };
 }

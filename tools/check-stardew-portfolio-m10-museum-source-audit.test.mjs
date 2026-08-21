@@ -5,6 +5,7 @@ import os from "node:os";
 import path, { resolve } from "node:path";
 import test from "node:test";
 import { checkPortfolioM10MuseumSourceAudit } from "./check-stardew-portfolio-m10-museum-source-audit.mjs";
+
 const root = resolve("."),
   script = resolve("tools/check-stardew-portfolio-m10-museum-source-audit.mjs");
 function run() {

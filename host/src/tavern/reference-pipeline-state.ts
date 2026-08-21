@@ -1,21 +1,21 @@
-import { type Static } from "typebox";
-import { assertProfileMatchesBinding, readIdentityProfile, readIdentityProfileBinding } from "../identity-profile.js";
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { identityKey, resolveRuntimePaths } from "../runtime.js";
+import type { Static } from "typebox";
 import {
   isCurrentMountedChatRuntimeLease,
   type MountedChatRuntimeLease,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { assertProfileMatchesBinding, readIdentityProfile, readIdentityProfileBinding } from "../identity-profile.js";
+import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import {
-  BrowserDraftV1Schema,
-  TavernBrowserValidatorsV1,
-  TAVERN_BROWSER_API_VERSION,
+  type BrowserDraftV1Schema,
   type BrowserTurnV1,
   type ComposedTavernProfile,
+  TAVERN_BROWSER_API_VERSION,
   type TavernBrowserOperationV1,
+  TavernBrowserValidatorsV1,
 } from "./browser-contract/index.js";
-import { createChatThreadStore, type ChatThreadState, type ChatTurnLedger } from "./chat-thread-store.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
+import { type ChatThreadState, type ChatTurnLedger, createChatThreadStore } from "./chat-thread-store.js";
 import type { P3ExactChatMessage } from "./p3-exact-chat-state.js";
 
 const MAX_TRANSCRIPT_MESSAGES = 500;
@@ -168,7 +168,7 @@ function project(
   if (state.messages.length > MAX_TRANSCRIPT_MESSAGES) throw unavailable();
   const projection = lease.browserProjection;
   const transcript = Object.freeze(state.messages.map((message, order) => projectMessage(lease, message, order)));
-  const turn = projectTurn(lease, state.turnLedger);
+  const turn = projectTurn(lease, profile, state.turnLedger);
   const operations = projectOperations(profile, state.turnLedger);
   const value = Object.freeze({
     selection: Object.freeze({
@@ -182,9 +182,10 @@ function project(
     draft: Object.freeze({ revision: state.draft.revision, text: state.draft.text }),
     turn,
     operations,
-    eventStream: profile.routeIds.includes("events") && eventStream !== undefined
-      ? Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor })
-      : null,
+    eventStream:
+      profile.routeIds.includes("events") && eventStream !== undefined
+        ? Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor })
+        : null,
   });
   // Fail closed unless every projected browser fact satisfies its frozen
   // contract schema; a partial or invalid projection never escapes.
@@ -224,23 +225,27 @@ function projectMessage(
  * `problemCode` appears only for the durable `failed` terminal classification,
  * whose reason codes exactly match the TypeBox contract union.
  */
-function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger | null): BrowserTurnV1 | null {
+function projectTurn(
+  lease: MountedChatRuntimeLease,
+  profile: ComposedTavernProfile,
+  ledger: ChatTurnLedger | null,
+): BrowserTurnV1 | null {
   if (ledger === null) return null;
   const state =
     ledger.status === "accepted_queued" || ledger.status === "attempt_starting"
       ? "queued"
-      : ledger.status === "running"
+      : ledger.status === "running" ||
+          ledger.status === "presentation_committed" ||
+          ledger.status === "completion_claimed" ||
+          ledger.status === "cancel_claimed"
         ? "running"
-        : ledger.status === "presentation_committed" || ledger.status === "completion_claimed"
-          ? "response_visible"
-          : ledger.status === "cancel_claimed"
-            ? "stopping"
-            : ledger.status;
+        : ledger.status;
   return Object.freeze({
     handle: lease.browserProjection.projectTurnHandle(ledger.turnId),
     state,
     projectionRevision: 1,
-    canCancel: false,
+    // A Stop is available once the exact prompt reaches durable arm.
+    canCancel: profile.operationIds.includes("chat.cancel") && isCancellableLedger(ledger),
     ...(ledger.status === "failed" ? { problemCode: ledger.reasonCode } : {}),
   });
 }
@@ -254,15 +259,38 @@ function projectOperations(
   profile: ComposedTavernProfile,
   turnLedger: ChatTurnLedger | null,
 ): readonly TavernBrowserOperationV1[] {
-  if (!profile.operationIds.includes("chat.submit")) return Object.freeze([]);
-  return Object.freeze([
-    Object.freeze({
-      operationId: "chat.submit",
-      labelKey: "tavern.operation.submit",
-      availability: turnLedger === null ? "available" : "busy",
-      routeId: "chat.submit",
-    }),
-  ]);
+  const terminal =
+    turnLedger === null ||
+    turnLedger.status === "completed" ||
+    turnLedger.status === "cancelled" ||
+    turnLedger.status === "failed";
+  const operations: TavernBrowserOperationV1[] = [];
+  if (profile.operationIds.includes("chat.submit"))
+    operations.push(
+      Object.freeze({
+        operationId: "chat.submit",
+        labelKey: "tavern.operation.submit",
+        availability: terminal ? "available" : "busy",
+        routeId: "chat.submit",
+      }),
+    );
+  if (profile.operationIds.includes("chat.cancel"))
+    operations.push(
+      Object.freeze({
+        operationId: "chat.cancel",
+        labelKey: "tavern.operation.cancel",
+        availability: isCancellableLedger(turnLedger) ? "available" : "unavailable",
+        routeId: "chat.cancel",
+      }),
+    );
+  return Object.freeze(operations);
+}
+
+function isCancellableLedger(ledger: ChatTurnLedger | null): boolean {
+  return (
+    ledger !== null &&
+    ((ledger.status === "attempt_starting" && ledger.observation?.phase === "armed") || ledger.status === "running")
+  );
 }
 
 /**

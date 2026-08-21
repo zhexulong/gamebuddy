@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+
 const root = resolve(import.meta.dirname, "..");
 const registry = JSON.parse(
   await readFile(resolve(root, "design/references/tavern/st-semantic-references-v1.json"), "utf8"),

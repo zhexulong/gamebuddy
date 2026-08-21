@@ -33,7 +33,11 @@ if (
 )
   throw new Error("unknown_fixture_profile_argument");
 const experimentalActions = experimental === undefined || experimental.length === 0 ? [] : experimental.split(",");
-if (requireFixtureLiveLocale !== undefined && requireFixtureLiveLocale !== "zh-CN" && requireFixtureLiveLocale !== "en-US")
+if (
+  requireFixtureLiveLocale !== undefined &&
+  requireFixtureLiveLocale !== "zh-CN" &&
+  requireFixtureLiveLocale !== "en-US"
+)
   throw new Error("invalid_fixture_live_locale_requirement");
 console.log(
   JSON.stringify(

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 /** Locked-target source/map realization dossier for the initial Mine entry only. */
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -307,13 +307,13 @@ export function validateMapProbe(probe) {
 function expectedBoundary() {
   return {
     actionInput:
-      "Initial enter_mine consumes only the unique fresh opaque ordinary Mine producer; its native omitted floor defaults to 1. No caller, DSM, or request selects a floor.",
+      "Initial enter_mine is a typed, parameterless action. The Mod fixes its sole native level argument to 1; no caller, DSM, or request selects a floor or layout.",
     ordinaryProducer:
-      "Maps/Mine Buildings Action Mine at (23,9) is the sole in-scope producer, but source/map realization does not claim its reachability.",
+      "Maps/Mine Buildings Action Mine at (23,9) is recorded only as the ordinary player UI-ingress provenance for default floor 1; it is not an enter_mine admission, reachability, or position requirement.",
     excludedProducer:
-      "Maps/Mine Buildings Action Mine 77377 at (67,9) is recorded as an excluded out-of-scope producer, never an enter_mine option.",
+      "Maps/Mine Buildings Action Mine 77377 at (67,9) is recorded as excluded player UI-ingress provenance, never an enter_mine option.",
     nativeChain:
-      "GameLocation.performAction Mine → ArgUtility.TryGetOptionalInt(action, 1, ..., 1) → playSound( stairsdown ) → Game1.enterMine(1) → warpFarmer(MineShaft.GetLevelName(...), 6, 6, 2)",
+      "Typed enter_mine → Game1.enterMine(1) → warpFarmer(MineShaft.GetLevelName(...), 6, 6, 2). Separately, ordinary player UI ingress is GameLocation.performAction Mine → ArgUtility.TryGetOptionalInt(action, 1, ..., 1) → Game1.enterMine(1).",
     excluded: [
       "UI/input",
       "raw coordinates",
@@ -403,8 +403,8 @@ export function validateDossier(d) {
   exact(d.bdd, ["scenario", "given", "when", "then", "verifier"], "bdd");
   if (
     d.bdd.scenario !== "enter_mine enters the native default floor" ||
-    !d.bdd.given.includes("runtime Given") ||
-    d.bdd.when !== "One typed enter_mine request consumes that opaque producer without a floor parameter." ||
+    d.bdd.given !== "Required runtime Given: a fresh native observation proves the local player is in Mine exterior; no UI interaction pose or producer reachability is required." ||
+    d.bdd.when !== "One typed parameterless enter_mine request fixes the native level argument to 1." ||
     !d.bdd.then.includes("floor 1") ||
     !d.bdd.verifier.includes("fresh native location/floor observation")
   )
@@ -607,18 +607,18 @@ function dossierFrom(observed) {
     bdd: {
       scenario: "enter_mine enters the native default floor",
       given:
-        "Required runtime Given: a fresh native observation proves the local player can reach the opaque ordinary Mine producer; source/map realization alone makes no reachability claim.",
-      when: "One typed enter_mine request consumes that opaque producer without a floor parameter.",
-      then: "The native chain enters default floor 1 and yields a terminal receipt plus fresh floor/location observation.",
+        "Required runtime Given: a fresh native observation proves the local player is in Mine exterior; no UI interaction pose or producer reachability is required.",
+      when: "One typed parameterless enter_mine request fixes the native level argument to 1.",
+      then: "The native seam enters floor 1 and yields a terminal receipt plus fresh floor/location observation.",
       verifier:
-        "The connected runner correlates the receipt and fresh native location/floor observation; this realization neither supplies nor replaces reachability evidence.",
+        "The connected runner correlates the receipt and fresh native location/floor observation; this realization neither supplies nor replaces Mine-exterior, authorization, or receipt evidence.",
     },
     conclusion: {
       sourceMapStatus: "realized",
       projectionState: "eligible_for_connected_implementation_review",
       liveState: "not_performed",
       nonClaim:
-        "This source+map realization does not claim producer reachability, connected implementation, publication, receipt evidence, persistence, or live closure.",
+        "This source+map realization does not claim Mine-exterior setup, authorization, connected implementation, publication, receipt evidence, persistence, or live closure.",
     },
   };
 }

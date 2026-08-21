@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { validateNativeMechanismReviewRegister } from "./lib/stardew-native-mechanism-review-register.mjs";
+
 const report = {
   schemaVersion: 1,
   artifactKind: "native_interaction_mechanism_enumeration",

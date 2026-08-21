@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { validateNativeFieldContinuationTrace } from "./lib/stardew-native-field-continuation-trace.mjs";
+
 const text = `class Farmer { List<int> movementDirections; void Set(){ movementDirections.Insert(0, 1); } void Update(){ if(movementDirections.Contains(1)) Move(); } void Halt(){ movementDirections.Clear(); } }`;
 const hash = createHash("sha256").update(text).digest("hex");
 function loc(needle) {

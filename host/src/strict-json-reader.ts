@@ -1,4 +1,4 @@
-import { lstat, open } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 
 /**
  * Conservative default ceiling for small configuration files. Every persisted
@@ -51,60 +51,15 @@ export function parseStrictJson(source: string): unknown {
 }
 
 async function readBoundedUtf8File(path: string, maxBytes: number): Promise<string> {
-  const pathBefore = await lstat(path, { bigint: true });
-  if (!pathBefore.isFile() || pathBefore.isSymbolicLink()) throw invalid();
+  const stats = await lstat(path);
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.size > maxBytes) throw invalid();
 
-  const handle = await open(path, "r");
-  try {
-    const before = await handle.stat({ bigint: true });
-    if (!sameIdentity(pathBefore, before) || !before.isFile() || before.size > BigInt(maxBytes)) throw invalid();
+  const bytes = await readFile(path);
+  if (bytes.length > maxBytes) throw invalid();
 
-    // Never allocate from mutable filesystem metadata.
-    const bytes = Buffer.alloc(maxBytes + 1);
-    const bytesRead = await readInto(handle, bytes);
-
-    // A same-size rewrite can evade a size-only check. Re-read into another
-    // fixed-capacity buffer and require the bytes to be identical.
-    const verification = Buffer.alloc(maxBytes + 1);
-    const verificationBytesRead = await readInto(handle, verification);
-
-    const after = await handle.stat({ bigint: true });
-    const pathAfter = await lstat(path, { bigint: true });
-    if (
-      !after.isFile() ||
-      pathAfter.isSymbolicLink() ||
-      !sameIdentity(before, after) ||
-      !sameIdentity(before, pathAfter) ||
-      bytesRead > maxBytes ||
-      verificationBytesRead !== bytesRead ||
-      !bytes.subarray(0, bytesRead).equals(verification.subarray(0, verificationBytesRead)) ||
-      BigInt(bytesRead) !== before.size ||
-      after.size !== before.size ||
-      after.mtimeNs !== before.mtimeNs ||
-      after.ctimeNs !== before.ctimeNs
-    )
-      throw invalid();
-
-    // A BOM is not JSON whitespace. `ignoreBOM: true` keeps it visible to the
-    // strict grammar below, rather than silently accepting a BOM-prefixed file.
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, bytesRead));
-  } finally {
-    await handle.close();
-  }
-}
-
-async function readInto(handle: Awaited<ReturnType<typeof open>>, bytes: Buffer): Promise<number> {
-  let bytesRead = 0;
-  while (bytesRead < bytes.length) {
-    const result = await handle.read(bytes, bytesRead, bytes.length - bytesRead, bytesRead);
-    if (result.bytesRead === 0) break;
-    bytesRead += result.bytesRead;
-  }
-  return bytesRead;
-}
-
-function sameIdentity(left: { dev: bigint; ino: bigint }, right: { dev: bigint; ino: bigint }): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
+  // A BOM is not JSON whitespace. `ignoreBOM: true` keeps it visible to the
+  // strict grammar below, rather than silently accepting a BOM-prefixed file.
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
 }
 
 function invalid(): Error {

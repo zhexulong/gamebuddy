@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { validatePortfolioM9SpecialOrderSourceAudit } from "./lib/stardew-portfolio-m9-special-order-source-audit.mjs";
+
 const root = resolve(".");
 const modelPath = resolve(root, "tools/stardew-portfolio-m9-special-order-source-audit.json");
 const scopePath = resolve(root, "design/16_STARDEW_DEMO_SCOPE_AND_GOAL_CONTRACTS.md");

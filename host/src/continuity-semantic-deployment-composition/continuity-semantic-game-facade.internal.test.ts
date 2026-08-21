@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  type GameRuntimeBindingExecution,
   mintBindingToken,
   releaseReservedGameRuntimeMaterialization,
-  type GameRuntimeBindingExecution,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
 import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import type {

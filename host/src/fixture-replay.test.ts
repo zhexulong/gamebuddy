@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { type BridgeMessage, validateBridgeMessage } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";

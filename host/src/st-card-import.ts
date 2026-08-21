@@ -1,6 +1,6 @@
 import { inflateSync } from "node:zlib";
-import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import type { IdentityProfile } from "./identity-profile.js";
+import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import type { WorldBookEntry } from "./worldbook.js";
 
 const MAX_INPUT_BYTES = ST_CARD_DECODER_LIMITS_V1.inputBytes;
@@ -72,6 +72,34 @@ export function previewStCard(value: unknown, fallbackProfileId = "gamebuddy.com
   return previewFromValue(value, fallbackProfileId);
 }
 
+/**
+ * Maps an imported candidate's static persona and identity into a Host IdentityProfile,
+ * ensuring 100% Prefix Caching in m[0].
+ */
+export function candidateToIdentityProfile(
+  previewOrCandidate: StCardImportPreview | StCardImportCandidate,
+  revision = 1,
+): IdentityProfile {
+  const profileCandidate =
+    "profileCandidate" in previewOrCandidate
+      ? previewOrCandidate.profileCandidate
+      : (previewOrCandidate as StCardImportPreview).profileCandidate;
+  return Object.freeze({
+    schemaVersion: 1,
+    profileId: profileCandidate.profileId,
+    revision,
+    identity: Object.freeze({
+      name: profileCandidate.identity.name,
+      role: profileCandidate.identity.role,
+      continuity: profileCandidate.identity.continuity,
+    }),
+    ...(profileCandidate.persona === undefined ? {} : { persona: profileCandidate.persona }),
+    ...(profileCandidate.examples === undefined || profileCandidate.examples.length === 0
+      ? {}
+      : { examples: profileCandidate.examples }),
+  });
+}
+
 function reportFromValue(value: Record<string, unknown>, source: "json" | "png"): StCardImportReport {
   const preview = previewFromValue(value, "gamebuddy.companion.imported");
   const data = isRecord(value.data) ? value.data : value;
@@ -108,7 +136,7 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
 function previewFromValue(value: Record<string, unknown>, fallbackProfileId: string): StCardImportPreview {
   const data = isRecord(value.data) ? value.data : value;
   const spec = typeof value.spec === "string" ? value.spec : typeof data.spec === "string" ? data.spec : undefined;
-  const format = spec === "chara_card_v3" ? "st-v3" : "st-v2";
+  const format = spec === "chara_card_v3" || spec === "ccv3" ? "st-v3" : "st-v2";
   const name = boundedText(data.name, ST_CARD_DECODER_LIMITS_V1.nameBytes) ?? "Imported Companion";
   const description = boundedMultilineText(data.description, ST_CARD_DECODER_LIMITS_V1.textBytes);
   const personality = boundedMultilineText(data.personality, ST_CARD_DECODER_LIMITS_V1.textBytes);
@@ -284,9 +312,9 @@ function parseExamples(value: string | undefined): readonly Readonly<{ user: str
       .filter(Boolean)
       .slice(0, 4)
       .flatMap((part) => {
-        const user = part.match(/(?:\{\{user\}\}|You|User)\s*:\s*([^\n]+)/iu)?.[1]?.trim();
-        const companion = part.match(/(?:\{\{char\}\}|Character|Assistant)\s*:\s*([^\n]+)/iu)?.[1]?.trim();
-        return user !== undefined && companion !== undefined && user.length <= 512 && companion.length <= 512
+        const user = part.match(/(?:\{\{user\}\}|You|User)\s*:\s*([\s\S]*?)(?=(?:\{\{char\}\}|Character|Assistant)\s*:|$)/iu)?.[1]?.trim();
+        const companion = part.match(/(?:\{\{char\}\}|Character|Assistant)\s*:\s*([\s\S]*?)(?=(?:\{\{user\}\}|You|User)\s*:|$)/iu)?.[1]?.trim();
+        return user !== undefined && companion !== undefined && user.length > 0 && companion.length > 0 && user.length <= 512 && companion.length <= 512
           ? [Object.freeze({ user, companion })]
           : [];
       }),

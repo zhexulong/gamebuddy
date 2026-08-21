@@ -1,7 +1,7 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { normalize, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -272,7 +272,11 @@ function sameFileSnapshot(before, after) {
   );
 }
 
-export async function hashProductionAssembly({ path = resolve(ROOT_PATH, PRODUCTION_ASSEMBLY), read = readFile, stat = lstat } = {}) {
+export async function hashProductionAssembly({
+  path = resolve(ROOT_PATH, PRODUCTION_ASSEMBLY),
+  read = readFile,
+  stat = lstat,
+} = {}) {
   let before, bytes, after;
   try {
     before = await stat(path);

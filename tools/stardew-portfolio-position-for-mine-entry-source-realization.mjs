@@ -1,9 +1,9 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 /** Exact-target, tools-only realization evidence for position_for_mine_entry. */
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";

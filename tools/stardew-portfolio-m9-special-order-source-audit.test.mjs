@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { validatePortfolioM9SpecialOrderSourceAudit } from "./lib/stardew-portfolio-m9-special-order-source-audit.mjs";
+
 const SOURCE_ROOT = new URL("../ref/external/StardewValleyDecompiled/Stardew Valley/", import.meta.url);
 async function fixture() {
   return JSON.parse(

@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
 import {
   REQUIRED_PCM_FORMAT,
-  type PcmFormat,
   type VoiceGatewayCapabilities,
   type VoiceGatewayEvent,
   type VoiceSpeechJob,
 } from "@gamebuddy/voice-protocol";
 
-export { REQUIRED_PCM_FORMAT } from "@gamebuddy/voice-protocol";
 export type { PcmFormat, VoiceGatewayCapabilities, VoiceGatewayEvent, VoiceSpeechJob } from "@gamebuddy/voice-protocol";
+export { REQUIRED_PCM_FORMAT } from "@gamebuddy/voice-protocol";
 export const MAX_CAPTURE_BYTES = 960_000;
 export const MAX_SPEECH_QUEUE = 3;
 export const MAX_SPEECH_AUDIO_BYTES = 1_920_000;
@@ -273,7 +272,7 @@ export class VoiceGatewayCore {
     const queuedIndex = this.#queue.findIndex((job) => job.jobId === jobId);
     if (queuedIndex >= 0) this.speech(this.#queue.splice(queuedIndex, 1)[0]!, "cancelled", reasonCode);
     const active = this.#activeSpeech.get(jobId);
-    if (active !== undefined && active.job.interruptible && !active.cancelled) {
+    if (active?.job.interruptible && !active.cancelled) {
       active.cancelled = true;
       active.controller.abort(reasonCode);
       this.mixer.stop();

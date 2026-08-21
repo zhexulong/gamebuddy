@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import { PUBLISHED_STARDEW_ACTIONS } from "./action-registry.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 test("every published Stardew action has an explicit fail-closed completion rule", () => {
   for (const action of PUBLISHED_STARDEW_ACTIONS)
@@ -353,7 +352,11 @@ test("bait_crab_pot completion evidence preserves decimal owner identity and exa
 
 test("travel and enter_exit completion evidence require the exact warped destination", () => {
   const travelValid = "expected=BusStop:20,12;actual=BusStop:20,12";
-  const travelReceipt = { state: "succeeded", reasonCode: "travel_completed", evidence: { detail: travelValid } } as const;
+  const travelReceipt = {
+    state: "succeeded",
+    reasonCode: "travel_completed",
+    evidence: { detail: travelValid },
+  } as const;
   assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("travel", travelReceipt), true);
   const exitValid = "expected=SeedShop:4,9;actual=SeedShop:4,9";
   assert.equal(
@@ -428,7 +431,9 @@ test("pickup_item completion evidence requires the native auto-collect chunk rem
     "location=Farm;target=item_abcdef0123456789;tile=12,9;item=(O)78;stack=1;native_auto_collect=true;chunk_removed=true;inventory_before=0;inventory_after=1";
   const receipt = { state: "succeeded", reasonCode: "item_picked_up", evidence: { detail: valid } } as const;
   assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("pickup_item", receipt), true);
-  const multiStack = valid.replace("stack=1;", "stack=3;").replace("inventory_before=0;inventory_after=1", "inventory_before=5;inventory_after=8");
+  const multiStack = valid
+    .replace("stack=1;", "stack=3;")
+    .replace("inventory_before=0;inventory_after=1", "inventory_before=5;inventory_after=8");
   assert.equal(
     STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("pickup_item", {
       ...receipt,
@@ -514,7 +519,8 @@ test("machine inspection, load, and collect completion evidence are exact Keg co
     state: "succeeded",
     reasonCode: "machine_inspected",
     evidence: {
-      detail: "location=Shed;target=machine_01;tile=5,9;machine=(BC)12;ready_for_harvest=false;minutes_until_ready=120;held=none;last_input=none",
+      detail:
+        "location=Shed;target=machine_01;tile=5,9;machine=(BC)12;ready_for_harvest=false;minutes_until_ready=120;held=none;last_input=none",
     },
   } as const;
   assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("machine_inspect", inspect), true);
@@ -580,7 +586,10 @@ test("machine inspection, load, and collect completion evidence are exact Keg co
   assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("machine_collect_output", collect), true);
   for (const malformed of [
     collect.evidence.detail.replace("ready_before=true", "ready_before=false"),
-    collect.evidence.detail.replace("inventory_coffee_before=0;inventory_coffee_after=1", "inventory_coffee_before=0;inventory_coffee_after=2"),
+    collect.evidence.detail.replace(
+      "inventory_coffee_before=0;inventory_coffee_after=1",
+      "inventory_coffee_before=0;inventory_coffee_after=2",
+    ),
     collect.evidence.detail.replace("held_after=none", "held_after=(O)395"),
     collect.evidence.detail.replace("ready_after=false", "ready_after=true"),
     collect.evidence.detail.replace("output=(O)395", "output=(O)348"),
@@ -671,7 +680,9 @@ test("collect_animal_product completion evidence preserves opaque animal identit
     "location=Barn;target=animal_01;animal=680508790015262242;tool=milk_pail;produce=(O)184;produce_stack=1;produce_cleared=true;inventory_before=0;inventory_after=1;inventory_gained=true;animation_complete=true";
   const receipt = { state: "succeeded", reasonCode: "animal_product_collected", evidence: { detail: valid } } as const;
   assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("collect_animal_product", receipt), true);
-  const cracker = valid.replace("produce_stack=1;", "produce_stack=2;").replace("inventory_before=0;inventory_after=1", "inventory_before=0;inventory_after=2");
+  const cracker = valid
+    .replace("produce_stack=1;", "produce_stack=2;")
+    .replace("inventory_before=0;inventory_after=1", "inventory_before=0;inventory_after=2");
   assert.equal(
     STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("collect_animal_product", {
       ...receipt,
@@ -737,7 +748,10 @@ test("harvest_crop completion evidence distinguishes regrowing and destroyed cro
     destroyed.evidence.detail.replace("regrows=false", "regrows=maybe"),
     regrow.evidence.detail.replace("regrow_advanced=true", "regrow_advanced=false"),
     regrow.evidence.detail.replace("crop_present_after=true", "crop_present_after=false"),
-    regrow.evidence.detail.replace("day_of_phase_before=1;day_of_phase_after=2", "day_of_phase_before=2;day_of_phase_after=2"),
+    regrow.evidence.detail.replace(
+      "day_of_phase_before=1;day_of_phase_after=2",
+      "day_of_phase_before=2;day_of_phase_after=2",
+    ),
     regrow.evidence.detail.replace("phase_before=4;phase_after=4", "phase_before=4;phase_after=3"),
     `${destroyed.evidence.detail};native_accepted=true`,
   ])
@@ -754,8 +768,16 @@ test("harvest_crop completion evidence distinguishes regrowing and destroyed cro
 test("completion parsers never accept another action's succeeded evidence", () => {
   const cross = [
     ["travel", "travel_completed", "expected=BusStop:20,12;actual=BusStop:20,12"],
-    ["pickup_forage", "forage_picked_up", "location=Forest;target=12,9;item=(O)16;removed=true;inventory_before=0;inventory_after=1"],
-    ["harvest_crop", "crop_harvested", "location=Farm;target=crop_01;tile=5,9;crop=Parsnip;item=(O)24;native_path_return=true;native_accepted=true;regrows=false;phase_before=4;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false"],
+    [
+      "pickup_forage",
+      "forage_picked_up",
+      "location=Forest;target=12,9;item=(O)16;removed=true;inventory_before=0;inventory_after=1",
+    ],
+    [
+      "harvest_crop",
+      "crop_harvested",
+      "location=Farm;target=crop_01;tile=5,9;crop=Parsnip;item=(O)24;native_path_return=true;native_accepted=true;regrows=false;phase_before=4;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false",
+    ],
   ] as const;
   for (const [actionId, , detail] of cross) {
     const receipt = { state: "succeeded", reasonCode: "succeeded", evidence: { detail } } as const;

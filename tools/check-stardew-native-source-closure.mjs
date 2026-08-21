@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { collectCSharpSources, fileSha256, sourceManifestSha256 } from "./lib/stardew-native-source-attestation.mjs";
 import { validateNativeSourceClosure } from "./lib/stardew-native-source-closure.mjs";
 import { validateNativeTransitionFamilyUniverse } from "./lib/stardew-native-transition-family-universe.mjs";
-import { collectCSharpSources, fileSha256, sourceManifestSha256 } from "./lib/stardew-native-source-attestation.mjs";
 
 const args = process.argv.slice(2).filter((value) => value !== "--");
 const take = (flag) => {

@@ -9,8 +9,8 @@
  * must supply its typed bridge route before completeness can pass.
  */
 
-import { classifyIngressReachableCall, classifyWorldDispatcherCall } from "./stardew-player-command-classification.mjs";
 import { extractLiteralOperationSelectors } from "./stardew-gameplay-surface-selector.mjs";
+import { classifyIngressReachableCall, classifyWorldDispatcherCall } from "./stardew-player-command-classification.mjs";
 
 // These are source-level rule-boundary candidates, not Agent actions. They only
 // become a PRCP after the full branch predicate, target domain, native

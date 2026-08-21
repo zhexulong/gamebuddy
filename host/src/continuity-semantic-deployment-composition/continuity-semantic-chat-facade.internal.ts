@@ -1,4 +1,3 @@
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import {
   createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
   createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest,
@@ -6,6 +5,7 @@ import {
   type SemanticChatRuntimeMountOptions,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { ProductionChatRuntimeReadback } from "../continuity-semantic-store/continuity-semantic-production-store.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
 
 /** Internal-only unmounted Chat construction product. No runtime internals escape. */
 export type ConstructedUnmountedChatSemanticFacade = Readonly<{

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  contentAssetIsGameplayRelevant,
   classifyDataLoaderTable,
+  contentAssetIsGameplayRelevant,
   contentOperationDomain,
   dataLoaderAssetPath,
+  knownToolBasisIds,
   logicalContentAssetPath,
   logicalContentOperationFamily,
-  knownToolBasisIds,
 } from "./lib/stardew-gameplay-surface-rules.mjs";
 
 test("FishingRod discovery names the unified fish lifecycle capability", () => {

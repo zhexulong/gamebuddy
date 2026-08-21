@@ -1,10 +1,10 @@
 import { once } from "node:events";
 import { createConnection } from "node:net";
 import {
-  MAX_NDJSON_FRAME_BYTES,
   createBoundedUtf8NdjsonDecoder,
   encodeVoiceGatewayMessage,
   isVoiceGatewayRequest,
+  MAX_NDJSON_FRAME_BYTES,
   parseVoiceGatewayResponse,
 } from "../../packages/voice-protocol/dist/index.js";
 

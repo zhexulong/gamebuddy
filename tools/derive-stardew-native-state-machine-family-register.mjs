@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { validateNativeStateMachineFamilyRegister } from "./lib/stardew-native-state-machine-family-register.mjs";
+
 function fail(code, message) {
   const error = new Error(message);
   error.code = code;

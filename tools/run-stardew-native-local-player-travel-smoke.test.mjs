@@ -102,7 +102,10 @@ test("travel runner moves to the warp source before traveling", async () => {
   const result = await runTravelSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "travel_completed");
-  assert.deepEqual(result.trace.map((entry) => entry.action), ["move_to_tile", "travel"]);
+  assert.deepEqual(
+    result.trace.map((entry) => entry.action),
+    ["move_to_tile", "travel"],
+  );
   assert.equal(result.after.location, "Farm");
   assert.deepEqual(result.after.tile, { x: 3, y: 4 });
 });

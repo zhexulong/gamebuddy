@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { readFile } from "node:fs/promises";
+import test from "node:test";
 
 const producerPath = new URL("../integrations/stardew/PortfolioP0bLifecycleProducer.cs", import.meta.url);
 const configPath = new URL("../integrations/stardew/ModConfig.cs", import.meta.url);
@@ -88,7 +88,7 @@ test("P0b producer is default-disabled and emits a signed native start manifest"
   assert.match(producer, /Game1\.ExitToTitle\(\)/);
   assert.match(producer, /Game1\.exitActiveMenu\(\)/);
   assert.doesNotMatch(producer, /CleanupReturningToTitle\(\)/);
-  assert.match(producer, /artifactKind\"] = \"portfolio_start_manifest\"/);
+  assert.match(producer, /artifactKind"] = "portfolio_start_manifest"/);
   assert.match(producer, /HMACSHA256/);
   assert.match(producer, /CanonicalJson/);
   assert.match(producer, /HashFile\(savePath\)/);
@@ -119,10 +119,10 @@ test("P0b producer preserves required event sequencing and records distinct init
   assert.match(producer, /PortfolioLocalPlayerBinding\? portfolioP0bReloadedBinding/);
   assert.match(producer, /reloaded\.BindingGeneration <= initial\.BindingGeneration/);
   assert.doesNotMatch(producer, /nativeScope = new/);
-  assert.match(producer, /artifactKind\"] = "portfolio_start_manifest"/);
-  assert.match(producer, /signatureAlgorithm\"] = "hmac-sha256"/);
-  assert.match(producer, /checkedMilestones\"] = Enumerable\.Range\(1, 10\)/);
-  assert.match(producer, /reopenVerified\"] = true/);
+  assert.match(producer, /artifactKind"] = "portfolio_start_manifest"/);
+  assert.match(producer, /signatureAlgorithm"] = "hmac-sha256"/);
+  assert.match(producer, /checkedMilestones"] = Enumerable\.Range\(1, 10\)/);
+  assert.match(producer, /reopenVerified"] = true/);
   assert.match(producer, /\["nativePlayerScope"\] = ToPortfolioP0bNativePlayerScope\(reloaded\)/);
 });
 

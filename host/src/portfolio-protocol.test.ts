@@ -1,30 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  PORTFOLIO_INTEGRATION_ID,
-  PORTFOLIO_TOPOLOGY,
-  newPortfolioEnvelope,
   bootstrapScope,
+  materializePortfolioMineElevatorFreshFloor,
+  materializePortfolioMineElevatorProbe,
+  materializePortfolioMineLadderFreshFloor,
+  materializePortfolioSleepDayReceipt,
+  materializePortfolioSkipEventProbe,
+  materializePortfolioSkipEventReceipt,
+  newPortfolioEnvelope,
+  PORTFOLIO_INTEGRATION_ID,
+  PORTFOLIO_MINE_ELEVATOR_ACTION,
+  PORTFOLIO_MINE_LADDER_ACTION,
+  PORTFOLIO_SKIP_EVENT_ACTION,
+  PORTFOLIO_TOPOLOGY,
   validatePortfolioMessage,
-  validatePortfolioSnapshot,
+  validatePortfolioMineElevatorCancelRequest,
+  validatePortfolioMineElevatorFreshFloor,
+  validatePortfolioMineElevatorFreshFloorRequest,
+  validatePortfolioMineElevatorProbe,
+  validatePortfolioMineElevatorReceipt,
+  validatePortfolioMineElevatorRequest,
+  validatePortfolioMineLadderFreshFloor,
+  validatePortfolioMineLadderReceipt,
+  validatePortfolioMineLadderRequest,
+  validatePortfolioSkipEventCancelRequest,
+  validatePortfolioSkipEventProbe,
+  validatePortfolioSkipEventReceipt,
+  validatePortfolioSkipEventRequest,
+  validatePortfolioSleepDayCancelRequest,
   validatePortfolioSleepDayReceipt,
   validatePortfolioSleepDayRequest,
-  validatePortfolioSleepDayCancelRequest,
-  materializePortfolioSleepDayReceipt,
-  PORTFOLIO_MINE_ELEVATOR_ACTION,
-  validatePortfolioMineElevatorRequest,
-  validatePortfolioMineElevatorProbe,
-  materializePortfolioMineElevatorProbe,
-  validatePortfolioMineElevatorFreshFloorRequest,
-  validatePortfolioMineElevatorFreshFloor,
-  materializePortfolioMineElevatorFreshFloor,
-  validatePortfolioMineElevatorCancelRequest,
-  validatePortfolioMineElevatorReceipt,
-  PORTFOLIO_MINE_LADDER_ACTION,
-  validatePortfolioMineLadderRequest,
-  validatePortfolioMineLadderFreshFloor,
-  materializePortfolioMineLadderFreshFloor,
-  validatePortfolioMineLadderReceipt,
+  validatePortfolioSnapshot,
 } from "./portfolio-protocol.js";
 
 const scope = {
@@ -299,6 +306,7 @@ test("M8 probe requires exact typed facts and binds request scope, checkpoint, a
     currentFloor: 5,
     lowestMineLevel: 10,
     targetUnlocked: true,
+    elevatorObserved: true,
     selectedCheckpoint: 10,
   };
   assert.equal(
@@ -311,6 +319,15 @@ test("M8 probe requires exact typed facts and binds request scope, checkpoint, a
   );
   assert.equal(validatePortfolioMineElevatorProbe(probe, scope), null);
   assert.equal(materializePortfolioMineElevatorProbe(probe, request, scope).targetUnlocked, true);
+  assert.equal(validatePortfolioMineElevatorProbe({ ...probe, lowestMineLevel: 125 }, scope), null);
+  assert.equal(
+    validatePortfolioMineElevatorProbe({ ...probe, elevatorObserved: undefined }, scope),
+    "invalid_portfolio_mine_elevator_probe",
+  );
+  assert.equal(
+    validatePortfolioMineElevatorProbe({ ...probe, elevatorInteractionAvailable: true }, scope),
+    "invalid_portfolio_mine_elevator_probe",
+  );
   assert.equal(
     validatePortfolioMineElevatorProbe({ ...probe, scope: { ...scope, saveId: "other" } }, scope),
     "invalid_portfolio_mine_elevator_probe",
@@ -940,5 +957,273 @@ test("Portfolio protocol rejects Farmhand scopes and mutation-shaped snapshots",
       scope,
     ),
     "portfolio_snapshot_scope_mismatch",
+  );
+});
+
+test("skip_event fixes probe facts, request/cancel bounds, and success receipt lifecycle", () => {
+  const now = 1_000_000;
+  const request = {
+    action: PORTFOLIO_SKIP_EVENT_ACTION,
+    requestId: "request_skip",
+    traceId: "trace_skip",
+    idempotencyKey: "idem_skip",
+    expectedRevision: 1,
+    deadlineMs: now + 10_000,
+    cancellationToken: "cancel_skip_token_1",
+    scope,
+  } as const;
+  assert.equal(validatePortfolioSkipEventRequest(request, scope, now), null);
+  assert.equal(
+    validatePortfolioMessage(
+      newPortfolioEnvelope(
+        "skip_event_request",
+        scope,
+        request,
+        "00000000-0000-4000-8000-000000000011",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    validatePortfolioSkipEventRequest({ ...request, scope: { ...scope, saveId: "other" } }, scope, now),
+    "invalid_portfolio_skip_event_request",
+  );
+  assert.equal(
+    validatePortfolioSkipEventRequest({ ...request, deadlineMs: now + 1_800_001 }, scope, now),
+    "invalid_portfolio_skip_event_request",
+  );
+  assert.equal(
+    validatePortfolioSkipEventRequest({ ...request, cancellationToken: "short" }, scope, now),
+    "invalid_portfolio_skip_event_request",
+  );
+  const probe = {
+    requestId: request.requestId,
+    traceId: request.traceId,
+    scope,
+    revision: 1,
+    fresh: true,
+    eventObserved: true,
+    eventSkippable: true,
+    opaqueEventTarget: "spring_event_01",
+  };
+  assert.equal(
+    validatePortfolioMessage(
+      newPortfolioEnvelope(
+        "skip_event_probe_request",
+        scope,
+        request,
+        "00000000-0000-4000-8000-000000000012",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    null,
+  );
+  assert.equal(validatePortfolioSkipEventProbe(probe, scope), null);
+  assert.equal(materializePortfolioSkipEventProbe(probe, request, scope).eventSkippable, true);
+  assert.equal(
+    validatePortfolioSkipEventProbe({ ...probe, scope: { ...scope, worldId: "other" } }, scope),
+    "invalid_portfolio_skip_event_probe",
+  );
+  assert.equal(validatePortfolioSkipEventProbe({ ...probe, fresh: false }, scope), "invalid_portfolio_skip_event_probe");
+  assert.throws(
+    () => materializePortfolioSkipEventProbe({ ...probe, revision: 2 }, request, scope),
+    /portfolio_skip_event_probe_correlation_mismatch/,
+  );
+  const cancel = {
+    action: PORTFOLIO_SKIP_EVENT_ACTION,
+    requestId: request.requestId,
+    traceId: request.traceId,
+    executionId: "execution_skip",
+    cancellationToken: request.cancellationToken,
+    scope,
+  } as const;
+  assert.equal(validatePortfolioSkipEventCancelRequest(cancel, scope), null);
+  assert.equal(
+    validatePortfolioSkipEventCancelRequest({ ...cancel, scope: { ...scope, companionId: "other" } }, scope),
+    "invalid_portfolio_skip_event_cancel_request",
+  );
+  assert.equal(
+    validatePortfolioSkipEventCancelRequest({ ...cancel, cancellationToken: "short" }, scope),
+    "invalid_portfolio_skip_event_cancel_request",
+  );
+  const phases = [
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId: "execution_skip",
+      phase: "fresh_observed",
+      revision: 1,
+      reasonCode: "fresh_observed",
+    },
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId: "execution_skip",
+      phase: "accepted",
+      revision: 1,
+      reasonCode: "accepted",
+    },
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId: "execution_skip",
+      phase: "native_skip",
+      revision: 2,
+      reasonCode: "skip_event_native_skip",
+    },
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId: "execution_skip",
+      phase: "postcondition",
+      revision: 3,
+      reasonCode: "postcondition_observed",
+    },
+    {
+      requestId: request.requestId,
+      traceId: request.traceId,
+      executionId: "execution_skip",
+      phase: "terminal",
+      revision: 3,
+      reasonCode: "skip_event_completed",
+    },
+  ] as const;
+  const receipt = {
+    requestId: request.requestId,
+    traceId: request.traceId,
+    executionId: "execution_skip",
+    state: "succeeded",
+    revision: 3,
+    reasonCode: "skip_event_completed",
+    evidence: {
+      scope,
+      phaseTrace: phases,
+      eventObserved: true,
+      eventSkippable: true,
+      opaqueEventTarget: "spring_event_01",
+      nativeEventId: "event_01",
+      nativeSkipObserved: true,
+      eventCleared: true,
+      postEventStateClean: true,
+    },
+    postcondition: {
+      postEventStateClean: true,
+      freshObservation: true,
+      sameExecution: true,
+    },
+  };
+  assert.equal(validatePortfolioSkipEventReceipt(receipt, scope), null);
+  assert.equal(materializePortfolioSkipEventReceipt(receipt, request, scope).state, "succeeded");
+  // The skippable bit describes the player UI affordance; a direct native
+  // Event.skipEvent terminal remains valid for any observed active Event.
+  assert.equal(
+    validatePortfolioSkipEventReceipt(
+      { ...receipt, evidence: { ...receipt.evidence, eventSkippable: false } },
+      scope,
+    ),
+    null,
+  );
+  // Success requires a fully observed-and-clean postcondition, so an
+  // incomplete cleanup or a mismatched terminal reason must fail closed.
+  assert.equal(
+    validatePortfolioSkipEventReceipt(
+      { ...receipt, evidence: { ...receipt.evidence, eventCleared: false } },
+      scope,
+    ),
+    "invalid_portfolio_skip_event_receipt",
+  );
+  assert.equal(
+    validatePortfolioSkipEventReceipt(
+      {
+        ...receipt,
+        postcondition: { ...receipt.postcondition, freshObservation: false },
+        evidence: { ...receipt.evidence, eventObserved: false },
+      },
+      scope,
+    ),
+    "invalid_portfolio_skip_event_receipt",
+  );
+  assert.equal(
+    validatePortfolioSkipEventReceipt({ ...receipt, reasonCode: "skip_event_native_skip" }, scope),
+    "invalid_portfolio_skip_event_phase_trace",
+  );
+  assert.equal(
+    validatePortfolioSkipEventReceipt({ ...receipt, executionId: "other_execution" }, scope),
+    "invalid_portfolio_skip_event_phase_trace",
+  );
+  // Once the native edge is observed, a later lifecycle invalidation must
+  // settle an exact uncertain receipt rather than erase that irreversible fact.
+  const postNativeUncertain = {
+    ...receipt,
+    state: "uncertain" as const,
+    revision: 2,
+    reasonCode: "native_operation_uncertain" as const,
+    evidence: {
+      ...receipt.evidence,
+      phaseTrace: [
+        phases[0],
+        phases[1],
+        phases[2],
+        { ...phases[2], phase: "terminal" as const, reasonCode: "native_operation_uncertain" as const },
+      ],
+      eventCleared: false,
+      postEventStateClean: false,
+    },
+    postcondition: {
+      postEventStateClean: false,
+      freshObservation: false,
+      sameExecution: true,
+    },
+  };
+  assert.equal(validatePortfolioSkipEventReceipt(postNativeUncertain, scope), null);
+  assert.equal(
+    validatePortfolioSkipEventReceipt(
+      {
+        ...postNativeUncertain,
+        reasonCode: "postcondition_observation_invalid",
+        evidence: {
+          ...postNativeUncertain.evidence,
+          phaseTrace: [
+            ...postNativeUncertain.evidence.phaseTrace.slice(0, 3),
+            {
+              ...postNativeUncertain.evidence.phaseTrace[2],
+              phase: "terminal" as const,
+              reasonCode: "postcondition_observation_invalid",
+            },
+          ],
+        },
+      },
+      scope,
+    ),
+    "invalid_portfolio_skip_event_phase_trace",
+  );
+  assert.equal(
+    validatePortfolioSkipEventReceipt({ ...postNativeUncertain, evidence: { ...postNativeUncertain.evidence, nativeSkipObserved: false } }, scope),
+    "invalid_portfolio_skip_event_phase_trace",
+  );
+  // A pre-native fault may settle short and uncertain, but it must not claim
+  // that the irreversible native edge was observed.
+  const preNativeUncertain = {
+    ...postNativeUncertain,
+    revision: 1,
+    evidence: {
+      ...postNativeUncertain.evidence,
+      eventObserved: false,
+      nativeSkipObserved: false,
+      phaseTrace: [
+        phases[0],
+        { ...phases[0], phase: "terminal" as const, reasonCode: "native_operation_uncertain" as const },
+      ],
+    },
+  };
+  assert.equal(validatePortfolioSkipEventReceipt(preNativeUncertain, scope), null);
+  assert.throws(
+    () => materializePortfolioSkipEventReceipt({ ...receipt, traceId: "other_trace" }, request, scope),
+    /invalid_portfolio_skip_event_receipt/,
   );
 });

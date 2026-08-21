@@ -1,8 +1,8 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -143,7 +143,7 @@ if (resolve(process.argv[1] ?? "") !== resolve(fileURLToPath(import.meta.url))) 
     "priceModifierMode",
   ];
   function requireFields(value, fields, reason) {
-    if (!value || fields.some((field) => !Object.prototype.hasOwnProperty.call(value, field))) fail(reason);
+    if (!value || fields.some((field) => !Object.hasOwn(value, field))) fail(reason);
   }
 
   const machine = machines.entries.find((entry) => entry?.machineId === CONTRACT.machineId);

@@ -1,17 +1,17 @@
+import type { BridgeFault, DeterministicBridgeEndpoint } from "./bridge.js";
+import type { GameIntegrationModule } from "./integration-module.js";
+import type { CompanionIntegrationState } from "./integration-types.js";
+import type { KnowledgeBundle } from "./knowledge.js";
 import {
-  newEnvelope,
-  nextCancelIdentity,
   type BridgeMessage,
   type CancelIdentity,
-  type ExecutionRequest,
   type ExecutionReceipt,
-  type Snapshot,
+  type ExecutionRequest,
+  newEnvelope,
+  nextCancelIdentity,
   type Scope,
+  type Snapshot,
 } from "./protocol.js";
-import { type CompanionIntegrationState } from "./integration-types.js";
-import { type KnowledgeBundle } from "./knowledge.js";
-import { type GameIntegrationModule } from "./integration-module.js";
-import { type BridgeFault, type DeterministicBridgeEndpoint } from "./bridge.js";
 
 /**
  * Host-side, game-neutral bridge state. It only caches Mod-originated facts;

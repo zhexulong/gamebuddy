@@ -15,10 +15,11 @@ const hostRoot = fileURLToPath(new URL("..", import.meta.url));
 const REQUIRED_VERIFICATION_ROOTS = [
   "tavern/p4-durable-turn-acceptance.js",
   "tavern/p4-provider-attempt.js",
-  "tavern/p4-provider-start.js",
-  "tavern/p5-presentation-commit.js",
+  "tavern/chat-provider-start.js",
   "tavern/p3-static-shell-composition.js",
   "reference-pipeline-dialogue-web.js",
+  "tavern-management-dialogue-web.js",
+  "tavern/tavern-management-static-shell-composition.js",
 ];
 
 function productionConfig(config) {
@@ -119,7 +120,7 @@ test("Windows stale-lock reclaimer provenance accepts only the fixed binary and 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("production config is exact v2 and retains the frozen P4/P5/reference verification roots", async () => withFixture(async (root) => {
+test("production config is exact v2 and retains the current Chat/reference verification roots", async () => withFixture(async (root) => {
   const valid = productionConfig({
     entryRoots: ["main.js"],
     resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }],

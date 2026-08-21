@@ -176,7 +176,14 @@ async function freshActionableSnapshot(client) {
     throw new Error("native_local_npc_relationship_snapshot_invalid");
   return snapshot;
 }
-async function moveToTile(client, receipts, trace, snapshot, target, { phase, stabilizeTimeoutMs, terminalTimeoutMs, check } = {}) {
+async function moveToTile(
+  client,
+  receipts,
+  trace,
+  snapshot,
+  target,
+  { phase, stabilizeTimeoutMs, terminalTimeoutMs, check } = {},
+) {
   const fresh = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
   const accepted = await execute(phase, "move_to_tile", target, fresh, trace, client);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
@@ -254,7 +261,7 @@ function chooseNearestUniqueLiveWarp(snapshot, warps) {
       distance: Math.abs(snapshot.tile.x - warp.sourceX) + Math.abs(snapshot.tile.y - warp.sourceY),
     }))
     .sort((left, right) => left.distance - right.distance);
-  return ranked.length > 1 && ranked[0].distance === ranked[1].distance ? null : ranked[0]?.warp ?? null;
+  return ranked.length > 1 && ranked[0].distance === ranked[1].distance ? null : (ranked[0]?.warp ?? null);
 }
 function chooseNearestLiveWarp(snapshot, expectedLocation, phase) {
   const matches = snapshot.warps.filter((warp) => validWarp(warp) && warp.targetLocation === expectedLocation);

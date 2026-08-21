@@ -18,7 +18,7 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function requiredString(value, field) {
+function _requiredString(value, field) {
   if (typeof value !== "string" || value.length === 0) fail(`Expected non-empty ${field}.`, { field });
   return value;
 }

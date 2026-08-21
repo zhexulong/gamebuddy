@@ -43,8 +43,7 @@ export async function runCollectAnimalProductSmoke(
       minRevision: receipt.revision,
       timeoutMs: postconditionTimeoutMs,
       requireActionable: true,
-      check: (snapshot) =>
-        Array.isArray(snapshot.animalProductTargets) && Array.isArray(snapshot.inventoryItemFacts),
+      check: (snapshot) => Array.isArray(snapshot.animalProductTargets) && Array.isArray(snapshot.inventoryItemFacts),
     });
     const evidence = parseEvidence(receipt.evidence);
     const targetGone = !(after.animalProductTargets ?? []).some((entry) => entry.targetId === target.targetId);

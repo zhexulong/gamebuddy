@@ -104,6 +104,17 @@ export const PORTFOLIO_REASON_CODES = [
   "enter_mine_transition_started",
   "enter_mine_floor_used",
   "portfolio_enter_mine_not_armed",
+  "invalid_portfolio_skip_event_request",
+  "invalid_portfolio_skip_event_cancel_request",
+  "invalid_portfolio_skip_event_receipt",
+  "invalid_portfolio_skip_event_phase",
+  "invalid_skip_event_request",
+  "invalid_skip_event_observation",
+  "skip_event_no_active_event",
+  "skip_event_target_invalid",
+  "skip_event_native_skip",
+  "skip_event_completed",
+  "portfolio_skip_event_not_armed",
 ] as const;
 export type PortfolioReasonCode = (typeof PORTFOLIO_REASON_CODES)[number];
 
@@ -290,6 +301,7 @@ export type PortfolioMineElevatorProbe = Readonly<{
   currentFloor: number;
   lowestMineLevel: number;
   targetUnlocked: boolean;
+  elevatorObserved: boolean;
   selectedCheckpoint: number;
 }>;
 
@@ -359,6 +371,77 @@ export type PortfolioMineElevatorReceipt = Readonly<{
   }>;
 }>;
 
+export const PORTFOLIO_SKIP_EVENT_ACTION = "skip_event" as const;
+export const PORTFOLIO_SKIP_EVENT_PHASES = [
+  "fresh_observed",
+  "accepted",
+  "native_skip",
+  "postcondition",
+  "terminal",
+] as const;
+export type PortfolioSkipEventPhaseName = (typeof PORTFOLIO_SKIP_EVENT_PHASES)[number];
+export type PortfolioSkipEventTerminalState = PortfolioMineElevatorTerminalState;
+export type PortfolioSkipEventRequest = Readonly<{
+  action: typeof PORTFOLIO_SKIP_EVENT_ACTION;
+  requestId: string;
+  traceId: PortfolioTraceId;
+  idempotencyKey: string;
+  expectedRevision: number;
+  deadlineMs: number;
+  cancellationToken: string;
+  scope: PortfolioScope;
+}>;
+export type PortfolioSkipEventCancelRequest = Readonly<{
+  action: typeof PORTFOLIO_SKIP_EVENT_ACTION;
+  requestId: string;
+  traceId: string;
+  executionId: string;
+  cancellationToken: string;
+  scope: PortfolioScope;
+}>;
+export type PortfolioSkipEventProbe = Readonly<{
+  requestId: string;
+  traceId: string;
+  scope: PortfolioScope;
+  revision: number;
+  fresh: boolean;
+  eventObserved: boolean;
+  eventSkippable: boolean;
+  opaqueEventTarget: string | null;
+}>;
+export type PortfolioSkipEventPhase = Readonly<{
+  requestId: string;
+  traceId: string;
+  executionId: string;
+  phase: PortfolioSkipEventPhaseName;
+  revision: number;
+  reasonCode: PortfolioReasonCode;
+}>;
+export type PortfolioSkipEventReceipt = Readonly<{
+  requestId: string;
+  traceId: string;
+  executionId: string;
+  state: PortfolioSkipEventTerminalState;
+  revision: number;
+  reasonCode: PortfolioReasonCode;
+  evidence: Readonly<{
+    scope: PortfolioScope;
+    phaseTrace: readonly PortfolioSkipEventPhase[];
+    eventObserved: boolean;
+    eventSkippable: boolean;
+    opaqueEventTarget: string | null;
+    nativeEventId: string | null;
+    nativeSkipObserved: boolean;
+    eventCleared: boolean;
+    postEventStateClean: boolean;
+  }>;
+  postcondition: Readonly<{
+    postEventStateClean: boolean;
+    freshObservation: boolean;
+    sameExecution: boolean;
+  }>;
+}>;
+
 export type PortfolioSnapshot = Readonly<{
   protocolVersion: number;
   integrationId: typeof PORTFOLIO_INTEGRATION_ID;
@@ -417,6 +500,12 @@ export type PortfolioMessage =
   | PortfolioEnvelope<"enter_mine_cancel_request", PortfolioMineEntryCancelRequest>
   | PortfolioEnvelope<"enter_mine_phase", PortfolioMineEntryPhase>
   | PortfolioEnvelope<"enter_mine_receipt", PortfolioMineEntryReceipt>
+  | PortfolioEnvelope<"skip_event_request", PortfolioSkipEventRequest>
+  | PortfolioEnvelope<"skip_event_probe_request", PortfolioSkipEventRequest>
+  | PortfolioEnvelope<"skip_event_probe", PortfolioSkipEventProbe>
+  | PortfolioEnvelope<"skip_event_cancel_request", PortfolioSkipEventCancelRequest>
+  | PortfolioEnvelope<"skip_event_phase", PortfolioSkipEventPhase>
+  | PortfolioEnvelope<"skip_event_receipt", PortfolioSkipEventReceipt>
   | PortfolioEnvelope<"mine_ladder_request", PortfolioMineLadderRequest>
   | PortfolioEnvelope<"mine_ladder_probe_request", PortfolioMineLadderRequest>
   | PortfolioEnvelope<"mine_ladder_probe", PortfolioMineLadderProbe>
@@ -546,6 +635,17 @@ export function validatePortfolioMessage(
       return validatePortfolioMineEntryPhase(value.payload);
     case "enter_mine_receipt":
       return validatePortfolioMineEntryReceipt(value.payload);
+    case "skip_event_request":
+    case "skip_event_probe_request":
+      return validatePortfolioSkipEventRequest(value.payload, expectedScope, nowMs);
+    case "skip_event_probe":
+      return validatePortfolioSkipEventProbe(value.payload, expectedScope);
+    case "skip_event_cancel_request":
+      return validatePortfolioSkipEventCancelRequest(value.payload, expectedScope);
+    case "skip_event_phase":
+      return validatePortfolioSkipEventPhase(value.payload);
+    case "skip_event_receipt":
+      return validatePortfolioSkipEventReceipt(value.payload, expectedScope);
     case "mine_ladder_request":
     case "mine_ladder_probe_request":
       return validatePortfolioMineLadderRequest(value.payload, expectedScope, nowMs);
@@ -617,6 +717,7 @@ export function validatePortfolioMineElevatorProbe(value: unknown, expectedScope
       "currentFloor",
       "lowestMineLevel",
       "targetUnlocked",
+      "elevatorObserved",
       "selectedCheckpoint",
     ]) &&
     validId(value.requestId) &&
@@ -631,6 +732,7 @@ export function validatePortfolioMineElevatorProbe(value: unknown, expectedScope
     Number.isSafeInteger(value.lowestMineLevel) &&
     value.lowestMineLevel >= 0 &&
     typeof value.targetUnlocked === "boolean" &&
+    typeof value.elevatorObserved === "boolean" &&
     isMineElevatorCheckpoint(value.selectedCheckpoint)
     ? null
     : "invalid_portfolio_mine_elevator_probe";
@@ -1464,7 +1566,7 @@ function isSleepDayTerminalState(value: unknown): value is PortfolioSleepDayTerm
 }
 
 const SLEEP_DAY_PHASE_ORDER: readonly PortfolioSleepDayPhaseName[] = PORTFOLIO_SLEEP_DAY_PHASES;
-function phaseIndexRevisionInvalid(phases: readonly PortfolioSleepDayPhase[], phase: PortfolioSleepDayPhase): boolean {
+function _phaseIndexRevisionInvalid(phases: readonly PortfolioSleepDayPhase[], phase: PortfolioSleepDayPhase): boolean {
   const index = phases.indexOf(phase);
   return index > 0 && phase.revision < phases[index - 1]!.revision;
 }
@@ -1532,7 +1634,7 @@ export type PortfolioMineLadderProbe = Readonly<{
   currentFloor: number;
   lowestMineLevel: number;
   targetUnlocked: boolean;
-  ladderInteractionAvailable: boolean;
+  ladderObserved: boolean;
   targetFloor: number;
 }>;
 export type PortfolioMineLadderFreshFloorRequest = Readonly<{
@@ -1641,7 +1743,7 @@ export function validatePortfolioMineLadderProbe(value: unknown, scope: Portfoli
       "currentFloor",
       "lowestMineLevel",
       "targetUnlocked",
-      "ladderInteractionAvailable",
+      "ladderObserved",
       "targetFloor",
     ]) &&
     validId(value.requestId) &&
@@ -1656,7 +1758,7 @@ export function validatePortfolioMineLadderProbe(value: unknown, scope: Portfoli
     Number.isSafeInteger(value.lowestMineLevel) &&
     value.lowestMineLevel >= 0 &&
     typeof value.targetUnlocked === "boolean" &&
-    typeof value.ladderInteractionAvailable === "boolean" &&
+    typeof value.ladderObserved === "boolean" &&
     Number.isSafeInteger(value.targetFloor) &&
     value.targetFloor >= 1 &&
     value.targetFloor <= 120
@@ -2022,7 +2124,6 @@ export type PortfolioMineEntryProbe = Readonly<{
   currentFloor: number;
   lowestMineLevel: number;
   targetUnlocked: boolean;
-  entryInteractionAvailable: boolean;
   targetFloor: number;
 }>;
 export type PortfolioMineEntryFreshFloorRequest = Readonly<{
@@ -2131,7 +2232,6 @@ export function validatePortfolioMineEntryProbe(value: unknown, scope: Portfolio
       "currentFloor",
       "lowestMineLevel",
       "targetUnlocked",
-      "entryInteractionAvailable",
       "targetFloor",
     ]) &&
     validId(value.requestId) &&
@@ -2146,7 +2246,6 @@ export function validatePortfolioMineEntryProbe(value: unknown, scope: Portfolio
     Number.isSafeInteger(value.lowestMineLevel) &&
     value.lowestMineLevel >= 0 &&
     typeof value.targetUnlocked === "boolean" &&
-    typeof value.entryInteractionAvailable === "boolean" &&
     Number.isSafeInteger(value.targetFloor) &&
     value.targetFloor >= 1 &&
     value.targetFloor === 1
@@ -2461,6 +2560,154 @@ export function validatePortfolioMineEntryReceipt(v: unknown): string | null {
   return v.state === "succeeded" || shortFailure || postTransitionFailure
     ? null
     : "invalid_portfolio_enter_mine_phase_trace";
+}
+
+const SKIP_EVENT_UNCERTAIN_REASONS = new Set<PortfolioReasonCode>([
+  "native_operation_uncertain",
+  "postcondition_observation_invalid",
+  "stale_callback_revision",
+  "portfolio_bridge_disconnected",
+]);
+function isPortfolioSkipEventTerminalState(value: unknown): value is PortfolioSkipEventTerminalState {
+  return isMineElevatorTerminalState(value);
+}
+function isMonotonicPortfolioSkipEventPhaseTrace(phases: readonly PortfolioSkipEventPhase[]): boolean {
+  let prior = -1;
+  let revision = -1;
+  let requestId: string | undefined;
+  let traceId: string | undefined;
+  let executionId: string | undefined;
+  for (const phase of phases) {
+    const index = PORTFOLIO_SKIP_EVENT_PHASES.indexOf(phase.phase);
+    if (index <= prior || phase.revision < revision) return false;
+    requestId ??= phase.requestId;
+    traceId ??= phase.traceId;
+    executionId ??= phase.executionId;
+    if (phase.requestId !== requestId || phase.traceId !== traceId || phase.executionId !== executionId) return false;
+    prior = index;
+    revision = phase.revision;
+  }
+  return true;
+}
+function validPortfolioSkipEventTerminalReason(
+  state: PortfolioSkipEventTerminalState,
+  reason: PortfolioReasonCode,
+): boolean {
+  switch (state) {
+    case "succeeded": return reason === "skip_event_completed";
+    case "cancelled": return reason === "cancelled";
+    case "expired": return reason === "deadline_expired";
+    case "failed": return reason === "native_operation_failed";
+    case "uncertain": return SKIP_EVENT_UNCERTAIN_REASONS.has(reason);
+    case "rejected":
+      return reason.startsWith("invalid_") || reason === "revision_mismatch" || reason === "deadline_expired" ||
+        reason === "skip_event_no_active_event" || reason === "skip_event_target_invalid" ||
+        reason === "execution_not_active" ||
+        reason === "cancellation_token_mismatch" || reason === "idempotency_key_reused_with_different_request";
+    case "blocked":
+      return reason.startsWith("portfolio_") || reason === "execution_already_active" ||
+        reason === "adapter_unavailable" || reason === "irreversible_phase_reached";
+  }
+}
+export function validatePortfolioSkipEventRequest(
+  v: unknown,
+  s: PortfolioScope,
+  n = Date.now(),
+): string | null {
+  return isRecord(v) && hasExactKeys(v, ["action", "requestId", "traceId", "idempotencyKey", "expectedRevision", "deadlineMs", "cancellationToken", "scope"]) &&
+    v.action === PORTFOLIO_SKIP_EVENT_ACTION && validId(v.requestId) && validId(v.traceId) && validId(v.idempotencyKey) &&
+    Number.isSafeInteger(v.expectedRevision) && v.expectedRevision >= 0 && Number.isSafeInteger(v.deadlineMs) &&
+    v.deadlineMs > n && v.deadlineMs <= n + 1800000 && validToken(v.cancellationToken) && samePortfolioScope(v.scope, s)
+    ? null : "invalid_portfolio_skip_event_request";
+}
+export function validatePortfolioSkipEventCancelRequest(v: unknown, s: PortfolioScope): string | null {
+  return isRecord(v) && hasExactKeys(v, ["action", "requestId", "traceId", "executionId", "cancellationToken", "scope"]) &&
+    v.action === PORTFOLIO_SKIP_EVENT_ACTION && validId(v.requestId) && validId(v.traceId) && validId(v.executionId) &&
+    validToken(v.cancellationToken) && samePortfolioScope(v.scope, s)
+    ? null : "invalid_portfolio_skip_event_cancel_request";
+}
+export function validatePortfolioSkipEventProbe(v: unknown, s: PortfolioScope): string | null {
+  return isRecord(v) && hasExactKeys(v, ["requestId", "traceId", "scope", "revision", "fresh", "eventObserved", "eventSkippable", "opaqueEventTarget"]) &&
+    validId(v.requestId) && validId(v.traceId) && samePortfolioScope(v.scope, s) && Number.isSafeInteger(v.revision) && v.revision >= 0 &&
+    v.fresh === true && typeof v.eventObserved === "boolean" && typeof v.eventSkippable === "boolean" &&
+    (v.opaqueEventTarget === null || (validId(v.opaqueEventTarget) && v.opaqueEventTarget !== "none"))
+    ? null : "invalid_portfolio_skip_event_probe";
+}
+export function validatePortfolioSkipEventPhase(v: unknown): string | null {
+  return isRecord(v) && hasExactKeys(v, ["requestId", "traceId", "executionId", "phase", "revision", "reasonCode"]) &&
+    validId(v.requestId) && validId(v.traceId) && validId(v.executionId) &&
+    typeof v.phase === "string" && (PORTFOLIO_SKIP_EVENT_PHASES as readonly string[]).includes(v.phase) &&
+    Number.isSafeInteger(v.revision) && v.revision >= 0 && validReason(v.reasonCode)
+    ? null : "invalid_portfolio_skip_event_phase";
+}
+export function validatePortfolioSkipEventReceipt(v: unknown, s?: PortfolioScope): string | null {
+  if (!isRecord(v) || !hasExactKeys(v, ["requestId", "traceId", "executionId", "state", "revision", "reasonCode", "evidence", "postcondition"]) ||
+    !validId(v.requestId) || !validId(v.traceId) || !validId(v.executionId) || !isPortfolioSkipEventTerminalState(v.state) ||
+    !Number.isSafeInteger(v.revision) || v.revision < 0 || !validReason(v.reasonCode) || !isRecord(v.evidence) || !isRecord(v.postcondition))
+    return "invalid_portfolio_skip_event_receipt";
+  const e = v.evidence, p = v.postcondition;
+  if (!hasExactKeys(e, ["scope", "phaseTrace", "eventObserved", "eventSkippable", "opaqueEventTarget", "nativeEventId", "nativeSkipObserved", "eventCleared", "postEventStateClean"]) ||
+    !validPortfolioScope(e.scope as PortfolioScope) || (s !== undefined && !samePortfolioScope(e.scope, s)) || !Array.isArray(e.phaseTrace) || e.phaseTrace.length < 2 ||
+    e.phaseTrace.some(validatePortfolioSkipEventPhase) || typeof e.eventObserved !== "boolean" || typeof e.eventSkippable !== "boolean" ||
+    (e.opaqueEventTarget !== null && (!validId(e.opaqueEventTarget) || e.opaqueEventTarget === "none")) ||
+    (e.nativeEventId !== null && !validId(e.nativeEventId)) || typeof e.nativeSkipObserved !== "boolean" || typeof e.eventCleared !== "boolean" ||
+    typeof e.postEventStateClean !== "boolean" || !hasExactKeys(p, ["postEventStateClean", "freshObservation", "sameExecution"]) ||
+    typeof p.postEventStateClean !== "boolean" || typeof p.freshObservation !== "boolean" || typeof p.sameExecution !== "boolean")
+    return "invalid_portfolio_skip_event_receipt";
+  const phases = e.phaseTrace as PortfolioSkipEventPhase[];
+  if (phases[0]?.phase !== "fresh_observed" || phases.at(-1)?.phase !== "terminal" || !isMonotonicPortfolioSkipEventPhaseTrace(phases) ||
+    phases.at(-1)?.reasonCode !== v.reasonCode || phases.at(-1)?.revision !== v.revision ||
+    phases.some((x) => x.requestId !== v.requestId || x.traceId !== v.traceId || x.executionId !== v.executionId) ||
+    !validPortfolioSkipEventTerminalReason(v.state, v.reasonCode))
+    return "invalid_portfolio_skip_event_phase_trace";
+  const shortFailure = v.state !== "succeeded" && ((phases.length === 2 && phases[0]?.revision === phases[1]?.revision) ||
+    (phases.length === 3 && phases[1]?.phase === "accepted" && phases[1]?.revision === phases[2]?.revision));
+  // A native Event.skipEvent boundary is irreversible. If a later lifecycle
+  // invalidation prevents a clean reread, preserve the exact observed native
+  // skip as an uncertain terminal rather than discarding its receipt.
+  const postNativeFailure = v.state === "uncertain" && v.reasonCode === "native_operation_uncertain" &&
+    phases.length === 4 &&
+    phases[0]?.phase === "fresh_observed" && phases[0]?.reasonCode === "fresh_observed" &&
+    phases[1]?.phase === "accepted" && phases[1]?.reasonCode === "accepted" &&
+    phases[2]?.phase === "native_skip" && phases[2]?.reasonCode === "skip_event_native_skip" &&
+    phases[3]?.phase === "terminal" && phases[3]?.reasonCode === "native_operation_uncertain" &&
+    phases[0]?.revision === phases[1]?.revision &&
+    phases[2]!.revision > phases[1]!.revision &&
+    phases[3]?.revision === phases[2]?.revision &&
+    e.eventObserved && e.nativeSkipObserved;
+  const expectedPhaseReasons = [
+    "fresh_observed",
+    "accepted",
+    "skip_event_native_skip",
+    "postcondition_observed",
+    "skip_event_completed",
+  ];
+  const successTrace = phases.length === 5 && phases.every((phase, index) =>
+    phase.phase === PORTFOLIO_SKIP_EVENT_PHASES[index] && phase.reasonCode === expectedPhaseReasons[index]
+  );
+  const successRevisions = phases.length === 5 &&
+    phases[0]?.revision === phases[1]?.revision &&
+    phases[2]!.revision > phases[1]!.revision &&
+    phases[3]!.revision > phases[2]!.revision &&
+    phases[4]!.revision === phases[3]!.revision;
+  const success = successTrace && successRevisions;
+  if (v.state === "succeeded" && (!success || !e.eventObserved || !e.nativeSkipObserved || !e.eventCleared || !e.postEventStateClean ||
+    !p.postEventStateClean || !p.freshObservation || !p.sameExecution)) return "invalid_portfolio_skip_event_receipt";
+  return v.state === "succeeded" || shortFailure || postNativeFailure
+    ? null
+    : "invalid_portfolio_skip_event_phase_trace";
+}
+export function materializePortfolioSkipEventProbe(v: unknown, r: Pick<PortfolioSkipEventRequest, "requestId" | "traceId" | "expectedRevision">, s: PortfolioScope): PortfolioSkipEventProbe {
+  if (validatePortfolioSkipEventProbe(v, s) !== null) throw new Error("invalid_portfolio_skip_event_probe");
+  const p = v as PortfolioSkipEventProbe;
+  if (p.requestId !== r.requestId || p.traceId !== r.traceId || p.revision !== r.expectedRevision) throw new Error("portfolio_skip_event_probe_correlation_mismatch");
+  return Object.freeze({ ...p, scope: Object.freeze({ ...p.scope }) });
+}
+export function materializePortfolioSkipEventReceipt(v: unknown, r: Pick<PortfolioSkipEventRequest, "requestId" | "traceId" | "expectedRevision">, s: PortfolioScope): PortfolioSkipEventReceipt {
+  if (validatePortfolioSkipEventReceipt(v, s) !== null) throw new Error("invalid_portfolio_skip_event_receipt");
+  const x = v as PortfolioSkipEventReceipt;
+  if (x.requestId !== r.requestId || x.traceId !== r.traceId || x.evidence.phaseTrace[0]?.revision !== r.expectedRevision) throw new Error("portfolio_skip_event_request_correlation_mismatch");
+  return Object.freeze({ ...x, evidence: Object.freeze({ ...x.evidence, phaseTrace: Object.freeze([...x.evidence.phaseTrace]) }), postcondition: Object.freeze({ ...x.postcondition }) });
 }
 export function materializePortfolioMineEntryReceipt(
   v: unknown,

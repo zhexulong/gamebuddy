@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server, type Socket } from "node:net";
 import test from "node:test";
 
-import { type VoiceAudioEpochAdmission, type VoiceEnqueueAdmission } from "./voice.js";
+import type { VoiceAudioEpochAdmission, VoiceEnqueueAdmission } from "./voice.js";
 import { LocalVoiceGatewayClient } from "./voice-gateway-client.js";
 
 function enqueueAdmission(

@@ -1,6 +1,6 @@
+import { type Static, type TSchema, Type } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 import { Format } from "typebox/format";
-import { Type, type Static, type TSchema } from "typebox";
 
 export const TAVERN_BROWSER_API_V1 = "tavern_browser_api/v1" as const;
 export const TAVERN_BROWSER_API_VERSION = 1 as const;
@@ -29,12 +29,15 @@ const isNfcUtf8Text = (value: string): boolean =>
   !hasUnpairedUtf16Surrogate(value) &&
   value === value.normalize("NFC") &&
   new TextEncoder().encode(value).byteLength <= MAX_TEXT_UTF8_BYTES;
+const isMemoryText = (value: string): boolean =>
+  !hasUnpairedUtf16Surrogate(value) && value === value.normalize("NFC") && new TextEncoder().encode(value).byteLength <= 4096;
 const isCanonicalUnpaddedBase64Url = (value: string): boolean => {
   if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) return false;
   const finalValue = BASE64URL_ALPHABET.indexOf(value.at(-1)!);
   return value.length % 4 === 0 || (value.length % 4 === 2 ? finalValue % 16 === 0 : finalValue % 4 === 0);
 };
 Format.Set("tavern-browser-nfc-utf8-text-v1", isNfcUtf8Text);
+Format.Set("tavern-browser-memory-text-v1", isMemoryText);
 Format.Set("tavern-browser-canonical-base64url-v1", isCanonicalUnpaddedBase64Url);
 
 const strictObject = <T extends Record<string, TSchema>>(properties: T) =>
@@ -55,6 +58,7 @@ const IdempotencyKey = Type.String({
 const Revision = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
 const PositiveGeneration = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const BoundedText = Type.String({ minLength: 1, format: "tavern-browser-nfc-utf8-text-v1" });
+const MemoryText = Type.String({ minLength: 1, format: "tavern-browser-memory-text-v1" });
 /** Player display title: NFC bounded text, 1..120 chars (exact store ceiling). */
 const TitleText = Type.String({ minLength: 1, maxLength: 120, format: "tavern-browser-nfc-utf8-text-v1" });
 const ProblemCode = Type.Union([
@@ -75,8 +79,6 @@ const ProblemCode = Type.Union([
   Type.Literal("turn_already_terminal"),
   Type.Literal("runtime_unavailable"),
   Type.Literal("presentation_unavailable"),
-  Type.Literal("memory_mutation_pending"),
-  Type.Literal("memory_mutation_unavailable"),
   Type.Literal("storage_unavailable"),
   Type.Literal("state_reconciliation_required"),
 ]);
@@ -116,28 +118,68 @@ export const BrowserDraftV1Schema = strictObject({
   revision: Revision,
   text: Type.Union([BoundedText, Type.Null()]),
 });
-const MemoryState = strictObject({
-  readAvailable: Type.Boolean(),
-  mutationAvailable: Type.Boolean(),
-  revision: Type.Union([Revision, Type.Null()]),
-  summaries: Type.Array(
-    strictObject({
-      handle: OpaqueHandle,
-      title: Type.String({ minLength: 1, maxLength: 256 }),
-      pinned: Type.Boolean(),
-    }),
-    { maxItems: 200 },
-  ),
-  lastOutcome: Type.Optional(
-    Type.Union([Type.Literal("committed"), Type.Literal("conflict"), Type.Literal("unavailable")]),
-  ),
+/**
+ * One safe bounded Memory row the browser may see. The handle is an opaque
+ * projected handle (never the vendor CAS `stateToken`, which exceeds the
+ * frozen handle bound); the title is a fixed category label and never derives
+ * from stored content. `sourceRefs` and the raw state token never leave the Host.
+ */
+export const MemoryItemV1Schema = strictObject({
+  handle: OpaqueHandle,
+  title: Type.String({ minLength: 1, maxLength: 256 }),
+  content: MemoryText,
+  category: Type.Union([Type.Literal("semantic"), Type.Literal("interaction")]),
+  status: Type.Union([Type.Literal("active"), Type.Literal("permanent"), Type.Literal("archived")]),
+  pinned: Type.Boolean(),
 });
+/**
+ * Read-only Memory projection for the exact mounted continuity (design/40 P8
+ * item 4 / design/78 Task 6). `projectionRevision` is an opaque content
+ * fingerprint of the projected rows so a client can detect a changed set;
+ * it is not a storage revision and never carries a durable identifier.
+ */
+export const MemoryReadV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  projectionRevision: OpaqueHandle,
+  memories: Type.Array(MemoryItemV1Schema, { maxItems: 200 }),
+});
+/**
+ * Player-authored ordinary Memory CRUD. The browser provides only opaque
+ * projection facts; the Host resolves them to a current vendor row before a
+ * vendor-owned state-token CAS. No provider, Pi session, receipt or evidence
+ * fact is expressible by this command.
+ */
+export const MemoryMutationCommandV1Schema = Type.Union([
+  strictObject({
+    apiVersion: ApiVersion,
+    operation: Type.Literal("create"),
+    expectedProjectionRevision: OpaqueHandle,
+    content: MemoryText,
+  }),
+  strictObject({
+    apiVersion: ApiVersion,
+    operation: Type.Literal("update"),
+    expectedProjectionRevision: OpaqueHandle,
+    handle: OpaqueHandle,
+    content: MemoryText,
+  }),
+  strictObject({
+    apiVersion: ApiVersion,
+    operation: Type.Literal("archive"),
+    expectedProjectionRevision: OpaqueHandle,
+    handle: OpaqueHandle,
+  }),
+]);
+/** Every successful mutation returns the same safe fresh read model. */
+export const MemoryMutationResultV1Schema = MemoryReadV1Schema;
 const OperationId = Type.Union([
   Type.Literal("chat.submit"),
   Type.Literal("chat.cancel"),
   Type.Literal("draft.save"),
   Type.Literal("draft.discard"),
   Type.Literal("chat.rename"),
+  Type.Literal("memory.mutate"),
+  Type.Literal("world-info.bind"),
 ]);
 const LabelKey = Type.Union([
   Type.Literal("tavern.nav.chat"),
@@ -147,6 +189,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.draft.save"),
   Type.Literal("tavern.operation.draft.discard"),
   Type.Literal("tavern.operation.rename"),
+  Type.Literal("tavern.operation.memory.mutate"),
+  Type.Literal("tavern.operation.world-info.bind"),
 ]);
 export const TavernBrowserOperationV1Schema = strictObject({
   operationId: OperationId,
@@ -160,7 +204,56 @@ const NavigationItem = strictObject({
   labelKey: LabelKey,
   availability: Type.Union([Type.Literal("available"), Type.Literal("unavailable")]),
 });
+const WorldInfoBindingState = Type.Union([
+  Type.Literal("none"),
+  Type.Literal("selected"),
+  Type.Literal("locked"),
+  Type.Literal("unavailable"),
+]);
+/**
+ * Safe World Info binding projection for the exact mounted Chat. `revision`
+ * and every item `handle` are opaque values minted by the Host binding
+ * service; the browser can never decode them into a durable fact.
+ */
+export const WorldInfoStateV1Schema = strictObject({
+  state: WorldInfoBindingState,
+  revision: OpaqueHandle,
+  items: Type.Array(
+    strictObject({
+      handle: OpaqueHandle,
+      title: Type.String({ minLength: 1, maxLength: 256 }),
+      summary: Type.Union([Type.String({ maxLength: 512 }), Type.Null()]),
+      selected: Type.Boolean(),
+    }),
+    { maxItems: 100 },
+  ),
+});
+/**
+ * Exact bind/unbind command. `expectedRevision` and `sourceHandle` are the
+ * opaque handles from the last validated state projection; a raw title,
+ * timestamp, storage handle or canonical hash is never expressible here.
+ */
+export const SetWorldInfoBindingCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  expectedRevision: OpaqueHandle,
+  sourceHandle: Type.Union([OpaqueHandle, Type.Null()]),
+});
+
 export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
+
+const MemoryStateSnapshotV1Schema = Type.Union([
+  strictObject({
+    readAvailable: Type.Literal(true),
+    mutationAvailable: Type.Boolean(),
+    projectionRevision: OpaqueHandle,
+  }),
+  strictObject({
+    readAvailable: Type.Literal(false),
+    mutationAvailable: Type.Literal(false),
+    projectionRevision: Type.Null(),
+  }),
+]);
 
 export const TavernStateSnapshotV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -184,32 +277,10 @@ export const TavernStateSnapshotV1Schema = strictObject({
       transcript: Type.Array(BrowserMessageV1Schema, { maxItems: 500 }),
       draft: strictObject({ revision: Revision, present: Type.Boolean() }),
       turn: Type.Union([BrowserTurnV1Schema, Type.Null()]),
-      worldInfo: Type.Union([
-        Type.Null(),
-        strictObject({
-          state: Type.Union([
-            Type.Literal("none"),
-            Type.Literal("selected"),
-            Type.Literal("locked"),
-            Type.Literal("unavailable"),
-          ]),
-          items: Type.Array(
-            strictObject({
-              handle: OpaqueHandle,
-              title: Type.String({ minLength: 1, maxLength: 256 }),
-              summary: Type.Union([Type.String({ maxLength: 512 }), Type.Null()]),
-            }),
-            { maxItems: 100 },
-          ),
-        }),
-      ]),
+      worldInfo: Type.Union([Type.Null(), WorldInfoStateV1Schema]),
     }),
   ]),
-  memory: strictObject({
-    readAvailable: Type.Boolean(),
-    mutationAvailable: Type.Boolean(),
-    projectionRevision: Type.Union([OpaqueHandle, Type.Null()]),
-  }),
+  memory: MemoryStateSnapshotV1Schema,
   eventStream: Type.Union([Type.Null(), TavernStateEventStreamV1Schema]),
 });
 export const SubmitMessageCommandV1Schema = strictObject({
@@ -218,7 +289,6 @@ export const SubmitMessageCommandV1Schema = strictObject({
   text: BoundedText,
   locale: Type.Union([Type.Literal("en"), Type.Literal("zh-CN")]),
   expectedDraftRevision: Type.Optional(Revision),
-  memoryDelegation: Type.Optional(Type.Union([Type.Literal("none"), Type.Literal("read")])),
 });
 export const SaveDraftCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
@@ -317,7 +387,6 @@ export const BrowserEventV1Schema = Type.Union([
     payload: strictObject({ revision: Revision, present: Type.Boolean() }),
   }),
   strictObject({ ...EventBase, eventType: Type.Literal("turn.state_changed"), payload: BrowserTurnV1Schema }),
-  strictObject({ ...EventBase, eventType: Type.Literal("memory.changed"), payload: MemoryState }),
   strictObject({
     ...EventBase,
     eventType: Type.Literal("stream.resync_required"),
@@ -350,8 +419,6 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "turn_already_terminal",
   "runtime_unavailable",
   "presentation_unavailable",
-  "memory_mutation_pending",
-  "memory_mutation_unavailable",
   "storage_unavailable",
   "state_reconciliation_required",
 ] as const);
@@ -516,12 +583,68 @@ const RouteDescriptors = Object.freeze([
     auth: "browser_session",
     origin: "same-origin",
     csrf: "required",
-    idempotency: "required",
-    headers: IdempotentCsrfHeaders,
+    idempotency: "none",
+    headers: CsrfHeaders,
     pathParams: TurnPath,
     query: noQuery,
     request: CancelTurnCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: CancelTurnResultV1Schema },
+  }),
+  route({
+    routeId: "memory.read",
+    method: "GET",
+    path: "/api/tavern/v1/memory",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: MemoryReadV1Schema },
+  }),
+  route({
+    routeId: "memory.mutate",
+    method: "PUT",
+    path: "/api/tavern/v1/memory",
+    operationId: "memory.mutate",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: MemoryMutationCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: MemoryMutationResultV1Schema },
+  }),
+  route({
+    routeId: "world-info.read",
+    method: "GET",
+    path: "/api/tavern/v1/world-info",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
+  }),
+  route({
+    routeId: "world-info.bind",
+    method: "PUT",
+    path: "/api/tavern/v1/world-info",
+    operationId: "world-info.bind",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: SetWorldInfoBindingCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
   }),
   route({
     routeId: "events",
@@ -568,6 +691,12 @@ export const TavernBrowserContractV1 = Object.freeze({
     ChatListV1Schema,
     RenameChatTitleCommandV1Schema,
     ChatTitleV1Schema,
+    MemoryItemV1Schema,
+    MemoryReadV1Schema,
+    MemoryMutationCommandV1Schema,
+    MemoryMutationResultV1Schema,
+    WorldInfoStateV1Schema,
+    SetWorldInfoBindingCommandV1Schema,
     SubmitResultV1Schema,
     MessageSubmissionStatusV1Schema,
     CancelTurnResultV1Schema,
@@ -588,11 +717,23 @@ export type TavernBrowserNavigationItemIdV1 = Static<typeof NavigationItemId>;
 export type SubmitMessageCommandV1 = Static<typeof SubmitMessageCommandV1Schema>;
 export type MessageSubmissionStatusQueryV1 = Static<typeof MessageSubmissionStatusQueryV1Schema>;
 export type MessageSubmissionStatusV1 = Static<typeof MessageSubmissionStatusV1Schema>;
+export type CancelTurnCommandV1 = Static<typeof CancelTurnCommandV1Schema>;
+export type CancelTurnResultV1 = Static<typeof CancelTurnResultV1Schema>;
 export type ChatListQueryV1 = Static<typeof ChatListQueryV1Schema>;
 export type ChatListEntryV1 = Static<typeof ChatListEntryV1Schema>;
 export type ChatListV1 = Static<typeof ChatListV1Schema>;
 export type RenameChatTitleCommandV1 = Static<typeof RenameChatTitleCommandV1Schema>;
 export type ChatTitleV1 = Static<typeof ChatTitleV1Schema>;
+export type MemoryItemV1 = Static<typeof MemoryItemV1Schema>;
+export type MemoryMutationCommandV1 = Static<typeof MemoryMutationCommandV1Schema>;
+export type MemoryMutationResultV1 = Static<typeof MemoryMutationResultV1Schema>;
+export type WorldInfoStateV1 = Static<typeof WorldInfoStateV1Schema>;
+export type SetWorldInfoBindingCommandV1 = Static<typeof SetWorldInfoBindingCommandV1Schema>;
+export type MemoryReadV1 = Readonly<{
+  apiVersion: typeof TAVERN_BROWSER_API_VERSION;
+  projectionRevision: string;
+  memories: readonly MemoryItemV1[];
+}>;
 export type TavernProblemV1 = Static<typeof TavernProblemV1Schema>;
 export type BrowserEventV1 = Static<typeof BrowserEventV1Schema>;
 export type TavernBrowserOperationIdV1 = Static<typeof OperationId>;
@@ -615,8 +756,20 @@ export type ComposedTavernProfile = Readonly<{
   readonly operationIds: readonly TavernBrowserOperationIdV1[];
   readonly navigationItemIds: readonly TavernBrowserNavigationItemIdV1[];
 }>;
+/**
+ * Module-private identity registry: only the frozen capability slice minted and
+ * returned by `composeTavernProfile` is branded here. A structural clone of a
+ * composed profile (including an `Object.freeze` spread copy) is not a composed
+ * capability slice and must fail before any durable I/O.
+ */
+const composedTavernProfiles = new WeakSet<object>();
 export function composeTavernProfile(input: unknown): ComposedTavernProfile {
-  if (typeof input !== "object" || input === null || Array.isArray(input) || Object.getPrototypeOf(input) !== Object.prototype)
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    Array.isArray(input) ||
+    Object.getPrototypeOf(input) !== Object.prototype
+  )
     throw new TypeError("Tavern profile must be a plain object");
   const value = input as Record<string, unknown>;
   const expectedKeys = ["profileId", "releaseTier", "routeIds", "operationIds", "navigationItemIds"] as const;
@@ -641,8 +794,7 @@ export function composeTavernProfile(input: unknown): ComposedTavernProfile {
     throw new TypeError("Tavern profile id is invalid");
   if (value.releaseTier !== "chat_core" && value.releaseTier !== "tavern_management")
     throw new TypeError("Tavern release tier is invalid");
-  if (!Array.isArray(value.routeIds) || value.routeIds.length > 100)
-    throw new TypeError("Tavern routes are invalid");
+  if (!Array.isArray(value.routeIds) || value.routeIds.length > 100) throw new TypeError("Tavern routes are invalid");
   if (!Array.isArray(value.operationIds) || value.operationIds.length > 100)
     throw new TypeError("Tavern operations are invalid");
   if (!Array.isArray(value.navigationItemIds) || value.navigationItemIds.length > 100)
@@ -684,13 +836,24 @@ export function composeTavernProfile(input: unknown): ComposedTavernProfile {
     if (seenNavigationItemIds.has(navigationItemId)) throw new TypeError("Tavern navigation item is duplicated");
     seenNavigationItemIds.add(navigationItemId);
   }
-  return Object.freeze({
+  const profile = Object.freeze({
     profileId: value.profileId,
     releaseTier: value.releaseTier,
     routeIds: Object.freeze([...value.routeIds] as TavernBrowserRouteIdV1[]),
     operationIds: Object.freeze([...value.operationIds] as TavernBrowserOperationIdV1[]),
     navigationItemIds: Object.freeze([...value.navigationItemIds] as TavernBrowserNavigationItemIdV1[]),
   });
+  composedTavernProfiles.add(profile);
+  return profile;
+}
+
+/**
+ * Identity-brand type guard: true only for the exact frozen object returned by
+ * `composeTavernProfile` (plus actual route/operation membership checks that the
+ * binding service performs separately). Structural clones are never branded.
+ */
+export function isComposedTavernProfile(value: unknown): value is ComposedTavernProfile {
+  return typeof value === "object" && value !== null && composedTavernProfiles.has(value);
 }
 
 export const TavernBrowserValidatorsV1: Readonly<Record<keyof typeof TavernBrowserContractV1.schemas, Validator>> =

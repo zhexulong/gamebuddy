@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Writable } from "node:stream";
+import test from "node:test";
 import {
   blockedAdmissionRecord,
   parseProductionAdmissionInvocation,

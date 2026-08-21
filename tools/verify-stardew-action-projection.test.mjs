@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import test from "node:test";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import test from "node:test";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
-import { parseModProjectionManifest, hostPublishedProjection, verifyStardewActionProjection } from "./verify-stardew-action-projection.mjs";
+import {
+  hostPublishedProjection,
+  parseModProjectionManifest,
+  verifyStardewActionProjection,
+} from "./verify-stardew-action-projection.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -35,7 +39,13 @@ const CONSUMER_CLASSES = Object.freeze({
     actionId: "till_soil",
     runner: "run-stardew-native-local-player-till-soil-smoke.mjs",
     terminalReasonCode: "soil_tilled",
-    mustImport: ["connectNativeLocalClient", "executeFresh", "observeFresh", "waitForStableRevision", "waitForTerminal"],
+    mustImport: [
+      "connectNativeLocalClient",
+      "executeFresh",
+      "observeFresh",
+      "waitForStableRevision",
+      "waitForTerminal",
+    ],
     mustNotImport: ["delay"],
   }),
   delayed_multi_stage: Object.freeze({
@@ -58,7 +68,13 @@ async function runnerSource(className) {
   return readFile(resolve(ROOT, "tools", expected.runner), "utf8");
 }
 
-const action = Object.freeze({ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", requiredCapability: "move_to_tile" });
+const action = Object.freeze({
+  actionId: "move_to_tile",
+  familyId: "movement_navigation",
+  identityVersion: 1,
+  lifecycle: "published",
+  requiredCapability: "move_to_tile",
+});
 const manifest = (actions = [action]) => JSON.stringify({ schema: "farmhand_action_projection_manifest/v1", actions });
 const host = (actions) => ({ PUBLISHED_STARDEW_ACTIONS: actions ?? [action] });
 
@@ -67,7 +83,10 @@ function fails(code, callback) {
 }
 
 test("verifies exact default Mod-to-Host projection bidirectionally", () => {
-  assert.deepEqual(verifyStardewActionProjection(parseModProjectionManifest(manifest()), hostPublishedProjection(host())), { actionCount: 1 });
+  assert.deepEqual(
+    verifyStardewActionProjection(parseModProjectionManifest(manifest()), hostPublishedProjection(host())),
+    { actionCount: 1 },
+  );
 });
 
 test("rejects malformed JSON and schema violations", () => {
@@ -78,17 +97,28 @@ test("rejects malformed JSON and schema violations", () => {
 
 test("rejects duplicate and missing actions in either projection", () => {
   fails("manifest_duplicate_action_id", () => parseModProjectionManifest(manifest([action, action])));
-  fails("host_missing_move_to_tile", () => verifyStardewActionProjection(parseModProjectionManifest(manifest()), hostPublishedProjection(host([]))));
-  fails("manifest_missing_move_to_tile", () => verifyStardewActionProjection(parseModProjectionManifest(manifest([])), hostPublishedProjection(host())));
+  fails("host_missing_move_to_tile", () =>
+    verifyStardewActionProjection(parseModProjectionManifest(manifest()), hostPublishedProjection(host([]))),
+  );
+  fails("manifest_missing_move_to_tile", () =>
+    verifyStardewActionProjection(parseModProjectionManifest(manifest([])), hostPublishedProjection(host())),
+  );
 });
 
 test("rejects family, identity, lifecycle, and required-capability drift", () => {
-  for (const [field, value] of [["familyId", "other"], ["identityVersion", 2], ["lifecycle", "experimental"], ["requiredCapability", "other_capability"]]) {
+  for (const [field, value] of [
+    ["familyId", "other"],
+    ["identityVersion", 2],
+    ["lifecycle", "experimental"],
+    ["requiredCapability", "other_capability"],
+  ]) {
     const changed = { ...action, [field]: value };
     if (field === "lifecycle") {
       fails("manifest_action_fields", () => parseModProjectionManifest(manifest([changed])));
     } else {
-      fails(`field_mismatch_move_to_tile_${field}`, () => verifyStardewActionProjection(parseModProjectionManifest(manifest()), hostPublishedProjection(host([changed]))));
+      fails(`field_mismatch_move_to_tile_${field}`, () =>
+        verifyStardewActionProjection(parseModProjectionManifest(manifest()), hostPublishedProjection(host([changed]))),
+      );
     }
   }
 });
@@ -98,7 +128,11 @@ test("actual descriptor identity binds the three shared-harness consumer classes
     const gate = STARDEW_PUBLISHED_ACTION_GATES.find((entry) => entry.actionId === expected.actionId);
     assert.ok(gate, `${className}: descriptor entry missing for ${expected.actionId}`);
     assert.equal(gate.runner, expected.runner, `${className}: runner identity drift for ${expected.actionId}`);
-    assert.equal(gate.terminalReasonCode, expected.terminalReasonCode, `${className}: terminal reason drift for ${expected.actionId}`);
+    assert.equal(
+      gate.terminalReasonCode,
+      expected.terminalReasonCode,
+      `${className}: terminal reason drift for ${expected.actionId}`,
+    );
     await access(resolve(ROOT, "tools", gate.runner), constants.R_OK);
   }
 });
@@ -162,7 +196,10 @@ test("delayed multi-stage consumer class (machine_collect_output) executes two s
   assert.match(source, /const collectAccepted = await execute\([\s\S]*?ACTION_COLLECT,/);
   // Two distinct terminals are awaited.
   assert.match(source, /const loadTerminal = await waitForTerminal\(receipts, loadAccepted, terminalTimeoutMs\);/);
-  assert.match(source, /const collectTerminal = await waitForTerminal\(receipts, collectAccepted, terminalTimeoutMs\);/);
+  assert.match(
+    source,
+    /const collectTerminal = await waitForTerminal\(receipts, collectAccepted, terminalTimeoutMs\);/,
+  );
   // The inter-stage readiness wait is a delayed game-clock stage: the runner
   // polls with the harness delay primitive until the machine is ready and
   // fails closed instead of skipping game time.
@@ -174,7 +211,7 @@ test("delayed multi-stage consumer class (machine_collect_output) executes two s
 
 test("Portfolio topology isolation is unchanged for the three consumer classes", async () => {
   for (const className of Object.keys(CONSUMER_CLASSES)) {
-    const expected = CONSUMER_CLASSES[className];
+    const _expected = CONSUMER_CLASSES[className];
     const source = await runnerSource(className);
     // Each consumer fails closed when the fixture config enables Portfolio.
     assert.match(source, /Portfolio\?\.Enable/, `${className}: runner must fail closed on Portfolio enable`);

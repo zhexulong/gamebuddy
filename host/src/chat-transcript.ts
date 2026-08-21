@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { RuntimePaths } from "./runtime.js";
 import { withPathLock } from "./path-lock.js";
+import type { RuntimePaths } from "./runtime.js";
 
 export const CHAT_TRANSCRIPT_SCHEMA_VERSION = 1 as const;
 /** Bound durable player-visible history; older original content stays in Pi/Magic Context, never in this browser artifact. */

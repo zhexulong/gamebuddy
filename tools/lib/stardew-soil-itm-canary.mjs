@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 const CANARY_ID = "stardew_1_6_15_soil_interaction_transition_model_v1";
-const SHA256 = /^[a-f0-9]{64}$/;
+const _SHA256 = /^[a-f0-9]{64}$/;
 const FORBIDDEN_KEYS = new Set([
   "actionid",
   "primitiveid",

@@ -56,9 +56,7 @@ export async function runUseItemSmoke(
       timeoutMs: postconditionTimeoutMs,
       requireActionable: true,
       check: (snapshot) =>
-        Number.isFinite(snapshot.stamina) &&
-        Number.isInteger(snapshot.health) &&
-        Array.isArray(snapshot.foodTargets),
+        Number.isFinite(snapshot.stamina) && Number.isInteger(snapshot.health) && Array.isArray(snapshot.foodTargets),
     });
     requireExactCapabilities(after);
 

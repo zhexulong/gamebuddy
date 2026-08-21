@@ -1,10 +1,10 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 /** One-shot, probe-only SMAPI transaction runner. It never alters the owned fixture. */
-import { randomBytes, createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { cp, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { validateRuntimeAttestation } from "./stardew-navigation-p4-runtime-validator.mjs";
 
@@ -16,7 +16,7 @@ const required = (value, error) => {
 };
 const inside = (root, path) => {
   const value = relative(root, path);
-  return value && !value.startsWith(".." + sep) && value !== ".." && !isAbsolute(value);
+  return value && !value.startsWith(`..${sep}`) && value !== ".." && !isAbsolute(value);
 };
 const hashFile = async (path, io) =>
   createHash("sha256")

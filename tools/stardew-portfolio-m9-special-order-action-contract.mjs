@@ -89,7 +89,7 @@ function nonempty(value, label, errors) {
 function exactString(value, expected, label, errors) {
   if (value !== expected) errors.push(`${label} is invalid.`);
 }
-function boolean(value, label, errors) {
+function _boolean(value, label, errors) {
   if (typeof value !== "boolean") errors.push(`${label} must be boolean.`);
 }
 function selector(value, label, errors) {

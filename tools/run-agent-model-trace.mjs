@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { appendFile, access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -82,7 +82,7 @@ export default function (pi) {
 async function resolvePiInvocation() {
   if (process.platform === "win32" && piCommand.toLowerCase().endsWith(".cmd")) {
     const shim = await readFile(piCommand, "utf8");
-    const relativeTarget = shim.match(/"([^\"]*pi-coding-agent[^\"]*dist[^\"]*cli\.js)"/i)?.[1];
+    const relativeTarget = shim.match(/"([^"]*pi-coding-agent[^"]*dist[^"]*cli\.js)"/i)?.[1];
     if (relativeTarget === undefined) throw new Error(`Unable to resolve Pi CLI target from ${piCommand}`);
     const target = resolve(dirname(piCommand), relativeTarget.replace(/^%~dp0[\\/]/, "").replaceAll("\\", "/"));
     await access(target);

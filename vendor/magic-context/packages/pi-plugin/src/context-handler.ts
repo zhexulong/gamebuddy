@@ -201,12 +201,6 @@ import {
 	readPublishedGameBuddyStableContext,
 } from "./gamebuddy-stable-context-source";
 import { publishGameOperationalGateMaterialization } from "./tavern-narrative-gate-marker";
-import {
-	hasActivePlayerMemoryNextRoundEvidence,
-	pendingPlayerMemoryNextRoundTargetMemoryId,
-	recordPlayerMemoryNextRoundMaterialization,
-	registerPlayerMemoryNextRoundMaterializationRefresh,
-} from "./player-memory-next-round-marker";
 import { hasVisibleNoteReadCallPi } from "./note-visibility-pi";
 import { type PiHistorianDeps, runPiHistorian } from "./pi-historian-runner";
 import { injectSyntheticTodowriteForPi } from "./pi-todo-inject";
@@ -653,22 +647,6 @@ function convertLocatedPiUserEntry(
 export function signalPiHistoryRefresh(sessionId: string): void {
 	historyRefreshSessions.add(sessionId);
 }
-
-/**
- * Source-only exact-next refresh: both invalidate m[1] replay and make the
- * immediately following context pass materialize even when normal scheduler
- * pressure would choose `defer`. No marker facts or callbacks escape Magic
- * Context; the provider hook remains the only evidence emission boundary.
- */
-export function signalPiPlayerMemoryNextRoundRefresh(sessionId: string): void {
-	historyRefreshSessions.add(sessionId);
-	pendingMaterializationSessions.add(sessionId);
-}
-
-// Bound only inside the Magic Context source runtime. This is the exact-next
-// invalidation edge for a committed player Memory mutation; no marker facts
-// or callback capabilities cross this boundary.
-registerPlayerMemoryNextRoundMaterializationRefresh(signalPiPlayerMemoryNextRoundRefresh);
 
 /**
  * Mark a Pi session as needing system-prompt adjunct refresh on its
@@ -2659,13 +2637,6 @@ export function registerPiContextHandler(
 			// same TTL window still hit the cached injection result
 			// because the consumer compares against the cached cutoff.
 			const isCacheBusting = historyRefreshSessions.has(sessionId);
-			// A committed player-controlled Memory mutation has a stricter
-			// contract than ordinary maintenance: its *next* provider request
-			// needs a freshly rendered m[1] for source-owned exact coverage.
-			// This local signal never exposes evidence and is consumed by the
-			// normal pipeline only after that materialization succeeds.
-			const exactNextPlayerMemoryMaterialization =
-				hasActivePlayerMemoryNextRoundEvidence(sessionId);
 			logTransformTiming(sessionId, "boundaryTriggerChecks", tBoundaryChecks);
 
 			sessionLog(
@@ -2752,16 +2723,12 @@ export function registerPiContextHandler(
 				// 95% emergency forces drop-all-tools regardless of the
 				// 85% gate, so the LLM call sees the smallest possible
 				// prompt before we hand control back to Pi.
-				// Exact-next is an m[1] refresh obligation, not an m[0] HARD fold.
-				// `executedWorkThisPass` below forwards it as the source-owned
-				// recompute flag while preserving the normal m[0]/m[1] layering.
 				forceMaterialization: forceMaterialization || isEmergency,
 				contextUsage: {
 					percentage: usagePercentage,
 					inputTokens: usageInputTokens,
 				},
 				isCacheBusting,
-				exactNextPlayerMemoryMaterialization,
 				reasoningClearing: {
 					clearReasoningAge:
 						options.heuristics?.clearReasoningAge ??
@@ -4037,8 +4004,6 @@ interface RunPipelineArgs {
 	 * historyRefreshSessions set.
 	 */
 	isCacheBusting: boolean;
-	/** Source-only exact-next m[1] refresh after a committed player Memory mutation. */
-	exactNextPlayerMemoryMaterialization?: boolean;
 	/**
 	 * Reasoning-clearing config. When provided, typed PiThinkingContent
 	 * blocks for messages older than `clearReasoningAge` from the newest
@@ -5177,13 +5142,11 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				args.isCacheBusting ||
 					deferredHistoryRefresh ||
 					executedWorkThisPass ||
-					args.exactNextPlayerMemoryMaterialization === true ||
 					(stablePublicationChanged && stableContext !== undefined),
-				// This hook runs immediately before a provider invocation. Permit its
-				// m[1] coverage cursor to observe player Memory writes; internal DEFER
-				// maintenance calls retain byte-identical replay by passing false.
+				// Provider invocations may soft-refresh m[1] after ordinary
+				// external Memory changes. Internal DEFER maintenance remains
+				// byte-identical by retaining the default false.
 				true,
-				pendingPlayerMemoryNextRoundTargetMemoryId(args.sessionId),
 			);
 			// PEEK-then-drain-on-success (Oracle audit Round 8 #6):
 			// only drain `historyRefreshSessions` if the rebuild
@@ -5192,14 +5155,6 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 			// retries the rebuild. Deferred-history is NOT drained
 			// here; Pi-native compaction marker application happens at
 			// the end of runPipeline after materializing work succeeds.
-			// Exact-next needs only the m[1] renderer provenance. Record it first so
-			// its provider round is the one just constructed; generic operational
-			// aggregate publication remains independently source-owned below.
-			recordPlayerMemoryNextRoundMaterialization(
-				args.sessionId,
-				injectionResult.m1MaxMemoryMutationId,
-				injectionResult.m1MemoryMutationProvenance,
-			);
 			// The marker registry ignores unbound sessions. This passes only the
 			// source-owned aggregate from the injection that constructed this request.
 			publishGameOperationalGateMaterialization(args.sessionId, {

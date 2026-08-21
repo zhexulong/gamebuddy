@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { PortfolioStardewBridgeClient } from "../host/dist-portfolio/portfolio-stardew-bridge.js";
 /**
  * Attach-only M8 runner. The target-version Mod must already be running;
  * --preflight observes one fresh snapshot and sends exactly one read-only probe;
@@ -10,14 +11,17 @@
  */
 import { computePortfolioBindingHash } from "./lib/stardew-portfolio-contract-primitives.mjs";
 import { PORTFOLIO_TOPOLOGY } from "./lib/stardew-portfolio-profile.mjs";
-import { PortfolioStardewBridgeClient } from "../host/dist-portfolio/portfolio-stardew-bridge.js";
 
 const ACTION = "select_mine_elevator_floor";
 const required = [
-  "GAMEBUDDY_PORTFOLIO_PIPE_NAME", "GAMEBUDDY_PORTFOLIO_BRIDGE_TOKEN",
-  "GAMEBUDDY_PORTFOLIO_SAVE_ID", "GAMEBUDDY_PORTFOLIO_WORLD_ID",
-  "GAMEBUDDY_PORTFOLIO_LOCAL_PLAYER_ID", "GAMEBUDDY_PORTFOLIO_COMPANION_ID",
-  "GAMEBUDDY_PORTFOLIO_BINDING_GENERATION", "GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT",
+  "GAMEBUDDY_PORTFOLIO_PIPE_NAME",
+  "GAMEBUDDY_PORTFOLIO_BRIDGE_TOKEN",
+  "GAMEBUDDY_PORTFOLIO_SAVE_ID",
+  "GAMEBUDDY_PORTFOLIO_WORLD_ID",
+  "GAMEBUDDY_PORTFOLIO_LOCAL_PLAYER_ID",
+  "GAMEBUDDY_PORTFOLIO_COMPANION_ID",
+  "GAMEBUDDY_PORTFOLIO_BINDING_GENERATION",
+  "GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT",
 ];
 
 const hasPreflight = process.argv.includes("--preflight");
@@ -26,7 +30,11 @@ if (process.argv.includes("--execute")) {
   emit({ state: "BLOCKED", code: "m8_execute_mode_not_available", action: ACTION });
   process.exitCode = 2;
 } else if (hasPreflight === hasAction) {
-  emit({ state: "BLOCKED", code: hasPreflight ? "m8_modes_are_mutually_exclusive" : "m8_mode_required", action: ACTION });
+  emit({
+    state: "BLOCKED",
+    code: hasPreflight ? "m8_modes_are_mutually_exclusive" : "m8_mode_required",
+    action: ACTION,
+  });
   process.exitCode = 2;
 } else {
   const missing = required.filter((name) => !process.env[name]);
@@ -43,8 +51,14 @@ async function run({ actionMode }) {
   try {
     const bindingGeneration = Number(process.env.GAMEBUDDY_PORTFOLIO_BINDING_GENERATION);
     const selectedCheckpoint = Number(process.env.GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT);
-    if (!Number.isSafeInteger(bindingGeneration) || bindingGeneration <= 0 ||
-        !Number.isSafeInteger(selectedCheckpoint) || selectedCheckpoint < 5 || selectedCheckpoint > 120 || selectedCheckpoint % 5 !== 0)
+    if (
+      !Number.isSafeInteger(bindingGeneration) ||
+      bindingGeneration <= 0 ||
+      !Number.isSafeInteger(selectedCheckpoint) ||
+      selectedCheckpoint < 5 ||
+      selectedCheckpoint > 120 ||
+      selectedCheckpoint % 5 !== 0
+    )
       throw new Error("m8_probe_configuration_invalid");
     const nativeScope = {
       saveId: process.env.GAMEBUDDY_PORTFOLIO_SAVE_ID,
@@ -65,8 +79,13 @@ async function run({ actionMode }) {
       process.env.GAMEBUDDY_PORTFOLIO_BRIDGE_TOKEN,
     );
     const snapshot = await client.observe();
-    if (snapshot.state !== "ready" || snapshot.revision < 0 || snapshot.worldReady !== true ||
-        snapshot.singlePlayer !== true || snapshot.currentLocalPlayerMatches !== true)
+    if (
+      snapshot.state !== "ready" ||
+      snapshot.revision < 0 ||
+      snapshot.worldReady !== true ||
+      snapshot.singlePlayer !== true ||
+      snapshot.currentLocalPlayerMatches !== true
+    )
       throw new Error(`m8_probe_snapshot_not_ready:${snapshot.reasonCode}`);
     const now = Date.now();
     const request = {
@@ -81,10 +100,18 @@ async function run({ actionMode }) {
       scope,
     };
     const probe = await client.probeMineElevator(request);
-    if (probe.requestId !== request.requestId || probe.traceId !== request.traceId ||
-        probe.revision !== snapshot.revision || probe.selectedCheckpoint !== selectedCheckpoint ||
-        !sameScope(probe.scope, scope) || probe.fresh !== true ||
-        probe.entryObserved !== true || probe.targetUnlocked !== true)
+    if (
+      probe.requestId !== request.requestId ||
+      probe.traceId !== request.traceId ||
+      probe.revision !== snapshot.revision ||
+      probe.selectedCheckpoint !== selectedCheckpoint ||
+      !sameScope(probe.scope, scope) ||
+      probe.fresh !== true ||
+      probe.entryObserved !== true ||
+      probe.currentFloor === selectedCheckpoint ||
+      probe.targetUnlocked !== true ||
+      probe.elevatorObserved !== true
+    )
       throw new Error("m8_probe_given_not_ready");
     if (!actionMode) {
       emit({ state: "M8_GIVEN_READY", action: ACTION, topology: PORTFOLIO_TOPOLOGY, probe });
@@ -106,18 +133,25 @@ async function run({ actionMode }) {
       scope,
     };
     const started = await client.startMineElevator(actionRequest);
-    if (started.request.requestId !== actionRequest.requestId ||
-        started.request.traceId !== actionRequest.traceId || started.executionId.length === 0)
+    if (
+      started.request.requestId !== actionRequest.requestId ||
+      started.request.traceId !== actionRequest.traceId ||
+      started.executionId.length === 0
+    )
       throw new Error("m8_action_start_correlation_invalid");
     const terminal = await started.terminal;
-    if (terminal.requestId !== actionRequest.requestId || terminal.traceId !== actionRequest.traceId ||
-        terminal.executionId !== started.executionId || terminal.state !== "succeeded" ||
-        terminal.reasonCode !== "mine_elevator_floor_selected" ||
-        !sameScope(terminal.evidence?.scope, scope) ||
-        terminal.postcondition?.selectedCheckpoint !== selectedCheckpoint ||
-        terminal.postcondition?.actualCurrentFloor !== selectedCheckpoint ||
-        terminal.postcondition?.freshObservation !== true ||
-        terminal.postcondition?.sameExecution !== true)
+    if (
+      terminal.requestId !== actionRequest.requestId ||
+      terminal.traceId !== actionRequest.traceId ||
+      terminal.executionId !== started.executionId ||
+      terminal.state !== "succeeded" ||
+      terminal.reasonCode !== "mine_elevator_floor_selected" ||
+      !sameScope(terminal.evidence?.scope, scope) ||
+      terminal.postcondition?.selectedCheckpoint !== selectedCheckpoint ||
+      terminal.postcondition?.actualCurrentFloor !== selectedCheckpoint ||
+      terminal.postcondition?.freshObservation !== true ||
+      terminal.postcondition?.sameExecution !== true
+    )
       throw new Error("m8_action_terminal_correlation_invalid");
     const freshFloor = await client.readMineElevatorFreshFloor({
       action: ACTION,
@@ -129,10 +163,16 @@ async function run({ actionMode }) {
       cancellationToken: actionRequest.cancellationToken,
       scope,
     });
-    if (freshFloor.requestId !== actionRequest.requestId || freshFloor.traceId !== actionRequest.traceId ||
-        freshFloor.executionId !== started.executionId || freshFloor.revision <= terminal.revision ||
-        !sameScope(freshFloor.scope, scope) || freshFloor.fresh !== true ||
-        freshFloor.currentFloor !== selectedCheckpoint || freshFloor.lowestMineLevel < selectedCheckpoint)
+    if (
+      freshFloor.requestId !== actionRequest.requestId ||
+      freshFloor.traceId !== actionRequest.traceId ||
+      freshFloor.executionId !== started.executionId ||
+      freshFloor.revision <= terminal.revision ||
+      !sameScope(freshFloor.scope, scope) ||
+      freshFloor.fresh !== true ||
+      freshFloor.currentFloor !== selectedCheckpoint ||
+      freshFloor.lowestMineLevel < selectedCheckpoint
+    )
       throw new Error("m8_action_fresh_floor_correlation_invalid");
     // This primitive changes the player's current mine location but does not
     // claim to increase or persist MineShaft.lowestLevelReached. The terminal
@@ -184,15 +224,27 @@ async function run({ actionMode }) {
 
 function sameScope(actual, expected) {
   const fields = [
-    "integrationId", "topology", "saveId", "worldId", "localPlayerId",
-    "companionId", "bindingGeneration", "bindingHash",
+    "integrationId",
+    "topology",
+    "saveId",
+    "worldId",
+    "localPlayerId",
+    "companionId",
+    "bindingGeneration",
+    "bindingHash",
   ];
-  return actual !== null && typeof actual === "object" && !Array.isArray(actual) &&
+  return (
+    actual !== null &&
+    typeof actual === "object" &&
+    !Array.isArray(actual) &&
     Object.keys(actual).length === fields.length &&
-    fields.every((field) => actual[field] === expected[field]);
+    fields.every((field) => actual[field] === expected[field])
+  );
 }
 function boundedReason(error) {
-  return String(error instanceof Error ? error.message : error).replace(/\s+/g, " ").slice(0, 256);
+  return String(error instanceof Error ? error.message : error)
+    .replace(/\s+/g, " ")
+    .slice(0, 256);
 }
 function emit(value) {
   console.log(JSON.stringify(value));

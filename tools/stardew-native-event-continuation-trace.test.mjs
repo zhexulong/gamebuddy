@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { validateNativeEventContinuationTrace } from "./lib/stardew-native-event-continuation-trace.mjs";
+
 const source = `class NetEvent0 { void Fire() {} void Poll() {} } class Farmer { NetEvent0 fireToolEvent; void Init() { fireToolEvent.onEvent += performFireTool; } void FireTool() { fireToolEvent.Fire(); } void Update() { fireToolEvent.Poll(); } void performFireTool() {} }`;
 const file = "Demo.cs";
 const hash = createHash("sha256").update(source).digest("hex");

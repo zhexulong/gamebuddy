@@ -5,8 +5,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import type { MountedChatRuntimeLease } from "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../../deployment-manifest.js";
 import { composeTavernProfile } from "../browser-contract/index.js";
 import { createChatManagementService } from "./chat-management-service.js";
 
@@ -90,7 +90,10 @@ test("management service source keeps the store, lease and coordinator authority
   // the browser contract; it never imports coordinator internal bridges or
   // P4/P5 transition authority.
   assert.match(source, /from "\.\/chat-title-management\.js"/);
-  assert.doesNotMatch(source, /continuity-semantic-production-coordinator\.internal|transitionP4Mounted|transitionP5Mounted/);
+  assert.doesNotMatch(
+    source,
+    /continuity-semantic-production-coordinator\.internal|transitionP4Mounted|transitionP5Mounted/,
+  );
   assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|fetch)[^"']*["']/);
 });
 
@@ -106,7 +109,7 @@ const mountPreamble = `
   const { createChatManagementService } = await import(serviceUrl);
   const { createChatThreadStore } = await import(storeUrl);
   const { identityKey } = await import(runtimeUrl);
-  const { composeTavernProfile } = await import(contractUrl);
+  const { composeTavernProfile, TavernBrowserValidatorsV1 } = await import(contractUrl);
   const { createTavernManagementStateFacade } = await import(facadeUrl);
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", storeUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href);
@@ -123,7 +126,10 @@ const mountPreamble = `
 
 async function runMountedChild(body: string, root: string): Promise<Record<string, unknown>> {
   const serviceUrl = new URL("./chat-management-service.js", import.meta.url).href;
-  const coordinatorUrl = new URL("../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js", import.meta.url).href;
+  const coordinatorUrl = new URL(
+    "../../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",
+    import.meta.url,
+  ).href;
   const deploymentUrl = new URL("../../deployment-manifest.js", import.meta.url).href;
   const storeUrl = new URL("../chat-thread-store.js", import.meta.url).href;
   const runtimeUrl = new URL("../../runtime.js", import.meta.url).href;
@@ -131,7 +137,19 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
   const facadeUrl = new URL("../tavern-management-state.js", import.meta.url).href;
   const child = spawn(
     process.execPath,
-    ["--input-type=module", "--eval", mountPreamble + body, serviceUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, contractUrl, facadeUrl, root],
+    [
+      "--input-type=module",
+      "--eval",
+      mountPreamble + body,
+      serviceUrl,
+      coordinatorUrl,
+      deploymentUrl,
+      storeUrl,
+      runtimeUrl,
+      contractUrl,
+      facadeUrl,
+      root,
+    ],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
   const output: Buffer[] = [];
@@ -192,7 +210,9 @@ test("mounted management service lists durable metadata only and renames the exa
   assert.equal(listValue.chats.length, 1);
   assert.equal(listValue.chats[0].isSelected, true);
   assert.equal((results.two as { chats: unknown[] }).chats.length, 2);
-  const secondEntry = (results.two as { chats: ReadonlyArray<Readonly<Record<string, unknown>>> }).chats.find((chat) => chat.isSelected === false)!;
+  const secondEntry = (results.two as { chats: ReadonlyArray<Readonly<Record<string, unknown>>> }).chats.find(
+    (chat) => chat.isSelected === false,
+  )!;
   assert.equal(secondEntry.status, "active");
   assert.equal(secondEntry.handle !== (listValue.chats[0] as Readonly<Record<string, unknown>>).handle, true);
   const rename = results.rename as { title: string; managementRevision: number };
@@ -211,14 +231,112 @@ test("mounted management service lists durable metadata only and renames the exa
   };
   assert.equal(facadeState.selection.chatHandle, (listValue.chats[0] as Readonly<Record<string, unknown>>).handle);
   assert.deepEqual(facadeState.operations, [
-    { operationId: "draft.save", labelKey: "tavern.operation.draft.save", availability: "available", routeId: "draft.save" },
-    { operationId: "draft.discard", labelKey: "tavern.operation.draft.discard", availability: "available", routeId: "draft.discard" },
-    { operationId: "chat.rename", labelKey: "tavern.operation.rename", availability: "available", routeId: "chat.rename" },
+    {
+      operationId: "draft.save",
+      labelKey: "tavern.operation.draft.save",
+      availability: "available",
+      routeId: "draft.save",
+    },
+    {
+      operationId: "draft.discard",
+      labelKey: "tavern.operation.draft.discard",
+      availability: "available",
+      routeId: "draft.discard",
+    },
+    {
+      operationId: "chat.rename",
+      labelKey: "tavern.operation.rename",
+      availability: "available",
+      routeId: "chat.rename",
+    },
   ]);
   // Metadata-only projection: no raw durable identifier may appear in any
   // serialized player DTO.
-  const serialized = JSON.stringify({ list: results.listValue, two: results.two, rename: results.rename, facade: results.facadeState });
+  const serialized = JSON.stringify({
+    list: results.listValue,
+    two: results.two,
+    rename: results.rename,
+    facade: results.facadeState,
+  });
   for (const raw of results.rawIds as string[]) {
     assert.equal(serialized.includes(raw), false, `raw durable identifier leaked: ${raw}`);
   }
+});
+
+test("mounted management state projects world-info.bind as a strict browser operation when the profile declares it", async () => {
+  const results = await mounted(`
+    const worldInfoProfile = composeTavernProfile({
+      profileId: "gamebuddy.tavern-management.chat-list-title",
+      releaseTier: "tavern_management",
+      routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "world-info.read", "world-info.bind"],
+      operationIds: ["draft.save", "draft.discard", "chat.rename", "world-info.bind"],
+      navigationItemIds: ["chat"],
+    });
+    const worldInfoService = Object.freeze({
+      read: async () => ({ state: "none", revision: "A".repeat(43), items: [] }),
+      setBinding: async () => { throw new Error("stub_set_binding_unreached"); },
+      close: async () => undefined,
+    });
+    const worldInfoFacade = await createTavernManagementStateFacade(manifest, lease, worldInfoProfile, worldInfoService);
+    const state = await worldInfoFacade.read();
+    const bindOperation = state.operations.find((operation) => operation.operationId === "world-info.bind");
+    const strict = TavernBrowserValidatorsV1.TavernBrowserOperationV1Schema.Check(bindOperation);
+    process.stdout.write(JSON.stringify({
+      bindOperation,
+      strict,
+      worldInfo: state.worldInfo,
+      operations: state.operations.map((operation) => operation.operationId),
+    }));
+    await lease.close();
+    await authority.close();
+  `);
+  const bindOperation = results.bindOperation as {
+    operationId: string;
+    labelKey: string;
+    availability: string;
+    routeId: string;
+  };
+  assert.deepEqual(bindOperation, {
+    operationId: "world-info.bind",
+    labelKey: "tavern.operation.world-info.bind",
+    availability: "available",
+    routeId: "world-info.bind",
+  });
+  assert.equal(results.strict, true);
+  // The exact safe World Info projection stays in the snapshot and the
+  // mounted Chat's existing operations remain intact.
+  assert.deepEqual(results.worldInfo, { state: "none", revision: "A".repeat(43), items: [] });
+  assert.deepEqual(results.operations, ["draft.save", "draft.discard", "chat.rename", "world-info.bind"]);
+});
+
+test("mounted management state facade rejects structural clones of a composed profile before durable I/O", async () => {
+  const results = await mounted(`
+    const { isComposedTavernProfile } = await import(contractUrl);
+    // Structural clone: identical own keys and frozen shapes, but never
+    // branded by composeTavernProfile's WeakSet, so only the canonical
+    // identity-brand guard rejects it, never the legacy shape check.
+    const structuralClone = Object.freeze({ ...profile });
+    const cloneIsBranded = isComposedTavernProfile(structuralClone);
+    // Any durable read against a missing root must fail with an I/O error;
+    // if facade construction still rejects with the profile failure here,
+    // the profile gate provably precedes all durable I/O.
+    const absentManifest = Object.freeze({ ...manifest, runtimeRoot: root + "/missing-root" });
+    const rejected = await code(() => createTavernManagementStateFacade(absentManifest, lease, structuralClone));
+    const brandedLeaf = await code(() => createTavernManagementStateFacade(absentManifest, lease, profile));
+    process.stdout.write(JSON.stringify({ cloneIsBranded, rejected, brandedLeaf }));
+    await lease.close();
+    await authority.close();
+  `);
+  // The frozen spread is a perfect structural copy but never the branded
+  // object, so the WeakSet brand guard and the shape guard disagree.
+  assert.equal(results.cloneIsBranded, false);
+  // The facade rejects the clone with the exact fail-closed error even
+  // though the mounted root was replaced by a nonexistent one, proving the
+  // rejection precedes the durable identity-profile reads.
+  assert.deepEqual(results.rejected, { ok: false, error: "tavern_management_state_unavailable" });
+  // Harness proof: a branded profile against the same missing root fails
+  // with a real I/O error, so the clone rejection above cannot come from
+  // durable I/O.
+  assert.equal((results.brandedLeaf as { ok: boolean }).ok, false);
+  assert.equal((results.brandedLeaf as { error: string }).error.includes("ENOENT"), true);
 });

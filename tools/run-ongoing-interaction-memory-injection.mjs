@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 /**
  * Controlled live verification for GameBuddy's first ongoing-interaction Memory
  * gate. This is deliberately NOT a Host Memory API: it seeds an ephemeral,
@@ -10,11 +11,11 @@
  * Sidekick, cross-surface recall, or production Memory authoring.
  */
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
+
 const selectedProductionArtifact = await selectHostProductionArtifact();
 const [{ startDialogueWebServer }, { createProductionGameContinuity }] = await Promise.all([
   loadSelectedHostProductionModule(selectedProductionArtifact, "dialogue-web.js"),

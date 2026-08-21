@@ -5,6 +5,7 @@ import {
   deriveNativeVirtualMemberInvocationRegister,
   validateNativeVirtualMemberInvocationRegister,
 } from "./lib/stardew-native-virtual-member-invocation-register.mjs";
+
 const h = (text) => createHash("sha256").update(text).digest("hex");
 const tool = `namespace Demo; public class Tool { public virtual bool beginUsing(GameLocation l, int x, int y, Farmer who) { who.Halt(); Update(); return false; } }`;
 const axe = `namespace Demo; public class Axe : Tool { public override bool beginUsing(GameLocation l, int x, int y, Farmer who) { Update(); who.EndUsingTool(); return true; } }`;

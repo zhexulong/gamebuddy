@@ -199,6 +199,33 @@ export class MemoryCommandFacade {
         });
     }
 
+    /**
+     * Resolve an opaque state token and perform the update in one immediate
+     * transaction.  This is for external management surfaces that deliberately
+     * never retain numeric storage ids between their safe reread and write.
+     */
+    updateByStateToken(input: Omit<MemoryCommandUpdateInput, "id">): MemoryCommandResult {
+        const content = input.content.trim();
+        if (!content) throw new Error("Memory content must not be empty");
+        return runMutation(this.db, () => {
+            const memory = this.requireMemoryByStateToken(input);
+            updateMemoryContent(this.db, memory.id, content, computeNormalizedHash(content));
+            if (input.actor.principal === "player_direct") {
+                const updated = getMemoryById(this.db, memory.id);
+                if (!updated) throw new Error(`Memory ${memory.id} was not found after update`);
+                setMetadata(this.db, updated.id, playerGovernedMetadata(updated.metadataJson));
+            }
+            queueMemoryMutation(this.db, {
+                projectPath: memory.projectPath,
+                mutationType: "update",
+                targetMemoryId: memory.id,
+                category: memory.category,
+                newContent: content,
+            });
+            return result(this.db, input.projectPath, memory.id);
+        });
+    }
+
     update(input: MemoryCommandUpdateInput): MemoryCommandResult {
         return this.updateWithCommitReceipt(input).value;
     }
@@ -219,6 +246,20 @@ export class MemoryCommandFacade {
                 category: memory.category, newContent: content,
             });
             return { value: result(this.db, input.projectPath, memory.id), committedMemoryMutationId: mutation.id };
+        });
+    }
+
+    archiveByStateToken(input: Omit<MemoryCommandMutationInput, "id">, reason?: string): MemoryCommandResult {
+        return runMutation(this.db, () => {
+            const memory = this.requireMemoryByStateToken(input);
+            if (reason === undefined) updateMemoryStatus(this.db, memory.id, "archived");
+            else archiveMemory(this.db, memory.id, reason);
+            queueMemoryMutation(this.db, {
+                projectPath: memory.projectPath,
+                mutationType: "archive",
+                targetMemoryId: memory.id,
+            });
+            return result(this.db, input.projectPath, memory.id);
         });
     }
 
@@ -275,6 +316,17 @@ export class MemoryCommandFacade {
             const mutation = queueMemoryMutation(this.db, { projectPath: source.projectPath, mutationType: "superseded", targetMemoryId: source.id, supersededById: target.id });
             return { value: result(this.db, source.projectPath, target.id), committedMemoryMutationId: mutation.id };
         });
+    }
+
+    private requireMemoryByStateToken(
+        input: Omit<MemoryCommandMutationInput, "id">,
+    ): Memory {
+        requireProjectPath(input.projectPath);
+        const memory = getMemoriesByProject(this.db, input.projectPath, ["active", "permanent", "archived"])
+            .find((candidate) => createMemoryStateToken(candidate) === input.stateToken);
+        if (!memory) throw new Error("Memory state token was not found or is stale");
+        assertMutationAuthorized(memory, input.actor);
+        return memory;
     }
 
     private transitionWithCommitReceipt(

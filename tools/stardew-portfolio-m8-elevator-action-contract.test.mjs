@@ -94,18 +94,30 @@ test("M8 elevator contract requires fresh entry/floor/unlock facts and strict gu
   assert.match(published, /fixtureStatus\.successClaimAllowed/);
 });
 
-test("M8 elevator contract keeps ladder, generic travel, UI, input, warp, and save mutation forbidden", async () => {
+test("M8 elevator contract permits only a named staged Given fixture while keeping action mutation forbidden", async () => {
   const contract = await loadContract();
   for (const entry of [
     "ladder route selection or ladder/elevator route conflation",
     "generic mine action, generic travel action, generic warp action, or direct warp request",
     "UI/menu automation, keyboard/mouse/XInput, visual/input injection, or window inspection",
-    "save XML editing, direct save mutation, direct player/world mutation, or fixture-written result",
+    "direct action save mutation, direct action player/world mutation, fixture-written action result, or use of a staged-save Given fixture outside its named launcher-owned validation transaction",
   ])
     assert.ok(contract.forbiddenBehavior.includes(entry), entry);
+  assert.equal(contract.fixtureStartingFacts.fixtureMutatesGameplayState, "declared_staged_given_only");
+  assert.ok(contract.fixtureCreationRules.some((entry) => entry.includes("mine_lowestLevelReached to 10")));
+  assert.equal(contract.fixtureStartingFacts.fixtureWritesSave, "declared_staged_slot_only_canonical_never_written");
+  assert.equal(
+    contract.fixtureStartingFacts.stagedSaveFixture,
+    "design/84_M8_STAGED_SAVE_GIVEN_FIXTURE_IMPLEMENTATION_PLAN.md",
+  );
 
   const mutated = await errorsFor((value) => {
     value.forbiddenBehavior = value.forbiddenBehavior.filter((entry) => !entry.includes("ladder route"));
   });
   assert.match(mutated, /forbiddenBehavior must match/);
+
+  const arbitraryPatch = await errorsFor((value) => {
+    value.fixtureStartingFacts.stagedSaveFixture = "arbitrary-xml-patch";
+  });
+  assert.match(arbitraryPatch, /fixtureStartingFacts\.stagedSaveFixture/);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
 
 import { VoiceGatewayProbeClient } from "./voice-gateway-probe-client.mjs";
 

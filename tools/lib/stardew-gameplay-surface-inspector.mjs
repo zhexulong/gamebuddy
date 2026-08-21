@@ -1,27 +1,26 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
+  classifyDataLoaderTable,
   classifyGameplayMember,
   classifyUiSurface,
   contentAssetIsGameplayRelevant,
   contentAssetMappingStatus,
   contentOperationDomain,
-  classifyDataLoaderTable,
   dataLoaderAssetPath,
-  hasUiInputMethods,
   isGameplayType,
   isUiInputMethod,
   logicalContentAssetPath,
   logicalContentOperationFamily,
 } from "./stardew-gameplay-surface-rules.mjs";
 import { extractLiteralOperationSelectors } from "./stardew-gameplay-surface-selector.mjs";
-import { buildPlayerCommandGraph } from "./stardew-player-command-graph.mjs";
 import { auditBridgeRouteEquivalence } from "./stardew-player-command-equivalence-audit.mjs";
+import { buildPlayerCommandGraph } from "./stardew-player-command-graph.mjs";
 
 const EXPECTED_VERSION = "1.6.15";
 const EXPECTED_BUILD = 24356;
@@ -71,7 +70,7 @@ function methodsFromSource(source, fullTypeName) {
   const shortName = fullTypeName.split(".").at(-1);
   const methods = new Set();
   const pattern =
-    /\b(?:public|private|protected|internal|protected\s+internal|private\s+protected)?\s*(?:static\s+|virtual\s+|override\s+|abstract\s+|sealed\s+|async\s+)*[A-Za-z_][\w<>,.?\[\]]*\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:\{|=>)/g;
+    /\b(?:public|private|protected|internal|protected\s+internal|private\s+protected)?\s*(?:static\s+|virtual\s+|override\s+|abstract\s+|sealed\s+|async\s+)*[A-Za-z_][\w<>,.?[\]]*\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:\{|=>)/g;
   for (const match of block.matchAll(pattern)) {
     // A constructor is not a player-reachable operation by itself.
     if (match[1] !== shortName) methods.add(match[1]);
@@ -213,7 +212,7 @@ async function probeTargetContent(gamePath) {
     }
     return parsed;
   } catch (error) {
-    if (error.code && error.code.startsWith("content_probe")) throw error;
+    if (error.code?.startsWith("content_probe")) throw error;
     fail("content_probe_failed", "Could not load target-game DataLoader tables from the supplied installation.", {
       cause: error.message,
     });

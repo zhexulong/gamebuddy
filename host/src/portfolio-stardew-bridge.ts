@@ -1,71 +1,81 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createConnection, type Socket } from "node:net";
-import { writePortfolioFrame, type PortfolioFrameWriter } from "./portfolio-transport.js";
-import { randomUUID } from "node:crypto";
 import {
-  PORTFOLIO_MAX_MESSAGE_BYTES,
-  PORTFOLIO_SLEEP_DAY_PHASES,
-  PORTFOLIO_MINE_ELEVATOR_PHASES,
-  PORTFOLIO_MINE_LADDER_PHASES,
-  PORTFOLIO_MINE_ENTRY_PHASES,
-  PORTFOLIO_TOPOLOGY,
   bootstrapScope,
   computePortfolioBindingHash,
+  materializePortfolioMineElevatorFreshFloor,
+  materializePortfolioMineElevatorProbe,
+  materializePortfolioMineElevatorReceipt,
+  materializePortfolioMineEntryFreshFloor,
+  materializePortfolioMineEntryProbe,
+  materializePortfolioMineEntryReceipt,
+  materializePortfolioMineLadderFreshFloor,
+  materializePortfolioMineLadderProbe,
+  materializePortfolioMineLadderReceipt,
+  materializePortfolioSkipEventProbe,
+  materializePortfolioSkipEventReceipt,
+  materializePortfolioSleepDayReceipt,
+  newPortfolioEnvelope,
+  PORTFOLIO_MAX_MESSAGE_BYTES,
+  PORTFOLIO_MINE_ELEVATOR_PHASES,
+  PORTFOLIO_MINE_ENTRY_PHASES,
+  PORTFOLIO_MINE_LADDER_PHASES,
+  PORTFOLIO_SKIP_EVENT_PHASES,
+  PORTFOLIO_SLEEP_DAY_PHASES,
+  PORTFOLIO_TOPOLOGY,
   type PortfolioBootstrapIdentity,
   type PortfolioMessage,
+  type PortfolioMineElevatorCancelRequest,
+  type PortfolioMineElevatorFreshFloor,
+  type PortfolioMineElevatorFreshFloorRequest,
+  type PortfolioMineElevatorPhase,
+  type PortfolioMineElevatorProbe,
+  type PortfolioMineElevatorReceipt,
+  type PortfolioMineElevatorRequest,
+  type PortfolioMineEntryCancelRequest,
+  type PortfolioMineEntryFreshFloor,
+  type PortfolioMineEntryFreshFloorRequest,
+  type PortfolioMineEntryPhase,
+  type PortfolioMineEntryProbe,
+  type PortfolioMineEntryReceipt,
+  type PortfolioMineEntryRequest,
+  type PortfolioMineLadderCancelRequest,
+  type PortfolioMineLadderFreshFloor,
+  type PortfolioMineLadderFreshFloorRequest,
+  type PortfolioMineLadderPhase,
+  type PortfolioMineLadderProbe,
+  type PortfolioMineLadderReceipt,
+  type PortfolioMineLadderRequest,
   type PortfolioScope,
-  type PortfolioSnapshot,
+  type PortfolioSkipEventCancelRequest,
+  type PortfolioSkipEventPhase,
+  type PortfolioSkipEventProbe,
+  type PortfolioSkipEventReceipt,
+  type PortfolioSkipEventRequest,
   type PortfolioSleepDayEvidenceIdentity,
   type PortfolioSleepDayPhase,
   type PortfolioSleepDayReceipt,
   type PortfolioSleepDayRequest,
-  newPortfolioEnvelope,
+  type PortfolioSnapshot,
   serializePortfolioBounded,
   validatePortfolioMessage,
-  validatePortfolioSnapshot,
-  validatePortfolioSleepDayRequest,
-  validatePortfolioSleepDayCancelRequest,
-  materializePortfolioSleepDayReceipt,
-  materializePortfolioMineElevatorReceipt,
-  validatePortfolioMineElevatorRequest,
-  materializePortfolioMineElevatorProbe,
-  materializePortfolioMineElevatorFreshFloor,
-  validatePortfolioMineElevatorFreshFloorRequest,
   validatePortfolioMineElevatorCancelRequest,
-  type PortfolioMineElevatorRequest,
-  type PortfolioMineElevatorProbe,
-  type PortfolioMineElevatorFreshFloorRequest,
-  type PortfolioMineElevatorFreshFloor,
-  type PortfolioMineElevatorCancelRequest,
-  type PortfolioMineElevatorPhase,
-  type PortfolioMineElevatorReceipt,
-  validatePortfolioMineLadderRequest,
-  materializePortfolioMineLadderProbe,
-  materializePortfolioMineLadderFreshFloor,
-  validatePortfolioMineLadderFreshFloorRequest,
-  validatePortfolioMineLadderCancelRequest,
-  materializePortfolioMineLadderReceipt,
-  type PortfolioMineLadderRequest,
-  type PortfolioMineLadderProbe,
-  type PortfolioMineLadderFreshFloorRequest,
-  type PortfolioMineLadderFreshFloor,
-  type PortfolioMineLadderCancelRequest,
-  type PortfolioMineLadderPhase,
-  type PortfolioMineLadderReceipt,
-  type PortfolioMineEntryReceipt,
-  validatePortfolioMineEntryRequest,
-  materializePortfolioMineEntryProbe,
-  materializePortfolioMineEntryFreshFloor,
-  validatePortfolioMineEntryFreshFloorRequest,
+  validatePortfolioMineElevatorFreshFloorRequest,
+  validatePortfolioMineElevatorRequest,
   validatePortfolioMineEntryCancelRequest,
-  materializePortfolioMineEntryReceipt,
-  type PortfolioMineEntryRequest,
-  type PortfolioMineEntryProbe,
-  type PortfolioMineEntryFreshFloorRequest,
-  type PortfolioMineEntryFreshFloor,
-  type PortfolioMineEntryCancelRequest,
-  type PortfolioMineEntryPhase,
+  validatePortfolioMineEntryFreshFloorRequest,
+  validatePortfolioMineEntryRequest,
+  validatePortfolioMineLadderCancelRequest,
+  validatePortfolioMineLadderFreshFloorRequest,
+  validatePortfolioMineLadderRequest,
+  validatePortfolioSkipEventCancelRequest,
+  validatePortfolioSkipEventRequest,
+  validatePortfolioSleepDayCancelRequest,
+  validatePortfolioSleepDayRequest,
+  validatePortfolioSnapshot,
 } from "./portfolio-protocol.js";
+import { type PortfolioFrameWriter, writePortfolioFrame } from "./portfolio-transport.js";
 
 function samePortfolioEvidenceIdentity(actual: PortfolioSleepDayEvidenceIdentity, expected: PortfolioScope): boolean {
   return (
@@ -173,7 +183,8 @@ type PlainPending = PendingBase & {
     | PortfolioSleepDayRequest
     | PortfolioMineElevatorRequest
     | PortfolioMineLadderRequest
-    | PortfolioMineEntryRequest;
+    | PortfolioMineEntryRequest
+    | PortfolioSkipEventRequest;
   executionId?: string;
   traceId?: string;
   cancellationToken?: string;
@@ -289,6 +300,34 @@ type MineEntryCancelPending = PendingBase & {
   phaseIndex: -1;
 };
 
+type SkipEventPending = PendingBase & {
+  kind: "skip_event";
+  request: PortfolioSkipEventRequest;
+  executionId?: string;
+  traceId: string;
+  cancellationToken: string;
+  cancellationRequest: false;
+  terminalSettled?: boolean;
+  phases: PortfolioSkipEventPhase[];
+  phaseIndex: number;
+  skipEventAcceptedResolve: (phase: PortfolioSkipEventPhase) => void;
+  skipEventTerminalPromise: Promise<PortfolioSkipEventReceipt>;
+  skipEventTerminalResolve: (receipt: PortfolioSkipEventReceipt) => void;
+  skipEventTerminalReject: (error: Error) => void;
+};
+
+type SkipEventCancelPending = PendingBase & {
+  kind: "skip_event_cancel";
+  request: PortfolioSkipEventRequest;
+  original: SkipEventPending;
+  executionId?: string;
+  traceId: string;
+  cancellationToken: string;
+  cancellationRequest: true;
+  phases: never[];
+  phaseIndex: -1;
+};
+
 /**
  * Private pending correlation model. Every request/phase/receipt/cancel frame
  * maps to exactly one variant; a lifecycle owns its typed request, phase
@@ -305,7 +344,9 @@ type PortfolioPending =
   | MineLadderPending
   | MineLadderCancelPending
   | MineEntryPending
-  | MineEntryCancelPending;
+  | MineEntryCancelPending
+  | SkipEventPending
+  | SkipEventCancelPending;
 
 type MineReceiptPending =
   | MineElevatorPending
@@ -313,12 +354,20 @@ type MineReceiptPending =
   | MineLadderPending
   | MineLadderCancelPending
   | MineEntryPending
-  | MineEntryCancelPending;
+  | MineEntryCancelPending
+  | SkipEventPending
+  | SkipEventCancelPending;
 
 export type PortfolioMineEntryStart = Readonly<{
   request: PortfolioMineEntryRequest;
   executionId: string;
   terminal: Promise<PortfolioMineEntryReceipt>;
+}>;
+
+export type PortfolioSkipEventStart = Readonly<{
+  request: PortfolioSkipEventRequest;
+  executionId: string;
+  terminal: Promise<PortfolioSkipEventReceipt>;
 }>;
 
 export type PortfolioMineLadderStart = Readonly<{
@@ -347,13 +396,16 @@ type PortfolioRequestType =
   | "mine_ladder_cancel_request"
   | "enter_mine_probe_request"
   | "enter_mine_fresh_floor_request"
-  | "enter_mine_cancel_request";
+  | "enter_mine_cancel_request"
+  | "skip_event_probe_request"
+  | "skip_event_cancel_request";
 
 type PortfolioSleepOrMineRequest =
   | PortfolioSleepDayRequest
   | PortfolioMineElevatorRequest
   | PortfolioMineLadderRequest
-  | PortfolioMineEntryRequest;
+  | PortfolioMineEntryRequest
+  | PortfolioSkipEventRequest;
 
 /** Build the private pending variant owned by one outbound request frame. */
 function buildRequestPending(
@@ -420,6 +472,20 @@ function buildRequestPending(
           phases: [],
           phaseIndex: -1,
         };
+      case "skip_event":
+      case "skip_event_cancel":
+        return {
+          ...base,
+          kind: "skip_event_cancel",
+          request: cancelOf.request,
+          original: cancelOf.kind === "skip_event" ? cancelOf : cancelOf.original,
+          executionId: cancelOf.executionId,
+          traceId: cancelOf.traceId,
+          cancellationToken: cancelOf.cancellationToken,
+          cancellationRequest: true,
+          phases: [],
+          phaseIndex: -1,
+        };
       case "plain":
         // A plain correlation cannot own a cancellation link.
         throw new Error("portfolio_pending_cannot_cancel_plain");
@@ -467,6 +533,10 @@ function buildRequestPending(
 }
 
 /** Host adapter for the independent, topology-isolated Portfolio protocol. */
+const BOOTSTRAP_HANDOFF_SETTLE_MS = 100;
+const PORTFOLIO_PIPE_CONNECT_TIMEOUT_MS = 15_000;
+const PORTFOLIO_PIPE_WRITE_TIMEOUT_MS = 5_000;
+
 export class PortfolioStardewBridgeClient {
   readonly #pending = new Map<string, PortfolioPending>();
   readonly #events = new EventEmitter();
@@ -518,11 +588,11 @@ export class PortfolioStardewBridgeClient {
     } finally {
       bootstrapClient.close("bootstrap_connection_complete");
     }
-    // The Mod's disconnect handoff is consumed on its game thread. Wait long
-    // enough for that one tick-owned transition before opening the strict
-    // successor; otherwise the worker can reject a correct successor merely
-    // because it arrives before the handoff has been armed.
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    // The Mod's disconnect handoff is consumed on its game thread. Keep the
+    // successor socket closed until the game-thread-owned handoff has had a
+    // complete settlement window; this remains one strict successor, not a
+    // reconnect loop.
+    await new Promise<void>((resolve) => setTimeout(resolve, BOOTSTRAP_HANDOFF_SETTLE_MS));
     // The strict connection is intentionally new: bootstrap identity uplift
     // must never share a socket with ordinary full-scope traffic.
     return PortfolioStardewBridgeClient.connect(actualScope!, pipeName, token);
@@ -543,8 +613,31 @@ export class PortfolioStardewBridgeClient {
       throw new Error("invalid_portfolio_bridge_config");
     const socket = createConnection(`\\\\.\\pipe\\${pipeName}`);
     await new Promise<void>((resolve, reject) => {
-      socket.once("connect", resolve);
-      socket.once("error", reject);
+      let settled = false;
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+        socket.off("close", onClose);
+        callback();
+      };
+      const onConnect = () => settle(resolve);
+      const onError = (error: NodeJS.ErrnoException) =>
+        settle(() =>
+          reject(new Error(error.code === "ENOENT" ? "portfolio_pipe_not_published" : "portfolio_pipe_connect_failed")),
+        );
+      const onClose = () => settle(() => reject(new Error("portfolio_pipe_connect_closed")));
+      const timer = setTimeout(() => {
+        settle(() => {
+          socket.destroy();
+          reject(new Error("portfolio_pipe_connect_timeout"));
+        });
+      }, PORTFOLIO_PIPE_CONNECT_TIMEOUT_MS);
+      socket.once("connect", onConnect);
+      socket.once("error", onError);
+      socket.once("close", onClose);
     });
     return new PortfolioStardewBridgeClient(scope as PortfolioScope, socket, token, frameWriterFactory?.(socket));
   }
@@ -905,9 +998,7 @@ export class PortfolioStardewBridgeClient {
     if (!this.#authenticated) throw new Error("portfolio_bridge_not_authenticated");
     const fault = validatePortfolioMineElevatorCancelRequest(request, this.scope);
     if (fault !== null) throw new Error(fault);
-    const pending = [...this.#pending.values()].find(
-      (candidate) => candidate.request?.requestId === request.requestId,
-    );
+    const pending = [...this.#pending.values()].find((candidate) => candidate.request?.requestId === request.requestId);
     if (
       pending === undefined ||
       (pending.kind !== "mine_elevator" && pending.kind !== "mine_elevator_cancel") ||
@@ -930,9 +1021,7 @@ export class PortfolioStardewBridgeClient {
     if (!this.#authenticated) throw new Error("portfolio_bridge_not_authenticated");
     const fault = validatePortfolioMineLadderCancelRequest(request, this.scope);
     if (fault !== null) throw new Error(fault);
-    const pending = [...this.#pending.values()].find(
-      (candidate) => candidate.request?.requestId === request.requestId,
-    );
+    const pending = [...this.#pending.values()].find((candidate) => candidate.request?.requestId === request.requestId);
     if (
       pending === undefined ||
       (pending.kind !== "mine_ladder" && pending.kind !== "mine_ladder_cancel") ||
@@ -955,9 +1044,7 @@ export class PortfolioStardewBridgeClient {
     if (!this.#authenticated) throw new Error("portfolio_bridge_not_authenticated");
     const fault = validatePortfolioMineEntryCancelRequest(request, this.scope);
     if (fault !== null) throw new Error(fault);
-    const pending = [...this.#pending.values()].find(
-      (candidate) => candidate.request?.requestId === request.requestId,
-    );
+    const pending = [...this.#pending.values()].find((candidate) => candidate.request?.requestId === request.requestId);
     if (
       pending === undefined ||
       (pending.kind !== "mine_entry" && pending.kind !== "mine_entry_cancel") ||
@@ -976,15 +1063,116 @@ export class PortfolioStardewBridgeClient {
     return materializePortfolioMineEntryReceipt(response.payload, pending.request, this.scope);
   }
 
+  public async probeSkipEvent(request: PortfolioSkipEventRequest): Promise<PortfolioSkipEventProbe> {
+    if (!this.#authenticated) throw new Error("portfolio_bridge_not_authenticated");
+    const fault = validatePortfolioSkipEventRequest(request, this.scope);
+    if (fault !== null) throw new Error(fault);
+    if (
+      this.#snapshot === null ||
+      this.#snapshot.state !== "ready" ||
+      this.#snapshot.revision !== request.expectedRevision
+    )
+      throw new Error("portfolio_skip_event_revision_not_fresh");
+    const response = await this.request("skip_event_probe_request", request, request);
+    if (response.type === "error") throw new Error(`portfolio_bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "skip_event_probe") {
+      this.close("portfolio_skip_event_probe_required");
+      throw new Error("portfolio_skip_event_probe_required");
+    }
+    return materializePortfolioSkipEventProbe(response.payload, request, this.scope);
+  }
+
+  public async startSkipEvent(request: PortfolioSkipEventRequest): Promise<PortfolioSkipEventStart> {
+    if (!this.#authenticated) throw new Error("portfolio_bridge_not_authenticated");
+    const fault = validatePortfolioSkipEventRequest(request, this.scope);
+    if (fault !== null) throw new Error(fault);
+    if (
+      this.#snapshot === null ||
+      this.#snapshot.state !== "ready" ||
+      this.#snapshot.revision !== request.expectedRevision
+    )
+      throw new Error("portfolio_skip_event_revision_not_fresh");
+    const correlationId = randomUUID();
+    const envelope = newPortfolioEnvelope("skip_event_request", this.scope, request, correlationId);
+    let acceptResolve!: (phase: PortfolioSkipEventPhase) => void;
+    let acceptReject!: (error: Error) => void;
+    let terminalResolve!: (receipt: PortfolioSkipEventReceipt) => void;
+    let terminalReject!: (error: Error) => void;
+    const accepted = new Promise<PortfolioSkipEventPhase>((resolve, reject) => {
+      acceptResolve = resolve;
+      acceptReject = reject;
+    });
+    const terminal = new Promise<PortfolioSkipEventReceipt>((resolve, reject) => {
+      terminalResolve = resolve;
+      terminalReject = reject;
+    });
+    // A terminal can fail closed before the start acceptance is awaited. Attach
+    // a rejection observer now so that path remains deterministic rather than
+    // becoming an unhandled-rejection process failure; callers still receive
+    // the original terminal Promise and its rejection when they retain it.
+    void terminal.catch(() => undefined);
+    const timer = setTimeout(
+      () => {
+        this.#pending.delete(correlationId);
+        const error = new Error("portfolio_skip_event_deadline_expired");
+        acceptReject(error);
+        terminalReject(error);
+      },
+      Math.max(0, request.deadlineMs - Date.now()),
+    );
+    this.#pending.set(correlationId, {
+      kind: "skip_event",
+      resolve: () => undefined,
+      reject: acceptReject,
+      timer,
+      request,
+      executionId: undefined,
+      traceId: request.traceId,
+      cancellationToken: request.cancellationToken,
+      cancellationRequest: false,
+      phases: [],
+      phaseIndex: -1,
+      skipEventAcceptedResolve: acceptResolve,
+      skipEventTerminalPromise: terminal,
+      skipEventTerminalResolve: terminalResolve,
+      skipEventTerminalReject: terminalReject,
+    });
+    void accepted.catch(() => undefined);
+    await this.#writeFrame(envelope);
+    const phase = await accepted;
+    return { request, executionId: phase.executionId, terminal };
+  }
+
+  public async cancelSkipEvent(request: PortfolioSkipEventCancelRequest): Promise<PortfolioSkipEventReceipt> {
+    if (!this.#authenticated) throw new Error("portfolio_bridge_not_authenticated");
+    const fault = validatePortfolioSkipEventCancelRequest(request, this.scope);
+    if (fault !== null) throw new Error(fault);
+    const pending = [...this.#pending.values()].find((candidate) => candidate.request?.requestId === request.requestId);
+    if (
+      pending === undefined ||
+      (pending.kind !== "skip_event" && pending.kind !== "skip_event_cancel") ||
+      pending.executionId === undefined ||
+      pending.request.traceId !== request.traceId ||
+      pending.executionId !== request.executionId ||
+      pending.request.cancellationToken !== request.cancellationToken ||
+      !samePortfolioEvidenceIdentity(request.scope, this.scope)
+    )
+      throw new Error("portfolio_skip_event_cancel_not_pending");
+    const response = await this.request("skip_event_cancel_request", request, pending.request, pending);
+    if (response.type !== "skip_event_receipt") {
+      this.close("portfolio_skip_event_cancel_receipt_required");
+      throw new Error("portfolio_skip_event_cancel_receipt_required");
+    }
+    return materializePortfolioSkipEventReceipt(response.payload, pending.request, this.scope);
+  }
+
   public async cancelSleepAndAdvanceDay(
     request: Extract<PortfolioMessage, { type: "sleep_day_cancel_request" }>["payload"],
   ): Promise<PortfolioSleepDayReceipt> {
     if (!this.#authenticated) throw new Error("portfolio_bridge_not_authenticated");
     const fault = validatePortfolioSleepDayCancelRequest(request);
     if (fault !== null) throw new Error(fault);
-    const pending = [...this.#pending.values()].find(
-      (candidate) => candidate.request?.requestId === request.requestId,
-    );
+    const pending = [...this.#pending.values()].find((candidate) => candidate.request?.requestId === request.requestId);
     if (
       pending === undefined ||
       (pending.kind !== "sleep_day" && pending.kind !== "sleep_day_cancel") ||
@@ -1033,6 +1221,9 @@ export class PortfolioStardewBridgeClient {
       pending.reject(error);
       if (pending.kind === "mine_elevator" || pending.kind === "mine_ladder" || pending.kind === "mine_entry") {
         pending.mineTerminalReject(error);
+      }
+      if (pending.kind === "skip_event") {
+        pending.skipEventTerminalReject(error);
       }
     }
     this.#pending.clear();
@@ -1085,9 +1276,16 @@ export class PortfolioStardewBridgeClient {
     const header = Buffer.allocUnsafe(4);
     header.writeInt32LE(payloadBytes.byteLength, 0);
     try {
-      await writePortfolioFrame(this.#frameWriter, Buffer.concat([header, payloadBytes]));
+      await writePortfolioFrame(
+        this.#frameWriter,
+        Buffer.concat([header, payloadBytes]),
+        PORTFOLIO_PIPE_WRITE_TIMEOUT_MS,
+      );
     } catch (error) {
-      if (!this.#closed) this.close("pipe_write_error");
+      const reasonCode = error instanceof Error && error.message === "portfolio_pipe_write_timeout"
+        ? "pipe_write_timeout"
+        : "pipe_write_error";
+      if (!this.#closed) this.close(reasonCode);
       throw error;
     }
   }
@@ -1101,7 +1299,7 @@ export class PortfolioStardewBridgeClient {
     pending: MineReceiptPending,
     message: Extract<
       PortfolioMessage,
-      { type: "mine_elevator_receipt" | "mine_ladder_receipt" | "enter_mine_receipt" }
+      { type: "mine_elevator_receipt" | "mine_ladder_receipt" | "enter_mine_receipt" | "skip_event_receipt" }
     >,
   ): boolean {
     if (
@@ -1111,14 +1309,20 @@ export class PortfolioStardewBridgeClient {
         (message.type === "mine_ladder_receipt" &&
           (pending.kind === "mine_ladder" || pending.kind === "mine_ladder_cancel")) ||
         (message.type === "enter_mine_receipt" &&
-          (pending.kind === "mine_entry" || pending.kind === "mine_entry_cancel"))
+          (pending.kind === "mine_entry" || pending.kind === "mine_entry_cancel")) ||
+        (message.type === "skip_event_receipt" &&
+          (pending.kind === "skip_event" || pending.kind === "skip_event_cancel"))
       ) ||
       message.payload.requestId !== pending.request.requestId ||
       message.payload.traceId !== pending.request.traceId ||
       (pending.executionId !== undefined && message.payload.executionId !== pending.executionId) ||
       !samePortfolioEvidenceIdentity(message.payload.evidence.scope, this.scope)
     ) {
-      this.close("portfolio_mine_elevator_correlation_mismatch");
+      this.close(
+        message.type === "skip_event_receipt"
+          ? "portfolio_skip_event_correlation_mismatch"
+          : "portfolio_mine_elevator_correlation_mismatch",
+      );
       return false;
     }
     // A terminal M8 receipt cannot establish start acceptance. This also
@@ -1129,44 +1333,64 @@ export class PortfolioStardewBridgeClient {
       original.phases.at(-1)?.phase !== "accepted" ||
       !phaseTraceIncludesObserved(original.phases, message.payload.evidence.phaseTrace)
     ) {
-      this.close("portfolio_mine_elevator_receipt_before_acceptance");
+      this.close(
+        message.type === "skip_event_receipt"
+          ? "portfolio_skip_event_receipt_before_acceptance"
+          : "portfolio_mine_elevator_receipt_before_acceptance",
+      );
       return false;
     }
-    let receipt: PortfolioMineElevatorReceipt | PortfolioMineLadderReceipt | PortfolioMineEntryReceipt;
+    let receipt:
+      | PortfolioMineElevatorReceipt
+      | PortfolioMineLadderReceipt
+      | PortfolioMineEntryReceipt
+      | PortfolioSkipEventReceipt;
     try {
       receipt =
-        message.type === "mine_ladder_receipt"
-          ? materializePortfolioMineLadderReceipt(
+        message.type === "skip_event_receipt"
+          ? materializePortfolioSkipEventReceipt(
               message.payload,
-              original.request as PortfolioMineLadderRequest,
+              original.request as PortfolioSkipEventRequest,
               this.scope,
             )
-          : message.type === "enter_mine_receipt"
-            ? materializePortfolioMineEntryReceipt(
+          : message.type === "mine_ladder_receipt"
+            ? materializePortfolioMineLadderReceipt(
                 message.payload,
-                original.request as PortfolioMineEntryRequest,
+                original.request as PortfolioMineLadderRequest,
                 this.scope,
               )
-            : materializePortfolioMineElevatorReceipt(
-                message.payload,
-                original.request as PortfolioMineElevatorRequest,
-                this.scope,
-              );
+            : message.type === "enter_mine_receipt"
+              ? materializePortfolioMineEntryReceipt(
+                  message.payload,
+                  original.request as PortfolioMineEntryRequest,
+                  this.scope,
+                )
+              : materializePortfolioMineElevatorReceipt(
+                  message.payload,
+                  original.request as PortfolioMineElevatorRequest,
+                  this.scope,
+                );
     } catch {
-      this.close("portfolio_mine_elevator_receipt_invalid");
+      this.close(
+        message.type === "skip_event_receipt"
+          ? "portfolio_skip_event_receipt_invalid"
+          : "portfolio_mine_elevator_receipt_invalid",
+      );
       return false;
     }
     if (original.terminalSettled) {
-      this.close("portfolio_mine_elevator_duplicate_terminal");
+      this.close(
+        message.type === "skip_event_receipt"
+          ? "portfolio_skip_event_duplicate_terminal"
+          : "portfolio_mine_elevator_duplicate_terminal",
+      );
       return false;
     }
     original.terminalSettled = true;
     this.#pending.delete(message.correlationId);
     clearTimeout(pending.timer);
     if (pending !== original) {
-      this.#pending.delete(
-        [...this.#pending.entries()].find(([, candidate]) => candidate === original)?.[0] ?? "",
-      );
+      this.#pending.delete([...this.#pending.entries()].find(([, candidate]) => candidate === original)?.[0] ?? "");
       clearTimeout(original.timer);
     }
     // Resolve exactly the family-exact terminal resolver of the settled
@@ -1177,8 +1401,14 @@ export class PortfolioStardewBridgeClient {
       original.mineTerminalResolve(receipt as PortfolioMineLadderReceipt);
     } else if (message.type === "enter_mine_receipt" && original.kind === "mine_entry") {
       original.mineTerminalResolve(receipt as PortfolioMineEntryReceipt);
+    } else if (message.type === "skip_event_receipt" && original.kind === "skip_event") {
+      original.skipEventTerminalResolve(receipt as PortfolioSkipEventReceipt);
     } else {
-      this.close("portfolio_mine_elevator_correlation_mismatch");
+      this.close(
+        message.type === "skip_event_receipt"
+          ? "portfolio_skip_event_correlation_mismatch"
+          : "portfolio_mine_elevator_correlation_mismatch",
+      );
       return false;
     }
     pending.resolve(message);
@@ -1221,20 +1451,27 @@ export class PortfolioStardewBridgeClient {
           message.type === "mine_ladder_phase" ||
           message.type === "mine_ladder_receipt" ||
           message.type === "enter_mine_phase" ||
-          message.type === "enter_mine_receipt") &&
+          message.type === "enter_mine_receipt" ||
+          message.type === "skip_event_phase" ||
+          message.type === "skip_event_receipt") &&
         pending === undefined
-      ) {
-        // A terminal/phase frame without a live correlation is never allowed to
-        // create a new lifecycle (including after cancellation or duplicate
-        // delivery). Fail closed rather than treating it as a fresh result.
-        this.close("portfolio_mine_elevator_unknown_correlation");
-        return;
-      }
+        ) {
+          // A terminal/phase frame without a live correlation is never allowed to
+          // create a new lifecycle (including after cancellation or duplicate
+          // delivery). Fail closed rather than treating it as a fresh result.
+          this.close(
+            message.type === "skip_event_phase" || message.type === "skip_event_receipt"
+              ? "portfolio_skip_event_unknown_correlation"
+              : "portfolio_mine_elevator_unknown_correlation",
+          );
+          return;
+        }
       if (pending?.request !== undefined) {
         if (
           message.type === "mine_elevator_phase" ||
           message.type === "mine_ladder_phase" ||
-          message.type === "enter_mine_phase"
+          message.type === "enter_mine_phase" ||
+          message.type === "skip_event_phase"
         ) {
           if (message.type === "mine_elevator_phase" && pending.kind === "mine_elevator") {
             if (
@@ -1305,7 +1542,34 @@ export class PortfolioStardewBridgeClient {
             if (message.payload.phase === "accepted") pending.mineAcceptedResolve(message.payload);
             continue;
           }
-          this.close("portfolio_mine_elevator_correlation_mismatch");
+          if (message.type === "skip_event_phase" && pending.kind === "skip_event") {
+            if (
+              message.payload.requestId !== pending.request.requestId ||
+              message.payload.traceId !== pending.request.traceId ||
+              (pending.executionId !== undefined && message.payload.executionId !== pending.executionId) ||
+              (pending.phases.length === 0 &&
+                (message.payload.phase !== "accepted" || message.payload.reasonCode !== "accepted")) ||
+              (pending.phases.length > 0 && message.payload.revision < pending.phases.at(-1)!.revision)
+            ) {
+              this.close("portfolio_skip_event_correlation_mismatch");
+              return;
+            }
+            const phaseIndex = PORTFOLIO_SKIP_EVENT_PHASES.indexOf(message.payload.phase);
+            if (phaseIndex <= pending.phaseIndex) {
+              this.close("portfolio_skip_event_phase_regressed");
+              return;
+            }
+            pending.phaseIndex = phaseIndex;
+            pending.executionId = message.payload.executionId;
+            pending.phases.push(message.payload);
+            if (message.payload.phase === "accepted") pending.skipEventAcceptedResolve(message.payload);
+            continue;
+          }
+          this.close(
+            message.type === "skip_event_phase"
+              ? "portfolio_skip_event_correlation_mismatch"
+              : "portfolio_mine_elevator_correlation_mismatch",
+          );
           return;
         }
         if (message.type === "sleep_day_phase") {
@@ -1336,7 +1600,8 @@ export class PortfolioStardewBridgeClient {
         if (
           message.type === "mine_elevator_receipt" ||
           message.type === "mine_ladder_receipt" ||
-          message.type === "enter_mine_receipt"
+          message.type === "enter_mine_receipt" ||
+          message.type === "skip_event_receipt"
         ) {
           if (
             pending.kind === "mine_elevator" ||
@@ -1344,11 +1609,17 @@ export class PortfolioStardewBridgeClient {
             pending.kind === "mine_ladder" ||
             pending.kind === "mine_ladder_cancel" ||
             pending.kind === "mine_entry" ||
-            pending.kind === "mine_entry_cancel"
+            pending.kind === "mine_entry_cancel" ||
+            pending.kind === "skip_event" ||
+            pending.kind === "skip_event_cancel"
           ) {
             if (!this.settleMineReceipt(pending, message)) return;
           } else {
-            this.close("portfolio_mine_elevator_correlation_mismatch");
+            this.close(
+              message.type === "skip_event_receipt"
+                ? "portfolio_skip_event_correlation_mismatch"
+                : "portfolio_mine_elevator_correlation_mismatch",
+            );
             return;
           }
           continue;
@@ -1394,6 +1665,11 @@ export class PortfolioStardewBridgeClient {
           const original = pending.cancellationRequest ? pending.original : pending;
           pending.reject(error);
           original.mineTerminalReject(error);
+          if (original !== pending) original.reject(error);
+        } else if (pending !== undefined && (pending.kind === "skip_event" || pending.kind === "skip_event_cancel")) {
+          const original = pending.cancellationRequest ? pending.original : pending;
+          pending.reject(error);
+          original.skipEventTerminalReject(error);
           if (original !== pending) original.reject(error);
         }
         this.close(`portfolio_bridge_rejected:${message.payload.reasonCode}`);

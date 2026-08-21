@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 import { resolveStardewActionGateRunner } from "./resolve-stardew-action-gate-runner.mjs";
+import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 test("fixture launcher resolver returns the canonical descriptor runner for every published action", () => {
   for (const gate of STARDEW_PUBLISHED_ACTION_GATES)

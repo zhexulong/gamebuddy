@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import { TavernArtifactStore } from "../artifact-store.js";
-import { validateTavernArtifact, type GreetingSet } from "../types.js";
+import type { TavernArtifactStore } from "../artifact-store.js";
+import { type GreetingSet, validateTavernArtifact } from "../types.js";
 
 export type GreetingVariantProjection = Readonly<{ label?: string; text: string }>;
 export type GreetingSetProjection = Readonly<{

@@ -23,6 +23,7 @@ internal static class PortfolioTerminalDeliveryCoreTests
         AcknowledgeRejectsArmedHeadAndDequeuesUnarmedHead();
         FifoHeadBlockingMatrix();
         ValueEqualDeliveryUsesCompletionEquality();
+        PortfolioSkipEventLifecycleContract.Run();
         Console.WriteLine("PortfolioTerminalDeliveryCore contract passed.");
         return 0;
     }

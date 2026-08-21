@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
-  verifyDeterministicBootstrapComposition,
   blockedDeterministicBootstrapComposition,
+  verifyDeterministicBootstrapComposition,
 } from "./stardew-companion-production-bootstrap.mjs";
+
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 function valid() {
   const challengeSha256 = "a".repeat(64);

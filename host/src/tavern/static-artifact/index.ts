@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { dirname, relative, resolve, sep } from "node:path";
 
 import { readStrictJsonFile } from "../../strict-json-reader.js";
@@ -63,7 +63,8 @@ export async function verifyTavernStaticArtifact(
 ): Promise<VerifiedTavernStaticArtifact> {
   if (!validIdentity(expectedIdentity)) throw invalid();
   const root = resolve(artifactRoot);
-  const activeInspector = inspector ?? (process.platform === "win32" ? undefined : await createPublishedWindowsReparseInspector(root));
+  const activeInspector =
+    inspector ?? (process.platform === "win32" ? undefined : await createPublishedWindowsReparseInspector(root));
   try {
     await assertNoWindowsReparse(activeInspector, root);
     const rootDirectory = await verifyDirectory(root, root, activeInspector);
@@ -71,18 +72,18 @@ export async function verifyTavernStaticArtifact(
     await assertNoWindowsReparse(activeInspector, manifestPath);
     await verifyRegularFile(manifestPath, root, undefined, activeInspector);
     const manifest = parseManifest(await readStrictJsonFile(manifestPath));
-  if (
-    manifest.browserContract !== expectedIdentity.browserContract ||
-    manifest.profileId !== expectedIdentity.profileId
-  )
-    throw invalid();
+    if (
+      manifest.browserContract !== expectedIdentity.browserContract ||
+      manifest.profileId !== expectedIdentity.profileId
+    )
+      throw invalid();
 
-  const assets = new Map<string, TavernStaticArtifactAsset>();
-  for (const asset of manifest.assets) {
-    if (!validAsset(asset) || assets.has(asset.path)) throw invalid();
-    assets.set(asset.path, Object.freeze({ ...asset }));
-  }
-  const allowed = new Set<string>([TAVERN_BROWSER_ARTIFACT_MANIFEST, manifest.entryHtml, ...assets.keys()]);
+    const assets = new Map<string, TavernStaticArtifactAsset>();
+    for (const asset of manifest.assets) {
+      if (!validAsset(asset) || assets.has(asset.path)) throw invalid();
+      assets.set(asset.path, Object.freeze({ ...asset }));
+    }
+    const allowed = new Set<string>([TAVERN_BROWSER_ARTIFACT_MANIFEST, manifest.entryHtml, ...assets.keys()]);
     await verifyArtifactTree(root, allowed, rootDirectory, activeInspector);
     const entryHtml = await readVerifiedFile(resolve(root, manifest.entryHtml), root, activeInspector);
     for (const asset of assets.values()) {
@@ -90,13 +91,13 @@ export async function verifyTavernStaticArtifact(
       if (content.length !== asset.bytes || sha256(content) !== asset.sha256) throw invalid();
     }
     const artifact = Object.freeze({
-    root,
-    identity: Object.freeze({ ...expectedIdentity }),
-    entryHtml: "index.html" as const,
-    assets,
-  });
-  // The shell is deliberately retained outside the public artifact shape: the frozen
-  // manifest has no HTML hash, and GET / must not re-open a replaceable filesystem path.
+      root,
+      identity: Object.freeze({ ...expectedIdentity }),
+      entryHtml: "index.html" as const,
+      assets,
+    });
+    // The shell is deliberately retained outside the public artifact shape: the frozen
+    // manifest has no HTML hash, and GET / must not re-open a replaceable filesystem path.
     verifiedEntryHtml.set(artifact, Buffer.from(entryHtml));
     verifiedInspectors.set(artifact, activeInspector);
     return artifact;
@@ -201,11 +202,22 @@ type FileIdentity = Readonly<{ dev: bigint; ino: bigint }>;
  * also unique, so an implementation which exposes an alias without that flag
  * cannot introduce a cycle into the verified tree.
  */
-async function verifyArtifactTree(root: string, allowed: ReadonlySet<string>, rootDirectory: FileIdentity, inspector: WindowsReparseInspectorCapability | undefined): Promise<void> {
+async function verifyArtifactTree(
+  root: string,
+  allowed: ReadonlySet<string>,
+  rootDirectory: FileIdentity,
+  inspector: WindowsReparseInspectorCapability | undefined,
+): Promise<void> {
   const directories = new Set<string>([identityKey(rootDirectory)]);
   await verifyArtifactDirectory(root, root, allowed, directories, inspector);
 }
-async function verifyArtifactDirectory(root: string, directory: string, allowed: ReadonlySet<string>, directories: Set<string>, inspector: WindowsReparseInspectorCapability | undefined): Promise<void> {
+async function verifyArtifactDirectory(
+  root: string,
+  directory: string,
+  allowed: ReadonlySet<string>,
+  directories: Set<string>,
+  inspector: WindowsReparseInspectorCapability | undefined,
+): Promise<void> {
   await assertNoWindowsReparse(inspector, directory);
   const directoryStat = await verifyDirectory(directory, root, inspector);
   if (!directories.has(identityKey(directoryStat))) throw invalid();
@@ -228,7 +240,11 @@ async function verifyArtifactDirectory(root: string, directory: string, allowed:
     }
   }
 }
-async function verifyDirectory(path: string, root: string, inspector: WindowsReparseInspectorCapability | undefined): Promise<FileIdentity> {
+async function verifyDirectory(
+  path: string,
+  root: string,
+  inspector: WindowsReparseInspectorCapability | undefined,
+): Promise<FileIdentity> {
   await assertNoWindowsReparse(inspector, path);
   const stat = await lstat(path, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw invalid();
@@ -238,13 +254,22 @@ async function verifyDirectory(path: string, root: string, inspector: WindowsRep
   if (physical !== physicalRoot && !physical.startsWith(`${physicalRoot}${sep}`)) throw invalid();
   return stat;
 }
-async function verifyRegularFile(path: string, root: string, expectedStat?: FileIdentity & { isFile(): boolean; isSymbolicLink(): boolean }, inspector?: WindowsReparseInspectorCapability): Promise<void> {
+async function verifyRegularFile(
+  path: string,
+  root: string,
+  expectedStat?: FileIdentity & { isFile(): boolean; isSymbolicLink(): boolean },
+  inspector?: WindowsReparseInspectorCapability,
+): Promise<void> {
   await assertNoWindowsReparse(inspector, path);
-  const stat = expectedStat ?? await lstat(path, { bigint: true });
+  const stat = expectedStat ?? (await lstat(path, { bigint: true }));
   if (!contained(path, root) || !stat.isFile() || stat.isSymbolicLink()) throw invalid();
   identityKey(stat);
 }
-async function readVerifiedFile(path: string, root: string, inspector: WindowsReparseInspectorCapability | undefined): Promise<Buffer> {
+async function readVerifiedFile(
+  path: string,
+  root: string,
+  inspector: WindowsReparseInspectorCapability | undefined,
+): Promise<Buffer> {
   if (!contained(path, root)) throw invalid();
   await assertNoWindowsReparse(inspector, path);
   const parent = dirname(path);

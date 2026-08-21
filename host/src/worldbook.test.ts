@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { createWorldBookTools, validateWorldBook, worldBookMetadata } from "./worldbook.js";
+import {
+  createWorldBookTools,
+  readWorldBook,
+  validateWorldBook,
+  worldBookMetadata,
+  writeWorldBook,
+} from "./worldbook.js";
 
 const book = validateWorldBook({
   schemaVersion: 1,
@@ -60,4 +69,42 @@ test("WorldBook rejects scope drift and duplicate entries", () => {
     () => validateWorldBook({ ...book, entries: [{ ...book.entries[1], saveId: undefined }] }),
     /invalid_worldbook/,
   );
+});
+
+test("readWorldBook reads manual JSON without canonicalHash, writeWorldBook persists canonicalHash", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "worldbook-test-"));
+  const filePath = join(dir, "worldbook.json");
+  try {
+    const manualJson = {
+      schemaVersion: 1,
+      worldBookId: "manual_worldbook",
+      revision: 1,
+      alwaysOnPremise: "Manual premise without hash.",
+      entries: [
+        {
+          entryId: "manual_entry",
+          title: "Manual Title",
+          content: "Manual Content",
+          scope: "companion",
+          provenance: "authored",
+          tokenBudget: "small",
+        },
+      ],
+    };
+    await writeFile(filePath, JSON.stringify(manualJson), "utf8");
+    const loaded = await readWorldBook(filePath);
+    assert.equal(loaded.worldBookId, "manual_worldbook");
+    assert.equal(loaded.alwaysOnPremise, "Manual premise without hash.");
+    assert.equal(loaded.entries.length, 1);
+    assert.equal(loaded.entries[0]!.title, "Manual Title");
+
+    await writeWorldBook(filePath, loaded);
+    const rawWritten = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
+    assert.ok(typeof rawWritten.canonicalHash === "string" && rawWritten.canonicalHash.length > 0);
+
+    const reloaded = await readWorldBook(filePath);
+    assert.deepEqual(reloaded, loaded);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

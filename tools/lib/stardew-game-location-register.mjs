@@ -167,7 +167,7 @@ export async function buildGameLocationInteractionRegister(sourceRecords) {
       item.sourcePath === "StardewValley/GameLocation.cs" && item.declaration.identifierSyntax === LOCATION_ROOT,
   );
   if (!root) fail("location_register_root_declaration_missing", "GameLocation class declaration was not found.");
-  const classesByName = new Map(allClasses.map((item) => [item.declaration.identifierSyntax, item]));
+  const _classesByName = new Map(allClasses.map((item) => [item.declaration.identifierSyntax, item]));
   const includedNames = new Set([LOCATION_ROOT]);
   let changed = true;
   while (changed) {

@@ -1,5 +1,5 @@
-import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

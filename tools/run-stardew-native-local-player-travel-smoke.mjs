@@ -128,7 +128,8 @@ async function observeTravelActionable(client) {
   const snapshot = await observeFresh(client, { actionable: true });
   if (!Number.isInteger(snapshot.tile?.x) || !Number.isInteger(snapshot.tile?.y))
     throw new Error("native_local_travel_snapshot_invalid");
-  if (!Array.isArray(snapshot.warps) || snapshot.warps.length === 0) throw new Error("native_local_travel_warps_missing");
+  if (!Array.isArray(snapshot.warps) || snapshot.warps.length === 0)
+    throw new Error("native_local_travel_warps_missing");
   return snapshot;
 }
 

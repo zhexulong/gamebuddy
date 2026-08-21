@@ -166,11 +166,13 @@ internal static class PortfolioBridgeSessionGenerationContract
     // noninvocation. These concrete adapters exist only to satisfy that fixed session signature.
     private static PortfolioMineEntrySemanticAdapter CreateMineEntryAdapter(PortfolioConfig config) => new(config, () => true, () => CurrentRevision,
         _ => false, _ => throw new InvalidOperationException("wrong generation must not observe an entry postcondition."),
-        (_, _, _, _, _, _) => throw new InvalidOperationException("wrong generation must not fail an entry execution."));
+        (_, _, _, _, _, _) => throw new InvalidOperationException("wrong generation must not fail an entry execution."),
+        _ => throw new InvalidOperationException("wrong generation must not arm an entry transition."));
 
     private static PortfolioMineLadderSemanticAdapter CreateMineLadderAdapter(PortfolioConfig config) => new(config, () => true, () => CurrentRevision,
         _ => false, _ => throw new InvalidOperationException("wrong generation must not observe a ladder postcondition."),
-        (_, _, _, _, _, _) => throw new InvalidOperationException("wrong generation must not fail a ladder execution."));
+        (_, _, _, _, _, _) => throw new InvalidOperationException("wrong generation must not fail a ladder execution."),
+        _ => throw new InvalidOperationException("wrong generation must not arm a ladder transition."));
 
     private static PortfolioMineElevatorSemanticAdapter CreateMineElevatorAdapter(PortfolioConfig config) => new(config, () => true, () => CurrentRevision,
         _ => false, _ => throw new InvalidOperationException("wrong generation must not observe an elevator postcondition."),

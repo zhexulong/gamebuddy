@@ -3,17 +3,17 @@ import { mkdir } from "node:fs/promises";
 import {
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
+  type IdentityProfile,
   identityProfileHash,
   writeIdentityProfile,
   writeIdentityProfileBinding,
-  type IdentityProfile,
 } from "../identity-profile.js";
-import { identityKey, resolveRuntimePaths, type CompanionIdentity } from "../runtime.js";
+import { withPathLock } from "../path-lock.js";
+import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../runtime.js";
 import { TavernArtifactStore } from "./artifact-store.js";
+import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
-import { createChatThreadStore, type ChatThreadStore } from "./chat-thread-store.js";
-import { withPathLock } from "../path-lock.js";
 import type { CharacterCandidate, TavernCompanion } from "./types.js";
 
 /** Explicit review boundary: candidates cannot alter an existing companion. */
@@ -143,45 +143,37 @@ async function provisionNewCompanionNamespace(
   suppliedThreads?: ChatThreadStore,
 ): Promise<NewCompanionProvision> {
   const paths = resolveRuntimePaths(identity, root);
-  try {
-    // The containment-aware lock creates and verifies each parent component
-    // before entering the transaction. A pre-existing namespace is never
-    // adopted or overwritten.
-    return await withPathLock(
-      paths.runtimeCwd,
-      async () => {
-        await mkdir(paths.runtimeCwd, { recursive: false });
-        await writeIdentityProfile(paths.identityProfilePath, profile, { containmentRoot: paths.root });
-        await writeIdentityProfileBinding(
-          paths.identityProfileBindingPath,
-          createIdentityProfileBinding(identityKey(identity), profile),
-          { containmentRoot: paths.root },
-        );
-        const threads = suppliedThreads ?? createChatThreadStore(paths.runtimeCwd, identityKey(identity));
-        const library = createTavernLibraryService(
-          resolveTavernPaths(paths, identity),
-          new TavernArtifactStore(paths.root),
-          threads,
-        );
-        const companion = await library.createNewCompanion({
-          companionId: identity.companionId,
-          continuityId: identity.continuityId!,
-          name: profile.identity.name,
-          profileId: profile.profileId,
-          profileRevision: profile.revision,
-          profileHash: identityProfileHash(profile),
-        });
-        return Object.freeze({ companion, identity, profile });
-      },
-      { containmentRoot: paths.root },
-    );
-  } catch (error) {
-    // Deliberately do not recursively remove the namespace. This transaction
-    // may have created nested Tavern artifacts, and path-based recursive
-    // deletion cannot prove ownership after a replacement or sentinel entry.
-    // Leaving it quarantined is fail-closed and preserves unmanaged content.
-    throw error;
-  }
+  // The containment-aware lock creates and verifies each parent component
+  // before entering the transaction. A pre-existing namespace is never
+  // adopted or overwritten.
+  return await withPathLock(
+    paths.runtimeCwd,
+    async () => {
+      await mkdir(paths.runtimeCwd, { recursive: false });
+      await writeIdentityProfile(paths.identityProfilePath, profile, { containmentRoot: paths.root });
+      await writeIdentityProfileBinding(
+        paths.identityProfileBindingPath,
+        createIdentityProfileBinding(identityKey(identity), profile),
+        { containmentRoot: paths.root },
+      );
+      const threads = suppliedThreads ?? createChatThreadStore(paths.runtimeCwd, identityKey(identity));
+      const library = createTavernLibraryService(
+        resolveTavernPaths(paths, identity),
+        new TavernArtifactStore(paths.root),
+        threads,
+      );
+      const companion = await library.createNewCompanion({
+        companionId: identity.companionId,
+        continuityId: identity.continuityId!,
+        name: profile.identity.name,
+        profileId: profile.profileId,
+        profileRevision: profile.revision,
+        profileHash: identityProfileHash(profile),
+      });
+      return Object.freeze({ companion, identity, profile });
+    },
+    { containmentRoot: paths.root },
+  );
 }
 
 function directProfile(name: string, companionId: string, continuityId: string): IdentityProfile {

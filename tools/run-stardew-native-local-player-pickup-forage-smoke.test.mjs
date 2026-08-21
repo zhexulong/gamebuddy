@@ -124,7 +124,10 @@ test("pickup-forage runner passes with exact terminal correlation and fresh rere
   assert.equal(result.evidence.removed, "True");
   assert.equal(result.targetGone, true);
   assert.equal(result.inventoryDeltaProven, true);
-  assert.deepEqual(result.trace.map((entry) => entry.action), ["pickup_forage"]);
+  assert.deepEqual(
+    result.trace.map((entry) => entry.action),
+    ["pickup_forage"],
+  );
   assert.deepEqual(result.after.forageTargets, []);
   assert.equal(result.after.location, "Farm");
 });
@@ -159,7 +162,9 @@ test("pickup-forage runner blocks on invalid evidence format", async () => {
 });
 
 test("pickup-forage runner blocks on a non-isolated capability surface", async () => {
-  const client = createFake({ capabilities: ["cancel_active_execution", "pickup_forage", "inspect_self", "move_to_tile"] });
+  const client = createFake({
+    capabilities: ["cancel_active_execution", "pickup_forage", "inspect_self", "move_to_tile"],
+  });
   const receipts = [];
   client.onFact((fact) => {
     if (fact.type === "execution_receipt") receipts.push(fact.payload);
@@ -204,7 +209,10 @@ test("pickup-forage runner travels to Farm before picking up forage", async () =
   const result = await runPickupForageSmoke(client, receipts, fixtureConfig(), OPTIONS);
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "forage_picked_up");
-  assert.deepEqual(result.trace.map((entry) => entry.action), ["travel", "pickup_forage"]);
+  assert.deepEqual(
+    result.trace.map((entry) => entry.action),
+    ["travel", "pickup_forage"],
+  );
   assert.equal(result.before.location, "Farm");
   assert.equal(result.after.location, "Farm");
 });
