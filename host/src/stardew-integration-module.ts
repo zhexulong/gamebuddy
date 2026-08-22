@@ -2,9 +2,12 @@ import {
   type ActionPolicy,
   DEFAULT_ACTION_POLICY,
   parseActionPolicy,
-  STARDEW_ACTION_REGISTRY,
+  STARDEW_ACTION_ADAPTERS,
 } from "./action-registry.js";
-import { createStardewActionTools, createStardewObservationTools } from "./game-tools.js";
+import {
+  createStardewActionTools,
+  createStardewObservationTools,
+} from "./game-tools.js";
 import {
   createIntegrationActionCatalog,
   DEFAULT_INTEGRATION_ACTION_POLICY,
@@ -18,23 +21,39 @@ import {
   type IntegrationToolContext,
 } from "./integration-module.js";
 import type { CompanionIntegration } from "./integration-types.js";
-import { createStardewKnowledgeTools, type KnowledgeBundle } from "./knowledge.js";
+import {
+  createStardewKnowledgeTools,
+  type KnowledgeBundle,
+} from "./knowledge.js";
 import type { ExecutionReceipt, Scope } from "./protocol.js";
 
-const STARDew_ACTION_ENTRIES = STARDEW_ACTION_REGISTRY.map((entry) => ({ ...entry }));
+const STARDew_ACTION_ENTRIES = STARDEW_ACTION_ADAPTERS.map(({ actionId }) => ({
+  actionId,
+}));
 
 /**
  * The first concrete adapter. Stardew-specific tool/schema/evidence behavior
  * remains here while the Host composition root only consumes this port.
  */
 export function createStardewIntegrationModule(): GameIntegrationModule {
-  const actionCatalog = createIntegrationActionCatalog(STARDew_ACTION_ENTRIES, hasStardewCompletionEvidence);
+  const actionCatalog = createIntegrationActionCatalog(
+    STARDew_ACTION_ENTRIES,
+    hasStardewCompletionEvidence,
+  );
   return Object.freeze({
-    descriptor: Object.freeze({ integrationId: "stardew", version: "bridge-v1", toolNamePrefix: "stardew_" }),
+    descriptor: Object.freeze({
+      integrationId: "stardew",
+      version: "bridge-v1",
+      toolNamePrefix: "stardew_",
+    }),
     actionCatalog,
     defaultPolicy: DEFAULT_INTEGRATION_ACTION_POLICY,
-    parsePolicy: (value: unknown): IntegrationActionPolicy => parseActionPolicy(value),
-    assertIdentityBinding: (connection, identity: IntegrationIdentityBinding) => {
+    parsePolicy: (value: unknown): IntegrationActionPolicy =>
+      parseActionPolicy(value),
+    assertIdentityBinding: (
+      connection,
+      identity: IntegrationIdentityBinding,
+    ) => {
       const scope = (connection as CompanionIntegration).scope;
       if (
         !sameScope(scope, connection.scope) ||
@@ -50,8 +69,13 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
     },
     worldScope: (connection) => {
       const scope = (connection as CompanionIntegration).scope;
-      if (!sameScope(scope, connection.scope)) throw new Error("integration_scope_mismatch");
-      return { integrationId: scope.integrationId, saveId: scope.saveId, worldId: scope.worldId };
+      if (!sameScope(scope, connection.scope))
+        throw new Error("integration_scope_mismatch");
+      return {
+        integrationId: scope.integrationId,
+        saveId: scope.saveId,
+        worldId: scope.worldId,
+      };
     },
     createToolSet: ({
       connection,
@@ -62,7 +86,8 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
     }: IntegrationToolContext) => {
       const mountedPolicy = (policy ?? DEFAULT_ACTION_POLICY) as ActionPolicy;
       const integration = connection as CompanionIntegration;
-      if (!sameScope(integration.scope, connection.scope)) throw new Error("integration_scope_mismatch");
+      if (!sameScope(integration.scope, connection.scope))
+        throw new Error("integration_scope_mismatch");
       // Executable tools require the launcher-owned liveness fence. A missing
       // or revoked gate is never a legacy admission path; observations remain
       // available because they do not dispatch gameplay operations.
@@ -70,7 +95,11 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
       const knowledge =
         isKnowledgeBundle(mountedKnowledge) && mountedGameVersion !== undefined
           ? createStardewKnowledgeTools(
-              { ...integration, knowledge: mountedKnowledge, gameVersion: mountedGameVersion },
+              {
+                ...integration,
+                knowledge: mountedKnowledge,
+                gameVersion: mountedGameVersion,
+              },
               mountedPolicy,
             )
           : ([] as const);
@@ -79,14 +108,20 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
         actions:
           !executable || dispatchAdmissionFactory === undefined
             ? []
-            : createStardewActionTools(integration, mountedPolicy, dispatchAdmissionFactory),
+            : createStardewActionTools(
+                integration,
+                mountedPolicy,
+                dispatchAdmissionFactory,
+              ),
         knowledge,
       });
     },
     knowledgeMetadata: ({ knowledge, gameVersion }) => ({
       mounted: isKnowledgeBundle(knowledge),
       gameVersion: gameVersion ?? null,
-      bundleVersion: isKnowledgeBundle(knowledge) ? knowledge.bundleVersion : null,
+      bundleVersion: isKnowledgeBundle(knowledge)
+        ? knowledge.bundleVersion
+        : null,
     }),
     status: (connection): IntegrationStatusDetails => {
       const state = (connection as CompanionIntegration).state;
@@ -100,38 +135,50 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
     },
     readState: (connection): IntegrationStateView => {
       const integration = connection as CompanionIntegration;
-      if (!sameScope(integration.scope, connection.scope)) throw new Error("integration_scope_mismatch");
+      if (!sameScope(integration.scope, connection.scope))
+        throw new Error("integration_scope_mismatch");
       const state = integration.state;
       return {
         connected: state.connected,
         sessionId: state.sessionId,
         capabilities: [...state.capabilities],
+        registrations: [...(state.catalogRegistrations ?? [])],
         snapshotRevision: state.snapshot?.revision ?? null,
         activeExecution:
-          state.snapshot?.activeExecution === null || state.snapshot?.activeExecution === undefined
+          state.snapshot?.activeExecution === null ||
+          state.snapshot?.activeExecution === undefined
             ? null
             : {
                 requestId: state.snapshot.activeExecution.requestId,
                 executionId: state.snapshot.activeExecution.executionId,
                 state: state.snapshot.activeExecution.state,
               },
-        latestReceipt: state.latestReceipt === null ? null : toIntegrationReceipt(state.latestReceipt),
+        latestReceipt:
+          state.latestReceipt === null
+            ? null
+            : toIntegrationReceipt(state.latestReceipt),
         latestReasonCode: state.latestReasonCode,
       };
     },
     cancelExecution: (connection, requestId, executionId, reasonCode) => {
       const integration = connection as CompanionIntegration & {
-        cancel?: (requestId: string, executionId: string, reasonCode: string) => unknown;
+        cancel?: (
+          requestId: string,
+          executionId: string,
+          reasonCode: string,
+        ) => unknown;
       };
-      if (!sameScope(integration.scope, connection.scope)) return "integration_scope_mismatch";
-      if (typeof integration.cancel !== "function") return "integration_cancel_unavailable";
+      if (!sameScope(integration.scope, connection.scope))
+        return "integration_scope_mismatch";
+      if (typeof integration.cancel !== "function")
+        return "integration_cancel_unavailable";
       return integration.cancel(requestId, executionId, reasonCode);
     },
     parseReceipt: (details: unknown) => parseStardewReceipt(details),
     actionIdForToolName: (toolName: string) => {
       if (!toolName.startsWith("stardew_")) return null;
       const actionId = toolName.slice("stardew_".length);
-      return actionCatalog.isPublished(actionId) ? actionId : null;
+      return actionCatalog.hasAdapter(actionId) ? actionId : null;
     },
     isCancellationTool: () => false,
   });
@@ -139,9 +186,17 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
 
 export const STARDEW_INTEGRATION_MODULE = createStardewIntegrationModule();
 
-function hasStardewCompletionEvidence(actionId: string, receipt: IntegrationReceiptEvidence): boolean {
+function hasStardewCompletionEvidence(
+  actionId: string,
+  receipt: IntegrationReceiptEvidence,
+): boolean {
   const detail = receipt.evidence?.detail;
-  if (receipt.state !== "succeeded" || typeof detail !== "string" || detail.length === 0 || detail.length > 4_096)
+  if (
+    receipt.state !== "succeeded" ||
+    typeof detail !== "string" ||
+    detail.length === 0 ||
+    detail.length > 4_096
+  )
     return false;
   // Each published action is explicit. Unsupported schemas fail closed rather
   // than treating a succeeded receipt or a matching substring as completion.
@@ -160,29 +215,64 @@ function hasStardewCompletionEvidence(actionId: string, receipt: IntegrationRece
         )
       );
     case "till_soil":
-      return receipt.reasonCode === "soil_tilled" && hasTillSoilCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "soil_tilled" &&
+        hasTillSoilCompletionEvidence(detail)
+      );
     case "water_crop":
-      return receipt.reasonCode === "crop_watered" && hasWaterCropCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "crop_watered" &&
+        hasWaterCropCompletionEvidence(detail)
+      );
     case "refill_watering_can":
-      return receipt.reasonCode === "watering_can_refilled" && hasRefillWateringCanCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "watering_can_refilled" &&
+        hasRefillWateringCanCompletionEvidence(detail)
+      );
     case "dig_artifact_spot":
-      return receipt.reasonCode === "artifact_spot_dug" && hasDigArtifactSpotCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "artifact_spot_dug" &&
+        hasDigArtifactSpotCompletionEvidence(detail)
+      );
     case "break_rock_source":
-      return receipt.reasonCode === "rock_source_broken" && hasBreakRockSourceCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "rock_source_broken" &&
+        hasBreakRockSourceCompletionEvidence(detail)
+      );
     case "clear_hoedirt":
-      return receipt.reasonCode === "hoedirt_cleared" && hasClearHoeDirtCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "hoedirt_cleared" &&
+        hasClearHoeDirtCompletionEvidence(detail)
+      );
     case "chop_tree_source":
-      return receipt.reasonCode === "tree_source_chopped" && hasChopTreeSourceCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "tree_source_chopped" &&
+        hasChopTreeSourceCompletionEvidence(detail)
+      );
     case "place_wood_fence":
-      return receipt.reasonCode === "wood_fence_placed" && hasWoodFenceCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "wood_fence_placed" &&
+        hasWoodFenceCompletionEvidence(detail)
+      );
     case "bait_crab_pot":
-      return receipt.reasonCode === "crab_pot_baited" && hasBaitCrabPotCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "crab_pot_baited" &&
+        hasBaitCrabPotCompletionEvidence(detail)
+      );
     case "plant_seed":
       return (
         receipt.reasonCode === "seed_planted" &&
         exactEvidence(
           detail,
-          ["location", "target", "tile", "item", "crop", "inventory_before", "inventory_after"],
+          [
+            "location",
+            "target",
+            "tile",
+            "item",
+            "crop",
+            "inventory_before",
+            "inventory_after",
+          ],
           (e) =>
             hasBoundedNonemptyEvidenceValue(e.location) &&
             hasOpaqueIdEvidenceValue(e.target) &&
@@ -193,33 +283,75 @@ function hasStardewCompletionEvidence(actionId: string, receipt: IntegrationRece
         )
       );
     case "move_to_tile":
-      return receipt.reasonCode === "target_reached" && hasMoveToTileCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "target_reached" &&
+        hasMoveToTileCompletionEvidence(detail)
+      );
     case "travel":
-      return receipt.reasonCode === "travel_completed" && hasDoorTransitionCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "travel_completed" &&
+        hasDoorTransitionCompletionEvidence(detail)
+      );
     case "enter_exit":
-      return receipt.reasonCode === "enter_exit_completed" && hasDoorTransitionCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "enter_exit_completed" &&
+        hasDoorTransitionCompletionEvidence(detail)
+      );
     case "pickup_forage":
-      return receipt.reasonCode === "forage_picked_up" && hasPickupForageCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "forage_picked_up" &&
+        hasPickupForageCompletionEvidence(detail)
+      );
     case "pickup_item":
-      return receipt.reasonCode === "item_picked_up" && hasPickupItemCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "item_picked_up" &&
+        hasPickupItemCompletionEvidence(detail)
+      );
     case "fertilize_tile":
-      return receipt.reasonCode === "fertilizer_applied" && hasFertilizeTileCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "fertilizer_applied" &&
+        hasFertilizeTileCompletionEvidence(detail)
+      );
     case "place_crab_pot":
-      return receipt.reasonCode === "crab_pot_placed" && hasPlaceCrabPotCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "crab_pot_placed" &&
+        hasPlaceCrabPotCompletionEvidence(detail)
+      );
     case "machine_inspect":
-      return receipt.reasonCode === "machine_inspected" && hasMachineInspectCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "machine_inspected" &&
+        hasMachineInspectCompletionEvidence(detail)
+      );
     case "machine_load":
-      return receipt.reasonCode === "machine_coffee_loaded" && hasMachineLoadCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "machine_coffee_loaded" &&
+        hasMachineLoadCompletionEvidence(detail)
+      );
     case "machine_collect_output":
-      return receipt.reasonCode === "machine_coffee_collected" && hasMachineCollectOutputCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "machine_coffee_collected" &&
+        hasMachineCollectOutputCompletionEvidence(detail)
+      );
     case "collect_animal_product":
-      return receipt.reasonCode === "animal_product_collected" && hasCollectAnimalProductCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "animal_product_collected" &&
+        hasCollectAnimalProductCompletionEvidence(detail)
+      );
     case "feed_animal":
-      return receipt.reasonCode === "hay_placed_in_trough" && hasFeedAnimalCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "hay_placed_in_trough" &&
+        hasFeedAnimalCompletionEvidence(detail)
+      );
     case "use_item":
-      return receipt.reasonCode === "item_used" && hasUseItemCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "item_used" &&
+        hasUseItemCompletionEvidence(detail)
+      );
     case "harvest_crop":
-      return receipt.reasonCode === "crop_harvested" && hasHarvestCropCompletionEvidence(detail);
+      return (
+        receipt.reasonCode === "crop_harvested" &&
+        hasHarvestCropCompletionEvidence(detail)
+      );
     default:
       return false;
   }
@@ -242,7 +374,10 @@ function validSlot(value: string | undefined): boolean {
   const slot = integerEvidenceValue(value);
   return slot !== null && slot <= 36;
 }
-function decremented(before: string | undefined, after: string | undefined): boolean {
+function decremented(
+  before: string | undefined,
+  after: string | undefined,
+): boolean {
   const left = integerEvidenceValue(before);
   const right = integerEvidenceValue(after);
   return left !== null && right !== null && right === left - 1;
@@ -266,7 +401,9 @@ function hasMoveToTileCompletionEvidence(detail: string): boolean {
  * The request producer admits integral [0, 1000] target tiles and serializes
  * them with `:0.##`; preserve that canonical integer spelling in the receipt.
  */
-function parseCanonicalIntegralTile(value: string | undefined): readonly [number, number] | null {
+function parseCanonicalIntegralTile(
+  value: string | undefined,
+): readonly [number, number] | null {
   if (value === undefined) return null;
   const match = /^(0|[1-9][0-9]*),(0|[1-9][0-9]*)$/.exec(value);
   if (match === null) return null;
@@ -276,10 +413,15 @@ function parseCanonicalIntegralTile(value: string | undefined): readonly [number
 }
 
 /** Parses exactly the nonnegative canonical output grammar of C# `:0.##`. */
-function parseFormatTile(value: string | undefined): readonly [number, number] | null {
+function parseFormatTile(
+  value: string | undefined,
+): readonly [number, number] | null {
   if (value === undefined) return null;
   // `:0.##` omits a zero fractional part and never retains a trailing zero.
-  const match = /^(0|[1-9][0-9]*)(?:\.([0-9]{0,1}[1-9]))?,(0|[1-9][0-9]*)(?:\.([0-9]{0,1}[1-9]))?$/.exec(value);
+  const match =
+    /^(0|[1-9][0-9]*)(?:\.([0-9]{0,1}[1-9]))?,(0|[1-9][0-9]*)(?:\.([0-9]{0,1}[1-9]))?$/.exec(
+      value,
+    );
   if (match === null) return null;
   const x = Number(match[1]) + Number(`0.${match[2] ?? "0"}`);
   const y = Number(match[3]) + Number(`0.${match[4] ?? "0"}`);
@@ -288,7 +430,10 @@ function parseFormatTile(value: string | undefined): readonly [number, number] |
   return x <= 1000.2 && y <= 1000.2 ? [x, y] : null;
 }
 
-function canBeSerializedExactArrival(tile: readonly [number, number], target: readonly [number, number]): boolean {
+function canBeSerializedExactArrival(
+  tile: readonly [number, number],
+  target: readonly [number, number],
+): boolean {
   // The producer succeeds when |actual - target|² <= 0.04 (radius 0.2).
   // `:0.##` quantizes each displayed coordinate by at most 0.005, so an
   // emitted coordinate q is possible iff max(|q-target|-0.005, 0) per axis
@@ -303,7 +448,10 @@ function hasTillSoilCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
   const expectedKeys = ["location", "target", "before", "after"];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
@@ -327,7 +475,10 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
     "water_after",
     "water_consumed",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const before = integerEvidenceValue(evidence.water_before);
   const after = integerEvidenceValue(evidence.water_after);
@@ -352,14 +503,20 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
 }
 
 /** Parses bounded key/value evidence without accepting duplicate fields. */
-function parseSemicolonEvidence(detail: string): Readonly<Record<string, string>> | null {
+function parseSemicolonEvidence(
+  detail: string,
+): Readonly<Record<string, string>> | null {
   const result: Record<string, string> = {};
   for (const field of detail.split(";")) {
     const separator = field.indexOf("=");
     if (separator <= 0 || separator === field.length - 1) return null;
     const key = field.slice(0, separator);
     const value = field.slice(separator + 1);
-    if (!(key in result) && /^[a-z][a-z0-9_]{0,63}$/.test(key) && value.length <= 512) {
+    if (
+      !(key in result) &&
+      /^[a-z][a-z0-9_]{0,63}$/.test(key) &&
+      value.length <= 512
+    ) {
       result[key] = value;
       continue;
     }
@@ -392,13 +549,18 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
     "hoedirt_present_after",
     "source_removed",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const slot = integerEvidenceValue(evidence.slot);
   const staminaBefore = finiteEvidenceValue(evidence.stamina_before);
   const staminaAfter = finiteEvidenceValue(evidence.stamina_after);
   const staminaDelta = finiteEvidenceValue(evidence.stamina_delta);
-  const expectedStaminaCost = finiteEvidenceValue(evidence.expected_stamina_cost);
+  const expectedStaminaCost = finiteEvidenceValue(
+    evidence.expected_stamina_cost,
+  );
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
@@ -413,7 +575,8 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
     staminaDelta !== null &&
     expectedStaminaCost !== null &&
     Math.abs(staminaAfter - staminaBefore - staminaDelta) <= 0.001 &&
-    Math.abs(-staminaDelta - expectedStaminaCost) <= DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON &&
+    Math.abs(-staminaDelta - expectedStaminaCost) <=
+      DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON &&
     staminaDelta <= 0 &&
     expectedStaminaCost >= 0 &&
     evidence.qualified_item_id === "(O)590" &&
@@ -428,8 +591,18 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
 function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
-  const expectedKeys = ["target", "slot", "can", "water_before", "water_after", "water_max"];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  const expectedKeys = [
+    "target",
+    "slot",
+    "can",
+    "water_before",
+    "water_after",
+    "water_max",
+  ];
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const _slot = integerEvidenceValue(evidence.slot);
   const before = integerEvidenceValue(evidence.water_before);
@@ -459,7 +632,10 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
     "durability_after",
     "removed",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const _slot = integerEvidenceValue(evidence.slot);
   return (
@@ -487,7 +663,10 @@ function hasClearHoeDirtCompletionEvidence(detail: string): boolean {
     "hoedirt_present_after",
     "removed",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const slot = integerEvidenceValue(evidence.slot);
   return (
@@ -524,7 +703,10 @@ function hasWoodFenceCompletionEvidence(detail: string): boolean {
     "inventory_before",
     "inventory_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const x = integerEvidenceValue(evidence.x);
   const y = integerEvidenceValue(evidence.y);
@@ -575,7 +757,10 @@ function hasBaitCrabPotCompletionEvidence(detail: string): boolean {
     "actionable",
     "active_execution",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const x = integerEvidenceValue(evidence.x);
   const y = integerEvidenceValue(evidence.y);
@@ -618,7 +803,10 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
     "stump_after",
     "source_transformed",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const _slot = integerEvidenceValue(evidence.slot);
   return (
@@ -653,22 +841,35 @@ function hasDoorTransitionCompletionEvidence(detail: string): boolean {
  * greedy up to the final colon so native names that themselves contain a
  * colon still round-trip; the trailing coordinates are canonical integers.
  */
-function parseWarpDestination(value: string | undefined): { location: string; x: number; y: number } | null {
+function parseWarpDestination(
+  value: string | undefined,
+): { location: string; x: number; y: number } | null {
   if (value === undefined) return null;
   const match = /^(.*):(0|[1-9][0-9]*),(0|[1-9][0-9]*)$/.exec(value);
   if (match === null) return null;
   const location = match[1];
   const x = Number(match[2]);
   const y = Number(match[3]);
-  if (!hasBoundedNonemptyEvidenceValue(location) || x > 1000 || y > 1000) return null;
+  if (!hasBoundedNonemptyEvidenceValue(location) || x > 1000 || y > 1000)
+    return null;
   return { location, x, y };
 }
 
 function hasPickupForageCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
-  const expectedKeys = ["location", "target", "item", "removed", "inventory_before", "inventory_after"];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  const expectedKeys = [
+    "location",
+    "target",
+    "item",
+    "removed",
+    "inventory_before",
+    "inventory_after",
+  ];
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const before = integerEvidenceValue(evidence.inventory_before);
   const after = integerEvidenceValue(evidence.inventory_after);
@@ -697,7 +898,10 @@ function hasPickupItemCompletionEvidence(detail: string): boolean {
     "inventory_before",
     "inventory_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const stack = integerEvidenceValue(evidence.stack);
   const before = integerEvidenceValue(evidence.inventory_before);
@@ -739,7 +943,10 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
     "inventory_gained",
     "crop_present_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const phaseBefore = integerEvidenceValue(evidence.phase_before);
   const dayOfPhaseBefore = integerEvidenceValue(evidence.day_of_phase_before);
@@ -800,7 +1007,10 @@ function hasFertilizeTileCompletionEvidence(detail: string): boolean {
     "inventory_before",
     "inventory_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const before = integerEvidenceValue(evidence.inventory_before);
   const after = integerEvidenceValue(evidence.inventory_after);
@@ -837,7 +1047,10 @@ function hasPlaceCrabPotCompletionEvidence(detail: string): boolean {
     "inventory_before",
     "inventory_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const x = integerEvidenceValue(evidence.x);
   const y = integerEvidenceValue(evidence.y);
@@ -894,7 +1107,10 @@ function hasMachineInspectCompletionEvidence(detail: string): boolean {
     "held",
     "last_input",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const minutes = signedIntegerEvidenceValue(evidence.minutes_until_ready);
   return (
@@ -902,7 +1118,8 @@ function hasMachineInspectCompletionEvidence(detail: string): boolean {
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasTileEvidenceValue(evidence.tile) &&
     hasOpaqueEvidenceValue(evidence.machine) &&
-    (evidence.ready_for_harvest === "true" || evidence.ready_for_harvest === "false") &&
+    (evidence.ready_for_harvest === "true" ||
+      evidence.ready_for_harvest === "false") &&
     minutes !== null &&
     isNoneOrOpaqueEvidenceValue(evidence.held) &&
     isNoneOrOpaqueEvidenceValue(evidence.last_input)
@@ -927,7 +1144,10 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
     "minutes_until_ready",
     "native_check_action",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const slot = integerEvidenceValue(evidence.slot);
   return (
@@ -966,7 +1186,10 @@ function hasMachineCollectOutputCompletionEvidence(detail: string): boolean {
     "ready_after",
     "native_check_action",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const before = integerEvidenceValue(evidence.inventory_coffee_before);
   const after = integerEvidenceValue(evidence.inventory_coffee_after);
@@ -1004,7 +1227,10 @@ function hasUseItemCompletionEvidence(detail: string): boolean {
     "health_after",
     "animation_complete",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const slot = integerEvidenceValue(evidence.slot);
   const stackBefore = integerEvidenceValue(evidence.stack_before);
@@ -1048,7 +1274,10 @@ function hasFeedAnimalCompletionEvidence(detail: string): boolean {
     "hay_after",
     "hay_consumed",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const slot = integerEvidenceValue(evidence.slot);
   const before = integerEvidenceValue(evidence.hay_before);
@@ -1085,7 +1314,10 @@ function hasCollectAnimalProductCompletionEvidence(detail: string): boolean {
     "inventory_gained",
     "animation_complete",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
+  if (
+    Object.keys(evidence).length !== expectedKeys.length ||
+    !expectedKeys.every((key) => key in evidence)
+  )
     return false;
   const produceStack = integerEvidenceValue(evidence.produce_stack);
   const before = integerEvidenceValue(evidence.inventory_before);
@@ -1115,12 +1347,15 @@ function integerEvidenceValue(value: string | undefined): number | null {
 }
 
 function finiteEvidenceValue(value: string | undefined): number | null {
-  if (value === undefined || !/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value)) return null;
+  if (value === undefined || !/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(value))
+    return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
 
-function isNoneOrOpaqueEvidenceValue(value: string | undefined): value is string {
+function isNoneOrOpaqueEvidenceValue(
+  value: string | undefined,
+): value is string {
   return value === "none" || hasOpaqueEvidenceValue(value);
 }
 
@@ -1130,12 +1365,16 @@ function signedIntegerEvidenceValue(value: string | undefined): number | null {
   return Number.isSafeInteger(number) ? number : null;
 }
 
-function hasBoundedNonemptyEvidenceValue(value: string | undefined): value is string {
+function hasBoundedNonemptyEvidenceValue(
+  value: string | undefined,
+): value is string {
   return hasOpaqueEvidenceValue(value);
 }
 
 /** `none` is an explicit producer literal only for the absent equipped tool. */
-function isToolSelectionBeforeValue(value: string | undefined): value is string {
+function isToolSelectionBeforeValue(
+  value: string | undefined,
+): value is string {
   return value === "none" || hasOpaqueEvidenceValue(value);
 }
 
@@ -1152,7 +1391,9 @@ function hasOpaqueEvidenceValue(value: string | undefined): value is string {
     typeof value === "string" &&
     value.length > 0 &&
     value.length <= 256 &&
-    !["none", "null", "undefined", "true", "false", "nan", "infinity"].includes(value.toLowerCase())
+    !["none", "null", "undefined", "true", "false", "nan", "infinity"].includes(
+      value.toLowerCase(),
+    )
   );
 }
 
@@ -1163,12 +1404,17 @@ function hasOpaqueIdEvidenceValue(value: string | undefined): value is string {
 }
 
 /** Stardew multiplayer IDs can exceed JavaScript's safe integer range. */
-function hasDecimalOwnerIdEvidenceValue(value: string | undefined): value is string {
+function hasDecimalOwnerIdEvidenceValue(
+  value: string | undefined,
+): value is string {
   return typeof value === "string" && /^(?:0|[1-9][0-9]{0,19})$/.test(value);
 }
 
-function parseStardewReceipt(details: unknown): IntegrationExecutionReceipt | null {
-  if (!isRecord(details) || typeof details.receiptJson !== "string") return null;
+function parseStardewReceipt(
+  details: unknown,
+): IntegrationExecutionReceipt | null {
+  if (!isRecord(details) || typeof details.receiptJson !== "string")
+    return null;
   try {
     const value = JSON.parse(details.receiptJson) as unknown;
     if (
@@ -1192,7 +1438,9 @@ function parseStardewReceipt(details: unknown): IntegrationExecutionReceipt | nu
   }
 }
 
-function toIntegrationReceipt(receipt: ExecutionReceipt): IntegrationExecutionReceipt {
+function toIntegrationReceipt(
+  receipt: ExecutionReceipt,
+): IntegrationExecutionReceipt {
   return {
     requestId: receipt.requestId,
     executionId: receipt.executionId,
@@ -1204,10 +1452,17 @@ function toIntegrationReceipt(receipt: ExecutionReceipt): IntegrationExecutionRe
 }
 
 function isKnowledgeBundle(value: unknown): value is KnowledgeBundle {
-  return typeof value === "object" && value !== null && (value as { bundleVersion?: unknown }).bundleVersion === 1;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { bundleVersion?: unknown }).bundleVersion === 1
+  );
 }
 
-function sameScope(left: Scope, right: Readonly<{ integrationId: string }>): boolean {
+function sameScope(
+  left: Scope,
+  right: Readonly<{ integrationId: string }>,
+): boolean {
   return left.integrationId === right.integrationId;
 }
 

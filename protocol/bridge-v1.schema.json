@@ -365,6 +365,17 @@
       "type": "object",
       "additionalProperties": false
     },
+    "actionRegistration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actionId", "familyId", "identityVersion", "lifecycle"],
+      "properties": {
+        "actionId": { "$ref": "#/$defs/opaqueId" },
+        "familyId": { "$ref": "#/$defs/opaqueId" },
+        "identityVersion": { "type": "integer", "minimum": 1 },
+        "lifecycle": { "enum": ["published", "experimental"] }
+      }
+    },
     "hello": {
       "type": "object",
       "additionalProperties": false,
@@ -383,7 +394,8 @@
       "required": [
         "sessionId",
         "capabilities",
-        "presentationLocale"
+        "presentationLocale",
+        "registrations"
       ],
       "properties": {
         "sessionId": {
@@ -399,6 +411,14 @@
         },
         "presentationLocale": {
           "$ref": "#/$defs/bcp47Locale"
+        },
+        "registrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionRegistration"
+          },
+          "minItems": 1,
+          "maxItems": 128
         }
       }
     },

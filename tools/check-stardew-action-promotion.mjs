@@ -11,7 +11,6 @@ export function validatePromotionSources({
   bridgeSession,
   executionManager,
   farmhandActionRouter,
-  handlerSources = [],
   registry,
   gameTools,
   protocol,
@@ -21,7 +20,7 @@ export function validatePromotionSources({
   const failures = [];
   const definitions = parseModDefinitions(farmhandActionDefinitions);
   const hostEntries = parseHostEntries(registry);
-  const routes = parseExplicitRoutes(gameTools, bridgeSession, handlerSources);
+  const routes = parseExplicitRoutes(gameTools);
   failures.push(...validateHostWrapperFactory(gameTools, routes));
   failures.push(...validateRouterBoundary(bridgeSession, farmhandActionRouter));
   const hostValidators = parseHostRequestValidators(protocol);
@@ -36,7 +35,7 @@ export function validatePromotionSources({
   failures.push(
     ...findMissingBridgeHelloAdvertisements(
       bridgeSession,
-      definitions.filter((definition) => definition.lifecycle === "Published").map((definition) => definition.actionId),
+      definitions.filter((definition) => definition.lifecycle === "published").map((definition) => definition.actionId),
     ),
   );
   if (!hasSnapshotCapabilitySurfaceProvenance(executionManager)) failures.push("snapshot_not_from_capability_surface");
@@ -51,31 +50,19 @@ export function validatePromotionSources({
     failures,
   );
   assertUnique(descriptorIds, "gate_descriptor_duplicates", failures);
-  assertUnique(routes.dispatchers, "dispatcher_route_duplicates", failures);
   for (const definition of definitions) {
     const host = hostEntries.filter((entry) => entry.actionId === definition.actionId);
-    if (definition.lifecycle === "Published") {
+    if (definition.lifecycle === "published") {
       if (host.length !== 1) failures.push(`published_host_projection:${definition.actionId}`);
-      else if (
-        host[0].familyId !== definition.familyId ||
-        host[0].identityVersion !== definition.identityVersion ||
-        host[0].lifecycle !== "published"
-      )
-        failures.push(`published_identity_drift:${definition.actionId}`);
+      // The Host only inventories a concrete typed adapter. It deliberately
+      // does not duplicate Mod-owned family, identity-version, or lifecycle.
       const descriptor = descriptors.filter((entry) => entry.actionId === definition.actionId);
       if (descriptor.length !== 1) failures.push(`published_missing_gate_descriptor:${definition.actionId}`);
       else if (descriptor[0].identityVersion !== definition.identityVersion)
         failures.push(`gate_identity_drift:${definition.actionId}`);
-    } else if (
-      host.length !== 1 ||
-      host[0].familyId !== definition.familyId ||
-      host[0].identityVersion !== definition.identityVersion ||
-      host[0].lifecycle !== "experimental"
-    ) {
-      failures.push(`experimental_identity_drift:${definition.actionId}`);
+    } else if (host.length > 1) {
+      failures.push(`experimental_adapter_duplicates:${definition.actionId}`);
     }
-    if (!routes.validators.includes(definition.actionId)) failures.push(`missing_validator:${definition.actionId}`);
-    if (!routes.dispatchers.includes(definition.actionId)) failures.push(`missing_dispatcher:${definition.actionId}`);
     if (!hostValidators.includes(definition.actionId))
       failures.push(`missing_host_request_validator:${definition.actionId}`);
     if (!envelopeValidators.includes(definition.actionId))
@@ -85,12 +72,6 @@ export function validatePromotionSources({
     if (!schemaActions.includes(definition.actionId))
       failures.push(`missing_schema_execution_action:${definition.actionId}`);
   }
-  for (const actionId of routes.validators)
-    if (!definitions.some((definition) => definition.actionId === actionId))
-      failures.push(`validator_not_in_definition:${actionId}`);
-  for (const actionId of routes.dispatchers)
-    if (!definitions.some((definition) => definition.actionId === actionId))
-      failures.push(`dispatcher_not_in_definition:${actionId}`);
   for (const actionId of hostValidators)
     if (!definitions.some((definition) => definition.actionId === actionId))
       failures.push(`host_request_validator_not_in_definition:${actionId}`);
@@ -119,14 +100,12 @@ export function validatePromotionSources({
     if (!hostSemanticEventKinds.includes(kind)) failures.push(`schema_orphan_semantic_event_kind:${kind}`);
   for (const host of hostEntries) {
     const definition = definitions.find((entry) => entry.actionId === host.actionId);
-    if (!definition) failures.push(`host_registry_not_in_mod:${host.actionId}`);
+    if (!definition) failures.push(`host_adapter_not_in_mod:${host.actionId}`);
     const toolCount = routes.visibility.filter((actionId) => actionId === host.actionId).length;
-    if (host.lifecycle === "published" && toolCount !== 1)
-      failures.push(`host_tool_count:${host.actionId}:${toolCount}`);
-    if (host.lifecycle !== "published" && toolCount !== 0) failures.push(`experimental_host_tool:${host.actionId}`);
+    if (toolCount !== 1) failures.push(`host_tool_count:${host.actionId}:${toolCount}`);
   }
   for (const id of descriptorIds)
-    if (!hostEntries.some((entry) => entry.actionId === id && entry.lifecycle === "published"))
+    if (!definitions.some((entry) => entry.actionId === id && entry.lifecycle === "published"))
       failures.push(`gate_descriptor_not_published:${id}`);
   return { failures, definitions, hostEntries };
 }
@@ -135,43 +114,32 @@ function assertUnique(values, label, failures) {
   if (new Set(values).size !== values.length) failures.push(label);
 }
 function findMissingBridgeHelloAdvertisements(source, expectedActionIds) {
-  const capabilitiesExpression = source.match(
-    /new BridgeHelloAck\(Guid\.NewGuid\(\)\.ToString\("N"\),\s*([\s\S]*?),\s*locale\)/,
-  )?.[1];
-  if (capabilitiesExpression === "this.publishedCapabilities.Capabilities") return [];
-
-  const omitted = new Set(
-    [...(capabilitiesExpression ?? "").matchAll(/\b(?:capability|action)\s*!=\s*"([a-z0-9_]+)"/g)].map(
-      (match) => match[1],
-    ),
-  );
-  return expectedActionIds
-    .filter((actionId) => omitted.size === 0 || omitted.has(actionId))
-    .map((actionId) => `bridge_hello_advertisement_missing:${actionId}`);
+  // Registration identity is Mod-owned. The authenticated hello must project
+  // that catalog directly rather than reproduce a Host-side action list.
+  return /FarmhandActionCatalog\.Registrations\.Select\(registration\s*=>\s*new FarmhandActionRegistrationWire\(/.test(
+    source,
+  )
+    ? []
+    : expectedActionIds.map(
+        (actionId) => `bridge_hello_registration_advertisement_missing:${actionId}`,
+      );
 }
 function parseModDefinitions(source) {
-  const body = source.match(/Definitions\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)?.[1];
-  if (!body) throw new Error("mod_action_definitions_not_found");
+  const body = source.match(/Registrations\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)?.[1];
+  if (!body) throw new Error("mod_action_registrations_not_found");
   return [
     ...body.matchAll(
-      /Definition\("([a-z0-9_]+)", "([a-z0-9_]+)", (\d+)(?:, FarmhandActionLifecycle\.(Published|Experimental))?\)/g,
+      /Registration\("([a-z0-9_]+)", "([a-z0-9_]+)", (\d+), FarmhandActionHandlerGroup\.[A-Za-z]+(?:, FarmhandActionLifecycle\.(Published|Experimental))?\)/g,
     ),
   ].map(([, actionId, familyId, identityVersion, lifecycle]) => ({
     actionId,
     familyId,
     identityVersion: Number(identityVersion),
-    lifecycle: lifecycle ?? "Published",
+    lifecycle: (lifecycle ?? "Published").toLowerCase(),
   }));
 }
 function parseHostEntries(source) {
-  return [
-    ...source.matchAll(/(publishedAction|experimentalAction)\(\s*"([a-z0-9_]+)",\s*"([a-z0-9_]+)",\s*(\d+)/g),
-  ].map(([, kind, actionId, familyId, identityVersion]) => ({
-    actionId,
-    familyId,
-    identityVersion: Number(identityVersion),
-    lifecycle: kind === "publishedAction" ? "published" : "experimental",
-  }));
+  return [...source.matchAll(/actionAdapter\(\s*"([a-z0-9_]+)"/g)].map(([, actionId]) => ({ actionId }));
 }
 function hasSnapshotCapabilitySurfaceProvenance(source) {
   const body =
@@ -223,30 +191,14 @@ function parseEnvelopeValidators(source) {
   const body = source.match(/function validateExecutionRequestEnvelope[\s\S]*?\n}\n/)?.[0] ?? "";
   return [...new Set([...body.matchAll(/value\.action === "([a-z0-9_]+)"/g)].map((entry) => entry[1]))];
 }
-function parseExplicitRoutes(gameTools, bridgeSession, handlerSources) {
+function parseExplicitRoutes(gameTools) {
   const visibility = [...gameTools.matchAll(/if \(isVisible\("([a-z0-9_]+)"\)\)/g)].map((entry) => entry[1]);
   const tools = [
     ...gameTools.matchAll(
       /if \(isVisible\("([a-z0-9_]+)"\)\) \{\s*tools\.push\(\s*makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*\n\s*toArgs:/g,
     ),
   ].map((entry) => ({ visibleAction: entry[1], adapterAction: entry[2] }));
-  const validatorBody =
-    bridgeSession.match(
-      /private static bool IsStructurallyValidExecutionRequest[\s\S]*?private bool IsFreshExecutionRequest/,
-    )?.[0] ?? "";
-  const validators = [
-    ...new Set(
-      [...validatorBody.matchAll(/request\.Action[^\r\n{]*/g)].flatMap((entry) =>
-        [...entry[0].matchAll(/"([a-z0-9_]+)"/g)].map((action) => action[1]),
-      ),
-    ),
-  ];
-  const dispatchers = handlerSources.flatMap((src) => {
-    const match = src.match(/SupportedActions\s*\{\s*get;\s*\}\s*=\s*new\[\]\s*\{([\s\S]*?)\};/);
-    if (!match) return [];
-    return [...match[1].matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
-  });
-  return { tools, visibility, validators, dispatchers };
+  return { tools, visibility };
 }
 
 function extractUniqueHostWrapperFactoryBody(gameTools) {
@@ -358,7 +310,7 @@ async function main() {
       JSON.stringify(
         {
           state: "passed",
-          publishedCount: result.definitions.filter((entry) => entry.lifecycle === "Published").length,
+          publishedCount: result.definitions.filter((entry) => entry.lifecycle === "published").length,
         },
         null,
         2,

@@ -6,6 +6,7 @@ import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import { CompanionIntegrationClient } from "./integration.js";
 import { newEnvelope, type Scope } from "./protocol.js";
+import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const scope: Scope = {
@@ -47,7 +48,7 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
         newEnvelope(
           "hello_ack",
           scope,
-          { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+          { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
           message.correlationId,
           now,
         ),
@@ -108,6 +109,7 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute() {
@@ -156,6 +158,7 @@ test("a materialized tool does not call integration.execute after subtractive po
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute() {
@@ -198,6 +201,7 @@ test("the shared wrapper surfaces bridge execute errors as fail-closed receipt r
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute() {
@@ -246,6 +250,7 @@ test("equip_tool mounts only from a live capability and forwards the selected sl
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -301,6 +306,7 @@ test("enter_exit mounts from a live capability and forwards the door tile", asyn
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -355,6 +361,7 @@ test("published pickup_item mounts only from a live capability and forwards the 
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -425,6 +432,7 @@ test("published refill_watering_can mounts only from a live capability and forwa
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -507,6 +515,7 @@ test("published plant_seed mounts only from a live capability and forwards the o
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -576,6 +585,7 @@ test("published clear_hoedirt mounts only from a live capability and forwards ex
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -646,6 +656,7 @@ test("published use_item mounts only from a live capability and forwards the foo
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -706,6 +717,7 @@ test("published harvest_crop mounts only from a live capability and forwards the
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -773,6 +785,7 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -856,6 +869,7 @@ test("published break_rock_source mounts only from a live Mod capability and for
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -939,6 +953,7 @@ test("published machine_inspect mounts only from a live capability and forwards 
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -1005,6 +1020,7 @@ test("published machine_load mounts only from a live capability and forwards the
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -1073,6 +1089,7 @@ test("published machine_collect_output mounts only from a live capability and fo
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -1152,6 +1169,7 @@ test("published bait_crab_pot mounts only from a live capability and forwards th
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -1239,6 +1257,7 @@ test("mounted Game Actions return authoritative Mod receipts without inventing c
         },
         latestReceipt: null,
         latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
       };
     },
     async execute(request) {
@@ -1286,6 +1305,7 @@ test("each executable action obtains a fresh runtime admission immediately befor
       },
       latestReceipt: null,
       latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
     },
     async execute(request: { requestId: string }) {
       return {
@@ -1332,6 +1352,7 @@ test("model-facing tools never expose active-execution cancellation", () => {
       snapshot: null,
       latestReceipt: null,
       latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
     },
     async execute() {
       throw new Error("unused");
@@ -1360,6 +1381,7 @@ test("action tools fail closed without runtime-owned dispatch admission", () => 
       snapshot: null,
       latestReceipt: null,
       latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
     },
     async execute() {
       throw new Error("must_not_execute");

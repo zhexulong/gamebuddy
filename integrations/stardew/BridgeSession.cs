@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Linq;
 using System.Text.Json;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
@@ -64,7 +65,15 @@ internal sealed class BridgeSession
         { reasonCode = "invalid_presentation_locale"; return false; }
         this.authenticatedGeneration = generation;
         this.pendingPlayerControls.Clear();
-        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(Guid.NewGuid().ToString("N"), this.publishedCapabilities.Capabilities, locale));
+        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(
+            Guid.NewGuid().ToString("N"),
+            this.publishedCapabilities.Capabilities,
+            locale,
+            FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(
+                registration.ActionId,
+                registration.FamilyId,
+                registration.IdentityVersion,
+                registration.Lifecycle.ToWireValue())).ToArray()));
         reasonCode = "accepted";
         return true;
     }
@@ -611,7 +620,7 @@ internal sealed record IdempotentExecution(string Fingerprint, string RequestId)
 internal sealed record IdempotentPresentation(string Fingerprint, BridgeCompanionPresentationReceipt? Receipt, string ReasonCode);
 internal sealed record IdempotentSystemNotice(string Fingerprint, BridgeSystemNoticeReceipt? Receipt, string ReasonCode);
 internal sealed record BridgeHello(string Token);
-internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, string PresentationLocale);
+internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, string PresentationLocale, IReadOnlyList<FarmhandActionRegistrationWire> Registrations);
 internal sealed record BridgeObserveRequest();
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string CancelId, long CancelEpoch, string ReasonCode);
 /// <summary>Last accepted cancel identity bound to one exact request/execution.</summary>

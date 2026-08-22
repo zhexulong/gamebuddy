@@ -483,9 +483,32 @@ export type PlayerControlReceipt = Readonly<{
   status: "accepted";
 }>;
 
+export type ActionRegistration = Readonly<{
+  actionId: string;
+  familyId: string;
+  identityVersion: number;
+  lifecycle: "published" | "experimental";
+}>;
+
+/** Mod-declared registrations, ordered exactly as the Mod projected them. */
+export type ActionCatalog = Readonly<{
+  /** Ordered, deduplicated action-id index. */
+  byActionId: ReadonlyMap<string, ActionRegistration>;
+  /** Ordered projection preserving Mod declaration order. */
+  entries: readonly ActionRegistration[];
+}>;
+
 export type BridgeMessage =
   | Envelope<"hello", Readonly<{ token: string }>>
-  | Envelope<"hello_ack", Readonly<{ sessionId: string; capabilities: readonly string[]; presentationLocale: string }>>
+  | Envelope<
+      "hello_ack",
+      Readonly<{
+        sessionId: string;
+        capabilities: readonly string[];
+        presentationLocale: string;
+        registrations: readonly ActionRegistration[];
+      }>
+    >
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"snapshot", Snapshot>
   | Envelope<"execution_request", ExecutionRequest>
@@ -601,6 +624,24 @@ const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"]
   dig_artifact_spot: ["slot", "x", "y", "expectedTargetId"],
 };
 
+export function newEnvelope<
+  TType extends BridgeMessage["type"],
+  TPayload extends Extract<BridgeMessage, Readonly<{ type: TType }>>["payload"],
+>(
+  type: TType,
+  scope: Scope,
+  payload: TPayload,
+  correlationId?: string,
+  timestampMs?: number,
+): Envelope<TType, TPayload>;
+/** Build malformed envelopes in protocol validator tests without weakening production validation. */
+export function newEnvelope<TType extends BridgeMessage["type"], TPayload>(
+  type: TType,
+  scope: Scope,
+  payload: TPayload,
+  correlationId?: string,
+  timestampMs?: number,
+): Envelope<TType, TPayload>;
 export function newEnvelope<TType extends BridgeMessage["type"], TPayload>(
   type: TType,
   scope: Scope,
@@ -667,10 +708,11 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "hello":
       return hasExactKeys(payload, ["token"]) && validToken(payload.token) ? null : "invalid_hello_token";
     case "hello_ack":
-      return hasExactKeys(payload, ["sessionId", "capabilities", "presentationLocale"]) &&
+      return hasExactKeys(payload, ["sessionId", "capabilities", "presentationLocale", "registrations"]) &&
         isOpaqueId(payload.sessionId) &&
         isStringArray(payload.capabilities) &&
-        isBcp47Locale(payload.presentationLocale)
+        isBcp47Locale(payload.presentationLocale) &&
+        isValidActionRegistrations(payload.registrations)
         ? null
         : "invalid_hello_ack";
     case "observe_request":
@@ -2210,6 +2252,19 @@ function validToken(value: unknown): value is string {
 }
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length <= 128);
+}
+function isValidActionRegistrations(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 128) return false;
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item) || !hasExactKeys(item, ["actionId", "familyId", "identityVersion", "lifecycle"])) return false;
+    if (!isOpaqueId(item.actionId) || !isOpaqueId(item.familyId)) return false;
+    if (typeof item.identityVersion !== "number" || !Number.isSafeInteger(item.identityVersion) || item.identityVersion < 1) return false;
+    if (item.lifecycle !== "published" && item.lifecycle !== "experimental") return false;
+    if (seen.has(item.actionId)) return false;
+    seen.add(item.actionId);
+  }
+  return true;
 }
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);

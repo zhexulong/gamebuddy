@@ -68,6 +68,15 @@ public sealed record BridgeEnvelope<TPayload>(
 );
 
 public sealed record BridgeTile(float X, float Y);
+/// <summary>Deterministic Mod-declared action identity projected on hello_ack.
+/// Reflects FarmhandActionCatalog.Registrations exactly; the Host treats this as
+/// the registration authority and rejects unknown extra action IDs.</summary>
+public sealed record FarmhandActionRegistrationWire(
+    string ActionId,
+    string FamilyId,
+    int IdentityVersion,
+    string Lifecycle
+);
 
 public sealed record BridgeWarp(
     int SourceX,
