@@ -1,271 +1,185 @@
-import type { ActionClass } from "./action-class.js";
+import type { ActionRegistration } from "./protocol.js";
 
-export type ActionLifecycle = "published" | "experimental" | "diagnostic" | "planned";
+export type ActionLifecycle = ActionRegistration["lifecycle"];
 
-export type PublishedAction = Readonly<{
+/** A local concrete adapter can restrict, but never publish, a Mod action. */
+export type StardewActionAdapter = Readonly<{
   actionId: string;
-  familyId: string;
-  identityVersion: number;
-  actionClass: ActionClass;
-  lifecycle: ActionLifecycle;
   label: string;
   description: string;
   targetKinds: readonly string[];
   requiredCapability: string;
 }>;
 
-type ActionDefinition<
-  TActionId extends string,
-  TActionClass extends ActionClass,
-  TLifecycle extends ActionLifecycle,
-> = PublishedAction &
-  Readonly<{
-    actionId: TActionId;
-    actionClass: TActionClass;
-    lifecycle: TLifecycle;
-    requiredCapability: TActionId;
-  }>;
-
 /**
- * The registry is deliberately broader than the currently published surface.
- * Planned entries document the product roadmap but are never materialized into
- * an Agent tool or interaction catalog.
+ * Concrete TypeBox adapters available in this Host build. This is deliberately
+ * not an action registry: it contains no Mod-owned membership, family,
+ * identity-version, or lifecycle facts.
  */
-export const STARDEW_ACTION_REGISTRY = Object.freeze([
-  publishedAction(
+export const STARDEW_ACTION_ADAPTERS = Object.freeze([
+  actionAdapter(
     "move_to_tile",
-    "movement_navigation",
-    1,
     "Move to a Stardew tile",
     "Move the Farmhand to a live, structured target tile.",
     ["tile"],
   ),
-  publishedAction("equip_tool", "body_tools", 1, "Equip a tool", "Select a Tool already owned by the Farmhand.", [
-    "inventory_slot",
-  ]),
-  publishedAction(
+  actionAdapter(
+    "equip_tool",
+    "Equip a tool",
+    "Select a Tool already owned by the Farmhand.",
+    ["inventory_slot"],
+  ),
+  actionAdapter(
     "travel",
-    "transport_warps",
-    1,
     "Travel through a discovered warp",
     "Use a live native warp from the current Stardew location.",
     ["warp"],
   ),
-  publishedAction(
+  actionAdapter(
     "enter_exit",
-    "movement_navigation",
-    1,
     "Enter or exit through a discovered door",
     "Use a live native door transition from the current Stardew location.",
     ["door", "building_entrance"],
   ),
-  publishedAction("till_soil", "farming_crops", 1, "Till a soil tile", "Use a native Hoe on a live soil target.", [
-    "soil_tile",
-  ]),
-  publishedAction(
+  actionAdapter(
+    "till_soil",
+    "Till a soil tile",
+    "Use a native Hoe on a live soil target.",
+    ["soil_tile"],
+  ),
+  actionAdapter(
     "pickup_forage",
-    "resource_gathering",
-    1,
     "Pick up a forage target",
     "Use the native forage interaction on a live target and verify the item enters the Farmhand inventory.",
     ["forage"],
   ),
-  publishedAction(
+  actionAdapter(
     "pickup_item",
-    "inventory_items",
-    1,
     "Pick up a live item drop",
     "Approach a live native Debris target and verify its native magnetic collection enters the Farmhand inventory.",
     ["item_drop"],
   ),
-  publishedAction(
+  actionAdapter(
     "water_crop",
-    "farming_crops",
-    1,
     "Water a live crop",
     "Use the native Watering Can on a live unwatered crop.",
     ["crop"],
   ),
-  publishedAction(
+  actionAdapter(
     "refill_watering_can",
-    "farming_crops",
-    1,
     "Refill a Watering Can",
     "Refill one selected, partially filled Watering Can from a live adjacent native water source.",
     ["watering_can", "water_source", "inventory_slot"],
   ),
-  publishedAction(
+  actionAdapter(
     "plant_seed",
-    "farming_crops",
-    1,
     "Plant a live seed",
     "Use the native seed placement path on a live empty HoeDirt target.",
     ["soil_tile", "inventory_slot"],
   ),
-  publishedAction(
+  actionAdapter(
     "fertilize_tile",
-    "farming_crops",
-    1,
     "Apply fertilizer to a live soil tile",
     "Use the native fertilizer placement path on a live ground HoeDirt target.",
     ["soil_tile", "inventory_slot"],
   ),
-  publishedAction(
+  actionAdapter(
     "place_wood_fence",
-    "buildings_farm_management",
-    1,
     "Place a Wood Fence",
     "Place only one qualified (O)322 non-gate Fence on a fresh empty Farm tile through the native placement path.",
     ["farm_tile", "inventory_slot"],
   ),
-  publishedAction(
+  actionAdapter(
     "place_crab_pot",
-    "buildings_farm_management",
-    1,
     "Place a Crab Pot",
     "Place only one qualified (O)710 Crab Pot on a fresh valid water tile in the Farm through the native placement path.",
     ["farm_tile", "inventory_slot"],
   ),
-  publishedAction(
+  actionAdapter(
     "bait_crab_pot",
-    "buildings_farm_management",
-    1,
     "Bait a Crab Pot",
     "Attach exactly one owned (O)685 Bait to one adjacent, current-player-owned unbaited (O)710 Crab Pot through its normal native interaction.",
     ["crab_pot", "inventory_slot"],
   ),
-  experimentalAction(
-    "clear_debris",
-    "resource_gathering",
-    1,
-    "Clear a resource clump",
-    "Use a native tool on a live ResourceClump target.",
-    ["debris"],
-  ),
-  publishedAction(
+  actionAdapter(
     "machine_inspect",
-    "machines_processing",
-    1,
     "Inspect a machine",
     "Read a live native machine state without opening a menu or changing the machine.",
     ["machine"],
   ),
-  publishedAction(
+  actionAdapter(
     "machine_load",
-    "machines_processing",
-    1,
     "Load Coffee Beans into a Keg",
     "Use the normal native machine interaction to load exactly five Coffee Beans into one idle Keg and begin Coffee processing.",
     ["machine", "inventory_slot"],
   ),
-  publishedAction(
+  actionAdapter(
     "machine_collect_output",
-    "machines_processing",
-    1,
     "Collect Coffee from a Keg",
     "Use the normal native machine interaction to collect ready Coffee from the exact Keg after its native processing lifecycle completes.",
     ["machine", "inventory"],
   ),
-  experimentalAction(
-    "npc_relationship",
-    "npc_social",
-    1,
-    "Inspect NPC relationship facts",
-    "Read live Farmhand relationship facts for a nearby NPC without opening dialogue or changing relationship state.",
-    ["npc"],
-  ),
-  experimentalAction(
-    "pet_animal",
-    "animals_pets",
-    1,
-    "Pet an animal",
-    "Use native Pet.checkAction on a live unpetted Pet while the Farmhand has empty hands.",
-    ["animal", "pet"],
-  ),
-  publishedAction(
+  actionAdapter(
     "collect_animal_product",
-    "animals_pets",
-    1,
     "Collect a ready animal product",
     "Use native MilkPail or Shears animation on a live adult animal with compatible produce.",
     ["animal", "animal_product", "tool", "inventory"],
   ),
-  publishedAction(
+  actionAdapter(
     "feed_animal",
-    "animals_pets",
-    1,
     "Place Hay in a feed trough",
     "Place one owned Hay item in a live empty AnimalHouse trough; placement does not claim an animal has eaten.",
     ["feed_trough", "inventory_slot"],
   ),
-  publishedAction(
+  actionAdapter(
     "use_item",
-    "inventory_items",
-    1,
     "Use or consume an owned food item",
     "Use the native Farmer eat path on a live ordinary edible inventory item.",
     ["inventory_slot", "food"],
   ),
-  publishedAction(
+  actionAdapter(
     "harvest_crop",
-    "farming_crops",
-    1,
     "Harvest a ready crop",
     "Use native Crop.harvest on a live ready ordinary crop.",
     ["crop", "inventory"],
   ),
-  publishedAction(
+  actionAdapter(
     "break_rock_source",
-    "resource_gathering",
-    1,
     "Break a one-hit rock source",
     "Use one equipped basic Pickaxe hit on a live ordinary one-hit stone; drops and pickup are separate.",
     ["rock_source", "tool"],
   ),
-  publishedAction(
+  actionAdapter(
     "clear_hoedirt",
-    "farming_crops",
-    1,
     "Clear empty HoeDirt",
     "Use one equipped Basic Pickaxe hit on live adjacent empty ground HoeDirt; crops, pots, drops, and pickup are excluded.",
     ["soil_tile", "tool"],
   ),
-  publishedAction(
+  actionAdapter(
     "dig_artifact_spot",
-    "resource_gathering",
-    1,
     "Dig an artifact spot",
     "Use one equipped Basic Hoe on a fresh adjacent (O)590 artifact spot; source removal and native HoeDirt creation are the completion boundary.",
     ["artifact_spot", "tool"],
   ),
-  publishedAction(
+  actionAdapter(
     "chop_tree_source",
-    "resource_gathering",
-    1,
     "Chop a one-hit tree source",
     "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree; source transformation is the completion boundary.",
     ["tree_source", "tool"],
   ),
-]) satisfies readonly PublishedAction[];
+]) satisfies readonly StardewActionAdapter[];
 
-export type StardewActionId = (typeof STARDEW_ACTION_REGISTRY)[number]["actionId"];
-type PublishedPrimitiveAction = Extract<
-  (typeof STARDEW_ACTION_REGISTRY)[number],
-  Readonly<{ actionClass: "primitive"; lifecycle: "published" }>
->;
+export type StardewActionId =
+  (typeof STARDEW_ACTION_ADAPTERS)[number]["actionId"];
 
-/** Only published primitive contracts are materializable Agent actions. */
-export const PUBLISHED_STARDEW_ACTIONS = Object.freeze(
-  STARDEW_ACTION_REGISTRY.filter((entry): entry is PublishedPrimitiveAction => isMaterializablePublishedAction(entry)),
-);
-
-export type PublishedPrimitiveActionId = PublishedPrimitiveAction["actionId"];
+/** A current restrictive projection: registration facts remain Mod-owned. */
+export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
 
 /**
  * Tool construction remains action-specific, but this closed projection forces
- * every Mod-published primitive identity to have one Host tool adapter name.
+ * every Mod-published identity for which this build has an adapter to have one Host tool adapter name.
  */
-export const PUBLISHED_PRIMITIVE_TOOL_NAMES = {
+export const STARDEW_ACTION_TOOL_NAMES = {
   move_to_tile: "stardew_move_to_tile",
   equip_tool: "stardew_equip_tool",
   travel: "stardew_travel",
@@ -291,7 +205,7 @@ export const PUBLISHED_PRIMITIVE_TOOL_NAMES = {
   clear_hoedirt: "stardew_clear_hoedirt",
   dig_artifact_spot: "stardew_dig_artifact_spot",
   chop_tree_source: "stardew_chop_tree_source",
-} as const satisfies Record<PublishedPrimitiveActionId, `stardew_${string}`>;
+} as const satisfies Record<StardewActionId, `stardew_${string}`>;
 
 /**
  * Removed roadmap labels are not registry/policy identifiers. They intentionally
@@ -300,9 +214,22 @@ export const PUBLISHED_PRIMITIVE_TOOL_NAMES = {
  * therefore be explicit and fail closed instead of silently broadening a deny.
  */
 export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
-  collect_resource: Object.freeze(["chop_tree_source", "break_rock_source", "pickup_item"]),
-  use_tool: Object.freeze(["tool_transform_object", "chop_tree_source", "break_rock_source", "clear_hoedirt"]),
-  combat_attack: Object.freeze(["melee_attack", "ranged_attack", "weapon_special"]),
+  collect_resource: Object.freeze([
+    "chop_tree_source",
+    "break_rock_source",
+    "pickup_item",
+  ]),
+  use_tool: Object.freeze([
+    "tool_transform_object",
+    "chop_tree_source",
+    "break_rock_source",
+    "clear_hoedirt",
+  ]),
+  combat_attack: Object.freeze([
+    "melee_attack",
+    "ranged_attack",
+    "weapon_special",
+  ]),
   place_item: Object.freeze([
     "place_decor_or_furniture",
     "place_fence_or_gate",
@@ -310,8 +237,15 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
     "place_crab_pot",
     "place_explosive",
   ]),
-  transfer_item: Object.freeze(["transfer_to_container", "transfer_from_container"]),
-  manage_animal: Object.freeze(["toggle_animal_door", "purchase_animal", "sell_or_relocate_animal"]),
+  transfer_item: Object.freeze([
+    "transfer_to_container",
+    "transfer_from_container",
+  ]),
+  manage_animal: Object.freeze([
+    "toggle_animal_door",
+    "purchase_animal",
+    "sell_or_relocate_animal",
+  ]),
   world_interact: Object.freeze(["execute_world_operation"]),
   special_interact: Object.freeze(["execute_world_operation"]),
   festival_interact: Object.freeze([
@@ -320,7 +254,11 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
     "control_minigame_phase",
     "claim_minigame_or_festival_reward",
   ]),
-  minigame_play: Object.freeze(["start_minigame_phase", "control_minigame_phase", "claim_minigame_or_festival_reward"]),
+  minigame_play: Object.freeze([
+    "start_minigame_phase",
+    "control_minigame_phase",
+    "claim_minigame_or_festival_reward",
+  ]),
   end_day: Object.freeze(["sleep_ready", "advance_day_after_ready"]),
   milk_animal: Object.freeze(["collect_animal_product"]),
   shear_animal: Object.freeze(["collect_animal_product"]),
@@ -351,16 +289,16 @@ export function parseActionPolicy(value: unknown): ActionPolicy {
   ) {
     throw new Error("invalid_action_policy");
   }
-  const actionIds: ReadonlySet<string> = new Set(STARDEW_ACTION_REGISTRY.map((entry) => entry.actionId));
-  const familyIds = new Set(STARDEW_ACTION_REGISTRY.map((entry) => entry.familyId));
   const deniedActions = [...(value.deniedActions as string[])];
   const deniedFamilies = [...(value.deniedFamilies as string[])];
   if (deniedActions.some((id) => id in RETIRED_ACTION_POLICY_MIGRATIONS)) {
-    throw new Error("retired_action_policy_identifier_requires_explicit_migration");
+    throw new Error(
+      "retired_action_policy_identifier_requires_explicit_migration",
+    );
   }
-  if (deniedActions.some((id) => !actionIds.has(id)) || deniedFamilies.some((id) => !familyIds.has(id))) {
-    throw new Error("invalid_action_policy_identifier");
-  }
+  // Policy is restrictive: IDs are checked against the authenticated Mod
+  // catalog only when tools are materialized. A Host-local registry must not
+  // decide whether a future or currently unavailable Mod action is valid.
   return Object.freeze({
     policyVersion: 1 as const,
     deniedActions: Object.freeze([...new Set(deniedActions)]),
@@ -372,7 +310,9 @@ function boundedIdentifierArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
     value.length <= 128 &&
-    value.every((item) => typeof item === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(item))
+    value.every(
+      (item) => typeof item === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(item),
+    )
   );
 }
 
@@ -380,94 +320,79 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function resolveCapabilityPullback(
-  registry: readonly PublishedAction[],
+/**
+ * Intersect local typed-adapter availability with the authenticated Mod
+ * registration catalog, fresh capabilities, and a restrictive policy. The
+ * Mod owns registration identity, family, version, and lifecycle; the Host
+ * contributes presentation plus the concrete TypeBox adapter only.
+ */
+export function visibleActionsFromModCatalog(
+  registrations: readonly ActionRegistration[],
   liveCapabilities: readonly string[],
   policy: ActionPolicy = DEFAULT_ACTION_POLICY,
-): readonly PublishedAction[] {
-  if (!registry || registry.length === 0) return Object.freeze([]);
-  if (!liveCapabilities || liveCapabilities.length === 0) return Object.freeze([]);
+): readonly VisibleStardewAction[] {
+  if (registrations.length === 0 || liveCapabilities.length === 0)
+    return Object.freeze([]);
 
-  const liveSet = new Set(liveCapabilities);
-  const deniedActionSet = new Set(policy.deniedActions);
-  const deniedFamilySet = new Set(policy.deniedFamilies);
-
-  return Object.freeze(
-    registry.filter((action) => {
-      if (!isMaterializablePublishedAction(action)) return false;
-      if (!liveSet.has(action.requiredCapability)) return false;
-      if (deniedActionSet.has(action.actionId)) return false;
-      if (deniedFamilySet.has(action.familyId)) return false;
-      return true;
-    }),
+  const adapters = new Map<string, StardewActionAdapter>(
+    STARDEW_ACTION_ADAPTERS.map((entry) => [entry.actionId, entry]),
   );
+  const live = new Set(liveCapabilities);
+  const deniedActions = new Set(policy.deniedActions);
+  const deniedFamilies = new Set(policy.deniedFamilies);
+  const visible: VisibleStardewAction[] = [];
+
+  for (const registration of registrations) {
+    const adapter = adapters.get(registration.actionId);
+    if (
+      adapter === undefined ||
+      registration.lifecycle !== "published" ||
+      !live.has(adapter.requiredCapability) ||
+      deniedActions.has(registration.actionId) ||
+      deniedFamilies.has(registration.familyId)
+    ) {
+      continue;
+    }
+    visible.push(
+      Object.freeze({
+        ...adapter,
+        familyId: registration.familyId,
+        identityVersion: registration.identityVersion,
+        lifecycle: registration.lifecycle,
+      }),
+    );
+  }
+  return Object.freeze(visible);
 }
 
-export function visiblePublishedActions(
-  capabilities: readonly string[],
-  policy: ActionPolicy = DEFAULT_ACTION_POLICY,
-): readonly PublishedAction[] {
-  return resolveCapabilityPullback(PUBLISHED_STARDEW_ACTIONS, capabilities, policy);
-}
-
-export function searchVisibleActions(
+export function searchActionsFromModCatalog(
+  registrations: readonly ActionRegistration[],
   capabilities: readonly string[],
   query: string,
   policy: ActionPolicy = DEFAULT_ACTION_POLICY,
-): readonly PublishedAction[] {
+): readonly VisibleStardewAction[] {
   const normalized = query.trim().toLocaleLowerCase();
-  if (normalized.length === 0) return visiblePublishedActions(capabilities, policy);
-  return visiblePublishedActions(capabilities, policy).filter((entry) =>
-    `${entry.actionId} ${entry.familyId} ${entry.label} ${entry.description}`.toLocaleLowerCase().includes(normalized),
+  const visible = visibleActionsFromModCatalog(
+    registrations,
+    capabilities,
+    policy,
+  );
+  if (normalized.length === 0) return visible;
+  return visible.filter((entry) =>
+    `${entry.actionId} ${entry.familyId} ${entry.label} ${entry.description}`
+      .toLocaleLowerCase()
+      .includes(normalized),
   );
 }
 
-export function isMaterializablePublishedAction(entry: PublishedAction): boolean {
-  return entry.actionClass === "primitive" && entry.lifecycle === "published";
-}
-
-function publishedAction<const TActionId extends string>(
+function actionAdapter<const TActionId extends string>(
   actionId: TActionId,
-  familyId: string,
-  identityVersion: number,
   label: string,
   description: string,
   targetKinds: readonly string[],
-): ActionDefinition<TActionId, "primitive", "published"> {
-  return action(actionId, familyId, identityVersion, "primitive", "published", label, description, targetKinds);
-}
-
-function experimentalAction<const TActionId extends string>(
-  actionId: TActionId,
-  familyId: string,
-  identityVersion: number,
-  label: string,
-  description: string,
-  targetKinds: readonly string[],
-): ActionDefinition<TActionId, "primitive", "experimental"> {
-  return action(actionId, familyId, identityVersion, "primitive", "experimental", label, description, targetKinds);
-}
-
-function action<
-  const TActionId extends string,
-  const TActionClass extends ActionClass,
-  const TLifecycle extends ActionLifecycle,
->(
-  actionId: TActionId,
-  familyId: string,
-  identityVersion: number,
-  actionClass: TActionClass,
-  lifecycle: TLifecycle,
-  label: string,
-  description: string,
-  targetKinds: readonly string[],
-): ActionDefinition<TActionId, TActionClass, TLifecycle> {
+): StardewActionAdapter & Readonly<{ actionId: TActionId }> {
   return Object.freeze({
     actionId,
-    familyId,
-    identityVersion,
-    actionClass,
-    lifecycle,
     label,
     description,
     targetKinds: Object.freeze([...targetKinds]),

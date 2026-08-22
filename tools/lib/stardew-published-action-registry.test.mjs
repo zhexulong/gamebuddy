@@ -6,23 +6,18 @@ import test from "node:test";
 
 import { readPublishedStardewActionIds } from "./stardew-published-action-registry.mjs";
 
-const registry = `
-const publishedAction = () => undefined;
-const experimentalAction = () => undefined;
-const isMaterializablePublishedAction = () => true;
-export const STARDEW_ACTION_REGISTRY = Object.freeze([
-  publishedAction("move_to_tile"),
-  experimentalAction("not_published"),
-  publishedAction("till_soil"),
-]);
-export const PUBLISHED_STARDEW_ACTIONS = Object.freeze(
-  STARDEW_ACTION_REGISTRY.filter(isMaterializablePublishedAction),
-);
+const registrations = `
+public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
+{
+    Registration("move_to_tile", "movement_navigation", 1, FarmhandActionHandlerGroup.Movement),
+    Registration("not_published", "future", 1, FarmhandActionHandlerGroup.Movement, FarmhandActionLifecycle.Experimental),
+    Registration("till_soil", "farming_crops", 1, FarmhandActionHandlerGroup.Farming),
+});
 `;
 
-async function withRegistry(source, run) {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-action-registry-"));
-  const path = join(root, "action-registry.ts");
+async function withRegistrations(source, run) {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-action-registrations-"));
+  const path = join(root, "FarmhandActionDefinitions.cs");
   try {
     await writeFile(path, source, "utf8");
     return await run(path);
@@ -31,26 +26,32 @@ async function withRegistry(source, run) {
   }
 }
 
-test("published action registry extraction is AST-based and excludes non-published calls", async () => {
-  await withRegistry(registry, async (registryPath) => {
-    assert.deepEqual(await readPublishedStardewActionIds({ registryPath }), ["move_to_tile", "till_soil"]);
+test("published action extraction is Mod-owned and excludes experimental registrations", async () => {
+  await withRegistrations(registrations, async (registrationsPath) => {
+    assert.deepEqual(await readPublishedStardewActionIds({ registrationsPath }), ["move_to_tile", "till_soil"]);
   });
 });
 
-test("published action registry extraction fails closed for a source token without the typed projection", async () => {
-  await withRegistry(
-    registry.replace("STARDEW_ACTION_REGISTRY.filter(isMaterializablePublishedAction)", "STARDEW_ACTION_REGISTRY"),
-    async (registryPath) => {
-      await assert.rejects(readPublishedStardewActionIds({ registryPath }), /invalid_published_projection/);
+test("published action extraction fails closed without the Mod registration declaration", async () => {
+  await withRegistrations(
+    registrations.replace("Registrations", "OtherRegistrations"),
+    async (registrationsPath) => {
+      await assert.rejects(
+        readPublishedStardewActionIds({ registrationsPath }),
+        /missing_mod_registrations/,
+      );
     },
   );
 });
 
-test("published action registry extraction rejects duplicate published identifiers", async () => {
-  await withRegistry(
-    registry.replace('publishedAction("till_soil")', 'publishedAction("move_to_tile")'),
-    async (registryPath) => {
-      await assert.rejects(readPublishedStardewActionIds({ registryPath }), /invalid_published_set/);
+test("published action extraction rejects duplicate Mod-owned published identifiers", async () => {
+  await withRegistrations(
+    registrations.replace(
+      'Registration("till_soil", "farming_crops", 1, FarmhandActionHandlerGroup.Farming)',
+      'Registration("move_to_tile", "farming_crops", 1, FarmhandActionHandlerGroup.Farming)',
+    ),
+    async (registrationsPath) => {
+      await assert.rejects(readPublishedStardewActionIds({ registrationsPath }), /invalid_published_set/);
     },
   );
 });

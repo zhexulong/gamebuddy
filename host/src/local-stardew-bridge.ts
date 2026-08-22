@@ -4,6 +4,7 @@ import type { CompanionIntegration, CompanionIntegrationState } from "./integrat
 import type { KnowledgeBundle } from "./knowledge.js";
 import { NamedPipeTransport } from "./named-pipe.js";
 import {
+  type ActionRegistration,
   type BridgeMessage,
   type CancelIdentity,
   type CompanionPresentationRequest,
@@ -63,6 +64,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
   #authenticated = false;
   #sessionId: string | null = null;
   #capabilities: readonly string[] = [];
+  #catalogRegistrations: readonly ActionRegistration[] = [];
   #snapshot: Snapshot | null = null;
   #latestReceipt: LocalStardewBridgeState["latestReceipt"] = null;
   #latestReasonCode: string | null = null;
@@ -92,6 +94,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       this.#initialSnapshotReceived = false;
       this.#sessionId = null;
       this.#capabilities = [];
+      this.#catalogRegistrations = [];
       this.#snapshot = null;
       this.#latestReceipt = null;
       this.#latestReasonCode = reasonCode;
@@ -130,6 +133,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       authenticated: this.#authenticated,
       sessionId: this.#sessionId,
       capabilities: this.#capabilities,
+      catalogRegistrations: this.#catalogRegistrations,
       snapshot: this.#snapshot,
       latestReceipt: this.#latestReceipt,
       latestReasonCode: this.#latestReasonCode,
@@ -246,12 +250,13 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     this.#authenticated = true;
     this.#sessionId = response.payload.sessionId;
     this.#capabilities = [...response.payload.capabilities];
+    this.#catalogRegistrations = [...response.payload.registrations];
   }
 
   private request(type: OutboundRequestType, payload: Record<string, unknown>): Promise<BridgeMessage> {
     if (!this.transport.connected) return Promise.reject(new Error("pipe_disconnected"));
     const correlationId = randomUUID();
-    const message = newEnvelope(type, this.scope, payload, correlationId);
+    const message = newEnvelope(type, this.scope, payload as never, correlationId);
     return new Promise<BridgeMessage>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(correlationId);
@@ -326,6 +331,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       this.#initialSnapshotReceived = false;
       this.#latestReceipt = null;
       this.#capabilities = [...message.payload.capabilities];
+      this.#catalogRegistrations = [...message.payload.registrations];
       this.#latestReasonCode = null;
     } else if (message.type === "snapshot") {
       // A delayed observation response must never replace newer Mod state.

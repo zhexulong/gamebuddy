@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 import {
   createStardewKnowledgeTool,
   decideCapability,
@@ -51,13 +52,13 @@ test("knowledge bundles are versioned, bounded, and fail closed on duplicates or
 });
 
 test("knowledge remains versioned advice and cannot override live capability facts", () => {
-  assert.equal(decideCapability(bundle, snapshot, "move_to_tile", "1.6.15").kind, "supported");
+  assert.equal(decideCapability(bundle, snapshot, "move_to_tile", "1.6.15", TEST_MOD_REGISTRATIONS).kind, "supported");
   assert.deepEqual(
-    decideCapability(bundle, snapshot, "move_to_tile", "different").reasonCode,
+    decideCapability(bundle, snapshot, "move_to_tile", "different", TEST_MOD_REGISTRATIONS).reasonCode,
     "knowledge_bundle_not_applicable",
   );
   assert.deepEqual(
-    decideCapability(bundle, { ...snapshot, capabilities: [] }, "move_to_tile", "1.6.15").reasonCode,
+    decideCapability(bundle, { ...snapshot, capabilities: [] }, "move_to_tile", "1.6.15", TEST_MOD_REGISTRATIONS).reasonCode,
     "capability_not_declared",
   );
 });
@@ -81,6 +82,7 @@ test("mounted knowledge exposes advisory rules only for live, version-matched ca
       snapshot,
       latestReceipt: null,
       latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
     },
   };
   const tool = createStardewKnowledgeTool(integration);
@@ -129,6 +131,7 @@ test("unmounted knowledge remains unavailable rather than inventing guidance", a
       snapshot,
       latestReceipt: null,
       latestReasonCode: null,
+        catalogRegistrations: TEST_MOD_REGISTRATIONS,
     },
   };
   const result = await createStardewKnowledgeTool(integration).execute(
@@ -164,6 +167,7 @@ test("knowledge cannot disclose a denied action or its advisory rules", () => {
     { actionId: "equip_tool" },
     "1.6.15",
     { policyVersion: 1, deniedActions: ["equip_tool"], deniedFamilies: [] },
+    TEST_MOD_REGISTRATIONS,
   );
   assert.equal(denied.reasonCode, "action_not_available");
   assert.deepEqual(denied.rules, []);

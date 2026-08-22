@@ -37,7 +37,7 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
   const valid = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
     "hello_01",
     now,
   );
@@ -47,7 +47,7 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "invalid session", capabilities: [], presentationLocale: "en-US" },
+        { sessionId: "invalid session", capabilities: [], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
         "hello_02",
         now,
       ),
@@ -61,7 +61,7 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "session_01", capabilities: [1], presentationLocale: "en-US" },
+        { sessionId: "session_01", capabilities: [1], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
         "hello_03",
         now,
       ),
@@ -76,7 +76,7 @@ test("hello acknowledgement and snapshot reject missing or invalid presentation 
   const validHello = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
     "hello_locale_01",
     now,
   );
