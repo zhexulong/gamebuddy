@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCompanionInterruption } from "../companion-interruption.js";
 import type { P4ProviderStartExecutionScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
-import { type ChatPresentationStartActivation, createChatPresentationGate } from "./chat-presentation-gate.internal.js";
 import type {
   AttemptObservationV1,
   AttemptStartingTurn,
@@ -13,11 +11,30 @@ import type {
   FailedTurn,
   RunningTurn,
 } from "./chat-thread-store.js";
+import { createChatEventStream } from "./chat-event-stream.js";
 import {
   P4C_CANONICAL_DIALOGUE_INPUT_KIND,
   renderCanonicalDialogueEnvelope,
   runMountedP4ProviderStart,
+  type NativeChatPreviewPublisher,
 } from "./p4-provider-start-execution.js";
+
+function nativeText(text: string) {
+  return Object.freeze({ type: "text" as const, text });
+}
+
+function nativeAssistant(
+  content: readonly ReturnType<typeof nativeText>[],
+  responseId = "assistant_01",
+  stopReason: "stop" | "aborted" | "error" = "stop",
+) {
+  return Object.freeze({
+    role: "assistant" as const,
+    content: [...content],
+    stopReason,
+    responseId,
+  });
+}
 
 const facts = Object.freeze({
   turnId: "turn_01",
@@ -93,17 +110,31 @@ type ScopeOverrides = Readonly<{
   readAcceptedMessageText?: () => Promise<string>;
   readCurrentTurnLedger?: () => Promise<ChatTurnLedger>;
   runtimeSession?: object;
-  activatePresentation?: () => ChatPresentationStartActivation;
   presentationCommitted?: () => boolean;
+  reserveNativeContentCommit?: () => { cancelEpoch: number; release(): void } | undefined;
   /** Simulates an ordinary SQLite Stop winning just before completion. */
   stopWinsCompletionClaim?: boolean;
   terminalLedger?: () => ChatTurnLedger | undefined;
 }>;
 
 function createScope(overrides: ScopeOverrides = {}) {
-  const fallbackEpoch = createCompanionInterruption();
-  const fallbackGate = createChatPresentationGate();
-  const fallbackSnapshot = fallbackEpoch.capture();
+  const suppliedRuntime = overrides.runtimeSession as
+    | { session?: Record<string, unknown>; [key: string]: unknown }
+    | undefined;
+  const suppliedSession = suppliedRuntime?.session;
+  const runtimeSession =
+    suppliedRuntime === undefined || suppliedSession === undefined
+      ? suppliedRuntime
+      : Object.freeze({
+          ...suppliedRuntime,
+          session: Object.freeze({
+            ...suppliedSession,
+            subscribe:
+              typeof suppliedSession.subscribe === "function"
+                ? suppliedSession.subscribe
+                : (_listener: (event: unknown) => void) => () => undefined,
+          }),
+        });
   const transitions: P4ProviderStartTransition[] = [];
   const presentationTransitions: P5PresentationTransition[] = [];
   let durableRunning: RunningTurn | undefined;
@@ -161,6 +192,20 @@ function createScope(overrides: ScopeOverrides = {}) {
     presentationTransitions.push(command);
     if (durableRunning === undefined || durablePresentation === undefined)
       throw new Error("p5_presentation_source_running_required");
+    if (command.operation === "commit_presentation") {
+      if (durablePresentation.status !== "running") throw new Error("p5_presentation_commit_source_required");
+      durablePresentation = Object.freeze({
+        ...durableRunning,
+        status: "presentation_committed" as const,
+        presentation: Object.freeze({
+          expressionId: command.message.messageId,
+          messageId: command.message.messageId,
+          cancelEpoch: command.cancelEpoch,
+          committedAtMs: command.committedAtMs,
+        }),
+      });
+      return durablePresentation;
+    }
     if (command.operation === "claim_completion") {
       if (durablePresentation.status === "running" && overrides.stopWinsCompletionClaim) {
         durablePresentation = Object.freeze({
@@ -238,7 +283,7 @@ function createScope(overrides: ScopeOverrides = {}) {
   const scope = Object.freeze({
     facts,
     deadlineAtMs: Date.now() + 120_000,
-    runtimeSession: overrides.runtimeSession ?? Object.freeze({}),
+    runtimeSession: runtimeSession ?? Object.freeze({}),
     transitionStore,
     transitionPresentation,
     readAcceptedMessageText: overrides.readAcceptedMessageText ?? (async () => "Hello"),
@@ -252,16 +297,10 @@ function createScope(overrides: ScopeOverrides = {}) {
         if (durablePresentation === undefined) return attemptStarting(Object.freeze({ phase: "armed", observedAtMs: 1 }));
         return durablePresentation;
       }),
-    activatePresentation:
-      overrides.activatePresentation ??
-      (() =>
-        fallbackGate.activate({
-          epoch: fallbackEpoch,
-          observationEpoch: fallbackSnapshot,
-          reserveCommit: (candidate) => (fallbackEpoch.isCurrent(candidate) ? () => undefined : undefined),
-          commitPresentation: async () => undefined,
-        })),
-    // Retired P4/P5 STOP arbitration deliberately has no runner seam.
+    canPreviewNativeContent: () => true,
+    reserveNativeContentCommit:
+      overrides.reserveNativeContentCommit ?? (() => Object.freeze({ cancelEpoch: 1, release: () => undefined })),
+    finalizeCancellation: async () => undefined,
   }) as P4ProviderStartExecutionScope;
   return { scope, transitions, presentationTransitions };
 }
@@ -322,53 +361,33 @@ test("P4c terminalizes an observed prompt without a durable presentation as fail
   assert.deepEqual(receivedEnvelope, JSON.parse(renderCanonicalDialogueEnvelope(facts, "Hello")));
 });
 
-test("P5 activates the construction gate before prompt and terminalizes one durable presentation", async () => {
-  const interruption = createCompanionInterruption();
-  const gate = createChatPresentationGate();
-  const observationEpoch = interruption.capture();
-  let activation: ChatPresentationStartActivation | undefined;
+test("P4c runs when native assistant output settles before the provider observer", async () => {
   let observer: Observer | undefined;
-  let commitCount = 0;
-  let sinkCount = 0;
-  gate.attach(() => {
-    sinkCount += 1;
-  });
   const { scope, transitions, presentationTransitions } = createScope({
-    presentationCommitted: () => commitCount === 1,
-    activatePresentation: () => {
-      activation = gate.activate({
-        epoch: interruption,
-        observationEpoch,
-        reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
-        commitPresentation: async () => {
-          commitCount += 1;
-        },
-      });
-      return activation;
-    },
+    presentationCommitted: () => true,
     runtimeSession: Object.freeze({
       installTavernProviderStartObserver(onStart: Observer) {
         observer = onStart;
         return () => undefined;
       },
-      session: Object.freeze({
-        async prompt() {
-          const captured = gate.admissionProvider.capture();
-          const expression = Object.freeze({
-            surface: "chat" as const,
-            expressionId: "expression_01",
-            sessionId: "surface_01",
-            text: "Visible.",
-            locale: "zh-CN",
-          });
-          const delivery = gate.textPort.present(expression, captured.admission);
-          queueMicrotask(() => observer?.(Object.freeze({ statusClass: "success" as const })));
-          await delivery;
-          await assert.rejects(async () => {
-            await gate.textPort.present(expression, captured.admission);
-          }, /presentation_admission_replayed|presentation_admission_unbound/);
-        },
-      }),
+      session: (() => {
+        const listeners = new Set<(event: unknown) => void>();
+        const emit = (event: unknown): void => {
+          for (const listener of [...listeners]) listener(event);
+        };
+        return Object.freeze({
+          subscribe(listener: (event: unknown) => void) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          async prompt() {
+            const partial = nativeAssistant([nativeText("")]);
+            emit({ type: "message_start", message: partial });
+            emit({ type: "message_end", message: nativeAssistant([nativeText("Visible native content.")]) });
+            observer?.(Object.freeze({ statusClass: "success" as const }));
+          },
+        });
+      })(),
     }),
   });
 
@@ -376,36 +395,148 @@ test("P5 activates the construction gate before prompt and terminalizes one dura
 
   assert.equal(result.outcome, "completed");
   assert.equal(result.ledger.status, "completed");
-  assert.deepEqual(
-    transitions.map(({ operation }) => operation),
-    ["arm", "running"],
-  );
-  assert.deepEqual(
-    presentationTransitions.map(({ operation }) => operation),
-    ["claim_completion", "complete"],
-  );
-  assert.equal(commitCount, 1);
-  assert.equal(sinkCount, 1);
-  assert.equal(activation !== undefined, true);
+  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
+  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), ["commit_presentation", "claim_completion", "complete"]);
+});
+
+test("P5 commits final native assistant content once after durable running and clears its preview", async () => {
+  let observer: Observer | undefined;
+  const previews: Array<{ turnId: string; delta: string }> = [];
+  let clears = 0;
+  const previewPublisher: NativeChatPreviewPublisher = Object.freeze({
+    publish: async (preview) => {
+      previews.push(preview);
+    },
+    clear: async () => {
+      clears += 1;
+    },
+  });
+  const { scope, transitions, presentationTransitions } = createScope({
+    presentationCommitted: () => true,
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver(onStart: Observer) {
+        observer = onStart;
+        return () => undefined;
+      },
+      session: (() => {
+        const listeners = new Set<(event: unknown) => void>();
+        const emit = (event: unknown): void => {
+          for (const listener of [...listeners]) listener(event);
+        };
+        return Object.freeze({
+          subscribe(listener: (event: unknown) => void) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          async prompt() {
+            const partial = nativeAssistant([nativeText("")]);
+            emit({ type: "message_start", message: partial });
+            queueMicrotask(() => observer?.(Object.freeze({ statusClass: "success" as const })));
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            emit({
+              type: "message_update",
+              message: partial,
+              assistantMessageEvent: { type: "text_start", contentIndex: 0, partial },
+            });
+            emit({
+              type: "message_update",
+              message: partial,
+              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Visible ", partial },
+            });
+            emit({
+              type: "message_end",
+              message: nativeAssistant([nativeText("Visible native content.")]),
+            });
+          },
+        });
+      })(),
+    }),
+  });
+
+  const result = await runMountedP4ProviderStart(scope, previewPublisher);
+
+  assert.equal(result.outcome, "completed");
+  assert.equal(result.ledger.status, "completed");
+  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
+  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), ["commit_presentation", "claim_completion", "complete"]);
+  const commit = presentationTransitions[0];
+  assert.equal(commit?.operation, "commit_presentation");
+  assert.equal(commit?.operation === "commit_presentation" && commit.message.text, "Visible native content.");
+  assert.deepEqual(previews, [{ turnId: facts.turnId, delta: "Visible " }]);
+  assert.equal(clears, 1);
+});
+test("P5 normalizes native preview deltas before the browser event contract and completes the final text", async () => {
+  let observer: Observer | undefined;
+  const eventStream = createChatEventStream();
+  const previewPublisher: NativeChatPreviewPublisher = Object.freeze({
+    publish: async (preview) => {
+      eventStream.publish({
+        eventType: "companion.delta",
+        selectionGeneration: facts.selectionGeneration,
+        payload: Object.freeze({ turnHandle: "A".repeat(22), delta: preview.delta }),
+      });
+    },
+    clear: async () => undefined,
+  });
+  const { scope, presentationTransitions } = createScope({
+    presentationCommitted: () => true,
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver(onStart: Observer) {
+        observer = onStart;
+        return () => undefined;
+      },
+      session: (() => {
+        const listeners = new Set<(event: unknown) => void>();
+        const emit = (event: unknown): void => {
+          for (const listener of [...listeners]) listener(event);
+        };
+        return Object.freeze({
+          subscribe(listener: (event: unknown) => void) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          async prompt() {
+            const partial = nativeAssistant([nativeText("")]);
+            emit({ type: "message_start", message: partial });
+            queueMicrotask(() => observer?.(Object.freeze({ statusClass: "success" as const })));
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            emit({
+              type: "message_update",
+              message: partial,
+              assistantMessageEvent: { type: "text_start", contentIndex: 0, partial },
+            });
+            emit({
+              type: "message_update",
+              message: partial,
+              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "cafe\u0301", partial },
+            });
+            emit({ type: "message_end", message: nativeAssistant([nativeText("Cafe\u0301")]) });
+          },
+        });
+      })(),
+    }),
+  });
+
+  const result = await runMountedP4ProviderStart(scope, previewPublisher);
+
+  assert.equal(result.outcome, "completed");
+  assert.equal(result.ledger.status, "completed");
+  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), [
+    "commit_presentation",
+    "claim_completion",
+    "complete",
+  ]);
+  const events = eventStream.subscribe({ epoch: eventStream.epoch, after: 0, generation: facts.selectionGeneration });
+  assert.equal(events.kind, "replay");
+  assert.deepEqual(events.kind === "replay" ? events.events.map((event) => event.payload) : [], [
+    { turnHandle: "A".repeat(22), delta: "café" },
+  ]);
 });
 
 test("P4c terminalizes a rejected prompt after an observation as durable runtime failure", async () => {
-  const interruption = createCompanionInterruption();
-  const gate = createChatPresentationGate();
-  const observationEpoch = interruption.capture();
   let observer: Observer | undefined;
   let promptCalls = 0;
-  let commitCount = 0;
   const { scope, transitions, presentationTransitions } = createScope({
-    activatePresentation: () =>
-      gate.activate({
-        epoch: interruption,
-        observationEpoch,
-        reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
-        commitPresentation: async () => {
-          commitCount += 1;
-        },
-      }),
     runtimeSession: Object.freeze({
       installTavernProviderStartObserver(onStart: Observer) {
         observer = onStart;
@@ -414,19 +545,7 @@ test("P4c terminalizes a rejected prompt after an observation as durable runtime
       session: Object.freeze({
         async prompt() {
           promptCalls += 1;
-          const captured = gate.admissionProvider.capture();
-          const delivery = gate.textPort.present(
-            Object.freeze({
-              surface: "chat" as const,
-              expressionId: "expression_rejected",
-              sessionId: "surface_01",
-              text: "Visible before transport rejection.",
-              locale: "en",
-            }),
-            captured.admission,
-          );
           observer?.(Object.freeze({ statusClass: "success" as const }));
-          await delivery;
           throw new Error("transport_rejected_after_observation");
         },
       }),
@@ -439,15 +558,8 @@ test("P4c terminalizes a rejected prompt after an observation as durable runtime
   assert.equal(result.outcome, "failed");
   assert.equal(result.ledger.status, "failed");
   assert.equal(result.ledger.reasonCode, "runtime_unavailable");
-  assert.deepEqual(
-    transitions.map(({ operation }) => operation),
-    ["arm", "running"],
-  );
-  assert.deepEqual(
-    presentationTransitions.map(({ operation }) => operation),
-    ["fail"],
-  );
-  assert.equal(commitCount, 1);
+  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
+  assert.deepEqual(presentationTransitions.map(({ operation }) => operation), ["fail"]);
 });
 
 test("P4c returns a normal durable Stop winner when an aborted prompt rejects", async () => {
@@ -535,357 +647,4 @@ test("P4c rereads a normal Stop winner after provider settlement", async () => {
   assert.equal(result.ledger.status, "cancelled");
   assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
   assert.deepEqual(presentationTransitions, []);
-});
-
-test("P5 Chat gate rejects a Game expression before durable commit", async () => {
-  const interruption = createCompanionInterruption();
-  const gate = createChatPresentationGate();
-  const observationEpoch = interruption.capture();
-  let commitCount = 0;
-  const activation = gate.activate({
-    epoch: interruption,
-    observationEpoch,
-    reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
-    commitPresentation: async () => {
-      commitCount += 1;
-    },
-  });
-  const captured = gate.admissionProvider.capture();
-  await assert.rejects(
-    async () =>
-      await Promise.resolve(
-        gate.textPort.present(
-          Object.freeze({
-            surface: "game" as const,
-            expressionId: "expression_game",
-            sessionId: "surface_01",
-            sourceEventId: "source_game",
-            text: "Must not cross the Chat boundary.",
-            locale: "zh-CN",
-          }),
-          captured.admission,
-        ),
-      ),
-    /presentation_surface_mismatch/,
-  );
-  assert.equal(commitCount, 0);
-  await activation.deactivate();
-});
-
-test("P5 stop before commit reservation rejects with zero durable presentation work", async () => {
-  const interruption = createCompanionInterruption();
-  const gate = createChatPresentationGate();
-  const observationEpoch = interruption.capture();
-  let commitCount = 0;
-  const activation = gate.activate({
-    epoch: interruption,
-    observationEpoch,
-    reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
-    commitPresentation: async () => {
-      commitCount += 1;
-    },
-  });
-  const captured = gate.admissionProvider.capture();
-  const delivery = gate.textPort.present(
-    Object.freeze({
-      surface: "chat" as const,
-      expressionId: "expression_stopped",
-      sessionId: "surface_01",
-      text: "Late.",
-      locale: "zh-CN",
-    }),
-    captured.admission,
-  );
-  interruption.stop("stop_first", "source_first", "player_stop_all");
-  activation.resolveRunning();
-  await assert.rejects(async () => await delivery, /presentation_admission_revoked/);
-  assert.equal(commitCount, 0);
-  await activation.deactivate();
-});
-
-test("P5 commit reservation orders a racing stop after the reserved durable commit", async () => {
-  const interruption = createCompanionInterruption();
-  const gate = createChatPresentationGate();
-  const observationEpoch = interruption.capture();
-  let releaseCommit!: () => void;
-  let commitStarted = false;
-  let commitFinished = false;
-  const activation = gate.activate({
-    epoch: interruption,
-    observationEpoch,
-    reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
-    commitPresentation: async () => {
-      commitStarted = true;
-      await new Promise<void>((resolve) => {
-        releaseCommit = resolve;
-      });
-      commitFinished = true;
-    },
-  });
-  const captured = gate.admissionProvider.capture();
-  const delivery = gate.textPort.present(
-    Object.freeze({
-      surface: "chat" as const,
-      expressionId: "expression_race",
-      sessionId: "surface_01",
-      text: "Visible.",
-      locale: "zh-CN",
-    }),
-    captured.admission,
-  );
-  activation.resolveRunning();
-  await new Promise<void>((resolve) => queueMicrotask(resolve));
-  assert.equal(commitStarted, true);
-  const stop = interruption.stop("stop_race", "source_race", "player_stop_all");
-  assert.equal(stop.accepted, true);
-  // The stop invalidates the old epoch, but cannot overtake a commit that
-  // already won the synchronous reservation linearization point.
-  assert.equal(commitFinished, false);
-  releaseCommit();
-  await delivery;
-  assert.equal(commitFinished, true);
-  await activation.deactivate();
-});
-
-test("P5 activation exposes no direct commit and deactivation drains a reserved callback before rebinding", async () => {
-  const interruption = createCompanionInterruption();
-  const gate = createChatPresentationGate();
-  const observationEpoch = interruption.capture();
-  let releaseListener!: () => void;
-  let listenerStarted = false;
-  gate.attach(async () => {
-    listenerStarted = true;
-    await new Promise<void>((resolve) => {
-      releaseListener = resolve;
-    });
-  });
-  const activation = gate.activate({
-    epoch: interruption,
-    observationEpoch,
-    reserveCommit: (candidate) => (interruption.isCurrent(candidate) ? () => undefined : undefined),
-    commitPresentation: async () => undefined,
-  });
-  assert.equal("commitPresentation" in activation, false);
-  const captured = gate.admissionProvider.capture();
-  const delivery = gate.textPort.present(
-    Object.freeze({
-      surface: "chat" as const,
-      expressionId: "expression_drain",
-      sessionId: "surface_01",
-      text: "Visible.",
-      locale: "zh-CN",
-    }),
-    captured.admission,
-  );
-  activation.resolveRunning();
-  while (!listenerStarted) await new Promise<void>((resolve) => queueMicrotask(resolve));
-
-  const deactivation = activation.deactivate();
-  await assert.rejects(async () => {
-    gate.admissionProvider.capture();
-  }, /presentation_admission_revoked/);
-  assert.throws(
-    () =>
-      gate.activate({
-        epoch: interruption,
-        observationEpoch,
-        reserveCommit: () => undefined,
-        commitPresentation: async () => undefined,
-      }),
-    /chat_presentation_gate_already_bound/,
-  );
-  let settled = false;
-  void deactivation.then(() => {
-    settled = true;
-  });
-  await new Promise<void>((resolve) => queueMicrotask(resolve));
-  assert.equal(settled, false);
-  releaseListener();
-  await delivery;
-  await deactivation;
-  assert.equal(settled, true);
-});
-
-test("P4c leaves the durable attempt armed when prompt settles without a provider observation", async () => {
-  let promptCalls = 0;
-  let unregisterCalls = 0;
-  const { scope, transitions } = createScope({
-    runtimeSession: Object.freeze({
-      installTavernProviderStartObserver() {
-        return () => {
-          unregisterCalls += 1;
-        };
-      },
-      session: Object.freeze({
-        prompt() {
-          promptCalls += 1;
-          return Promise.resolve();
-        },
-      }),
-    }),
-  });
-
-  const result = await runMountedP4ProviderStart(scope);
-
-  assert.equal(promptCalls, 1);
-  assert.equal(unregisterCalls, 1);
-  assert.equal(result.outcome, "armed");
-  assert.equal(result.ledger.status, "attempt_starting");
-  assert.equal(result.ledger.observation?.phase, "armed");
-  assert.deepEqual(
-    transitions.map(({ operation }) => operation),
-    ["arm"],
-  );
-});
-
-test("P4c records a synchronously-throwing provider prompt as durable failure", async () => {
-  let promptCalls = 0;
-  let unregisterCalls = 0;
-  const { scope, transitions } = createScope({
-    runtimeSession: Object.freeze({
-      installTavernProviderStartObserver() {
-        return () => {
-          unregisterCalls += 1;
-        };
-      },
-      session: Object.freeze({
-        prompt() {
-          promptCalls += 1;
-          // A transport failure may throw synchronously before the promise is
-          // formed. It must become the same durable retryable failure as an
-          // asynchronous provider rejection.
-          throw new Error("sync_transport_failure");
-        },
-      }),
-    }),
-  });
-
-  const result = await runMountedP4ProviderStart(scope);
-
-  assert.equal(promptCalls, 1);
-  assert.equal(unregisterCalls, 1);
-  assert.equal(result.outcome, "failed");
-  assert.equal(result.ledger.status, "failed");
-  assert.equal(result.ledger.reasonCode, "runtime_unavailable");
-  assert.equal(result.ledger.observation.phase, "armed");
-  assert.deepEqual(
-    transitions.map(({ operation }) => operation),
-    ["arm", "fail"],
-  );
-});
-
-test("P4c persists an asynchronously rejected provider prompt as retryable failure", async () => {
-  let promptCalls = 0;
-  const { scope, transitions } = createScope({
-    runtimeSession: Object.freeze({
-      installTavernProviderStartObserver() {
-        return () => undefined;
-      },
-      session: Object.freeze({
-        async prompt() {
-          promptCalls += 1;
-          throw new Error("async_transport_failure");
-        },
-      }),
-    }),
-  });
-
-  const result = await runMountedP4ProviderStart(scope);
-
-  assert.equal(promptCalls, 1);
-  assert.equal(result.outcome, "failed");
-  assert.equal(result.ledger.status, "failed");
-  assert.equal(result.ledger.reasonCode, "runtime_unavailable");
-  assert.equal(result.ledger.observation.phase, "armed");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "fail"]);
-});
-
-test("P4c revalidates after asynchronous message read and records local pre-invocation revocation without prompting", async () => {
-  let invalid = false;
-  let promptCalls = 0;
-  const { scope, transitions } = createScope({
-    assertAdmission() {
-      if (invalid) throw new Error("semantic_chat_runtime_p4_attempt_invocation_rejected");
-    },
-    readAcceptedMessageText: async () => {
-      invalid = true;
-      return "Hello";
-    },
-    runtimeSession: Object.freeze({
-      installTavernProviderStartObserver() {
-        return () => undefined;
-      },
-      session: Object.freeze({
-        prompt() {
-          promptCalls += 1;
-          return Promise.resolve();
-        },
-      }),
-    }),
-  });
-
-  const result = await runMountedP4ProviderStart(scope);
-
-  assert.equal(promptCalls, 0);
-  assert.equal(result.outcome, "not_started");
-  assert.equal(result.ledger.observation?.phase, "not_started");
-  assert.equal(
-    result.ledger.observation?.phase === "not_started" && result.ledger.observation.reasonCode,
-    "admission_revoked",
-  );
-  assert.deepEqual(
-    transitions.map(({ operation }) => operation),
-    ["arm", "not_started"],
-  );
-});
-
-test("P4c ignores a late provider observation once running admission is no longer active", async () => {
-  let observer: Observer | undefined;
-  let assertions = 0;
-  const { scope, transitions } = createScope({
-    assertAdmission() {
-      assertions += 1;
-      // initial, activation-before-arm, arm-after-activation, pre-read
-      // invocation, and post-read prompt linearizations pass; only the
-      // observer-side running linearization is no longer active.
-      if (assertions >= 6) throw new Error("semantic_chat_runtime_p4_attempt_invocation_rejected");
-    },
-    runtimeSession: Object.freeze({
-      installTavernProviderStartObserver(onStart: Observer) {
-        observer = onStart;
-        return () => undefined;
-      },
-      session: Object.freeze({
-        prompt() {
-          observer?.(Object.freeze({ statusClass: "error" as const }));
-          return Promise.resolve();
-        },
-      }),
-    }),
-  });
-
-  const result = await runMountedP4ProviderStart(scope);
-
-  assert.equal(result.outcome, "armed");
-  assert.deepEqual(
-    transitions.map(({ operation }) => operation),
-    ["arm"],
-  );
-});
-
-test("P4c records session_unavailable only before a Host prompt invocation", async () => {
-  const { scope, transitions } = createScope();
-
-  const result = await runMountedP4ProviderStart(scope);
-
-  assert.equal(result.outcome, "not_started");
-  assert.equal(result.ledger.observation?.phase, "not_started");
-  assert.equal(
-    result.ledger.observation?.phase === "not_started" && result.ledger.observation.reasonCode,
-    "session_unavailable",
-  );
-  assert.deepEqual(
-    transitions.map(({ operation }) => operation),
-    ["arm", "not_started"],
-  );
 });

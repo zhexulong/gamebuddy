@@ -41,12 +41,7 @@ import type {
   ProductionSagaReadback,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import type { CompanionTextExpression } from "../presentation.js";
 import { identityKey, type RuntimeSession } from "../runtime.js";
-import type {
-  ChatPresentationGate,
-  ChatPresentationStartActivation,
-} from "../tavern/chat-presentation-gate.internal.js";
 import type { CreateChatThreadRequest } from "../tavern/chat-thread-store.js";
 import {
   createChatThreadStore,
@@ -129,7 +124,6 @@ export type MountedChatRuntimeLease = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
   browserProjection: MountedChatBrowserProjection;
-  attachPresentation(listener: (expression: CompanionTextExpression) => void | Promise<void>): () => void;
   /**
    * Cancels only the current exact in-flight Pi prompt without exposing the Pi
    * session. A stale turn/attempt pair cannot abort a later prompt.
@@ -150,11 +144,7 @@ type MountedChatRuntimeLeaseRecord = {
   readonly p4AttemptBinding?: MountedP4AttemptBinding;
   /** Live materialized runtime session for the P4c start scope; never public. */
   readonly p4ProviderStartRuntimeSession?: RuntimeSession;
-  /**
-   * Chat-only default-unbound presentation gate from construction. Only the
-   * exact P4 activation seam in this module may bind it.
-   */
-  readonly p4PresentationGate?: ChatPresentationGate;
+
   /**
    * Process-local one-shot reservation for a durable generation-one attempt.
    * It closes concurrent/reentrant start calls before the durable `armed` write;
@@ -170,8 +160,7 @@ type MountedChatRuntimeLeaseRecord = {
    * invalidates every minted presentation admission for this lease.
    */
   readonly p5PresentationEpoch: CompanionInterruption;
-  /** The exact live P4c gate activation, if its prompt is currently in flight. */
-  p5PresentationActivation?: ChatPresentationStartActivation;
+
   /** The sole Pi prompt currently executing under this mounted lease. */
   activePrompt?: Readonly<{ turnId: string; attemptId: string; aborting: boolean }>;
   /** Retained legacy P4/P5 cancellation state; new browser Stop bypasses it. */
@@ -280,13 +269,17 @@ export type P4ProviderStartExecutionScope = Readonly<{
    */
   beginActivePrompt(): () => void;
   /**
-   * Coordinator-private binding of the Chat presentation gate to this exact P4
-   * invocation. It returns the narrow one-shot activation: the running barrier
-   * (resolved by the runner only after the durable running transition), the
-   * exclusive exact-attempt P5 store commit port, and revocation after active
-   * callbacks drain. No store, binding, or admission escapes it.
+   * Performs P5's synchronous cancel/commit arbitration for this exact native
+   * content finalization. The returned release function merely closes the
+   * in-process reservation; the subsequent transition still owns durability.
    */
-  activatePresentation(): import("../tavern/chat-presentation-gate.internal.js").ChatPresentationStartActivation;
+  reserveNativeContentCommit(): Readonly<{ cancelEpoch: number; release(): void }> | undefined;
+  /**
+   * Tests whether native content preview is still permitted for this exact
+   * mounted prompt. It observes the same Host-owned interruption epoch as the
+   * final commit reservation but never creates any presentation authority.
+   */
+  canPreviewNativeContent(): boolean;
   /**
    * Reads the durable winner for a STOP that raced this invocation. The runner
    * owns prompt/gate drain and therefore performs the final `cancel` or
@@ -617,80 +610,29 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
         if (mounted.activePrompt === activePrompt) mounted.activePrompt = undefined;
       };
     };
-    const activatePresentation =
-      (): import("../tavern/chat-presentation-gate.internal.js").ChatPresentationStartActivation => {
-        if (!record.active.value || !mounted.active)
-          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_invocation_rejected");
-        const gate = mounted.p4PresentationGate;
-        if (gate === undefined || mounted.p5PresentationActivation !== undefined)
-          throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_gate_unavailable");
-        const observationEpoch = mounted.p5PresentationEpoch.capture();
-        let commitReserved = false;
-        const reserveCommit = (
-          candidate: import("../companion-interruption.js").InterruptionSnapshot,
-        ): (() => void) | undefined => {
-          if (
-            commitReserved ||
-            candidate !== observationEpoch ||
-            !mounted.p5PresentationEpoch.isCurrent(candidate) ||
-            !record.active.value ||
-            !mounted.active
-          )
-            return undefined;
-          commitReserved = true;
-          return () => undefined;
-        };
-        const commitPresentation = async (expression: CompanionTextExpression): Promise<void> => {
-          assertScopeActive();
-          const observedAtMs = Date.now();
-          const committed = await transitionP5MountedPresentation(
-            Object.freeze({
-              authority: mounted.p4P5TransitionAuthority.authority,
-              operationAuthority: scopedOperationAuthority.authority,
-              runtimeRoot: mounted.runtimeRoot,
-              playerId: mounted.principal.playerId,
-              companionId: mounted.principal.companionId,
-              continuityId: mounted.principal.continuityId,
-              chatThreadId: mounted.chatThreadId,
-              chatSurfaceSessionId: mounted.chatSurfaceSessionId,
-              selectionGeneration: attempt.selectionGeneration,
-              runtimeBindingDigest: attempt.runtimeBindingDigest,
-              runtimeOwner: attempt.runtimeOwner,
-              attemptId: attempt.attemptId,
-            }),
-            Object.freeze({
-              operation: "commit_presentation",
-              cancelEpoch: observationEpoch.epoch,
-              message: Object.freeze({
-                messageId: expression.expressionId,
-                text: expression.text,
-                occurredAtMs: observedAtMs,
-              }),
-              committedAtMs: observedAtMs,
-            }),
-          );
-          // The exact read-back is the postcondition: listeners are only ever
-          // reached after this durable presentation commit.
-          if (committed.status !== "presentation_committed")
-            throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_commit_rejected");
-        };
-        const activation = gate.activate(
-          Object.freeze({
-            epoch: mounted.p5PresentationEpoch,
-            observationEpoch,
-            reserveCommit,
-            commitPresentation,
-          }),
-        );
-        mounted.p5PresentationActivation = activation;
-        return Object.freeze({
-          ...activation,
-          deactivate: async () => {
-            await activation.deactivate();
-            if (mounted.p5PresentationActivation === activation) mounted.p5PresentationActivation = undefined;
-          },
-        });
-      };
+    let nativeContentCommitReserved = false;
+    let nativeContentPreviewEpoch: import("../companion-interruption.js").InterruptionSnapshot | undefined;
+    const reserveNativeContentCommit = (): Readonly<{ cancelEpoch: number; release(): void }> | undefined => {
+      const observationEpoch = mounted.p5PresentationEpoch.capture();
+      if (
+        nativeContentCommitReserved ||
+        !mounted.p5PresentationEpoch.isCurrent(observationEpoch) ||
+        !record.active.value ||
+        !mounted.active
+      )
+        return undefined;
+      nativeContentCommitReserved = true;
+      return Object.freeze({
+        cancelEpoch: observationEpoch.epoch,
+        release: () => {
+          nativeContentCommitReserved = false;
+        },
+      });
+    };
+    const canPreviewNativeContent = (): boolean => {
+      const previewEpoch = nativeContentPreviewEpoch ??= mounted.p5PresentationEpoch.capture();
+      return record.active.value && mounted.active && mounted.p5PresentationEpoch.isCurrent(previewEpoch);
+    };
     const finalizeCancellation = async (): Promise<
       | import("../tavern/chat-thread-store.js").CompletionClaimedTurn
       | import("../tavern/chat-thread-store.js").CompletedTurn
@@ -724,7 +666,8 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
         readCurrentTurnLedger,
         assertAdmission,
         beginActivePrompt,
-        activatePresentation,
+        reserveNativeContentCommit,
+        canPreviewNativeContent,
         finalizeCancellation,
       }),
     );
@@ -959,7 +902,6 @@ export async function stopMountedChatPresentationEpoch(
   // cancel authority after the in-memory epoch closes. The runner owns the
   // later drain and final `cancelled` transition. In particular STOP must not
   // await gate.drain(): a listener may itself await STOP while it is pending.
-  record.p5PresentationActivation?.revoke();
   // Claim the durable winner before awaiting Pi abort. `abort()` may settle the
   // prompt synchronously, so awaiting it first would let rejection terminalize
   // the turn as failed even though STOP already won its linearization point.
@@ -1600,7 +1542,6 @@ async function createFreshChatRuntimeAuthority(
         if (
           !record ||
           !runtimeSession ||
-          !record.runtime.attachPresentation ||
           readback.status !== "terminal" ||
           readback.runtimeState !== "active" ||
           readback.operationId !== record.bootstrapReceipt.operationId ||
@@ -1620,29 +1561,12 @@ async function createFreshChatRuntimeAuthority(
         );
         let lease!: MountedChatRuntimeLease;
         lease = Object.freeze({
-          // The lease never exposes the raw Pi session to browser callers, but
-          // P4c requires this exact mounted runtime's private provider and
-          // presentation authority. The coordinator holds that authority in
-          // its private WeakMap record below rather than projecting it here.
-          runtimeSession: Object.freeze({
-            profile: runtimeSession.profile,
-            // This private start surface is never returned to browser code:
-            // `MountedChatRuntimeLease` is held in the coordinator WeakMap and
-            // only P4c obtains the actual runtime session from that record.
-            session: runtimeSession.session,
-            installTavernProviderStartObserver: runtimeSession.installTavernProviderStartObserver,
-          }),
+          // The lease exposes only profile metadata. P4c gets the exact live
+          // runtime solely from this module's private WeakMap record below.
+          runtimeSession: Object.freeze({ profile: runtimeSession.profile }),
           chatThreadId: readback.chatThreadId,
           chatSurfaceSessionId: readback.chatSurfaceSessionId,
           browserProjection,
-          attachPresentation(
-            this: unknown,
-            listener: (expression: CompanionTextExpression) => void | Promise<void>,
-          ): () => void {
-            if (this !== lease || !isCurrentMountedChatRuntimeLease(lease))
-              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
-            return record.runtime.attachPresentation!(listener);
-          },
           async abortActivePrompt(
             this: unknown,
             expected: Readonly<{ turnId: string; attemptId: string }>,
@@ -1696,9 +1620,6 @@ async function createFreshChatRuntimeAuthority(
             runtimeOwner: Object.freeze({ ...record.bootstrapPermit.owner }),
           }),
           ...(runtimeSession === undefined ? {} : { p4ProviderStartRuntimeSession: runtimeSession }),
-          ...(record.runtime.presentationGate === undefined
-            ? {}
-            : { p4PresentationGate: record.runtime.presentationGate }),
           p4ProviderStartAttemptIds: new Set<string>(),
           p4P5TransitionAuthority: createP4P5MountedTransitionAuthority(),
           p5PresentationEpoch: createCompanionInterruption(),

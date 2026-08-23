@@ -166,6 +166,8 @@ test("mounted Companion status reports live integration facts without inferring 
         health: 100,
         actionable: true,
         capabilities: ["equip_tool"],
+        catalogRevision: 1,
+        enabledActionIds: ["equip_tool"],
         presentationLocale: "en-US",
         activeExecution: null,
       },
@@ -217,6 +219,7 @@ test("runtime mounts a fake integration through the module port", async () => {
       familyId: "arcade_interaction",
       identityVersion: 1,
       lifecycle: "published" as const,
+      kind: "execution" as const,
     },
   ];
   const catalog = createIntegrationActionCatalog(
@@ -296,6 +299,7 @@ test("runtime mounts a fake integration through the module port", async () => {
       connected: true,
       capabilities: (connection.state as { capabilities: readonly string[] })
         .capabilities,
+      capabilityRevision: 1,
       snapshotRevision: 1,
       latestReceiptState: null,
       latestReasonCode: null,
@@ -306,6 +310,7 @@ test("runtime mounts a fake integration through the module port", async () => {
       capabilities: (connection.state as { capabilities: readonly string[] })
         .capabilities,
       registrations,
+      capabilityRevision: 1,
       snapshotRevision: 1,
       presentationLocale: "en-US",
       activeExecution: null,
@@ -318,11 +323,12 @@ test("runtime mounts a fake integration through the module port", async () => {
       toolName === "arcade_activate_console" ? "activate_console" : null,
     isCancellationTool: () => false,
   };
+  const integrationState = { capabilities: ["activate_console"], registrations };
   const integration = {
     scope: { integrationId: "test-arcade" },
     executionGate: { executable: true },
     module: fake,
-    state: { capabilities: ["activate_console"], registrations },
+    state: integrationState,
   } as never;
   const runtime = await createCompanionRuntime(identity, root, integration);
   try {
@@ -338,7 +344,136 @@ test("runtime mounts a fake integration through the module port", async () => {
       actionRegistryRevision(registrations),
     );
     assert.doesNotMatch(JSON.stringify(manifest.mountedTools), /stardew_/);
+
+    // A live capability loss is consumed only after the idle barrier by the
+    // private refresher. The session receives a new whole projection, not a
+    // stale action closure or a second registry.
+    integrationState.capabilities = [];
+    await runtime.refreshIntegrationTools?.();
+    assert.deepEqual(
+      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
+      ["companion_status", "todowrite"],
+    );
   } finally {
+    runtime.session.dispose();
+  }
+});
+
+test("runtime refresh waits for Pi idle and coalesces to the current adapter projection", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-refresh-idle-"));
+  const registrations = [
+    {
+      actionId: "activate_console",
+      familyId: "arcade_interaction",
+      identityVersion: 1,
+      lifecycle: "published" as const,
+      kind: "execution" as const,
+    },
+  ];
+  let capabilities: string[] = ["activate_console"];
+  let refreshMaterializations = 0;
+  let releaseIdle: (() => void) | undefined;
+  const idle = new Promise<void>((resolvePromise) => {
+    releaseIdle = resolvePromise;
+  });
+  const module: GameIntegrationModule = {
+    descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
+    actionCatalog: createIntegrationActionCatalog([{ actionId: "activate_console" }]),
+    defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
+    parsePolicy: (value) => value as never,
+    assertIdentityBinding: () => undefined,
+    worldScope: () => null,
+    createToolSet: ({ connection }) => {
+      const materialization = ++refreshMaterializations;
+      return {
+        observation: [],
+        actions:
+          (connection.state as { capabilities: readonly string[] }).capabilities.length === 0
+            ? []
+            : [
+                defineTool({
+                  name: "arcade_activate_console",
+                  label: "Activate arcade console",
+                  description: "Fixture action.",
+                  parameters: Type.Object({}),
+                  execute: async () => ({
+                    content: [{ type: "text", text: `materialization=${materialization}` }],
+                    details: {},
+                  }),
+                }),
+              ],
+        knowledge: [],
+      };
+    },
+    knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
+    status: () => ({
+      connected: true,
+      capabilities,
+      capabilityRevision: 1,
+      snapshotRevision: 1,
+      latestReceiptState: null,
+      latestReasonCode: null,
+    }),
+    readState: () => ({
+      connected: true,
+      sessionId: "arcade_session_01",
+      capabilities,
+      registrations,
+      capabilityRevision: 1,
+      snapshotRevision: 1,
+      activeExecution: null,
+      latestReceipt: null,
+      latestReasonCode: null,
+    }),
+    cancelExecution: () => "not_supported",
+    parseReceipt: () => null,
+    actionIdForToolName: (toolName) => toolName === "arcade_activate_console" ? "activate_console" : null,
+    isCancellationTool: () => false,
+  };
+  const integration = {
+    scope: { integrationId: "test-arcade" },
+    executionGate: { executable: true },
+    module,
+    get state() {
+      return { capabilities, registrations };
+    },
+  } as never;
+  const runtime = await createCompanionRuntime(identity, root, integration);
+  const originalWaitForIdle = runtime.session.agent.waitForIdle.bind(runtime.session.agent);
+  runtime.session.agent.waitForIdle = () => idle;
+  try {
+    capabilities = [];
+    const withdrawal = runtime.refreshIntegrationTools?.();
+    assert.deepEqual(
+      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
+      ["arcade_activate_console", "companion_status", "todowrite"],
+    );
+    // Two updates during the same in-flight idle barrier must not install the
+    // withdrawn surface transiently: the current Mod projection wins.
+    capabilities = ["activate_console"];
+    const reenablement = runtime.refreshIntegrationTools?.();
+    releaseIdle?.();
+    await Promise.all([withdrawal, reenablement]);
+    assert.ok(refreshMaterializations > 1);
+    assert.deepEqual(
+      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
+      ["arcade_activate_console", "companion_status", "todowrite"],
+    );
+    const reenabled = runtime.session.agent.state.tools.find(
+      (tool) => tool.name === "arcade_activate_console",
+    );
+    assert.ok(reenabled);
+    const result = await reenabled.execute(
+      "refresh_reenabled_call",
+      {},
+      new AbortController().signal,
+    );
+    assert.deepEqual(result, {
+      content: [{ type: "text", text: `materialization=${refreshMaterializations}` }],
+      details: {},
+    });
+  } finally {
+    runtime.session.agent.waitForIdle = originalWaitForIdle;
     runtime.session.dispose();
   }
 });
@@ -411,7 +546,7 @@ test("generic runtime keeps an explicit game surface when the Host construction 
   }
 });
 
-test("Chat surface runtime has no presentation pseudo-tools before the Host mounts a presentation authority", async () => {
+test("Chat surface runtime is a pure native-content dialogue surface with no mounted tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-surface-runtime-"));
   const runtime = await createCompanionRuntime(
     { ...identity, continuityId: "continuity_chat_01" },
@@ -430,13 +565,7 @@ test("Chat surface runtime has no presentation pseudo-tools before the Host moun
     assert.doesNotMatch(runtime.session.systemPrompt, /companion_text/);
     assert.doesNotMatch(runtime.session.systemPrompt, /private/);
     assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
-    assert.equal(
-      runtime.session.agent.state.tools.some(
-        (tool) =>
-          tool.name === "companion_text" || tool.name === "companion_speak",
-      ),
-      false,
-    );
+    assert.deepEqual(runtime.session.agent.state.tools, []);
     assert.equal(runtime.paths.surfaceSessionId, "chat_surface_01");
   } finally {
     runtime.session.dispose();
@@ -527,6 +656,8 @@ test("Stardew action tools fail closed when a connection lacks the launcher exec
         health: 100,
         actionable: true,
         capabilities: ["equip_tool"],
+        catalogRevision: 1,
+        enabledActionIds: ["equip_tool"],
         presentationLocale: "en-US",
         activeExecution: null,
       },
@@ -575,8 +706,10 @@ test("runtime composes a ledger admission before mounting and executing a live S
       sessionId: "session_01",
       capabilities: ["equip_tool", "cancel_active_execution"],
       catalogRegistrations: [
-        { actionId: "equip_tool", familyId: "body_tools", identityVersion: 1, lifecycle: "published" },
+        { actionId: "equip_tool", familyId: "body_tools", identityVersion: 1, lifecycle: "published", kind: "execution" },
       ],
+      catalogRevision: 1,
+      enabledActionIds: ["equip_tool"],
       snapshot: {
         revision: 1,
         location: "Farm",
@@ -585,6 +718,8 @@ test("runtime composes a ledger admission before mounting and executing a live S
         health: 100,
         actionable: true,
         capabilities: ["equip_tool", "cancel_active_execution"],
+        catalogRevision: 1,
+        enabledActionIds: ["equip_tool"],
         presentationLocale: "en-US",
         activeExecution: null,
       },
@@ -721,11 +856,7 @@ test("runtime materializes the optional gameplay subagent without exposing its t
   );
   try {
     assert.ok(delegated.gameplaySubagent);
-    assert.deepEqual(delegated.gameplaySubagent.modelConfig, {
-      provider: "cpa-oai",
-      modelId: "gpt-5.6-luna",
-      thinkingLevel: "medium",
-    });
+    assert.deepEqual(delegated.gameplaySubagent.modelConfig, config);
     const manifest = JSON.parse(
       await readFile(delegated.paths.runManifestPath, "utf8"),
     );
@@ -734,11 +865,7 @@ test("runtime materializes the optional gameplay subagent without exposing its t
       modelId: "deepseek-v4-flash",
       thinkingLevel: "high",
     });
-    assert.deepEqual(manifest.gameplaySubagentModel, {
-      provider: "cpa-oai",
-      modelId: "gpt-5.6-luna",
-      thinkingLevel: "medium",
-    });
+    assert.deepEqual(manifest.gameplaySubagentModel, config);
     assert.equal(
       delegated.session.agent.state.tools.some(
         (tool) => tool.name === "delegate_game_task",
@@ -757,6 +884,42 @@ test("runtime materializes the optional gameplay subagent without exposing its t
   } finally {
     delegated.gameplaySubagent?.dispose();
     delegated.session.dispose();
+    integration.dispose();
+  }
+});
+
+test("gameplay subagent composition fails closed without a mounted game model config", async () => {
+  const root = await mkdtemp(
+    join(tmpdir(), "gamebuddy-gameplay-subagent-no-model-"),
+  );
+  const scope: Scope = {
+    integrationId: "stardew",
+    saveId: identity.saveId,
+    worldId: identity.worldId,
+    playerId: identity.playerId,
+    companionId: identity.companionId,
+  };
+  const [hostEndpoint] = createDeterministicBridgePair(scope);
+  const integration = new CompanionIntegrationClient(
+    scope,
+    hostEndpoint,
+    STARDEW_INTEGRATION_MODULE,
+  );
+  try {
+    await assert.rejects(
+      () =>
+        createCompanionRuntime(
+          identity,
+          root,
+          integration,
+          undefined,
+          undefined,
+          undefined,
+          true,
+        ),
+      /gameplay_subagent_requires_model_and_integration/,
+    );
+  } finally {
     integration.dispose();
   }
 });

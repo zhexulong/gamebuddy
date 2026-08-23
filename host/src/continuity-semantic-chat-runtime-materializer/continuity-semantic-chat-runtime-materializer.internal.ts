@@ -92,15 +92,6 @@ export type MaterializedChatRuntime = Readonly<{
    * Host production materializer and is consumed only by the coordinator.
    */
   runtimeSession?: RuntimeSession;
-  /** Session-bound delivery attachment; coordinator exposes it only through a mounted lease. */
-  attachPresentation?: (
-    listener: (expression: import("../presentation.js").CompanionTextExpression) => void | Promise<void>,
-  ) => () => void;
-  /**
-   * Chat-only default-unbound presentation gate. Only the coordinator's exact
-   * P4 activation seam may bind it; no facade or browser caller reaches it.
-   */
-  presentationGate?: import("../tavern/chat-presentation-gate.internal.js").ChatPresentationGate;
   /** Runtime resources only. The later coordinator owns durable terminalization and binding close. */
   close(): Promise<void>;
 }>;
@@ -108,12 +99,6 @@ export type ChatRuntimeMaterialization = ChatRuntimeDisposal &
   Readonly<{
     /** Never exposed by this module's public product; retained for production mounting only. */
     runtimeSession?: RuntimeSession;
-    /** Construction-owned presentation sink, projected only through the mounted lease. */
-    attachPresentation?: (
-      listener: (expression: import("../presentation.js").CompanionTextExpression) => void | Promise<void>,
-    ) => () => void;
-    /** Chat-only default-unbound presentation gate; coordinator-private activation only. */
-    presentationGate?: import("../tavern/chat-presentation-gate.internal.js").ChatPresentationGate;
   }>;
 export type ChatRuntimeMaterializer = Readonly<{
   /** Construction-zone-only: consumes one callback-admitted Chat binding reservation. */
@@ -177,8 +162,6 @@ export function finalizeMaterializedChatRuntime(
   return Object.freeze({
     receipt,
     ...(runtime.runtimeSession === undefined ? {} : { runtimeSession: runtime.runtimeSession }),
-    ...(runtime.attachPresentation === undefined ? {} : { attachPresentation: runtime.attachPresentation }),
-    ...(runtime.presentationGate === undefined ? {} : { presentationGate: runtime.presentationGate }),
     close: () => {
       if (closePromise !== undefined) return closePromise;
       let shared!: Promise<void>;
