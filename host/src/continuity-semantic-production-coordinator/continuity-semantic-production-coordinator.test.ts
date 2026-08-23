@@ -655,6 +655,9 @@ test(
         const [coordinatorUrl, manifestUrl, manifestPath] = process.argv.slice(1);
         const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = await import(coordinatorUrl);
         const { loadHostDeploymentManifest } = await import(manifestUrl);
+        const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", coordinatorUrl));
+        const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", coordinatorUrl));
+        bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
         const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(await loadHostDeploymentManifest(manifestPath));
         const lease = await authority.startMountedChatRuntime();
         const projection = lease.browserProjection;

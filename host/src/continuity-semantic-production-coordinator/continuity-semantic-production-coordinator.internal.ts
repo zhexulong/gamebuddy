@@ -134,7 +134,9 @@ export type MountedChatRuntimeLease = Readonly<{
    * Cancels only the current exact in-flight Pi prompt without exposing the Pi
    * session. A stale turn/attempt pair cannot abort a later prompt.
    */
-  abortActivePrompt(expected: Readonly<{ turnId: string; attemptId: string }>): Promise<"aborted" | "not_active" | "mismatch">;
+  abortActivePrompt(
+    expected: Readonly<{ turnId: string; attemptId: string }>,
+  ): Promise<"aborted" | "not_active" | "mismatch">;
   close(): Promise<void>;
 }>;
 export type SemanticChatRuntimeMountOptions = Readonly<{
@@ -599,11 +601,7 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
     const readCurrentTurnLedger = async (): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger> => {
       const store = createChatThreadStore(mounted.runtimeRoot, identityKey(Object.freeze({ ...mounted.principal })));
       const ledger = (await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId)).turnLedger;
-      if (
-        ledger === null ||
-        ledger.turnId !== facts.turnId ||
-        !isTurnWithExactAttempt(ledger, facts.attemptId)
-      )
+      if (ledger === null || ledger.turnId !== facts.turnId || !isTurnWithExactAttempt(ledger, facts.attemptId))
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_turn_unavailable");
       return ledger;
     };
@@ -917,7 +915,8 @@ export async function stopMountedChatPresentationEpoch(
       ledger.attempt.runtimeOwner.ownerToken === record.p4AttemptBinding.runtimeOwner.ownerToken &&
       ledger.attempt.runtimeOwner.runtimeInstanceId === record.p4AttemptBinding.runtimeOwner.runtimeInstanceId &&
       ledger.attempt.runtimeOwner.ownerPid === record.p4AttemptBinding.runtimeOwner.ownerPid &&
-      ledger.attempt.runtimeOwner.ownerProcessStartIdentity === record.p4AttemptBinding.runtimeOwner.ownerProcessStartIdentity
+      ledger.attempt.runtimeOwner.ownerProcessStartIdentity ===
+        record.p4AttemptBinding.runtimeOwner.ownerProcessStartIdentity
     )
       return ledger;
     throw error;
@@ -1624,14 +1623,7 @@ async function createFreshChatRuntimeAuthority(
           // P4c requires this exact mounted runtime's private provider and
           // presentation authority. The coordinator holds that authority in
           // its private WeakMap record below rather than projecting it here.
-          runtimeSession: Object.freeze({
-            profile: runtimeSession.profile,
-            // This private start surface is never returned to browser code:
-            // `MountedChatRuntimeLease` is held in the coordinator WeakMap and
-            // only P4c obtains the actual runtime session from that record.
-            session: runtimeSession.session,
-            installTavernProviderStartObserver: runtimeSession.installTavernProviderStartObserver,
-          }),
+          runtimeSession: Object.freeze({ profile: runtimeSession.profile }),
           chatThreadId: readback.chatThreadId,
           chatSurfaceSessionId: readback.chatSurfaceSessionId,
           browserProjection,
@@ -1657,7 +1649,8 @@ async function createFreshChatRuntimeAuthority(
             )
               throw new SemanticProductionCoordinatorError("semantic_chat_runtime_abort_request_rejected");
             const leaseRecord = mountedChatRuntimeLeases.get(lease);
-            if (leaseRecord === undefined || !leaseRecord.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
+            if (leaseRecord === undefined || !leaseRecord.active)
+              throw new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected");
             const activePrompt = leaseRecord.activePrompt;
             if (activePrompt === undefined) return "not_active";
             if (activePrompt.turnId !== expected.turnId || activePrompt.attemptId !== expected.attemptId)

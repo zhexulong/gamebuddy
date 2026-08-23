@@ -1,5 +1,5 @@
 import { lstat, readdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { runBoundedChild } from "./test-supervisor.mjs";
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
@@ -7,6 +7,7 @@ import { assertHostVerificationArtifactManifest } from "./verification-artifact-
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultTestRoot = resolve(hostRoot, "dist-test");
 const defaultScriptTestRoot = resolve(hostRoot, "scripts");
+const testRuntimeBootstrap = pathToFileURL(resolve(defaultScriptTestRoot, "test-runtime-bootstrap.mjs")).href;
 const DEFAULT_TEST_BATCH_SIZE = 10;
 const DEFAULT_TEST_SUITE_TIMEOUT_MS = 15 * 60_000;
 
@@ -63,7 +64,7 @@ export async function discoverTestFiles(root = defaultTestRoot, extension = ".te
 
 export async function runDiscoveredTests(paths, { node = process.execPath, runChild = runBoundedChild, timeoutMs = undefined, onHeartbeat = undefined } = {}) {
   if (!Array.isArray(paths) || paths.length === 0) throw runnerError("test_files_missing", defaultTestRoot);
-  const args = ["--test", "--test-concurrency=1", ...paths];
+  const args = ["--import", testRuntimeBootstrap, "--test", "--test-concurrency=1", ...paths];
   // Tests deliberately resolve repository-owned source and test-only assets
   // relative to the Host package. Supplying an absolute test path does not
   // change Node's cwd, so keep this invariant in the shared runner.

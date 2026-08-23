@@ -109,11 +109,7 @@ export async function createPublishedWindowsStaleLockReclaimer(
  */
 export async function requestWindowsStaleLockReclaimer(): Promise<WindowsStaleLockReclaimerCapability | undefined> {
   if (process.platform !== "win32" || process.arch !== "x64") return undefined;
-  const published = await createPublishedWindowsStaleLockReclaimer(resolve(dirname(modulePath), "..")).catch(
-    () => undefined,
-  );
-  if (published !== undefined) return published;
-  return await createBuildWindowsStaleLockReclaimer().catch(() => undefined);
+  return await createPublishedWindowsStaleLockReclaimer(resolve(dirname(modulePath), "..")).catch(() => undefined);
 }
 
 /**

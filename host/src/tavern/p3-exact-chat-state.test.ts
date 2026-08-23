@@ -86,6 +86,9 @@ test(
         const { loadHostDeploymentManifest } = await import(deploymentUrl);
         const manifest = await loadHostDeploymentManifest(manifestPath);
         const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = await import(coordinatorUrl);
+        const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", coordinatorUrl));
+        const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", coordinatorUrl));
+        bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
         const { createP3ExactChatStateFacade } = await import(facadeUrl);
         const { identityKey, resolveRuntimePaths } = await import(runtimeUrl);
         const { createChatThreadStore } = await import(threadsUrl);

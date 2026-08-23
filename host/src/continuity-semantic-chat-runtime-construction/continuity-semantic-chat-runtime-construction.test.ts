@@ -95,7 +95,7 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.match(stableContext.canonicalHash, /^[a-f0-9]{64}$/);
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -114,7 +114,7 @@ test("Chat construction regenerates the canonical hash for each actual Pi sessio
     assert.equal(second.sessionId, "pi_session_two");
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -134,6 +134,6 @@ test("Chat construction rejects a missing exact Tavern thread rather than creati
     );
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

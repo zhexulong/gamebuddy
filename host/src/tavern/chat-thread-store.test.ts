@@ -96,13 +96,16 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
 
       // Verify no 0-byte .lock files exist in continuity directory
       const files = await readdir(join(root, "tavern", "v1", "continuities", key));
-      assert.equal(files.some((f) => f.endsWith(".lock")), false);
+      assert.equal(
+        files.some((f) => f.endsWith(".lock")),
+        false,
+      );
     } finally {
       db.close();
     }
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -136,7 +139,7 @@ test("greeting openings require an exact canonical hash on write and reject inva
     assert.equal(created.messages[0].messageId, "opening_01");
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -147,7 +150,7 @@ test("duplicate thread creation is rejected with exact error", async () => {
     await assert.rejects(() => s.createThread(request()), /chat_thread_already_exists/);
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -157,7 +160,7 @@ test("missing thread resume fails closed with not_found", async () => {
     await assert.rejects(() => s.resumeThread("missing_01", "surface_01"), /chat_thread_not_found/);
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -177,7 +180,7 @@ test("blank opening creates empty transcript and switches to greeting atomically
     assert.deepEqual(blank.messages, []);
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -200,7 +203,7 @@ test("first player message or response locks the opening", async () => {
     );
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -231,7 +234,7 @@ test("appendPlayer and commitResponse are idempotent on identical re-submission 
     );
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -270,7 +273,7 @@ test("draft save and discard update revision monotonically with CAS guard", asyn
     assert.deepEqual(discarded, { revision: 2, text: null });
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -327,7 +330,7 @@ test("lifecycle transitions increment managementRevision monotonically with CAS 
     assert.equal(thread3.managementRevision, 4);
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -369,7 +372,7 @@ test("renameThreadTitle updates title and increments managementRevision with CAS
     );
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -384,13 +387,10 @@ test("active thread selection persists singleton and detects surface mismatch", 
     const read = await s.readActiveThreadSelection();
     assert.deepEqual(read, selection);
 
-    await assert.rejects(
-      () => s.selectActiveThread("thread_01", "wrong_surface"),
-      /chat_thread_surface_mismatch/,
-    );
+    await assert.rejects(() => s.selectActiveThread("thread_01", "wrong_surface"), /chat_thread_surface_mismatch/);
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -420,7 +420,7 @@ test("capacity limit of 500 messages is strictly enforced", async () => {
     );
   } finally {
     s.close?.();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -470,7 +470,7 @@ test("concurrent transactions across store instances preserve monotonic manageme
     store1.close?.();
     store2.close?.();
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -552,6 +552,6 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
 
     s.close?.();
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
