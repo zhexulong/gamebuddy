@@ -64,6 +64,14 @@ export type BrowserEventV1 =
       epoch: string;
       sequence: number;
       selectionGeneration: number;
+      eventType: "companion.delta";
+      payload: Readonly<{ turnHandle: string; delta: string }>;
+    }>
+  | Readonly<{
+      apiVersion: 1;
+      epoch: string;
+      sequence: number;
+      selectionGeneration: number;
       eventType: "message.committed";
       payload: BrowserMessageV1;
     }>
@@ -527,6 +535,13 @@ function isBrowserEvent(value: unknown): value is BrowserEventV1 {
     !isPositiveSafeInteger(value.selectionGeneration)
   )
     return false;
+  if (value.eventType === "companion.delta")
+    return (
+      isRecord(value.payload) &&
+      hasExactKeys(value.payload, ["turnHandle", "delta"]) &&
+      isOpaqueHandle(value.payload.turnHandle) &&
+      isNfcUtf8Text(value.payload.delta)
+    );
   if (value.eventType === "message.committed") return isBrowserMessage(value.payload);
   if (value.eventType === "draft.changed")
     return (
@@ -895,6 +910,7 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
       if (options.cursor !== undefined) params.set("cursor", options.cursor);
       const source = new EventSource(`/api/tavern/v1/events?${params.toString()}`, { withCredentials: true });
       const eventTypes = [
+        "companion.delta",
         "message.committed",
         "draft.changed",
         "turn.state_changed",

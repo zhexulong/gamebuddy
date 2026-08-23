@@ -205,6 +205,9 @@ async function startShippedReferenceComposition() {
       load("tavern/chat-event-stream.js"),
     ]);
   const eventStream = createChatEventStream();
+  let transcript = Object.freeze([
+    Object.freeze({ handle, role: "player" as const, text: "A synthetic durable message.", locale: "und", order: 0, revision: 1 }),
+  ]);
   const profile = composeTavernProfile({
     profileId: "gamebuddy.chat-core.reference-pipeline",
     releaseTier: "chat_core",
@@ -216,9 +219,9 @@ async function startShippedReferenceComposition() {
     selection: Object.freeze({ chatHandle: handle, generation: 1, stateRevision: handle }),
     companionDisplayName: "Mira",
     title: "Reference Chat",
-    transcript: Object.freeze([
-      Object.freeze({ handle, role: "player", text: "A synthetic durable message.", locale: "und", order: 0, revision: 1 }),
-    ]),
+    get transcript() {
+      return transcript;
+    },
     draft: Object.freeze({ revision: 1, text: "Sentinel draft" }),
     turn: null,
     eventStream: Object.freeze({ epoch: eventStream.epoch, cursor: eventStream.cursor }),
@@ -248,7 +251,7 @@ async function startShippedReferenceComposition() {
     async close() {},
   });
   const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
-  return await startReferencePipelineStaticShellComposition({
+  const server = await startReferencePipelineStaticShellComposition({
     artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
     inspector,
     referenceStateFacade,
@@ -256,6 +259,23 @@ async function startShippedReferenceComposition() {
     eventStream,
     profile,
     bootstrapToken: token,
+  });
+  return Object.freeze({
+    ...server,
+    eventStream,
+    commitNativeText(text: string): void {
+      transcript = Object.freeze([
+        ...transcript,
+        Object.freeze({
+          handle,
+          role: "companion" as const,
+          text,
+          locale: "und",
+          order: transcript.length,
+          revision: 1,
+        }),
+      ]);
+    },
   });
 }
 
@@ -293,6 +313,45 @@ test("reference browser mounts the reference surface with live SSE and cookie re
     await expect(page.getByRole("heading", { name: "Reference Chat" })).toBeVisible();
     assert.equal(apiPaths.filter((path) => path === "/api/tavern/v1/bootstrap").length, 1);
     assert.ok(apiPaths.filter((path) => path === "/api/tavern/v1/state").length >= 1);
+  } finally {
+    await browser.close();
+    await server.close();
+  }
+});
+
+test("reference browser renders a volatile native-content preview, then replaces it from durable state", async () => {
+  const server = await startShippedReferenceComposition();
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    await page.goto(server.launchUrl, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("A synthetic durable message.", { exact: true })).toBeVisible();
+
+    server.eventStream.publish({
+      eventType: "companion.delta",
+      selectionGeneration: 1,
+      payload: { turnHandle: handle, delta: "A provisional reply." },
+    });
+    await expect(page.getByText("A provisional reply.", { exact: true })).toBeVisible();
+
+    server.commitNativeText("A durable companion reply.");
+    server.eventStream.publish({
+      eventType: "message.committed",
+      selectionGeneration: 1,
+      payload: {
+        handle,
+        role: "companion",
+        text: "A durable companion reply.",
+        locale: "und",
+        order: 1,
+        revision: 1,
+      },
+    });
+    await expect(page.getByText("A provisional reply.", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("A durable companion reply.", { exact: true })).toHaveCount(1);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByText("A provisional reply.", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("A durable companion reply.", { exact: true })).toHaveCount(1);
   } finally {
     await browser.close();
     await server.close();

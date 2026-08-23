@@ -177,7 +177,11 @@ class IntegrationLifecycleSnapshot {
 
     let count: number;
     try {
-      count = this.module.actionCatalog.visibleActions(state.capabilities, this.policy).length;
+      count = this.module.actionCatalog.visibleActions(
+        state.registrations ?? [],
+        state.capabilities,
+        this.policy,
+      ).length;
     } catch {
       return unavailable("active", "mismatch");
     }
