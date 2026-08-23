@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import test from "node:test";
+import test, { before } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createUnmountedDialogueSemanticFacade } from "../continuity-semantic-deployment-composition/continuity-semantic-deployment-composition.js";
 import { createCanonicalProductionAuthorityAdmission } from "../continuity-semantic-provisioning/continuity-semantic-provisioning.internal.js";
@@ -18,6 +18,8 @@ import {
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import { createManifestDerivedInitialChatExactContentPort } from "../tavern/initial-chat-exact-content-port.js";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { authorityRootMutexName } from "../windows-partition-mutex.js";
 import * as internalCoordinator from "./continuity-semantic-production-coordinator.internal.js";
 import { createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest } from "./continuity-semantic-production-coordinator.internal.js";
@@ -28,6 +30,13 @@ import {
   type SemanticGameProductionAuthority,
 } from "./continuity-semantic-production-coordinator.js";
 import { createTestSemanticChatRuntimeCoordinator } from "./continuity-semantic-production-coordinator.test-support.js";
+
+// The compiled test artifact is not a production artifact; give this test
+// module the explicit test-only reclaimer required by path-lock before it
+// constructs a runtime that writes its identity profile.
+before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 function cleanup(root: string): void {
@@ -651,10 +660,15 @@ test(
     const mountInIsolatedProductionProcess = async (manifestPath: string) => {
       const coordinatorUrl = new URL("./continuity-semantic-production-coordinator.internal.js", import.meta.url).href;
       const manifestUrl = new URL("../deployment-manifest.js", import.meta.url).href;
+      const pathLockUrl = new URL("../path-lock.js", import.meta.url).href;
+      const reclaimerUrl = new URL("../windows-stale-lock-reclaimer/index.js", import.meta.url).href;
       const script = `
-        const [coordinatorUrl, manifestUrl, manifestPath] = process.argv.slice(1);
+        const [coordinatorUrl, manifestUrl, pathLockUrl, reclaimerUrl, manifestPath] = process.argv.slice(1);
         const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = await import(coordinatorUrl);
         const { loadHostDeploymentManifest } = await import(manifestUrl);
+        const { bindWindowsStaleLockReclaimer } = await import(pathLockUrl);
+        const { createBuildWindowsStaleLockReclaimer } = await import(reclaimerUrl);
+        bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
         const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(await loadHostDeploymentManifest(manifestPath));
         const lease = await authority.startMountedChatRuntime();
         const projection = lease.browserProjection;
@@ -673,7 +687,7 @@ test(
       `;
       const child = spawn(
         process.execPath,
-        ["--input-type=module", "--eval", script, coordinatorUrl, manifestUrl, manifestPath],
+        ["--input-type=module", "--eval", script, coordinatorUrl, manifestUrl, pathLockUrl, reclaimerUrl, manifestPath],
         {
           stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,

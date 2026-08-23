@@ -5,7 +5,7 @@ import {
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { AttemptStartingTurn, CancelledTurn, CompletedTurn, FailedTurn } from "./chat-thread-store.js";
-import { runMountedP4ProviderStartLedger } from "./p4-provider-start-execution.js";
+import { runMountedP4ProviderStartLedger, type NativeChatPreviewPublisher } from "./p4-provider-start-execution.js";
 
 /**
  * Starts the one already-claimed mounted Chat turn. The coordinator retains
@@ -16,8 +16,11 @@ import { runMountedP4ProviderStartLedger } from "./p4-provider-start-execution.j
 export async function startMountedChatProvider(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
+  previewPublisher?: NativeChatPreviewPublisher,
 ): Promise<AttemptStartingTurn | CompletedTurn | CancelledTurn | FailedTurn> {
   return await startMountedP4Attempt(manifest, lease, (invocation) =>
-    consumeMountedP4AttemptInvocationAdmission(invocation, (scope) => runMountedP4ProviderStartLedger(scope)),
+    consumeMountedP4AttemptInvocationAdmission(invocation, (scope) =>
+      runMountedP4ProviderStartLedger(scope, previewPublisher),
+    ),
   );
 }

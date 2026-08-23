@@ -75,6 +75,7 @@ export function ReferenceApp() {
   const [view, setView] = useState<ViewState>({ kind: "loading" });
   const viewRef = useRef<ViewState>({ kind: "loading" });
   const [inputText, setInputText] = useState("");
+  const [preview, setPreview] = useState<Readonly<{ turnHandle: string; text: string }> | null>(null);
   const localeRef = useRef<Locale>(resolveLocale());
   const cancelledRef = useRef(false);
   const pollActiveRef = useRef(false);
@@ -127,6 +128,7 @@ export function ReferenceApp() {
         }
         const session = createReferencePipelineSession(snapshot);
         if (!active) return;
+        setPreview(null);
         commit({ kind: "ready", session, draft, locale: localeRef.current });
       } catch (error) {
         if (!active) return;
@@ -186,6 +188,7 @@ export function ReferenceApp() {
           cursor = snapshot.eventStream.cursor;
           next = next.resetEventCheckpoint();
         }
+        setPreview(null);
         commit({ kind: "ready", session: next, draft, locale: current.locale });
       } catch (error) {
         if (!disposed) commit(problemView(error, messages(localeRef.current)));
@@ -207,6 +210,27 @@ export function ReferenceApp() {
           if (current.kind !== "ready") return;
           const checkpointed = current.session.applyEvent(event);
           cursor = lastEventId;
+          if (event.eventType === "companion.delta") {
+            setPreview((existing) =>
+              Object.freeze({
+                turnHandle: event.payload.turnHandle,
+                // A changed opaque turn boundary replaces any stale ephemeral
+                // preview; matching events extend its stream-only text.
+                text:
+                  existing?.turnHandle === event.payload.turnHandle
+                    ? `${existing.text}${event.payload.delta}`
+                    : event.payload.delta,
+              }),
+            );
+            // The delta is intentionally non-durable. Its ordered SSE
+            // checkpoint is enough to retain replay/resync safety, while a
+            // `/state` reread would erase the only provisional view before
+            // React can paint it. Durable events reread below.
+            return;
+          }
+          if (event.eventType === "message.committed" || event.eventType === "turn.state_changed") {
+            setPreview(null);
+          }
           const snapshot = await apiRef.current.readState();
           const draft = await apiRef.current.readDraft();
           if (disposed) return;
@@ -218,6 +242,9 @@ export function ReferenceApp() {
             throw new ReferencePipelineSessionError("state_reconciliation_required");
           }
           const next = checkpointed.applySnapshot(snapshot);
+          // Any authoritative reread replaces the transient content view;
+          // only the durable transcript in `/state` can restore it.
+          setPreview(null);
           commit({ kind: "ready", session: next, draft, locale: current.locale });
         } catch {
           // Any invalid, non-contiguous, stale-generation, or explicit
@@ -345,6 +372,7 @@ export function ReferenceApp() {
       return;
     }
     setInputText("");
+    setPreview(null);
     commit({ ...current, session: current.session.withPending(pending) });
     try {
       await apiRef.current.submit(
@@ -381,6 +409,7 @@ export function ReferenceApp() {
     const draft = await apiRef.current.readDraft();
     if (snapshot.chat === null || draft.revision !== snapshot.chat.draft.revision)
       throw new ReferencePipelineSessionError("state_reconciliation_required");
+    setPreview(null);
     commit({ ...current, session: current.session.applySnapshot(snapshot), draft });
   };
 
@@ -446,6 +475,7 @@ export function ReferenceApp() {
           <main id="main-content" className="app-main-content">
             <Timeline
               transcript={view.session.snapshot.chat.transcript}
+              preview={preview}
               companionName={view.session.snapshot.chat.companion.name}
               chatTitle={view.session.snapshot.chat.title}
               labels={labels()}

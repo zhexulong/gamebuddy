@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -42,13 +42,12 @@ import {
   type IntegrationActionPolicy,
 } from "./integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
-import type {
-  CompanionTextPort,
-  HostPresentationAdmissionProvider,
-  PresentationRuntime,
-} from "./presentation.js";
+import type { PresentationRuntime } from "./presentation.js";
 import type { ExecutionReceipt } from "./protocol.js";
-import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
+import {
+  actionRegistryRevision,
+  writeOrVerifyRunManifest,
+} from "./run-manifest.js";
 import {
   type ExactReceiptRecoveryPort,
   type ReceiptRecoveryOutcome,
@@ -94,7 +93,10 @@ export const MAGIC_CONTEXT_HISTORIAN_ENABLED = true;
 // simultaneous Chat/Game runtimes cannot inherit one another's cwd/data root.
 let magicContextReloadTail: Promise<void> = Promise.resolve();
 
-async function reloadMagicContextInRuntimeRoot(loader: DefaultResourceLoader, runtimeCwd: string): Promise<void> {
+async function reloadMagicContextInRuntimeRoot(
+  loader: DefaultResourceLoader,
+  runtimeCwd: string,
+): Promise<void> {
   const previous = magicContextReloadTail;
   let release: () => void = () => undefined;
   magicContextReloadTail = new Promise<void>((resolvePromise) => {
@@ -126,10 +128,14 @@ export function createCompanionStatusTool(integration?: IntegrationConnection) {
   return defineTool({
     name: "companion_status",
     label: "Companion Status",
-    description: "Report the local Companion Host and mounted game integration status.",
+    description:
+      "Report the local Companion Host and mounted game integration status.",
     parameters: Type.Object({}),
     execute: async () => {
-      const details = integration === undefined ? undefined : integration.module.status(integration);
+      const details =
+        integration === undefined
+          ? undefined
+          : integration.module.status(integration);
       const fullDetails = {
         host: "ready",
         integrationId: integration?.scope.integrationId ?? null,
@@ -150,48 +156,6 @@ export function createCompanionStatusTool(integration?: IntegrationConnection) {
 /** Backward-compatible offline base tool for callers that do not mount an integration. */
 export const companionStatusTool = createCompanionStatusTool();
 export const PHASE_0B_ALLOWED_TOOL_NAMES = Object.freeze(["companion_status"]);
-
-function createChatPresentationTool(
-  presentation: PresentationRuntime | undefined,
-): ToolDefinition | undefined {
-  if (
-    presentation?.surface !== "chat" ||
-    presentation.admissionProvider === undefined ||
-    presentation.textPort === undefined
-  )
-    return undefined;
-  const admissionProvider: HostPresentationAdmissionProvider = presentation.admissionProvider;
-  const textPort: CompanionTextPort = presentation.textPort;
-  const sessionId = presentation.sessionId;
-  const locale = presentation.profile.locale;
-  return defineTool({
-    name: "companion_text",
-    label: "Companion Text",
-    description:
-      "Deliver exactly one concise player-visible companion reply for the current Chat turn. Use this tool once after preparing the reply; ordinary assistant text is not shown to the player.",
-    parameters: Type.Object({
-      text: Type.String({ minLength: 1, maxLength: 4_000 }),
-    }),
-    execute: async (_toolCallId, parameters) => {
-      const capture = admissionProvider.capture();
-      if (capture.surface !== "chat") throw new Error("presentation_surface_mismatch");
-      await textPort.present(
-        Object.freeze({
-          surface: "chat",
-          expressionId: `chat_${_toolCallId}`,
-          sessionId,
-          text: parameters.text,
-          locale,
-        }),
-        capture.admission,
-      );
-      return {
-        content: [{ type: "text" as const, text: "Companion reply delivered." }],
-        details: Object.freeze({ delivered: true }),
-      };
-    },
-  });
-}
 
 /**
  * A Host-owned companion identity. `continuityId` is the logical shared
@@ -234,11 +198,12 @@ export type CompanionModelConfig = Readonly<{
 }>;
 
 /** The player-facing Dialogue Director uses DeepSeek V4 Flash; gameplay children never inherit it. */
-export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig = Object.freeze({
-  provider: "cpa-oai",
-  modelId: "deepseek-v4-flash",
-  thinkingLevel: "high",
-});
+export const DEFAULT_COMPANION_MODEL_CONFIG: CompanionModelConfig =
+  Object.freeze({
+    provider: "cpa-oai",
+    modelId: "deepseek-v4-flash",
+    thinkingLevel: "high",
+  });
 
 /**
  * Internal-only test seam for bounded Magic Context gates. It is deliberately
@@ -256,11 +221,12 @@ type MagicContextFeatureTestOverride = Readonly<{
 }>;
 
 /** Private composition constant; Preview JSON and every external Host protocol are unable to select it. */
-const PREVIEW_MAGIC_CONTEXT_DISABLED: MagicContextFeatureTestOverride = Object.freeze({
-  loadExtension: false,
-  memoryEnabled: false,
-  historianEnabled: false,
-});
+const PREVIEW_MAGIC_CONTEXT_DISABLED: MagicContextFeatureTestOverride =
+  Object.freeze({
+    loadExtension: false,
+    memoryEnabled: false,
+    historianEnabled: false,
+  });
 
 export type RuntimeSession = Readonly<{
   session: AgentSession;
@@ -272,6 +238,8 @@ export type RuntimeSession = Readonly<{
   identityProfile: IdentityProfileMetadata;
   profile: IdentityProfile;
   extensions: readonly string[];
+  /** Host-owned surface port; Pi never receives this authority directly. */
+  presentation?: PresentationRuntime;
   gameplaySubagent?: GameplayTaskSubagent;
   /** Runtime-local STOP authority; never durable or adapter-owned. */
   interruption?: CompanionInterruption;
@@ -286,7 +254,9 @@ export type RuntimeSession = Readonly<{
    * port and admits receipts into the private coordinator. This is never
    * invoked by a disconnect and never reissues an action request.
    */
-  recoverStardewExecutionReceipts?: (port: ExactReceiptRecoveryPort) => Promise<readonly ReceiptRecoveryOutcome[]>;
+  recoverStardewExecutionReceipts?: (
+    port: ExactReceiptRecoveryPort,
+  ) => Promise<readonly ReceiptRecoveryOutcome[]>;
   /** Tavern-only, session-bound publication seam. It never writes Pi messages or Magic Context storage. */
   publishTavernStableContext?: (snapshot: unknown) => Promise<void>;
   /** Removes the in-process session publication before Pi disposal. */
@@ -306,15 +276,28 @@ export type RuntimeSession = Readonly<{
    * payload, header, or prompt bytes.
    */
   installTavernProviderStartObserver?: (
-    onStart: (observation: Readonly<{ sessionId: string; statusClass: "success" | "error" }>) => void,
+    onStart: (
+      observation: Readonly<{
+        sessionId: string;
+        statusClass: "success" | "error";
+      }>,
+    ) => void,
   ) => () => void;
   /** Removes the source-owned generic operational marker before Pi disposal. */
   clearGameOperationalGateMarker?: () => void;
+  /**
+   * Rebuilds only this connection's adapter tools from current authenticated
+   * state after Pi is idle. This is private composition plumbing, not action
+   * publication or a public runtime command.
+   */
+  refreshIntegrationTools?: () => Promise<void>;
 }>;
 
 function requireOpaqueSegment(label: string, value: string): string {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(value)) {
-    throw new Error(`${label} must be a 1–128 character opaque identifier using only letters, digits, _ and -.`);
+    throw new Error(
+      `${label} must be a 1–128 character opaque identifier using only letters, digits, _ and -.`,
+    );
   }
   return value;
 }
@@ -325,8 +308,14 @@ export function identityKey(identity: CompanionIdentity): string {
     identity.continuityId === undefined
       ? [
           requireOpaqueSegment("playerId", identity.playerId),
-          requireOpaqueSegment("saveId", requiredGameId("saveId", identity.saveId)),
-          requireOpaqueSegment("worldId", requiredGameId("worldId", identity.worldId)),
+          requireOpaqueSegment(
+            "saveId",
+            requiredGameId("saveId", identity.saveId),
+          ),
+          requireOpaqueSegment(
+            "worldId",
+            requiredGameId("worldId", identity.worldId),
+          ),
           requireOpaqueSegment("companionId", identity.companionId),
         ]
       : [
@@ -344,25 +333,113 @@ export function identityKey(identity: CompanionIdentity): string {
  * the deterministic receipt-order audit, exact-once cancel, and wake
  * normalization; it never routes an action and never interprets postconditions.
  */
-function createRuntimeDispatchController(connection: IntegrationConnection): ActionExecutionCoordinator {
+function createRuntimeDispatchController(
+  connection: IntegrationConnection,
+): ActionExecutionCoordinator {
   return createActionExecutionCoordinator(connection);
 }
 
-function gateIntegrationTool(tool: ToolDefinition, connection: IntegrationConnection): ToolDefinition {
+function gateIntegrationTool(
+  tool: ToolDefinition,
+  connection: IntegrationConnection,
+): ToolDefinition {
   return {
     ...tool,
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       // Only action tools are executable operations. Their tool surface is
       // mounted only with a live launcher gate, then rechecked at invocation.
-      if (connection.module.actionIdForToolName(tool.name) !== null && connection.executionGate?.executable !== true)
+      if (
+        connection.module.actionIdForToolName(tool.name) !== null &&
+        connection.executionGate?.executable !== true
+      )
         throw new Error("integration_not_ready");
       return tool.execute(toolCallId, params, signal, onUpdate, ctx);
     },
   };
 }
 
-function requiredGameId(label: "saveId" | "worldId", value: string | undefined): string {
-  if (value === undefined) throw new Error(`${label} is required when continuityId is absent.`);
+type RuntimeAgentTool = AgentSession["agent"]["state"]["tools"][number];
+
+function toRuntimeTool(tool: ToolDefinition): RuntimeAgentTool {
+  return {
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    parameters: tool.parameters,
+    ...(tool.constrainedSampling === undefined
+      ? {}
+      : { constrainedSampling: tool.constrainedSampling }),
+    ...(tool.prepareArguments === undefined
+      ? {}
+      : { prepareArguments: tool.prepareArguments }),
+    ...(tool.executionMode === undefined
+      ? {}
+      : { executionMode: tool.executionMode }),
+    execute: (toolCallId, params, signal, onUpdate) =>
+      tool.execute(toolCallId, params, signal, onUpdate, undefined as never),
+  };
+}
+
+function createIntegrationToolRefresher(input: Readonly<{
+  session: AgentSession;
+  connection: IntegrationConnection;
+  module: GameIntegrationModule;
+  knowledge: unknown;
+  gameVersion: string | undefined;
+  policy: IntegrationActionPolicy;
+  dispatchAdmissionFactory: (() => ReturnType<ActionExecutionCoordinator["createAdmission"]>) | undefined;
+  retainedTools: readonly RuntimeAgentTool[];
+}>): () => Promise<void> {
+  let requested = false;
+  let running: Promise<void> | undefined;
+  return async (): Promise<void> => {
+    requested = true;
+    if (running !== undefined) return await running;
+    running = (async () => {
+      do {
+        requested = false;
+        // This agent-core barrier includes the provider call, tool batch,
+        // retries, and continuations. The next turn sees one whole projection.
+        await input.session.agent.waitForIdle();
+        const toolSet = input.module.createToolSet({
+          connection: input.connection,
+          knowledge: input.knowledge,
+          gameVersion: input.gameVersion,
+          policy: input.policy,
+          dispatchAdmissionFactory: input.dispatchAdmissionFactory,
+        });
+        const adapterTools = [
+          ...toolSet.observation,
+          ...toolSet.actions,
+          ...toolSet.knowledge,
+        ]
+          .map((tool) => gateIntegrationTool(tool, input.connection))
+          .map(toRuntimeTool);
+        const next = [...input.retainedTools, ...adapterTools].sort((left, right) =>
+          left.name.localeCompare(right.name),
+        );
+        // AgentState is the public core Agent surface; assigning its array is
+        // how an embedder changes the next provider request. Do not call
+        // AgentSession.setActiveToolsByName here: it can only select from the
+        // construction-time private registry and would drop a newly projected
+        // adapter definition before the next turn.
+        input.session.agent.state.tools = next;
+      } while (requested);
+    })();
+    try {
+      await running;
+    } finally {
+      running = undefined;
+    }
+  };
+}
+
+function requiredGameId(
+  label: "saveId" | "worldId",
+  value: string | undefined,
+): string {
+  if (value === undefined)
+    throw new Error(`${label} is required when continuityId is absent.`);
   return value;
 }
 
@@ -374,9 +451,12 @@ export function resolveRuntimePaths(
   const key = identityKey(identity);
   const resolvedRoot = resolve(root);
   const runtimeCwd = join(resolvedRoot, "contexts", key);
-  if (surfaceSessionId !== undefined) requireOpaqueSegment("surfaceSessionId", surfaceSessionId);
+  if (surfaceSessionId !== undefined)
+    requireOpaqueSegment("surfaceSessionId", surfaceSessionId);
   const sessionRoot =
-    surfaceSessionId === undefined ? runtimeCwd : join(runtimeCwd, "surface-sessions", surfaceSessionId);
+    surfaceSessionId === undefined
+      ? runtimeCwd
+      : join(runtimeCwd, "surface-sessions", surfaceSessionId);
 
   return {
     root: resolvedRoot,
@@ -480,7 +560,9 @@ export async function createGameCompanionRuntime(
     gameSessionId,
     undefined,
     "game",
-    attachment?.disableMagicContextMemory === true ? PREVIEW_MAGIC_CONTEXT_DISABLED : undefined,
+    attachment?.disableMagicContextMemory === true
+      ? PREVIEW_MAGIC_CONTEXT_DISABLED
+      : undefined,
     undefined,
     undefined,
     gameOperationalGate,
@@ -514,26 +596,41 @@ async function createRuntime(
   // A surface session ID identifies a persistent session; it must never be
   // used to infer the product surface because both Chat and Game have them.
   const runtimeSurface = surface ?? presentation?.surface ?? "game";
-  if (tavernStableContextSnapshot !== undefined && (runtimeSurface !== "chat" || identity.continuityId === undefined)) {
+  if (
+    tavernStableContextSnapshot !== undefined &&
+    (runtimeSurface !== "chat" || identity.continuityId === undefined)
+  ) {
     throw new Error("tavern_stable_context_requires_chat_continuity");
   }
-  if (tavernNarrativeGateNonceSha256 !== undefined && !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256)) {
+  if (
+    tavernNarrativeGateNonceSha256 !== undefined &&
+    !/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256)
+  ) {
     throw new Error("invalid_tavern_marker_config");
   }
   if (gameOperationalGate !== undefined && runtimeSurface !== "game") {
     throw new Error("game_operational_marker_requires_game_surface");
   }
-  if (gameOperationalGate !== undefined && !/^[a-f0-9]{64}$/.test(gameOperationalGate.nonceSha256)) {
+  if (
+    gameOperationalGate !== undefined &&
+    !/^[a-f0-9]{64}$/.test(gameOperationalGate.nonceSha256)
+  ) {
     throw new Error("invalid_game_operational_marker_config");
   }
-  const loadMagicContextExtension = internalMagicContextFeatureTestOverride?.loadExtension !== false;
+  const loadMagicContextExtension =
+    internalMagicContextFeatureTestOverride?.loadExtension !== false;
   if (!loadMagicContextExtension && gameOperationalGate !== undefined) {
     throw new Error("game_operational_marker_requires_magic_context");
   }
-  const integrationModule: GameIntegrationModule | undefined = integration?.module;
-  if (integration !== undefined && integrationModule === undefined) throw new Error("integration_module_required");
+  const integrationModule: GameIntegrationModule | undefined =
+    integration?.module;
+  if (integration !== undefined && integrationModule === undefined)
+    throw new Error("integration_module_required");
   if (integration !== undefined) {
-    assertIntegrationModule(integration.module, integration.scope.integrationId);
+    assertIntegrationModule(
+      integration.module,
+      integration.scope.integrationId,
+    );
     integration.module.assertIdentityBinding(integration, identity);
   }
   const mountedPolicy =
@@ -543,35 +640,55 @@ async function createRuntime(
         ? actionPolicy
         : integrationModule.parsePolicy(actionPolicy);
   const paths = resolveRuntimePaths(identity, root, surfaceSessionId);
-  const identityProfileAlreadyExists = await pathExists(paths.identityProfilePath);
+  const identityProfileAlreadyExists = await pathExists(
+    paths.identityProfilePath,
+  );
   await Promise.all([
     mkdir(paths.runtimeCwd, { recursive: true }),
     mkdir(paths.agentDir, { recursive: true }),
     mkdir(paths.sessionDir, { recursive: true }),
     mkdir(dirname(paths.identityProfileBindingPath), { recursive: true }),
-    ...(loadMagicContextExtension ? [mkdir(join(paths.runtimeCwd, ".cortexkit"), { recursive: true })] : []),
+    ...(loadMagicContextExtension
+      ? [mkdir(join(paths.runtimeCwd, ".cortexkit"), { recursive: true })]
+      : []),
   ]);
 
   const profile =
     initialProfile !== undefined && !identityProfileAlreadyExists
-      ? (await writeIdentityProfile(paths.identityProfilePath, initialProfile), initialProfile)
+      ? (await writeIdentityProfile(paths.identityProfilePath, initialProfile),
+        initialProfile)
       : await readOrCreateIdentityProfile(paths.identityProfilePath);
   const profileMetadata = identityProfileMetadata(profile);
-  const existingBinding = await readIdentityProfileBinding(paths.identityProfileBindingPath);
+  const existingBinding = await readIdentityProfileBinding(
+    paths.identityProfileBindingPath,
+  );
   const existingSessionFiles = await listSessionFiles(paths.sessionDir);
   if (existingBinding === null) {
     // A continuity owns one profile, while every explicit user-visible surface
     // session owns its own session binding. A new surface may therefore see an
     // existing profile but must never adopt pre-existing Pi JSONL without its
     // own binding.
-    if (existingSessionFiles.length > 0 || (surfaceSessionId === undefined && identityProfileAlreadyExists))
+    if (
+      existingSessionFiles.length > 0 ||
+      (surfaceSessionId === undefined && identityProfileAlreadyExists)
+    )
       throw new Error("identity_profile_mismatch");
   } else {
-    assertProfileMatchesBinding(identityKey(identity), profile, existingBinding);
-    if (existingBinding.sessionFile !== null && !existingSessionFiles.includes(existingBinding.sessionFile)) {
+    assertProfileMatchesBinding(
+      identityKey(identity),
+      profile,
+      existingBinding,
+    );
+    if (
+      existingBinding.sessionFile !== null &&
+      !existingSessionFiles.includes(existingBinding.sessionFile)
+    ) {
       throw new Error("identity_profile_mismatch");
     }
-    if (existingBinding.sessionFile === null && existingSessionFiles.length > 1) {
+    if (
+      existingBinding.sessionFile === null &&
+      existingSessionFiles.length > 1
+    ) {
       throw new Error("identity_profile_mismatch");
     }
   }
@@ -583,9 +700,11 @@ async function createRuntime(
   // to this Host-owned opaque continuity runtime; auto_search remains off and
   // Host never gains project-memory/SQLite authority.
   const magicContextMemoryEnabled =
-    internalMagicContextFeatureTestOverride?.memoryEnabled ?? MAGIC_CONTEXT_MEMORY_ENABLED;
+    internalMagicContextFeatureTestOverride?.memoryEnabled ??
+    MAGIC_CONTEXT_MEMORY_ENABLED;
   const magicContextHistorianEnabled =
-    internalMagicContextFeatureTestOverride?.historianEnabled ?? MAGIC_CONTEXT_HISTORIAN_ENABLED;
+    internalMagicContextFeatureTestOverride?.historianEnabled ??
+    MAGIC_CONTEXT_HISTORIAN_ENABLED;
   if (loadMagicContextExtension)
     await writeFile(
       join(paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
@@ -600,17 +719,21 @@ async function createRuntime(
             ? { disable: true }
             : {
                 model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId}`,
-                thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).thinkingLevel,
+                thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
+                  .thinkingLevel,
                 disallowed_tools: ["*"],
               },
-          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens === undefined
+          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ===
+          undefined
             ? {}
             : {
                 execute_threshold_tokens: {
-                  default: internalMagicContextFeatureTestOverride.historianExecuteThresholdTokens,
+                  default:
+                    internalMagicContextFeatureTestOverride.historianExecuteThresholdTokens,
                 },
               }),
-          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdPercentage === undefined
+          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdPercentage ===
+          undefined
             ? {}
             : {
                 execute_threshold_percentage:
@@ -661,19 +784,25 @@ async function createRuntime(
     agentDir: paths.agentDir,
     settingsManager: settings,
     noExtensions: true,
-    additionalExtensionPaths: loadMagicContextExtension ? [magicContextEntry] : [],
+    additionalExtensionPaths: loadMagicContextExtension
+      ? [magicContextEntry]
+      : [],
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
     systemPrompt:
-      runtimeSurface === "chat" ? buildChatCompanionSystemPrompt(profile) : buildGameCompanionSystemPrompt(profile),
+      runtimeSurface === "chat"
+        ? buildChatCompanionSystemPrompt(profile)
+        : buildGameCompanionSystemPrompt(profile),
     appendSystemPrompt: [],
   });
   // The fork must never spawn the external `pi` CLI from a GameBuddy runtime.
   // Preview has no approved Magic Context capability, so it does not mount or
   // bootstrap the extension at all.
-  const previousEmbeddedRuntimeMarker = loadMagicContextExtension ? process.env.GAMEBUDDY_EMBEDDED_RUNTIME : undefined;
+  const previousEmbeddedRuntimeMarker = loadMagicContextExtension
+    ? process.env.GAMEBUDDY_EMBEDDED_RUNTIME
+    : undefined;
   if (loadMagicContextExtension) {
     process.env.GAMEBUDDY_EMBEDDED_RUNTIME = "1";
     try {
@@ -691,34 +820,51 @@ async function createRuntime(
         );
       }
     } catch (error) {
-      if (previousEmbeddedRuntimeMarker === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+      if (previousEmbeddedRuntimeMarker === undefined)
+        delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+      else
+        process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
       throw error;
     }
   } else {
     await loader.reload();
   }
 
-  const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
+  const sessionManager = SessionManager.continueRecent(
+    paths.runtimeCwd,
+    paths.sessionDir,
+  );
   const modelRuntime = await createCompanionModelRuntime(paths, modelConfig);
   const model =
-    modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
-  if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
+    modelConfig === undefined
+      ? undefined
+      : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
+  if (modelConfig !== undefined && model === undefined)
+    throw new Error("companion_model_not_available");
 
   const companionStatus = createCompanionStatusTool(integration);
-  const dispatchController = integration === undefined ? undefined : createRuntimeDispatchController(integration);
+  const dispatchController =
+    integration === undefined
+      ? undefined
+      : createRuntimeDispatchController(integration);
   // One private supervisor per game runtime. It is retained by closure so an
   // explicit relaunch can run exactly one bounded pass over the same
   // coordinator without ever exporting the coordinator itself.
   const receiptRecoverySupervisor =
-    dispatchController === undefined ? undefined : new StardewExecutionRecoverySupervisor(dispatchController);
-  if (gameHostBindingFactory !== undefined && (runtimeSurface !== "game" || dispatchController === undefined))
+    dispatchController === undefined
+      ? undefined
+      : new StardewExecutionRecoverySupervisor(dispatchController);
+  if (
+    gameHostBindingFactory !== undefined &&
+    (runtimeSurface !== "game" || dispatchController === undefined)
+  )
     throw new Error("invalid_game_host_binding_factory");
   const boundPresentation =
     gameHostBindingFactory === undefined
       ? presentation
-      : gameHostBindingFactory(Object.freeze({ interruption: dispatchController!.interruption }));
-  const chatPresentationTool = createChatPresentationTool(boundPresentation);
+      : gameHostBindingFactory(
+          Object.freeze({ interruption: dispatchController!.interruption }),
+        );
   const integrationToolSet =
     integration !== undefined && integrationModule !== undefined
       ? integrationModule.createToolSet({
@@ -727,13 +873,19 @@ async function createRuntime(
           gameVersion: integration.gameVersion,
           policy: mountedPolicy,
           dispatchAdmissionFactory:
-            dispatchController === undefined ? undefined : () => dispatchController.createAdmission(),
+            dispatchController === undefined
+              ? undefined
+              : () => dispatchController.createAdmission(),
         })
       : undefined;
   const rawIntegrationTools =
     integrationToolSet === undefined
       ? []
-      : [...integrationToolSet.observation, ...integrationToolSet.actions, ...integrationToolSet.knowledge];
+      : [
+          ...integrationToolSet.observation,
+          ...integrationToolSet.actions,
+          ...integrationToolSet.knowledge,
+        ];
   // Tool definitions remain mounted for the lifetime of a Pi session. Every
   // adapter tool therefore receives a Host-owned execution fence so a later
   // lifecycle loss revokes stale closures rather than trusting the adapter to
@@ -741,19 +893,36 @@ async function createRuntime(
   const integrationTools =
     integration === undefined
       ? rawIntegrationTools
-      : rawIntegrationTools.map((tool) => gateIntegrationTool(tool, integration));
-  const worldBookScope = integration === undefined ? null : integration.module.worldScope(integration);
-  const worldBookTools = worldBook === undefined ? [] : createWorldBookTools(worldBook, worldBookScope ?? undefined);
+      : rawIntegrationTools.map((tool) =>
+          gateIntegrationTool(tool, integration),
+        );
+  const worldBookScope =
+    integration === undefined
+      ? null
+      : integration.module.worldScope(integration);
+  const worldBookTools =
+    worldBook === undefined
+      ? []
+      : createWorldBookTools(worldBook, worldBookScope ?? undefined);
   const gameplaySubagent = gameplaySubagentEnabled
     ? integration !== undefined && modelConfig !== undefined
-      ? new GameplayTaskSubagent(paths, integration, mountedPolicy, undefined, undefined, undefined, () =>
-          dispatchController!.createAdmission(),
+      ? new GameplayTaskSubagent(
+          paths,
+          integration,
+          modelConfig,
+          mountedPolicy,
+          undefined,
+          undefined,
+          () => dispatchController!.createAdmission(),
         )
       : (() => {
           throw new Error("gameplay_subagent_requires_model_and_integration");
         })()
     : undefined;
-  const rawGameplayTools = gameplaySubagent === undefined ? [] : [gameplaySubagent.createDelegateTool()];
+  const rawGameplayTools =
+    gameplaySubagent === undefined
+      ? []
+      : [gameplaySubagent.createDelegateTool()];
   // The delegate itself is an execution entry point. Fence it as well as the
   // module-owned action tools so a terminal adapter lifecycle cannot start a
   // new worker task through an already-mounted Pi session.
@@ -761,14 +930,28 @@ async function createRuntime(
     integration === undefined
       ? rawGameplayTools
       : rawGameplayTools.map((tool) => gateIntegrationTool(tool, integration));
-  const allowedToolNames = [
-    ...PHASE_0B_ALLOWED_TOOL_NAMES,
-    ...(chatPresentationTool === undefined ? [] : [chatPresentationTool.name]),
-    ...(loadMagicContextExtension ? ["todowrite"] : []),
-    ...integrationTools.map((tool) => tool.name),
-    ...worldBookTools.map((tool) => tool.name),
-    ...gameplayTools.map((tool) => tool.name),
-  ].sort();
+  // Chat is a pure dialogue surface. Native assistant content is its sole
+  // player-visible expression channel; no status, Magic Context, Game, or
+  // delegation tool may steer it into an intermediate tool-use turn.
+  const allowedToolNames =
+    runtimeSurface === "chat"
+      ? []
+      : [
+          ...PHASE_0B_ALLOWED_TOOL_NAMES,
+          ...(loadMagicContextExtension ? ["todowrite"] : []),
+          ...integrationTools.map((tool) => tool.name),
+          ...worldBookTools.map((tool) => tool.name),
+          ...gameplayTools.map((tool) => tool.name),
+        ].sort();
+  const customTools =
+    runtimeSurface === "chat"
+      ? []
+      : [
+          companionStatus,
+          ...integrationTools,
+          ...worldBookTools,
+          ...gameplayTools,
+        ];
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {
     ({ session } = await createAgentSession({
@@ -781,19 +964,15 @@ async function createRuntime(
       model,
       noTools: "all",
       tools: allowedToolNames,
-      customTools: [
-        companionStatus,
-        ...(chatPresentationTool === undefined ? [] : [chatPresentationTool]),
-        ...integrationTools,
-        ...worldBookTools,
-        ...gameplayTools,
-      ],
+      customTools,
       thinkingLevel: modelConfig?.thinkingLevel ?? "off",
     }));
   } finally {
     if (loadMagicContextExtension) {
-      if (previousEmbeddedRuntimeMarker === undefined) delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+      if (previousEmbeddedRuntimeMarker === undefined)
+        delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
+      else
+        process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
     }
   }
 
@@ -806,12 +985,41 @@ async function createRuntime(
   let clearGameOperationalGateMarker: (() => void) | undefined;
   let installTavernProviderStartObserver:
     | ((
-        onStart: (observation: Readonly<{ sessionId: string; statusClass: "success" | "error" }>) => void,
+        onStart: (
+          observation: Readonly<{
+            sessionId: string;
+            statusClass: "success" | "error";
+          }>,
+        ) => void,
       ) => () => void)
     | undefined;
   try {
-    const activeTools = session.agent.state.tools.map((tool) => tool.name).sort();
+    const activeTools = session.agent.state.tools
+      .map((tool) => tool.name)
+      .sort();
     const expectedTools = allowedToolNames;
+    const refreshIntegrationTools =
+      integration === undefined || integrationModule === undefined
+        ? undefined
+        : createIntegrationToolRefresher({
+            session,
+            connection: integration,
+            module: integrationModule,
+            knowledge: integration.knowledge,
+            gameVersion: integration.gameVersion,
+            policy: mountedPolicy,
+            dispatchAdmissionFactory:
+              dispatchController === undefined
+                ? undefined
+                : () => dispatchController.createAdmission(),
+            // The session is constructed with an explicit allowlist. Retain
+            // only its non-adapter wrappers so refresh cannot reintroduce a
+            // Pi builtin, an extension, or an old action closure.
+            retainedTools: session.agent.state.tools.filter(
+              (tool) =>
+                !tool.name.startsWith(integrationModule.descriptor.toolNamePrefix),
+            ),
+          });
     if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
       throw new Error(
         `Companion tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`,
@@ -819,12 +1027,18 @@ async function createRuntime(
     }
 
     const sessionFile =
-      session.sessionFile === undefined || !(await pathExists(session.sessionFile))
+      session.sessionFile === undefined ||
+      !(await pathExists(session.sessionFile))
         ? null
         : basename(session.sessionFile);
     const expectedSessionFile =
-      existingBinding?.sessionFile ?? (existingSessionFiles.length === 1 ? existingSessionFiles[0] : null);
-    if (existingBinding !== null && expectedSessionFile !== null && expectedSessionFile !== sessionFile) {
+      existingBinding?.sessionFile ??
+      (existingSessionFiles.length === 1 ? existingSessionFiles[0] : null);
+    if (
+      existingBinding !== null &&
+      expectedSessionFile !== null &&
+      expectedSessionFile !== sessionFile
+    ) {
       throw new Error("identity_profile_mismatch");
     }
     await writeIdentityProfileBinding(
@@ -852,39 +1066,58 @@ async function createRuntime(
             // The exact source-owned module is also the extension entry loaded above,
             // so this reaches its process-local per-Pi-session registry rather than a
             // pnpm package copy. No SQLite, raw message, or cwd-derived binding path.
-            const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
+            const bridge = (await import(
+              pathToFileURL(magicContextEntry).href
+            )) as {
               publishGameBuddyStableContextSnapshot: (
                 binding: typeof tavernStableContextBinding,
                 value: unknown,
               ) => unknown;
             };
-            bridge.publishGameBuddyStableContextSnapshot(tavernStableContextBinding, snapshot);
+            bridge.publishGameBuddyStableContextSnapshot(
+              tavernStableContextBinding,
+              snapshot,
+            );
           };
     clearTavernStableContext =
       tavernStableContextBinding === undefined
         ? undefined
         : async (): Promise<void> => {
-            const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
+            const bridge = (await import(
+              pathToFileURL(magicContextEntry).href
+            )) as {
               clearPublishedGameBuddyStableContext: (sessionId: string) => void;
             };
-            bridge.clearPublishedGameBuddyStableContext(tavernStableContextBinding.sessionId);
+            bridge.clearPublishedGameBuddyStableContext(
+              tavernStableContextBinding.sessionId,
+            );
           };
     if (tavernNarrativeGateNonceSha256 !== undefined) {
       reportTavernNarrativeGateRuntime = () => {
-        if (typeof process.send !== "function" || process.connected !== true) return;
+        if (typeof process.send !== "function" || process.connected !== true)
+          return;
         try {
-          process.send(Object.freeze({ schema: "gamebuddy-tavern-narrative-gate-runtime/v1", piSessionId }));
+          process.send(
+            Object.freeze({
+              schema: "gamebuddy-tavern-narrative-gate-runtime/v1",
+              piSessionId,
+            }),
+          );
         } catch {
           // Gate evidence failure does not change the actual provider path.
         }
       };
       const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
-        registerTavernNarrativeGateMarker: (value: Readonly<{ sessionId: string; nonceSha256: string }>) => () => void;
+        registerTavernNarrativeGateMarker: (
+          value: Readonly<{ sessionId: string; nonceSha256: string }>,
+        ) => () => void;
       };
-      clearTavernNarrativeGateMarker = bridge.registerTavernNarrativeGateMarker({
-        sessionId: piSessionId,
-        nonceSha256: tavernNarrativeGateNonceSha256,
-      });
+      clearTavernNarrativeGateMarker = bridge.registerTavernNarrativeGateMarker(
+        {
+          sessionId: piSessionId,
+          nonceSha256: tavernNarrativeGateNonceSha256,
+        },
+      );
     }
     if (gameOperationalGate !== undefined) {
       const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
@@ -896,17 +1129,24 @@ async function createRuntime(
           }>,
         ) => () => void;
       };
-      clearGameOperationalGateMarker = bridge.registerGameOperationalGateMarker({
-        sessionId: piSessionId,
-        nonceSha256: gameOperationalGate.nonceSha256,
-        surface: "game",
-      });
+      clearGameOperationalGateMarker = bridge.registerGameOperationalGateMarker(
+        {
+          sessionId: piSessionId,
+          nonceSha256: gameOperationalGate.nonceSha256,
+          surface: "game",
+        },
+      );
     }
     if (loadMagicContextExtension) {
       const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
         registerTavernProviderStartObserver: (
           sessionId: string,
-          onStart: (observation: Readonly<{ sessionId: string; statusClass: "success" | "error" }>) => void,
+          onStart: (
+            observation: Readonly<{
+              sessionId: string;
+              statusClass: "success" | "error";
+            }>,
+          ) => void,
         ) => () => void;
       };
       if (typeof bridge.registerTavernProviderStartObserver !== "function")
@@ -914,7 +1154,8 @@ async function createRuntime(
       installTavernProviderStartObserver = (onStart) =>
         bridge.registerTavernProviderStartObserver(piSessionId, onStart);
     }
-    if (tavernStableContextSnapshot !== undefined) await publishTavernStableContext!(tavernStableContextSnapshot);
+    if (tavernStableContextSnapshot !== undefined)
+      await publishTavernStableContext!(tavernStableContextSnapshot);
 
     await writeOrVerifyRunManifest(paths, {
       schemaVersion: 1,
@@ -925,8 +1166,17 @@ async function createRuntime(
         modelId: modelConfig?.modelId ?? null,
         thinkingLevel: modelConfig?.thinkingLevel ?? null,
       },
-      gameplaySubagentModel: gameplaySubagent === undefined ? null : gameplaySubagent.modelConfig,
-      actionRegistryRevision: actionRegistryRevision(integrationModule?.actionCatalog.entries ?? []),
+      gameplaySubagentModel:
+        gameplaySubagent === undefined ? null : gameplaySubagent.modelConfig,
+      actionRegistryRevision: actionRegistryRevision(
+        integration === undefined || integrationModule === undefined
+          ? []
+          : integrationModule.actionCatalog.visibleActions(
+              integrationModule.readState(integration).registrations ?? [],
+              integrationModule.readState(integration).capabilities,
+              mountedPolicy,
+            ),
+      ),
       actionPolicy: mountedPolicy,
       mountedTools: activeTools,
       knowledge:
@@ -957,7 +1207,12 @@ async function createRuntime(
       identityKey: identityKey(identity),
       identityProfile: profileMetadata,
       profile,
-      extensions: loader.getExtensions().extensions.map((extension) => extension.path),
+      extensions: loader
+        .getExtensions()
+        .extensions.map((extension) => extension.path),
+      ...(boundPresentation === undefined
+        ? {}
+        : { presentation: boundPresentation }),
       ...(gameplaySubagent === undefined ? {} : { gameplaySubagent }),
       ...(dispatchController === undefined
         ? {}
@@ -965,16 +1220,32 @@ async function createRuntime(
             interruption: dispatchController.interruption,
             cancelIntegrationEpoch: (epoch: number, reasonCode: string) =>
               dispatchController.cancelEpoch(epoch, reasonCode),
-            interruptIntegrationExecutions: (reasonCode: string) => dispatchController.interrupt(reasonCode),
-            bindIntegrationReceipt: (receipt: ExecutionReceipt) => dispatchController.receiveReceipt(receipt),
-            recoverStardewExecutionReceipts: (port) => receiptRecoverySupervisor!.recoverFromFreshBinding(port),
+            interruptIntegrationExecutions: (reasonCode: string) =>
+              dispatchController.interrupt(reasonCode),
+            bindIntegrationReceipt: (receipt: ExecutionReceipt) =>
+              dispatchController.receiveReceipt(receipt),
+            recoverStardewExecutionReceipts: (port) =>
+              receiptRecoverySupervisor!.recoverFromFreshBinding(port),
           }),
-      ...(publishTavernStableContext === undefined ? {} : { publishTavernStableContext }),
-      ...(clearTavernStableContext === undefined ? {} : { clearTavernStableContext }),
-      ...(clearTavernNarrativeGateMarker === undefined ? {} : { clearTavernNarrativeGateMarker }),
-      ...(reportTavernNarrativeGateRuntime === undefined ? {} : { reportTavernNarrativeGateRuntime }),
-      ...(clearGameOperationalGateMarker === undefined ? {} : { clearGameOperationalGateMarker }),
-      ...(installTavernProviderStartObserver === undefined ? {} : { installTavernProviderStartObserver }),
+      ...(publishTavernStableContext === undefined
+        ? {}
+        : { publishTavernStableContext }),
+      ...(clearTavernStableContext === undefined
+        ? {}
+        : { clearTavernStableContext }),
+      ...(clearTavernNarrativeGateMarker === undefined
+        ? {}
+        : { clearTavernNarrativeGateMarker }),
+      ...(reportTavernNarrativeGateRuntime === undefined
+        ? {}
+        : { reportTavernNarrativeGateRuntime }),
+      ...(clearGameOperationalGateMarker === undefined
+        ? {}
+        : { clearGameOperationalGateMarker }),
+      ...(refreshIntegrationTools === undefined ? {} : { refreshIntegrationTools }),
+      ...(installTavernProviderStartObserver === undefined
+        ? {}
+        : { installTavernProviderStartObserver }),
     };
   } catch (error) {
     throw await cleanupRuntimeInitializationFailure(
@@ -999,7 +1270,9 @@ export function resolveMagicContextExtensionEntry(): string {
     // Node therefore walks only Host's declared dependency ancestry. Resolve
     // using ESM conditions: this extension deliberately exports only `import`,
     // so `createRequire(...).resolve()` would incorrectly reject it.
-    const entry = fileURLToPath(import.meta.resolve("@cortexkit/pi-magic-context"));
+    const entry = fileURLToPath(
+      import.meta.resolve("@cortexkit/pi-magic-context"),
+    );
     if (!existsSync(entry)) throw new Error("missing");
     return entry;
   } catch {
@@ -1007,7 +1280,9 @@ export function resolveMagicContextExtensionEntry(): string {
   }
 }
 
-type RuntimeSessionResource = Awaited<ReturnType<typeof createAgentSession>>["session"];
+type RuntimeSessionResource = Awaited<
+  ReturnType<typeof createAgentSession>
+>["session"];
 
 async function cleanupRuntimeInitializationFailure(
   session: RuntimeSessionResource,
@@ -1037,7 +1312,11 @@ async function cleanupRuntimeInitializationFailure(
   } catch (error) {
     cleanupErrors.push(error);
   }
-  if (cleanupErrors.length > 0) throw new AggregateError([primary, ...cleanupErrors], "runtime_initialization_failed");
+  if (cleanupErrors.length > 0)
+    throw new AggregateError(
+      [primary, ...cleanupErrors],
+      "runtime_initialization_failed",
+    );
   throw primary;
 }
 
@@ -1046,13 +1325,20 @@ async function pathExists(path: string): Promise<boolean> {
     await access(path);
     return true;
   } catch (error) {
-    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    )
+      return false;
     throw error;
   }
 }
 
 async function listSessionFiles(sessionDir: string): Promise<string[]> {
-  return (await readdir(sessionDir)).filter((entry) => /^[A-Za-z0-9._-]{1,256}\.jsonl$/.test(entry)).sort();
+  return (await readdir(sessionDir))
+    .filter((entry) => /^[A-Za-z0-9._-]{1,256}\.jsonl$/.test(entry))
+    .sort();
 }
 
 async function createCompanionModelRuntime(

@@ -41,8 +41,6 @@ export function createHostChatRuntimeMaterializer(
         return Object.freeze({
           ...disposal,
           runtimeSession: runtime,
-          attachPresentation: construction.attachPresentation,
-          presentationGate: construction.presentationGate,
         });
       });
     },

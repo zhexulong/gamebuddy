@@ -379,7 +379,13 @@ const EventBase = {
   sequence: PositiveGeneration,
   selectionGeneration: PositiveGeneration,
 };
+const CompanionDeltaV1Schema = strictObject({
+  /** Opaque Host projection of the exact mounted turn; never a Pi message ID. */
+  turnHandle: OpaqueHandle,
+  delta: BoundedText,
+});
 export const BrowserEventV1Schema = Type.Union([
+  strictObject({ ...EventBase, eventType: Type.Literal("companion.delta"), payload: CompanionDeltaV1Schema }),
   strictObject({ ...EventBase, eventType: Type.Literal("message.committed"), payload: BrowserMessageV1Schema }),
   strictObject({
     ...EventBase,

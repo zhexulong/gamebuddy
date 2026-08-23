@@ -172,10 +172,34 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
   )
     throw unavailable();
 
-  const start: ChatPipelineStartDependency = options.deps?.start ?? Object.freeze({
-    start: async () => await startMountedChatProvider(manifest, lease),
-  });
   const eventStream = options.eventStream;
+  const start: ChatPipelineStartDependency = options.deps?.start ?? Object.freeze({
+    start: async () =>
+      await startMountedChatProvider(
+        manifest,
+        lease,
+        eventStream === undefined || !profile.routeIds.includes("events")
+          ? undefined
+          : Object.freeze({
+              publish: async (preview) => {
+                eventStream.publish({
+                  eventType: "companion.delta",
+                  selectionGeneration: lease.browserProjection.selectionGeneration,
+                  payload: Object.freeze({
+                    // The browser has no access to Pi/provider message identity;
+                    // scope the volatile preview to the Host-owned turn instead.
+                    turnHandle: lease.browserProjection.projectTurnHandle(preview.turnId),
+                    delta: preview.delta,
+                  }),
+                });
+              },
+              clear: async () => {
+                // A terminal state event immediately follows the provider run.
+                // The browser treats that state as the volatile-preview clear.
+              },
+            }),
+      ),
+  });
   const accept = createP4DurableTurnAcceptanceFacade(manifest, lease);
   const claim = createP4ProviderAttemptFacade(manifest, lease);
 
