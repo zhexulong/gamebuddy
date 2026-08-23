@@ -1,15 +1,4 @@
-import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-
-/**
- * Legacy observation hook retained for trace consumers. It deliberately does
- * not project ordinary Pi output to a player surface; only explicit
- * presentation tools may do that.
- */
-export function attachCompanionExpression(session: Pick<AgentSession, "subscribe">, _sinks: unknown): () => void {
-  return session.subscribe((_event: AgentSessionEvent) => undefined);
-}
-
-/** Extract only completed assistant text blocks; thinking and tool calls stay private. */
+/** Extract final ordinary assistant text for private task summaries only. */
 export function finalAssistantText(messages: readonly unknown[]): string | null {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];

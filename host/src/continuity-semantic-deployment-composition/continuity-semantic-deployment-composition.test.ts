@@ -84,6 +84,10 @@ function launcher(): ConfigurableIntegrationLauncher {
       connected: true,
       sessionId: "session_01",
       capabilities: ["activate"],
+      capabilityRevision: 1,
+      registrations: [
+        { actionId: "activate", familyId: "interaction", identityVersion: 1, lifecycle: "published", kind: "execution" },
+      ],
       snapshotRevision: 1,
       activeExecution: null,
       latestReceipt: null,
@@ -92,6 +96,7 @@ function launcher(): ConfigurableIntegrationLauncher {
     status: () => ({
       connected: true,
       capabilities: ["activate"],
+      capabilityRevision: 1,
       snapshotRevision: 1,
       latestReceiptState: null,
       latestReasonCode: null,

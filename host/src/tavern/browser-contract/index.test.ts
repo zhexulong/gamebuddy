@@ -134,6 +134,22 @@ test("problem codes and events are closed unions", () => {
   const event = Compile(BrowserEventV1Schema);
   const base = { apiVersion: 1, epoch: handle, sequence: 1, selectionGeneration: 1 };
   assert.equal(event.Check({ ...base, eventType: "draft.changed", payload: { revision: 1, present: true } }), true);
+  assert.equal(
+    event.Check({
+      ...base,
+      eventType: "companion.delta",
+      payload: { turnHandle: handle, delta: "Hi" },
+    }),
+    true,
+  );
+  assert.equal(
+    event.Check({
+      ...base,
+      eventType: "companion.delta",
+      payload: { turnHandle: "not-opaque", delta: "Hi", text: "forged" },
+    }),
+    false,
+  );
   assert.equal(event.Check({ ...base, eventType: "turn.changed", payload: { revision: 1, present: true } }), false);
 });
 

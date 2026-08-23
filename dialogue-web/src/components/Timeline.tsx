@@ -7,8 +7,10 @@ export function Timeline({
   companionName,
   chatTitle,
   labels,
+  preview = null,
 }: {
   transcript: readonly P3Message[];
+  preview?: Readonly<{ turnHandle: string; text: string }> | null;
   companionName: string;
   chatTitle: string | null;
   labels: {
@@ -32,7 +34,7 @@ export function Timeline({
       <div className="timeline-heading">
         <h1>{displayTitle}</h1>
       </div>
-      {transcript.length === 0 ? (
+      {transcript.length === 0 && preview === null ? (
         <div className="empty-state">
           <p>{labels.emptyChat}</p>
         </div>
@@ -46,6 +48,22 @@ export function Timeline({
               playerLabel={labels.you}
             />
           ))}
+          {preview !== null && (
+            <MessageBubble
+              message={Object.freeze({
+                // The preview exists only for the active event-stream turn;
+                // suffixing preserves a React key disjoint from durable rows.
+                handle: `${preview.turnHandle}_preview`,
+                role: "companion" as const,
+                text: preview.text,
+                locale: "und" as const,
+                order: transcript.length,
+                revision: 0,
+              })}
+              companionName={companionName}
+              playerLabel={labels.you}
+            />
+          )}
         </ol>
       )}
     </section>

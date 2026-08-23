@@ -83,10 +83,10 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.equal(prepared.modelConfig.provider, "cpa-oai");
     assert.equal(prepared.modelConfig.modelId, "deepseek-v4-flash");
     assert.equal(prepared.modelProfileRevision, 0);
-    // Construction registers the Chat tool surface but keeps its coordinator
-    // admission unbound until the exact P4 invocation activates it.
-    assert.equal(typeof prepared.presentation.admissionProvider?.capture, "function");
-    assert.throws(() => prepared.presentation.admissionProvider!.capture(), /presentation_admission_unbound/);
+    // Chat mounts no speaking pseudo-tool or presentation callback. Native
+    // assistant content is observed privately by the exact P4 invocation.
+    assert.equal(prepared.presentation.admissionProvider, undefined);
+    assert.equal(prepared.presentation.textPort, undefined);
     const stableContext = await prepared.materializeStableContextForPiSession("pi_session_genuine");
     assert.equal(stableContext.continuityId, principal.continuityId);
     assert.equal(stableContext.sessionId, "pi_session_genuine");
@@ -95,7 +95,7 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.match(stableContext.canonicalHash, /^[a-f0-9]{64}$/);
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -114,7 +114,7 @@ test("Chat construction regenerates the canonical hash for each actual Pi sessio
     assert.equal(second.sessionId, "pi_session_two");
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -134,6 +134,6 @@ test("Chat construction rejects a missing exact Tavern thread rather than creati
     );
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

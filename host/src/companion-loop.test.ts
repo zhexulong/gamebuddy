@@ -5,20 +5,23 @@ import { CompanionLoop } from "./companion-loop.js";
 function settledSession(
   handler: (text: string, options?: { deliverAs?: string }) => Promise<void> | void = async () => {},
 ) {
-  let listener: ((event: { type: string; messages?: readonly unknown[]; message?: unknown }) => void) | undefined;
+  const listeners = new Set<(event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown }) => void>();
+  const emit = (event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown }) => {
+    for (const listener of [...listeners]) listener(event);
+  };
   return {
     async sendUserMessage(text: string, options?: { deliverAs?: string }) {
-      listener?.({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
       await handler(text, options);
-      listener?.({ type: "agent_settled" });
+      emit({ type: "agent_settled" });
     },
     async abort() {},
     clearQueue() {},
     async waitForIdle() {},
-    subscribe(next: (event: { type: string; messages?: readonly unknown[]; message?: unknown }) => void) {
-      listener = next;
+    subscribe(next: (event: { type: string; messages?: readonly unknown[]; message?: unknown; assistantMessageEvent?: unknown }) => void) {
+      listeners.add(next);
       return () => {
-        listener = undefined;
+        listeners.delete(next);
       };
     },
   };
@@ -68,6 +71,7 @@ test("CompanionLoop chooses the deterministic final player trigger as presentati
     endBatch() {
       observed.push("end");
     },
+    async presentNativeAssistantContent() {},
   });
   // Input enqueue order intentionally differs from deterministic timestamp
   // order; the real serialized event order is the authority.
@@ -99,6 +103,147 @@ test("CompanionLoop chooses the deterministic final player trigger as presentati
   });
   await loop.flush();
   assert.deepEqual(observed, ["begin:player_late", "end"]);
+});
+
+test("CompanionLoop forwards only final native assistant content from an exact consumed player batch", async () => {
+  const lifecycle: string[] = [];
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        const partial = { id: "assistant_1", role: "assistant", content: [], stopReason: "stop" };
+        emit({ type: "message_start", message: partial });
+        emit({
+          type: "message_end",
+          message: { id: "assistant_1", role: "assistant", content: [{ type: "text", text: "I am here." }], stopReason: "stop" },
+        });
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {
+        lifecycle.push("begin");
+      },
+      endBatch() {
+        lifecycle.push("end");
+      },
+      async presentNativeAssistantContent(content) {
+        assert.deepEqual(lifecycle, ["begin"]);
+        presented.push(content);
+      },
+    },
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_1",
+    eventId: "player_source_1",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: 1,
+  });
+  await loop.flush();
+  assert.deepEqual(presented, [{ sourceEventId: "player_source_1", text: "I am here." }]);
+  assert.deepEqual(lifecycle, ["begin", "end"]);
+});
+
+test("CompanionLoop suppresses foreign, aborted, and post-STOP native content", async () => {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const presented: unknown[] = [];
+  let releaseTurn!: () => void;
+  const turn = new Promise<void>((resolve) => {
+    releaseTurn = resolve;
+  });
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        await turn;
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => listeners.delete(next);
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content);
+      },
+    },
+  );
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_suppressed",
+    eventId: "player_source_suppressed",
+    text: "hello",
+    locale: "en-US",
+    timestampMs: 1,
+  });
+  const flushing = loop.flush();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  const current = { id: "current", role: "assistant", content: [], stopReason: "stop" };
+  const foreign = { id: "foreign", role: "assistant", content: [], stopReason: "stop" };
+  // Binding begins at the actual assistant start. A different final snapshot
+  // cannot replace it, and STOP then revokes the bound observer before its own
+  // delayed final snapshot arrives.
+  emit({ type: "message_start", message: current });
+  emit({ type: "message_end", message: { ...foreign, content: [{ type: "text", text: "foreign" }] } });
+  const stopping = loop.abortAndClear();
+  emit({
+    type: "message_end",
+    message: { id: "late", role: "assistant", content: [{ type: "text", text: "late" }], stopReason: "stop" },
+  });
+  releaseTurn();
+  await stopping;
+  await flushing;
+  assert.deepEqual(presented, []);
+});
+
+test("CompanionLoop permits a consumed player turn with no native content projection", async () => {
+  const lifecycle: string[] = [];
+  const loop = new CompanionLoop(settledSession() as never, {
+    beginPlayerBatch() {
+      lifecycle.push("begin");
+    },
+    endBatch() {
+      lifecycle.push("end");
+    },
+    async presentNativeAssistantContent() {
+      assert.fail("a tool-only or empty assistant turn must not manufacture dialogue");
+    },
+  });
+  loop.pump.enqueuePlayerInput({
+    source: "player_text",
+    inputId: "input_no_text",
+    eventId: "player_source_no_text",
+    text: "do it",
+    locale: "en-US",
+    timestampMs: 1,
+  });
+  await loop.flush();
+  assert.deepEqual(lifecycle, ["begin", "end"]);
 });
 
 test("CompanionLoop chooses an authenticated world source for fact-only follow-up and rejects held facts", async () => {
@@ -188,6 +333,7 @@ test("CompanionLoop refuses presentation lineage for legacy player correlation w
       observed.push(sourceEventId);
     },
     endBatch() {},
+    async presentNativeAssistantContent() {},
   });
   loop.pump.enqueuePlayerInput({
     source: "player_text",
