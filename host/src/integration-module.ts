@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { isActionClass, type ActionClass } from "./action-class.js";
-import type { ExecutionDispatchObserver, ExecutionCorrelationOwner } from "./execution-correlation-ledger.js";
+import type {
+  ExecutionCorrelationOwner,
+  ExecutionDispatchObserver,
+} from "./execution-correlation-ledger.js";
 import type { IntegrationConnection } from "./integration-types.js";
 
 /** Host-owned identity fields that a selected module may bind to its connection. */
@@ -19,7 +21,8 @@ export type IntegrationWorldScope = Readonly<{
   worldId: string;
 }>;
 
-export type IntegrationActionLifecycle = "published" | "experimental" | "diagnostic" | "planned";
+export type IntegrationActionLifecycle =
+  "published" | "experimental" | "diagnostic" | "planned";
 
 /** The common deny-by-exception policy shape. Each module owns its parser. */
 export type IntegrationActionPolicy = Readonly<{
@@ -28,11 +31,12 @@ export type IntegrationActionPolicy = Readonly<{
   deniedFamilies: readonly string[];
 }>;
 
-export const DEFAULT_INTEGRATION_ACTION_POLICY: IntegrationActionPolicy = Object.freeze({
-  policyVersion: 1,
-  deniedActions: Object.freeze([]),
-  deniedFamilies: Object.freeze([]),
-});
+export const DEFAULT_INTEGRATION_ACTION_POLICY: IntegrationActionPolicy =
+  Object.freeze({
+    policyVersion: 1,
+    deniedActions: Object.freeze([]),
+    deniedFamilies: Object.freeze([]),
+  });
 
 /** A module-neutral terminal/non-terminal execution receipt projection. */
 export type IntegrationExecutionReceipt = Readonly<{
@@ -49,22 +53,35 @@ export type IntegrationStateView = Readonly<{
   connected: boolean;
   sessionId: string | null;
   capabilities: readonly string[];
+  /** Authenticated adapter-owned registration facts for the current connection generation. Absence is an empty catalog. */
+  registrations?: readonly IntegrationActionRegistration[];
   snapshotRevision: number | null;
-  activeExecution: Readonly<{ requestId: string; executionId: string; state: string }> | null;
+  activeExecution: Readonly<{
+    requestId: string;
+    executionId: string;
+    state: string;
+  }> | null;
   latestReceipt: IntegrationExecutionReceipt | null;
   latestReasonCode: string | null;
 }>;
 
-export type IntegrationActionDescriptor = Readonly<{
+/** Adapter-local implementation availability; it cannot publish an action. */
+export type IntegrationActionAdapter = Readonly<{
+  actionId: string;
+  /** Extra fixture-only fields are discarded at the Host adapter boundary. */
+  readonly [key: string]: unknown;
+}>;
+
+/** Authenticated integration-owned action registration facts. */
+export type IntegrationActionRegistration = Readonly<{
   actionId: string;
   familyId: string;
-  actionClass: ActionClass;
+  identityVersion: number;
   lifecycle: IntegrationActionLifecycle;
-  label: string;
-  description: string;
-  targetKinds: readonly string[];
-  requiredCapability: string;
 }>;
+
+export type IntegrationVisibleAction = IntegrationActionAdapter &
+  IntegrationActionRegistration;
 
 export type IntegrationReceiptEvidence = Readonly<{
   state: string;
@@ -77,7 +94,11 @@ export type IntegrationDispatchAdmission = Readonly<{
   observer: ExecutionDispatchObserver;
   owner: ExecutionCorrelationOwner;
   /** Ledger-only exact cancel facade; it rejects unknown owner/request/execution tuples. */
-  cancelExact(requestId: string, executionId: string, reasonCode: string): Promise<unknown>;
+  cancelExact(
+    requestId: string,
+    executionId: string,
+    reasonCode: string,
+  ): Promise<unknown>;
 }>;
 
 export type IntegrationToolContext = Readonly<{
@@ -120,21 +141,25 @@ export type IntegrationStatusDetails = Readonly<{
 }>;
 
 export type IntegrationActionCatalog = Readonly<{
-  entries: readonly IntegrationActionDescriptor[];
+  /** Host-local concrete adapters, never integration publication metadata. */
+  entries: readonly IntegrationActionAdapter[];
   revision: string;
-  get(actionId: string): IntegrationActionDescriptor | undefined;
+  hasAdapter(actionId: string): boolean;
   visibleActions(
+    registrations: readonly IntegrationActionRegistration[],
     capabilities: readonly string[],
     policy?: IntegrationActionPolicy,
-  ): readonly IntegrationActionDescriptor[];
+  ): readonly IntegrationVisibleAction[];
   searchVisibleActions(
+    registrations: readonly IntegrationActionRegistration[],
     capabilities: readonly string[],
     query: string,
     policy?: IntegrationActionPolicy,
-  ): readonly IntegrationActionDescriptor[];
-  familyFor(actionId: string): string | undefined;
-  isPublished(actionId: string): boolean;
-  hasCompletionEvidence(actionId: string, receipt: IntegrationReceiptEvidence): boolean;
+  ): readonly IntegrationVisibleAction[];
+  hasCompletionEvidence(
+    actionId: string,
+    receipt: IntegrationReceiptEvidence,
+  ): boolean;
 }>;
 
 export type GameIntegrationModule = Readonly<{
@@ -148,14 +173,21 @@ export type GameIntegrationModule = Readonly<{
   defaultPolicy: IntegrationActionPolicy;
   parsePolicy(value: unknown): IntegrationActionPolicy;
   /** Reject a connection that does not match the Host-owned Companion identity. */
-  assertIdentityBinding(connection: IntegrationConnection, identity: IntegrationIdentityBinding): void;
+  assertIdentityBinding(
+    connection: IntegrationConnection,
+    identity: IntegrationIdentityBinding,
+  ): void;
   /** Return the optional current-world key for Host-owned WorldBook filtering. */
   worldScope(connection: IntegrationConnection): IntegrationWorldScope | null;
   /** Materialize only tools backed by this module's validated connection. */
   createToolSet(context: IntegrationToolContext): IntegrationToolSet;
   /** Return immutable manifest metadata without exposing adapter state. */
   knowledgeMetadata(
-    context: Readonly<{ connection?: IntegrationConnection; knowledge?: unknown; gameVersion?: string }>,
+    context: Readonly<{
+      connection?: IntegrationConnection;
+      knowledge?: unknown;
+      gameVersion?: string;
+    }>,
   ): IntegrationKnowledgeMetadata;
   /** Project adapter-owned state into the small Host lifecycle view. */
   readState(connection: IntegrationConnection): IntegrationStateView;
@@ -179,80 +211,79 @@ export type GameIntegrationModule = Readonly<{
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const TOOL_NAME_PREFIX = /^[a-z][a-z0-9_-]{0,31}_$/;
 const VERSION = /^[A-Za-z0-9_.-]{1,64}$/;
-const LIFECYCLES = new Set<IntegrationActionLifecycle>(["published", "experimental", "diagnostic", "planned"]);
+const LIFECYCLES = new Set<IntegrationActionLifecycle>([
+  "published",
+  "experimental",
+  "diagnostic",
+  "planned",
+]);
 
 /**
- * Build a deterministic catalog for one integration. The catalog owns
- * visibility and action-family lookup so Host core never needs a Stardew- or
- * game-specific registry import.
+ * Build the Host-local concrete adapter inventory for one integration. It can
+ * only subtract from authenticated registration facts supplied at resolution.
  */
 export function createIntegrationActionCatalog(
-  entries: readonly IntegrationActionDescriptor[],
-  hasCompletionEvidence: (actionId: string, receipt: IntegrationReceiptEvidence) => boolean = () => false,
+  entries: readonly IntegrationActionAdapter[],
+  hasCompletionEvidence: (
+    actionId: string,
+    receipt: IntegrationReceiptEvidence,
+  ) => boolean = () => false,
 ): IntegrationActionCatalog {
-  if (!Array.isArray(entries) || entries.length > 512) throw new Error("invalid_integration_action_catalog");
+  if (!Array.isArray(entries) || entries.length > 512)
+    throw new Error("invalid_integration_action_catalog");
   const normalized = entries.map((entry) => {
-    if (!isRecord(entry)) throw new Error("invalid_integration_action_catalog");
-    const { actionId, familyId, actionClass, lifecycle, label, description, targetKinds, requiredCapability } = entry;
-    if (
-      !isIdentifier(actionId) ||
-      !isIdentifier(familyId) ||
-      !isActionClass(actionClass) ||
-      !isIdentifier(requiredCapability) ||
-      !isLifecycle(lifecycle) ||
-      !boundedText(label, 256) ||
-      !boundedText(description, 4_096) ||
-      !Array.isArray(targetKinds) ||
-      targetKinds.length > 32 ||
-      !targetKinds.every(isIdentifier)
-    ) {
+    if (!isRecord(entry) || !isIdentifier(entry.actionId))
       throw new Error("invalid_integration_action_catalog");
-    }
-    return Object.freeze({
-      actionId,
-      familyId,
-      actionClass,
-      lifecycle,
-      label,
-      description,
-      targetKinds: Object.freeze([...targetKinds]),
-      requiredCapability,
-    });
+    return Object.freeze({ actionId: entry.actionId });
   });
   const actionIds = new Set<string>();
   for (const entry of normalized) {
-    if (actionIds.has(entry.actionId)) throw new Error("duplicate_integration_action");
+    if (actionIds.has(entry.actionId))
+      throw new Error("duplicate_integration_action");
     actionIds.add(entry.actionId);
   }
   const frozenEntries = Object.freeze(normalized);
-  const byId = new Map(frozenEntries.map((entry) => [entry.actionId, entry]));
-  const revision = createHash("sha256").update(JSON.stringify(frozenEntries)).digest("hex");
+  const revision = createHash("sha256")
+    .update(JSON.stringify(frozenEntries))
+    .digest("hex");
   const visible = (
+    registrations: readonly IntegrationActionRegistration[],
     capabilities: readonly string[],
     policy?: IntegrationActionPolicy,
-  ): readonly IntegrationActionDescriptor[] => {
+  ): readonly IntegrationVisibleAction[] => {
     const capabilitySet = new Set(capabilities);
     const deniedActions = new Set(policy?.deniedActions ?? []);
     const deniedFamilies = new Set(policy?.deniedFamilies ?? []);
-    return frozenEntries.filter(
-      (entry) =>
-        entry.actionClass === "primitive" &&
-        entry.lifecycle === "published" &&
-        capabilitySet.has(entry.requiredCapability) &&
-        !deniedActions.has(entry.actionId) &&
-        !deniedFamilies.has(entry.familyId),
-    );
+    const seen = new Set<string>();
+    const result: IntegrationVisibleAction[] = [];
+    for (const registration of registrations) {
+      if (
+        !isRegistration(registration) ||
+        seen.has(registration.actionId) ||
+        !actionIds.has(registration.actionId) ||
+        registration.lifecycle !== "published" ||
+        !capabilitySet.has(registration.actionId) ||
+        deniedActions.has(registration.actionId) ||
+        deniedFamilies.has(registration.familyId)
+      ) {
+        continue;
+      }
+      seen.add(registration.actionId);
+      result.push(Object.freeze({ ...registration }));
+    }
+    return Object.freeze(result);
   };
   const search = (
+    registrations: readonly IntegrationActionRegistration[],
     capabilities: readonly string[],
     query: string,
     policy?: IntegrationActionPolicy,
-  ): readonly IntegrationActionDescriptor[] => {
-    const available = visible(capabilities, policy);
+  ): readonly IntegrationVisibleAction[] => {
+    const available = visible(registrations, capabilities, policy);
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (normalizedQuery.length === 0) return available;
     return available.filter((entry) =>
-      `${entry.actionId} ${entry.familyId} ${entry.label} ${entry.description}`
+      `${entry.actionId} ${entry.familyId}`
         .toLocaleLowerCase()
         .includes(normalizedQuery),
     );
@@ -260,20 +291,20 @@ export function createIntegrationActionCatalog(
   return Object.freeze({
     entries: frozenEntries,
     revision,
-    get: (actionId: string) => byId.get(actionId),
+    hasAdapter: (actionId: string) => actionIds.has(actionId),
     visibleActions: visible,
     searchVisibleActions: search,
-    familyFor: (actionId: string) => byId.get(actionId)?.familyId,
-    isPublished: (actionId: string) => {
-      const entry = byId.get(actionId);
-      return entry?.actionClass === "primitive" && entry.lifecycle === "published";
-    },
-    hasCompletionEvidence: (actionId: string, receipt: IntegrationReceiptEvidence) =>
-      hasCompletionEvidence(actionId, receipt),
+    hasCompletionEvidence: (
+      actionId: string,
+      receipt: IntegrationReceiptEvidence,
+    ) => hasCompletionEvidence(actionId, receipt),
   });
 }
 
-export function assertIntegrationModule(module: GameIntegrationModule, integrationId: string): void {
+export function assertIntegrationModule(
+  module: GameIntegrationModule,
+  integrationId: string,
+): void {
   if (
     !isRecord(module) ||
     !isRecord(module.descriptor) ||
@@ -295,15 +326,11 @@ export function assertIntegrationModule(module: GameIntegrationModule, integrati
     !isRecord(module.actionCatalog) ||
     !Array.isArray(module.actionCatalog.entries) ||
     typeof module.actionCatalog.revision !== "string" ||
-    typeof module.actionCatalog.get !== "function" ||
+    typeof module.actionCatalog.hasAdapter !== "function" ||
     typeof module.actionCatalog.visibleActions !== "function" ||
     typeof module.actionCatalog.searchVisibleActions !== "function" ||
-    typeof module.actionCatalog.familyFor !== "function" ||
-    typeof module.actionCatalog.isPublished !== "function" ||
     typeof module.actionCatalog.hasCompletionEvidence !== "function" ||
-    module.actionCatalog.entries.some(
-      (entry) => !isIdentifier(entry.actionId) || !isIdentifier(entry.familyId) || !isActionClass(entry.actionClass),
-    )
+    module.actionCatalog.entries.some((entry) => !isIdentifier(entry.actionId))
   ) {
     throw new Error("integration_module_scope_mismatch");
   }
@@ -312,11 +339,18 @@ export function assertIntegrationModule(module: GameIntegrationModule, integrati
       module.actionCatalog.entries,
       module.actionCatalog.hasCompletionEvidence,
     ).revision;
-    if (!/^[a-f0-9]{64}$/.test(module.actionCatalog.revision) || canonicalRevision !== module.actionCatalog.revision) {
+    if (
+      !/^[a-f0-9]{64}$/.test(module.actionCatalog.revision) ||
+      canonicalRevision !== module.actionCatalog.revision
+    ) {
       throw new Error("integration_module_catalog_revision_mismatch");
     }
   } catch (error) {
-    if (error instanceof Error && error.message === "integration_module_catalog_revision_mismatch") throw error;
+    if (
+      error instanceof Error &&
+      error.message === "integration_module_catalog_revision_mismatch"
+    )
+      throw error;
     throw new Error("integration_module_scope_mismatch");
   }
 }
@@ -330,7 +364,10 @@ export function assertIntegrationModuleConformance(
   module: GameIntegrationModule,
   connection: IntegrationConnection,
 ): IntegrationModuleConformance {
-  if (connection.module !== module || connection.scope.integrationId !== module.descriptor.integrationId) {
+  if (
+    connection.module !== module ||
+    connection.scope.integrationId !== module.descriptor.integrationId
+  ) {
     throw new Error("integration_module_scope_mismatch");
   }
   assertIntegrationModule(module, connection.scope.integrationId);
@@ -348,9 +385,12 @@ export function assertIntegrationModuleConformance(
     throw new Error("integration_status_view_invalid");
   }
   const toolGroups = [tools.observation, tools.actions, tools.knowledge];
-  if (!toolGroups.every((group) => Array.isArray(group))) throw new Error("integration_tool_set_invalid");
+  if (!toolGroups.every((group) => Array.isArray(group)))
+    throw new Error("integration_tool_set_invalid");
   const names = toolGroups.flat().map((tool) => tool.name);
-  const actionIds = new Set(module.actionCatalog.entries.map((entry) => entry.actionId));
+  const actionIds = new Set(
+    module.actionCatalog.entries.map((entry) => entry.actionId),
+  );
   for (const name of names) {
     if (
       typeof name !== "string" ||
@@ -361,11 +401,19 @@ export function assertIntegrationModuleConformance(
       throw new Error("integration_tool_namespace_invalid");
     }
     const actionId = module.actionIdForToolName(name);
-    if (actionId !== null && !actionIds.has(actionId)) throw new Error("integration_tool_action_unregistered");
+    if (
+      actionId !== null &&
+      (!actionIds.has(actionId) || !module.actionCatalog.hasAdapter(actionId))
+    )
+      throw new Error("integration_tool_action_unregistered");
   }
-  if (new Set(names).size !== names.length) throw new Error("duplicate_integration_tool");
+  if (new Set(names).size !== names.length)
+    throw new Error("duplicate_integration_tool");
   const state = module.readState(connection);
-  if (!Array.isArray(state.capabilities) || (state.activeExecution !== null && !isRecord(state.activeExecution))) {
+  if (
+    !Array.isArray(state.capabilities) ||
+    (state.activeExecution !== null && !isRecord(state.activeExecution))
+  ) {
     throw new Error("integration_state_view_invalid");
   }
   return Object.freeze({
@@ -383,11 +431,30 @@ function isToolNamePrefix(value: unknown): value is string {
 }
 
 function isLifecycle(value: unknown): value is IntegrationActionLifecycle {
-  return typeof value === "string" && LIFECYCLES.has(value as IntegrationActionLifecycle);
+  return (
+    typeof value === "string" &&
+    LIFECYCLES.has(value as IntegrationActionLifecycle)
+  );
+}
+
+function isRegistration(
+  value: unknown,
+): value is IntegrationActionRegistration {
+  return (
+    isRecord(value) &&
+    isIdentifier(value.actionId) &&
+    isIdentifier(value.familyId) &&
+    typeof value.identityVersion === "number" &&
+    Number.isSafeInteger(value.identityVersion) &&
+    value.identityVersion >= 1 &&
+    isLifecycle(value.lifecycle)
+  );
 }
 
 function boundedText(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= maxLength;
+  return (
+    typeof value === "string" && value.length > 0 && value.length <= maxLength
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

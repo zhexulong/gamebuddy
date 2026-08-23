@@ -1,10 +1,5 @@
 import { randomUUID } from "node:crypto";
-
-import { type IntegrationConnection } from "./integration-types.js";
-import {
-  createCompanionInterruption,
-  type CompanionInterruption,
-} from "./companion-interruption.js";
+import { type CompanionInterruption, createCompanionInterruption } from "./companion-interruption.js";
 import {
   ExecutionCorrelationLedger,
   type ExecutionDispatch,
@@ -12,6 +7,7 @@ import {
 } from "./execution-correlation-ledger.js";
 import type { ExecutionWake, ExecutionWakeSource } from "./integration-launcher.js";
 import type { IntegrationDispatchAdmission } from "./integration-module.js";
+import type { IntegrationConnection } from "./integration-types.js";
 import type { ExecutionReceipt } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
 
@@ -33,6 +29,28 @@ import { ReceiptReplayLedger } from "./receipt-replay.js";
  * Per-action argument validation stays in protocol.ts and per-action
  * completion evidence stays in the module action catalog.
  */
+export type ActionBatchItem<T = unknown> = Readonly<{
+  actionId: string;
+  requestId: string;
+  payload?: T;
+  execute: () => Promise<ExecutionReceipt>;
+}>;
+
+export type ActionBatch<T = unknown> = Readonly<{
+  batchId: string;
+  epoch?: number;
+  actions: readonly ActionBatchItem<T>[];
+}>;
+
+export type ActionBatchExecutionResult = Readonly<{
+  batchId: string;
+  epoch: number;
+  receipts: readonly ExecutionReceipt[];
+  completedCount: number;
+  failedFast: boolean;
+  interrupted: boolean;
+}>;
+
 export type ActionExecutionAdmission = IntegrationDispatchAdmission &
   Readonly<{
     cancelPending(reasonCode: string): void;
@@ -53,6 +71,8 @@ export type ActionExecutionCoordinator = Readonly<{
   uncertainDispatches(): readonly RecoverableExecutionDispatch[];
   cancelEpoch(epoch: number, reasonCode: string): Promise<void>;
   interrupt(reasonCode: string): Promise<void>;
+  /** Executes a batch of actions sequentially with Fail-Fast semantics and Epoch interruption interception */
+  executeBatch(batch: ActionBatch, admission?: ActionExecutionAdmission): Promise<ActionBatchExecutionResult>;
 }>;
 
 /**
@@ -61,19 +81,12 @@ export type ActionExecutionCoordinator = Readonly<{
  * method is reachable only as the ledger's exact sender; neither Agent surface
  * receives it directly.
  */
-export function createActionExecutionCoordinator(
-  connection: IntegrationConnection,
-): ActionExecutionCoordinator {
+export function createActionExecutionCoordinator(connection: IntegrationConnection): ActionExecutionCoordinator {
   const interruption = createCompanionInterruption();
   const ledger = new ExecutionCorrelationLedger(
     async (requestId, executionId, reasonCode) =>
       (await Promise.resolve(
-        connection.module.cancelExecution(
-          connection,
-          requestId,
-          executionId,
-          reasonCode,
-        ),
+        connection.module.cancelExecution(connection, requestId, executionId, reasonCode),
       )) as never,
   );
   const replay = new ReceiptReplayLedger();
@@ -109,8 +122,7 @@ export function createActionExecutionCoordinator(
           ledger.beforeWrite(dispatch);
         },
         bindReceipt: (receipt: ExecutionReceipt) => receiveReceipt(receipt),
-        markUncertain: (dispatch: ExecutionDispatch) =>
-          ledger.markUncertain(dispatch),
+        markUncertain: (dispatch: ExecutionDispatch) => ledger.markUncertain(dispatch),
       }),
       cancelExact: (requestId, executionId, reasonCode) =>
         ledger.requestCancelExact(owner, requestId, executionId, reasonCode),
@@ -124,8 +136,7 @@ export function createActionExecutionCoordinator(
     interruption,
     createAdmission,
     receiveReceipt,
-    receiveWake: (wake: unknown): ExecutionWake | null =>
-      normalizeExecutionWake(wake),
+    receiveWake: (wake: unknown): ExecutionWake | null => normalizeExecutionWake(wake),
     uncertainDispatches: () => ledger.uncertainDispatches(),
     cancelEpoch: async (epoch: number, reasonCode: string) => {
       await Promise.all(ledger.requestCancelEpoch(epoch, reasonCode));
@@ -135,6 +146,118 @@ export function createActionExecutionCoordinator(
       interruption.close(reasonCode);
       await Promise.all(ledger.requestCancelEpoch(snapshot.epoch, reasonCode));
     },
+    executeBatch: async (
+      batch: ActionBatch,
+      admission?: ActionExecutionAdmission,
+    ): Promise<ActionBatchExecutionResult> => {
+      const targetAdmission = admission ?? createAdmission();
+      const targetEpoch = batch.epoch ?? targetAdmission.owner.epoch;
+      const receipts: ExecutionReceipt[] = [];
+      let failedFast = false;
+      let interrupted = false;
+
+      for (let i = 0; i < batch.actions.length; i++) {
+        const item = batch.actions[i]!;
+
+        // Interception: Check if epoch was closed or interrupted
+        const currentSnapshot = interruption.capture();
+        if (!interruption.isCurrent(currentSnapshot) || currentSnapshot.epoch !== targetEpoch) {
+          interrupted = true;
+          for (let j = i; j < batch.actions.length; j++) {
+            const unexecuted = batch.actions[j]!;
+            receipts.push(
+              Object.freeze({
+                requestId: unexecuted.requestId,
+                executionId: `epoch_interrupted_${unexecuted.requestId}`,
+                state: "cancelled" as const,
+                reasonCode: "epoch_interrupted",
+                revision: 0,
+                evidence: null,
+              }),
+            );
+          }
+          break;
+        }
+
+        try {
+          const receipt = await item.execute();
+          receiveReceipt(receipt);
+          receipts.push(receipt);
+
+          // Fail-Fast: check if terminal state is non-success
+          if (
+            receipt.state === "failed" ||
+            receipt.state === "rejected" ||
+            receipt.state === "invalidated" ||
+            receipt.state === "expired" ||
+            receipt.state === "uncertain" ||
+            receipt.state === "cancelled"
+          ) {
+            failedFast = true;
+            for (let j = i + 1; j < batch.actions.length; j++) {
+              const aborted = batch.actions[j]!;
+              receipts.push(
+                Object.freeze({
+                  requestId: aborted.requestId,
+                  executionId: `fail_fast_${aborted.requestId}`,
+                  state: "cancelled" as const,
+                  reasonCode: "batch_fail_fast_aborted",
+                  revision: receipt.revision,
+                  evidence: {
+                    causeActionId: item.actionId,
+                    causeRequestId: item.requestId,
+                    causeReason: receipt.reasonCode,
+                    causeState: receipt.state,
+                  },
+                }),
+              );
+            }
+            break;
+          }
+        } catch (error) {
+          failedFast = true;
+          const causeReason = error instanceof Error ? error.message : "batch_action_failed";
+          receipts.push(
+            Object.freeze({
+              requestId: item.requestId,
+              executionId: `error_${item.requestId}`,
+              state: "failed" as const,
+              reasonCode: causeReason,
+              revision: 0,
+              evidence: null,
+            }),
+          );
+          for (let j = i + 1; j < batch.actions.length; j++) {
+            const aborted = batch.actions[j]!;
+            receipts.push(
+              Object.freeze({
+                requestId: aborted.requestId,
+                executionId: `fail_fast_${aborted.requestId}`,
+                state: "cancelled" as const,
+                reasonCode: "batch_fail_fast_aborted",
+                revision: 0,
+                evidence: {
+                  causeActionId: item.actionId,
+                  causeRequestId: item.requestId,
+                  causeReason,
+                  causeState: "failed",
+                },
+              }),
+            );
+          }
+          break;
+        }
+      }
+
+      return Object.freeze({
+        batchId: batch.batchId,
+        epoch: targetEpoch,
+        receipts: Object.freeze(receipts),
+        completedCount: receipts.filter((r) => r.state === "succeeded" || r.state === "accepted").length,
+        failedFast,
+        interrupted,
+      });
+    },
   });
 }
 
@@ -143,10 +266,7 @@ export function createActionExecutionCoordinator(
  * observable receipt field matches. Evidence is compared canonically so key
  * order cannot turn one adapter message into a fake order violation.
  */
-function identicalReceipt(
-  left: ExecutionReceipt,
-  right: ExecutionReceipt,
-): boolean {
+function identicalReceipt(left: ExecutionReceipt, right: ExecutionReceipt): boolean {
   return (
     left.executionId === right.executionId &&
     left.requestId === right.requestId &&
@@ -170,15 +290,10 @@ function canonicalStableJson(value: unknown): string {
 }
 
 /** Adapter-owned optional capability lookup; absent adapters keep polling. */
-export function executionWakeSourceFor(
-  connection: unknown,
-): ExecutionWakeSource | undefined {
-  if (!isRecord(connection) || !isRecord(connection.executionWakeSource))
-    return undefined;
+export function executionWakeSourceFor(connection: unknown): ExecutionWakeSource | undefined {
+  if (!isRecord(connection) || !isRecord(connection.executionWakeSource)) return undefined;
   const source = connection.executionWakeSource;
-  return typeof source.onExecutionWake === "function"
-    ? (source as ExecutionWakeSource)
-    : undefined;
+  return typeof source.onExecutionWake === "function" ? (source as ExecutionWakeSource) : undefined;
 }
 
 /** Reject malformed adapter values before they can wake a task-owned waiter. */
@@ -212,7 +327,5 @@ export function normalizeExecutionWake(value: unknown): ExecutionWake | null {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" && value !== null && !Array.isArray(value)
-  );
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

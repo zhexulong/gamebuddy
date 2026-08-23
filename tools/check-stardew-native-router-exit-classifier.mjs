@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { validateNativeRouterExitClassifier } from "./lib/stardew-native-router-exit-classifier.mjs";
+
 function fail(code, message) {
   const error = new Error(message);
   error.code = code;

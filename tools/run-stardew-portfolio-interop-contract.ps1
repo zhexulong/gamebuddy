@@ -55,14 +55,11 @@ if (-not (Test-Path -LiteralPath $peerPath) -or -not (Test-Path -LiteralPath $pr
 
 # The attested Node path may only launch the peer just built above. The peer
 # independently validates the compiled production assembly hash it loads.
-# The test file runs BOTH frozen scenarios - the success terminal-drain
-# scenario (exact private ModEntry.DrainPortfolioMineElevatorTerminalDeliveries
-# -> real pipe -> real PortfolioStardewBridgeClient succeeded receipt +
-# second-drain dequeue) and the accepted-then-cancel scenario (exact private
-# ModEntry.HandlePortfolioMineElevatorCancel -> compiled session -> compiled
-# coordinator -> real pipe -> real client) - each spawning the peer with its
-# explicit scenario argument and a fresh pipe name; node --test fails the run
-# if either scenario fails.
+# The test file runs elevator success/cancel, independent enter_mine
+# success/cancel, and independent use_mine_ladder success scenarios. Each
+# drives its exact private ModEntry terminal drain or cancel handler -> real
+# pipe -> real PortfolioStardewBridgeClient terminal delivery with a fresh
+# pipe name; node --test fails the run if any scenario fails.
 Remove-Item Env:GAMEBUDDY_PORTFOLIO_INTEROP_PEER_DLL -ErrorAction Ignore
 $env:GAMEBUDDY_PORTFOLIO_INTEROP_ATTESTED = '1'
 $env:GAMEBUDDY_PORTFOLIO_INTEROP_PEER_SHA256 = Get-Sha256 $peerPath

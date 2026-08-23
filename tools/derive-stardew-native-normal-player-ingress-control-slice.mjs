@@ -3,6 +3,7 @@ import path from "node:path";
 import { verifyExactMechanismReportSources } from "./lib/stardew-native-mechanism-review-register.mjs";
 import { deriveNativeNormalPlayerControlSlice } from "./lib/stardew-native-normal-player-ingress-control-slice.mjs";
 import { validateNativeNormalPlayerIngressRegister } from "./lib/stardew-native-normal-player-ingress-register.mjs";
+
 function fail(code, message) {
   const error = new Error(message);
   error.code = code;

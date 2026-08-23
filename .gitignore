@@ -58,6 +58,9 @@ coverage/
 [Bb]in/
 [Oo]bj/
 TestResults/
+# NuGet restores and native helper publish outputs are always local/rebuildable.
+**/NuGet/
+**/.dist/
 stardewvalley.targets
 *.user
 *.suo
@@ -74,9 +77,17 @@ integrations/stardew/config.json
 
 # Scratch downloads, local research, and one-off diagnostics
 /research/
+/.tmp/
+/tmp/
 tmp_*
 .tmp-*/
 /.tmp-*
+/subagent-artifacts/
+/host/.agents/
+/host/dist-*
+/host/tmp-*.mjs
+/host/tsconfig.*.tmp.json
+/test-results/
 /tavern-gate-output.json
 /contentprobe.err
 /contentprobe.out

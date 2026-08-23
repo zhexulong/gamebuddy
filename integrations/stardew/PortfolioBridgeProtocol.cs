@@ -74,7 +74,8 @@ internal static class PortfolioBridgeProtocol
         "invalid_envelope",
         "invalid_json", "stale_or_invalid_timestamp", "authentication_failed", "already_authenticated",
         "unauthenticated", "portfolio_message_type_rejected", "invalid_request", "response_serialization_failed",
-        "portfolio_sleep_day_not_armed", "invalid_portfolio_mine_ladder_request", "invalid_portfolio_enter_mine_request", "invalid_portfolio_enter_mine_probe_request", "invalid_portfolio_enter_mine_fresh_floor_request", "invalid_portfolio_enter_mine_cancel_request", "invalid_portfolio_enter_mine_fresh_floor", "invalid_portfolio_enter_mine_receipt", "invalid_portfolio_enter_mine_phase", "invalid_portfolio_enter_mine_probe", "invalid_enter_mine_request", "invalid_enter_mine_observation", "enter_mine_target_invalid", "enter_mine_transition_started", "enter_mine_floor_used", "portfolio_enter_mine_not_armed", "invalid_portfolio_bootstrap_hello", "invalid_portfolio_bootstrap_hello_ack", "portfolio_bootstrap_scope_mismatch", "portfolio_bootstrap_not_allowed", "invalid_portfolio_mine_ladder_probe_request", "invalid_portfolio_mine_ladder_fresh_floor_request", "invalid_portfolio_mine_ladder_cancel_request", "invalid_portfolio_mine_ladder_fresh_floor", "invalid_portfolio_mine_ladder_receipt", "invalid_portfolio_mine_ladder_phase", "invalid_portfolio_mine_ladder_probe", "invalid_mine_ladder_request", "invalid_mine_ladder_observation", "mine_ladder_target_invalid", "mine_ladder_transition_started", "mine_ladder_floor_used", "portfolio_mine_ladder_not_armed"
+        "portfolio_sleep_day_not_armed", "invalid_portfolio_mine_ladder_request", "invalid_portfolio_enter_mine_request", "invalid_portfolio_enter_mine_probe_request", "invalid_portfolio_enter_mine_fresh_floor_request", "invalid_portfolio_enter_mine_cancel_request", "invalid_portfolio_enter_mine_fresh_floor", "invalid_portfolio_enter_mine_receipt", "invalid_portfolio_enter_mine_phase", "invalid_portfolio_enter_mine_probe", "invalid_enter_mine_request", "invalid_enter_mine_observation", "enter_mine_target_invalid", "enter_mine_transition_started", "enter_mine_floor_used", "portfolio_enter_mine_not_armed", "invalid_portfolio_bootstrap_hello", "invalid_portfolio_bootstrap_hello_ack", "portfolio_bootstrap_scope_mismatch", "portfolio_bootstrap_not_allowed", "invalid_portfolio_mine_ladder_probe_request", "invalid_portfolio_mine_ladder_fresh_floor_request", "invalid_portfolio_mine_ladder_cancel_request", "invalid_portfolio_mine_ladder_fresh_floor", "invalid_portfolio_mine_ladder_receipt", "invalid_portfolio_mine_ladder_phase", "invalid_portfolio_mine_ladder_probe", "invalid_mine_ladder_request", "invalid_mine_ladder_observation", "mine_ladder_target_invalid", "mine_ladder_transition_started", "mine_ladder_floor_used", "portfolio_mine_ladder_not_armed",
+        "invalid_portfolio_skip_event_request", "invalid_portfolio_skip_event_probe_request", "invalid_portfolio_skip_event_cancel_request", "invalid_portfolio_skip_event_receipt", "invalid_portfolio_skip_event_phase", "invalid_skip_event_request", "invalid_skip_event_observation", "invalid_skip_event_cancel_request", "skip_event_no_active_event", "skip_event_target_invalid", "skip_event_native_skip", "skip_event_completed", "portfolio_skip_event_not_armed"
     };
 
     internal static bool IsReasonCode(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
@@ -88,6 +89,12 @@ internal static class PortfolioBridgeProtocol
     internal const string MineElevatorAction = "select_mine_elevator_floor";
     internal const string MineLadderAction = "use_mine_ladder";
     internal const string MineEntryAction = "enter_mine";
+    internal const string SkipEventAction = "skip_event";
+    internal static readonly string[] SkipEventPhases =
+    {
+        "fresh_observed", "accepted", "native_skip", "postcondition", "terminal",
+    };
+    internal static bool IsSkipEventPhase(string? value) => value is not null && Array.IndexOf(SkipEventPhases, value) >= 0;
     internal const int MineEntryMinimumFloor = 1;
     internal const int MineEntryMaximumFloor = 1;
     internal const int MineLadderMinimumFloor = 1;
@@ -145,6 +152,18 @@ internal static class PortfolioBridgeProtocol
         "failed" => reason == "native_operation_failed",
         "uncertain" => reason is "native_operation_uncertain" or "postcondition_observation_invalid" or "stale_callback_revision" or "portfolio_bridge_disconnected",
         "rejected" => reason.StartsWith("invalid_", StringComparison.Ordinal) || reason is "revision_mismatch" or "deadline_expired" or "mine_observation_invalid" or "enter_mine_target_invalid" or "idempotency_key_reused_with_different_request" or "execution_not_active" or "cancellation_token_mismatch",
+        "blocked" => reason.StartsWith("portfolio_", StringComparison.Ordinal) || reason is "execution_already_active" or "adapter_unavailable" or "irreversible_phase_reached",
+        _ => false,
+    };
+
+    internal static bool IsSkipEventTerminalReason(string state, string reason) => state switch
+    {
+        "succeeded" => reason == "skip_event_completed",
+        "cancelled" => reason == "cancelled",
+        "expired" => reason == "deadline_expired",
+        "failed" => reason == "native_operation_failed",
+        "uncertain" => reason is "native_operation_uncertain" or "postcondition_observation_invalid" or "stale_callback_revision" or "portfolio_bridge_disconnected",
+        "rejected" => reason.StartsWith("invalid_", StringComparison.Ordinal) || reason is "revision_mismatch" or "deadline_expired" or "skip_event_no_active_event" or "skip_event_target_invalid" or "idempotency_key_reused_with_different_request" or "execution_not_active" or "cancellation_token_mismatch",
         "blocked" => reason.StartsWith("portfolio_", StringComparison.Ordinal) || reason is "execution_already_active" or "adapter_unavailable" or "irreversible_phase_reached",
         _ => false,
     };
@@ -423,6 +442,99 @@ internal static class PortfolioBridgeProtocol
     internal static bool TryDeserializeMineEntryRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineEntryActionRequest>? envelope, out string reasonCode) => TryDeserializeMineEntry(json, expectedScope, "enter_mine_request", "invalid_portfolio_enter_mine_request", out envelope, out reasonCode);
     internal static bool TryDeserializeMineEntryProbeRequest(string json, PortfolioScope expectedScope, out PortfolioEnvelope<PortfolioMineEntryActionRequest>? envelope, out string reasonCode) => TryDeserializeMineEntry(json, expectedScope, "enter_mine_probe_request", "invalid_portfolio_enter_mine_probe_request", out envelope, out reasonCode);
     private static bool TryDeserializeMineEntry(string json, PortfolioScope scope, string type, string invalid, out PortfolioEnvelope<PortfolioMineEntryActionRequest>? envelope, out string reasonCode) { envelope=null; if(!TryParseStrictEnvelope(json,scope,type,out JsonDocument? d,out reasonCode)) return false; using(d!) { var p=d!.RootElement.GetProperty("payload"); if(!HasExactProperties(p,"action","requestId","traceId","idempotencyKey","expectedRevision","deadlineMs","cancellationToken","scope")){reasonCode=invalid;return false;} try { var x=JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioMineEntryActionRequest>>(d.RootElement.GetRawText(),JsonOptions); var now=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(); if(x?.Payload is null||!x.Payload.IsValid||x.Payload.DeadlineMs<=now||x.Payload.DeadlineMs>now+1800000||!x.Payload.Scope.Equals(scope)){reasonCode=invalid;return false;} envelope=x;reasonCode="accepted";return true;}catch(JsonException){reasonCode=invalid;return false;} } }
+
+    internal static bool TryDeserializeSkipEventRequest(
+        string json,
+        PortfolioScope expectedScope,
+        out PortfolioEnvelope<PortfolioSkipEventActionRequest>? envelope,
+        out string reasonCode)
+        => TryDeserializeSkipEvent(json, expectedScope, "skip_event_request", "invalid_portfolio_skip_event_request", out envelope, out reasonCode);
+
+    internal static bool TryDeserializeSkipEventProbeRequest(
+        string json,
+        PortfolioScope expectedScope,
+        out PortfolioEnvelope<PortfolioSkipEventActionRequest>? envelope,
+        out string reasonCode)
+        => TryDeserializeSkipEvent(json, expectedScope, "skip_event_probe_request", "invalid_portfolio_skip_event_probe_request", out envelope, out reasonCode);
+
+    private static bool TryDeserializeSkipEvent(
+        string json,
+        PortfolioScope expectedScope,
+        string expectedType,
+        string invalidReason,
+        out PortfolioEnvelope<PortfolioSkipEventActionRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryParseStrictEnvelope(json, expectedScope, expectedType, out JsonDocument? document, out reasonCode))
+            return false;
+        using (JsonDocument parsedDocument = document!)
+        {
+            JsonElement payload = parsedDocument.RootElement.GetProperty("payload");
+            if (!HasExactProperties(payload, "action", "requestId", "traceId", "idempotencyKey", "expectedRevision", "deadlineMs", "cancellationToken", "scope"))
+            {
+                reasonCode = invalidReason;
+                return false;
+            }
+            try
+            {
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                PortfolioEnvelope<PortfolioSkipEventActionRequest>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioSkipEventActionRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (parsed?.Payload is null || !parsed.Payload.IsValid || parsed.Payload.DeadlineMs <= now
+                    || parsed.Payload.DeadlineMs > now + (long)TimeSpan.FromMinutes(30).TotalMilliseconds
+                    || !parsed.Payload.Scope.Equals(expectedScope))
+                {
+                    reasonCode = invalidReason;
+                    return false;
+                }
+                envelope = parsed;
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = invalidReason;
+                return false;
+            }
+        }
+    }
+
+    internal static bool TryDeserializeSkipEventCancelRequest(
+        string json,
+        PortfolioScope expectedScope,
+        out PortfolioEnvelope<PortfolioSkipEventActionCancelRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryParseStrictEnvelope(json, expectedScope, "skip_event_cancel_request", out JsonDocument? document, out reasonCode))
+            return false;
+        using (JsonDocument parsedDocument = document!)
+        {
+            JsonElement payload = parsedDocument.RootElement.GetProperty("payload");
+            if (!HasExactProperties(payload, "action", "requestId", "traceId", "executionId", "cancellationToken", "scope"))
+            {
+                reasonCode = "invalid_portfolio_skip_event_cancel_request";
+                return false;
+            }
+            try
+            {
+                PortfolioEnvelope<PortfolioSkipEventActionCancelRequest>? parsed = JsonSerializer.Deserialize<PortfolioEnvelope<PortfolioSkipEventActionCancelRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (parsed?.Payload is null || !parsed.Payload.IsValid || !parsed.Payload.Scope.Equals(expectedScope))
+                {
+                    reasonCode = "invalid_portfolio_skip_event_cancel_request";
+                    return false;
+                }
+                envelope = parsed;
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_portfolio_skip_event_cancel_request";
+                return false;
+            }
+        }
+    }
 
     internal static bool TryDeserializeBootstrapHello(
         string json,

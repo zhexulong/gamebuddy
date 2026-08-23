@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { readFile } from "node:fs/promises";
+import test from "node:test";
 
 test("M8 action runner preserves preflight and gates mutation on the exact fresh probe", async () => {
   const source = await readFile(new URL("./run-stardew-portfolio-m8-action.mjs", import.meta.url), "utf8");
@@ -12,6 +12,7 @@ test("M8 action runner preserves preflight and gates mutation on the exact fresh
   assert.match(source, /hasAction = process\.argv\.includes\("--action"\)/);
   assert.match(source, /probe\.fresh !== true/);
   assert.match(source, /probe\.entryObserved !== true/);
+  assert.match(source, /probe\.currentFloor === selectedCheckpoint/);
   assert.match(source, /probe\.targetUnlocked !== true/);
   assert.match(source, /probe\.selectedCheckpoint !== selectedCheckpoint/);
   assert.match(source, /probe\.revision !== snapshot\.revision/);
@@ -28,9 +29,12 @@ test("M8 action runner preserves preflight and gates mutation on the exact fresh
   assert.match(source, /freshFloor\.executionId !== started\.executionId/);
   assert.match(source, /freshFloor\.revision <= terminal\.revision/);
   assert.match(source, /freshFloor\.currentFloor !== selectedCheckpoint/);
-  assert.match(source, /freshFloor,\n    \}\);/);
+  assert.match(source, /freshFloor,\n {4}\}\);/);
   assert.match(source, /terminal: actionTerminal/);
-  assert.doesNotMatch(source, /m8_native_save_reopen_observation_required|externally_player_confirmed_native_save_close_reopen|M8_ACTION_CLOSED/);
+  assert.doesNotMatch(
+    source,
+    /m8_native_save_reopen_observation_required|externally_player_confirmed_native_save_close_reopen|M8_ACTION_CLOSED/,
+  );
   assert.doesNotMatch(source, /readNativeSaveReopen|SaveGame\.Save|drive-stardew-ui|P0bLifecycle/);
   assert.match(source, /m8_action_(?:trace|idem|cancel)/);
   assert.doesNotMatch(source, /Game1\.enterMine/);

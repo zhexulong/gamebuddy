@@ -3,7 +3,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import test from "node:test";
 
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
-import { type BridgeMessage, type Scope } from "./protocol.js";
+import type { BridgeMessage, Scope } from "./protocol.js";
 
 const scope: Scope = {
   integrationId: "stardew",
@@ -47,7 +47,7 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
           ...request,
           messageId: "mod_hello_01",
           type: "hello_ack",
-          payload: { sessionId: "session_01", capabilities: ["inspect_self"], presentationLocale: "en-US" },
+          payload: { sessionId: "session_01", capabilities: ["inspect_self"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
         }),
       );
       socket.write(
@@ -119,7 +119,7 @@ test("local Stardew bridge rejects a duplicate-key raw named-pipe frame before J
           ...request,
           messageId: "mod_hello_duplicate_key",
           type: "hello_ack",
-          payload: { sessionId: "session_duplicate_key", capabilities: [], presentationLocale: "en-US" },
+          payload: { sessionId: "session_duplicate_key", capabilities: [], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
         }),
       );
     });
@@ -168,7 +168,7 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
                   ...request,
                   messageId: "mod_hello_player_control",
                   type: "hello_ack",
-                  payload: { sessionId: "session_player_control", capabilities: [], presentationLocale: "zh-CN" },
+                  payload: { sessionId: "session_player_control", capabilities: [], presentationLocale: "zh-CN", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
                 }
               : {
                   ...request,
@@ -261,7 +261,7 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
             ...request,
             messageId: "mod_hello_player_control_reject",
             type: "hello_ack",
-            payload: { sessionId: "session_player_control_reject", capabilities: [], presentationLocale: "zh-CN" },
+            payload: { sessionId: "session_player_control_reject", capabilities: [], presentationLocale: "zh-CN", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
           }),
         );
       }
@@ -310,7 +310,10 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
         },
       },
     });
-    assert.deepEqual(await rejectedDiagnostic, { stage: "native_chat_bridge_inbound_rejected", reasonCode: "malformed_player_control" });
+    assert.deepEqual(await rejectedDiagnostic, {
+      stage: "native_chat_bridge_inbound_rejected",
+      reasonCode: "malformed_player_control",
+    });
     assert.deepEqual(diagnostics, [
       { stage: "native_chat_bridge_inbound_frame_received", reasonCode: "received" },
       { stage: "native_chat_bridge_inbound_rejected", reasonCode: "malformed_player_control" },
@@ -348,7 +351,14 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
               ...request,
               messageId: "mod_hello_execution_receipt",
               type: "hello_ack",
-              payload: { sessionId: "session_execution_receipt", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+              payload: {
+                sessionId: "session_execution_receipt",
+                capabilities: ["move_to_tile"],
+                presentationLocale: "en-US",
+                registrations: [
+                  { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published" },
+                ],
+              },
             }),
           );
           continue;
@@ -449,7 +459,7 @@ test("local Stardew bridge delivers an exact-correlated system notice receipt", 
               ...request,
               messageId: "mod_hello_system_notice",
               type: "hello_ack",
-              payload: { sessionId: "session_system_notice", capabilities: [], presentationLocale: "en-US" },
+              payload: { sessionId: "session_system_notice", capabilities: [], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
             }),
           );
           continue;
@@ -513,7 +523,7 @@ test("local Stardew bridge authenticates and observes Mod-declared capabilities"
                 ...request,
                 messageId: "mod_hello_01",
                 type: "hello_ack",
-                payload: { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+                payload: { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
               }
             : {
                 ...request,
@@ -572,7 +582,14 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
               ...request,
               messageId: "mod_hello_cancel_identity",
               type: "hello_ack",
-              payload: { sessionId: "session_cancel_identity", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+              payload: {
+                sessionId: "session_cancel_identity",
+                capabilities: ["move_to_tile"],
+                presentationLocale: "en-US",
+                registrations: [
+                  { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published" },
+                ],
+              },
             }),
           );
           continue;
@@ -617,7 +634,10 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
     assert.notEqual(cancelPayloads[2].cancelId, cancelPayloads[0].cancelId);
     assert.equal(cancelPayloads[2].cancelEpoch, 1);
     for (const payload of cancelPayloads) {
-      assert.equal(payload.requestId, payload.executionId === "cancel_execution_01" ? "cancel_request_01" : "cancel_request_02");
+      assert.equal(
+        payload.requestId,
+        payload.executionId === "cancel_execution_01" ? "cancel_request_01" : "cancel_request_02",
+      );
       assert.match(payload.cancelId, /^[A-Za-z0-9_-]{1,128}$/);
       assert.ok(Number.isSafeInteger(payload.cancelEpoch) && payload.cancelEpoch >= 1);
       assert.equal(payload.reasonCode, "stop_requested");

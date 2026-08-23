@@ -4,21 +4,38 @@ import { once } from "node:events";
 import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 
 if (process.platform !== "win32") throw new Error("P4 durable acceptance requires real Windows production mounting");
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { createP4DurableTurnAcceptanceFacade } from "./p4-durable-turn-acceptance.js";
 
 const key = "a".repeat(64);
-const command = Object.freeze({ chatThreadId: "thread_01", chatSurfaceSessionId: "surface_01", companionId: "companion_01", continuityId: "continuity_01", selectionGeneration: 1, text: "Hello", locale: "en-US", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0 });
+const command = Object.freeze({
+  chatThreadId: "thread_01",
+  chatSurfaceSessionId: "surface_01",
+  companionId: "companion_01",
+  continuityId: "continuity_01",
+  selectionGeneration: 1,
+  text: "Hello",
+  locale: "en-US",
+  idempotencyKey: "abcdefghijklmnopqrstuv",
+  expectedDraftRevision: 0,
+});
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4-"));
   const store = createChatThreadStore(root, key, () => 100);
-  await store.createThread({ chatThreadId: command.chatThreadId, companionId: command.companionId, continuityId: command.continuityId, chatSurfaceSessionId: command.chatSurfaceSessionId, opening: "blank" });
+  await store.createThread({
+    chatThreadId: command.chatThreadId,
+    companionId: command.companionId,
+    continuityId: command.continuityId,
+    chatSurfaceSessionId: command.chatSurfaceSessionId,
+    opening: "blank",
+  });
   return { root, store, directory: join(root, "tavern", "v1", "continuities", key, "threads", command.chatThreadId) };
 }
 
@@ -26,15 +43,54 @@ test("P4 acceptance is absent from the ordinary ChatThreadStore surface", async 
   const { root, store } = await fixture();
   try {
     assert.equal("acceptPlayerMessage" in store, false);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("P4 prepared recovery restores all artifacts, ignores legacy chat drafts, and removes its journal after readback", async () => {
   const { root, store, directory } = await fixture();
   try {
     const initial = await store.resumeThread(command.chatThreadId, command.chatSurfaceSessionId);
-    const recovered = { ...initial, messages: [{ messageId: "player_recovered", role: "player", kind: "player", text: "Recovered", occurredAtMs: 101, greetingSource: null }], draft: { revision: 1, text: null }, turnLedger: { turnId: "turn_recovered", status: "accepted_queued", idempotencyKey: command.idempotencyKey, messageId: "player_recovered", acceptedAtMs: 101 }, idempotency: [{ key: command.idempotencyKey, fingerprint: "b".repeat(64), result: { turnId: "turn_recovered", status: "accepted_queued", idempotencyKey: command.idempotencyKey, messageId: "player_recovered", acceptedAtMs: 101 } }] };
-    await writeFile(join(directory, "transaction.json"), JSON.stringify({ schemaVersion: 1, state: recovered }), "utf8");
+    const recovered = {
+      ...initial,
+      messages: [
+        {
+          messageId: "player_recovered",
+          role: "player",
+          kind: "player",
+          text: "Recovered",
+          occurredAtMs: 101,
+          greetingSource: null,
+        },
+      ],
+      draft: { revision: 1, text: null },
+      turnLedger: {
+        turnId: "turn_recovered",
+        status: "accepted_queued",
+        idempotencyKey: command.idempotencyKey,
+        messageId: "player_recovered",
+        acceptedAtMs: 101,
+      },
+      idempotency: [
+        {
+          key: command.idempotencyKey,
+          fingerprint: "b".repeat(64),
+          result: {
+            turnId: "turn_recovered",
+            status: "accepted_queued",
+            idempotencyKey: command.idempotencyKey,
+            messageId: "player_recovered",
+            acceptedAtMs: 101,
+          },
+        },
+      ],
+    };
+    await writeFile(
+      join(directory, "transaction.json"),
+      JSON.stringify({ schemaVersion: 1, state: recovered }),
+      "utf8",
+    );
     await unlink(join(directory, "draft.json"));
     await writeFile(join(directory, "turn-ledger.json"), "{}", "utf8");
     const legacy = join(root, "tavern", "v1", "chat-drafts");
@@ -42,29 +98,47 @@ test("P4 prepared recovery restores all artifacts, ignores legacy chat drafts, a
     assert.deepEqual(await store.resumeThread(command.chatThreadId, command.chatSurfaceSessionId), recovered);
     await assert.rejects(readFile(join(directory, "transaction.json")), { code: "ENOENT" });
     assert.deepEqual(await store.resumeThread(command.chatThreadId, command.chatSurfaceSessionId), recovered);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 function manifest(root: string): HostDeploymentManifest {
-  return Object.freeze({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: root, principal: { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" }, bootstrapOperationId: "bootstrap_01", authorityGeneration: 1 });
+  return Object.freeze({
+    schemaVersion: 2,
+    topology: "independent_chat_and_game_surfaces",
+    runtimeRoot: root,
+    principal: { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
+    bootstrapOperationId: "bootstrap_01",
+    authorityGeneration: 1,
+  });
 }
 
 test("P4 facade rejects forged mounted leases before access", () => {
   const forged = Object.freeze({}) as MountedChatRuntimeLease;
-  assert.throws(() => createP4DurableTurnAcceptanceFacade(manifest("unused"), forged), /p4_durable_turn_acceptance_unavailable/);
+  assert.throws(
+    () => createP4DurableTurnAcceptanceFacade(manifest("unused"), forged),
+    /p4_durable_turn_acceptance_unavailable/,
+  );
 });
 
 test("public P4 facade calls only its private bridge, never raw store or coordinator internals", async () => {
   const source = await readFile(new URL("./p4-durable-turn-acceptance.js", import.meta.url), "utf8");
   assert.match(source, /from "\.\/p4-durable-turn-acceptance\.internal\.js"/);
   assert.match(source, /acceptMountedP4DurableTurnFromFacade\(manifest, lease,/);
-  assert.doesNotMatch(source, /acceptP4MountedPlayerMessage\(|acceptMountedP4DurableTurn\(|consumeMountedP4Admission\(/);
+  assert.doesNotMatch(
+    source,
+    /acceptP4MountedPlayerMessage\(|acceptMountedP4DurableTurn\(|consumeMountedP4Admission\(/,
+  );
 });
 
 test("P4 opaque admission is one-shot, rejects reentry and close drains the accepted store transaction", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4-admission-"));
   try {
-    const coordinatorUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", import.meta.url).href;
+    const coordinatorUrl = new URL(
+      "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
+      import.meta.url,
+    ).href;
     const deploymentUrl = new URL("../deployment-manifest.js", import.meta.url).href;
     const storeUrl = new URL("./chat-thread-store.js", import.meta.url).href;
     const script = `
@@ -122,12 +196,27 @@ test("P4 opaque admission is one-shot, rejects reentry and close drains the acce
       process.stdout.write(JSON.stringify({ firstReceipt, afterFirst, afterOuter, closePendingBeforeMutation, receipt, afterClose, events, state }));
       await authority.close();
     `;
-    const child = spawn(process.execPath, ["--input-type=module", "--eval", script, coordinatorUrl, deploymentUrl, storeUrl, root], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    const output: Buffer[] = [], errors: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => output.push(chunk)); child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "--eval", script, coordinatorUrl, deploymentUrl, storeUrl, root],
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+    );
+    const output: Buffer[] = [],
+      errors: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
     const [code] = (await once(child, "exit")) as [number | null];
     assert.equal(code, 0, Buffer.concat(errors).toString("utf8"));
-    const result = JSON.parse(Buffer.concat(output).toString("utf8")) as { firstReceipt: { turnId: string }; afterFirst: boolean; afterOuter: boolean; closePendingBeforeMutation: boolean; receipt: { messageId: string; idempotencyKey: string }; afterClose: boolean; events: string[]; state: { messages: unknown[]; turnLedger: { messageId: string } | null; idempotency: { key: string }[] } };
+    const result = JSON.parse(Buffer.concat(output).toString("utf8")) as {
+      firstReceipt: { turnId: string };
+      afterFirst: boolean;
+      afterOuter: boolean;
+      closePendingBeforeMutation: boolean;
+      receipt: { messageId: string; idempotencyKey: string };
+      afterClose: boolean;
+      events: string[];
+      state: { messages: unknown[]; turnLedger: { messageId: string } | null; idempotency: { key: string }[] };
+    };
     assert.equal(result.firstReceipt.turnId, "ignored");
     assert.equal(result.afterFirst, true);
     assert.equal(result.afterOuter, true);
@@ -135,15 +224,30 @@ test("P4 opaque admission is one-shot, rejects reentry and close drains the acce
     assert.equal(result.afterClose, true);
     assert.equal(result.state.messages.length, 1);
     assert.equal(result.state.turnLedger?.messageId, result.receipt.messageId);
-    assert.deepEqual(result.state.idempotency.map(({ key }) => key), [result.receipt.idempotencyKey]);
-    assert.deepEqual(result.events, ["reentrant-rejected", "admitted", "close-started", "mutation-start", "receipt", "close-settled"]);
-  } finally { await rm(root, { recursive: true, force: true }); }
+    assert.deepEqual(
+      result.state.idempotency.map(({ key }) => key),
+      [result.receipt.idempotencyKey],
+    );
+    assert.deepEqual(result.events, [
+      "reentrant-rejected",
+      "admitted",
+      "close-started",
+      "mutation-start",
+      "receipt",
+      "close-settled",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("P4 facade genuine mount binds root and principal before durable writes, replays exact receipts, and closes", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-p4-mounted-"));
   try {
-    const coordinatorUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js", import.meta.url).href;
+    const coordinatorUrl = new URL(
+      "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",
+      import.meta.url,
+    ).href;
     const facadeUrl = new URL("./p4-durable-turn-acceptance.js", import.meta.url).href;
     const deploymentUrl = new URL("../deployment-manifest.js", import.meta.url).href;
     const script = `
@@ -206,12 +310,41 @@ test("P4 facade genuine mount binds root and principal before durable writes, re
       let closed = false; try { await facade.accept({ text: "Again", locale: "en-US", idempotencyKey: "bcdefghijklmnopqrstuvw", expectedDraftRevision: 1 }); } catch (error) { closed = /p4_durable_turn_acceptance_unavailable/.test(String(error)); }
       process.stdout.write(JSON.stringify({ accepted, replay, changedPayload, busy, rejected, callbackInvocations, pristineAfterRejected, recoveredCurrent, recoveredOther, state, otherState, closed })); await authority.close();
     `;
-    const child = spawn(process.execPath, ["--input-type=module", "--eval", script, coordinatorUrl, facadeUrl, deploymentUrl, root], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    const output: Buffer[] = [], errors: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => output.push(chunk)); child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
+    const child = spawn(
+      process.execPath,
+      ["--input-type=module", "--eval", script, coordinatorUrl, facadeUrl, deploymentUrl, root],
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+    );
+    const output: Buffer[] = [],
+      errors: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
     const [code] = (await once(child, "exit")) as [number | null];
     assert.equal(code, 0, Buffer.concat(errors).toString("utf8"));
-    const result = JSON.parse(Buffer.concat(output).toString("utf8")) as { accepted: { status: string; messageId: string }; replay: { status: string; messageId: string }; changedPayload: boolean; busy: boolean; rejected: boolean[]; callbackInvocations: number[]; pristineAfterRejected: boolean[]; recoveredCurrent: { draft: { revision: number; text: string | null } }; recoveredOther: { draft: { revision: number; text: string | null } }; state: { messages: unknown[]; draft: { revision: number; text: string | null }; turnLedger: unknown; idempotency: unknown[] }; otherState: { messages: unknown[]; draft: { revision: number; text: string | null }; turnLedger: unknown; idempotency: unknown[] }; closed: boolean };
+    const result = JSON.parse(Buffer.concat(output).toString("utf8")) as {
+      accepted: { status: string; messageId: string };
+      replay: { status: string; messageId: string };
+      changedPayload: boolean;
+      busy: boolean;
+      rejected: boolean[];
+      callbackInvocations: number[];
+      pristineAfterRejected: boolean[];
+      recoveredCurrent: { draft: { revision: number; text: string | null } };
+      recoveredOther: { draft: { revision: number; text: string | null } };
+      state: {
+        messages: unknown[];
+        draft: { revision: number; text: string | null };
+        turnLedger: unknown;
+        idempotency: unknown[];
+      };
+      otherState: {
+        messages: unknown[];
+        draft: { revision: number; text: string | null };
+        turnLedger: unknown;
+        idempotency: unknown[];
+      };
+      closed: boolean;
+    };
     assert.equal(result.accepted.status, "accepted_queued");
     assert.deepEqual(result.replay, result.accepted);
     assert.equal(result.changedPayload, true);
@@ -230,5 +363,7 @@ test("P4 facade genuine mount binds root and principal before durable writes, re
     assert.equal(result.otherState.turnLedger, null);
     assert.equal(result.otherState.idempotency.length, 0);
     assert.equal(result.closed, true);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

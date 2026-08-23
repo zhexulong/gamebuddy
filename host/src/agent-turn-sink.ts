@@ -1,5 +1,5 @@
-import { type AgentSession } from "@earendil-works/pi-coding-agent";
-import { type CompanionTurnSink, type DeliveryDisposition } from "./event-pump.js";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { CompanionTurnSink, DeliveryDisposition } from "./event-pump.js";
 
 /**
  * A deliberately thin ordinary-turn adapter. It passes source-labelled batches

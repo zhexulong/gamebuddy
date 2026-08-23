@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile, rename } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { buildGameLocationInteractionRegister } from "./lib/stardew-game-location-register.mjs";
 
 const ASSEMBLY = "Stardew Valley.dll";

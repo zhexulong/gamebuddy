@@ -5,6 +5,7 @@ import {
   deriveNativeVirtualReceiverRegister,
   validateNativeVirtualReceiverRegister,
 } from "./lib/stardew-native-virtual-receiver-register.mjs";
+
 const h = (text) => createHash("sha256").update(text).digest("hex");
 const axe = `namespace Demo; public class Axe : Tool { public override bool beginUsing(GameLocation l, int x, int y, Farmer who) { return true; } }`;
 const hoe = `namespace Demo; public class Hoe : Tool { }`;

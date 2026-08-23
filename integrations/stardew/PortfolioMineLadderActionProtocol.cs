@@ -96,7 +96,7 @@ internal sealed record PortfolioMineLadderProbe(
     int CurrentFloor,
     int LowestMineLevel,
     bool TargetUnlocked,
-    bool LadderInteractionAvailable,
+    bool LadderObserved,
     int TargetFloor)
 {
     [JsonExtensionData]
@@ -117,7 +117,7 @@ internal sealed record PortfolioMineLadderFreshObservation(
     int LowestMineLevel,
     bool UnlockedLevelObserved,
     bool TargetUnlocked,
-    bool LadderInteractionAvailable,
+    bool LadderObserved,
     string OpaqueLadderTarget,
     int TargetFloor)
 {
@@ -224,17 +224,11 @@ internal sealed record PortfolioMineLadderAdapterResult(
     int TargetFloor,
     bool TransitionArmed)
 {
-    [JsonIgnore]
-    internal bool ApproachPending { get; init; }
-
-    [JsonIgnore]
-    internal bool NativeOperationFailed { get; init; }
-
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; init; }
 
     internal bool IsValid => Scope is not null && Scope.IsValid
-        && ((TransitionArmed ? 1 : 0) + (ApproachPending ? 1 : 0) + (NativeOperationFailed ? 1 : 0) == 1)
+        && TransitionArmed
         && PortfolioBridgeProtocol.IsOpaqueId(RequestId)
         && PortfolioBridgeProtocol.IsOpaqueId(TraceId)
         && PortfolioBridgeProtocol.IsOpaqueId(ExecutionId)

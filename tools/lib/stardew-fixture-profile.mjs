@@ -1,5 +1,5 @@
-import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
+import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const PROFILE_NAMES = Object.freeze(["A-host", "A-ai-client", "A-ai-probe"]);
@@ -30,7 +30,12 @@ const CONFIG_TARGETS = Object.freeze([
 // SMAPI scans the complete custom --mods-path tree. A profile sidecar may be
 // useful configuration input, but it must never retain a second manifest/DLL
 // beside the deployed Mods/GameBuddy bundle during a fixture run.
-const BUNDLE_FILE_NAMES = Object.freeze(["GameBuddy.Stardew.dll", "manifest.json", "GameBuddy.Stardew.deps.json"]);
+const BUNDLE_FILE_NAMES = Object.freeze([
+  "GameBuddy.Stardew.dll",
+  "GameBuddy.Stardew.Core.dll",
+  "manifest.json",
+  "GameBuddy.Stardew.deps.json",
+]);
 const SIDECAR_BUNDLE_TARGETS = Object.freeze(
   PROFILE_NAMES.flatMap((profile) =>
     BUNDLE_FILE_NAMES.map((fileName) => ({
@@ -228,15 +233,9 @@ export async function restoreFixtureProfile(options) {
   const backupName = assertBackupName(options.backupName);
   await assertFixtureTransaction(context, backupName);
   const backupDir = join(context.root, backupName);
-  try {
-    const restored = await restoreFixtureProfileUnlocked(context, backupDir, { removeBackup: options.removeBackup });
-    if (options.removeBackup !== false) await endFixtureTransaction(context, backupName);
-    return restored;
-  } catch (error) {
-    // Preserve the transaction lock after a failed restore: another prepare
-    // must not overwrite the still-recoverable backup/profile state.
-    throw error;
-  }
+  const restored = await restoreFixtureProfileUnlocked(context, backupDir, { removeBackup: options.removeBackup });
+  if (options.removeBackup !== false) await endFixtureTransaction(context, backupName);
+  return restored;
 }
 
 async function restoreFixtureProfileUnlocked(context, backupDir, { removeBackup = true } = {}) {
@@ -624,8 +623,9 @@ async function assertSidecarBundlesAbsent(context) {
 async function deployModBundle(context, host, ai) {
   const releaseDll = join(context.releaseDir, "GameBuddy.Stardew.dll");
   const releaseManifest = join(context.releaseDir, "manifest.json");
+  const releaseCoreDll = join(context.releaseDir, "GameBuddy.Stardew.Core.dll");
   const releaseDeps = join(context.releaseDir, "GameBuddy.Stardew.deps.json");
-  for (const file of [releaseDll, releaseManifest, releaseDeps])
+  for (const file of [releaseDll, releaseCoreDll, releaseManifest, releaseDeps])
     if (!(await exists(file))) throw new Error(`release_bundle_missing:${file}`);
   for (const profile of PROFILE_NAMES) {
     const sidecarRoot = join(context.profiles, profile, "GameBuddy");
@@ -637,6 +637,7 @@ async function deployModBundle(context, host, ai) {
     // remains available as the transaction input and is restored separately.
     await Promise.all(BUNDLE_FILE_NAMES.map((fileName) => rm(join(sidecarRoot, fileName), { force: true })));
     await cp(releaseDll, join(modRoot, "GameBuddy.Stardew.dll"));
+    await cp(releaseCoreDll, join(modRoot, "GameBuddy.Stardew.Core.dll"));
     await cp(releaseManifest, join(modRoot, "manifest.json"));
     await cp(releaseDeps, join(modRoot, "GameBuddy.Stardew.deps.json"));
   }
@@ -691,7 +692,7 @@ async function inspectStardewProcesses(processNames) {
       const { stdout } = await tasklist("tasklist.exe", ["/FI", `IMAGENAME eq ${imageName}`, "/NH", "/FO", "CSV"], {
         windowsHide: true,
       });
-      if (stdout.split(/\r?\n/).some((line) => line.includes(`\"${imageName}\"`))) matches.push(imageName);
+      if (stdout.split(/\r?\n/).some((line) => line.includes(`"${imageName}"`))) matches.push(imageName);
     } catch (error) {
       // tasklist uses exit code 1 when a filter has no matching process.
       if (error?.code !== 1) throw new Error(`fixture_process_guard_failed:${imageName}:${error?.code ?? "unknown"}`);

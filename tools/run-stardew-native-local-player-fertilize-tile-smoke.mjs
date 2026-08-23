@@ -13,13 +13,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const SCENARIO = "native_fertilize_tile_v1";
-const EXPECTED_CAPABILITIES = [
-  "cancel_active_execution",
-  "fertilize_tile",
-  "inspect_self",
-  "move_to_tile",
-  "travel",
-];
+const EXPECTED_CAPABILITIES = ["cancel_active_execution", "fertilize_tile", "inspect_self", "move_to_tile", "travel"];
 
 /** Execute the fertilize contract against an already-connected bridge session. */
 export async function runFertilizeTileSmoke(
@@ -207,14 +201,7 @@ async function moveToTile(client, receipts, snapshot, target, phase, trace, stab
   });
 }
 
-async function moveToReachableFertilizerTarget(
-  client,
-  receipts,
-  snapshot,
-  trace,
-  stabilizeTimeoutMs,
-  moveTimeoutMs,
-) {
+async function moveToReachableFertilizerTarget(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs) {
   if (chooseReachableFertilizerTarget(snapshot)) return snapshot;
   for (let radius = 2; radius <= 12; radius++) {
     const candidates = [];

@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 
 import {
+  type BridgeMessage,
   EVENT_WINDOW_MS,
   MAX_EVENTS_PER_WINDOW,
-  type BridgeMessage,
   type Scope,
   serializeBounded,
   validateBridgeMessage,

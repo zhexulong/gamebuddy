@@ -11,7 +11,7 @@ import {
 const ACTION = "equip_tool";
 
 /** Execute the equip-tool contract against an already-connected bridge session. */
-export async function runEquipToolSmoke(client, config, { postconditionTimeoutMs = 5_000 } = {}) {
+export async function runEquipToolSmoke(client, _config, { postconditionTimeoutMs = 5_000 } = {}) {
   try {
     const before = await observeFresh(client, { actionable: true });
     if (!before.capabilities.includes(ACTION)) throw new Error("native_local_equip_tool_capability_missing");
@@ -23,7 +23,9 @@ export async function runEquipToolSmoke(client, config, { postconditionTimeoutMs
           entry.label.length > 0 &&
           entry.label !== before.currentTool,
       ) ??
-      before.toolSlots?.find((entry) => Number.isInteger(entry.slot) && typeof entry.label === "string" && entry.label.length > 0);
+      before.toolSlots?.find(
+        (entry) => Number.isInteger(entry.slot) && typeof entry.label === "string" && entry.label.length > 0,
+      );
     if (!selected) throw new Error("no_live_eligible_tool_slot");
 
     const requestId = `native_local_equip_tool_${Date.now()}`;

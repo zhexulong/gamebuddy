@@ -98,7 +98,12 @@ if (import.meta.main) {
     console.log(JSON.stringify(result));
     if (result.state !== "passed") process.exitCode = 2;
   } catch (error) {
-    console.error(JSON.stringify({ state: "blocked", reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256) }));
+    console.error(
+      JSON.stringify({
+        state: "blocked",
+        reasonCode: String(error instanceof Error ? error.message : error).slice(0, 256),
+      }),
+    );
     process.exitCode = 2;
   } finally {
     session.close();

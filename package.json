@@ -10,6 +10,7 @@
   "scripts": {
     "build": "pnpm --filter @gamebuddy/voice-protocol build && pnpm --filter @gamebuddy/companion-host build && pnpm --filter @gamebuddy/voice-gateway build",
     "test": "pnpm --filter @gamebuddy/voice-protocol test && pnpm --filter @gamebuddy/companion-host test && pnpm --filter @gamebuddy/voice-gateway test",
+    "test:all": "pnpm test && pnpm test:dialogue-web",
     "test:dialogue-web": "pnpm --filter @gamebuddy/dialogue-web test",
     "typecheck": "pnpm --filter @gamebuddy/voice-protocol typecheck && pnpm --filter @gamebuddy/companion-host typecheck && pnpm --filter @gamebuddy/voice-gateway typecheck && pnpm --filter @gamebuddy/dialogue-web typecheck",
     "build:voice-protocol": "pnpm --filter @gamebuddy/voice-protocol build",
@@ -19,7 +20,7 @@
     "format:check": "biome format tools host/src voice-gateway/src dialogue-web/src",
     "check:text-hygiene": "node tools/check-text-hygiene.mjs",
     "check:diff": "node tools/check-diff.mjs",
-    "quality:check": "pnpm lint && pnpm format:check && pnpm check:text-hygiene && pnpm check:diff",
+    "quality:check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm check:host-production-import-boundary && pnpm check:text-hygiene && pnpm test:stardew-action-projection && pnpm check:stardew-action-surface && pnpm test:stardew:core && pnpm test:stardew:integration",
     "dependency-audit": "node tools/generate-sbom.mjs --verify",
     "check:dependency-risk": "node tools/check-dependency-risk.mjs",
     "test:dependency-risk": "node --test tools/check-dependency-risk.test.mjs",
@@ -40,6 +41,8 @@
     "run:stardew-companion-live": "node tools/run-stardew-companion-live-scenarios.mjs",
     "verify:stardew:static": "node tools/verify-stardew-static.mjs",
     "test:stardew:static": "node --test tools/verify-stardew-static.test.mjs",
+    "test:stardew:core": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests",
+    "test:stardew:integration": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests",
     "test:stardew-action-projection": "node --test tools/check-stardew-action-promotion.test.mjs tools/stardew-action-gate-descriptors.test.mjs",
     "verify:stardew-action-projection-local": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-local.ps1 -Configuration Debug",
     "verify:stardew-action-projection-p2c": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-p2c.ps1 -Configuration Debug",
@@ -151,7 +154,6 @@
     "test:stardew-static-companion-fixture": "node --test tools/stardew-companion-live-scenario.test.mjs tools/stardew-companion-live-scorer.test.mjs",
     "test:stardew-static-companion-evidence": "node --test tools/lib/stardew-companion-live-evidence.test.mjs",
     "test:stardew-static-companion-admission": "node --test tools/lib/stardew-companion-production-admission.test.mjs",
-    "test:stardew-static-capability-projection": "dotnet integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll",
     "test:stardew-static-portfolio-projection": "dotnet integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll"
   },
   "devDependencies": {

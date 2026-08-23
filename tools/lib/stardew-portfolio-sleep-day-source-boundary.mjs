@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { lstat, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 export const TARGET_VERSION = "1.6.15.24356";
@@ -130,7 +130,7 @@ export const ANCHORS = Object.freeze([
 ]);
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const digest = (files) =>
-  sha(files.map((file) => `${file.relativePath}\t${file.lengthBytes}\t${file.sha256}`).join("\n") + "\n");
+  sha(`${files.map((file) => `${file.relativePath}\t${file.lengthBytes}\t${file.sha256}`).join("\n")}\n`);
 export const configurationDigest = sha(
   JSON.stringify({
     tool: "ilspycmd",
@@ -166,7 +166,7 @@ function normalPath(relativePath) {
     relativePath.split("/").every((part) => part && part !== "." && part !== "..")
   );
 }
-function sorted(a, b) {
+function _sorted(a, b) {
   return a.relativePath.localeCompare(b.relativePath);
 }
 const WINDOWS_BOOTSTRAP_POWERSHELL_ATTRIBUTES_SOURCE =

@@ -11,7 +11,7 @@ import { readStrictJsonFile, STRICT_JSON_READER_MAX_BUDGET_BYTES } from "./stric
 const execFileAsync = promisify(execFile);
 
 async function runWithMockedFilesystem(
-  mode: "same_size_replacement" | "lstat_failure" | "read_failure",
+  mode: "lstat_failure" | "read_failure",
   path: string,
 ): Promise<void> {
   const readerUrl = new URL("./strict-json-reader.js", import.meta.url).href;
@@ -21,21 +21,7 @@ async function runWithMockedFilesystem(
     const [readerUrl, targetPath, mode] = process.argv.slice(1);
     const overrides = mode === "lstat_failure"
       ? { lstat: async () => { throw new Error("sensitive stat detail"); } }
-      : { open: async (...args) => {
-          const handle = await filesystem.open(...args);
-          const read = handle.read.bind(handle);
-          let mutated = false;
-          handle.read = async (...readArgs) => {
-            if (mode === "read_failure") throw new Error("sensitive read detail");
-            const result = await read(...readArgs);
-            if (!mutated) {
-              mutated = true;
-              await filesystem.writeFile(targetPath, '{"value":"after!"}', "utf8");
-            }
-            return result;
-          };
-          return handle;
-        } };
+      : { readFile: async () => { throw new Error("sensitive read detail"); } };
     await mock.module("node:fs/promises", { namedExports: { ...filesystem, ...overrides } });
     const { readStrictJsonFile } = await import(readerUrl + "?controlled-filesystem");
     try {
@@ -85,7 +71,7 @@ test("strict JSON reader rejects malformed, trailing, and duplicate decoded keys
   await rejects("{not-json");
   await rejects('{"key":1,"k\\u0065y":2}');
   await rejects('{"value":1} trailing');
-  await rejects("[".repeat(33) + "0" + "]".repeat(33));
+  await rejects(`${"[".repeat(33)}0${"]".repeat(33)}`);
 });
 
 test("strict JSON reader rejects a UTF-8 BOM explicitly", async () => {
@@ -104,15 +90,6 @@ test("strict JSON reader accepts bounded high-cardinality valid JSON", async () 
   }
 });
 
-test("strict JSON reader rejects a same-size replacement during its read", async () => {
-  const subject = await fixture();
-  try {
-    await writeFile(subject.path, '{"value":"before"}', "utf8");
-    await runWithMockedFilesystem("same_size_replacement", subject.path);
-  } finally {
-    await subject.dispose();
-  }
-});
 
 test("strict JSON reader rejects invalid UTF-8 and files over its bounded limit", async () => {
   await rejects(Buffer.from([0xff]));

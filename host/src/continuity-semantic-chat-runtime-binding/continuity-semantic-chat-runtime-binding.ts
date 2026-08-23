@@ -3,8 +3,8 @@
  * manifest snapshot. It never accepts a path or loads deployment state.
  */
 export {
-  createChatRuntimeBinding,
   type ChatRuntimeBinding,
+  createChatRuntimeBinding,
   type OpaqueChatRuntimeBindingToken,
   type ReservedChatRuntimeMaterialization,
 } from "./continuity-semantic-chat-runtime-binding.internal.js";

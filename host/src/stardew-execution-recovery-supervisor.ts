@@ -43,7 +43,13 @@ export class StardewExecutionRecoverySupervisor {
           idempotencyKey: dispatch.idempotencyKey,
         });
         if (receipt.requestId !== dispatch.requestId) {
-          outcomes.push(Object.freeze({ requestId: dispatch.requestId, result: "rejected", reasonCode: "receipt_request_mismatch" }));
+          outcomes.push(
+            Object.freeze({
+              requestId: dispatch.requestId,
+              result: "rejected",
+              reasonCode: "receipt_request_mismatch",
+            }),
+          );
           continue;
         }
         this.coordinator.receiveReceipt(receipt);

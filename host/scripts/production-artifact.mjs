@@ -27,8 +27,7 @@ const configuredVerificationRoot = (value) => typeof value === "string"
 const REQUIRED_VERIFICATION_ROOTS = Object.freeze([
   "tavern/p4-durable-turn-acceptance.js",
   "tavern/p4-provider-attempt.js",
-  "tavern/p4-provider-start.js",
-  "tavern/p5-presentation-commit.js",
+  "tavern/chat-provider-start.js",
   "tavern/p3-static-shell-composition.js",
   "reference-pipeline-dialogue-web.js",
   "tavern-management-dialogue-web.js",

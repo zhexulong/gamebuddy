@@ -1,11 +1,11 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { type Mixer } from "./gateway.js";
+import type { Mixer } from "./gateway.js";
 
 const MAX_PCM_BYTES = 1_920_000;
 const POWERSHELL_TIMEOUT_MS = 12_000;

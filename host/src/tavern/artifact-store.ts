@@ -38,7 +38,7 @@ export type TavernRevisionRepository<T extends RevisionedArtifact, View> = Reado
   create(buildRevisionOne: () => T): Promise<View>;
   update(expectedRevision: number, buildNext: (revision: number) => T): Promise<View>;
 }>;
-export type TavernArtifactRepository<T extends RevisionedArtifact, View> = Readonly<{
+export type TavernArtifactRepository<_T extends RevisionedArtifact, View> = Readonly<{
   read(): Promise<View>;
   /** An absent exact leaf is not an artifact; corruption and invalid contents fail closed. */
   readIfPresent(): Promise<View | undefined>;

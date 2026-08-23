@@ -350,8 +350,7 @@ internal sealed class PortfolioSpecialOrderActionCoordinator
 
     private void StoreReplay(string key, ReplayEntry entry)
     {
-        if (!completedByIdempotency.ContainsKey(key))
-            completedByIdempotency.Add(key, entry);
+        completedByIdempotency.TryAdd(key, entry);
     }
 
     private static PortfolioSpecialOrderReceipt Finish(ActiveExecution execution, string state, string reasonCode)

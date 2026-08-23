@@ -1,6 +1,6 @@
-import { type ExecutionReceipt, type Scope as StardewScope, type Snapshot } from "./protocol.js";
-import { type KnowledgeBundle } from "./knowledge.js";
-import { type GameIntegrationModule } from "./integration-module.js";
+import type { GameIntegrationModule } from "./integration-module.js";
+import type { KnowledgeBundle } from "./knowledge.js";
+import type { ActionRegistration, ExecutionReceipt, Scope as StardewScope, Snapshot } from "./protocol.js";
 
 /**
  * Compatibility state exposed by the first Stardew bridge adapter. Other
@@ -10,6 +10,12 @@ export type CompanionIntegrationState = Readonly<{
   connected: boolean;
   sessionId: string | null;
   capabilities: readonly string[];
+  /**
+   * Authenticated Mod registration projection for this connection generation.
+   * Production bridge clients populate it from hello_ack; absence is treated as
+   * an empty catalog so a partial or stale adapter never materializes an action.
+   */
+  catalogRegistrations?: readonly ActionRegistration[];
   snapshot: Snapshot | null;
   latestReceipt: ExecutionReceipt | null;
   latestReasonCode: string | null;

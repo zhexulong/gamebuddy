@@ -10,7 +10,12 @@ function fail(code) {
 }
 
 function record(value, code) {
-  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
     fail(code);
   }
   return value;
@@ -22,8 +27,20 @@ function exactKeys(value, keys, code) {
 
 function action(value, source, strictShape = false) {
   const entry = record(value, `${source}_action_invalid`);
-  if (strictShape) exactKeys(entry, ["actionId", "familyId", "identityVersion", "lifecycle", "requiredCapability"], `${source}_action_shape`);
-  if (!ACTION_ID.test(entry.actionId) || !FAMILY_ID.test(entry.familyId) || !Number.isSafeInteger(entry.identityVersion) || entry.identityVersion < 1 || entry.lifecycle !== "published" || !ACTION_ID.test(entry.requiredCapability)) {
+  if (strictShape)
+    exactKeys(
+      entry,
+      ["actionId", "familyId", "identityVersion", "lifecycle", "requiredCapability"],
+      `${source}_action_shape`,
+    );
+  if (
+    !ACTION_ID.test(entry.actionId) ||
+    !FAMILY_ID.test(entry.familyId) ||
+    !Number.isSafeInteger(entry.identityVersion) ||
+    entry.identityVersion < 1 ||
+    entry.lifecycle !== "published" ||
+    !ACTION_ID.test(entry.requiredCapability)
+  ) {
     fail(`${source}_action_fields`);
   }
   return Object.freeze({
@@ -37,7 +54,11 @@ function action(value, source, strictShape = false) {
 
 export function parseModProjectionManifest(text) {
   let parsed;
-  try { parsed = JSON.parse(text); } catch { fail("manifest_json"); }
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    fail("manifest_json");
+  }
   const manifest = record(parsed, "manifest_shape");
   exactKeys(manifest, ["schema", "actions"], "manifest_shape");
   if (manifest.schema !== MANIFEST_SCHEMA || !Array.isArray(manifest.actions)) fail("manifest_schema");

@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { get } from "node:http";
-import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { PassThrough } from "node:stream";
+import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { get } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
-
-import { createStaticTavernArtifactServer, verifyTavernStaticArtifact } from "./index.js";
 import { createTestWindowsReparseInspector } from "../../windows-reparse-inspector/index.test-support.js";
+import { createStaticTavernArtifactServer, verifyTavernStaticArtifact } from "./index.js";
 
 const identity = Object.freeze({ browserContract: "tavern_browser_api/v1" as const, profileId: "chat-core" });
 const script = Buffer.from("console.log('synthetic artifact');\n", "utf8");
@@ -155,26 +154,39 @@ test("static verifier invokes the inspector for every traversal and read path", 
   try {
     await verifyTavernStaticArtifact(item.root, identity, capability);
     for (const relativePath of ["", "tavern-browser-artifact-manifest.json", "assets", assetPath, "index.html"]) {
-      assert.ok(inspected.some((path) => path === join(item.root, relativePath)), relativePath || "root");
+      assert.ok(
+        inspected.some((path) => path === join(item.root, relativePath)),
+        relativePath || "root",
+      );
     }
   } finally {
     await item.dispose();
   }
 });
 
-test("Windows directory junctions fail verification before static server construction", { skip: process.platform !== "win32" }, async () => {
-  const item = await fixture();
-  const target = await mkdtemp(join(tmpdir(), "gamebuddy-static-artifact-junction-target-"));
-  try {
-    await rm(join(item.root, "assets"), { recursive: true });
-    await symlink(target, join(item.root, "assets"), "junction");
-    await assert.rejects(() => verifyTavernStaticArtifact(item.root, identity, regularInspector()), /invalid_tavern_static_artifact/);
-    await assert.rejects(() => createStaticTavernArtifactServer(item.root, identity, regularInspector()), /invalid_tavern_static_artifact/);
-  } finally {
-    await item.dispose();
-    await rm(target, { recursive: true, force: true });
-  }
-});
+test(
+  "Windows directory junctions fail verification before static server construction",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const item = await fixture();
+    const target = await mkdtemp(join(tmpdir(), "gamebuddy-static-artifact-junction-target-"));
+    try {
+      await rm(join(item.root, "assets"), { recursive: true });
+      await symlink(target, join(item.root, "assets"), "junction");
+      await assert.rejects(
+        () => verifyTavernStaticArtifact(item.root, identity, regularInspector()),
+        /invalid_tavern_static_artifact/,
+      );
+      await assert.rejects(
+        () => createStaticTavernArtifactServer(item.root, identity, regularInspector()),
+        /invalid_tavern_static_artifact/,
+      );
+    } finally {
+      await item.dispose();
+      await rm(target, { recursive: true, force: true });
+    }
+  },
+);
 
 test("verifier rejects duplicate entries, unsafe reparse entries, size mismatch, and non-asset paths", async () => {
   const cases: Array<[string, (root: string) => Promise<void>]> = [
@@ -237,7 +249,10 @@ test("verifier rejects duplicate entries, unsafe reparse entries, size mismatch,
 });
 function syntheticHelper(inspected: string[]) {
   const child = Object.assign(new EventEmitter(), {
-    stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: () => true,
   });
   child.stdin.on("data", (input: Buffer) => {
     inspected.push(JSON.parse(input.toString("utf8")).path);

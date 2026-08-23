@@ -45,7 +45,7 @@ export type BrowserTurnV1 = Readonly<{
 }>;
 
 export type TavernBrowserOperationV1 = Readonly<{
-  operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard" | "chat.rename";
+  operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard" | "chat.rename" | "memory.mutate" | "world-info.bind";
   labelKey:
     | "tavern.nav.chat"
     | "tavern.nav.memory"
@@ -53,9 +53,32 @@ export type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.cancel"
     | "tavern.operation.draft.save"
     | "tavern.operation.draft.discard"
-    | "tavern.operation.rename";
+    | "tavern.operation.rename"
+    | "tavern.operation.memory.mutate"
+    | "tavern.operation.world-info.bind";
   availability: "available" | "busy" | "unavailable";
   routeId: string;
+}>;
+
+export type WorldInfoItemV1 = Readonly<{
+  handle: string;
+  title: string;
+  summary: string | null;
+  selected: boolean;
+}>;
+
+/** Safe opaque projection for binding World Info to the exact mounted Chat. */
+export type WorldInfoStateV1 = Readonly<{
+  state: "none" | "selected" | "locked" | "unavailable";
+  revision: string;
+  items: readonly WorldInfoItemV1[];
+}>;
+
+export type SetWorldInfoBindingCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: string;
+  sourceHandle: string | null;
 }>;
 
 export type TavernStateSnapshotV1 = Readonly<{
@@ -69,22 +92,25 @@ export type TavernStateSnapshotV1 = Readonly<{
   operations: readonly TavernBrowserOperationV1[];
   navigation: readonly unknown[];
   selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }> | null;
-  chat:
-    | Readonly<{
-        companion: Readonly<{ name: string }>;
-        title: string | null;
-        transcript: readonly BrowserMessageV1[];
-        draft: Readonly<{ revision: number; present: boolean }>;
-        turn: BrowserTurnV1 | null;
-        worldInfo: Readonly<Record<string, unknown>> | null;
-      }>
-    | null;
+  chat: Readonly<{
+    companion: Readonly<{ name: string }>;
+    title: string | null;
+    transcript: readonly BrowserMessageV1[];
+    draft: Readonly<{ revision: number; present: boolean }>;
+    turn: BrowserTurnV1 | null;
+    worldInfo: WorldInfoStateV1 | null;
+  }> | null;
   memory: Readonly<{ readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null }>;
   eventStream: null;
 }>;
 
 export type BrowserDraftV1 = Readonly<{ apiVersion: 1; revision: number; text: string | null }>;
-export type SaveDraftCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number; expectedRevision: number; text: string }>;
+export type SaveDraftCommandV1 = Readonly<{
+  apiVersion: 1;
+  selectionGeneration: number;
+  expectedRevision: number;
+  text: string;
+}>;
 export type DiscardDraftCommandV1 = Readonly<{ apiVersion: 1; selectionGeneration: number; expectedRevision: number }>;
 export type ChatListQueryV1 = Readonly<{ apiVersion: 1; state?: "active" }>;
 
@@ -115,6 +141,26 @@ export type ChatTitleV1 = Readonly<{
   title: string | null;
   managementRevision: number;
 }>;
+
+export type MemoryItemV1 = Readonly<{
+  handle: string;
+  title: string;
+  content: string;
+  category: "semantic" | "interaction";
+  status: "active" | "permanent" | "archived";
+  pinned: boolean;
+}>;
+
+export type MemoryReadV1 = Readonly<{
+  apiVersion: 1;
+  projectionRevision: string;
+  memories: readonly MemoryItemV1[];
+}>;
+
+export type MemoryMutationCommandV1 =
+  | Readonly<{ apiVersion: 1; operation: "create"; expectedProjectionRevision: string; content: string }>
+  | Readonly<{ apiVersion: 1; operation: "update"; expectedProjectionRevision: string; handle: string; content: string }>
+  | Readonly<{ apiVersion: 1; operation: "archive"; expectedProjectionRevision: string; handle: string }>;
 
 export type TavernProblemV1 = Readonly<{
   type: string;
@@ -162,22 +208,20 @@ const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 const HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
 const ROUTE_ID_PATTERN = /^[a-z][a-z0-9._-]*$/;
 const MAX_TEXT_UTF8_BYTES = 16_384;
+const MAX_MEMORY_TEXT_UTF8_BYTES = 4096;
 const MAX_TRANSCRIPT_MESSAGES = 500;
 const MAX_ARRAY_ITEMS = 100;
 
 const MESSAGE_ROLES = ["player", "companion"] as const;
 const MESSAGE_LOCALES = ["en", "zh-CN", "und"] as const;
-const TURN_STATES = [
-  "queued",
-  "running",
-  "response_visible",
-  "stopping",
-  "completed",
-  "cancelled",
-  "failed",
+const TURN_STATES = ["queued", "running", "response_visible", "stopping", "completed", "cancelled", "failed"] as const;
+const TURN_PROBLEM_CODES = [
+  "interrupted",
+  "no_visible_presentation",
+  "runtime_unavailable",
+  "storage_unavailable",
 ] as const;
-const TURN_PROBLEM_CODES = ["interrupted", "no_visible_presentation", "runtime_unavailable", "storage_unavailable"] as const;
-const OPERATION_IDS = ["chat.submit", "chat.cancel", "draft.save", "draft.discard", "chat.rename"] as const;
+const OPERATION_IDS = ["chat.submit", "chat.cancel", "draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"] as const;
 const LABEL_KEYS = [
   "tavern.nav.chat",
   "tavern.nav.memory",
@@ -186,6 +230,8 @@ const LABEL_KEYS = [
   "tavern.operation.draft.save",
   "tavern.operation.draft.discard",
   "tavern.operation.rename",
+  "tavern.operation.memory.mutate",
+  "tavern.operation.world-info.bind",
 ] as const;
 const OPERATION_AVAILABILITY = ["available", "busy", "unavailable"] as const;
 const NAVIGATION_ITEM_IDS = ["chat", "memory"] as const;
@@ -209,8 +255,6 @@ const PROBLEM_CODES = [
   "turn_already_terminal",
   "runtime_unavailable",
   "presentation_unavailable",
-  "memory_mutation_pending",
-  "memory_mutation_unavailable",
   "storage_unavailable",
   "state_reconciliation_required",
 ] as const;
@@ -220,8 +264,9 @@ const TURN_KEYS = ["handle", "state", "projectionRevision", "canCancel"] as cons
 const TURN_KEYS_WITH_PROBLEM_CODE = ["handle", "state", "projectionRevision", "canCancel", "problemCode"] as const;
 const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as const;
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
-const WORLD_INFO_KEYS = ["state", "items"] as const;
-const WORLD_INFO_ITEM_KEYS = ["handle", "title", "summary"] as const;
+const WORLD_INFO_KEYS = ["state", "revision", "items"] as const;
+const WORLD_INFO_ITEM_KEYS = ["handle", "title", "summary", "selected"] as const;
+const SET_WORLD_INFO_BINDING_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "sourceHandle"] as const;
 const SNAPSHOT_KEYS = [
   "apiVersion",
   "build",
@@ -241,13 +286,27 @@ const SNAPSHOT_CHAT_KEYS = ["companion", "title", "transcript", "draft", "turn",
 const CHAT_COMPANION_KEYS = ["name"] as const;
 const CHAT_DRAFT_KEYS = ["revision", "present"] as const;
 const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"] as const;
+const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "pinned"] as const;
+const MEMORY_READ_KEYS = ["apiVersion", "projectionRevision", "memories"] as const;
+const MEMORY_MUTATION_CREATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "content"] as const;
+const MEMORY_MUTATION_UPDATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "handle", "content"] as const;
+const MEMORY_MUTATION_ARCHIVE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "handle"] as const;
+const MEMORY_CATEGORIES = ["semantic", "interaction"] as const;
+const MEMORY_STATUSES = ["active", "permanent", "archived"] as const;
+const MAX_MEMORY_ITEMS = 200;
 const DRAFT_KEYS = ["apiVersion", "revision", "text"] as const;
 const SAVE_DRAFT_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "text"] as const;
 const DISCARD_DRAFT_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision"] as const;
-const CHAT_LIST_QUERY_KEYS = ["apiVersion", "state"] as const;
+const _CHAT_LIST_QUERY_KEYS = ["apiVersion", "state"] as const;
 const CHAT_LIST_ENTRY_KEYS = ["handle", "title", "status", "managementRevision", "isSelected"] as const;
 const CHAT_LIST_KEYS = ["apiVersion", "chats"] as const;
-const RENAME_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "chatHandle", "expectedManagementRevision", "title"] as const;
+const RENAME_COMMAND_KEYS = [
+  "apiVersion",
+  "selectionGeneration",
+  "chatHandle",
+  "expectedManagementRevision",
+  "title",
+] as const;
 const CHAT_TITLE_KEYS = ["apiVersion", "title", "managementRevision"] as const;
 const PROBLEM_KEYS = ["type", "title", "status", "code", "requestId", "retryable"] as const;
 
@@ -315,6 +374,10 @@ function hasUnpairedUtf16Surrogate(value: string): boolean {
 }
 
 /** NFC, no unpaired surrogates, bounded UTF-8 bytes (frozen BoundedText). */
+function isBoundedText(value: unknown, maxBytes: number): value is string {
+  return isNfcUtf8Text(value, 1, maxBytes);
+}
+
 function isNfcUtf8Text(value: unknown, minLength = 1, maxBytes = MAX_TEXT_UTF8_BYTES): value is string {
   if (typeof value !== "string" || value.length < minLength) return false;
   if (hasUnpairedUtf16Surrogate(value)) return false;
@@ -368,23 +431,36 @@ function isNavigationItem(value: unknown): boolean {
   );
 }
 
-function isWorldInfoItem(value: unknown): boolean {
+function isWorldInfoItem(value: unknown): value is WorldInfoItemV1 {
   return (
     isRecord(value) &&
     hasExactKeys(value, WORLD_INFO_ITEM_KEYS) &&
     isOpaqueHandle(value.handle) &&
     isLengthBoundedString(value.title, 1, 256) &&
-    (value.summary === null || isLengthBoundedString(value.summary, 0, 512))
+    (value.summary === null || isLengthBoundedString(value.summary, 0, 512)) &&
+    typeof value.selected === "boolean"
   );
 }
 
-function isWorldInfo(value: unknown): boolean {
+function isWorldInfo(value: unknown): value is WorldInfoStateV1 {
   if (!isRecord(value) || !hasExactKeys(value, WORLD_INFO_KEYS)) return false;
   return (
     isOneOf(value.state, WORLD_INFO_STATES) &&
+    isOpaqueHandle(value.revision) &&
     Array.isArray(value.items) &&
     value.items.length <= MAX_ARRAY_ITEMS &&
     value.items.every(isWorldInfoItem)
+  );
+}
+
+function isSetWorldInfoBindingCommand(value: unknown): value is SetWorldInfoBindingCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, SET_WORLD_INFO_BINDING_COMMAND_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isPositiveSafeInteger(value.selectionGeneration) &&
+    isOpaqueHandle(value.expectedRevision) &&
+    (value.sourceHandle === null || isOpaqueHandle(value.sourceHandle))
   );
 }
 
@@ -425,6 +501,16 @@ function isChat(value: unknown): boolean {
   return true;
 }
 
+function isMemoryState(value: unknown): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, MEMORY_KEYS)) return false;
+  if (typeof value.readAvailable !== "boolean" || typeof value.mutationAvailable !== "boolean") return false;
+  if (value.projectionRevision !== null && !isOpaqueHandle(value.projectionRevision)) return false;
+  return (
+    (value.readAvailable && value.projectionRevision !== null) ||
+    (!value.readAvailable && value.projectionRevision === null && !value.mutationAvailable)
+  );
+}
+
 function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
   if (!isRecord(value) || !hasExactKeys(value, SNAPSHOT_KEYS)) return false;
   if (value.apiVersion !== TAVERN_BROWSER_API_VERSION) return false;
@@ -456,9 +542,7 @@ function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
     return false;
   if (value.selection !== null && !isSelection(value.selection)) return false;
   if (value.chat !== null && !isChat(value.chat)) return false;
-  if (!isRecord(value.memory) || !hasExactKeys(value.memory, MEMORY_KEYS)) return false;
-  if (typeof value.memory.readAvailable !== "boolean" || typeof value.memory.mutationAvailable !== "boolean") return false;
-  if (value.memory.projectionRevision !== null && !isOpaqueHandle(value.memory.projectionRevision)) return false;
+  if (!isMemoryState(value.memory)) return false;
   // The management profile mounts no events route: any event stream object is
   // a different (looser) contract and must reconcile, never be read loosely.
   if (value.eventStream !== null) return false;
@@ -466,13 +550,32 @@ function isSnapshot(value: unknown): value is TavernStateSnapshotV1 {
 }
 
 function isDraft(value: unknown): value is BrowserDraftV1 {
-  return isRecord(value) && hasExactKeys(value, DRAFT_KEYS) && value.apiVersion === 1 && isNonNegativeSafeInteger(value.revision) && (value.text === null || isNfcUtf8Text(value.text));
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, DRAFT_KEYS) &&
+    value.apiVersion === 1 &&
+    isNonNegativeSafeInteger(value.revision) &&
+    (value.text === null || isNfcUtf8Text(value.text))
+  );
 }
 function isSaveDraftCommand(value: unknown): value is SaveDraftCommandV1 {
-  return isRecord(value) && hasExactKeys(value, SAVE_DRAFT_KEYS) && value.apiVersion === 1 && isPositiveSafeInteger(value.selectionGeneration) && isNonNegativeSafeInteger(value.expectedRevision) && isNfcUtf8Text(value.text);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, SAVE_DRAFT_KEYS) &&
+    value.apiVersion === 1 &&
+    isPositiveSafeInteger(value.selectionGeneration) &&
+    isNonNegativeSafeInteger(value.expectedRevision) &&
+    isNfcUtf8Text(value.text)
+  );
 }
 function isDiscardDraftCommand(value: unknown): value is DiscardDraftCommandV1 {
-  return isRecord(value) && hasExactKeys(value, DISCARD_DRAFT_KEYS) && value.apiVersion === 1 && isPositiveSafeInteger(value.selectionGeneration) && isNonNegativeSafeInteger(value.expectedRevision);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, DISCARD_DRAFT_KEYS) &&
+    value.apiVersion === 1 &&
+    isPositiveSafeInteger(value.selectionGeneration) &&
+    isNonNegativeSafeInteger(value.expectedRevision)
+  );
 }
 function validateDraft(value: unknown): BrowserDraftV1 {
   if (!isDraft(value)) throw new TavernProtocolError();
@@ -550,6 +653,40 @@ function isProblem(value: unknown): value is TavernProblemV1 {
   );
 }
 
+function isMemoryItem(value: unknown): value is MemoryItemV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, MEMORY_ITEM_KEYS) &&
+    isOpaqueHandle(value.handle) &&
+    isLengthBoundedString(value.title, 1, 256) &&
+    isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES) &&
+    isOneOf(value.category, MEMORY_CATEGORIES) &&
+    isOneOf(value.status, MEMORY_STATUSES) &&
+    typeof value.pinned === "boolean"
+  );
+}
+
+function isMemoryRead(value: unknown): value is MemoryReadV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, MEMORY_READ_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOpaqueHandle(value.projectionRevision) &&
+    Array.isArray(value.memories) &&
+    value.memories.length <= MAX_MEMORY_ITEMS &&
+    value.memories.every(isMemoryItem)
+  );
+}
+
+function isMemoryMutationCommand(value: unknown): value is MemoryMutationCommandV1 {
+  if (!isRecord(value) || value.apiVersion !== TAVERN_BROWSER_API_VERSION || !isOpaqueHandle(value.expectedProjectionRevision)) return false;
+  if (value.operation === "create")
+    return hasExactKeys(value, MEMORY_MUTATION_CREATE_KEYS) && isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES);
+  if (value.operation === "update")
+    return hasExactKeys(value, MEMORY_MUTATION_UPDATE_KEYS) && isOpaqueHandle(value.handle) && isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES);
+  return value.operation === "archive" && hasExactKeys(value, MEMORY_MUTATION_ARCHIVE_KEYS) && isOpaqueHandle(value.handle);
+}
+
 // --- Public strict closed validators. ---
 
 export function validateSnapshot(value: unknown): TavernStateSnapshotV1 {
@@ -568,8 +705,24 @@ export function validateProblem(value: unknown): TavernProblemV1 {
   if (!isProblem(value)) throw new TavernProtocolError();
   return value;
 }
+export function validateMemoryRead(value: unknown): MemoryReadV1 {
+  if (!isMemoryRead(value)) throw new TavernProtocolError();
+  return value;
+}
+export function validateMemoryMutationCommand(value: unknown): MemoryMutationCommandV1 {
+  if (!isMemoryMutationCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+export function validateWorldInfoState(value: unknown): WorldInfoStateV1 {
+  if (!isWorldInfo(value)) throw new TavernProtocolError();
+  return value;
+}
+export function validateSetWorldInfoBindingCommand(value: unknown): SetWorldInfoBindingCommandV1 {
+  if (!isSetWorldInfoBindingCommand(value)) throw new TavernProtocolError();
+  return value;
+}
 
-// --- Fetch client for the four management routes. ---
+// --- Fetch client for the management routes. ---
 
 async function readJson(response: Response): Promise<unknown> {
   try {
@@ -617,6 +770,14 @@ export type ManagementPipelineApi = Readonly<{
   discardDraft(command: DiscardDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1>;
   /** PUT /api/tavern/v1/chat/title with Content-Type and x-csrf-token. */
   renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1>;
+  /** GET /api/tavern/v1/memory (browser session; no CSRF header). */
+  readMemory(): Promise<MemoryReadV1>;
+  /** PUT /api/tavern/v1/memory with ordinary projection-revision CAS. */
+  mutateMemory(command: MemoryMutationCommandV1, csrfToken: string): Promise<MemoryReadV1>;
+  /** GET safe World Info state for the exact mounted Chat. */
+  readWorldInfo(): Promise<WorldInfoStateV1>;
+  /** PUT exact bind/unbind command with browser-session CSRF protection. */
+  setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
 }>;
 
 export function createManagementPipelineApi(fetchLike: typeof fetch = fetch): ManagementPipelineApi {
@@ -650,11 +811,27 @@ export function createManagementPipelineApi(fetchLike: typeof fetch = fetch): Ma
     },
     async saveDraft(command: SaveDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1> {
       if (!isSaveDraftCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      return exchange(fetchLike, "PUT", "/api/tavern/v1/draft", 200, validateDraft, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      return exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/draft",
+        200,
+        validateDraft,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
     },
     async discardDraft(command: DiscardDraftCommandV1, csrfToken: string): Promise<BrowserDraftV1> {
       if (!isDiscardDraftCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
-      return exchange(fetchLike, "DELETE", "/api/tavern/v1/draft", 200, validateDraft, { "Content-Type": "application/json", "x-csrf-token": csrfToken }, command);
+      return exchange(
+        fetchLike,
+        "DELETE",
+        "/api/tavern/v1/draft",
+        200,
+        validateDraft,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
     },
     async renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1> {
       if (!isRenameChatTitleCommand(command)) throw new TavernProtocolError();
@@ -665,6 +842,36 @@ export function createManagementPipelineApi(fetchLike: typeof fetch = fetch): Ma
         "/api/tavern/v1/chat/title",
         200,
         validateChatTitle,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+    },
+    async readMemory(): Promise<MemoryReadV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/memory", 200, validateMemoryRead);
+    },
+    async mutateMemory(command: MemoryMutationCommandV1, csrfToken: string): Promise<MemoryReadV1> {
+      if (!isMemoryMutationCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/memory",
+        200,
+        validateMemoryRead,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+    },
+    async readWorldInfo(): Promise<WorldInfoStateV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/world-info", 200, validateWorldInfoState);
+    },
+    async setWorldInfoBinding(command: SetWorldInfoBindingCommandV1, csrfToken: string): Promise<WorldInfoStateV1> {
+      if (!isSetWorldInfoBindingCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/world-info",
+        200,
+        validateWorldInfoState,
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
         command,
       );

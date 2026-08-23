@@ -27,6 +27,19 @@
 export const TAVERN_BROWSER_API_VERSION = 1 as const;
 export const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
 
+export type WorldInfoItemV1 = Readonly<{
+  handle: string;
+  title: string;
+  summary: string | null;
+  selected: boolean;
+}>;
+
+export type WorldInfoStateV1 = Readonly<{
+  state: "none" | "selected" | "locked" | "unavailable";
+  revision: string;
+  items: readonly WorldInfoItemV1[];
+}>;
+
 export type BrowserMessageV1 = Readonly<{
   handle: string;
   role: "player" | "companion";
@@ -44,16 +57,14 @@ export type TavernStateSnapshotV1 = Readonly<{
   operations: readonly unknown[];
   navigation: readonly unknown[];
   selection: Readonly<{ chatHandle: string; generation: number; stateRevision: string }> | null;
-  chat:
-    | Readonly<{
-        companion: Readonly<{ name: string }>;
-        title: string | null;
-        transcript: readonly BrowserMessageV1[];
-        draft: Readonly<{ revision: number; present: boolean }>;
-        turn: Readonly<Record<string, unknown>> | null;
-        worldInfo: Readonly<Record<string, unknown>> | null;
-      }>
-    | null;
+  chat: Readonly<{
+    companion: Readonly<{ name: string }>;
+    title: string | null;
+    transcript: readonly BrowserMessageV1[];
+    draft: Readonly<{ revision: number; present: boolean }>;
+    turn: Readonly<Record<string, unknown>> | null;
+    worldInfo: WorldInfoStateV1 | null;
+  }> | null;
   memory: Readonly<Record<string, unknown>>;
   eventStream: null;
 }>;
@@ -204,7 +215,11 @@ function createSession(state: SessionState): ManagementPipelineSession {
         throw new ManagementPipelineSessionError("state_reconciliation_required");
       }
       const snapshot = state.snapshot;
-      if (snapshot.chat === null || !isNonnegativeSafeInteger(snapshot.chat.draft.revision) || frozenResult.revision <= snapshot.chat.draft.revision) {
+      if (
+        snapshot.chat === null ||
+        !isNonnegativeSafeInteger(snapshot.chat.draft.revision) ||
+        frozenResult.revision <= snapshot.chat.draft.revision
+      ) {
         throw new ManagementPipelineSessionError("state_reconciliation_required");
       }
       return createSession({

@@ -5,12 +5,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
-import {
-  composeTavernProfile,
-  TavernBrowserValidatorsV1,
-} from "./browser-contract/index.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { composeTavernProfile, TavernBrowserValidatorsV1 } from "./browser-contract/index.js";
 import {
   assertChatPipelineServiceLeaseAfterDurableRead,
   createChatPipelineService,
@@ -35,8 +32,8 @@ function referenceProfile() {
   return composeTavernProfile({
     profileId: "gamebuddy.chat-core.reference-pipeline",
     releaseTier: "chat_core",
-    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.submission_status"],
-    operationIds: ["chat.submit"],
+    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status"],
+    operationIds: ["chat.submit", "chat.cancel"],
     navigationItemIds: ["chat"],
   });
 }
@@ -92,9 +89,7 @@ test("service post-read lease guard rejects when a controlled durable-read compl
     resolveRead = resolve;
   });
   let current = true;
-  const postRead = durableRead.then(() =>
-    assertChatPipelineServiceLeaseAfterDurableRead(inertLease, () => current),
-  );
+  const postRead = durableRead.then(() => assertChatPipelineServiceLeaseAfterDurableRead(inertLease, () => current));
   current = false;
   resolveRead();
   return assert.rejects(postRead, /chat_pipeline_service_unavailable/);
@@ -102,19 +97,20 @@ test("service post-read lease guard rejects when a controlled durable-read compl
 
 test("service source keeps start/claim private and imports no HTTP/response surfaces", async () => {
   const source = await readFile(new URL("./chat-pipeline-service.js", import.meta.url), "utf8");
-  // The service composes only the existing public P4a/P4b/P5 facades.
+  // The service composes durable acceptance/claim facades and one normal
+  // mounted provider-start operation; no proof-only P4/P5 forwarding facade
+  // remains on its production path.
   assert.match(source, /from "\.\/p4-durable-turn-acceptance\.js"/);
   assert.match(source, /from "\.\/p4-provider-attempt\.js"/);
-  assert.match(source, /from "\.\/p5-presentation-commit\.js"/);
-  // No raw store/coordinator ingress and no HTTP/response/transport import.
+  assert.match(source, /from "\.\/chat-provider-start\.js"/);
+  assert.doesNotMatch(source, /p5-presentation-commit|p4-provider-start/);
+  assert.match(source, /stopMountedChatPresentationEpoch/);
+  // No raw store transition/coordinator ingress and no HTTP/response/transport import.
   assert.doesNotMatch(
     source,
     /acceptP4MountedPlayerMessage|claimP4MountedAttempt|transitionP4MountedProviderStart|transitionP5MountedPresentation|startMountedP4|consumeMountedP4/,
   );
-  assert.doesNotMatch(
-    source,
-    /from ["'][^"']*(node:http|express|router|request|respons(e|es?)|fetch)[^"']*["']/,
-  );
+  assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|request|respons(e|es?)|fetch)[^"']*["']/);
   // The opaque browser-safe surface is exactly the frozen Task-2 contract.
   assert.match(source, /submitAfterResponseCommit/);
   assert.match(source, /readSubmissionStatus/);
@@ -137,7 +133,8 @@ const mountPreamble = `
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", storeUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href);
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
-  const profile = composeTavernProfile({ profileId: "gamebuddy.chat-core.reference-pipeline", releaseTier: "chat_core", routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.submission_status"], operationIds: ["chat.submit"], navigationItemIds: ["chat"] });
+  const profile = composeTavernProfile({ profileId: "gamebuddy.chat-core.reference-pipeline", releaseTier: "chat_core", routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status"], operationIds: ["chat.submit", "chat.cancel"], navigationItemIds: ["chat"] });
+  const run = async (fn) => { try { return { ok: true, value: await fn() }; } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; } };
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const ticks = async () => { for (let i = 0; i < 25; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
   const waitFor = async (predicate, rounds = 600) => {
@@ -186,15 +183,33 @@ const mountPreamble = `
 
 async function runMountedChild(body: string, root: string): Promise<Record<string, unknown>> {
   const serviceUrl = new URL("./chat-pipeline-service.js", import.meta.url).href;
-  const coordinatorUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js", import.meta.url).href;
+  const coordinatorUrl = new URL(
+    "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",
+    import.meta.url,
+  ).href;
   const deploymentUrl = new URL("../deployment-manifest.js", import.meta.url).href;
   const storeUrl = new URL("./chat-thread-store.js", import.meta.url).href;
   const runtimeUrl = new URL("../runtime.js", import.meta.url).href;
   const contractUrl = new URL("./browser-contract/index.js", import.meta.url).href;
-  const internalUrl = new URL("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js", import.meta.url).href;
+  const internalUrl = new URL(
+    "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
+    import.meta.url,
+  ).href;
   const child = spawn(
     process.execPath,
-    ["--input-type=module", "--eval", mountPreamble + body, serviceUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, contractUrl, internalUrl, root],
+    [
+      "--input-type=module",
+      "--eval",
+      mountPreamble + body,
+      serviceUrl,
+      coordinatorUrl,
+      deploymentUrl,
+      storeUrl,
+      runtimeUrl,
+      contractUrl,
+      internalUrl,
+      root,
+    ],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
   const output: Buffer[] = [];
@@ -292,6 +307,57 @@ test(
       ...(output.messageIds as string[]),
       keyOf(output.key),
     ]);
+  },
+);
+
+test(
+  "cancel aborts the exact armed prompt and leaves the durable terminal winner",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  let startCalls = 0;
+  let releaseStart;
+  let releasePrompt;
+  const startGate = new Promise((resolve) => { releaseStart = resolve; });
+  const service = serviceFor(fx, async () => { startCalls += 1; await startGate; });
+  const first = await service.submitAfterResponseCommit(commandFor(fx, {}), "zbcdefghijklmnopqrstuv", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await internal.startMountedP4Attempt(fx.manifest, fx.lease, (invocation) =>
+    internal.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope) => {
+      await scope.transitionStore({ operation: "arm", observedAtMs: await nextTime() });
+      releasePrompt = scope.beginActivePrompt();
+      return scope.readCurrentTurnLedger();
+    }),
+  );
+  const current = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const attemptId = current.turnLedger?.status === "attempt_starting" ? current.turnLedger.attempt.attemptId : "";
+  if (current.turnLedger?.status !== "attempt_starting" || current.turnLedger.observation?.phase !== "armed")
+    throw new Error("expected_armed_turn");
+  const beforeCancel = await service.readSubmissionStatus({ apiVersion: 1, idempotencyKey: "zbcdefghijklmnopqrstuv", selectionGeneration: fx.generation });
+  const cancelOutcome = await run(async () => service.cancel(first.turn.handle, { apiVersion: 1, selectionGeneration: fx.generation }));
+  releasePrompt();
+  releaseStart();
+  const afterCancel = await service.readSubmissionStatus({ apiVersion: 1, idempotencyKey: "zbcdefghijklmnopqrstuv", selectionGeneration: fx.generation });
+  await service.close();
+  const durable = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const retry = await run(async () => await serviceFor(fx, async () => { startCalls += 1; }).submitAfterResponseCommit(commandFor(fx, { expectedDraftRevision: 1 }), "cdefghijklmnopqrstuvwx", async () => undefined));
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({ first, beforeCancel, cancelOutcome, afterCancel, retry, startCalls, attemptId, ledgerStatus: durable.turnLedger?.status ?? null }));
+`);
+    assert.equal((output.beforeCancel as MessageSubmissionStatusV1).committedResult?.turn.canCancel, true);
+    const cancelOutcome = output.cancelOutcome as { ok: boolean; value?: { state?: string } };
+    assert.equal(cancelOutcome.ok, true);
+    assert.equal(cancelOutcome.value?.state, "cancelled");
+    assert.equal((output.afterCancel as MessageSubmissionStatusV1).disposition, "terminal");
+    assert.equal((output.afterCancel as MessageSubmissionStatusV1).committedResult?.turn.state, "cancelled");
+    const retry = output.retry as { ok: boolean; value?: SubmitResultV1; error?: string };
+    assert.equal(retry.ok, true, retry.error);
+    assert.equal(retry.value?.turn.state, "queued");
+    assert.equal(output.startCalls, 2);
+    assert.notEqual(output.attemptId, "");
+    assert.equal(output.ledgerStatus, "cancelled");
   },
 );
 
@@ -504,7 +570,8 @@ test(
     const root = await mkdtemp(join(tmpdir(), "gamebuddy-pipeline-process-recovery-"));
     const key = "klmnopqrstuvwxyzaabcde";
     try {
-      const first = await runMountedChild(`
+      const first = await runMountedChild(
+        `
   const fx = await fixture();
   let startCalls = 0;
   const service = serviceFor(fx, async () => { startCalls += 1; });
@@ -516,11 +583,14 @@ test(
   await fx.lease.close();
   await fx.authority.close();
   process.stdout.write(JSON.stringify({ accepted, terminal, manifestPath, startCalls, generation: fx.generation }));
-`, root);
+`,
+        root,
+      );
       assert.equal(first.startCalls, 1);
       assert.equal((first.terminal as MessageSubmissionStatusV1).disposition, "terminal");
 
-      const second = await runMountedChild(`
+      const second = await runMountedChild(
+        `
   const deployment = await loadHostDeploymentManifest(${JSON.stringify(root)} + "/fixture_1/manifest.json");
   const authority = await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(deployment);
   const lease = await authority.startMountedChatRuntime();
@@ -531,7 +601,9 @@ test(
   await lease.close();
   await authority.close();
   process.stdout.write(JSON.stringify({ status, startCalls, generation: lease.browserProjection.selectionGeneration }));
-`, root);
+`,
+        root,
+      );
       assert.equal(second.startCalls, 0);
       assert.equal(second.generation, (first.generation as number) + 1);
       const firstStatus = first.terminal as MessageSubmissionStatusV1;

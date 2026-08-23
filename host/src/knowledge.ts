@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { type CompanionIntegration } from "./integration-types.js";
-import { type ExecutionReceipt, type Snapshot } from "./protocol.js";
-import { visiblePublishedActions, type ActionPolicy } from "./action-registry.js";
+import { type ActionPolicy, visibleActionsFromModCatalog } from "./action-registry.js";
+import type { CompanionIntegration } from "./integration-types.js";
+import type { ActionRegistration, ExecutionReceipt, Snapshot } from "./protocol.js";
 
 export type KnowledgeRule = Readonly<{
   id: string;
@@ -205,8 +205,9 @@ export function decideCapability(
   snapshot: Snapshot,
   capability: string,
   gameVersion: string,
+  registrations: readonly ActionRegistration[] = [],
 ): KnowledgeDecision {
-  return decideKnowledge(bundle, snapshot, { capability }, gameVersion);
+  return decideKnowledge(bundle, snapshot, { capability }, gameVersion, undefined, registrations);
 }
 
 export function decideKnowledge(
@@ -215,10 +216,11 @@ export function decideKnowledge(
   query: KnowledgeQuery,
   gameVersion: string,
   policy: ActionPolicy = { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
+  registrations: readonly ActionRegistration[] = [],
 ): KnowledgeDecision {
   if (bundle.bundleVersion !== 1 || bundle.integrationId !== "stardew" || bundle.gameVersion !== gameVersion)
     return { kind: "unknown", reasonCode: "knowledge_bundle_not_applicable", rules: [] };
-  const visibleActions = visiblePublishedActions(snapshot.capabilities, policy);
+  const visibleActions = visibleActionsFromModCatalog(registrations, snapshot.capabilities, policy);
   const visibleActionIds = new Set(visibleActions.map((entry) => entry.actionId));
   if (query.capability !== undefined && !snapshot.capabilities.includes(query.capability))
     return { kind: "unavailable", reasonCode: "capability_not_declared", rules: [] };
@@ -259,12 +261,13 @@ export function knowledgeCatalog(
   gameVersion: string | undefined,
   snapshot: Snapshot | null,
   policy: ActionPolicy = { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
+  registrations: readonly ActionRegistration[] = [],
 ): KnowledgeCatalogDetails {
   if (bundle === undefined || gameVersion === undefined || snapshot === null || bundle.gameVersion !== gameVersion)
     return { gameVersion: gameVersion ?? null, topics: [] };
   const topics = new Map<string, { actionIds: Set<string>; targetKinds: Set<string>; locations: Set<string> }>();
   const visibleActionIds = new Set(
-    visiblePublishedActions(snapshot.capabilities, policy).map((entry) => entry.actionId),
+    visibleActionsFromModCatalog(registrations, snapshot.capabilities, policy).map((entry) => entry.actionId),
   );
   for (const rule of bundle.rules) {
     if (rule.topicId === undefined || !visibleActionIds.has(rule.actionId ?? rule.capability)) continue;
@@ -335,7 +338,14 @@ export function createStardewKnowledgeTools(
           query,
           nextObservations: [],
         });
-      const decision = decideKnowledge(integration.knowledge, snapshot, query, gameVersion, policy);
+      const decision = decideKnowledge(
+        integration.knowledge,
+        snapshot,
+        query,
+        gameVersion,
+        policy,
+        integration.state.catalogRegistrations ?? [],
+      );
       return result({
         ...decision,
         snapshotRevision: snapshot.revision,
@@ -356,6 +366,7 @@ export function createStardewKnowledgeTools(
         integration.gameVersion,
         integration.state.snapshot,
         policy,
+        integration.state.catalogRegistrations ?? [],
       );
       return { content: [{ type: "text" as const, text: JSON.stringify(details) }], details };
     },

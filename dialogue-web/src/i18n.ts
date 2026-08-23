@@ -51,6 +51,13 @@ const en = {
   entryTitle: "Title",
   entryContent: "Content",
   attachToChat: "Attach to Chat",
+  worldInfoBindingTitle: "World Info Binding",
+  worldInfoBind: "Bind",
+  worldInfoUnbind: "Unbind",
+  worldInfoEmpty: "No World Info revisions are available to bind.",
+  worldInfoLocked: "World Info binding is locked after this chat has messages.",
+  worldInfoUnavailable: "World Info binding is temporarily unavailable.",
+  worldInfoBindingFailure: "World Info binding could not be updated.",
 
   // Persona
   userPersona: "User Persona",
@@ -63,11 +70,17 @@ const en = {
   semanticMemory: "Semantic Memory",
   noMemories: "No recorded memories yet.",
   refreshMemory: "Refresh Memory",
+  memoryContent: "Memory content",
+  editMemory: "Edit memory",
+  archiveMemory: "Archive memory",
+  deleteMemory: "Delete memory",
 
   // Composer
   typeMessagePlaceholder: "Type a message to your companion… (Enter to send, Shift+Enter for newline)",
   send: "Send",
   stop: "Stop",
+  chatStopped: "Reply stopped. You can send another message.",
+  chatFailed: "The reply failed. You can try again.",
 
   // Settings & System
   language: "Language",
@@ -150,6 +163,13 @@ const zh: Messages = {
   entryTitle: "词条标题",
   entryContent: "词条内容",
   attachToChat: "关联至当前对话",
+  worldInfoBindingTitle: "世界书绑定",
+  worldInfoBind: "绑定",
+  worldInfoUnbind: "解除绑定",
+  worldInfoEmpty: "没有可绑定的世界书版本。",
+  worldInfoLocked: "当前对话已有消息，世界书绑定已锁定。",
+  worldInfoUnavailable: "世界书绑定暂时不可用。",
+  worldInfoBindingFailure: "无法更新世界书绑定。",
 
   // Persona
   userPersona: "用户设定 (Persona)",
@@ -162,11 +182,17 @@ const zh: Messages = {
   semanticMemory: "长期记忆 (Semantic Memory)",
   noMemories: "暂未记录任何长期记忆。",
   refreshMemory: "刷新记忆",
+  memoryContent: "记忆内容",
+  editMemory: "编辑记忆",
+  archiveMemory: "归档记忆",
+  deleteMemory: "删除记忆",
 
   // Composer
   typeMessagePlaceholder: "给伴侣发送消息… (Enter 发送, Shift+Enter 换行)",
   send: "发送",
   stop: "停止生成",
+  chatStopped: "回复已停止。你可以发送另一条消息。",
+  chatFailed: "回复失败。你可以重试。",
 
   // Settings & System
   language: "语言",

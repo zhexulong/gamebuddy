@@ -2,15 +2,14 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import test from "node:test";
-
+import { startVoiceGateway } from "./server.js";
 import {
+  type CaptureFileSystem,
   listWindowsInputDevices,
   probeWindowsInput,
   WindowsCaptureCleanupError,
   WindowsPttCapture,
-  type CaptureFileSystem,
 } from "./windows-capture.js";
-import { startVoiceGateway } from "./server.js";
 
 function runner(outputs: readonly string[] = ['[{"id":"wavein:0","name":"Microphone"}]']) {
   const calls: string[][] = [];
@@ -64,7 +63,7 @@ test("Windows capture rejects invalid endpoints and no-audio probe results", asy
 
 test("capture accepts only its terminal native JSON receipt and records the resolved device", async () => {
   const directory = await import("node:fs/promises").then(({ mkdtemp }) => mkdtemp("windows-capture-test-"));
-  const path = await import("node:path");
+  const _path = await import("node:path");
   const fs = await import("node:fs/promises");
   let invocation = 0;
   let releaseCompletion!: () => void;

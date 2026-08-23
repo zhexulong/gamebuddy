@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { ChatThreadMessage } from "./chat-thread-store.js";
 import type { WorldBook } from "../worldbook.js";
+import type { ChatThreadMessage } from "./chat-thread-store.js";
 
 export const TAVERN_INTERCHANGE_VERSION = "tavern-interchange/v1" as const;
 export const TAVERN_INTERCHANGE_LIMITS_V1 = Object.freeze({
@@ -231,7 +231,7 @@ function signedChat(value: Omit<SafeChatJsonl, "canonicalHash" | "jsonl">): Safe
   return Object.freeze({ ...value, canonicalHash, jsonl: jsonl(value.header, value.messages) });
 }
 function jsonl(header: SafeChatHeader, messages: readonly SafeChatBubble[]): string {
-  return [header, ...messages].map((line) => JSON.stringify(line)).join("\n") + "\n";
+  return `${[header, ...messages].map((line) => JSON.stringify(line)).join("\n")}\n`;
 }
 function validateChat(value: Record<string, any>): void {
   if (

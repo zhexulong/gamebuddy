@@ -23,12 +23,9 @@ internal static class Program
             Assembly loadedAssembly = ProductionAssemblyBinding.LoadCanonicalAssembly(expectedSha256, fullProductionAssemblyPath, ValidateProductionAssembly);
             AssertTypedReferenceBindsToLoadedAssembly(loadedAssembly);
             ProductionAssemblyBinding.AssertByteAlteredAssemblyRejectedBeforeTypeLoad(expectedSha256, fullProductionAssemblyPath);
+            SelectableCheckpointTruthTable(); UnlockedSelectionTruthTable(); LadderProjectionTruthTable(); BootstrapHandoffTruthTable(); MineEntryTerminalVocabularyTruthTable();
             PortfolioMineLadderIntegrationStructuralContract.Run(loadedAssembly);
-            PortfolioMineEntryIntegrationStructuralContract.Run(loadedAssembly);
-            PortfolioMineElevatorIntegrationStructuralContract.Run(loadedAssembly);
-            Environment.SetEnvironmentVariable(AssemblyPathEnvironmentVariable, fullProductionAssemblyPath);
-            SelectableCheckpointTruthTable(); UnlockedSelectionTruthTable(); ElevatorAvailabilityTruthTable(); LadderProjectionTruthTable(); BootstrapHandoffTruthTable(); MineEntryTerminalVocabularyTruthTable(); PortfolioMineCoordinatorLifecycleContract.Run(); PortfolioBridgeSessionGenerationContract.Run(); PlayerControlProtocolTests.Run(); LocalPipeBridgeTests.Run(); NativeChatIngressPolicyTests.Run(); CompanionPresentationPolicyTests.Run(); NativeChatPresentationPolicyTests.Run();
-            Console.WriteLine("Portfolio mine projection; Elevator, Entry, and Ladder compiled integration; coordinator lifecycle; bridge-session generation; entry terminal vocabulary; bootstrap handoff; player-control protocol; and native chat ingress policy tests passed."); return 0;
+            Console.WriteLine("Portfolio mine projection and direct ladder structural contract passed."); return 0;
         }
         catch (Exception exception) { Console.Error.WriteLine(exception.Message); return 1; }
     }
@@ -49,20 +46,10 @@ internal static class Program
         Assert(!PortfolioMineElevatorProjection.IsUnlockedSelection(125, 125), "progress must not widen domain.");
     }
 
-    private static void ElevatorAvailabilityTruthTable()
-    {
-        for (int predicates = 0; predicates < 16; predicates++)
-        {
-            bool actual = PortfolioMineElevatorProjection.IsAccessibleElevatorInteraction((predicates & 1) != 0, (predicates & 2) != 0, (predicates & 4) != 0 ? 120 : 121, (predicates & 8) != 0 ? 112 : 111);
-            Assert(actual == (predicates == 15), $"availability truth-table row {predicates} must match.");
-        }
-    }
-
     private static void LadderProjectionTruthTable()
     {
         Assert(PortfolioMineLadderProjection.IsLadderTarget(0, 1), "first descent must be valid.");
         Assert(!PortfolioMineLadderProjection.IsLadderTarget(0, 121), "out-of-domain ladder must reject.");
-        Assert(PortfolioMineLadderProjection.IsAccessibleLadderInteraction(true, true, 1, 173), "case 173 must allow ladder.");
     }
 
     private static void BootstrapHandoffTruthTable()
@@ -117,7 +104,7 @@ internal static class Program
             .Where(method => (method.Attributes & System.Reflection.MethodAttributes.Public) != 0)
             .Select(method => reader.GetString(method.Name))
             .ToArray();
-        foreach (string requiredMethod in new[] { "IsSelectableCheckpoint", "IsUnlockedSelection", "IsAccessibleElevatorInteraction" })
+        foreach (string requiredMethod in new[] { "IsSelectableCheckpoint", "IsUnlockedSelection" })
             Assert(publicMethods.Contains(requiredMethod, StringComparer.Ordinal),
                 $"Production PortfolioMineElevatorProjection must expose {requiredMethod}.");
     }

@@ -1191,6 +1191,103 @@ body {
 }
 
 /* ==========================================================================
+   Management Surface (P9 gamebuddy.tavern-management.chat-list-title)
+   Scoped fixes for the mounted management journey: draft section and success
+   banner layout, app-bar title flex/ellipsis so the list button never leaves
+   the viewport, long list titles that cannot overflow the drawer, and touch
+   pointer targets that stay usable on narrow viewports. All selectors are
+   scoped to the management shell, so the read-only reference surface and the
+   taller conflict-journey viewports are untouched.
+   ========================================================================== */
+
+[data-profile="management"] .app-bar {
+  gap: 8px;
+}
+
+[data-profile="management"] .app-bar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-profile="management"] .reference-draft-section {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-subtle);
+  background-color: var(--surface-panel);
+  padding: 12px 0 calc(12px + env(safe-area-inset-bottom)) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-profile="management"] .reference-draft-section textarea {
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
+
+[data-profile="management"] .success-banner {
+  background-color: rgba(79, 174, 154, 0.14);
+  border-color: rgba(79, 174, 154, 0.45);
+  color: var(--palette-teal-base);
+}
+
+[data-profile="management"] .chat-item-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+[data-profile="management"] .small-button,
+[data-profile="management"] .icon-button-small {
+  min-width: var(--touch-target-min);
+  min-height: var(--touch-target-min);
+}
+
+[data-profile="management"] .tavern-memory-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 4px 0 calc(12px + env(safe-area-inset-bottom)) 0;
+}
+
+[data-profile="management"] .tavern-memory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+[data-profile="management"] .tavern-memory-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+[data-profile="management"] .tavern-memory-section .memory-list {
+  gap: 8px;
+}
+
+[data-profile="management"] .tavern-memory-section .memory-item-card {
+  padding: 10px 12px;
+}
+
+[data-profile="management"] .memory-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+[data-profile="management"] .memory-item-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ==========================================================================
    Keyframe Animations & Motion Fallbacks
    ========================================================================== */
 
@@ -1231,9 +1328,9 @@ body {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
   }
 
   .context-panel {

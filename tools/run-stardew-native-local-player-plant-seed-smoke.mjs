@@ -14,13 +14,7 @@ import {
 
 const SCENARIO = "native_plant_seed_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "plant_seed"];
-const EXPECTED_CAPABILITIES = [
-  "cancel_active_execution",
-  "inspect_self",
-  "move_to_tile",
-  "plant_seed",
-  "travel",
-];
+const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "plant_seed", "travel"];
 const EXPECTED_EVIDENCE_KEYS = ["crop", "inventory_after", "inventory_before", "item", "location", "target", "tile"];
 
 /** Execute the plant-seed contract against an already-connected bridge session. */
@@ -46,14 +40,7 @@ export async function runPlantSeedSmoke(
     snapshot = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
     if (snapshot.location !== "Farm")
       snapshot = await travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutMs, travelTimeoutMs);
-    snapshot = await moveToReachableSeedTarget(
-      client,
-      receipts,
-      snapshot,
-      trace,
-      stabilizeTimeoutMs,
-      moveTimeoutMs,
-    );
+    snapshot = await moveToReachableSeedTarget(client, receipts, snapshot, trace, stabilizeTimeoutMs, moveTimeoutMs);
     if (snapshot.actionable !== true || snapshot.activeExecution != null)
       throw new Error("player_not_actionable_before_plant");
 
@@ -275,7 +262,10 @@ function chooseReachableSeedTarget(snapshot) {
 }
 
 function requireExactCapabilities(actual, source) {
-  if (JSON.stringify([...(Array.isArray(actual) ? actual : [])].sort()) !== JSON.stringify([...EXPECTED_CAPABILITIES].sort()))
+  if (
+    JSON.stringify([...(Array.isArray(actual) ? actual : [])].sort()) !==
+    JSON.stringify([...EXPECTED_CAPABILITIES].sort())
+  )
     throw new Error(`native_local_plant_seed_${source}_capability_not_isolated`);
 }
 
@@ -295,10 +285,7 @@ function validateNativeLocalFixtureConfig(value) {
     value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
-  if (
-    value.ActionPolicyVersion !== 0 ||
-    JSON.stringify(value.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS)
-  )
+  if (value.ActionPolicyVersion !== 0 || JSON.stringify(value.EnabledActions) !== JSON.stringify(EXPECTED_ACTIONS))
     throw new Error("native_local_plant_seed_action_policy_invalid");
 }
 

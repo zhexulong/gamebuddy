@@ -15,10 +15,34 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": false,
+      "recommended": true,
+      "a11y": {
+        "recommended": false,
+        "noStaticElementInteractions": "off",
+        "useKeyWithClickEvents": "off",
+        "useSemanticElements": "off",
+        "noAutofocus": "off",
+        "useValidAnchor": "warn"
+      },
       "correctness": {
-        "noUnusedImports": "off",
-        "noUnusedVariables": "off"
+        "noUnusedImports": "error",
+        "noUnusedVariables": {
+          "level": "error",
+          "options": {
+            "ignoreRestSiblings": true
+          }
+        },
+        "noConstAssign": "error",
+        "useExhaustiveDependencies": "warn",
+        "useUniqueElementIds": "off",
+        "noVoidTypeReturn": "off",
+        "noUnsafeFinally": "off"
+      },
+      "complexity": {
+        "noCommaOperator": "off"
+      },
+      "performance": {
+        "noAccumulatingSpread": "off"
       },
       "security": {
         "noDangerouslySetInnerHtml": "error"
@@ -26,10 +50,18 @@
       "suspicious": {
         "noExplicitAny": "off",
         "noAssignInExpressions": "off",
-        "noControlCharactersInRegex": "off"
+        "noControlCharactersInRegex": "off",
+        "noDuplicateProperties": "off",
+        "noShadowRestrictedNames": "off",
+        "noImplicitAnyLet": "off",
+        "noThenProperty": "off",
+        "useIterableCallbackReturn": "off",
+        "noTemplateCurlyInString": "off"
       },
       "style": {
-        "useImportType": "off"
+        "useImportType": "error",
+        "useNodejsImportProtocol": "error",
+        "noNonNullAssertion": "off"
       }
     }
   },

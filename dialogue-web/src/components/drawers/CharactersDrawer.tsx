@@ -1,7 +1,7 @@
 import { Plus, Upload, User, UserCheck, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Messages } from "../../i18n";
-import type { CompanionSummary, ImportCandidateField } from "../../types";
+import type { CompanionSummary } from "../../types";
 
 export function CharactersDrawer({
   isOpen,

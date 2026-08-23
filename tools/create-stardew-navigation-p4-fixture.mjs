@@ -6,11 +6,11 @@
  * into a private APPDATA transaction.
  */
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SHA256 = /^[a-f0-9]{64}$/;
+const _SHA256 = /^[a-f0-9]{64}$/;
 const saveNamePattern = /^GameBuddyFixture[A-Za-z0-9]{0,64}_[0-9]{1,32}$/;
 const required = (value, error) => {
   if (typeof value !== "string" || !isAbsolute(value)) throw new Error(error);

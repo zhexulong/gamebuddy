@@ -37,7 +37,7 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
   const valid = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
     "hello_01",
     now,
   );
@@ -47,7 +47,7 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "invalid session", capabilities: [], presentationLocale: "en-US" },
+        { sessionId: "invalid session", capabilities: [], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
         "hello_02",
         now,
       ),
@@ -61,7 +61,7 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "session_01", capabilities: [1], presentationLocale: "en-US" },
+        { sessionId: "session_01", capabilities: [1], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
         "hello_03",
         now,
       ),
@@ -76,7 +76,7 @@ test("hello acknowledgement and snapshot reject missing or invalid presentation 
   const validHello = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
     "hello_locale_01",
     now,
   );
@@ -664,25 +664,135 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["forageTargets", { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)16", stack: 1 }],
     ["itemTargets", { targetId: "item_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", stack: 1 }],
     ["cropTargets", { targetId: "crop_deadbeef", x: 10, y: 12, cropId: "24" }],
-    ["harvestTargets", { targetId: "harvest_deadbeef", x: 10, y: 12, cropId: "24", qualifiedHarvestItemId: "(O)24", regrowsAfterHarvest: false }],
-    ["woodFenceTargets", { targetId: "fence_deadbeef", location: "Farm", slot: 4, x: 10, y: 12, qualifiedItemId: "(O)322" }],
-    ["woodFenceResultTargets", { targetId: "fence_deadbeef", location: "Farm", slot: 4, x: 10, y: 12, qualifiedItemId: "(O)322", isFence: true, isGate: false, health: 10, maxHealth: 10 }],
+    [
+      "harvestTargets",
+      {
+        targetId: "harvest_deadbeef",
+        x: 10,
+        y: 12,
+        cropId: "24",
+        qualifiedHarvestItemId: "(O)24",
+        regrowsAfterHarvest: false,
+      },
+    ],
+    [
+      "woodFenceTargets",
+      { targetId: "fence_deadbeef", location: "Farm", slot: 4, x: 10, y: 12, qualifiedItemId: "(O)322" },
+    ],
+    [
+      "woodFenceResultTargets",
+      {
+        targetId: "fence_deadbeef",
+        location: "Farm",
+        slot: 4,
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(O)322",
+        isFence: true,
+        isGate: false,
+        health: 10,
+        maxHealth: 10,
+      },
+    ],
     ["crabPotTargets", crabPot],
     ["crabPotResultTargets", { ...crabPot, ownerId: 1, offsetX: 0, offsetY: 0, overlayTiles: [] }],
     ["baitCrabPotTargets", { ...crabPot, baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
     ["baitCrabPotResultTargets", { ...crabPot, baitQualifiedItemId: "(O)685", ownerId: "1", baitStack: 1 }],
     ["seedTargets", { targetId: "seed_deadbeef", slot: 2, x: 10, y: 12, qualifiedItemId: "(O)472" }],
-    ["debrisTargets", { targetId: "debris_deadbeef", slot: 4, x: 10, y: 12, parentSheetIndex: 752, toolKind: "pickaxe", requiredUpgradeLevel: 0, health: 8 }],
-    ["rockSourceTargets", { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", health: 1 }],
+    [
+      "debrisTargets",
+      {
+        targetId: "debris_deadbeef",
+        slot: 4,
+        x: 10,
+        y: 12,
+        parentSheetIndex: 752,
+        toolKind: "pickaxe",
+        requiredUpgradeLevel: 0,
+        health: 8,
+      },
+    ],
+    [
+      "rockSourceTargets",
+      { targetId: "rock_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)2", health: 1 },
+    ],
     ["clearHoeDirtTargets", { targetId: "dirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
-    ["artifactSpotTargets", { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" }],
-    ["artifactSpotResultTargets", { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
-    ["machineTargets", { targetId: "machine_deadbeef", x: 10, y: 12, qualifiedItemId: "(BC)12", readyForHarvest: false, minutesUntilReady: 10 }],
-    ["treeChopSourceTargets", { targetId: "tree_deadbeef", location: "Farm", x: 10, y: 12, treeType: "Oak", growthStage: 5, health: 1, stump: false, moss: false, tapped: false }],
-    ["treeChopResultTargets", { targetId: "tree_deadbeef", location: "Farm", x: 10, y: 12, treeType: "Oak", health: 5, stump: true, moss: false, tapped: false }],
-    ["npcRelationshipTargets", { targetId: "npc_deadbeef", x: 10, y: 12, npcName: "Abigail", friendshipPoints: 0, friendshipStatus: "Neutral", talkedToToday: false, giftsToday: 0, giftsThisWeek: 0 }],
+    [
+      "artifactSpotTargets",
+      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" },
+    ],
+    [
+      "artifactSpotResultTargets",
+      { targetId: "artifact_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true },
+    ],
+    [
+      "machineTargets",
+      {
+        targetId: "machine_deadbeef",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(BC)12",
+        readyForHarvest: false,
+        minutesUntilReady: 10,
+      },
+    ],
+    [
+      "treeChopSourceTargets",
+      {
+        targetId: "tree_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        treeType: "Oak",
+        growthStage: 5,
+        health: 1,
+        stump: false,
+        moss: false,
+        tapped: false,
+      },
+    ],
+    [
+      "treeChopResultTargets",
+      {
+        targetId: "tree_deadbeef",
+        location: "Farm",
+        x: 10,
+        y: 12,
+        treeType: "Oak",
+        health: 5,
+        stump: true,
+        moss: false,
+        tapped: false,
+      },
+    ],
+    [
+      "npcRelationshipTargets",
+      {
+        targetId: "npc_deadbeef",
+        x: 10,
+        y: 12,
+        npcName: "Abigail",
+        friendshipPoints: 0,
+        friendshipStatus: "Neutral",
+        talkedToToday: false,
+        giftsToday: 0,
+        giftsThisWeek: 0,
+      },
+    ],
     ["petTargets", { targetId: "pet_deadbeef", x: 10, y: 12, petType: "Dog", friendship: 1, pettedToday: false }],
-    ["animalProductTargets", { targetId: "animal_deadbeef", slot: 4, x: 10, y: 12, animalType: "Cow", qualifiedProduceItemId: "(O)184", toolKind: "milk_pail", produceStack: 1 }],
+    [
+      "animalProductTargets",
+      {
+        targetId: "animal_deadbeef",
+        slot: 4,
+        x: 10,
+        y: 12,
+        animalType: "Cow",
+        qualifiedProduceItemId: "(O)184",
+        toolKind: "milk_pail",
+        produceStack: 1,
+      },
+    ],
     ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 4, x: 10, y: 12, hayStack: 1 }],
     ["inventoryItemFacts", { slot: 4, qualifiedItemId: "(O)184", stack: 1 }],
     ["foodTargets", { slot: 4, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
@@ -690,7 +800,13 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
   for (const [field, target] of families) {
     assert.equal(
       validateBridgeMessage(
-        newEnvelope("snapshot", scope, { ...snapshot, [field]: [{ ...target, unexpected: true }] }, `snapshot_${field}_extra`, now),
+        newEnvelope(
+          "snapshot",
+          scope,
+          { ...snapshot, [field]: [{ ...target, unexpected: true }] },
+          `snapshot_${field}_extra`,
+          now,
+        ),
         scope,
         now,
       ),
@@ -716,6 +832,14 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   );
   assert.equal(validateExecutionRequest({ ...valid, expectedRevision: 3 }, snapshot, now), "stale_snapshot");
   assert.equal(validateExecutionRequest({ ...valid, action: "sell_item" }, snapshot, now), "unknown_action");
+  assert.equal(
+    validateExecutionRequest(
+      { ...valid, action: "sop_composite_pipeline", args: { pipelinePayload: {} } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "sop_composite_pipeline"] },
+      now,
+    ),
+    "unknown_action",
+  );
   const travel = { ...valid, action: "travel", args: { x: 10, y: 10 } };
   assert.equal(
     validateExecutionRequest(travel, { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] }, now),

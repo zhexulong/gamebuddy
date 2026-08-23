@@ -84,6 +84,36 @@ describe("MemoryCommandFacade", () => {
         });
     });
 
+    it("resolves a player-owned opaque state token inside the mutation transaction", () => {
+        db = makeDatabase();
+        const facade = new MemoryCommandFacade(db);
+        const created = facade.create({
+            actor: player,
+            projectPath: "/repo",
+            category: "SEMANTIC_MEMORY",
+            content: "Original player memory",
+        });
+        const updated = facade.updateByStateToken({
+            actor: player,
+            projectPath: "/repo",
+            stateToken: created.stateToken,
+            content: "Updated player memory",
+        });
+        expect(updated.memory.content).toBe("Updated player memory");
+        expect(() => facade.updateByStateToken({
+            actor: player,
+            projectPath: "/repo",
+            stateToken: created.stateToken,
+            content: "Stale update",
+        })).toThrow(/not found or is stale/);
+        const archived = facade.archiveByStateToken({
+            actor: player,
+            projectPath: "/repo",
+            stateToken: updated.stateToken,
+        });
+        expect(archived.memory.status).toBe("archived");
+    });
+
     it("rejects stale tokens and companion mutation of player or permanent records without delegation", () => {
         db = makeDatabase();
         const facade = new MemoryCommandFacade(db);

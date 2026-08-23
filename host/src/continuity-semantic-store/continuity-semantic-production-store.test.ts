@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { createTestWindowsOwnerDeathVerification } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.test-support.js";
 import {
   openProductionContinuityStore,
-  productionChatOwnerProvenDead,
   type ProductionBootstrapInput,
   type ProductionGameRequest,
   type ProductionGameTerminalReceipt,
+  productionChatOwnerProvenDead,
 } from "./continuity-semantic-production-store.js";
-import { createTestWindowsOwnerDeathVerification } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.test-support.js";
 
 const principal = { continuityId: "continuity1", companionId: "companion1", playerId: "player1" } as const;
 const bootstrap: ProductionBootstrapInput = {
@@ -389,7 +389,10 @@ test("Chat runtime teardown recovery accepts only frozen exact receipts and pers
       expected: { ...store.readChatCatalog().vector },
     });
     assert.ok(teardown.permit);
-    assert.equal(store.failChatRuntimeTeardown({ principal, permit: teardown.permit, reason: "effect_failed" }).runtimeState, "recovery_required");
+    assert.equal(
+      store.failChatRuntimeTeardown({ principal, permit: teardown.permit, reason: "effect_failed" }).runtimeState,
+      "recovery_required",
+    );
     const recoveryReceipt = Object.freeze({
       kind: "chat_runtime_teardown_recovery_completed" as const,
       operationId: teardown.permit.operationId,

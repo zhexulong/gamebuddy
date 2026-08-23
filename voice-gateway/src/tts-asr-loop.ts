@@ -1,4 +1,4 @@
-import { type AsrProvider, type SpeechJob, type TtsProvider } from "./gateway.js";
+import type { AsrProvider, SpeechJob, TtsProvider } from "./gateway.js";
 
 export type TtsAsrLoopResult = Readonly<{
   pcm16Bytes: number;

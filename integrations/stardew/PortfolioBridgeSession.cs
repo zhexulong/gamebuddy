@@ -185,7 +185,7 @@ internal sealed class PortfolioBridgeSession
         response = Reply("mine_elevator_probe", request.CorrelationId, new PortfolioMineElevatorProbe(
             observation.RequestId, observation.TraceId, observation.Scope, observation.Revision,
             observation.Fresh, observation.MineEntryObserved, observation.CurrentFloor,
-            observation.LowestMineLevel, observation.TargetUnlocked, observation.ElevatorInteractionAvailable, request.Payload.SelectedCheckpoint));
+            observation.LowestMineLevel, observation.TargetUnlocked, observation.ElevatorObserved, request.Payload.SelectedCheckpoint));
         reasonCode = "accepted";
         return true;
     }
@@ -303,7 +303,7 @@ internal sealed class PortfolioBridgeSession
         response = Reply("mine_ladder_probe", request.CorrelationId, new PortfolioMineLadderProbe(
             observation.RequestId, observation.TraceId, observation.Scope, observation.Revision,
             observation.Fresh, observation.MineEntryObserved, observation.CurrentFloor,
-            observation.LowestMineLevel, observation.TargetUnlocked, observation.LadderInteractionAvailable, observation.TargetFloor));
+            observation.LowestMineLevel, observation.TargetUnlocked, observation.LadderObserved, observation.TargetFloor));
         reasonCode = "accepted";
         return true;
     }
@@ -421,7 +421,7 @@ internal sealed class PortfolioBridgeSession
         response = Reply("enter_mine_probe", request.CorrelationId, new PortfolioMineEntryProbe(
             observation.RequestId, observation.TraceId, observation.Scope, observation.Revision,
             observation.Fresh, observation.MineEntryObserved, observation.CurrentFloor,
-            observation.LowestMineLevel, observation.TargetUnlocked, observation.EntryInteractionAvailable, observation.TargetFloor));
+            observation.LowestMineLevel, observation.TargetUnlocked, observation.TargetFloor));
         reasonCode = "accepted";
         return true;
     }
@@ -499,6 +499,97 @@ internal sealed class PortfolioBridgeSession
         }
 
         response = Reply("sleep_day_receipt", request.CorrelationId, coordinator.Cancel(request.Payload));
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal bool TrySkipEvent(
+        long connectionGeneration,
+        string json,
+        PortfolioSkipEventActionCoordinator coordinator,
+        IPortfolioSkipEventObservationAdapter adapter,
+        long currentRevision,
+        out string? response,
+        out string reasonCode)
+    {
+        response = null;
+        if (!PortfolioBridgeProtocol.TryDeserializeSkipEventRequest(json, this.binding.ToScope(), out PortfolioEnvelope<PortfolioSkipEventActionRequest>? request, out reasonCode)
+            || request is null
+            || !IsAuthenticatedEnvelope(connectionGeneration, request, "skip_event_request", out reasonCode))
+            return false;
+        if (!this.config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.SkipEventAction))
+        {
+            reasonCode = "invalid_request";
+            return false;
+        }
+
+        PortfolioSkipEventFreshObservation observation = adapter.CreateFreshObservation(request.Payload, this.binding.ToScope(), currentRevision);
+        PortfolioSkipEventActionBeginResult result = coordinator.Begin(request.Payload, observation, request.CorrelationId);
+        if (result.IsAccepted)
+        {
+            response = SerializeReply("skip_event_phase", request.CorrelationId, result.Phase!);
+        }
+        else if (result.Receipt is not null)
+        {
+            response = SerializeReply("skip_event_receipt", request.CorrelationId, result.Receipt);
+        }
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal bool TrySkipEventProbe(
+        long connectionGeneration,
+        string json,
+        PortfolioSkipEventActionCoordinator coordinator,
+        IPortfolioSkipEventObservationAdapter adapter,
+        long currentRevision,
+        out string? response,
+        out string reasonCode)
+    {
+        response = null;
+        if (!PortfolioBridgeProtocol.TryDeserializeSkipEventProbeRequest(json, this.binding.ToScope(), out PortfolioEnvelope<PortfolioSkipEventActionRequest>? request, out reasonCode)
+            || request is null
+            || !IsAuthenticatedEnvelope(connectionGeneration, request, "skip_event_probe_request", out reasonCode))
+            return false;
+        if (!this.config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.SkipEventAction))
+        {
+            reasonCode = "invalid_request";
+            return false;
+        }
+        if (request.Payload.ExpectedRevision != currentRevision)
+        {
+            reasonCode = "revision_mismatch";
+            return false;
+        }
+        PortfolioSkipEventFreshObservation observation = adapter.CreateFreshObservation(request.Payload, this.binding.ToScope(), currentRevision);
+        PortfolioSkipEventProbe probe = new(
+            observation.RequestId, observation.TraceId, observation.Scope, observation.Revision,
+            observation.Fresh, observation.EventObserved, observation.EventSkippable, observation.OpaqueEventTarget);
+        response = SerializeReply("skip_event_probe", request.CorrelationId, probe);
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal bool TryCancelSkipEvent(
+        long connectionGeneration,
+        string json,
+        PortfolioSkipEventActionCoordinator coordinator,
+        IPortfolioSkipEventObservationAdapter adapter,
+        out string? response,
+        out string reasonCode)
+    {
+        response = null;
+        if (!PortfolioBridgeProtocol.TryDeserializeSkipEventCancelRequest(json, this.binding.ToScope(), out PortfolioEnvelope<PortfolioSkipEventActionCancelRequest>? request, out reasonCode)
+            || request is null
+            || !IsAuthenticatedEnvelope(connectionGeneration, request, "skip_event_cancel_request", out reasonCode))
+            return false;
+        if (!this.config.IsPortfolioActionAuthorized(PortfolioBridgeProtocol.SkipEventAction))
+        {
+            reasonCode = "invalid_request";
+            return false;
+        }
+
+        response = SerializeReply("skip_event_receipt", request.CorrelationId, coordinator.Cancel(request.Payload));
         reasonCode = "accepted";
         return true;
     }
@@ -587,4 +678,13 @@ internal sealed class PortfolioBridgeSession
         this.binding.ToScope(),
         type,
         payload);
+
+    /// <summary>Serializes a bound reply envelope for outward delivery.</summary>
+    private string? SerializeReply<TPayload>(string type, string correlationId, TPayload payload)
+    {
+        PortfolioEnvelope<TPayload> response = Reply(type, correlationId, payload);
+        return PortfolioBridgeProtocol.TrySerialize(response, out string serialized, out _)
+            ? serialized
+            : null;
+    }
 }

@@ -1,11 +1,11 @@
-import { assertProfileMatchesBinding, readIdentityProfile, readIdentityProfileBinding } from "../identity-profile.js";
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
-import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import {
   isCurrentMountedChatRuntimeLease,
   type MountedChatRuntimeLease,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
-import { createChatThreadStore, type ChatThreadMessage, type ChatThreadState } from "./chat-thread-store.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { assertProfileMatchesBinding, readIdentityProfile, readIdentityProfileBinding } from "../identity-profile.js";
+import { identityKey, resolveRuntimePaths } from "../runtime.js";
+import { type ChatThreadMessage, type ChatThreadState, createChatThreadStore } from "./chat-thread-store.js";
 
 const MAX_TRANSCRIPT_MESSAGES = 500;
 type P3ExactChatBinding = Readonly<{
@@ -148,11 +148,7 @@ function project(
   });
 }
 
-function projectMessage(
-  lease: MountedChatRuntimeLease,
-  message: ChatThreadMessage,
-  order: number,
-): P3ExactChatMessage {
+function projectMessage(lease: MountedChatRuntimeLease, message: ChatThreadMessage, order: number): P3ExactChatMessage {
   if (message.role !== "player" && message.role !== "companion") throw unavailable();
   if (!safeBrowserRevision(order) || !safeBrowserRevision(1)) throw unavailable();
   return Object.freeze({

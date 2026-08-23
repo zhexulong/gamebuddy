@@ -34,7 +34,7 @@ const ECOSYSTEMS = new Set(["npm", "bun", "nuget", "other"]);
 const SEVERITIES = new Set(["critical", "high", "moderate", "low", "unknown"]);
 
 const rootFromModule = resolve(import.meta.dirname, "..");
-const absentLockHash = Object.fromEntries(LOCKFILE_PATHS.map((path) => [path, null]));
+const _absentLockHash = Object.fromEntries(LOCKFILE_PATHS.map((path) => [path, null]));
 
 function issue(code, detail) {
   return { code, detail };

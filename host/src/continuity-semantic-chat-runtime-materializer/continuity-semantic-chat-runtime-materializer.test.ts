@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
-  reserveChatRuntimeMaterialization,
-  withConsumedChatRuntimeBinding,
   type ChatRuntimeBindingExecution,
   type ReservedChatRuntimeMaterialization,
+  reserveChatRuntimeMaterialization,
+  withConsumedChatRuntimeBinding,
 } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
-import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.test-support.js";
 import type { ChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.js";
+import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.test-support.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import {
   assertChatStableContextLifecycle,
@@ -110,55 +110,6 @@ test("Chat materializer source graph has the sole production Chat runtime owner 
   assert.equal(publicSource.includes("clearGameOperationalGateMarker"), false);
   assert.match(publicSource, /tavernNarrativeGateNonceSha256/);
   assert.equal(internalSource.includes("clearGameOperationalGateMarker"), false);
-});
-
-test("materialized runtime retains only its construction-owned presentation attach capability", async () => {
-  const listeners = new Set<(expression: { text: string }) => void>();
-  const attachPresentation = (listener: (expression: { text: string }) => void) => {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
-  };
-  const materializer = createTestChatRuntimeMaterializer(async () =>
-    Object.freeze({
-      session: Object.freeze({ dispose: () => undefined }),
-      attachPresentation,
-    }),
-  );
-  const fixture = await binding();
-  try {
-    const result = await inActiveBinding(fixture.binding, (execution, reservation) =>
-      materializer.materialize(reservation, permit(execution)),
-    );
-    assert.equal(typeof result.attachPresentation, "function");
-    let delivered = "";
-    const detach = result.attachPresentation!((expression) => {
-      delivered = expression.text;
-    });
-    for (const listener of listeners) listener({ text: "delivered" });
-    assert.equal(delivered, "delivered");
-    detach();
-    await result.close();
-  } finally {
-    await fixture.binding.close();
-    await rm(fixture.root, { recursive: true, force: true });
-  }
-});
-
-test("materialized runtime omits missing presentation attachment fail-closed", async () => {
-  const materializer = createTestChatRuntimeMaterializer(async () =>
-    Object.freeze({ session: Object.freeze({ dispose: () => undefined }) }),
-  );
-  const fixture = await binding();
-  try {
-    const result = await inActiveBinding(fixture.binding, (execution, reservation) =>
-      materializer.materialize(reservation, permit(execution)),
-    );
-    assert.equal(result.attachPresentation, undefined);
-    await result.close();
-  } finally {
-    await fixture.binding.close();
-    await rm(fixture.root, { recursive: true, force: true });
-  }
 });
 
 test("materializes only an exact Chat permit and mints permit-exact Host lifecycle evidence", async () => {

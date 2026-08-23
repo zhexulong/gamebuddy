@@ -1,7 +1,7 @@
 import type { WorldFact } from "./event-pump.js";
-import type { CompanionIdentity } from "./runtime.js";
 import { assertIntegrationModule, type GameIntegrationModule } from "./integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
+import type { CompanionIdentity } from "./runtime.js";
 
 /**
  * A supported GameBuddy integration has one strict evidence model: a live,

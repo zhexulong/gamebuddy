@@ -191,11 +191,11 @@ describe("GameBuddy stable-context handler wiring", () => {
 });
 
 describe("GameBuddy ongoing-interaction Memory cross-surface handler wiring", () => {
-	it("refreshes m[1] for Game and exact-origin Chat provider passes after a player command without folding either m[0]", async () => {
+	it("soft-refreshes m[1] for each same-continuity provider pass after an external player Memory mutation", async () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-gamebuddy-cross-surface-"));
 		const foreignCwd = mkdtempSync(join(tmpdir(), "pi-gamebuddy-cross-surface-foreign-"));
-		const chatSessionId = "chat-exact-origin";
+		const chatSessionId = "chat-surface";
 		const gameSessionId = "game-surface";
 		try {
 			const fake = createFakePi();
@@ -207,7 +207,10 @@ describe("GameBuddy ongoing-interaction Memory cross-surface handler wiring", ()
 					memoryDomain: "ongoing-interaction",
 				},
 			});
-			const handler = fake.handlers.get("context") as (event: { messages: never[] }, ctx: never) => Promise<{ messages: Array<{ content?: unknown }> }>;
+			const handler = fake.handlers.get("context") as (
+				event: { messages: never[] },
+				ctx: never,
+			) => Promise<{ messages: Array<{ content?: unknown }> }>;
 			const chatInitial = await handler(
 				{ messages: [userMessage("Chat initial", 10)] as never[] },
 				fakeContext(chatSessionId, cwd) as never,
@@ -234,12 +237,12 @@ describe("GameBuddy ongoing-interaction Memory cross-surface handler wiring", ()
 			expect(textOf(gameNext.messages[0] as never)).toBe(gameM0);
 			expect(JSON.stringify(gameNext.messages)).toContain("The player prefers a calm explanation");
 
-			const chatReturn = await handler(
-				{ messages: [userMessage("Chat return provider invocation", 30)] as never[] },
+			const chatNext = await handler(
+				{ messages: [userMessage("Chat provider invocation", 30)] as never[] },
 				fakeContext(chatSessionId, cwd) as never,
 			);
-			expect(textOf(chatReturn.messages[0] as never)).toBe(chatM0);
-			expect(JSON.stringify(chatReturn.messages)).toContain("The player prefers a calm explanation");
+			expect(textOf(chatNext.messages[0] as never)).toBe(chatM0);
+			expect(JSON.stringify(chatNext.messages)).toContain("The player prefers a calm explanation");
 
 			const isolated = await handler(
 				{ messages: [userMessage("Other continuity", 40)] as never[] },

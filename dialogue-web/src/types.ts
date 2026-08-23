@@ -25,6 +25,7 @@ export interface ChatSummary {
   updatedAtMs?: number;
   /** Absent in metadata-only profiles (for example the management list). */
   messageCount?: number;
+  managementRevision?: number;
 }
 
 export interface WorldInfoEntry {

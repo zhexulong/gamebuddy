@@ -8,13 +8,19 @@ const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 const EXCLUDED_PREFIXES = Object.freeze([
   ".git/",
+  ".tmp/",
+  "%TEMP%",
   "node_modules/",
   "vendor/",
   ".commit-snapshots/",
   ".commit-validation/",
   ".pi/",
+  ".agents/",
+  "artifacts/",
+  "subagent-artifacts/",
   "host/dist/",
   "host/dist-test/",
+  "host/dist-reference-check/",
   "host/.memory-live-check/",
   // Ephemeral Host/Pi execution roots carry local SQLite, auth, and session state.
   "host/contexts/",

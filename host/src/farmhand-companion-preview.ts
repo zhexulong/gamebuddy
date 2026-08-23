@@ -1,29 +1,28 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { CompanionLoop } from "./companion-loop.js";
 import { createCompanionLiveEvidenceArtifact } from "./companion-live-evidence-artifact.js";
 import { createLiveSourceAttester } from "./companion-live-source-attestation.js";
-import {
-  CompanionHostService,
-  GameTurnLineageTracker,
-  createGamePresentationAdmissionProvider,
-} from "./host-service.js";
-import {
-  assertReceiptBackedLaunch,
-  type IntegrationLaunchHandle,
-  type IntegrationLauncher,
-} from "./integration-launcher.js";
+import { CompanionLoop } from "./companion-loop.js";
 import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
   createFarmhandSystemNoticePresenter,
   type FarmhandPresentationBridge,
 } from "./farmhand-companion-presentation.js";
+import {
+  CompanionHostService,
+  createGamePresentationAdmissionProvider,
+  GameTurnLineageTracker,
+} from "./host-service.js";
+import {
+  assertReceiptBackedLaunch,
+  type IntegrationLauncher,
+  type IntegrationLaunchHandle,
+} from "./integration-launcher.js";
 import { createGameCompanionRuntime, type GameCompanionIdentity, type RuntimeSession } from "./runtime.js";
-import { isExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "./settings/model-profile-store.js";
+import { isExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
 import { parseStardewLauncherConfig, STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
 import { readStrictJsonFile } from "./strict-json-reader.js";
 
@@ -227,10 +226,7 @@ async function composePreview(
     "presentationLocale" in connectionState.snapshot
       ? connectionState.snapshot.presentationLocale
       : undefined;
-  if (
-    typeof presentationLocale !== "string" ||
-    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(presentationLocale)
-  )
+  if (typeof presentationLocale !== "string" || !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(presentationLocale))
     throw new Error("farmhand_preview_presentation_locale_unavailable");
   if (presentationLocale !== config.requiredPresentationLocale)
     throw new Error("farmhand_preview_presentation_locale_mismatch");
@@ -300,8 +296,7 @@ async function relaunchPreview(
   dependencies: FarmhandCompanionPreviewDependencies,
 ): Promise<FarmhandCompanionPreview> {
   const predecessorState = previewState.get(predecessor);
-  if (predecessorState?.closed === true)
-    throw new Error("farmhand_preview_relaunch_predecessor_closed");
+  if (predecessorState?.closed === true) throw new Error("farmhand_preview_relaunch_predecessor_closed");
   if (typeof predecessor.runtime.recoverStardewExecutionReceipts !== "function")
     throw new Error("farmhand_preview_relaunch_requires_game_runtime");
   if (!sameGameCompanionIdentity(predecessor.identity, config.identity))
@@ -338,10 +333,7 @@ async function relaunchPreview(
 
 function sameGameCompanionIdentity(a: GameCompanionIdentity, b: GameCompanionIdentity): boolean {
   return (
-    a.playerId === b.playerId &&
-    a.companionId === b.companionId &&
-    a.saveId === b.saveId &&
-    a.worldId === b.worldId
+    a.playerId === b.playerId && a.companionId === b.companionId && a.saveId === b.saveId && a.worldId === b.worldId
   );
 }
 
@@ -419,7 +411,15 @@ async function closePreview(
 function productionDependencies(): FarmhandCompanionPreviewDependencies {
   return Object.freeze({
     launcher: STARDEW_INTEGRATION_LAUNCHER,
-    createRuntime: async (identity, root, connection, presentationBridge, sessionId, turnTracker, presentationLocale) => {
+    createRuntime: async (
+      identity,
+      root,
+      connection,
+      presentationBridge,
+      sessionId,
+      turnTracker,
+      presentationLocale,
+    ) => {
       const modelConfig = resolveModelProfileConfig(
         await new ModelProfileStore(resolve(root, "settings", "model-profiles.json")).read("game"),
       );

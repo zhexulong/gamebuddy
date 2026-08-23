@@ -1,17 +1,18 @@
+import type { BridgeFault, DeterministicBridgeEndpoint } from "./bridge.js";
+import type { GameIntegrationModule } from "./integration-module.js";
+import type { CompanionIntegrationState } from "./integration-types.js";
+import type { KnowledgeBundle } from "./knowledge.js";
 import {
-  newEnvelope,
-  nextCancelIdentity,
+  type ActionRegistration,
   type BridgeMessage,
   type CancelIdentity,
-  type ExecutionRequest,
   type ExecutionReceipt,
-  type Snapshot,
+  type ExecutionRequest,
+  newEnvelope,
+  nextCancelIdentity,
   type Scope,
+  type Snapshot,
 } from "./protocol.js";
-import { type CompanionIntegrationState } from "./integration-types.js";
-import { type KnowledgeBundle } from "./knowledge.js";
-import { type GameIntegrationModule } from "./integration-module.js";
-import { type BridgeFault, type DeterministicBridgeEndpoint } from "./bridge.js";
 
 /**
  * Host-side, game-neutral bridge state. It only caches Mod-originated facts;
@@ -21,6 +22,7 @@ import { type BridgeFault, type DeterministicBridgeEndpoint } from "./bridge.js"
 export class CompanionIntegrationClient {
   #sessionId: string | null = null;
   #capabilities: readonly string[] = [];
+  #registrations: readonly ActionRegistration[] = [];
   #snapshot: Snapshot | null = null;
   #latestReceipt: ExecutionReceipt | null = null;
   #latestReasonCode: string | null = null;
@@ -40,6 +42,7 @@ export class CompanionIntegrationClient {
     this.#unsubscribeDisconnect = endpoint.onDisconnect((reasonCode) => {
       this.#sessionId = null;
       this.#capabilities = [];
+      this.#registrations = [];
       this.#snapshot = null;
       this.#latestReceipt = null;
       this.#latestReasonCode = reasonCode;
@@ -56,6 +59,7 @@ export class CompanionIntegrationClient {
       connected: this.endpoint.connected && this.#sessionId !== null,
       sessionId: this.#sessionId,
       capabilities: this.#capabilities,
+      catalogRegistrations: this.#registrations,
       snapshot: this.#snapshot,
       latestReceipt: this.#latestReceipt,
       latestReasonCode: this.#latestReasonCode,
@@ -111,6 +115,7 @@ export class CompanionIntegrationClient {
       case "hello_ack":
         this.#sessionId = message.payload.sessionId;
         this.#capabilities = [...message.payload.capabilities];
+        this.#registrations = [...message.payload.registrations];
         this.#snapshot = null;
         this.#latestReceipt = null;
         this.#latestReasonCode = null;

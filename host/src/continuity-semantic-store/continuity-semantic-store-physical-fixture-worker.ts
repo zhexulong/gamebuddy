@@ -43,7 +43,7 @@ function tableSql(db: DatabaseSync, table: keyof typeof tableColumns): string {
     | { sql: string }
     | undefined;
   assert.ok(row?.sql, `missing ${table}`);
-  return row.sql.replace(/[\s\"`]/g, "").toLowerCase();
+  return row.sql.replace(/[\s"`]/g, "").toLowerCase();
 }
 
 function assertIndependentGameSchema(db: DatabaseSync): void {

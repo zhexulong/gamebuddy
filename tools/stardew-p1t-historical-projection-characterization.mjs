@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
@@ -25,7 +25,8 @@ function methodBody(source) {
   if (source.split(signature).length !== 2) fail("method_signature_drift");
   const signatureOffset = source.indexOf(signature);
   const opening = source.indexOf("{", signatureOffset + signature.length);
-  if (opening === -1 || !/^\s*$/.test(source.slice(signatureOffset + signature.length, opening))) fail("method_form_drift");
+  if (opening === -1 || !/^\s*$/.test(source.slice(signatureOffset + signature.length, opening)))
+    fail("method_form_drift");
   let depth = 0;
   for (let index = opening; index < source.length; index++) {
     if (source[index] === "{") depth++;
@@ -38,9 +39,9 @@ function extractCreateCapabilitiesMembership(source) {
   if (typeof source !== "string") fail("source_invalid");
   const body = methodBody(source).replaceAll("\r\n", "\n").replace(/^\n/, "").trimEnd();
   const lines = body.split("\n");
-  const base = /^        List<string> result = new\(\) \{ "([a-z][a-z0-9_]*)", "([a-z][a-z0-9_]*)" \};$/;
-  const condition = /^        if \(enabledActions\?\.Contains\("([a-z][a-z0-9_]*)"\) == true\)$/;
-  const insertion = /^            result\.Insert\(0, "([a-z][a-z0-9_]*)"\);$/;
+  const base = /^ {8}List<string> result = new\(\) \{ "([a-z][a-z0-9_]*)", "([a-z][a-z0-9_]*)" \};$/;
+  const condition = /^ {8}if \(enabledActions\?\.Contains\("([a-z][a-z0-9_]*)"\) == true\)$/;
+  const insertion = /^ {12}result\.Insert\(0, "([a-z][a-z0-9_]*)"\);$/;
   const membership = [];
   const first = base.exec(lines.shift());
   if (!first) fail("method_form_drift");
@@ -70,7 +71,8 @@ export async function characterizeHistoricalProjection({ gitRunner = runGit } = 
   const membership = extractCreateCapabilitiesMembership(source);
   const includesTreeFirstHit = membership.includes("tree_first_hit");
   const excluded = ["place_crab_pot", "bait_crab_pot", "chop_tree_source"];
-  if (!includesTreeFirstHit || excluded.some((actionId) => membership.includes(actionId))) fail("expected_drift_fact_missing");
+  if (!includesTreeFirstHit || excluded.some((actionId) => membership.includes(actionId)))
+    fail("expected_drift_fact_missing");
   return Object.freeze({
     artifactKind: "stardew_p1t_historical_projection_characterization/v1",
     source: Object.freeze({ commit: PINNED_COMMIT, path: PINNED_PATH, sha256 }),

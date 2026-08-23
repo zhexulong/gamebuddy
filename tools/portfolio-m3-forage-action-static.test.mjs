@@ -31,7 +31,7 @@ test("M3 coordinator binds fresh selector target and range/capacity guards, then
   for (const forbidden of [
     "Game1.tryToCheckAt",
     "GameLocation.checkAction",
-    "\.checkAction\\(",
+    ".checkAction\\(",
     "reflection",
     "SaveGame",
     "NewDay",

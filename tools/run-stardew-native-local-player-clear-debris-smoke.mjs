@@ -1,8 +1,8 @@
 import {
-  NativeSmokeHarnessError,
   connectNativeLocalClient,
   delay,
   executeFresh,
+  NativeSmokeHarnessError,
   observeFresh,
   readNativeClientConfig,
   summarizeReceipt as summarizeHarnessReceipt,

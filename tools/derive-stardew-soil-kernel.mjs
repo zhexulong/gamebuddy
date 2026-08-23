@@ -1,15 +1,15 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 /**
  * Produce a redacted, source-first semantic-kernel prototype from the exact
  * pinned Stardew installation. This is an audit artifact only: it never starts
  * the game, loads a save, creates actions, or changes game/mod state.
  */
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { deriveSoilTileSemanticKernels } from "./lib/stardew-source-semantic-kernel.mjs";
 
 const execFileAsync = promisify(execFile);

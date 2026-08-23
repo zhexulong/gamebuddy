@@ -5,8 +5,8 @@
  * attaches a bridge, mutates gameplay state, or executes an action.
  */
 import { readFile } from "node:fs/promises";
-import process from "node:process";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const APPROVED_TARGET = Object.freeze({

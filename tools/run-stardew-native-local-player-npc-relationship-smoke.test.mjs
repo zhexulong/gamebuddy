@@ -120,7 +120,10 @@ test("npc-relationship runner passes a travel-hop inspected fixture with unchang
   assert.equal(result.evidence.location, "Farm");
   assert.equal(result.after.location, "Farm");
   assert.equal(result.after.revision >= result.receipt.revision, true);
-  assert.deepEqual(result.trace.map((entry) => entry.action), ["travel", "npc_relationship"]);
+  assert.deepEqual(
+    result.trace.map((entry) => entry.action),
+    ["travel", "npc_relationship"],
+  );
 });
 
 test("npc-relationship runner fails closed on a capability superset", async () => {

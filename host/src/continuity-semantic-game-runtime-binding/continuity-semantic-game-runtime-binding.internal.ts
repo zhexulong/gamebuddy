@@ -2,8 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 
 import type { IntegrationLaunchHandle } from "../integration-launcher.js";
-import type { IntegrationConnection } from "../integration-types.js";
 import type { IntegrationWorldScope } from "../integration-module.js";
+import type { IntegrationConnection } from "../integration-types.js";
 
 /** Construction-zone-only process owner proof. No fields are exposed on the proof object. */
 export type OpaqueRuntimeOwnerIdentity = Readonly<{

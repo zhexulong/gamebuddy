@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
-import { identityKey } from "../runtime.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
+import { identityKey } from "../runtime.js";
 import {
-  classifyInitialChatExactContentFailure,
-  createInitialChatExactContentCapability,
-  isInitialChatExactContentCapability,
   type ChatThreadState,
   type CreateChatThreadRequest,
-  type InitialChatExactContentCapability,
+  classifyInitialChatExactContentFailure,
   createChatThreadStore,
+  createInitialChatExactContentCapability,
+  type InitialChatExactContentCapability,
+  isInitialChatExactContentCapability,
 } from "./chat-thread-store.js";
 
 /** The exact four-way Tavern content binding required by the initial-Chat saga. */

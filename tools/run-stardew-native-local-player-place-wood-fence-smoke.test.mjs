@@ -71,13 +71,15 @@ function createFake({ capabilities, terminalReasonCode = "wood_fence_placed" } =
         ...snapshot,
         revision: 8,
         woodFenceTargets: [],
-        woodFenceResultTargets: [{
-          ...target,
-          isFence: true,
-          isGate: false,
-          health: 100,
-          maxHealth: 100,
-        }],
+        woodFenceResultTargets: [
+          {
+            ...target,
+            isFence: true,
+            isGate: false,
+            health: 100,
+            maxHealth: 100,
+          },
+        ],
       };
       client.state.snapshot = snapshot;
       // Facts sharing only one identity field must never satisfy the exact

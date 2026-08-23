@@ -1,4 +1,4 @@
-import { type SpeechJob, type TtsProvider } from "./gateway.js";
+import type { SpeechJob, TtsProvider } from "./gateway.js";
 
 export const MIMO_TTS_ENDPOINT = "https://api.xiaomimimo.com/v1/chat/completions";
 export const MIMO_TTS_MODEL = "mimo-v2.5-tts";

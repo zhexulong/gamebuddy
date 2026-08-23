@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,9 +21,9 @@ const BUILD_ID = "host-build-2026-01";
 const GAME_BYTES = Buffer.from("target-game");
 const SMAPI_BYTES = Buffer.from("target-smapi");
 const SMAPI_EXE_BYTES = Buffer.from("target-smapi-exe");
-const GAME_HASH = createHash("sha256").update(GAME_BYTES).digest("hex");
-const SMAPI_HASH = createHash("sha256").update(SMAPI_BYTES).digest("hex");
-const SMAPI_EXE_HASH = createHash("sha256").update(SMAPI_EXE_BYTES).digest("hex");
+const _GAME_HASH = createHash("sha256").update(GAME_BYTES).digest("hex");
+const _SMAPI_HASH = createHash("sha256").update(SMAPI_BYTES).digest("hex");
+const _SMAPI_EXE_HASH = createHash("sha256").update(SMAPI_EXE_BYTES).digest("hex");
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-p0b-attestation-"));
@@ -39,6 +39,7 @@ async function fixture(t) {
   await writeFile(join(gamePath, "StardewModdingAPI.dll"), SMAPI_BYTES);
   await writeFile(join(gamePath, "StardewModdingAPI.exe"), SMAPI_EXE_BYTES);
   await writeFile(join(bundle, "GameBuddy.Stardew.dll"), "mod-dll");
+  await writeFile(join(bundle, "GameBuddy.Stardew.Core.dll"), "core-dll");
   await writeFile(join(bundle, "GameBuddy.Stardew.deps.json"), "deps");
   await writeFile(
     join(bundle, "manifest.json"),

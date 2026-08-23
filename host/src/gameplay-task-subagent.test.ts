@@ -3,32 +3,47 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
+import type {
+  AgentSession,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
+import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import {
   admitGameplayAction,
+  awaitTaskOwnedTerminalReceipt,
   DEFAULT_GAMEPLAY_TASK_BUDGET,
+  type GameplayTaskBudget,
   GameplayTaskSubagent,
   hasActionPostconditionEvidence,
   hasAuthoritativeCompletion,
   selectTaskOwnedCancellation,
-  awaitTaskOwnedTerminalReceipt,
-  type GameplayTaskBudget,
 } from "./gameplay-task-subagent.js";
-import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { CompanionIntegration } from "./integration-types.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
-import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
-import type { RuntimePaths } from "./runtime.js";
 import type { ExecutionWake } from "./integration-launcher.js";
+import type { CompanionIntegration } from "./integration-types.js";
+import type { RuntimePaths } from "./runtime.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const paths: RuntimePaths = {
   root: tmpdir(),
   runtimeCwd: join(tmpdir(), "gamebuddy-gameplay-task-tests"),
   agentDir: join(tmpdir(), "gamebuddy-gameplay-task-tests", "pi-agent"),
   sessionDir: join(tmpdir(), "gamebuddy-gameplay-task-tests", "sessions"),
-  identityProfilePath: join(tmpdir(), "gamebuddy-gameplay-task-tests", "identity-profile.json"),
-  identityProfileBindingPath: join(tmpdir(), "gamebuddy-gameplay-task-tests", "identity-profile-binding.json"),
-  runManifestPath: join(tmpdir(), "gamebuddy-gameplay-task-tests", "companion-run-manifest.json"),
+  identityProfilePath: join(
+    tmpdir(),
+    "gamebuddy-gameplay-task-tests",
+    "identity-profile.json",
+  ),
+  identityProfileBindingPath: join(
+    tmpdir(),
+    "gamebuddy-gameplay-task-tests",
+    "identity-profile-binding.json",
+  ),
+  runManifestPath: join(
+    tmpdir(),
+    "gamebuddy-gameplay-task-tests",
+    "companion-run-manifest.json",
+  ),
 };
 
 const integration: CompanionIntegration = {
@@ -46,6 +61,7 @@ const integration: CompanionIntegration = {
     snapshot: null,
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   },
   module: STARDEW_INTEGRATION_MODULE,
 };
@@ -56,15 +72,33 @@ function withBudget(patch: Partial<GameplayTaskBudget>): GameplayTaskBudget {
 
 test("GameplayTaskSubagent rejects invalid Host-enforced budgets before any model runtime is created", () => {
   assert.throws(
-    () => new GameplayTaskSubagent(paths, integration, undefined, withBudget({ maxTurns: 0 })),
+    () =>
+      new GameplayTaskSubagent(
+        paths,
+        integration,
+        undefined,
+        withBudget({ maxTurns: 0 }),
+      ),
     /invalid_gameplay_task_budget:maxTurns/,
   );
   assert.throws(
-    () => new GameplayTaskSubagent(paths, integration, undefined, withBudget({ maxToolCalls: 1.5 })),
+    () =>
+      new GameplayTaskSubagent(
+        paths,
+        integration,
+        undefined,
+        withBudget({ maxToolCalls: 1.5 }),
+      ),
     /invalid_gameplay_task_budget:maxToolCalls/,
   );
   assert.throws(
-    () => new GameplayTaskSubagent(paths, integration, undefined, withBudget({ maxActiveExecutions: 2 as 1 })),
+    () =>
+      new GameplayTaskSubagent(
+        paths,
+        integration,
+        undefined,
+        withBudget({ maxActiveExecutions: 2 as 1 }),
+      ),
     /invalid_gameplay_task_budget:maxActiveExecutions/,
   );
 });
@@ -87,9 +121,26 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
     revision: 1,
     evidence: { detail: "location=Farm;target=3,4;before=none;after=HoeDirt" },
   };
-  const report = { state: "completed", evidence: { requestId: "request_01", executionId: "execution_01" } };
-  const owned = [{ actionId: "till_soil", requestId: "request_01", executionId: "execution_01" }];
-  assert.equal(hasAuthoritativeCompletion(report, succeeded, owned, STARDEW_INTEGRATION_MODULE.actionCatalog), true);
+  const report = {
+    state: "completed",
+    evidence: { requestId: "request_01", executionId: "execution_01" },
+  };
+  const owned = [
+    {
+      actionId: "till_soil",
+      requestId: "request_01",
+      executionId: "execution_01",
+    },
+  ];
+  assert.equal(
+    hasAuthoritativeCompletion(
+      report,
+      succeeded,
+      owned,
+      STARDEW_INTEGRATION_MODULE.actionCatalog,
+    ),
+    true,
+  );
   assert.equal(
     hasAuthoritativeCompletion(
       report,
@@ -110,21 +161,35 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
   );
   assert.equal(
     hasAuthoritativeCompletion(
-      { ...report, evidence: { requestId: "other", executionId: "execution_01" } },
+      {
+        ...report,
+        evidence: { requestId: "other", executionId: "execution_01" },
+      },
       succeeded,
       owned,
       STARDEW_INTEGRATION_MODULE.actionCatalog,
     ),
     false,
   );
-  assert.equal(hasAuthoritativeCompletion(report, succeeded, [], STARDEW_INTEGRATION_MODULE.actionCatalog), false);
+  assert.equal(
+    hasAuthoritativeCompletion(
+      report,
+      succeeded,
+      [],
+      STARDEW_INTEGRATION_MODULE.actionCatalog,
+    ),
+    false,
+  );
 });
 
 test("completion evidence must contain action-specific postcondition keys", () => {
   assert.equal(
     hasActionPostconditionEvidence(
       "equip_tool",
-      { reasonCode: "tool_selected", evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" } },
+      {
+        reasonCode: "tool_selected",
+        evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+      },
       STARDEW_INTEGRATION_MODULE.actionCatalog,
     ),
     true,
@@ -140,7 +205,10 @@ test("completion evidence must contain action-specific postcondition keys", () =
   assert.equal(
     hasActionPostconditionEvidence(
       "equip_tool",
-      { reasonCode: "unexpected_success", evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" } },
+      {
+        reasonCode: "unexpected_success",
+        evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
+      },
       STARDEW_INTEGRATION_MODULE.actionCatalog,
     ),
     false,
@@ -156,7 +224,10 @@ test("completion evidence must contain action-specific postcondition keys", () =
   assert.equal(
     hasActionPostconditionEvidence(
       "till_soil",
-      { reasonCode: "soil_tilled", evidence: { detail: "before=none;after=Stone" } },
+      {
+        reasonCode: "soil_tilled",
+        evidence: { detail: "before=none;after=Stone" },
+      },
       STARDEW_INTEGRATION_MODULE.actionCatalog,
     ),
     false,
@@ -164,10 +235,18 @@ test("completion evidence must contain action-specific postcondition keys", () =
   const planted = {
     reasonCode: "seed_planted",
     evidence: {
-      detail: "location=Farm;target=seed_target_01;tile=3,4;item=(O)479;crop=479;inventory_before=2;inventory_after=1",
+      detail:
+        "location=Farm;target=seed_target_01;tile=3,4;item=(O)479;crop=479;inventory_before=2;inventory_after=1",
     },
   };
-  assert.equal(hasActionPostconditionEvidence("plant_seed", planted, STARDEW_INTEGRATION_MODULE.actionCatalog), true);
+  assert.equal(
+    hasActionPostconditionEvidence(
+      "plant_seed",
+      planted,
+      STARDEW_INTEGRATION_MODULE.actionCatalog,
+    ),
+    true,
+  );
   assert.equal(
     hasActionPostconditionEvidence(
       "plant_seed",
@@ -203,22 +282,54 @@ test("Gameplay action admission enforces active execution, total, and family lim
     acceptedActions: 1,
     acceptedActionsByFamily: { farming_crops: 1 },
     executions: [],
-    budget: withBudget({ maxAcceptedActions: 2, maxAcceptedActionsPerFamily: 1 }),
+    budget: withBudget({
+      maxAcceptedActions: 2,
+      maxAcceptedActionsPerFamily: 1,
+    }),
   };
-  assert.deepEqual(admitGameplayAction("till_soil", record, null, STARDEW_INTEGRATION_MODULE.actionCatalog), {
-    ok: false,
-    reasonCode: "gameplay_task_action_family_budget_exhausted",
-  });
-  assert.deepEqual(admitGameplayAction("equip_tool", record, null, STARDEW_INTEGRATION_MODULE.actionCatalog), {
-    ok: true,
-    familyId: "body_tools",
-  });
+  const liveCapabilities = TEST_MOD_REGISTRATIONS.map(
+    (entry) => entry.actionId,
+  );
+  const policy = STARDEW_INTEGRATION_MODULE.defaultPolicy;
+  assert.deepEqual(
+    admitGameplayAction(
+      "till_soil",
+      record,
+      null,
+      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      TEST_MOD_REGISTRATIONS,
+      liveCapabilities,
+      policy,
+    ),
+    {
+      ok: false,
+      reasonCode: "gameplay_task_action_family_budget_exhausted",
+    },
+  );
+  assert.deepEqual(
+    admitGameplayAction(
+      "equip_tool",
+      record,
+      null,
+      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      TEST_MOD_REGISTRATIONS,
+      liveCapabilities,
+      policy,
+    ),
+    {
+      ok: true,
+      familyId: "body_tools",
+    },
+  );
   assert.deepEqual(
     admitGameplayAction(
       "equip_tool",
       { ...record, acceptedActions: 2 },
       null,
       STARDEW_INTEGRATION_MODULE.actionCatalog,
+      TEST_MOD_REGISTRATIONS,
+      liveCapabilities,
+      policy,
     ),
     { ok: false, reasonCode: "gameplay_task_action_budget_exhausted" },
   );
@@ -228,24 +339,46 @@ test("Gameplay action admission enforces active execution, total, and family lim
       record,
       { requestId: "request_01", executionId: "execution_01" },
       STARDEW_INTEGRATION_MODULE.actionCatalog,
+      TEST_MOD_REGISTRATIONS,
+      liveCapabilities,
+      policy,
     ),
     { ok: false, reasonCode: "gameplay_task_active_execution_exists" },
   );
-  assert.deepEqual(admitGameplayAction("not_published", record, null, STARDEW_INTEGRATION_MODULE.actionCatalog), {
-    ok: false,
-    reasonCode: "unknown_gameplay_action",
-  });
+  assert.deepEqual(
+    admitGameplayAction(
+      "not_published",
+      record,
+      null,
+      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      TEST_MOD_REGISTRATIONS,
+      liveCapabilities,
+      policy,
+    ),
+    {
+      ok: false,
+      reasonCode: "unknown_gameplay_action",
+    },
+  );
   assert.deepEqual(
     admitGameplayAction(
       "equip_tool",
       {
         ...record,
         executions: [
-          { actionId: "move_to_tile", requestId: "request_01", executionId: "execution_01", state: "running" },
+          {
+            actionId: "move_to_tile",
+            requestId: "request_01",
+            executionId: "execution_01",
+            state: "running",
+          },
         ],
       },
       null,
       STARDEW_INTEGRATION_MODULE.actionCatalog,
+      TEST_MOD_REGISTRATIONS,
+      liveCapabilities,
+      policy,
     ),
     { ok: false, reasonCode: "gameplay_task_active_execution_exists" },
   );
@@ -255,6 +388,7 @@ type MutableIntegrationState = {
   connected: boolean;
   sessionId: string | null;
   capabilities: string[];
+  catalogRegistrations: readonly import("./protocol.js").ActionRegistration[];
   snapshot: any;
   latestReceipt: any;
   latestReasonCode: string | null;
@@ -265,7 +399,11 @@ function scriptedIntegration(
   calls: { execute: string[]; cancel: string[] },
 ): CompanionIntegration & {
   execute(request: any): Promise<any>;
-  cancel(requestId: string, executionId: string, reasonCode: string): Promise<any>;
+  cancel(
+    requestId: string,
+    executionId: string,
+    reasonCode: string,
+  ): Promise<any>;
 } {
   return {
     scope: integration.scope,
@@ -300,18 +438,24 @@ function scriptedIntegration(
   };
 }
 
-function testDispatchAdmissionFactory(mounted: Pick<ReturnType<typeof scriptedIntegration>, "cancel">) {
+function testDispatchAdmissionFactory(
+  mounted: Pick<ReturnType<typeof scriptedIntegration>, "cancel">,
+) {
   let generation = 0;
   return () => {
     const owner = { ownerId: `worker_test_${++generation}`, epoch: 0 };
-    const ledger = new ExecutionCorrelationLedger((requestId, executionId, reasonCode) =>
-      mounted.cancel(requestId, executionId, reasonCode),
+    const ledger = new ExecutionCorrelationLedger(
+      (requestId, executionId, reasonCode) =>
+        mounted.cancel(requestId, executionId, reasonCode),
     );
     return {
       owner,
       observer: ledger,
-      cancelExact: (requestId: string, executionId: string, reasonCode: string) =>
-        ledger.requestCancelExact(owner, requestId, executionId, reasonCode),
+      cancelExact: (
+        requestId: string,
+        executionId: string,
+        reasonCode: string,
+      ) => ledger.requestCancelExact(owner, requestId, executionId, reasonCode),
       cancelPending: (reasonCode: string) => {
         void ledger.requestCancelOwner(owner, reasonCode);
       },
@@ -349,10 +493,20 @@ function liveSnapshot(capabilities: string[]) {
   };
 }
 
-async function invoke(tools: readonly ToolDefinition[], name: string, params: Record<string, unknown>) {
+async function invoke(
+  tools: readonly ToolDefinition[],
+  name: string,
+  params: Record<string, unknown>,
+) {
   const tool = tools.find((candidate) => candidate.name === name);
   if (tool === undefined) throw new Error(`missing_test_tool:${name}`);
-  return tool.execute("test_call", params, new AbortController().signal, undefined, undefined as never);
+  return tool.execute(
+    "test_call",
+    params,
+    new AbortController().signal,
+    undefined,
+    undefined as never,
+  );
 }
 
 test("GameplayTaskSubagent reserves before construction, binds abort to its task, and releases only after finalization", async () => {
@@ -364,6 +518,7 @@ test("GameplayTaskSubagent reserves before construction, binds abort to its task
     snapshot: liveSnapshot(["equip_tool"]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
@@ -388,7 +543,8 @@ test("GameplayTaskSubagent reserves before construction, binds abort to its task
   );
   const parent = new AbortController();
   const runningA = worker.run("A", parent.signal);
-  while (resolveConstruction === undefined) await new Promise((resolve) => setTimeout(resolve, 1));
+  while (resolveConstruction === undefined)
+    await new Promise((resolve) => setTimeout(resolve, 1));
   await assert.rejects(worker.run("B"), /gameplay_task_already_active/);
   parent.abort();
   resolveConstruction(fakeSession([], async () => undefined));
@@ -407,17 +563,26 @@ test("GameplayTaskSubagent releases a failed workspace reservation without a CWD
     snapshot: liveSnapshot([]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
   let workspaceAttempts = 0;
-  const worker = new GameplayTaskSubagent(paths, mounted, undefined, DEFAULT_GAMEPLAY_TASK_BUDGET, {
-    createWorkspace: async () => {
-      if (workspaceAttempts++ === 0) throw new Error("workspace_creation_failed");
-      return join(paths.runtimeCwd, "allocated-workspace");
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      createWorkspace: async () => {
+        if (workspaceAttempts++ === 0)
+          throw new Error("workspace_creation_failed");
+        return join(paths.runtimeCwd, "allocated-workspace");
+      },
+      create: async ({ customTools }) =>
+        fakeSession(customTools, async () => undefined),
     },
-    create: async ({ customTools }) => fakeSession(customTools, async () => undefined),
-  });
+  );
   assert.equal((await worker.run("first")).state, "blocked");
   assert.equal(worker.activeTaskId, null);
   assert.equal((await worker.run("second")).state, "blocked");
@@ -433,16 +598,23 @@ test("GameplayTaskSubagent releases a failed construction reservation", async ()
     snapshot: liveSnapshot([]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
   let attempts = 0;
-  const worker = new GameplayTaskSubagent(paths, mounted, undefined, DEFAULT_GAMEPLAY_TASK_BUDGET, {
-    create: async ({ customTools }) => {
-      if (attempts++ === 0) throw new Error("construction_failed");
-      return fakeSession(customTools, async () => undefined);
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      create: async ({ customTools }) => {
+        if (attempts++ === 0) throw new Error("construction_failed");
+        return fakeSession(customTools, async () => undefined);
+      },
     },
-  });
+  );
   assert.equal((await worker.run("first")).state, "blocked");
   assert.equal((await worker.run("second")).state, "blocked");
 });
@@ -456,16 +628,23 @@ test("Gameplay worker hides action tools without a runtime-owned dispatch admiss
     snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
   let mountedNames: readonly string[] = [];
-  const worker = new GameplayTaskSubagent(paths, mounted, undefined, DEFAULT_GAMEPLAY_TASK_BUDGET, {
-    create: async ({ customTools }) => {
-      mountedNames = customTools.map((tool) => tool.name);
-      return fakeSession(customTools, async () => undefined);
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    DEFAULT_GAMEPLAY_TASK_BUDGET,
+    {
+      create: async ({ customTools }) => {
+        mountedNames = customTools.map((tool) => tool.name);
+        return fakeSession(customTools, async () => undefined);
+      },
     },
-  });
+  );
   const result = await worker.run("admission required");
   assert.equal(result.state, "blocked");
   assert.equal(mountedNames.includes("stardew_equip_tool"), false);
@@ -480,9 +659,14 @@ test("Gameplay worker fake session blocks a second action until the owned receip
     connected: true,
     sessionId: "session_01",
     capabilities: ["equip_tool", "move_to_tile", "cancel_active_execution"],
-    snapshot: liveSnapshot(["equip_tool", "move_to_tile", "cancel_active_execution"]),
+    snapshot: liveSnapshot([
+      "equip_tool",
+      "move_to_tile",
+      "cancel_active_execution",
+    ]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
@@ -494,9 +678,18 @@ test("Gameplay worker fake session blocks a second action until the owned receip
     {
       create: async ({ customTools }) =>
         fakeSession(customTools, async (tools) => {
-          await invoke(tools, "stardew_equip_tool", { slot: 1, requestId: "request_01", idempotencyKey: "key_01" });
+          await invoke(tools, "stardew_equip_tool", {
+            slot: 1,
+            requestId: "request_01",
+            idempotencyKey: "key_01",
+          });
           await assert.rejects(
-            invoke(tools, "stardew_move_to_tile", { x: 2, y: 2, requestId: "request_02", idempotencyKey: "key_02" }),
+            invoke(tools, "stardew_move_to_tile", {
+              x: 2,
+              y: 2,
+              requestId: "request_02",
+              idempotencyKey: "key_02",
+            }),
             /gameplay_task_active_execution_exists/,
           );
           state.latestReceipt = {
@@ -519,7 +712,9 @@ test("Gameplay worker fake session blocks a second action until the owned receip
             state: "succeeded",
             reasonCode: "target_reached",
             revision: 7,
-            evidence: { detail: "tile=2,2;target=2,2;arrival=exact;path=stardew_native" },
+            evidence: {
+              detail: "tile=2,2;target=2,2;arrival=exact;path=stardew_native",
+            },
           };
           await invoke(tools, "report_to_parent", {
             state: "completed",
@@ -538,7 +733,11 @@ test("Gameplay worker fake session blocks a second action until the owned receip
   assert.equal(worker.lastTaskRecord?.executions[0]?.state, "succeeded");
   assert.deepEqual(
     worker.lastTaskSteps.map((step) => step.name),
-    ["worker_finished", "worker_reported_completed", "authoritatively_completed"],
+    [
+      "worker_finished",
+      "worker_reported_completed",
+      "authoritatively_completed",
+    ],
   );
 });
 
@@ -551,6 +750,7 @@ test("Gameplay worker action-family budget cancels before dispatching an over-bu
     snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
@@ -576,7 +776,11 @@ test("Gameplay worker action-family budget cancels before dispatching an over-bu
             evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
           };
           await assert.rejects(
-            invoke(tools, "stardew_equip_tool", { slot: 2, requestId: "request_second", idempotencyKey: "key_second" }),
+            invoke(tools, "stardew_equip_tool", {
+              slot: 2,
+              requestId: "request_second",
+              idempotencyKey: "key_second",
+            }),
             /gameplay_task_action_family_budget_exhausted/,
           );
         }),
@@ -587,7 +791,10 @@ test("Gameplay worker action-family budget cancels before dispatching an over-bu
   const result = await worker.run("family budget task");
   assert.equal(result.state, "blocked");
   assert.deepEqual(calls.execute, ["equip_tool"]);
-  assert.equal(worker.lastTaskRecord?.terminalReasonCode, "gameplay_task_action_family_budget_exhausted");
+  assert.equal(
+    worker.lastTaskRecord?.terminalReasonCode,
+    "gameplay_task_action_family_budget_exhausted",
+  );
 });
 
 test("Gameplay worker parent abort cancels only its accepted execution and records an authoritative terminal receipt", async () => {
@@ -599,6 +806,7 @@ test("Gameplay worker parent abort cancels only its accepted execution and recor
     snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
@@ -636,7 +844,8 @@ test("Gameplay worker parent abort cancels only its accepted execution and recor
   );
   const parent = new AbortController();
   const running = worker.run("cancel task", parent.signal);
-  while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+  while (calls.execute.length === 0)
+    await new Promise((resolve) => setTimeout(resolve, 1));
   parent.abort("player_stop");
   const result = await running;
   assert.equal(result.state, "cancelled");
@@ -652,7 +861,12 @@ test("task-owned terminal waiter uses an exact wake only after rereading the own
   const waiting = awaitTaskOwnedTerminalReceipt({
     executions: [{ requestId: "request_01", executionId: "execution_01" }],
     deadlineMs: startedAt + 1_000,
-    wakeSource: { onExecutionWake: (listener) => (listeners.add(listener), () => listeners.delete(listener)) },
+    wakeSource: {
+      onExecutionWake: (listener) => (
+        listeners.add(listener),
+        () => listeners.delete(listener)
+      ),
+    },
     readReceipt: () => receipt,
   });
   receipt = {
@@ -687,7 +901,12 @@ test("matching terminal wake with null or nonterminal reread remains pending thr
   const waiting = awaitTaskOwnedTerminalReceipt({
     executions: [{ requestId: "request_01", executionId: "execution_01" }],
     deadlineMs,
-    wakeSource: { onExecutionWake: (listener) => (listeners.add(listener), () => listeners.delete(listener)) },
+    wakeSource: {
+      onExecutionWake: (listener) => (
+        listeners.add(listener),
+        () => listeners.delete(listener)
+      ),
+    },
     readReceipt: () => receipt,
   });
   for (const listener of listeners)
@@ -726,12 +945,29 @@ test("task-owned terminal waiter ignores malformed and unrelated wakes", async (
   const waiting = awaitTaskOwnedTerminalReceipt({
     executions: [{ requestId: "request_01", executionId: "execution_01" }],
     deadlineMs: Date.now() + 1_000,
-    wakeSource: { onExecutionWake: (listener) => (listeners.add(listener), () => listeners.delete(listener)) },
+    wakeSource: {
+      onExecutionWake: (listener) => (
+        listeners.add(listener),
+        () => listeners.delete(listener)
+      ),
+    },
     readReceipt: () => receipt,
   });
   for (const listener of listeners) {
-    listener({ kind: "terminal", requestId: "other", executionId: "other", state: "succeeded", reasonCode: "other" });
-    listener({ kind: "terminal", requestId: "", executionId: "", state: "", reasonCode: "" } as ExecutionWake);
+    listener({
+      kind: "terminal",
+      requestId: "other",
+      executionId: "other",
+      state: "succeeded",
+      reasonCode: "other",
+    });
+    listener({
+      kind: "terminal",
+      requestId: "",
+      executionId: "",
+      state: "",
+      reasonCode: "",
+    } as ExecutionWake);
   }
   await new Promise((resolve) => setTimeout(resolve, 20));
   receipt = {
@@ -800,9 +1036,14 @@ test("adapter liveness freezes the active task, cancels its owned execution once
     connected: true,
     sessionId: "session_01",
     capabilities: ["equip_tool", "move_to_tile", "cancel_active_execution"],
-    snapshot: liveSnapshot(["equip_tool", "move_to_tile", "cancel_active_execution"]),
+    snapshot: liveSnapshot([
+      "equip_tool",
+      "move_to_tile",
+      "cancel_active_execution",
+    ]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
@@ -839,17 +1080,28 @@ test("adapter liveness freezes the active task, cancels its owned execution once
           releasePrompt,
         ),
     },
-    { onExecutionWake: (listener) => (listeners.add(listener), () => listeners.delete(listener)) },
+    {
+      onExecutionWake: (listener) => (
+        listeners.add(listener),
+        () => listeners.delete(listener)
+      ),
+    },
     testDispatchAdmissionFactory(mounted),
   );
   const running = worker.run("liveness task");
-  while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
-  for (const listener of listeners) listener({ kind: "invalidated", reasonCode: "scope_lost" });
-  for (const listener of listeners) listener({ kind: "disconnected", reasonCode: "pipe_closed" });
+  while (calls.execute.length === 0)
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  for (const listener of listeners)
+    listener({ kind: "invalidated", reasonCode: "scope_lost" });
+  for (const listener of listeners)
+    listener({ kind: "disconnected", reasonCode: "pipe_closed" });
   const result = await running;
   assert.equal(result.state, "cancelled");
   assert.equal(calls.cancel.length, 1);
-  assert.match(calls.cancel[0]!, /^request_live:execution_1:integration_invalidated:scope_lost$/);
+  assert.match(
+    calls.cancel[0]!,
+    /^request_live:execution_1:integration_invalidated:scope_lost$/,
+  );
   assert.deepEqual(calls.execute, ["equip_tool"]);
   assert.equal(worker.lastTaskRecord?.terminalReceipt?.state, "cancelled");
 });
@@ -863,6 +1115,7 @@ test("worker mints a fresh runtime-owned admission for each action invocation", 
     snapshot: liveSnapshot(["equip_tool", "move_to_tile"]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
@@ -921,7 +1174,8 @@ test("worker mints a fresh runtime-owned admission for each action invocation", 
   );
   const parent = new AbortController();
   const running = worker.run("same admission", parent.signal);
-  while (calls.execute.length < 2) await new Promise((resolve) => setTimeout(resolve, 1));
+  while (calls.execute.length < 2)
+    await new Promise((resolve) => setTimeout(resolve, 1));
   parent.abort();
   const result = await running;
   assert.equal(result.state, "cancelled");
@@ -938,6 +1192,7 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
     snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   let resolveDispatch!: (value: any) => void;
@@ -975,7 +1230,8 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
   );
   const parent = new AbortController();
   const running = worker.run("pending dispatch", parent.signal);
-  while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+  while (calls.execute.length === 0)
+    await new Promise((resolve) => setTimeout(resolve, 1));
   // State reconciliation must not settle this dispatch from an observed
   // nonterminal receipt before game-tools binds the execute response to the ledger.
   state.latestReceipt = {
@@ -997,10 +1253,15 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
   });
   const result = await running;
   assert.equal(result.state, "cancelled");
-  assert.deepEqual(calls.cancel, ["request_pending:execution_pending:parent_aborted"]);
+  assert.deepEqual(calls.cancel, [
+    "request_pending:execution_pending:parent_aborted",
+  ]);
   assert.equal(worker.lastTaskRecord?.pendingDispatch, null);
   assert.deepEqual(
-    worker.lastTaskRecord?.executions.map(({ requestId, executionId }) => ({ requestId, executionId })),
+    worker.lastTaskRecord?.executions.map(({ requestId, executionId }) => ({
+      requestId,
+      executionId,
+    })),
     [{ requestId: "request_pending", executionId: "execution_pending" }],
   );
 });
@@ -1014,6 +1275,7 @@ test("pending post-write dispatch settles from an exact terminal wake before its
     snapshot: liveSnapshot(["equip_tool"]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   const mounted = scriptedIntegration(state, calls);
@@ -1047,12 +1309,18 @@ test("pending post-write dispatch settles from an exact terminal wake before its
           releasePrompt,
         ),
     },
-    { onExecutionWake: (listener) => (listeners.add(listener), () => listeners.delete(listener)) },
+    {
+      onExecutionWake: (listener) => (
+        listeners.add(listener),
+        () => listeners.delete(listener)
+      ),
+    },
     testDispatchAdmissionFactory(mounted),
   );
   const parent = new AbortController();
   const running = worker.run("pending exact wake", parent.signal);
-  while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+  while (calls.execute.length === 0)
+    await new Promise((resolve) => setTimeout(resolve, 1));
   state.latestReceipt = {
     requestId: "request_wake",
     executionId: "execution_wake",
@@ -1088,6 +1356,7 @@ test("latest terminal receipt before delayed tool resolution retires ledger corr
     snapshot: liveSnapshot(["equip_tool", "cancel_active_execution"]),
     latestReceipt: null,
     latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
   };
   const calls = { execute: [] as string[], cancel: [] as string[] };
   let resolveDispatch!: (value: any) => void;
@@ -1125,7 +1394,8 @@ test("latest terminal receipt before delayed tool resolution retires ledger corr
   );
   const parent = new AbortController();
   const running = worker.run("terminal pending dispatch", parent.signal);
-  while (calls.execute.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+  while (calls.execute.length === 0)
+    await new Promise((resolve) => setTimeout(resolve, 1));
   // Even a matching terminal receipt is only observation until game-tools
   // invokes bindReceipt; cancellation is retained by the ledger meanwhile.
   state.latestReceipt = {
@@ -1145,23 +1415,50 @@ test("latest terminal receipt before delayed tool resolution retires ledger corr
 });
 
 test("Gameplay cancellation selects only a task-owned active execution", () => {
-  const taskExecutions: Array<{ requestId: string; executionId: string; state: string }> = [
-    { requestId: "request_owned", executionId: "execution_owned", state: "accepted" },
-    { requestId: "request_done", executionId: "execution_done", state: "succeeded" },
+  const taskExecutions: Array<{
+    requestId: string;
+    executionId: string;
+    state: string;
+  }> = [
+    {
+      requestId: "request_owned",
+      executionId: "execution_owned",
+      state: "accepted",
+    },
+    {
+      requestId: "request_done",
+      executionId: "execution_done",
+      state: "succeeded",
+    },
   ];
   assert.deepEqual(
-    selectTaskOwnedCancellation(taskExecutions, { requestId: "request_other", executionId: "execution_other" }),
-    { requestId: "request_owned", executionId: "execution_owned" },
-  );
-  assert.deepEqual(
-    selectTaskOwnedCancellation(taskExecutions, { requestId: "request_owned", executionId: "execution_owned" }),
-    { requestId: "request_owned", executionId: "execution_owned" },
-  );
-  assert.equal(
-    selectTaskOwnedCancellation([{ requestId: "request_done", executionId: "execution_done", state: "succeeded" }], {
+    selectTaskOwnedCancellation(taskExecutions, {
       requestId: "request_other",
       executionId: "execution_other",
     }),
+    { requestId: "request_owned", executionId: "execution_owned" },
+  );
+  assert.deepEqual(
+    selectTaskOwnedCancellation(taskExecutions, {
+      requestId: "request_owned",
+      executionId: "execution_owned",
+    }),
+    { requestId: "request_owned", executionId: "execution_owned" },
+  );
+  assert.equal(
+    selectTaskOwnedCancellation(
+      [
+        {
+          requestId: "request_done",
+          executionId: "execution_done",
+          state: "succeeded",
+        },
+      ],
+      {
+        requestId: "request_other",
+        executionId: "execution_other",
+      },
+    ),
     null,
   );
 });

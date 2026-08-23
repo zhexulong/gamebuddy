@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { inspectLegacyAuthoritySealCandidate } from "./legacy-authority-seal.js";
 
 type Reply = { ok: boolean; code: string; message?: string };

@@ -1,6 +1,14 @@
-import { type AgentSession, type AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { CompanionEventPump, type DeliveryDisposition } from "./event-pump.js";
+import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
+import { attachNativeCompanionContent, type NativeCompanionContentObserver } from "./native-companion-content.js";
+import { CompanionEventPump, type DeliveryDisposition } from "./event-pump.js";
+
+export type NativeGameCompanionContent = Readonly<{
+  sourceEventId: string;
+  text: string;
+}>;
+
+export type NativeGameContentPresenter = (content: NativeGameCompanionContent) => Promise<void>;
 
 export interface CompanionTurnObserver {
   /**
@@ -11,6 +19,12 @@ export interface CompanionTurnObserver {
    */
   beginPlayerBatch(sourceEventId: string, batchId: string | undefined): void;
   endBatch(batchId: string | undefined): void;
+  /**
+   * Receives final ordinary assistant content only for the currently Pi-consumed
+   * player batch. This callback owns surface admission; it is never invoked for
+   * tool calls, world-only batches, aborted/error turns, or after STOP revoke.
+   */
+  presentNativeAssistantContent?(content: NativeGameCompanionContent): Promise<void>;
 }
 
 /** Completion is session-authoritative only after Pi itself reports idle. */
@@ -39,6 +53,23 @@ export class CompanionLoop {
     if (this.#turnObserver !== undefined) throw new Error("companion_turn_observer_already_attached");
     this.#turnObserver = turnObserver;
   }
+
+  /**
+   * Adds the Host-owned native Game output hook without replacing turn lineage.
+   * This is a composition-only seam: the presenter must be installed before
+   * any ingress is accepted, so an actual Pi-consumed batch cannot race an
+   * observerless Game turn.
+   */
+  public attachNativeGameContentPresenter(presenter: NativeGameContentPresenter): void {
+    const observer = this.#turnObserver;
+    if (observer === undefined || observer.presentNativeAssistantContent !== undefined)
+      throw new Error("native_game_content_presenter_unavailable");
+    this.#turnObserver = Object.freeze({
+      ...observer,
+      presentNativeAssistantContent: presenter,
+    });
+  }
+
   public get pump(): CompanionEventPump {
     return this.#pump;
   }
@@ -98,6 +129,9 @@ export class CompanionLoop {
     let accepted = false;
     let settled = false;
     let beganPresentation = false;
+    let nativeContentObserver: NativeCompanionContentObserver | undefined;
+    let nativeContentFinal: Promise<void> | undefined;
+    let nativeContentDelivered = false;
     const tracksPlayerDelivery = sourceEventId !== undefined;
     let unsubscribe: (() => void) | undefined;
     let resolveStarted!: () => void;
@@ -135,6 +169,31 @@ export class CompanionLoop {
           if (sourceEventId !== undefined) {
             this.#turnObserver?.beginPlayerBatch(sourceEventId, batchId);
             beganPresentation = true;
+            // A production Game composition installs the final-content
+            // presenter before ingress opens. Smaller non-Game consumers of
+            // CompanionLoop intentionally have no Game presentation surface,
+            // so absence means "no projection", never a synthetic fallback.
+            if (this.#turnObserver?.presentNativeAssistantContent !== undefined) {
+              nativeContentObserver = attachNativeCompanionContent(this.session as AgentSession, {
+                // Game has no unauthoritative streaming projection: only the
+                // final content crosses the existing source-lineage bridge.
+                onPreviewDelta: () => undefined,
+                onFinalText: async (text) => {
+                  // The observer finalizes once, but keep this local guard at
+                  // the Game authority boundary: one consumed batch can admit
+                  // at most one native expression even if an event adapter is
+                  // malformed or changes its subscription semantics.
+                  if (nativeContentDelivered) return;
+                  nativeContentDelivered = true;
+                  const content = Object.freeze({ sourceEventId, text });
+                  const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
+                  if (presentation !== undefined) nativeContentFinal = presentation;
+                  await presentation;
+                },
+                onRejected: () => undefined,
+              });
+              nativeContentObserver.open();
+            }
           }
           if (sourceEventId !== undefined && batchId !== undefined)
             this.#emitLiveEvidence((sink) => sink.piTurnAccepted({ batchId, sourceEventId, disposition }));
@@ -186,10 +245,19 @@ export class CompanionLoop {
       if (!accepted) return;
       await completed;
       if (!settled) throw new Error("pi_turn_settlement_missing");
+      // The final observer callback is serialized independently of Pi's
+      // settlement notification. Drain it before closing the lineage so the
+      // bridge's source/epoch admission remains current through its only
+      // native-content presentation write.
+      await nativeContentObserver?.close();
+      nativeContentObserver = undefined;
+      await nativeContentFinal;
     } finally {
       if (this.#cancelQueuedDelivery === resolveCancelled) this.#cancelQueuedDelivery = undefined;
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = false;
       unsubscribe?.();
+      nativeContentObserver?.revoke();
+      await nativeContentObserver?.close();
       if (beganPresentation) this.#turnObserver?.endBatch(batchId);
     }
   }
@@ -265,7 +333,7 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
   return undefined;
 }
 
-function isHeldWorldEvent(event: Readonly<{ kind?: string; payload?: Readonly<{ state?: unknown }> }>): boolean {
+function _isHeldWorldEvent(event: Readonly<{ kind?: string; payload?: Readonly<{ state?: unknown }> }>): boolean {
   return (
     event.kind === "snapshot" ||
     (event.kind === "execution_receipt" &&

@@ -3,9 +3,8 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
-import { writeOrVerifyRunManifest, type CompanionRunManifest } from "./run-manifest.js";
 import type { IntegrationActionPolicy } from "./integration-module.js";
+import { type CompanionRunManifest, writeOrVerifyRunManifest } from "./run-manifest.js";
 import type { RuntimePaths } from "./runtime.js";
 
 const manifest: CompanionRunManifest = {

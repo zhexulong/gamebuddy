@@ -1,5 +1,8 @@
 using System.Text.Json;
 using GameBuddy.Stardew;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core.Protocol;
 using StardewModdingAPI;
 
 internal static class CompanionPresentationPolicyTests

@@ -208,12 +208,12 @@ export async function readNativeClientConfig(argv = process.argv) {
   let raw;
   try {
     raw = await readFile(requiredArg("--client-config", argv), "utf8");
-  } catch (error) {
+  } catch (_error) {
     throw new NativeSmokeHarnessError("invalid_native_client_config");
   }
   try {
     return JSON.parse(raw);
-  } catch (error) {
+  } catch (_error) {
     throw new NativeSmokeHarnessError("invalid_native_client_config");
   }
 }

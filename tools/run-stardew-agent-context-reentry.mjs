@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { loadHostProductionModule } from "./lib/host-production-module.mjs";
 
 const { connectLocalCompanion } = await loadHostProductionModule("local-bootstrap.js");

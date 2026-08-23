@@ -1,27 +1,31 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { type Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { CompanionLoop } from "./companion-loop.js";
-import { CompanionHostService, GameTurnLineageTracker, createGamePresentationAdmissionProvider } from "./host-service.js";
 import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
   type FarmhandPresentationBridge,
 } from "./farmhand-companion-presentation.js";
+import {
+  CompanionHostService,
+  createGamePresentationAdmissionProvider,
+  GameTurnLineageTracker,
+} from "./host-service.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import { NamedPipeTransport } from "./named-pipe.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
-import { newEnvelope, validateBridgeMessage, type BridgeMessage, type Scope } from "./protocol.js";
-import { DEFAULT_COMPANION_MODEL_CONFIG, createGameCompanionRuntime } from "./runtime.js";
+import { type BridgeMessage, newEnvelope, type Scope, validateBridgeMessage } from "./protocol.js";
+import { createGameCompanionRuntime, DEFAULT_COMPANION_MODEL_CONFIG } from "./runtime.js";
 import { STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
@@ -44,7 +48,8 @@ async function waitForLine(process: InteropProcess, expected: string, observed: 
   await new Promise<void>((resolvePromise, reject) => {
     let poll: ReturnType<typeof setInterval> | undefined;
     const timeout = setTimeout(() => finish(new Error(`interop_helper_ready_timeout:${observed.join(",")}`)), 25_000);
-    const onClose = (code: number | null) => finish(new Error(`interop_helper_exited_before_ready:${code ?? "signal"}`));
+    const onClose = (code: number | null) =>
+      finish(new Error(`interop_helper_exited_before_ready:${code ?? "signal"}`));
     const finish = (error?: Error) => {
       clearTimeout(timeout);
       if (poll !== undefined) clearInterval(poll);
@@ -93,7 +98,7 @@ function isPipeListenerNotReady(error: unknown): boolean {
   return error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
 }
 
-async function connectAfterPipeListen<T>(pipeName: string, connect: () => Promise<T>): Promise<T> {
+async function connectAfterPipeListen<T>(_pipeName: string, connect: () => Promise<T>): Promise<T> {
   const deadlineMs = Date.now() + 5_000;
   let lastError: unknown;
   while (Date.now() < deadlineMs) {
@@ -115,7 +120,14 @@ async function artifactLauncherUrl(): Promise<string> {
   assert.equal(typeof generation, "string");
   if (typeof generation !== "string") throw new Error("interop_artifact_generation_invalid");
   assert.match(generation, /^g-[a-z0-9-]+$/);
-  const modulePath = resolve(repositoryRoot, "host", "dist", "generations", generation, "stardew-integration-launcher.js");
+  const modulePath = resolve(
+    repositoryRoot,
+    "host",
+    "dist",
+    "generations",
+    generation,
+    "stardew-integration-launcher.js",
+  );
   assert.equal(existsSync(modulePath), true);
   return pathToFileURL(modulePath).href;
 }
@@ -152,11 +164,14 @@ class SettledLineageTracker extends GameTurnLineageTracker {
   }
 }
 
-
 test("Farmhand C# LocalPipeBridge delivers an idle semantic event to the production Node transport", async () => {
   assert.equal(existsSync(helperPath), true, "build the FarmhandBridgeInterop.Contract before this test");
   const pipeName = `gamebuddy_interop_raw_${process.pid}_${randomUUID().replaceAll("-", "")}`;
-  const helper = spawn("dotnet", [helperPath, pipeName], { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const helper = spawn("dotnet", [helperPath, pipeName], {
+    cwd: repositoryRoot,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
   const stderr: Buffer[] = [];
   const observed: string[] = [];
   helper.stdout.on("data", (chunk: Buffer) => observed.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)));
@@ -266,28 +281,34 @@ test("Farmhand C# LocalPipeBridge delivers an idle player_input frame to the pro
     const diagnostics: Readonly<{ stage: string; reasonCode: string }>[] = [];
     const forwardedTypes: string[] = [];
     const connectionReasons: string[] = [];
-    const received = new Promise<Extract<Parameters<typeof client.onFact>[0] extends (fact: infer T) => void ? T : never, { type: "semantic_event" }>>(
-      (resolvePromise) => {
-        client.onFact((fact) => {
-          forwardedTypes.push(fact.type);
-          if (fact.type === "semantic_event" && fact.payload.kind === "player_input") resolvePromise(fact);
-        });
-      },
-    );
+    const received = new Promise<
+      Extract<
+        Parameters<typeof client.onFact>[0] extends (fact: infer T) => void ? T : never,
+        { type: "semantic_event" }
+      >
+    >((resolvePromise) => {
+      client.onFact((fact) => {
+        forwardedTypes.push(fact.type);
+        if (fact.type === "semantic_event" && fact.payload.kind === "player_input") resolvePromise(fact);
+      });
+    });
     client.onDiagnostic((diagnostic) => diagnostics.push(diagnostic));
     client.onConnectionFact((fact) => connectionReasons.push(fact.reasonCode));
 
     const snapshot = await beforeDeadline(client.observe(), "interop_observe", observed);
     assert.equal(snapshot.revision, 0);
-    const fact = await beforeDeadline(received, `interop_player_input:forwarded=${forwardedTypes.join(",")}:diagnostics=${diagnostics.map((item) => `${item.stage}:${item.reasonCode}`).join(",")}:closed=${connectionReasons.join(",")}`, observed);
+    const fact = await beforeDeadline(
+      received,
+      `interop_player_input:forwarded=${forwardedTypes.join(",")}:diagnostics=${diagnostics.map((item) => `${item.stage}:${item.reasonCode}`).join(",")}:closed=${connectionReasons.join(",")}`,
+      observed,
+    );
     assert.equal(fact.payload.playerControl?.sourceEventId, "source_01");
     assert.equal(fact.payload.playerControl?.text, "你好");
     assert.ok(
-      diagnostics.filter((item) => item.stage === "native_chat_pipe_data_received" && item.reasonCode === "received").length >= 1,
+      diagnostics.filter((item) => item.stage === "native_chat_pipe_data_received" && item.reasonCode === "received")
+        .length >= 1,
     );
-    const nonChunkDiagnostics = diagnostics.filter(
-      (item) => item.stage !== "native_chat_pipe_data_received",
-    );
+    const nonChunkDiagnostics = diagnostics.filter((item) => item.stage !== "native_chat_pipe_data_received");
     assert.deepEqual(nonChunkDiagnostics, [
       { stage: "native_chat_bridge_inbound_frame_received", reasonCode: "received" },
       { stage: "native_chat_bridge_player_control_validated", reasonCode: "accepted" },
@@ -321,16 +342,18 @@ test("Farmhand C# player_input reaches the production Stardew adapter event sour
   try {
     await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
     const launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: {
-            playerId: scope.playerId,
-            companionId: scope.companionId,
-            saveId: scope.saveId,
-            worldId: scope.worldId,
-          },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
+      connectAfterPipeListen(
+        pipeName,
+        async () =>
+          await STARDEW_INTEGRATION_LAUNCHER.launch({
+            identity: {
+              playerId: scope.playerId,
+              companionId: scope.companionId,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            },
+            config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+          }),
       ),
       "interop_adapter_launch",
       observed,
@@ -379,16 +402,18 @@ test("Farmhand adapter acknowledges player_input only after its Host listener re
   try {
     await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
     const launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: {
-            playerId: scope.playerId,
-            companionId: scope.companionId,
-            saveId: scope.saveId,
-            worldId: scope.worldId,
-          },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
+      connectAfterPipeListen(
+        pipeName,
+        async () =>
+          await STARDEW_INTEGRATION_LAUNCHER.launch({
+            identity: {
+              playerId: scope.playerId,
+              companionId: scope.companionId,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            },
+            config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+          }),
       ),
       "interop_receipt_adapter_launch",
       observed,
@@ -428,11 +453,18 @@ test("Farmhand adapter exposes an authenticated presentation capability that rec
   try {
     await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
     const launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: { playerId: scope.playerId, companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
+      connectAfterPipeListen(
+        pipeName,
+        async () =>
+          await STARDEW_INTEGRATION_LAUNCHER.launch({
+            identity: {
+              playerId: scope.playerId,
+              companionId: scope.companionId,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            },
+            config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+          }),
       ),
       "interop_presentation_adapter_launch",
       observed,
@@ -488,11 +520,18 @@ test("Farmhand C# player_input sourceEventId crosses Pi consumption into the C# 
   try {
     await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
     launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: { playerId: scope.playerId, companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
+      connectAfterPipeListen(
+        pipeName,
+        async () =>
+          await STARDEW_INTEGRATION_LAUNCHER.launch({
+            identity: {
+              playerId: scope.playerId,
+              companionId: scope.companionId,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            },
+            config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+          }),
       ),
       "interop_source_bound_adapter_launch",
       observed,
@@ -642,11 +681,18 @@ test("Farmhand Preview runtime remains pipe-responsive after mounting without Ma
   try {
     await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
     launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: { playerId: scope.playerId, companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
+      connectAfterPipeListen(
+        pipeName,
+        async () =>
+          await STARDEW_INTEGRATION_LAUNCHER.launch({
+            identity: {
+              playerId: scope.playerId,
+              companionId: scope.companionId,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            },
+            config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+          }),
       ),
       "interop_preview_runtime_adapter_launch",
       observed,
@@ -716,11 +762,18 @@ test("Farmhand adapter acknowledges a startup-buffered player_input only after i
   try {
     await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
     const launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: { playerId: scope.playerId, companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
+      connectAfterPipeListen(
+        pipeName,
+        async () =>
+          await STARDEW_INTEGRATION_LAUNCHER.launch({
+            identity: {
+              playerId: scope.playerId,
+              companionId: scope.companionId,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            },
+            config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+          }),
       ),
       "interop_receipt_buffered_adapter_launch",
       observed,
@@ -760,11 +813,18 @@ test("Farmhand adapter acknowledges player_input after every current Host listen
   try {
     await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
     const launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: { playerId: scope.playerId, companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
+      connectAfterPipeListen(
+        pipeName,
+        async () =>
+          await STARDEW_INTEGRATION_LAUNCHER.launch({
+            identity: {
+              playerId: scope.playerId,
+              companionId: scope.companionId,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            },
+            config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+          }),
       ),
       "interop_receipt_listeners_adapter_launch",
       observed,
@@ -790,163 +850,223 @@ test("Farmhand adapter acknowledges player_input after every current Host listen
   assert.equal(Buffer.concat(stderr).toString("utf8"), "");
 });
 
-test("Farmhand adapter fails closed without acknowledging player_input when a Host listener throws", { timeout: 20_000 }, async () => {
-  assert.equal(existsSync(helperPath), true, "build the FarmhandBridgeInterop.Contract before this test");
-  const pipeName = `gamebuddy_interop_receipt_listener_failure_${process.pid}_${randomUUID().replaceAll("-", "")}`;
-  const helper = spawn("dotnet", [helperPath, pipeName, "50", "await-player-control-receipt"], {
-    cwd: repositoryRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  const stderr: Buffer[] = [];
-  const observed: string[] = [];
-  helper.stdout.on("data", (chunk: Buffer) => observed.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)));
-  helper.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-
-  try {
-    await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
-    const launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: { playerId: scope.playerId, companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
-      ),
-      "interop_receipt_listener_failure_adapter_launch",
-      observed,
-    );
-    launch.events.onFact((fact) => {
-      if (fact.kind === "semantic_event" && fact.payload.kind === "player_input") throw new Error("listener_failure");
+test(
+  "Farmhand adapter fails closed without acknowledging player_input when a Host listener throws",
+  { timeout: 20_000 },
+  async () => {
+    assert.equal(existsSync(helperPath), true, "build the FarmhandBridgeInterop.Contract before this test");
+    const pipeName = `gamebuddy_interop_receipt_listener_failure_${process.pid}_${randomUUID().replaceAll("-", "")}`;
+    const helper = spawn("dotnet", [helperPath, pipeName, "50", "await-player-control-receipt"], {
+      cwd: repositoryRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
-    const [code] = await beforeDeadline(once(helper, "close"), "interop_receipt_listener_failure_helper_close", observed, 15_000);
-    assert.notEqual(code, 0);
-    assert.equal(observed.includes("farmhand_bridge_interop_player_input_host_accepted"), false);
-    launch.close();
-  } finally {
-    await exit(helper);
-  }
-
-  assert.equal(Buffer.concat(stderr).toString("utf8"), "interop_timeout\r\n");
-});
-
-test("Farmhand adapter does not acknowledge player_input when the Host listener closes its bridge", { timeout: 20_000 }, async () => {
-  assert.equal(existsSync(helperPath), true, "build the FarmhandBridgeInterop.Contract before this test");
-  const pipeName = `gamebuddy_interop_receipt_write_failure_${process.pid}_${randomUUID().replaceAll("-", "")}`;
-  const helper = spawn("dotnet", [helperPath, pipeName, "50", "await-player-control-receipt"], {
-    cwd: repositoryRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  const stderr: Buffer[] = [];
-  const observed: string[] = [];
-  helper.stdout.on("data", (chunk: Buffer) => observed.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)));
-  helper.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-
-  try {
-    await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
-    const launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: { playerId: scope.playerId, companionId: scope.companionId, saveId: scope.saveId, worldId: scope.worldId },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
-      ),
-      "interop_receipt_write_failure_adapter_launch",
-      observed,
+    const stderr: Buffer[] = [];
+    const observed: string[] = [];
+    helper.stdout.on("data", (chunk: Buffer) =>
+      observed.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)),
     );
-    launch.events.onFact((fact) => {
-      if (fact.kind === "semantic_event" && fact.payload.kind === "player_input") launch.close();
+    helper.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+
+    try {
+      await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
+      const launch = await beforeDeadline(
+        connectAfterPipeListen(
+          pipeName,
+          async () =>
+            await STARDEW_INTEGRATION_LAUNCHER.launch({
+              identity: {
+                playerId: scope.playerId,
+                companionId: scope.companionId,
+                saveId: scope.saveId,
+                worldId: scope.worldId,
+              },
+              config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+            }),
+        ),
+        "interop_receipt_listener_failure_adapter_launch",
+        observed,
+      );
+      launch.events.onFact((fact) => {
+        if (fact.kind === "semantic_event" && fact.payload.kind === "player_input") throw new Error("listener_failure");
+      });
+      const [code] = await beforeDeadline(
+        once(helper, "close"),
+        "interop_receipt_listener_failure_helper_close",
+        observed,
+        15_000,
+      );
+      assert.notEqual(code, 0);
+      assert.equal(observed.includes("farmhand_bridge_interop_player_input_host_accepted"), false);
+      launch.close();
+    } finally {
+      await exit(helper);
+    }
+
+    assert.equal(Buffer.concat(stderr).toString("utf8"), "interop_timeout\r\n");
+  },
+);
+
+test(
+  "Farmhand adapter does not acknowledge player_input when the Host listener closes its bridge",
+  { timeout: 20_000 },
+  async () => {
+    assert.equal(existsSync(helperPath), true, "build the FarmhandBridgeInterop.Contract before this test");
+    const pipeName = `gamebuddy_interop_receipt_write_failure_${process.pid}_${randomUUID().replaceAll("-", "")}`;
+    const helper = spawn("dotnet", [helperPath, pipeName, "50", "await-player-control-receipt"], {
+      cwd: repositoryRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
-    const [code] = await beforeDeadline(once(helper, "close"), "interop_receipt_write_failure_helper_close", observed, 15_000);
-    assert.notEqual(code, 0);
-    assert.equal(observed.includes("farmhand_bridge_interop_player_input_host_accepted"), false);
-  } finally {
-    await exit(helper);
-  }
+    const stderr: Buffer[] = [];
+    const observed: string[] = [];
+    helper.stdout.on("data", (chunk: Buffer) =>
+      observed.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)),
+    );
+    helper.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
 
-  assert.equal(Buffer.concat(stderr).toString("utf8"), "interop_timeout\r\n");
-});
+    try {
+      await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
+      const launch = await beforeDeadline(
+        connectAfterPipeListen(
+          pipeName,
+          async () =>
+            await STARDEW_INTEGRATION_LAUNCHER.launch({
+              identity: {
+                playerId: scope.playerId,
+                companionId: scope.companionId,
+                saveId: scope.saveId,
+                worldId: scope.worldId,
+              },
+              config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+            }),
+        ),
+        "interop_receipt_write_failure_adapter_launch",
+        observed,
+      );
+      launch.events.onFact((fact) => {
+        if (fact.kind === "semantic_event" && fact.payload.kind === "player_input") launch.close();
+      });
+      const [code] = await beforeDeadline(
+        once(helper, "close"),
+        "interop_receipt_write_failure_helper_close",
+        observed,
+        15_000,
+      );
+      assert.notEqual(code, 0);
+      assert.equal(observed.includes("farmhand_bridge_interop_player_input_host_accepted"), false);
+    } finally {
+      await exit(helper);
+    }
 
-test("Farmhand C# player_input reaches the production adapter from an independent immutable Node process", { timeout: 100_000 }, async () => {
-  assert.equal(existsSync(helperPath), true, "build the FarmhandBridgeInterop.Contract before this test");
-  const pipeName = `gamebuddy_interop_artifact_${process.pid}_${randomUUID().replaceAll("-", "")}`;
-  const helper = spawn("dotnet", [helperPath, pipeName, "70000"], {
-    cwd: repositoryRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  const helperStderr: Buffer[] = [];
-  const helperObserved: string[] = [];
-  helper.stdout.on("data", (chunk: Buffer) => helperObserved.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)));
-  helper.stderr.on("data", (chunk: Buffer) => helperStderr.push(chunk));
-  const launcherUrl = await artifactLauncherUrl();
-  const childScript = [
-    "const [launcherUrl, pipeName, token] = process.argv.slice(1);",
-    "if (!launcherUrl || !pipeName || !token) throw new Error('interop_artifact_child_config_required');",
-    "const { STARDEW_INTEGRATION_LAUNCHER } = await import(launcherUrl);",
-    "const identity = { playerId: 'farmhand_01', companionId: 'companion_01', saveId: 'save_01', worldId: 'world_01' };",
-    "let launch; const deadline = Date.now() + 5_000;",
-    "for (;;) {",
-    "  try { launch = await STARDEW_INTEGRATION_LAUNCHER.launch({ identity, config: { pipeName, bridgeToken: token, expectedPresentationLocale: 'zh-CN' } }); break; }",
-    "  catch (error) { if (error?.code !== 'ENOENT' || Date.now() >= deadline) throw error; await new Promise((resolve) => setTimeout(resolve, 25)); }",
-    "}",
-    "const timeout = setTimeout(() => { launch.close(); process.exit(1); }, 85_000);",
-    "launch.events.onFact((fact) => {",
-    "  if (fact.kind !== 'semantic_event' || fact.payload.kind !== 'player_input') return;",
-    "  clearTimeout(timeout);",
-    "  process.stdout.write('artifact_child_player_input_observed\\n', () => { launch.close(); process.exit(0); });",
-    "});",
-    "process.stdout.write('artifact_child_adapter_ready\\n');",
-  ].join("\n");
-  const artifact = spawn(process.execPath, ["--input-type=module", "--eval", childScript, launcherUrl, pipeName, token], {
-    cwd: repositoryRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  const artifactObserved: string[] = [];
-  const artifactStderr: Buffer[] = [];
-  artifact.stdout.on("data", (chunk: Buffer) => artifactObserved.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)));
-  artifact.stderr.on("data", (chunk: Buffer) => artifactStderr.push(chunk));
+    assert.equal(Buffer.concat(stderr).toString("utf8"), "interop_timeout\r\n");
+  },
+);
 
-  try {
-    await waitForLine(helper, "farmhand_bridge_interop_ready", helperObserved);
-    await beforeDeadline(
-      waitForLine(artifact, "artifact_child_adapter_ready", artifactObserved),
-      "interop_artifact_child_ready",
-      helperObserved,
+test(
+  "Farmhand C# player_input reaches the production adapter from an independent immutable Node process",
+  { timeout: 100_000 },
+  async () => {
+    assert.equal(existsSync(helperPath), true, "build the FarmhandBridgeInterop.Contract before this test");
+    const pipeName = `gamebuddy_interop_artifact_${process.pid}_${randomUUID().replaceAll("-", "")}`;
+    const helper = spawn("dotnet", [helperPath, pipeName, "70000"], {
+      cwd: repositoryRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const helperStderr: Buffer[] = [];
+    const helperObserved: string[] = [];
+    helper.stdout.on("data", (chunk: Buffer) =>
+      helperObserved.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)),
     );
-    const [code] = await beforeDeadline(
-      once(artifact, "close"),
-      "interop_artifact_child_player_input",
-      helperObserved,
-      85_000,
+    helper.stderr.on("data", (chunk: Buffer) => helperStderr.push(chunk));
+    const launcherUrl = await artifactLauncherUrl();
+    const childScript = [
+      "const [launcherUrl, pipeName, token] = process.argv.slice(1);",
+      "if (!launcherUrl || !pipeName || !token) throw new Error('interop_artifact_child_config_required');",
+      "const { STARDEW_INTEGRATION_LAUNCHER } = await import(launcherUrl);",
+      "const identity = { playerId: 'farmhand_01', companionId: 'companion_01', saveId: 'save_01', worldId: 'world_01' };",
+      "let launch; const deadline = Date.now() + 5_000;",
+      "for (;;) {",
+      "  try { launch = await STARDEW_INTEGRATION_LAUNCHER.launch({ identity, config: { pipeName, bridgeToken: token, expectedPresentationLocale: 'zh-CN' } }); break; }",
+      "  catch (error) { if (error?.code !== 'ENOENT' || Date.now() >= deadline) throw error; await new Promise((resolve) => setTimeout(resolve, 25)); }",
+      "}",
+      "const timeout = setTimeout(() => { launch.close(); process.exit(1); }, 85_000);",
+      "launch.events.onFact((fact) => {",
+      "  if (fact.kind !== 'semantic_event' || fact.payload.kind !== 'player_input') return;",
+      "  clearTimeout(timeout);",
+      "  process.stdout.write('artifact_child_player_input_observed\\n', () => { launch.close(); process.exit(0); });",
+      "});",
+      "process.stdout.write('artifact_child_adapter_ready\\n');",
+    ].join("\n");
+    const artifact = spawn(
+      process.execPath,
+      ["--input-type=module", "--eval", childScript, launcherUrl, pipeName, token],
+      {
+        cwd: repositoryRoot,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
     );
-    assert.equal(code, 0, Buffer.concat(artifactStderr).toString("utf8"));
-    assert.equal(artifactObserved[0], "artifact_child_adapter_ready");
-    assert.ok(
-      artifactObserved.filter((stage) => stage === "GameBuddy native chat ingress stage=native_chat_pipe_data_received:received").length >= 1,
+    const artifactObserved: string[] = [];
+    const artifactStderr: Buffer[] = [];
+    artifact.stdout.on("data", (chunk: Buffer) =>
+      artifactObserved.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean)),
     );
-    const nonChunkStages = artifactObserved.filter(
-      (stage) => stage !== "GameBuddy native chat ingress stage=native_chat_pipe_data_received:received",
-    );
-    assert.equal(nonChunkStages[0], "artifact_child_adapter_ready");
-    assert.equal(
-      nonChunkStages.filter((stage) => stage === "GameBuddy native chat ingress stage=native_chat_bridge_inbound_frame_received:received").length,
-      1,
-    );
-    assert.equal(
-      nonChunkStages.filter((stage) => stage === "GameBuddy native chat ingress stage=native_chat_bridge_player_control_validated:accepted").length,
-      1,
-    );
-    assert.equal(nonChunkStages.filter((stage) => stage === "GameBuddy native chat ingress stage=native_chat_adapter_fact_forwarded").length, 1);
-    assert.equal(nonChunkStages.filter((stage) => stage === "artifact_child_player_input_observed").length, 1);
-  } finally {
-    await exit(artifact);
-    await exit(helper);
-  }
+    artifact.stderr.on("data", (chunk: Buffer) => artifactStderr.push(chunk));
 
-  assert.equal(Buffer.concat(helperStderr).toString("utf8"), "");
-});
+    try {
+      await waitForLine(helper, "farmhand_bridge_interop_ready", helperObserved);
+      await beforeDeadline(
+        waitForLine(artifact, "artifact_child_adapter_ready", artifactObserved),
+        "interop_artifact_child_ready",
+        helperObserved,
+      );
+      const [code] = await beforeDeadline(
+        once(artifact, "close"),
+        "interop_artifact_child_player_input",
+        helperObserved,
+        85_000,
+      );
+      assert.equal(code, 0, Buffer.concat(artifactStderr).toString("utf8"));
+      assert.equal(artifactObserved[0], "artifact_child_adapter_ready");
+      assert.ok(
+        artifactObserved.filter(
+          (stage) => stage === "GameBuddy native chat ingress stage=native_chat_pipe_data_received:received",
+        ).length >= 1,
+      );
+      const nonChunkStages = artifactObserved.filter(
+        (stage) => stage !== "GameBuddy native chat ingress stage=native_chat_pipe_data_received:received",
+      );
+      assert.equal(nonChunkStages[0], "artifact_child_adapter_ready");
+      assert.equal(
+        nonChunkStages.filter(
+          (stage) => stage === "GameBuddy native chat ingress stage=native_chat_bridge_inbound_frame_received:received",
+        ).length,
+        1,
+      );
+      assert.equal(
+        nonChunkStages.filter(
+          (stage) =>
+            stage === "GameBuddy native chat ingress stage=native_chat_bridge_player_control_validated:accepted",
+        ).length,
+        1,
+      );
+      assert.equal(
+        nonChunkStages.filter(
+          (stage) => stage === "GameBuddy native chat ingress stage=native_chat_adapter_fact_forwarded",
+        ).length,
+        1,
+      );
+      assert.equal(nonChunkStages.filter((stage) => stage === "artifact_child_player_input_observed").length, 1);
+    } finally {
+      await exit(artifact);
+      await exit(helper);
+    }
+
+    assert.equal(Buffer.concat(helperStderr).toString("utf8"), "");
+  },
+);
 
 test("Farmhand C# player_input survives a live-equivalent idle interval before the production adapter", async () => {
   assert.equal(existsSync(helperPath), true, "build the FarmhandBridgeInterop.Contract before this test");
@@ -969,16 +1089,18 @@ test("Farmhand C# player_input survives a live-equivalent idle interval before t
   try {
     await waitForLine(helper, "farmhand_bridge_interop_ready", observed);
     const launch = await beforeDeadline(
-      connectAfterPipeListen(pipeName, async () =>
-        await STARDEW_INTEGRATION_LAUNCHER.launch({
-          identity: {
-            playerId: scope.playerId,
-            companionId: scope.companionId,
-            saveId: scope.saveId,
-            worldId: scope.worldId,
-          },
-          config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
-        }),
+      connectAfterPipeListen(
+        pipeName,
+        async () =>
+          await STARDEW_INTEGRATION_LAUNCHER.launch({
+            identity: {
+              playerId: scope.playerId,
+              companionId: scope.companionId,
+              saveId: scope.saveId,
+              worldId: scope.worldId,
+            },
+            config: { pipeName, bridgeToken: token, expectedPresentationLocale: "zh-CN" },
+          }),
       ),
       "interop_idle_adapter_launch",
       observed,
@@ -990,7 +1112,8 @@ test("Farmhand C# player_input survives a live-equivalent idle interval before t
     });
     await beforeDeadline(received, "interop_idle_adapter_player_input", observed, 85_000);
     assert.ok(
-      stages.filter((stage) => stage === "GameBuddy native chat ingress stage=native_chat_pipe_data_received:received").length >= 1,
+      stages.filter((stage) => stage === "GameBuddy native chat ingress stage=native_chat_pipe_data_received:received")
+        .length >= 1,
       "the socket must publish at least one raw-data observation before frame handling",
     );
     assert.deepEqual(

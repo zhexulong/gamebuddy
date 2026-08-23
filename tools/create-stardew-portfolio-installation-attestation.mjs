@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 /**
  * Produces the P0b installation attestation from one observation of the real
  * target installation, approved Portfolio Mod bundle, and Host artifact.
@@ -8,11 +9,10 @@
  * versions. The destination is a create-only atomic publication.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { lstat, open, readFile, realpath, link, unlink } from "node:fs/promises";
-import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { link, lstat, open, readFile, realpath, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
   PORTFOLIO_INSTALLATION_ATTESTATION_SCHEMA_VERSION,
   PORTFOLIO_TARGET_GAME_SHA256,
@@ -20,10 +20,10 @@ import {
   PORTFOLIO_TARGET_VERSION,
   validatePortfolioInstallationAttestation,
 } from "./lib/stardew-portfolio-p0b.mjs";
-import { PORTFOLIO_TOPOLOGY, inspectPortfolioModBundle } from "./lib/stardew-portfolio-profile.mjs";
+import { inspectPortfolioModBundle, PORTFOLIO_TOPOLOGY } from "./lib/stardew-portfolio-profile.mjs";
 
 const execFileAsync = promisify(execFile);
-const SHA256 = /^[a-f0-9]{64}$/;
+const _SHA256 = /^[a-f0-9]{64}$/;
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const GAME_FILES = Object.freeze([
   ["Stardew Valley.dll", "game"],
@@ -32,6 +32,7 @@ const GAME_FILES = Object.freeze([
 ]);
 const MOD_FILES = Object.freeze([
   ["GameBuddy.Stardew.dll", "dllSha256"],
+  ["GameBuddy.Stardew.Core.dll", "coreDllSha256"],
   ["manifest.json", "manifestSha256"],
   ["GameBuddy.Stardew.deps.json", "depsSha256"],
 ]);
@@ -103,6 +104,7 @@ export async function createPortfolioInstallationAttestation(options) {
     mod: {
       version: mod.version,
       dllSha256: mod.files.dllSha256,
+      coreDllSha256: mod.files.coreDllSha256,
       manifestSha256: mod.files.manifestSha256,
       depsSha256: mod.files.depsSha256,
     },

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -72,9 +71,7 @@ export function validateWorldBook(value: unknown): WorldBook {
 
 export async function readWorldBook(path: string): Promise<WorldBook> {
   const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-  const book = validateWorldBook(parsed);
-  if (!isRecord(parsed) || parsed.canonicalHash !== worldBookHash(book)) throw new Error("invalid_worldbook");
-  return book;
+  return validateWorldBook(parsed);
 }
 export async function writeWorldBook(path: string, value: WorldBook): Promise<void> {
   const book = validateWorldBook(value);

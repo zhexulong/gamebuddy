@@ -1,20 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
-import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 import {
-  withConsumedChatRuntimeBinding,
   type ChatRuntimeBindingExecution,
+  withConsumedChatRuntimeBinding,
 } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.test-support.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import { createChatThreadStore } from "../tavern/chat-thread-store.js";
-import { identityKey } from "../runtime.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { identityKey } from "../runtime.js";
+import { createChatThreadStore } from "../tavern/chat-thread-store.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
+import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction.internal.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
@@ -84,13 +83,10 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.equal(prepared.modelConfig.provider, "cpa-oai");
     assert.equal(prepared.modelConfig.modelId, "deepseek-v4-flash");
     assert.equal(prepared.modelProfileRevision, 0);
-    // Construction registers the Chat tool surface but keeps its coordinator
-    // admission unbound until the exact P4 invocation activates it.
-    assert.equal(typeof prepared.presentation.admissionProvider?.capture, "function");
-    assert.throws(
-      () => prepared.presentation.admissionProvider!.capture(),
-      /presentation_admission_unbound/,
-    );
+    // Chat mounts no speaking pseudo-tool or presentation callback. Native
+    // assistant content is observed privately by the exact P4 invocation.
+    assert.equal(prepared.presentation.admissionProvider, undefined);
+    assert.equal(prepared.presentation.textPort, undefined);
     const stableContext = await prepared.materializeStableContextForPiSession("pi_session_genuine");
     assert.equal(stableContext.continuityId, principal.continuityId);
     assert.equal(stableContext.sessionId, "pi_session_genuine");
@@ -99,7 +95,7 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.match(stableContext.canonicalHash, /^[a-f0-9]{64}$/);
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -118,7 +114,7 @@ test("Chat construction regenerates the canonical hash for each actual Pi sessio
     assert.equal(second.sessionId, "pi_session_two");
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -138,6 +134,6 @@ test("Chat construction rejects a missing exact Tavern thread rather than creati
     );
   } finally {
     await value.binding.close();
-    await rm(value.root, { recursive: true, force: true });
+    await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

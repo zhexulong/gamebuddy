@@ -1,13 +1,13 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   createReclaimerCapability,
-  reclaimerState,
   type ReclaimerState,
+  reclaimerState,
   type SpawnHelper,
   type WindowsStaleLockReclaimerCapability,
 } from "./internal.js";
@@ -37,19 +37,41 @@ export type WindowsStaleLockReclaimCategory =
   | "kept_path_replaced"
   | "kept_not_regular"
   | "indeterminate";
-export type WindowsStaleLockReleaseCategory = "released" | "missing" | "kept_token_mismatch" | "kept_not_regular" | "indeterminate";
+export type WindowsStaleLockReleaseCategory =
+  | "released"
+  | "missing"
+  | "kept_token_mismatch"
+  | "kept_not_regular"
+  | "indeterminate";
 export type WindowsStaleLockReclaimerRequest = Readonly<
-  | { schemaVersion: 1; operation: "reclaim_stale_lock"; policy: WindowsStaleLockReclaimPolicy; root: string; segments: readonly string[] }
+  | {
+      schemaVersion: 1;
+      operation: "reclaim_stale_lock";
+      policy: WindowsStaleLockReclaimPolicy;
+      root: string;
+      segments: readonly string[];
+    }
   | { schemaVersion: 1; operation: "release_owned_lock"; token: string; root: string; segments: readonly string[] }
 >;
 export type { WindowsStaleLockReclaimerCapability } from "./internal.js";
 
 const RECLAIM_CATEGORIES: ReadonlySet<string> = new Set([
-  "reclaimed", "missing", "kept_malformed_fresh", "kept_valid_fresh", "kept_policy_mismatch",
-  "kept_identity_changed", "kept_path_replaced", "kept_not_regular", "indeterminate",
+  "reclaimed",
+  "missing",
+  "kept_malformed_fresh",
+  "kept_valid_fresh",
+  "kept_policy_mismatch",
+  "kept_identity_changed",
+  "kept_path_replaced",
+  "kept_not_regular",
+  "indeterminate",
 ]);
 const RELEASE_CATEGORIES: ReadonlySet<string> = new Set([
-  "released", "missing", "kept_token_mismatch", "kept_not_regular", "indeterminate",
+  "released",
+  "missing",
+  "kept_token_mismatch",
+  "kept_not_regular",
+  "indeterminate",
 ]);
 
 /** Mints the build-only capability from the sole repository-relative helper pair. */
@@ -87,7 +109,9 @@ export async function createPublishedWindowsStaleLockReclaimer(
  */
 export async function requestWindowsStaleLockReclaimer(): Promise<WindowsStaleLockReclaimerCapability | undefined> {
   if (process.platform !== "win32" || process.arch !== "x64") return undefined;
-  const published = await createPublishedWindowsStaleLockReclaimer(resolve(dirname(modulePath), "..")).catch(() => undefined);
+  const published = await createPublishedWindowsStaleLockReclaimer(resolve(dirname(modulePath), "..")).catch(
+    () => undefined,
+  );
   if (published !== undefined) return published;
   return await createBuildWindowsStaleLockReclaimer().catch(() => undefined);
 }
@@ -109,7 +133,13 @@ export async function reclaimStaleLock(
   const { root, segments } = deriveRootAndSegments(absolutePath);
   const state = reclaimerState(capability);
   if (state === undefined || (process.platform !== "win32" && state.reclaimOnNonWindows !== true)) throw unavailable();
-  const category = await runOperation(state, { schemaVersion: 1, operation: "reclaim_stale_lock", policy, root, segments });
+  const category = await runOperation(state, {
+    schemaVersion: 1,
+    operation: "reclaim_stale_lock",
+    policy,
+    root,
+    segments,
+  });
   if (!RECLAIM_CATEGORIES.has(category)) throw unavailable();
   return category as WindowsStaleLockReclaimCategory;
 }
@@ -128,7 +158,13 @@ export async function releaseOwnedLock(
   const { root, segments } = deriveRootAndSegments(absolutePath);
   const state = reclaimerState(capability);
   if (state === undefined || (process.platform !== "win32" && state.reclaimOnNonWindows !== true)) throw unavailable();
-  const category = await runOperation(state, { schemaVersion: 1, operation: "release_owned_lock", token, root, segments });
+  const category = await runOperation(state, {
+    schemaVersion: 1,
+    operation: "release_owned_lock",
+    token,
+    root,
+    segments,
+  });
   if (!RELEASE_CATEGORIES.has(category)) throw unavailable();
   return category as WindowsStaleLockReleaseCategory;
 }
@@ -182,14 +218,16 @@ function verifiedSpawn(facts: FixedPairFacts): SpawnHelper {
  * the production inventory must still declare the exact verified pair. Any
  * missing, changed, linked, reparse, or ambiguous object fails closed.
  */
-function verifyFixedPair(input: Readonly<{
-  root: string;
-  pairRoot: string;
-  executable: string;
-  manifest: string;
-  sha256?: string;
-  inventoryPath: string | undefined;
-}>): FixedPairFacts {
+function verifyFixedPair(
+  input: Readonly<{
+    root: string;
+    pairRoot: string;
+    executable: string;
+    manifest: string;
+    sha256?: string;
+    inventoryPath: string | undefined;
+  }>,
+): FixedPairFacts {
   verifyDirectoryChainSync(input.root, input.pairRoot);
   verifyRegularSync(input.executable);
   verifyRegularSync(input.manifest);
@@ -288,8 +326,12 @@ function verifyInventorySync(raw: Buffer, helperSha256: string, manifestBytes: B
     throw unavailable();
   }
   if (!isRecord(parsed) || parsed.schema !== inventorySchema || !Array.isArray(parsed.entries)) throw unavailable();
-  const helperMatches = parsed.entries.filter((entry) => isVerifiedPairEntry(entry, `${pairDestination}/${helperFileName}`, helperSha256));
-  const manifestMatches = parsed.entries.filter((entry) => isVerifiedPairEntry(entry, `${pairDestination}/${manifestFileName}`, helperSha256));
+  const helperMatches = parsed.entries.filter((entry) =>
+    isVerifiedPairEntry(entry, `${pairDestination}/${helperFileName}`, helperSha256),
+  );
+  const manifestMatches = parsed.entries.filter((entry) =>
+    isVerifiedPairEntry(entry, `${pairDestination}/${manifestFileName}`, helperSha256),
+  );
   if (helperMatches.length !== 1 || manifestMatches.length !== 1) throw unavailable();
   if (helperMatches[0]!.sha256 !== helperSha256) throw unavailable();
   if (manifestMatches[0]!.sha256 !== createHash("sha256").update(manifestBytes).digest("hex")) throw unavailable();
@@ -298,20 +340,24 @@ function verifyInventorySync(raw: Buffer, helperSha256: string, manifestBytes: B
 type InventoryEntry = Readonly<Record<string, unknown>>;
 
 function isVerifiedPairEntry(entry: unknown, path: string, helperSha256: string): entry is InventoryEntry {
-  return isRecord(entry)
-    && entry.path === path
-    && entry.type === "file"
-    && typeof entry.sha256 === "string"
-    && isVerifiedPairOrigin(entry.origin, helperSha256);
+  return (
+    isRecord(entry) &&
+    entry.path === path &&
+    entry.type === "file" &&
+    typeof entry.sha256 === "string" &&
+    isVerifiedPairOrigin(entry.origin, helperSha256)
+  );
 }
 
 function isVerifiedPairOrigin(origin: unknown, helperSha256: string): boolean {
-  return isRecord(origin)
-    && origin.kind === inventoryOriginKind
-    && origin.destination === pairDestination
-    && origin.helper === helperFileName
-    && origin.manifest === manifestFileName
-    && origin.helperSha256 === helperSha256;
+  return (
+    isRecord(origin) &&
+    origin.kind === inventoryOriginKind &&
+    origin.destination === pairDestination &&
+    origin.helper === helperFileName &&
+    origin.manifest === manifestFileName &&
+    origin.helperSha256 === helperSha256
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -331,13 +377,24 @@ async function runOperation(state: ReclaimerState, request: WindowsStaleLockRecl
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (error) rejectOperation(error); else resolveOperation(category!);
+      if (error) rejectOperation(error);
+      else resolveOperation(category!);
     };
-    const overflow = () => { child.kill(); finish(undefined, unavailable()); };
+    const overflow = () => {
+      child.kill();
+      finish(undefined, unavailable());
+    };
     let timer: ReturnType<typeof setTimeout>;
-    try { child = state.spawnHelper(state.executable, []); }
-    catch { rejectOperation(unavailable()); return; }
-    timer = setTimeout(() => { child.kill(); finish(undefined, unavailable()); }, timeoutMs);
+    try {
+      child = state.spawnHelper(state.executable, []);
+    } catch {
+      rejectOperation(unavailable());
+      return;
+    }
+    timer = setTimeout(() => {
+      child.kill();
+      finish(undefined, unavailable());
+    }, timeoutMs);
     const collect = (target: Buffer[]) => (chunk: Buffer) => {
       outputBytes += chunk.length;
       if (outputBytes > outputLimitBytes) return overflow();
@@ -358,7 +415,11 @@ async function runOperation(state: ReclaimerState, request: WindowsStaleLockRecl
 
 function parseResponse(value: Buffer): string | undefined {
   let text: string;
-  try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(value); } catch { return undefined; }
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(value);
+  } catch {
+    return undefined;
+  }
   const match = /^\{"schemaVersion":1,"result":"([a-z_]+)"\}\n$/.exec(text);
   return match === null ? undefined : match[1];
 }
@@ -375,10 +436,30 @@ function parseResponse(value: Buffer): string | undefined {
 const WIN32_DRIVE_ROOT_PATTERN = /^([A-Za-z]:)[\\/]/;
 const UNSAFE_SEGMENT_PATTERN = /[\\/:*?"<>|]/;
 const RESERVED_SEGMENT_NAMES = new Set([
-  "CON", "PRN", "AUX", "NUL",
-  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-  "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-  "CONIN$", "CONOUT$",
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  "COM1",
+  "COM2",
+  "COM3",
+  "COM4",
+  "COM5",
+  "COM6",
+  "COM7",
+  "COM8",
+  "COM9",
+  "LPT1",
+  "LPT2",
+  "LPT3",
+  "LPT4",
+  "LPT5",
+  "LPT6",
+  "LPT7",
+  "LPT8",
+  "LPT9",
+  "CONIN$",
+  "CONOUT$",
 ]);
 
 function deriveRootAndSegments(absolutePath: string): { root: string; segments: readonly string[] } {
@@ -415,5 +496,9 @@ function isSafeSegment(segment: string): boolean {
 function productionSpawn(command: string, args: readonly string[]): ChildProcess {
   return spawn(command, [...args], { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
 }
-function unavailableSpawn(): ChildProcess { throw unavailable(); }
-function unavailable(): Error { return new Error("windows_stale_lock_reclaimer_unavailable"); }
+function unavailableSpawn(): ChildProcess {
+  throw unavailable();
+}
+function unavailable(): Error {
+  return new Error("windows_stale_lock_reclaimer_unavailable");
+}

@@ -4,6 +4,7 @@
     <AssemblyName>PortfolioTerminalDeliveryCore.Contract</AssemblyName>
     <TargetFramework>net6.0</TargetFramework>
     <GamePath Condition="'$(GamePath)' == '' and '$(GAMEBUDDY_STARDEW_GAME_PATH)' != ''">$(GAMEBUDDY_STARDEW_GAME_PATH)</GamePath>
+    <GamePath Condition="'$(GamePath)' == ''">D:\Steam\steamapps\common\Stardew Valley</GamePath>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
@@ -12,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GameBuddy.Stardew.csproj" />
+    <ProjectReference Include="..\src\Core\GameBuddy.Stardew.Core.csproj" />
   </ItemGroup>
 
   <!-- The production Mod is normally loaded by SMAPI, which supplies these
@@ -38,5 +40,6 @@
 
   <ItemGroup>
     <Compile Include="PortfolioTerminalDeliveryCoreTests.cs" />
+    <Compile Include="PortfolioSkipEventLifecycle.Contract.cs" />
   </ItemGroup>
 </Project>

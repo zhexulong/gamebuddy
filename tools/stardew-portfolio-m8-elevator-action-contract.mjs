@@ -34,7 +34,7 @@ const FORBIDDEN = Object.freeze([
   "GameLocation.checkAction, raw dispatcher string, direct callback invocation, or arbitrary native-call fallback",
   "generic mine action, generic travel action, generic warp action, or direct warp request",
   "ladder route selection or ladder/elevator route conflation",
-  "save XML editing, direct save mutation, direct player/world mutation, or fixture-written result",
+  "direct action save mutation, direct action player/world mutation, fixture-written action result, or use of a staged-save Given fixture outside its named launcher-owned validation transaction",
   "static floor number, static elevator/target ID, debug floor, or fake target ID",
 ]);
 const NON_CLAIMS = Object.freeze([
@@ -44,11 +44,13 @@ const NON_CLAIMS = Object.freeze([
   "The example remains unprovisioned and cannot provide a save, target, result, or terminal route state.",
 ]);
 const FIXTURE_RULES = Object.freeze([
-  "Create or inspect the starting save through target-version native Stardew only.",
+  "Create a new transaction-owned staged slot from a manifest-verified read-only canonical slot; never overwrite or restore canonical contents.",
+  "A named launcher-owned staged-save declaration may establish only source-backed Given fields, including explicitly declared player/world/progress/inventory facts, and must not expose arbitrary XML paths or values.",
+  "For the fixed validation floor-5 elevator Given, the declaration may set staged mine_lowestLevelReached to 10 only after validation of the target-version serialized shape and mine_lowestLevelReachedForOrder == -1; it must not create the elevator action result.",
   "Keep the selected checkpoint unmaterialized until a runtime request and fresh observation resolve it.",
-  "Record no concrete floor number, opaque correlation value, receipt, execution, result, or postcondition in the fixture.",
-  "Do not advance the route, unlock a checkpoint, enter a terminal result, or write gameplay state during fixture creation.",
-  "A missing, ambiguous, contaminated, advanced, or terminal starting state fails closed.",
+  "Record no opaque correlation value, receipt, execution, result, action evidence, or postcondition in the fixture.",
+  "The live game-thread probe must freshly observe MineShaft, elevator facility, and unlocked/non-current checkpoint before the action request; serialized setup is not action admission proof.",
+  "A missing, ambiguous, contaminated, advanced, terminal, or canonical-integrity-mismatched starting state fails closed.",
 ]);
 const ROOT_FIELDS = Object.freeze([
   "schemaVersion",
@@ -94,7 +96,7 @@ function exactArray(value, expected, label, errors) {
 function value(value, expected, label, errors) {
   if (value !== expected) errors.push(`${label} must be ${JSON.stringify(expected)}.`);
 }
-function nonEmpty(value, label, errors) {
+function _nonEmpty(value, label, errors) {
   if (typeof value !== "string" || value.trim() === "") errors.push(`${label} must be a non-empty string.`);
 }
 function booleans(object, fields, label, errors) {
@@ -515,6 +517,7 @@ export function validateM8ElevatorActionContract(contract) {
       "fixtureMutatesGameplayState",
       "fixtureWritesEvidence",
       "fixtureWritesSave",
+      "stagedSaveFixture",
     ],
     "fixtureStartingFacts",
     errors,
@@ -556,10 +559,23 @@ export function validateM8ElevatorActionContract(contract) {
     "fixtureStartingFacts.terminalRouteResult",
     errors,
   );
-  falseBooleans(
-    contract?.fixtureStartingFacts,
-    ["fixtureMutatesGameplayState", "fixtureWritesEvidence", "fixtureWritesSave"],
-    "fixtureStartingFacts",
+  value(
+    contract?.fixtureStartingFacts?.fixtureMutatesGameplayState,
+    "declared_staged_given_only",
+    "fixtureStartingFacts.fixtureMutatesGameplayState",
+    errors,
+  );
+  value(contract?.fixtureStartingFacts?.fixtureWritesEvidence, false, "fixtureStartingFacts.fixtureWritesEvidence", errors);
+  value(
+    contract?.fixtureStartingFacts?.fixtureWritesSave,
+    "declared_staged_slot_only_canonical_never_written",
+    "fixtureStartingFacts.fixtureWritesSave",
+    errors,
+  );
+  value(
+    contract?.fixtureStartingFacts?.stagedSaveFixture,
+    "design/84_M8_STAGED_SAVE_GIVEN_FIXTURE_IMPLEMENTATION_PLAN.md",
+    "fixtureStartingFacts.stagedSaveFixture",
     errors,
   );
   exactArray(contract?.fixtureCreationRules, FIXTURE_RULES, "fixtureCreationRules", errors);

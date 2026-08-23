@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
-
-import { MimoTtsProvider, MIMO_TTS_MODEL } from "./mimo.js";
-import { type SpeechJob } from "./gateway.js";
+import { fileURLToPath } from "node:url";
+import type { SpeechJob } from "./gateway.js";
+import { MIMO_TTS_MODEL, MimoTtsProvider } from "./mimo.js";
 
 const job: SpeechJob = {
   jobId: "job_01",

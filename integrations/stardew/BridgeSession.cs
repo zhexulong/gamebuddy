@@ -1,4 +1,10 @@
 using System.Security.Cryptography;
+using System.Linq;
+using System.Text.Json;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core.Protocol;
+using GameBuddy.Stardew.Core.Routing;
 using Microsoft.Xna.Framework;
 
 namespace GameBuddy.Stardew;
@@ -10,6 +16,7 @@ internal sealed class BridgeSession
     private const int MaximumPendingPlayerControls = 64;
     private const int MaximumRememberedCancelIdentities = 256;
     private readonly ExecutionManager executions;
+    private readonly FarmhandActionRouter actionRouter;
     private readonly BridgeScope scope;
     private readonly string token;
     private readonly FarmhandCapabilitySurface publishedCapabilities;
@@ -29,18 +36,19 @@ internal sealed class BridgeSession
     // execution merely because its transport generation changed.
     private readonly Dictionary<string, CancelIdentityRecord> cancelIdentities = new(StringComparer.Ordinal);
     private readonly Queue<string> cancelIdentityOrder = new();
-    private readonly FarmhandActionRouter actionRouter = new();
     private long authenticatedGeneration = -1;
     private long presentationEpoch;
 
     internal BridgeSession(
         ExecutionManager executions,
+        FarmhandActionRouter actionRouter,
         BridgeScope scope,
         string token,
         FarmhandCapabilitySurface publishedCapabilities,
         Func<string>? presentationLocale = null)
     {
         this.executions = executions;
+        this.actionRouter = actionRouter ?? throw new ArgumentNullException(nameof(actionRouter));
         this.scope = scope;
         this.token = token;
         this.publishedCapabilities = publishedCapabilities;
@@ -57,7 +65,15 @@ internal sealed class BridgeSession
         { reasonCode = "invalid_presentation_locale"; return false; }
         this.authenticatedGeneration = generation;
         this.pendingPlayerControls.Clear();
-        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(Guid.NewGuid().ToString("N"), this.publishedCapabilities.Capabilities, locale));
+        acknowledgement = Reply("hello_ack", envelope.CorrelationId, new BridgeHelloAck(
+            Guid.NewGuid().ToString("N"),
+            this.publishedCapabilities.Capabilities,
+            locale,
+            FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(
+                registration.ActionId,
+                registration.FamilyId,
+                registration.IdentityVersion,
+                registration.Lifecycle.ToWireValue())).ToArray()));
         reasonCode = "accepted";
         return true;
     }
@@ -100,7 +116,7 @@ internal sealed class BridgeSession
             if (!this.executions.TryGetReceipt(existingRequest.RequestId, out LocalExecutionReceipt latest)) { reasonCode = "idempotency_receipt_unavailable"; return false; }
             response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(latest)); reasonCode = "idempotent_replay"; return true;
         }
-        if (!this.actionRouter.TryRoute(request, this.executions, this.publishedCapabilities, out LocalExecutionReceipt receipt, out reasonCode))
+        if (!this.actionRouter.TryRoute(request, this.executions, out LocalExecutionReceipt receipt, out reasonCode))
             return false;
         this.RememberIdempotency(request.IdempotencyKey, fingerprint, request.RequestId);
         response = Reply("execution_receipt", envelope.CorrelationId, ToBridgeReceipt(receipt)); reasonCode = "accepted"; return true;
@@ -604,7 +620,7 @@ internal sealed record IdempotentExecution(string Fingerprint, string RequestId)
 internal sealed record IdempotentPresentation(string Fingerprint, BridgeCompanionPresentationReceipt? Receipt, string ReasonCode);
 internal sealed record IdempotentSystemNotice(string Fingerprint, BridgeSystemNoticeReceipt? Receipt, string ReasonCode);
 internal sealed record BridgeHello(string Token);
-internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, string PresentationLocale);
+internal sealed record BridgeHelloAck(string SessionId, IReadOnlyList<string> Capabilities, string PresentationLocale, IReadOnlyList<FarmhandActionRegistrationWire> Registrations);
 internal sealed record BridgeObserveRequest();
 internal sealed record BridgeCancelRequest(string RequestId, string ExecutionId, string CancelId, long CancelEpoch, string ReasonCode);
 /// <summary>Last accepted cancel identity bound to one exact request/execution.</summary>

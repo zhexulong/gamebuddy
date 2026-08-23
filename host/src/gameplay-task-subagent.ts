@@ -1,42 +1,41 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  type AgentSession,
   createAgentSession,
   DefaultResourceLoader,
   defineTool,
   ModelRuntime,
   SessionManager,
   SettingsManager,
-  type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
-import { type IntegrationConnection } from "./integration-types.js";
 import {
   executionWakeSourceFor,
   normalizeExecutionWake,
 } from "./action-execution-coordinator.internal.js";
-import {
-  type ExecutionWake,
-  type ExecutionWakeSource,
-} from "./integration-launcher.js";
-import {
-  type IntegrationActionCatalog,
-  type IntegrationActionPolicy,
-  type IntegrationDispatchAdmission,
-  type IntegrationExecutionReceipt,
-  type IntegrationStateView,
-} from "./integration-module.js";
 import { finalAssistantText } from "./agent-expression.js";
-import { type CompanionModelConfig, type RuntimePaths } from "./runtime.js";
+import type {
+  ExecutionWake,
+  ExecutionWakeSource,
+} from "./integration-launcher.js";
+import type {
+  IntegrationActionCatalog,
+  IntegrationActionPolicy,
+  IntegrationDispatchAdmission,
+  IntegrationExecutionReceipt,
+} from "./integration-module.js";
+import type { IntegrationConnection } from "./integration-types.js";
+import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 
 /** Gameplay workers are deliberately pinned independently from the dialogue model. */
-export const GAMEPLAY_SUBAGENT_MODEL_CONFIG: CompanionModelConfig = Object.freeze({
-  provider: "cpa-oai",
-  modelId: "gpt-5.6-luna",
-  thinkingLevel: "medium",
-});
+export const GAMEPLAY_SUBAGENT_MODEL_CONFIG: CompanionModelConfig =
+  Object.freeze({
+    provider: "cpa-oai",
+    modelId: "gpt-5.6-luna",
+    thinkingLevel: "medium",
+  });
 
 export type GameplayTaskResult = Readonly<{
   taskId: string;
@@ -78,7 +77,12 @@ export type GameplayTaskRecord = Readonly<{
   modelRetries: number;
   acceptedActions: number;
   acceptedActionsByFamily: Readonly<Record<string, number>>;
-  executions: readonly Readonly<{ actionId: string; requestId: string; executionId: string; state: string }>[];
+  executions: readonly Readonly<{
+    actionId: string;
+    requestId: string;
+    executionId: string;
+    state: string;
+  }>[];
   /** A request was written but its execute response has not yet been reconciled. */
   pendingDispatch: Readonly<{
     actionId: string;
@@ -87,14 +91,24 @@ export type GameplayTaskRecord = Readonly<{
     cancelRequired: boolean;
   }> | null;
   /** Receipt reference only; evidence remains Mod-owned and is never copied into worker trace. */
-  terminalReceipt: Readonly<{ requestId: string; executionId: string; state: string; reasonCode: string }> | null;
+  terminalReceipt: Readonly<{
+    requestId: string;
+    executionId: string;
+    state: string;
+    reasonCode: string;
+  }> | null;
   terminalReasonCode: string | null;
   /** Whether terminal reconciliation had an adapter wake in addition to polling. */
   wakeMode: "polling" | "event_with_reconcile_poll";
 }>;
 
 export type GameplayTaskStep = Readonly<{
-  name: "worker_finished" | "worker_reported_completed" | "authoritatively_completed" | "blocked" | "cancelled";
+  name:
+    | "worker_finished"
+    | "worker_reported_completed"
+    | "authoritatively_completed"
+    | "blocked"
+    | "cancelled";
   reasonCode: string;
 }>;
 
@@ -124,7 +138,8 @@ export type GameplayTaskDispatchAdmission = IntegrationDispatchAdmission &
     cancelPending(reasonCode: string): void;
   }>;
 
-export type GameplayTaskDispatchAdmissionFactory = () => GameplayTaskDispatchAdmission;
+export type GameplayTaskDispatchAdmissionFactory =
+  () => GameplayTaskDispatchAdmission;
 
 type MutableTaskRecord = {
   taskId: string;
@@ -138,14 +153,24 @@ type MutableTaskRecord = {
   modelRetries: number;
   acceptedActions: number;
   acceptedActionsByFamily: Record<string, number>;
-  executions: Array<{ actionId: string; requestId: string; executionId: string; state: string }>;
+  executions: Array<{
+    actionId: string;
+    requestId: string;
+    executionId: string;
+    state: string;
+  }>;
   pendingDispatch: {
     actionId: string;
     requestId: string;
     state: "dispatching" | "uncertain";
     cancelRequired: boolean;
   } | null;
-  terminalReceipt: { requestId: string; executionId: string; state: string; reasonCode: string } | null;
+  terminalReceipt: {
+    requestId: string;
+    executionId: string;
+    state: string;
+    reasonCode: string;
+  } | null;
   terminalReasonCode: string | null;
   wakeMode: "polling" | "event_with_reconcile_poll";
 };
@@ -187,7 +212,8 @@ export class GameplayTaskSubagent {
     private readonly dispatchAdmissionFactory?: GameplayTaskDispatchAdmissionFactory,
   ) {
     assertBudget(budget);
-    this.#executionWakeSource = executionWakeSource ?? executionWakeSourceFor(integration);
+    this.#executionWakeSource =
+      executionWakeSource ?? executionWakeSourceFor(integration);
   }
 
   public get modelConfig(): CompanionModelConfig {
@@ -217,7 +243,9 @@ export class GameplayTaskSubagent {
       label: "Delegate Gameplay Task",
       description:
         "Run one bounded gameplay task in a private child Agent. The child cannot speak to the player or change its own permissions.",
-      parameters: Type.Object({ task: Type.String({ minLength: 1, maxLength: 2_000 }) }),
+      parameters: Type.Object({
+        task: Type.String({ minLength: 1, maxLength: 2_000 }),
+      }),
       execute: async (_toolCallId, params, signal) => {
         const result = await this.run(params.task, signal);
         return {
@@ -236,21 +264,33 @@ export class GameplayTaskSubagent {
     // A request can be on the wire before execute() has returned its execution
     // id. Seal cancellation admission now; settling the response below issues
     // the exact owned cancel once the Mod correlation is known.
-    if (active.record.pendingDispatch !== null) active.record.pendingDispatch.cancelRequired = true;
+    if (active.record.pendingDispatch !== null)
+      active.record.pendingDispatch.cancelRequired = true;
     if (active.cancellationIssued) return;
     active.cancellationIssued = true;
     this.#cancellationEpoch++;
     active.controller.abort(reasonCode);
-    issueTaskOwnedCancellation(active.record, active.dispatchAdmission, reasonCode);
+    issueTaskOwnedCancellation(
+      active.record,
+      active.dispatchAdmission,
+      reasonCode,
+    );
     void active.session?.abort().catch(() => undefined);
   }
 
-  public async run(task: string, parentSignal?: AbortSignal): Promise<GameplayTaskResult> {
-    if (this.#active !== undefined) throw new Error("gameplay_task_already_active");
+  public async run(
+    task: string,
+    parentSignal?: AbortSignal,
+  ): Promise<GameplayTaskResult> {
+    if (this.#active !== undefined)
+      throw new Error("gameplay_task_already_active");
     return (this.#lastTaskResult = await this.runTask(task, parentSignal));
   }
 
-  private async runTask(task: string, parentSignal?: AbortSignal): Promise<GameplayTaskResult> {
+  private async runTask(
+    task: string,
+    parentSignal?: AbortSignal,
+  ): Promise<GameplayTaskResult> {
     const steps: GameplayTaskStep[] = [];
     this.#lastTaskSteps = Object.freeze([]);
     const taskId = `gameplay_${crypto.randomUUID()}`;
@@ -271,7 +311,10 @@ export class GameplayTaskSubagent {
       pendingDispatch: null,
       terminalReceipt: null,
       terminalReasonCode: null,
-      wakeMode: this.#executionWakeSource === undefined ? "polling" : "event_with_reconcile_poll",
+      wakeMode:
+        this.#executionWakeSource === undefined
+          ? "polling"
+          : "event_with_reconcile_poll",
     };
     const controller = new AbortController();
     // Reserve synchronously, before the first await. This is also the exact
@@ -305,16 +348,22 @@ export class GameplayTaskSubagent {
     let taskReport: GameplayTaskReport | null = null;
     this.#lastReport = null;
     try {
-      taskRoot = await (this.sessionFactory?.createWorkspace?.(join(this.paths.runtimeCwd, "gameplay-task-")) ??
-        mkdtemp(join(this.paths.runtimeCwd, "gameplay-task-")));
+      taskRoot = await (this.sessionFactory?.createWorkspace?.(
+        join(this.paths.runtimeCwd, "gameplay-task-"),
+      ) ?? mkdtemp(join(this.paths.runtimeCwd, "gameplay-task-")));
       const agentDir = join(taskRoot, "pi-agent");
       await mkdir(agentDir, { recursive: true });
       const reportTool = defineTool({
         name: "report_to_parent",
         label: "Report Gameplay Task",
-        description: "Return a bounded structured task status to the parent Agent. This never speaks to the player.",
+        description:
+          "Return a bounded structured task status to the parent Agent. This never speaks to the player.",
         parameters: Type.Object({
-          state: Type.Union([Type.Literal("completed"), Type.Literal("blocked"), Type.Literal("cancelled")]),
+          state: Type.Union([
+            Type.Literal("completed"),
+            Type.Literal("blocked"),
+            Type.Literal("cancelled"),
+          ]),
           reasonCode: Type.String({ minLength: 1, maxLength: 128 }),
           evidence: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
         }),
@@ -322,13 +371,17 @@ export class GameplayTaskSubagent {
           const report: GameplayTaskReport = Object.freeze({
             state: params.state,
             reasonCode: params.reasonCode,
-            ...(params.evidence === undefined ? {} : { evidence: params.evidence }),
+            ...(params.evidence === undefined
+              ? {}
+              : { evidence: params.evidence }),
           });
           if (
             report.state === "completed" &&
             !hasAuthoritativeCompletion(
               report,
-              requireIntegrationModule(this.integration).readState(this.integration).latestReceipt,
+              requireIntegrationModule(this.integration).readState(
+                this.integration,
+              ).latestReceipt,
               record.executions,
               requireIntegrationModule(this.integration).actionCatalog,
             )
@@ -337,17 +390,23 @@ export class GameplayTaskSubagent {
           }
           taskReport = report;
           this.#lastReport = report;
-          return { content: [{ type: "text" as const, text: JSON.stringify(report) }], details: report };
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(report) }],
+            details: report,
+          };
         },
       });
       const integrationModule = requireIntegrationModule(this.integration);
       const status = defineTool({
         name: "companion_status",
         label: "Companion Status",
-        description: "Read the mounted integration status for this private gameplay task.",
+        description:
+          "Read the mounted integration status for this private gameplay task.",
         parameters: Type.Object({}),
         execute: async () => {
-          const state = requireIntegrationModule(this.integration).readState(this.integration);
+          const state = requireIntegrationModule(this.integration).readState(
+            this.integration,
+          );
           const details = {
             host: "ready",
             connected: state.connected,
@@ -355,7 +414,10 @@ export class GameplayTaskSubagent {
             snapshotRevision: state.snapshotRevision,
             latestReceiptState: state.latestReceipt?.state ?? null,
           };
-          return { content: [{ type: "text" as const, text: JSON.stringify(details) }], details };
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(details) }],
+            details,
+          };
         },
       });
       // Action tools are absent without a runtime-minted admission. Never
@@ -376,19 +438,28 @@ export class GameplayTaskSubagent {
         knowledge: this.integration.knowledge,
         gameVersion: this.integration.gameVersion,
         policy: this.actionPolicy,
-        ...(dispatchAdmissionFactory === undefined ? {} : { dispatchAdmissionFactory }),
+        ...(dispatchAdmissionFactory === undefined
+          ? {}
+          : { dispatchAdmissionFactory }),
       });
       const integrationTools = [
         ...integrationToolSet.observation,
         ...integrationToolSet.actions,
         ...integrationToolSet.knowledge,
       ];
-      const cancelSettledPendingDispatch = (requestId: string, executionId: string) => {
+      const cancelSettledPendingDispatch = (
+        requestId: string,
+        executionId: string,
+      ) => {
         if (!active.cancellationIssued) return;
         const admission = active.dispatchAdmission;
         if (admission === undefined) return;
         void admission
-          .cancelExact(requestId, executionId, record.terminalReasonCode ?? "gameplay_task_cancelled")
+          .cancelExact(
+            requestId,
+            executionId,
+            record.terminalReasonCode ?? "gameplay_task_cancelled",
+          )
           .catch(() => undefined);
       };
       const budgetedIntegrationTools = integrationTools.map((tool) =>
@@ -398,39 +469,74 @@ export class GameplayTaskSubagent {
           controller,
           this.integration,
           integrationModule,
+          this.actionPolicy ?? integrationModule.defaultPolicy,
           cancelThisTask,
           cancelSettledPendingDispatch,
         ),
       );
       const customTools = [
-        budgetTool(status, record, controller, this.integration, integrationModule, cancelThisTask, cancelSettledPendingDispatch),
+        budgetTool(
+          status,
+          record,
+          controller,
+          this.integration,
+          integrationModule,
+          this.actionPolicy ?? integrationModule.defaultPolicy,
+          cancelThisTask,
+          cancelSettledPendingDispatch,
+        ),
         ...budgetedIntegrationTools,
-        budgetTool(reportTool, record, controller, this.integration, integrationModule, cancelThisTask, cancelSettledPendingDispatch),
+        budgetTool(
+          reportTool,
+          record,
+          controller,
+          this.integration,
+          integrationModule,
+          this.actionPolicy ?? integrationModule.defaultPolicy,
+          cancelThisTask,
+          cancelSettledPendingDispatch,
+        ),
       ];
       const allowedToolNames = customTools.map((tool) => tool.name).sort();
       if (this.sessionFactory !== undefined) {
-        session = await this.sessionFactory.create({ taskId, taskRoot, agentDir, allowedToolNames, customTools });
+        session = await this.sessionFactory.create({
+          taskId,
+          taskRoot,
+          agentDir,
+          allowedToolNames,
+          customTools,
+        });
       } else {
-        session = await createProductionGameplayTaskSession(taskRoot, agentDir, taskId, allowedToolNames, customTools);
+        session = await createProductionGameplayTaskSession(
+          taskRoot,
+          agentDir,
+          taskId,
+          allowedToolNames,
+          customTools,
+        );
       }
-      const actualToolNames = session.agent.state.tools.map((tool) => tool.name).sort();
+      const actualToolNames = session.agent.state.tools
+        .map((tool) => tool.name)
+        .sort();
       if (JSON.stringify(actualToolNames) !== JSON.stringify(allowedToolNames))
         throw new Error("gameplay_subagent_tool_isolation_failed");
       active.session = session;
       // Liveness is fail-closed for this task only: stop further tool admission,
       // issue at most one owned cancellation, then let the existing bounded
       // receipt watchdog determine the terminal outcome.
-      const unsubscribeLiveness = this.#executionWakeSource?.onExecutionWake((candidate) => {
-        const wake = normalizeExecutionWake(candidate);
-        if (wake?.kind === "terminal") {
-          // A bridge write can still be awaiting its response when STOP lands.
-          // The adapter's terminal wake lets the task reconcile that exact
-          // request immediately; polling remains only a lost-wake fallback.
-          settlePendingTerminalWake(record, this.integration, wake);
-        }
-        if (wake?.kind === "invalidated" || wake?.kind === "disconnected")
-          cancelThisTask(`integration_${wake.kind}:${wake.reasonCode}`);
-      });
+      const unsubscribeLiveness = this.#executionWakeSource?.onExecutionWake(
+        (candidate) => {
+          const wake = normalizeExecutionWake(candidate);
+          if (wake?.kind === "terminal") {
+            // A bridge write can still be awaiting its response when STOP lands.
+            // The adapter's terminal wake lets the task reconcile that exact
+            // request immediately; polling remains only a lost-wake fallback.
+            settlePendingTerminalWake(record, this.integration, wake);
+          }
+          if (wake?.kind === "invalidated" || wake?.kind === "disconnected")
+            cancelThisTask(`integration_${wake.kind}:${wake.reasonCode}`);
+        },
+      );
       const timeout = setTimeout(
         () => cancelThisTask("gameplay_task_wall_clock_budget_exhausted"),
         record.budget.maxWallClockMs,
@@ -439,7 +545,8 @@ export class GameplayTaskSubagent {
         if (event.type === "agent_end") {
           record.turns++;
           if (event.willRetry) record.modelRetries++;
-          if (record.turns >= record.budget.maxTurns) cancelThisTask("gameplay_task_turn_budget_exhausted");
+          if (record.turns >= record.budget.maxTurns)
+            cancelThisTask("gameplay_task_turn_budget_exhausted");
           else if (record.modelRetries > record.budget.maxModelRetries)
             cancelThisTask("gameplay_task_retry_budget_exhausted");
         }
@@ -470,13 +577,23 @@ export class GameplayTaskSubagent {
         unsubscribeLiveness?.();
       }
       const summary = finalAssistantText(session.messages);
-      steps.push(Object.freeze({ name: "worker_finished", reasonCode: "worker_prompt_finished" }));
+      steps.push(
+        Object.freeze({
+          name: "worker_finished",
+          reasonCode: "worker_prompt_finished",
+        }),
+      );
       // Assignment occurs inside the tool callback, which TypeScript's local
       // control-flow analysis cannot observe across await/session boundaries.
       const finalReport = taskReport as GameplayTaskReport | null;
       if (finalReport === null) {
         record.terminalReasonCode ??= "missing_terminal_report";
-        steps.push(Object.freeze({ name: "blocked", reasonCode: record.terminalReasonCode }));
+        steps.push(
+          Object.freeze({
+            name: "blocked",
+            reasonCode: record.terminalReasonCode,
+          }),
+        );
         return {
           taskId,
           state: "blocked",
@@ -485,7 +602,12 @@ export class GameplayTaskSubagent {
         };
       }
       if (finalReport.state === "completed") {
-        steps.push(Object.freeze({ name: "worker_reported_completed", reasonCode: finalReport.reasonCode }));
+        steps.push(
+          Object.freeze({
+            name: "worker_reported_completed",
+            reasonCode: finalReport.reasonCode,
+          }),
+        );
         // Recheck at the Host terminal boundary. A later, unrelated receipt may
         // have displaced the one that made report_to_parent admissible.
         if (
@@ -497,7 +619,12 @@ export class GameplayTaskSubagent {
           )
         ) {
           record.terminalReasonCode = "authoritative_completion_receipt_lost";
-          steps.push(Object.freeze({ name: "blocked", reasonCode: record.terminalReasonCode }));
+          steps.push(
+            Object.freeze({
+              name: "blocked",
+              reasonCode: record.terminalReasonCode,
+            }),
+          );
           return {
             taskId,
             state: "blocked",
@@ -505,8 +632,11 @@ export class GameplayTaskSubagent {
             report: Object.freeze({ reasonCode: record.terminalReasonCode }),
           };
         }
-        const receipt = integrationModule.readState(this.integration).latestReceipt;
-        if (receipt === null) throw new Error("authoritative_completion_receipt_lost");
+        const receipt = integrationModule.readState(
+          this.integration,
+        ).latestReceipt;
+        if (receipt === null)
+          throw new Error("authoritative_completion_receipt_lost");
         record.terminalReceipt = Object.freeze({
           requestId: receipt.requestId,
           executionId: receipt.executionId,
@@ -517,13 +647,24 @@ export class GameplayTaskSubagent {
       record.terminalReasonCode ??= finalReport.reasonCode;
       steps.push(
         Object.freeze({
-          name: finalReport.state === "completed" ? "authoritatively_completed" : finalReport.state,
+          name:
+            finalReport.state === "completed"
+              ? "authoritatively_completed"
+              : finalReport.state,
           reasonCode: record.terminalReasonCode,
         }),
       );
-      return { taskId, state: finalReport.state, summary: cap(summary), report: finalReport };
+      return {
+        taskId,
+        state: finalReport.state,
+        summary: cap(summary),
+        report: finalReport,
+      };
     } catch (error) {
-      if (controller.signal.aborted || (error instanceof Error && /aborted|cancelled/i.test(error.message)))
+      if (
+        controller.signal.aborted ||
+        (error instanceof Error && /aborted|cancelled/i.test(error.message))
+      )
         return await abortedTaskResult(
           taskId,
           record,
@@ -532,7 +673,8 @@ export class GameplayTaskSubagent {
           controller.signal,
           this.#executionWakeSource,
         );
-      record.terminalReasonCode ??= error instanceof Error ? error.message : "gameplay_subagent_failed";
+      record.terminalReasonCode ??=
+        error instanceof Error ? error.message : "gameplay_subagent_failed";
       return {
         taskId,
         state: "blocked",
@@ -546,7 +688,10 @@ export class GameplayTaskSubagent {
       // Never let a stale task's finalizer erase a task that replaced it.
       if (this.#active === active) this.#active = undefined;
       session?.dispose();
-      if (taskRoot !== undefined) await rm(taskRoot, { recursive: true, force: true }).catch(() => undefined);
+      if (taskRoot !== undefined)
+        await rm(taskRoot, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
     }
   }
 }
@@ -558,9 +703,16 @@ async function createProductionGameplayTaskSession(
   allowedToolNames: readonly string[],
   customTools: readonly ToolDefinition[],
 ): Promise<AgentSession> {
-  const modelRuntime = await createTaskModelRuntime(agentDir, GAMEPLAY_SUBAGENT_MODEL_CONFIG);
-  const model = modelRuntime.getModel(GAMEPLAY_SUBAGENT_MODEL_CONFIG.provider, GAMEPLAY_SUBAGENT_MODEL_CONFIG.modelId);
-  if (model === undefined) throw new Error("gameplay_subagent_model_unavailable");
+  const modelRuntime = await createTaskModelRuntime(
+    agentDir,
+    GAMEPLAY_SUBAGENT_MODEL_CONFIG,
+  );
+  const model = modelRuntime.getModel(
+    GAMEPLAY_SUBAGENT_MODEL_CONFIG.provider,
+    GAMEPLAY_SUBAGENT_MODEL_CONFIG.modelId,
+  );
+  if (model === undefined)
+    throw new Error("gameplay_subagent_model_unavailable");
   const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
   const loader = new DefaultResourceLoader({
     cwd: taskRoot,
@@ -597,7 +749,10 @@ async function createProductionGameplayTaskSession(
   return session;
 }
 
-async function createTaskModelRuntime(agentDir: string, config: CompanionModelConfig): Promise<ModelRuntime> {
+async function createTaskModelRuntime(
+  agentDir: string,
+  config: CompanionModelConfig,
+): Promise<ModelRuntime> {
   const modelsPath = join(agentDir, "models.json");
   await writeFile(
     modelsPath,
@@ -610,7 +765,10 @@ async function createTaskModelRuntime(agentDir: string, config: CompanionModelCo
             api: "openai-completions",
             apiKey: "$CPA_OAI_API_KEY",
             authHeader: true,
-            compat: { supportsDeveloperRole: false, supportsReasoningEffort: true },
+            compat: {
+              supportsDeveloperRole: false,
+              supportsReasoningEffort: true,
+            },
             models: [
               {
                 id: config.modelId,
@@ -647,7 +805,7 @@ async function createTaskModelRuntime(agentDir: string, config: CompanionModelCo
   });
 }
 
-function isPromiseLike(value: unknown): value is Promise<unknown> {
+function _isPromiseLike(value: unknown): value is Promise<unknown> {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -657,20 +815,37 @@ function isPromiseLike(value: unknown): value is Promise<unknown> {
 }
 
 export function selectTaskOwnedCancellation(
-  taskExecutions: readonly Readonly<{ requestId: string; executionId: string; state: string }>[],
-  observed: Readonly<{ requestId: string; executionId: string }> | null | undefined,
+  taskExecutions: readonly Readonly<{
+    requestId: string;
+    executionId: string;
+    state: string;
+  }>[],
+  observed:
+    Readonly<{ requestId: string; executionId: string }> | null | undefined,
 ): Readonly<{ requestId: string; executionId: string }> | null {
   if (
     observed !== null &&
     observed !== undefined &&
-    taskExecutions.some((known) => known.requestId === observed.requestId && known.executionId === observed.executionId)
+    taskExecutions.some(
+      (known) =>
+        known.requestId === observed.requestId &&
+        known.executionId === observed.executionId,
+    )
   ) {
-    return Object.freeze({ requestId: observed.requestId, executionId: observed.executionId });
+    return Object.freeze({
+      requestId: observed.requestId,
+      executionId: observed.executionId,
+    });
   }
-  const nonterminal = taskExecutions.find((known) => !isTerminalReceiptState(known.state));
+  const nonterminal = taskExecutions.find(
+    (known) => !isTerminalReceiptState(known.state),
+  );
   return nonterminal === undefined
     ? null
-    : Object.freeze({ requestId: nonterminal.requestId, executionId: nonterminal.executionId });
+    : Object.freeze({
+        requestId: nonterminal.requestId,
+        executionId: nonterminal.executionId,
+      });
 }
 
 export type GameplayActionAdmission =
@@ -684,30 +859,58 @@ export type GameplayActionAdmission =
         | "gameplay_task_action_family_budget_exhausted";
     }>;
 
-/** Pure Host admission decision used immediately before a Game Action tool call. */
+type GameplayActionAdmissionRecord = Readonly<
+  Pick<
+    MutableTaskRecord,
+    "acceptedActions" | "acceptedActionsByFamily" | "executions" | "budget"
+  >
+> &
+  Readonly<Partial<Pick<MutableTaskRecord, "pendingDispatch">>>;
+
+/**
+ * Pure Host admission decision used immediately before a Game Action tool call.
+ * Runtime production always passes the authenticated Mod registration projection.
+ */
 export function admitGameplayAction(
   actionId: string,
-  record: Readonly<Pick<MutableTaskRecord, "acceptedActions" | "acceptedActionsByFamily" | "executions" | "budget">> &
-    Readonly<Partial<Pick<MutableTaskRecord, "pendingDispatch">>>,
-  activeExecution: Readonly<{ requestId: string; executionId: string }> | null | undefined,
+  record: GameplayActionAdmissionRecord,
+  activeExecution:
+    Readonly<{ requestId: string; executionId: string }> | null | undefined,
   catalog: IntegrationActionCatalog,
+  registrations: readonly import("./integration-module.js").IntegrationActionRegistration[],
+  capabilities: readonly string[],
+  policy: import("./integration-module.js").IntegrationActionPolicy,
 ): GameplayActionAdmission {
-  const entry = catalog.get(actionId);
+  const entry = catalog
+    .visibleActions(registrations, capabilities, policy)
+    .find((candidate) => candidate.actionId === actionId);
   const familyId = entry?.familyId;
-  if (familyId === undefined || !catalog.isPublished(actionId))
+  if (familyId === undefined)
     return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
   if (
     (activeExecution !== null && activeExecution !== undefined) ||
     record.executions.some((known) => !isTerminalReceiptState(known.state)) ||
     record.pendingDispatch != null
   ) {
-    return Object.freeze({ ok: false, reasonCode: "gameplay_task_active_execution_exists" });
+    return Object.freeze({
+      ok: false,
+      reasonCode: "gameplay_task_active_execution_exists",
+    });
   }
   if (record.acceptedActions >= record.budget.maxAcceptedActions) {
-    return Object.freeze({ ok: false, reasonCode: "gameplay_task_action_budget_exhausted" });
+    return Object.freeze({
+      ok: false,
+      reasonCode: "gameplay_task_action_budget_exhausted",
+    });
   }
-  if ((record.acceptedActionsByFamily[familyId] ?? 0) >= record.budget.maxAcceptedActionsPerFamily) {
-    return Object.freeze({ ok: false, reasonCode: "gameplay_task_action_family_budget_exhausted" });
+  if (
+    (record.acceptedActionsByFamily[familyId] ?? 0) >=
+    record.budget.maxAcceptedActionsPerFamily
+  ) {
+    return Object.freeze({
+      ok: false,
+      reasonCode: "gameplay_task_action_family_budget_exhausted",
+    });
   }
   return Object.freeze({ ok: true, familyId });
 }
@@ -715,7 +918,11 @@ export function admitGameplayAction(
 export function hasAuthoritativeCompletion(
   report: Readonly<{ state: string; evidence?: unknown }>,
   receipt: IntegrationExecutionReceipt | null,
-  taskExecutions: readonly Readonly<{ actionId: string; requestId: string; executionId: string }>[],
+  taskExecutions: readonly Readonly<{
+    actionId: string;
+    requestId: string;
+    executionId: string;
+  }>[],
   catalog: IntegrationActionCatalog,
 ): boolean {
   if (
@@ -727,7 +934,10 @@ export function hasAuthoritativeCompletion(
     return false;
   const requestId = report.evidence.requestId;
   const executionId = report.evidence.executionId;
-  const execution = taskExecutions.find((known) => known.requestId === requestId && known.executionId === executionId);
+  const execution = taskExecutions.find(
+    (known) =>
+      known.requestId === requestId && known.executionId === executionId,
+  );
   return (
     requestId === receipt.requestId &&
     executionId === receipt.executionId &&
@@ -744,7 +954,10 @@ export function hasAuthoritativeCompletion(
  */
 export function hasActionPostconditionEvidence(
   actionId: string,
-  receipt: Readonly<{ reasonCode: string; evidence: Readonly<Record<string, unknown>> | null }>,
+  receipt: Readonly<{
+    reasonCode: string;
+    evidence: Readonly<Record<string, unknown>> | null;
+  }>,
   catalog: IntegrationActionCatalog,
 ): boolean {
   return catalog.hasCompletionEvidence(actionId, {
@@ -756,19 +969,31 @@ export function hasActionPostconditionEvidence(
 
 function assertBudget(budget: GameplayTaskBudget): void {
   for (const [key, value] of Object.entries(budget)) {
-    if (!Number.isSafeInteger(value) || value < 1) throw new Error(`invalid_gameplay_task_budget:${key}`);
+    if (!Number.isSafeInteger(value) || value < 1)
+      throw new Error(`invalid_gameplay_task_budget:${key}`);
   }
-  if (budget.maxActiveExecutions !== 1) throw new Error("invalid_gameplay_task_budget:maxActiveExecutions");
+  if (budget.maxActiveExecutions !== 1)
+    throw new Error("invalid_gameplay_task_budget:maxActiveExecutions");
 }
 
 function freezeRecord(record: MutableTaskRecord): GameplayTaskRecord {
   return Object.freeze({
     ...record,
     budget: Object.freeze({ ...record.budget }),
-    acceptedActionsByFamily: Object.freeze({ ...record.acceptedActionsByFamily }),
-    executions: Object.freeze(record.executions.map((execution) => Object.freeze({ ...execution }))),
-    pendingDispatch: record.pendingDispatch === null ? null : Object.freeze({ ...record.pendingDispatch }),
-    terminalReceipt: record.terminalReceipt === null ? null : Object.freeze({ ...record.terminalReceipt }),
+    acceptedActionsByFamily: Object.freeze({
+      ...record.acceptedActionsByFamily,
+    }),
+    executions: Object.freeze(
+      record.executions.map((execution) => Object.freeze({ ...execution })),
+    ),
+    pendingDispatch:
+      record.pendingDispatch === null
+        ? null
+        : Object.freeze({ ...record.pendingDispatch }),
+    terminalReceipt:
+      record.terminalReceipt === null
+        ? null
+        : Object.freeze({ ...record.terminalReceipt }),
   });
 }
 
@@ -778,8 +1003,12 @@ function budgetTool(
   controller: AbortController,
   integration: IntegrationConnection,
   integrationModule: ReturnType<typeof requireIntegrationModule>,
+  mountedPolicy: import("./integration-module.js").IntegrationActionPolicy,
   cancelTask: (reasonCode: string) => void,
-  cancelSettledPendingDispatch: (requestId: string, executionId: string) => void,
+  cancelSettledPendingDispatch: (
+    requestId: string,
+    executionId: string,
+  ) => void,
 ): ToolDefinition {
   const actionId = integrationModule.actionIdForToolName(tool.name);
   const isCancel = integrationModule.isCancellationTool(tool.name);
@@ -787,7 +1016,8 @@ function budgetTool(
     ...tool,
     executionMode: "sequential",
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-      if (controller.signal.aborted) throw new Error(record.terminalReasonCode ?? "gameplay_task_cancelled");
+      if (controller.signal.aborted)
+        throw new Error(record.terminalReasonCode ?? "gameplay_task_cancelled");
       if (++record.toolCalls > record.budget.maxToolCalls) {
         record.terminalReasonCode ??= "gameplay_task_tool_budget_exhausted";
         cancelTask(record.terminalReasonCode);
@@ -799,18 +1029,26 @@ function budgetTool(
         if (
           typeof requestId !== "string" ||
           typeof executionId !== "string" ||
-          !record.executions.some((known) => known.requestId === requestId && known.executionId === executionId)
+          !record.executions.some(
+            (known) =>
+              known.requestId === requestId &&
+              known.executionId === executionId,
+          )
         ) {
           throw new Error("gameplay_task_cancel_not_owned");
         }
       }
       if (actionId !== null) {
         reconcileKnownExecution(record, integration);
+        const state = integrationModule.readState(integration);
         const admission = admitGameplayAction(
           actionId,
           record,
-          integrationModule.readState(integration).activeExecution,
+          state.activeExecution,
           integrationModule.actionCatalog,
+          state.registrations ?? [],
+          state.capabilities,
+          mountedPolicy,
         );
         if (!admission.ok) {
           if (admission.reasonCode.includes("budget_exhausted")) {
@@ -824,9 +1062,20 @@ function budgetTool(
           throw new Error("gameplay_task_request_id_required");
         // Record ownership before yielding to the transport. Do not infer an
         // execution id or issue a cancel until the Mod has returned one.
-        record.pendingDispatch = { actionId, requestId, state: "dispatching", cancelRequired: false };
+        record.pendingDispatch = {
+          actionId,
+          requestId,
+          state: "dispatching",
+          cancelRequired: false,
+        };
         try {
-          const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
+          const result = await tool.execute(
+            toolCallId,
+            params,
+            signal,
+            onUpdate,
+            ctx,
+          );
           settlePendingDispatch(
             record,
             integration,
@@ -839,7 +1088,8 @@ function budgetTool(
         } catch (error) {
           // A post-write transport failure is not proof that no execution
           // exists. Retain a bounded uncertain correlation for reconciliation.
-          if (record.pendingDispatch?.requestId === requestId) record.pendingDispatch.state = "uncertain";
+          if (record.pendingDispatch?.requestId === requestId)
+            record.pendingDispatch.state = "uncertain";
           throw error;
         }
       }
@@ -853,20 +1103,27 @@ async function abortedTaskResult(
   record: MutableTaskRecord,
   report: GameplayTaskReport | null,
   integration: IntegrationConnection,
-  signal: AbortSignal | undefined,
+  _signal: AbortSignal | undefined,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<GameplayTaskResult> {
-  const integrationModule = requireIntegrationModule(integration);
+  const _integrationModule = requireIntegrationModule(integration);
   const reasonCode = record.terminalReasonCode ?? "gameplay_task_cancelled";
   const budgetExhausted = reasonCode.includes("budget_exhausted");
   // Cancellation has already triggered the signal; continue to await the Mod's
   // authoritative terminal receipt inside the bounded watchdog window.
   const cancellation =
     record.pendingDispatch !== null || record.executions.length > 0
-      ? await awaitPendingDispatchAndOwnedTerminalReceipt(record, integration, wakeSource)
+      ? await awaitPendingDispatchAndOwnedTerminalReceipt(
+          record,
+          integration,
+          wakeSource,
+        )
       : null;
   if (cancellation !== null) record.terminalReceipt = cancellation;
-  if (record.pendingDispatch !== null || (record.executions.length > 0 && cancellation === null)) {
+  if (
+    record.pendingDispatch !== null ||
+    (record.executions.length > 0 && cancellation === null)
+  ) {
     record.terminalReasonCode = "cancellation_receipt_missing";
     return {
       taskId,
@@ -895,7 +1152,9 @@ async function awaitOwnedTerminalReceipt(
     deadlineMs: deadline,
     signal,
     wakeSource,
-    readReceipt: () => requireIntegrationModule(integration).readState(integration).latestReceipt,
+    readReceipt: () =>
+      requireIntegrationModule(integration).readState(integration)
+        .latestReceipt,
   });
 }
 
@@ -912,12 +1171,19 @@ export async function awaitTaskOwnedTerminalReceipt(
     wakeSource?: ExecutionWakeSource;
     readReceipt: () => IntegrationExecutionReceipt | null;
   }>,
-): Promise<Readonly<{ requestId: string; executionId: string; state: string; reasonCode: string }> | null> {
+): Promise<Readonly<{
+  requestId: string;
+  executionId: string;
+  state: string;
+  reasonCode: string;
+}> | null> {
   const owned = (receipt: IntegrationExecutionReceipt | null) =>
     receipt !== null &&
     isTerminalReceiptState(receipt.state) &&
     input.executions.some(
-      (execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId,
+      (execution) =>
+        execution.requestId === receipt.requestId &&
+        execution.executionId === receipt.executionId,
     )
       ? Object.freeze({
           requestId: receipt.requestId,
@@ -954,7 +1220,10 @@ export async function awaitTaskOwnedTerminalReceipt(
     const onAbort = () => finish(null);
     input.signal?.addEventListener("abort", onAbort, { once: true });
     poll = setInterval(reconcile, 250);
-    deadline = setTimeout(() => finish(null), Math.max(0, input.deadlineMs - Date.now()));
+    deadline = setTimeout(
+      () => finish(null),
+      Math.max(0, input.deadlineMs - Date.now()),
+    );
     if (input.wakeSource !== undefined) {
       unsubscribe = input.wakeSource.onExecutionWake((candidate) => {
         const wake = normalizeExecutionWake(candidate);
@@ -962,7 +1231,9 @@ export async function awaitTaskOwnedTerminalReceipt(
         if (wake.kind === "terminal") {
           if (
             !input.executions.some(
-              (execution) => execution.requestId === wake.requestId && execution.executionId === wake.executionId,
+              (execution) =>
+                execution.requestId === wake.requestId &&
+                execution.executionId === wake.executionId,
             )
           )
             return;
@@ -990,11 +1261,17 @@ function isTerminalReceiptState(state: string): boolean {
   );
 }
 
-function reconcileKnownExecution(record: MutableTaskRecord, integration: IntegrationConnection): void {
-  const receipt = requireIntegrationModule(integration).readState(integration).latestReceipt;
+function reconcileKnownExecution(
+  record: MutableTaskRecord,
+  integration: IntegrationConnection,
+): void {
+  const receipt =
+    requireIntegrationModule(integration).readState(integration).latestReceipt;
   if (receipt === null) return;
   const known = record.executions.find(
-    (execution) => execution.requestId === receipt.requestId && execution.executionId === receipt.executionId,
+    (execution) =>
+      execution.requestId === receipt.requestId &&
+      execution.executionId === receipt.executionId,
   );
   if (known !== undefined) known.state = receipt.state;
 }
@@ -1005,11 +1282,19 @@ function settlePendingDispatch(
   integrationModule: ReturnType<typeof requireIntegrationModule>,
   familyId: string,
   details: unknown,
-  cancelSettledPendingDispatch: (requestId: string, executionId: string) => void,
+  cancelSettledPendingDispatch: (
+    requestId: string,
+    executionId: string,
+  ) => void,
 ): void {
   const receipt = parseReceipt(details, integrationModule);
   const pending = record.pendingDispatch;
-  if (pending == null || receipt === null || receipt.requestId !== pending.requestId) return;
+  if (
+    pending == null ||
+    receipt === null ||
+    receipt.requestId !== pending.requestId
+  )
+    return;
   const cancelRequired = pending.cancelRequired;
   settlePendingCorrelation(
     record,
@@ -1021,9 +1306,15 @@ function settlePendingDispatch(
     familyId,
   );
   const execution = record.executions.find(
-    (known) => known.requestId === receipt.requestId && known.executionId === receipt.executionId,
+    (known) =>
+      known.requestId === receipt.requestId &&
+      known.executionId === receipt.executionId,
   );
-  if (cancelRequired && execution !== undefined && !isTerminalReceiptState(execution.state))
+  if (
+    cancelRequired &&
+    execution !== undefined &&
+    !isTerminalReceiptState(execution.state)
+  )
     cancelSettledPendingDispatch(receipt.requestId, receipt.executionId);
 }
 
@@ -1042,22 +1333,34 @@ function settlePendingCorrelation(
   // A receipt event may arrive before the execute response. Preserve that
   // authoritative terminal state rather than issuing a stale cancel from a
   // delayed accepted/running response.
-  const latest = requireIntegrationModule(integration).readState(integration).latestReceipt;
+  const latest =
+    requireIntegrationModule(integration).readState(integration).latestReceipt;
   const resolvedState =
-    latest?.requestId === requestId && latest.executionId === executionId && isTerminalReceiptState(latest.state)
+    latest?.requestId === requestId &&
+    latest.executionId === executionId &&
+    isTerminalReceiptState(latest.state)
       ? latest.state
       : state;
   const existing = record.executions.find(
-    (known) => known.requestId === requestId && known.executionId === executionId,
+    (known) =>
+      known.requestId === requestId && known.executionId === executionId,
   );
   if (existing === undefined) {
-    record.executions.push({ actionId, requestId, executionId, state: resolvedState });
+    record.executions.push({
+      actionId,
+      requestId,
+      executionId,
+      state: resolvedState,
+    });
     if (
       familyId !== undefined &&
-      (resolvedState === "accepted" || resolvedState === "running" || resolvedState === "succeeded")
+      (resolvedState === "accepted" ||
+        resolvedState === "running" ||
+        resolvedState === "succeeded")
     ) {
       record.acceptedActions++;
-      record.acceptedActionsByFamily[familyId] = (record.acceptedActionsByFamily[familyId] ?? 0) + 1;
+      record.acceptedActionsByFamily[familyId] =
+        (record.acceptedActionsByFamily[familyId] ?? 0) + 1;
     }
   } else existing.state = resolvedState;
 }
@@ -1073,7 +1376,9 @@ function issueTaskOwnedCancellation(
     admission.cancelPending(reasonCode);
     return;
   }
-  void admission.cancelExact(execution.requestId, execution.executionId, reasonCode).catch(() => undefined);
+  void admission
+    .cancelExact(execution.requestId, execution.executionId, reasonCode)
+    .catch(() => undefined);
 }
 
 function settlePendingTerminalWake(
@@ -1083,7 +1388,8 @@ function settlePendingTerminalWake(
 ): void {
   const pending = record.pendingDispatch;
   if (pending === null || pending.requestId !== wake.requestId) return;
-  const receipt = requireIntegrationModule(integration).readState(integration).latestReceipt;
+  const receipt =
+    requireIntegrationModule(integration).readState(integration).latestReceipt;
   if (
     receipt !== null &&
     receipt.requestId === wake.requestId &&
@@ -1107,9 +1413,19 @@ async function awaitPendingDispatchAndOwnedTerminalReceipt(
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<MutableTaskRecord["terminalReceipt"]> {
   const deadline = Math.min(record.deadlineMs, Date.now() + 5_000);
-  await awaitPendingDispatchSettlement(record, integration, wakeSource, deadline);
+  await awaitPendingDispatchSettlement(
+    record,
+    integration,
+    wakeSource,
+    deadline,
+  );
   if (record.pendingDispatch !== null) return null;
-  return await awaitOwnedTerminalReceipt(record, integration, undefined, wakeSource);
+  return await awaitOwnedTerminalReceipt(
+    record,
+    integration,
+    undefined,
+    wakeSource,
+  );
 }
 
 /**
@@ -1142,7 +1458,11 @@ async function awaitPendingDispatchSettlement(
       const pending = record.pendingDispatch;
       if (pending === null) return finish();
       const receipt = integrationModule.readState(integration).latestReceipt;
-      if (receipt !== null && receipt.requestId === pending.requestId && isTerminalReceiptState(receipt.state)) {
+      if (
+        receipt !== null &&
+        receipt.requestId === pending.requestId &&
+        isTerminalReceiptState(receipt.state)
+      ) {
         settlePendingCorrelation(
           record,
           integration,
@@ -1159,7 +1479,11 @@ async function awaitPendingDispatchSettlement(
     if (wakeSource !== undefined) {
       unsubscribe = wakeSource.onExecutionWake((candidate) => {
         const wake = normalizeExecutionWake(candidate);
-        if (wake?.kind === "terminal" && wake.requestId === record.pendingDispatch?.requestId) reconcile();
+        if (
+          wake?.kind === "terminal" &&
+          wake.requestId === record.pendingDispatch?.requestId
+        )
+          reconcile();
       });
     }
     reconcile();
@@ -1174,7 +1498,8 @@ function parseReceipt(
 }
 
 function requireIntegrationModule(integration: IntegrationConnection) {
-  if (integration.module === undefined) throw new Error("integration_module_required");
+  if (integration.module === undefined)
+    throw new Error("integration_module_required");
   return integration.module;
 }
 
@@ -1183,5 +1508,9 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function cap(value: string | null): string | null {
-  return value === null ? null : value.length <= 2_000 ? value : `${value.slice(0, 1_997)}...`;
+  return value === null
+    ? null
+    : value.length <= 2_000
+      ? value
+      : `${value.slice(0, 1_997)}...`;
 }

@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import type { WorldFact } from "./event-pump.js";
 import {
   createGameOperationalGateEvidenceProjection,
   GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA,
   validateGameOperationalGateEvidence,
 } from "./game-operational-gate-evidence.js";
-import type { WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource } from "./integration-launcher.js";
 import type { GameIntegrationModule, IntegrationStateView } from "./integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";

@@ -20,7 +20,7 @@ const [
   loadSelectedHostProductionModule(selectedProductionArtifact, "runtime.js"),
 ]);
 
-const repoRoot = resolve(join(fileURLToPath(new URL(".", import.meta.url)), ".."));
+const _repoRoot = resolve(join(fileURLToPath(new URL(".", import.meta.url)), ".."));
 const root = await mkdtemp(join(tmpdir(), "gamebuddy-gameplay-subagent-model-trace-"));
 const scope = Object.freeze({
   integrationId: "stardew",

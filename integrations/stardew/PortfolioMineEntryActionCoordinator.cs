@@ -83,10 +83,8 @@ internal sealed class PortfolioMineEntryActionCoordinator
             PortfolioMineEntryAdapterResult? adapterResult;
             try
             {
-                // Crossing this boundary may arm native work before the adapter
-                // returns (including during a reentrant callback), so cancellation
-                // must remain fail-closed until an explicit native outcome arrives.
-                execution.TransitionArmed = true;
+                // The adapter rechecks the Mine-exterior Given immediately
+                // before ArmNativeTransition and the fixed direct native edge.
                 execution.AdapterCallInProgress = true;
                 // This is the only adapter boundary. It is intentionally
                 // semantic and cannot accept a floor, location, or dispatcher.
@@ -104,6 +102,8 @@ internal sealed class PortfolioMineEntryActionCoordinator
             execution.BeginInProgress = false;
             // The adapter result is untrusted until correlation, scope, target,
             // revision, checkpoint, and deadline are checked again after return.
+            if (adapterResult is not null && adapterResult.IsValid)
+                execution.TransitionArmed = adapterResult.TransitionArmed;
             if (active != execution && execution.TerminalReceipt is not null)
                 return TerminalResult(execution.TerminalReceipt);
             if (!armed || adapterResult is null || execution.Cancelled || !IsMatchingAdapterResult(execution, adapterResult)
@@ -400,7 +400,6 @@ internal sealed class PortfolioMineEntryActionCoordinator
             && (observation.ExtensionData is null || observation.ExtensionData.Count == 0)
             && observation.Fresh && observation.PlayerAvailable && observation.WorldReady && observation.PolicyAllowed
             && observation.MineEntryObserved && observation.UnlockedLevelObserved
-            && observation.EntryInteractionAvailable
             && observation.Revision == request.ExpectedRevision && observation.CurrentFloor >= 0
             && observation.CurrentFloor <= MaximumCheckpoint && observation.LowestMineLevel >= 0
             && observation.LowestMineLevel >= observation.CurrentFloor
@@ -417,8 +416,7 @@ internal sealed class PortfolioMineEntryActionCoordinator
         if (now >= request.DeadlineMs) return "deadline_expired";
         if (!observation.PlayerAvailable || !observation.WorldReady) return "portfolio_world_not_ready";
         if (!observation.PolicyAllowed) return "portfolio_action_not_allowed";
-        if (!observation.MineEntryObserved || !observation.UnlockedLevelObserved
-            || !observation.EntryInteractionAvailable)
+        if (!observation.MineEntryObserved || !observation.UnlockedLevelObserved)
             return "mine_observation_invalid";
         return "enter_mine_target_invalid";
     }
@@ -485,6 +483,18 @@ internal sealed class PortfolioMineEntryActionCoordinator
             && result.Revision == execution.Revision
             && result.TargetFloor == execution.TargetFloor
             && String.Equals(result.OpaqueEntryTarget, execution.OpaqueEntryTarget, StringComparison.Ordinal);
+    internal bool ArmNativeTransition(string executionId)
+    {
+        lock (this.gate)
+        {
+            if (active is null || active.ExecutionId != executionId || active.Cancelled
+                || active.NativeEntryTransitionObserved || active.TransitionArmed)
+                return false;
+            active.TransitionArmed = true;
+            return true;
+        }
+    }
+
     private static string NormalizeCallbackReason(string? value) => value switch
     {
         "cancelled" => "cancelled",

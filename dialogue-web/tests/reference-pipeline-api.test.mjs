@@ -17,6 +17,7 @@ import {
   TavernProtocolError,
   createReferencePipelineApi,
   validateDraft,
+  validateEvent,
   validateProblem,
   validateSnapshot,
   validateSubmissionStatus,
@@ -140,6 +141,26 @@ function assertProtocolError(promise) {
 
 // --- Fetch client: requests, headers, credentials, bodies. ---
 
+test("validateEvent accepts only the bounded opaque companion delta DTO", () => {
+  const base = {
+    apiVersion: 1,
+    epoch: HANDLE,
+    sequence: 1,
+    selectionGeneration: 1,
+    eventType: "companion.delta",
+    payload: { turnHandle: HANDLE, delta: "Hi" },
+  };
+  assert.deepEqual(validateEvent(base), base);
+  assert.throws(
+    () => validateEvent({ ...base, payload: { turnHandle: HANDLE, delta: "Hi", text: "forged" } }),
+    TavernProtocolError,
+  );
+  assert.throws(
+    () => validateEvent({ ...base, eventType: "message.preview", payload: { handle: HANDLE, text: "Hi", locale: "und" } }),
+    TavernProtocolError,
+  );
+});
+
 test("bootstrap posts the exact body to the frozen route and validates the snapshot", async () => {
   const { transport, calls } = makeTransport(jsonResponse(snapshot()));
   const api = createReferencePipelineApi(transport);
@@ -236,7 +257,7 @@ test("submit rejects non-canonical csrf/idempotency and invalid commands before 
     api.submit({ ...COMMAND, text: "e\u0301" }, { csrfToken: HANDLE, idempotencyKey: KEY }),
   );
   await assertProtocolError(
-    api.submit({ ...COMMAND, memoryDelegation: "write" }, { csrfToken: HANDLE, idempotencyKey: KEY }),
+    api.submit({ ...COMMAND, retiredOption: "read" }, { csrfToken: HANDLE, idempotencyKey: KEY }),
   );
   assert.equal(calls.length, 0);
 });

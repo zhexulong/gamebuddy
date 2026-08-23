@@ -1,26 +1,24 @@
 import { isAbsolute } from "node:path";
-
+import { createCompanionBootstrapEvidence, deliverCompanionBootstrapEvidence } from "./companion-bootstrap-evidence.js";
 import {
-  GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA,
-  validateGameOperationalGateEvidence,
-  type GameOperationalGateEvidence,
-} from "./game-operational-gate-evidence.js";
-
+  type CompanionControlServer,
+  readProductControlLaunch,
+  startCompanionControlServer,
+} from "./companion-control-server.js";
+import { createCompanionLiveEvidenceArtifact } from "./companion-live-evidence-artifact.js";
+import { createLiveSourceAttester } from "./companion-live-source-attestation.js";
 import {
   createKnownSemanticGameDeadOwnerRecoveryFacadeFromOperatorConfig,
   createKnownSemanticGameFacadeFromOperatorConfig,
 } from "./continuity-semantic-game-operator-selection/continuity-semantic-game-operator-selection.internal.js";
+import {
+  GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA,
+  type GameOperationalGateEvidence,
+  validateGameOperationalGateEvidence,
+} from "./game-operational-gate-evidence.js";
 import { loadSemanticVoiceConfig, parseSemanticMainCommand } from "./semantic-main-config.js";
 import { connectHealthyVoiceGateway } from "./voice-bootstrap.js";
 import { createHostShutdownLifecycle, createVoicePollingSupervisor } from "./voice-polling.js";
-import {
-  readProductControlLaunch,
-  startCompanionControlServer,
-  type CompanionControlServer,
-} from "./companion-control-server.js";
-import { createCompanionBootstrapEvidence, deliverCompanionBootstrapEvidence } from "./companion-bootstrap-evidence.js";
-import { createLiveSourceAttester } from "./companion-live-source-attestation.js";
-import { createCompanionLiveEvidenceArtifact } from "./companion-live-evidence-artifact.js";
 
 const command = parseSemanticMainCommand(process.argv.slice(2), process.env.GAMEBUDDY_SEMANTIC_GAME_OPERATOR_CONFIG);
 if (command.kind === "recover_dead_owner") {
@@ -129,7 +127,7 @@ async function enterSemanticGame(operatorConfigPath: string, gameOperationalGate
   }
 
   const voiceConfig = voiceConfigPath === undefined ? undefined : await loadSemanticVoiceConfig(voiceConfigPath);
-  let voice = await connectHealthyVoiceGateway(voiceConfig?.voiceGateway, voiceConfig?.voiceProfile);
+  const voice = await connectHealthyVoiceGateway(voiceConfig?.voiceGateway, voiceConfig?.voiceProfile);
   // The Gateway session identity must be receipt-owned. A preconfigured voice
   // session is only an expected value to compare after durable Game enter; it
   // never chooses the Host/Pi session or presentation session id.
@@ -239,7 +237,7 @@ async function enterSemanticGame(operatorConfigPath: string, gameOperationalGate
   });
   process.stdout.write("GameBuddy semantic Game facade entered. Press Ctrl+C to stop.\n");
   let primaryError: unknown;
-  let cleanupErrors: unknown[] = [];
+  const cleanupErrors: unknown[] = [];
   try {
     await new Promise<void>((resolveStop) => {
       const stop = () => resolveStop();

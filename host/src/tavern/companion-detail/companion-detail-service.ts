@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { TavernArtifactStore } from "../artifact-store.js";
+import type { TavernArtifactStore } from "../artifact-store.js";
 import type { TavernPaths } from "../tavern-paths.js";
-import { validateTavernArtifact, type TavernCompanion } from "../types.js";
+import { type TavernCompanion, validateTavernArtifact } from "../types.js";
 
 /**
  * Read-only player-safe projection of the canonical companion record.

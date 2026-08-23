@@ -6,11 +6,13 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "test": "pnpm run test:ui && pnpm run test:artifact && pnpm run test:composed && pnpm run test:mounted-reference",
+    "test": "pnpm run test:unit && pnpm run test:ui && pnpm run test:artifact && pnpm run test:composed && pnpm run test:mounted-reference && pnpm run test:mounted-management",
+    "test:unit": "node --test tests/i18n.test.mjs tests/reference-pipeline-api.test.mjs tests/reference-pipeline-session.test.mjs tests/management-pipeline-api.test.mjs",
     "test:ui": "playwright test tests/tavern-ui.spec.ts tests/tavern-visual.spec.ts",
     "test:artifact": "node --test tests/manifest-boundary.test.mjs",
     "test:composed": "node --test tests/p3-composed-browser.test.mjs",
     "test:mounted-reference": "playwright test tests/reference-pipeline-browser.spec.ts --project=chromium --workers=1",
+    "test:mounted-management": "playwright test tests/management-pipeline-browser.spec.ts --project=chromium --workers=1",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {

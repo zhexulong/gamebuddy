@@ -1,5 +1,5 @@
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 import type { LiveSourceAttestation } from "./companion-live-source-attestation.js";
 

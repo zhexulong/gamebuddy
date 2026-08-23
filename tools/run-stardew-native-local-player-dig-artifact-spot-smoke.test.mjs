@@ -176,7 +176,9 @@ test("dig-artifact-spot runner fails closed on stamina evidence mismatch", async
           reasonCode: "artifact_spot_dug",
           revision: 7,
           // stamina_delta -2 does not match expected_stamina_cost 1 within the epsilon.
-          evidence: terminalEvidence({ detail: terminalEvidence().detail.replace("stamina_delta=-1", "stamina_delta=-2") }),
+          evidence: terminalEvidence({
+            detail: terminalEvidence().detail.replace("stamina_delta=-1", "stamina_delta=-2"),
+          }),
         };
       }
       throw new Error(`unexpected_action:${request.action}`);

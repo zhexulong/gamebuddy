@@ -1,63 +1,59 @@
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { homedir } from "node:os";
 
 import {
+  type AgentSession,
   createAgentSession,
   DefaultResourceLoader,
   defineTool,
   ModelRuntime,
   SessionManager,
   SettingsManager,
-  type AgentSession,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
 import {
-  createCompanionPresentationTools,
-  type PresentationRuntime,
-} from "./presentation.js";
+  type ActionExecutionCoordinator,
+  createActionExecutionCoordinator,
+} from "./action-execution-coordinator.internal.js";
+import type { CompanionInterruption } from "./companion-interruption.js";
+import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
+import {
+  assertProfileMatchesBinding,
+  buildChatCompanionSystemPrompt,
+  buildGameCompanionSystemPrompt,
+  createIdentityProfileBinding,
+  type IdentityProfile,
+  type IdentityProfileMetadata,
+  identityProfileMetadata,
+  readIdentityProfileBinding,
+  readOrCreateIdentityProfile,
+  writeIdentityProfile,
+  writeIdentityProfileBinding,
+} from "./identity-profile.js";
 import {
   assertIntegrationModule,
   DEFAULT_INTEGRATION_ACTION_POLICY,
   type GameIntegrationModule,
   type IntegrationActionPolicy,
 } from "./integration-module.js";
-import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
-import {
-  createActionExecutionCoordinator,
-  type ActionExecutionCoordinator,
-} from "./action-execution-coordinator.internal.js";
+import type { IntegrationConnection } from "./integration-types.js";
+import type { PresentationRuntime } from "./presentation.js";
 import type { ExecutionReceipt } from "./protocol.js";
-import {
-  StardewExecutionRecoverySupervisor,
-  type ExactReceiptRecoveryPort,
-  type ReceiptRecoveryOutcome,
-} from "./stardew-execution-recovery-supervisor.js";
-import { type CompanionInterruption } from "./companion-interruption.js";
 import {
   actionRegistryRevision,
   writeOrVerifyRunManifest,
 } from "./run-manifest.js";
-import { type IntegrationConnection } from "./integration-types.js";
-import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 import {
-  assertProfileMatchesBinding,
-  buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
-  createIdentityProfileBinding,
-  identityProfileMetadata,
-  readIdentityProfileBinding,
-  readOrCreateIdentityProfile,
-  writeIdentityProfile,
-  type IdentityProfile,
-  type IdentityProfileMetadata,
-  writeIdentityProfileBinding,
-} from "./identity-profile.js";
+  type ExactReceiptRecoveryPort,
+  type ReceiptRecoveryOutcome,
+  StardewExecutionRecoverySupervisor,
+} from "./stardew-execution-recovery-supervisor.js";
+import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 
 export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
   pi: "0.84.1",
@@ -161,40 +157,6 @@ export function createCompanionStatusTool(integration?: IntegrationConnection) {
 export const companionStatusTool = createCompanionStatusTool();
 export const PHASE_0B_ALLOWED_TOOL_NAMES = Object.freeze(["companion_status"]);
 
-function createCompanionMemoryTool(
-  memory: CompanionMemoryFacade,
-): ToolDefinition {
-  return defineTool({
-    name: "companion_memory",
-    label: "Companion Memory",
-    description:
-      "Read GameBuddy Companion memories, or save one inferred semantic memory only when the Host has granted the current player turn that authority.",
-    parameters: Type.Union([
-      Type.Object({ operation: Type.Literal("list") }),
-      Type.Object({
-        operation: Type.Literal("get"),
-        stateToken: Type.String({ minLength: 1, maxLength: 2048 }),
-      }),
-      // Authorization is deliberately not an input. The Host independently
-      // binds this operation to a player-granted active turn.
-      Type.Object({
-        operation: Type.Literal("create_inferred_semantic"),
-        content: Type.String({ minLength: 1, maxLength: 4096 }),
-      }),
-    ]),
-    execute: async (toolCallId, params) => {
-      const result = await memory.execute(
-        params as CompanionMemoryCommand,
-        toolCallId,
-      );
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
-        details: result,
-      };
-    },
-  });
-}
-
 /**
  * A Host-owned companion identity. `continuityId` is the logical shared
  * experience key; legacy game-only callers may omit it and remain partitioned
@@ -227,24 +189,6 @@ export type RuntimePaths = Readonly<{
 }>;
 
 export type CompanionThinkingLevel = "low" | "medium" | "high";
-
-/**
- * Narrow Host injection boundary for Companion memory. The facade owns the
- * already-bound continuity and storage; the runtime never receives a browser,
- * project path, database handle, or Magic Context command API.
- */
-export type CompanionMemoryCommand =
-  | Readonly<{ operation: "list" }>
-  | Readonly<{ operation: "get"; stateToken: string }>
-  | Readonly<{ operation: "create_inferred_semantic"; content: string }>;
-
-export type CompanionMemoryFacade = Readonly<{
-  /** `operationId` is Host/Pi-issued tool-call identity, never a model field. */
-  execute(
-    command: CompanionMemoryCommand,
-    operationId?: string,
-  ): Promise<unknown>;
-}>;
 
 export type CompanionModelConfig = Readonly<{
   /** CPA is the configured local provider boundary for approved Agent models. */
@@ -294,6 +238,8 @@ export type RuntimeSession = Readonly<{
   identityProfile: IdentityProfileMetadata;
   profile: IdentityProfile;
   extensions: readonly string[];
+  /** Host-owned surface port; Pi never receives this authority directly. */
+  presentation?: PresentationRuntime;
   gameplaySubagent?: GameplayTaskSubagent;
   /** Runtime-local STOP authority; never durable or adapter-owned. */
   interruption?: CompanionInterruption;
@@ -308,7 +254,9 @@ export type RuntimeSession = Readonly<{
    * port and admits receipts into the private coordinator. This is never
    * invoked by a disconnect and never reissues an action request.
    */
-  recoverStardewExecutionReceipts?: (port: ExactReceiptRecoveryPort) => Promise<readonly ReceiptRecoveryOutcome[]>;
+  recoverStardewExecutionReceipts?: (
+    port: ExactReceiptRecoveryPort,
+  ) => Promise<readonly ReceiptRecoveryOutcome[]>;
   /** Tavern-only, session-bound publication seam. It never writes Pi messages or Magic Context storage. */
   publishTavernStableContext?: (snapshot: unknown) => Promise<void>;
   /** Removes the in-process session publication before Pi disposal. */
@@ -316,18 +264,33 @@ export type RuntimeSession = Readonly<{
   /** Removes the one-shot Tavern provider marker binding before Pi disposal. */
   clearTavernNarrativeGateMarker?: () => void;
   /**
+   * Emits a bounded parent-IPC runtime identity only for the process-owned
+   * Tavern narrative gate. The session ID remains unavailable to all ordinary
+   * browser/Host consumers.
+   */
+  reportTavernNarrativeGateRuntime?: () => void;
+  /**
    * Installs a source-owned one-shot provider-start observer on this exact
    * session through the loaded Magic Context extension entry. Returns the
    * explicit unregister; the caller owns one-shot lifecycle and retains no
    * payload, header, or prompt bytes.
    */
   installTavernProviderStartObserver?: (
-    onStart: (observation: Readonly<{ sessionId: string; statusClass: "success" | "error" }>) => void,
+    onStart: (
+      observation: Readonly<{
+        sessionId: string;
+        statusClass: "success" | "error";
+      }>,
+    ) => void,
   ) => () => void;
-  /** Removes the Chat-only exact-next Memory marker binding before Pi disposal. */
-  clearPlayerMemoryNextRoundMarker?: () => void;
   /** Removes the source-owned generic operational marker before Pi disposal. */
   clearGameOperationalGateMarker?: () => void;
+  /**
+   * Rebuilds only this connection's adapter tools from current authenticated
+   * state after Pi is idle. This is private composition plumbing, not action
+   * publication or a public runtime command.
+   */
+  refreshIntegrationTools?: () => Promise<void>;
 }>;
 
 function requireOpaqueSegment(label: string, value: string): string {
@@ -395,6 +358,82 @@ function gateIntegrationTool(
   };
 }
 
+type RuntimeAgentTool = AgentSession["agent"]["state"]["tools"][number];
+
+function toRuntimeTool(tool: ToolDefinition): RuntimeAgentTool {
+  return {
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    parameters: tool.parameters,
+    ...(tool.constrainedSampling === undefined
+      ? {}
+      : { constrainedSampling: tool.constrainedSampling }),
+    ...(tool.prepareArguments === undefined
+      ? {}
+      : { prepareArguments: tool.prepareArguments }),
+    ...(tool.executionMode === undefined
+      ? {}
+      : { executionMode: tool.executionMode }),
+    execute: (toolCallId, params, signal, onUpdate) =>
+      tool.execute(toolCallId, params, signal, onUpdate, undefined as never),
+  };
+}
+
+function createIntegrationToolRefresher(input: Readonly<{
+  session: AgentSession;
+  connection: IntegrationConnection;
+  module: GameIntegrationModule;
+  knowledge: unknown;
+  gameVersion: string | undefined;
+  policy: IntegrationActionPolicy;
+  dispatchAdmissionFactory: (() => ReturnType<ActionExecutionCoordinator["createAdmission"]>) | undefined;
+  retainedTools: readonly RuntimeAgentTool[];
+}>): () => Promise<void> {
+  let requested = false;
+  let running: Promise<void> | undefined;
+  return async (): Promise<void> => {
+    requested = true;
+    if (running !== undefined) return await running;
+    running = (async () => {
+      do {
+        requested = false;
+        // This agent-core barrier includes the provider call, tool batch,
+        // retries, and continuations. The next turn sees one whole projection.
+        await input.session.agent.waitForIdle();
+        const toolSet = input.module.createToolSet({
+          connection: input.connection,
+          knowledge: input.knowledge,
+          gameVersion: input.gameVersion,
+          policy: input.policy,
+          dispatchAdmissionFactory: input.dispatchAdmissionFactory,
+        });
+        const adapterTools = [
+          ...toolSet.observation,
+          ...toolSet.actions,
+          ...toolSet.knowledge,
+        ]
+          .map((tool) => gateIntegrationTool(tool, input.connection))
+          .map(toRuntimeTool);
+        const next = [...input.retainedTools, ...adapterTools].sort((left, right) =>
+          left.name.localeCompare(right.name),
+        );
+        // AgentState is the public core Agent surface; assigning its array is
+        // how an embedder changes the next provider request. Do not call
+        // AgentSession.setActiveToolsByName here: it can only select from the
+        // construction-time private registry and would drop a newly projected
+        // adapter definition before the next turn.
+        input.session.agent.state.tools = next;
+      } while (requested);
+    })();
+    try {
+      await running;
+    } finally {
+      running = undefined;
+    }
+  };
+}
+
 function requiredGameId(
   label: "saveId" | "worldId",
   value: string | undefined,
@@ -456,12 +495,6 @@ export type GameCompanionRuntimeAttachment = Readonly<{
   disableMagicContextMemory?: true;
 }>;
 
-/** Chat-only exact-next Memory evidence configuration; raw marker facts never leave its callback. */
-export type PlayerMemoryNextRoundEvidenceConfig = Readonly<{
-  nonceSha256: string;
-  onSourceMarker(marker: unknown): void;
-}>;
-
 /**
  * Generic Companion runtime construction. This Chat-callable path intentionally
  * has no Game Operational Gate marker parameter.
@@ -480,9 +513,7 @@ export async function createCompanionRuntime(
   surface?: "chat" | "game",
   internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride,
   tavernStableContextSnapshot?: unknown,
-  companionMemory?: CompanionMemoryFacade,
   tavernNarrativeGateNonceSha256?: string,
-  playerMemoryNextRoundEvidence?: PlayerMemoryNextRoundEvidenceConfig,
 ): Promise<RuntimeSession> {
   return await createRuntime(
     identity,
@@ -498,9 +529,7 @@ export async function createCompanionRuntime(
     surface,
     internalMagicContextFeatureTestOverride,
     tavernStableContextSnapshot,
-    companionMemory,
     tavernNarrativeGateNonceSha256,
-    playerMemoryNextRoundEvidence,
   );
 }
 
@@ -536,8 +565,6 @@ export async function createGameCompanionRuntime(
       : undefined,
     undefined,
     undefined,
-    undefined,
-    undefined,
     gameOperationalGate,
     attachment?.hostBindingFactory ?? gameHostBindingFactory,
   );
@@ -562,9 +589,7 @@ async function createRuntime(
   surface?: "chat" | "game",
   internalMagicContextFeatureTestOverride?: MagicContextFeatureTestOverride,
   tavernStableContextSnapshot?: unknown,
-  companionMemory?: CompanionMemoryFacade,
   tavernNarrativeGateNonceSha256?: string,
-  playerMemoryNextRoundEvidence?: PlayerMemoryNextRoundEvidenceConfig,
   gameOperationalGate?: GameOperationalGateConfig,
   gameHostBindingFactory?: GameHostBindingFactory,
 ): Promise<RuntimeSession> {
@@ -585,14 +610,6 @@ async function createRuntime(
   }
   if (gameOperationalGate !== undefined && runtimeSurface !== "game") {
     throw new Error("game_operational_marker_requires_game_surface");
-  }
-  if (
-    playerMemoryNextRoundEvidence !== undefined &&
-    (runtimeSurface !== "chat" ||
-      !/^[a-f0-9]{64}$/.test(playerMemoryNextRoundEvidence.nonceSha256) ||
-      typeof playerMemoryNextRoundEvidence.onSourceMarker !== "function")
-  ) {
-    throw new Error("player_memory_next_round_marker_requires_chat_surface");
   }
   if (
     gameOperationalGate !== undefined &&
@@ -688,70 +705,71 @@ async function createRuntime(
   const magicContextHistorianEnabled =
     internalMagicContextFeatureTestOverride?.historianEnabled ??
     MAGIC_CONTEXT_HISTORIAN_ENABLED;
-  if (loadMagicContextExtension) await writeFile(
-    join(paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
-    JSON.stringify(
-      {
-        enabled: true,
-        embedding: { provider: "off" },
-        // Production selects the embedded-SDK, no-tool Historian. The internal
-        // override can still disable it for A/B fixtures without changing any
-        // Memory authority or exposing an authoring API.
-        historian: !magicContextHistorianEnabled
-          ? { disable: true }
-          : {
-              model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId}`,
-              thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
-                .thinkingLevel,
-              disallowed_tools: ["*"],
-            },
-        ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ===
-        undefined
-          ? {}
-          : {
-              execute_threshold_tokens: {
-                default:
-                  internalMagicContextFeatureTestOverride.historianExecuteThresholdTokens,
+  if (loadMagicContextExtension)
+    await writeFile(
+      join(paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"),
+      JSON.stringify(
+        {
+          enabled: true,
+          embedding: { provider: "off" },
+          // Production selects the embedded-SDK, no-tool Historian. The internal
+          // override can still disable it for A/B fixtures without changing any
+          // Memory authority or exposing an authoring API.
+          historian: !magicContextHistorianEnabled
+            ? { disable: true }
+            : {
+                model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId}`,
+                thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG)
+                  .thinkingLevel,
+                disallowed_tools: ["*"],
               },
-            }),
-        ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdPercentage ===
-        undefined
-          ? {}
-          : {
-              execute_threshold_percentage:
-                internalMagicContextFeatureTestOverride.historianExecuteThresholdPercentage,
-            }),
-        dreamer: { disable: true, inject_docs: false },
-        sidekick: { disable: true },
-        // The upstream generic system block is a coding-agent instruction set
-        // (ctx_memory/ctx_search/Git/project guidance). Chat intentionally keeps
-        // it out of the Companion prompt; m[0]/m[1] remains the sole native
-        // read-only Semantic Memory injection path.
-        system_prompt_injection: { enabled: false },
-        memory: {
-          // GameBuddy selects the domain; the vendored Magic Context fork owns
-          // historian interpretation, promotion, retrieval, and injection.
-          // The Host never gains an SQLite API or writer. Magic Context itself
-          // owns any domain-valid promotion triggered by the embedded Historian.
-          // Chat/Game retain separate Pi surface sessions. The only approved
-          // cross-surface material is Magic Context's native same-continuity
-          // read-only Semantic Memory gate; Host does not synthesize recall.
-          domain: MAGIC_CONTEXT_MEMORY_DOMAIN,
-          enabled: magicContextMemoryEnabled,
-          auto_promote: MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED,
-          // Keep explicit to prevent an upstream default flip from silently
-          // enabling a current-session hint and being mistaken for continuity recall.
-          auto_search: { enabled: MAGIC_CONTEXT_RECALL_ENABLED },
+          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens ===
+          undefined
+            ? {}
+            : {
+                execute_threshold_tokens: {
+                  default:
+                    internalMagicContextFeatureTestOverride.historianExecuteThresholdTokens,
+                },
+              }),
+          ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdPercentage ===
+          undefined
+            ? {}
+            : {
+                execute_threshold_percentage:
+                  internalMagicContextFeatureTestOverride.historianExecuteThresholdPercentage,
+              }),
+          dreamer: { disable: true, inject_docs: false },
+          sidekick: { disable: true },
+          // The upstream generic system block is a coding-agent instruction set
+          // (ctx_memory/ctx_search/Git/project guidance). Chat intentionally keeps
+          // it out of the Companion prompt; m[0]/m[1] remains the sole native
+          // read-only Semantic Memory injection path.
+          system_prompt_injection: { enabled: false },
+          memory: {
+            // GameBuddy selects the domain; the vendored Magic Context fork owns
+            // historian interpretation, promotion, retrieval, and injection.
+            // The Host never gains an SQLite API or writer. Magic Context itself
+            // owns any domain-valid promotion triggered by the embedded Historian.
+            // Chat/Game retain separate Pi surface sessions. The only approved
+            // cross-surface material is Magic Context's native same-continuity
+            // read-only Semantic Memory gate; Host does not synthesize recall.
+            domain: MAGIC_CONTEXT_MEMORY_DOMAIN,
+            enabled: magicContextMemoryEnabled,
+            auto_promote: MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED,
+            // Keep explicit to prevent an upstream default flip from silently
+            // enabling a current-session hint and being mistaken for continuity recall.
+            auto_search: { enabled: MAGIC_CONTEXT_RECALL_ENABLED },
+          },
+          todowrite: { enabled: true, overlay: false },
+          smart_drops: false,
+          temporal_awareness: false,
         },
-        todowrite: { enabled: true, overlay: false },
-        smart_drops: false,
-        temporal_awareness: false,
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
   const settings = SettingsManager.inMemory({ compaction: { enabled: false } });
   // Resolve the declared runtime dependency rather than a source-relative
@@ -804,7 +822,8 @@ async function createRuntime(
     } catch (error) {
       if (previousEmbeddedRuntimeMarker === undefined)
         delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+      else
+        process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
       throw error;
     }
   } else {
@@ -877,16 +896,6 @@ async function createRuntime(
       : rawIntegrationTools.map((tool) =>
           gateIntegrationTool(tool, integration),
         );
-  const presentationTools =
-    boundPresentation === undefined
-      ? []
-      : createCompanionPresentationTools(boundPresentation);
-  // Memory is a Chat-only product adapter. Absence of an injected facade is
-  // fail-closed: no memory tool is mounted and no storage is opened.
-  const companionMemoryTools =
-    runtimeSurface === "chat" && companionMemory !== undefined
-      ? [createCompanionMemoryTool(companionMemory)]
-      : [];
   const worldBookScope =
     integration === undefined
       ? null
@@ -900,8 +909,8 @@ async function createRuntime(
       ? new GameplayTaskSubagent(
           paths,
           integration,
+          modelConfig,
           mountedPolicy,
-          undefined,
           undefined,
           undefined,
           () => dispatchController!.createAdmission(),
@@ -921,15 +930,28 @@ async function createRuntime(
     integration === undefined
       ? rawGameplayTools
       : rawGameplayTools.map((tool) => gateIntegrationTool(tool, integration));
-  const allowedToolNames = [
-    ...PHASE_0B_ALLOWED_TOOL_NAMES,
-    ...(loadMagicContextExtension ? ["todowrite"] : []),
-    ...companionMemoryTools.map((tool) => tool.name),
-    ...integrationTools.map((tool) => tool.name),
-    ...worldBookTools.map((tool) => tool.name),
-    ...presentationTools.map((tool) => tool.name),
-    ...gameplayTools.map((tool) => tool.name),
-  ].sort();
+  // Chat is a pure dialogue surface. Native assistant content is its sole
+  // player-visible expression channel; no status, Magic Context, Game, or
+  // delegation tool may steer it into an intermediate tool-use turn.
+  const allowedToolNames =
+    runtimeSurface === "chat"
+      ? []
+      : [
+          ...PHASE_0B_ALLOWED_TOOL_NAMES,
+          ...(loadMagicContextExtension ? ["todowrite"] : []),
+          ...integrationTools.map((tool) => tool.name),
+          ...worldBookTools.map((tool) => tool.name),
+          ...gameplayTools.map((tool) => tool.name),
+        ].sort();
+  const customTools =
+    runtimeSurface === "chat"
+      ? []
+      : [
+          companionStatus,
+          ...integrationTools,
+          ...worldBookTools,
+          ...gameplayTools,
+        ];
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {
     ({ session } = await createAgentSession({
@@ -942,21 +964,15 @@ async function createRuntime(
       model,
       noTools: "all",
       tools: allowedToolNames,
-      customTools: [
-        companionStatus,
-        ...companionMemoryTools,
-        ...integrationTools,
-        ...worldBookTools,
-        ...presentationTools,
-        ...gameplayTools,
-      ],
+      customTools,
       thinkingLevel: modelConfig?.thinkingLevel ?? "off",
     }));
   } finally {
     if (loadMagicContextExtension) {
       if (previousEmbeddedRuntimeMarker === undefined)
         delete process.env.GAMEBUDDY_EMBEDDED_RUNTIME;
-      else process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
+      else
+        process.env.GAMEBUDDY_EMBEDDED_RUNTIME = previousEmbeddedRuntimeMarker;
     }
   }
 
@@ -965,16 +981,45 @@ async function createRuntime(
   // before Pi disposal so a reused session id cannot retain stale context.
   let clearTavernStableContext: (() => Promise<void>) | undefined;
   let clearTavernNarrativeGateMarker: (() => void) | undefined;
-  let clearPlayerMemoryNextRoundMarker: (() => void) | undefined;
+  let reportTavernNarrativeGateRuntime: (() => void) | undefined;
   let clearGameOperationalGateMarker: (() => void) | undefined;
-  let installTavernProviderStartObserver: ((
-    onStart: (observation: Readonly<{ sessionId: string; statusClass: "success" | "error" }>) => void,
-  ) => () => void) | undefined;
+  let installTavernProviderStartObserver:
+    | ((
+        onStart: (
+          observation: Readonly<{
+            sessionId: string;
+            statusClass: "success" | "error";
+          }>,
+        ) => void,
+      ) => () => void)
+    | undefined;
   try {
     const activeTools = session.agent.state.tools
       .map((tool) => tool.name)
       .sort();
     const expectedTools = allowedToolNames;
+    const refreshIntegrationTools =
+      integration === undefined || integrationModule === undefined
+        ? undefined
+        : createIntegrationToolRefresher({
+            session,
+            connection: integration,
+            module: integrationModule,
+            knowledge: integration.knowledge,
+            gameVersion: integration.gameVersion,
+            policy: mountedPolicy,
+            dispatchAdmissionFactory:
+              dispatchController === undefined
+                ? undefined
+                : () => dispatchController.createAdmission(),
+            // The session is constructed with an explicit allowlist. Retain
+            // only its non-adapter wrappers so refresh cannot reintroduce a
+            // Pi builtin, an extension, or an old action closure.
+            retainedTools: session.agent.state.tools.filter(
+              (tool) =>
+                !tool.name.startsWith(integrationModule.descriptor.toolNamePrefix),
+            ),
+          });
     if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
       throw new Error(
         `Companion tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`,
@@ -1048,6 +1093,20 @@ async function createRuntime(
             );
           };
     if (tavernNarrativeGateNonceSha256 !== undefined) {
+      reportTavernNarrativeGateRuntime = () => {
+        if (typeof process.send !== "function" || process.connected !== true)
+          return;
+        try {
+          process.send(
+            Object.freeze({
+              schema: "gamebuddy-tavern-narrative-gate-runtime/v1",
+              piSessionId,
+            }),
+          );
+        } catch {
+          // Gate evidence failure does not change the actual provider path.
+        }
+      };
       const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
         registerTavernNarrativeGateMarker: (
           value: Readonly<{ sessionId: string; nonceSha256: string }>,
@@ -1059,29 +1118,6 @@ async function createRuntime(
           nonceSha256: tavernNarrativeGateNonceSha256,
         },
       );
-    }
-    if (playerMemoryNextRoundEvidence !== undefined) {
-      const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
-        registerPlayerMemoryNextRoundMarker: (
-          value: Readonly<{
-            sessionId: string;
-            nonceSha256: string;
-            surface: "chat";
-          }>,
-          onSourceMarker: (marker: unknown) => void,
-        ) => () => void;
-      };
-      if (typeof bridge.registerPlayerMemoryNextRoundMarker !== "function")
-        throw new Error("player_memory_next_round_marker_bridge_unavailable");
-      clearPlayerMemoryNextRoundMarker =
-        bridge.registerPlayerMemoryNextRoundMarker(
-          {
-            sessionId: piSessionId,
-            nonceSha256: playerMemoryNextRoundEvidence.nonceSha256,
-            surface: "chat",
-          },
-          playerMemoryNextRoundEvidence.onSourceMarker,
-        );
     }
     if (gameOperationalGate !== undefined) {
       const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
@@ -1105,7 +1141,12 @@ async function createRuntime(
       const bridge = (await import(pathToFileURL(magicContextEntry).href)) as {
         registerTavernProviderStartObserver: (
           sessionId: string,
-          onStart: (observation: Readonly<{ sessionId: string; statusClass: "success" | "error" }>) => void,
+          onStart: (
+            observation: Readonly<{
+              sessionId: string;
+              statusClass: "success" | "error";
+            }>,
+          ) => void,
         ) => () => void;
       };
       if (typeof bridge.registerTavernProviderStartObserver !== "function")
@@ -1128,7 +1169,13 @@ async function createRuntime(
       gameplaySubagentModel:
         gameplaySubagent === undefined ? null : gameplaySubagent.modelConfig,
       actionRegistryRevision: actionRegistryRevision(
-        integrationModule?.actionCatalog.entries ?? [],
+        integration === undefined || integrationModule === undefined
+          ? []
+          : integrationModule.actionCatalog.visibleActions(
+              integrationModule.readState(integration).registrations ?? [],
+              integrationModule.readState(integration).capabilities,
+              mountedPolicy,
+            ),
       ),
       actionPolicy: mountedPolicy,
       mountedTools: activeTools,
@@ -1163,6 +1210,9 @@ async function createRuntime(
       extensions: loader
         .getExtensions()
         .extensions.map((extension) => extension.path),
+      ...(boundPresentation === undefined
+        ? {}
+        : { presentation: boundPresentation }),
       ...(gameplaySubagent === undefined ? {} : { gameplaySubagent }),
       ...(dispatchController === undefined
         ? {}
@@ -1186,12 +1236,13 @@ async function createRuntime(
       ...(clearTavernNarrativeGateMarker === undefined
         ? {}
         : { clearTavernNarrativeGateMarker }),
-      ...(clearPlayerMemoryNextRoundMarker === undefined
+      ...(reportTavernNarrativeGateRuntime === undefined
         ? {}
-        : { clearPlayerMemoryNextRoundMarker }),
+        : { reportTavernNarrativeGateRuntime }),
       ...(clearGameOperationalGateMarker === undefined
         ? {}
         : { clearGameOperationalGateMarker }),
+      ...(refreshIntegrationTools === undefined ? {} : { refreshIntegrationTools }),
       ...(installTavernProviderStartObserver === undefined
         ? {}
         : { installTavernProviderStartObserver }),
@@ -1201,7 +1252,6 @@ async function createRuntime(
       session,
       clearTavernStableContext,
       clearTavernNarrativeGateMarker,
-      clearPlayerMemoryNextRoundMarker,
       clearGameOperationalGateMarker,
       error,
     );
@@ -1238,7 +1288,6 @@ async function cleanupRuntimeInitializationFailure(
   session: RuntimeSessionResource,
   clearPublishedStableContext: (() => Promise<void>) | undefined,
   clearNarrativeGateMarker: (() => void) | undefined,
-  clearPlayerMemoryNextRoundMarker: (() => void) | undefined,
   clearOperationalGateMarker: (() => void) | undefined,
   primary: unknown,
 ): Promise<never> {
@@ -1250,11 +1299,6 @@ async function cleanupRuntimeInitializationFailure(
   }
   try {
     clearNarrativeGateMarker?.();
-  } catch (error) {
-    cleanupErrors.push(error);
-  }
-  try {
-    clearPlayerMemoryNextRoundMarker?.();
   } catch (error) {
     cleanupErrors.push(error);
   }

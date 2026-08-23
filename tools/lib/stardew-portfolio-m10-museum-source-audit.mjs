@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+
 const HASH = /^[a-f0-9]{64}$/;
 const ROOT = "ref/external/StardewValleyDecompiled/Stardew Valley/";
 const EXPECTED = new Map([

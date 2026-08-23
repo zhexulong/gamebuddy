@@ -6,7 +6,7 @@
  * its Pi-session identity and an authoritative bridge receipt/snapshot through
  * a source-owned IPC contract before this runner may execute a live gate.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { lstat, open, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -8,12 +8,14 @@ export type ReferencePipelineDrain = Readonly<{
  * so its exact owner can perform a controlled retry rather than discarding
  * the only authority that can finish admitted work.
  */
-export async function closeReferencePipelineRuntime(options: Readonly<{
-  server?: ReferencePipelineDrain;
-  pipelineService?: ReferencePipelineDrain;
-  lease?: ReferencePipelineDrain;
-  facade: ReferencePipelineDrain;
-}>): Promise<void> {
+export async function closeReferencePipelineRuntime(
+  options: Readonly<{
+    server?: ReferencePipelineDrain;
+    pipelineService?: ReferencePipelineDrain;
+    lease?: ReferencePipelineDrain;
+    facade: ReferencePipelineDrain;
+  }>,
+): Promise<void> {
   if (options.server !== undefined) await options.server.close();
   else if (options.pipelineService !== undefined) await options.pipelineService.close();
   if (options.lease !== undefined) await options.lease.close();

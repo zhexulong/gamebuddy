@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
-import test from "node:test";
+import { access, readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import test from "node:test";
 
 import { readPublishedStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";

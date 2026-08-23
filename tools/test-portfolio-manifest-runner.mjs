@@ -142,7 +142,7 @@ export function selectEntries(manifest, { eventKind, changedPaths }) {
 }
 
 function splitCommand(command) {
-  if (typeof command !== "string" || /[;&|<>`$()\\'\"]/.test(command)) fail("unsafe_command");
+  if (typeof command !== "string" || /[;&|<>`$()\\'"]/.test(command)) fail("unsafe_command");
   const tokens = command.trim().split(/\s+/u);
   if (tokens.length === 0 || !["node", "pnpm"].includes(tokens[0])) fail("executable_not_allowlisted");
   const unsafe = [

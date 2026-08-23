@@ -3,7 +3,13 @@ import test from "node:test";
 
 import { createDeterministicBridgePair } from "./bridge.js";
 import { CompanionIntegrationClient } from "./integration.js";
-import { newEnvelope, validateBridgeMessage, type BridgeMessage, type CancelRequestPayload, type Scope } from "./protocol.js";
+import {
+  type BridgeMessage,
+  type CancelRequestPayload,
+  newEnvelope,
+  type Scope,
+  validateBridgeMessage,
+} from "./protocol.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const scope: Scope = {
@@ -41,7 +47,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
         newEnvelope(
           "hello_ack",
           scope,
-          { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"], presentationLocale: "en-US" },
+          { sessionId: "session_01", capabilities: ["move_to_tile", "inspect_self"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
           message.correlationId,
           now,
         ),
@@ -93,7 +99,7 @@ test("integration client keeps the newest Mod snapshot when a delayed older snap
     newEnvelope(
       "hello_ack",
       scope,
-      { sessionId: "session_01", capabilities: ["inspect_self"], presentationLocale: "en-US" },
+      { sessionId: "session_01", capabilities: ["inspect_self"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
       "hello_01",
       now,
     ),
@@ -134,7 +140,7 @@ test("integration client binds a typed cancel identity per request and validates
         newEnvelope(
           "hello_ack",
           scope,
-          { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US" },
+          { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
           message.correlationId,
           now,
         ),

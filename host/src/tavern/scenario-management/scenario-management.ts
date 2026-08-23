@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
-import { TavernArtifactStore } from "../artifact-store.js";
-import { validateTavernArtifact, type Scenario } from "../types.js";
+import type { TavernArtifactStore } from "../artifact-store.js";
+import { type Scenario, validateTavernArtifact } from "../types.js";
 
 export type PlayerScenarioProjection = Readonly<{
   revision: number;

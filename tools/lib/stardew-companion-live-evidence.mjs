@@ -1,8 +1,9 @@
 export const COMPANION_LIVE_EVIDENCE_SCHEMA = "gamebuddy-stardew-companion-live-evidence/v1";
+
 import { createHash } from "node:crypto";
 
 const SHA256 = /^[a-f0-9]{64}$/;
-const ID = /^[A-Za-z0-9_-]{1,128}$/;
+const _ID = /^[A-Za-z0-9_-]{1,128}$/;
 const KINDS = new Set([
   "native_player_input_observed",
   "native_stop_all_observed",

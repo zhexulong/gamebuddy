@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   ANCHOR_DEFS,
-  MAP,
-  TARGET,
   extractSourceAnchors,
+  MAP,
   mint,
+  TARGET,
   validateDossier,
   validateMapProbe,
   verify,
 } from "./stardew-portfolio-enter-mine-source-realization.mjs";
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 
 const gameLocation = `public virtual bool performAction(string[] action, Farmer who, Location tileLocation)
 {
@@ -41,13 +41,13 @@ const probe = () => ({
 });
 const boundary = () => ({
   actionInput:
-    "Initial enter_mine consumes only the unique fresh opaque ordinary Mine producer; its native omitted floor defaults to 1. No caller, DSM, or request selects a floor.",
+    "Initial enter_mine is a typed, parameterless action. The Mod fixes its sole native level argument to 1; no caller, DSM, or request selects a floor or layout.",
   ordinaryProducer:
-    "Maps/Mine Buildings Action Mine at (23,9) is the sole in-scope producer, but source/map realization does not claim its reachability.",
+    "Maps/Mine Buildings Action Mine at (23,9) is recorded only as the ordinary player UI-ingress provenance for default floor 1; it is not an enter_mine admission, reachability, or position requirement.",
   excludedProducer:
-    "Maps/Mine Buildings Action Mine 77377 at (67,9) is recorded as an excluded out-of-scope producer, never an enter_mine option.",
+    "Maps/Mine Buildings Action Mine 77377 at (67,9) is recorded as excluded player UI-ingress provenance, never an enter_mine option.",
   nativeChain:
-    "GameLocation.performAction Mine → ArgUtility.TryGetOptionalInt(action, 1, ..., 1) → playSound( stairsdown ) → Game1.enterMine(1) → warpFarmer(MineShaft.GetLevelName(...), 6, 6, 2)",
+    "Typed enter_mine → Game1.enterMine(1) → warpFarmer(MineShaft.GetLevelName(...), 6, 6, 2). Separately, ordinary player UI ingress is GameLocation.performAction Mine → ArgUtility.TryGetOptionalInt(action, 1, ..., 1) → Game1.enterMine(1).",
   excluded: [
     "UI/input",
     "raw coordinates",
@@ -85,16 +85,18 @@ function dossier() {
     semanticBoundary: boundary(),
     bdd: {
       scenario: "enter_mine enters the native default floor",
-      given: "Required runtime Given: a fresh native observation proves reachability.",
-      when: "One typed enter_mine request consumes that opaque producer without a floor parameter.",
-      then: "The native chain enters default floor 1.",
+      given:
+        "Required runtime Given: a fresh native observation proves the local player is in Mine exterior; no UI interaction pose or producer reachability is required.",
+      when: "One typed parameterless enter_mine request fixes the native level argument to 1.",
+      then: "The native seam enters floor 1.",
       verifier: "fresh native location/floor observation",
     },
     conclusion: {
       sourceMapStatus: "realized",
       projectionState: "eligible_for_connected_implementation_review",
       liveState: "not_performed",
-      nonClaim: "This source+map realization does not claim reachability.",
+      nonClaim:
+        "This source+map realization does not claim Mine-exterior setup, authorization, connected implementation, publication, receipt evidence, persistence, or live closure.",
     },
   };
 }
@@ -124,11 +126,14 @@ test("source anchor rejects a decoy local-player guard that does not lexically c
   bad["StardewValley/GameLocation.cs"] = Buffer.from(decoy);
   assert.throws(() => extractSourceAnchors(bad), /lexically contained/);
 });
-test("dossier rejects caller floor, unsupported reachability, and map producer drift", () => {
+test("dossier rejects caller floor, producer-based admission, and map producer drift", () => {
   assert.equal(validateDossier(dossier()), true);
   const floor = dossier();
   floor.semanticBoundary.actionInput = "caller selects floor";
   assert.throws(() => validateDossier(floor), /semantic boundary drifted/);
+  const producerAdmission = dossier();
+  producerAdmission.semanticBoundary.ordinaryProducer = "requires producer reachability";
+  assert.throws(() => validateDossier(producerAdmission), /semantic boundary drifted/);
   const reach = dossier();
   reach.mapRealization.ordinaryProducer = { ...MAP.ordinary, reachability: "adjacent" };
   assert.throws(() => validateDossier(reach), /map realization drifted/);

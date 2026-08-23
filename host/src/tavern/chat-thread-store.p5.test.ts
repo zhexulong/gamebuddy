@@ -11,7 +11,6 @@ import {
   createChatThreadStore,
   transitionP4MountedProviderStart as rawTransitionP4MountedProviderStart,
   transitionP5MountedPresentation as rawTransitionP5MountedPresentation,
-  type AttemptClaimV1,
 } from "./chat-thread-store.js";
 import { createP4P5MountedTransitionAuthority } from "./chat-thread-store.p4-p5-transition-authority.internal.js";
 
@@ -55,13 +54,18 @@ const bindingFor = (root: string) =>
     chatSurfaceSessionId: "surface_01",
     selectionGeneration: 3,
     runtimeBindingDigest: "d".repeat(64),
-    runtimeOwner: { ownerToken: "owner_01", runtimeInstanceId: "runtime_01", ownerPid: 1, ownerProcessStartIdentity: "start_01" },
+    runtimeOwner: {
+      ownerToken: "owner_01",
+      runtimeInstanceId: "runtime_01",
+      ownerPid: 1,
+      ownerProcessStartIdentity: "start_01",
+    },
   }) as const;
 const continuityKey = createHash("sha256")
   .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
   .digest("hex");
 
-function runningStore() {
+function _runningStore() {
   return {
     root: undefined as unknown as string,
     store: undefined as unknown as ReturnType<typeof createChatThreadStore>,
@@ -81,7 +85,14 @@ test.after(() => {
 async function prepareRunning(
   root: string,
 ): Promise<Readonly<{ attemptId: string; store: ReturnType<typeof createChatThreadStore>; base: number }>> {
-  const store = createChatThreadStore(root, continuityKey, (() => { let current = 100; return () => current++; })());
+  const store = createChatThreadStore(
+    root,
+    continuityKey,
+    (() => {
+      let current = 100;
+      return () => current++;
+    })(),
+  );
   await store.createThread({
     chatThreadId: "thread_01",
     companionId: "companion_01",
@@ -102,8 +113,14 @@ async function prepareRunning(
   // The P4 ingress store writes wall-clock timestamps, so every later command
   // timestamp must be a strict offset above the durable updatedAtMs.
   const prefix = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
-  await transitionP4MountedProviderStart({ ...bindingFor(root), attemptId }, { operation: "arm", observedAtMs: prefix + 1 });
-  await transitionP4MountedProviderStart({ ...bindingFor(root), attemptId }, { operation: "running", statusClass: "success", observedAtMs: prefix + 2 });
+  await transitionP4MountedProviderStart(
+    { ...bindingFor(root), attemptId },
+    { operation: "arm", observedAtMs: prefix + 1 },
+  );
+  await transitionP4MountedProviderStart(
+    { ...bindingFor(root), attemptId },
+    { operation: "running", statusClass: "success", observedAtMs: prefix + 2 },
+  );
   const base = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
   return { attemptId, store, base };
 }
@@ -116,11 +133,21 @@ test("P5 commits exactly one durable presentation from running and reopens ident
     const messageId = "response_abc123";
     const committed = await transitionP5MountedPresentation(
       { ...bindingFor(root), attemptId },
-      { operation: "commit_presentation", cancelEpoch: 0, message: { messageId, text: "I am here.", occurredAtMs: committedAt }, committedAtMs: committedAt },
+      {
+        operation: "commit_presentation",
+        cancelEpoch: 0,
+        message: { messageId, text: "I am here.", occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+      },
     );
     assert.equal(committed.status, "presentation_committed");
     if (committed.status === "presentation_committed") {
-      assert.deepEqual(committed.presentation, { expressionId: messageId, messageId, cancelEpoch: 0, committedAtMs: committedAt });
+      assert.deepEqual(committed.presentation, {
+        expressionId: messageId,
+        messageId,
+        cancelEpoch: 0,
+        committedAtMs: committedAt,
+      });
       assert.equal(committed.attempt.attemptId, attemptId);
     }
     const state = await store.resumeThread("thread_01", "surface_01");
@@ -173,29 +200,52 @@ test("P5 completion claims and completes only from an exact committed presentati
   try {
     const { attemptId, base } = await prepareRunning(root);
     await assert.rejects(
-      () => transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "claim_completion", claimedAtMs: base + 10 }),
+      () =>
+        transitionP5MountedPresentation(
+          { ...bindingFor(root), attemptId },
+          { operation: "claim_completion", claimedAtMs: base + 10 },
+        ),
       /p5_presentation_completion_source_required/,
     );
     await transitionP5MountedPresentation(
       { ...bindingFor(root), attemptId },
-      { operation: "commit_presentation", cancelEpoch: 0, message: { messageId: "response_abc123", text: "Done.", occurredAtMs: base + 11 }, committedAtMs: base + 11 },
+      {
+        operation: "commit_presentation",
+        cancelEpoch: 0,
+        message: { messageId: "response_abc123", text: "Done.", occurredAtMs: base + 11 },
+        committedAtMs: base + 11,
+      },
     );
-    const claimedCompletion = await transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "claim_completion", claimedAtMs: base + 12 });
+    const claimedCompletion = await transitionP5MountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "claim_completion", claimedAtMs: base + 12 },
+    );
     assert.equal(claimedCompletion.status, "completion_claimed");
     if (claimedCompletion.status === "completion_claimed") {
       assert.equal(claimedCompletion.completionClaimedAtMs, base + 12);
       assert.equal(claimedCompletion.presentation.messageId, "response_abc123");
     }
     await assert.rejects(
-      () => transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "claim_completion", claimedAtMs: base + 13 }),
+      () =>
+        transitionP5MountedPresentation(
+          { ...bindingFor(root), attemptId },
+          { operation: "claim_completion", claimedAtMs: base + 13 },
+        ),
       /p5_presentation_completion_source_required/,
     );
-    const completed = await transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "complete", completedAtMs: base + 14 });
+    const completed = await transitionP5MountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "complete", completedAtMs: base + 14 },
+    );
     assert.equal(completed.status, "completed");
     const reopened = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
     assert.deepEqual(reopened.turnLedger, completed);
     await assert.rejects(
-      () => transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "fail", reasonCode: "interrupted", failedAtMs: base + 15 }),
+      () =>
+        transitionP5MountedPresentation(
+          { ...bindingFor(root), attemptId },
+          { operation: "fail", reasonCode: "interrupted", failedAtMs: base + 15 },
+        ),
       /p5_presentation_terminal_immutable/,
     );
   } finally {
@@ -209,16 +259,31 @@ test("P5 cancel after commit keeps the bubble historical and terminalizes cancel
     const { attemptId, base } = await prepareRunning(root);
     await transitionP5MountedPresentation(
       { ...bindingFor(root), attemptId },
-      { operation: "commit_presentation", cancelEpoch: 1, message: { messageId: "response_abc123", text: "Visible.", occurredAtMs: base + 10 }, committedAtMs: base + 10 },
+      {
+        operation: "commit_presentation",
+        cancelEpoch: 1,
+        message: { messageId: "response_abc123", text: "Visible.", occurredAtMs: base + 10 },
+        committedAtMs: base + 10,
+      },
     );
-    const cancelClaimed = await transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "claim_cancel", claimedAtMs: base + 11 });
+    const cancelClaimed = await transitionP5MountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "claim_cancel", claimedAtMs: base + 11 },
+    );
     assert.equal(cancelClaimed.status, "cancel_claimed");
-    if (cancelClaimed.status === "cancel_claimed") assert.equal(cancelClaimed.presentation?.messageId, "response_abc123");
-    const cancelled = await transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "cancel", cancelledAtMs: base + 12 });
+    if (cancelClaimed.status === "cancel_claimed")
+      assert.equal(cancelClaimed.presentation?.messageId, "response_abc123");
+    const cancelled = await transitionP5MountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "cancel", cancelledAtMs: base + 12 },
+    );
     assert.equal(cancelled.status, "cancelled");
     const state = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
     assert.equal(state.messages.filter((message) => message.kind === "response").length, 1);
-    const repeated = await transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "cancel", cancelledAtMs: base + 13 });
+    const repeated = await transitionP5MountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "cancel", cancelledAtMs: base + 13 },
+    );
     assert.equal(repeated.status, "cancelled");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -229,18 +294,29 @@ test("P5 cancel before commit declines the late presentation callback", async ()
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-cancel-early-"));
   try {
     const { attemptId, store, base } = await prepareRunning(root);
-    const early = await transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "claim_cancel", claimedAtMs: base + 10 });
+    const early = await transitionP5MountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "claim_cancel", claimedAtMs: base + 10 },
+    );
     assert.equal(early.status, "cancel_claimed");
     if (early.status === "cancel_claimed") assert.equal(early.presentation, null);
     await assert.rejects(
       () =>
         transitionP5MountedPresentation(
           { ...bindingFor(root), attemptId },
-          { operation: "commit_presentation", cancelEpoch: 1, message: { messageId: "response_abc123", text: "Late.", occurredAtMs: base + 11 }, committedAtMs: base + 11 },
+          {
+            operation: "commit_presentation",
+            cancelEpoch: 1,
+            message: { messageId: "response_abc123", text: "Late.", occurredAtMs: base + 11 },
+            committedAtMs: base + 11,
+          },
         ),
       /p5_presentation_source_running_required/,
     );
-    const finish = await transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "cancel", cancelledAtMs: base + 12 });
+    const finish = await transitionP5MountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "cancel", cancelledAtMs: base + 12 },
+    );
     assert.equal(finish.status, "cancelled");
     const state = await store.resumeThread("thread_01", "surface_01");
     assert.equal(state.messages.filter((message) => message.kind === "response").length, 0);
@@ -265,7 +341,11 @@ test("P5 fails from a live running attempt and rejects attempt-starting or termi
     const reopened = await createChatThreadStore(root, continuityKey).resumeThread("thread_01", "surface_01");
     assert.deepEqual(reopened.turnLedger, failed);
     await assert.rejects(
-      () => transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "complete", completedAtMs: base + 11 }),
+      () =>
+        transitionP5MountedPresentation(
+          { ...bindingFor(root), attemptId },
+          { operation: "complete", completedAtMs: base + 11 },
+        ),
       /p5_presentation_complete_source_required/,
     );
   } finally {
@@ -276,7 +356,14 @@ test("P5 fails from a live running attempt and rejects attempt-starting or termi
 test("P5 fail is not reachable before the provider start observation", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-thread-p5-fail-early-"));
   try {
-    const store = createChatThreadStore(root, continuityKey, (() => { let current = 100; return () => current++; })());
+    const store = createChatThreadStore(
+      root,
+      continuityKey,
+      (() => {
+        let current = 100;
+        return () => current++;
+      })(),
+    );
     await store.createThread({
       chatThreadId: "thread_01",
       companionId: "companion_01",
@@ -296,7 +383,11 @@ test("P5 fail is not reachable before the provider start observation", async () 
     const attemptId = claimed.attempt.attemptId;
     const failedAt = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs + 1;
     await assert.rejects(
-      () => transitionP5MountedPresentation({ ...bindingFor(root), attemptId }, { operation: "fail", reasonCode: "no_visible_presentation", failedAtMs: failedAt }),
+      () =>
+        transitionP5MountedPresentation(
+          { ...bindingFor(root), attemptId },
+          { operation: "fail", reasonCode: "no_visible_presentation", failedAtMs: failedAt },
+        ),
       /p5_presentation_terminal_immutable/,
     );
   } finally {
@@ -347,7 +438,11 @@ test("P5 exact attempt binding rejects a foreign attempt or binding", async () =
     await assert.rejects(
       () =>
         transitionP5MountedPresentation(
-          { ...bindingFor(root), attemptId, runtimeOwner: { ...bindingFor(root).runtimeOwner, ownerToken: "owner_changed" } },
+          {
+            ...bindingFor(root),
+            attemptId,
+            runtimeOwner: { ...bindingFor(root).runtimeOwner, ownerToken: "owner_changed" },
+          },
           { operation: "claim_cancel", claimedAtMs: base + 10 },
         ),
       /p5_presentation_attempt_mismatch/,

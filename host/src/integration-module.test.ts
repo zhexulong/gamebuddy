@@ -10,44 +10,34 @@ import {
   type GameIntegrationModule,
   type IntegrationToolContext,
 } from "./integration-module.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
+import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 const scope = { integrationId: "test-arcade" } as const;
 
+const fakeRegistrations = Object.freeze([
+  {
+    actionId: "inspect_zone",
+    familyId: "observation",
+    identityVersion: 1,
+    lifecycle: "published" as const,
+  },
+  {
+    actionId: "activate_console",
+    familyId: "interaction",
+    identityVersion: 1,
+    lifecycle: "published" as const,
+  },
+  {
+    actionId: "planned_action",
+    familyId: "future",
+    identityVersion: 1,
+    lifecycle: "planned" as const,
+  },
+]);
+
 const fakeCatalog = createIntegrationActionCatalog(
-  [
-    {
-      actionId: "inspect_zone",
-      familyId: "observation",
-      actionClass: "primitive",
-      lifecycle: "published",
-      label: "Inspect zone",
-      description: "Read the current arcade zone.",
-      targetKinds: ["zone"],
-      requiredCapability: "inspect_zone",
-    },
-    {
-      actionId: "activate_console",
-      familyId: "interaction",
-      actionClass: "primitive",
-      lifecycle: "published",
-      label: "Activate console",
-      description: "Activate a live console.",
-      targetKinds: ["console"],
-      requiredCapability: "activate_console",
-    },
-    {
-      actionId: "planned_action",
-      familyId: "future",
-      actionClass: "primitive",
-      lifecycle: "planned",
-      label: "Planned",
-      description: "Not yet available.",
-      targetKinds: ["zone"],
-      requiredCapability: "planned_action",
-    },
-  ],
+  fakeRegistrations,
   (actionId, receipt) =>
     actionId === "activate_console" &&
     receipt.state === "succeeded" &&
@@ -61,13 +51,19 @@ function fakeModule(): GameIntegrationModule {
     label: "Inspect arcade zone",
     description: "Receipt-backed fixture observation.",
     parameters: Type.Object({}),
-    execute: async () => ({ content: [{ type: "text" as const, text: "zone" }], details: { zone: "alpha" } }),
+    execute: async () => ({
+      content: [{ type: "text" as const, text: "zone" }],
+      details: { zone: "alpha" },
+    }),
   });
   const activateConsole = defineTool({
     name: "arcade_activate_console",
     label: "Activate arcade console",
-    description: "Receipt-backed fixture action used only to verify the Host module seam.",
-    parameters: Type.Object({ consoleId: Type.String({ minLength: 1, maxLength: 32 }) }),
+    description:
+      "Receipt-backed fixture action used only to verify the Host module seam.",
+    parameters: Type.Object({
+      consoleId: Type.String({ minLength: 1, maxLength: 32 }),
+    }),
     execute: async (_toolCallId, params) => {
       const receipt = {
         requestId: "arcade_request_01",
@@ -84,7 +80,11 @@ function fakeModule(): GameIntegrationModule {
     },
   });
   return Object.freeze({
-    descriptor: Object.freeze({ integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" }),
+    descriptor: Object.freeze({
+      integrationId: "test-arcade",
+      version: "fixture-v1",
+      toolNamePrefix: "arcade_",
+    }),
     actionCatalog: fakeCatalog,
     defaultPolicy: Object.freeze({
       policyVersion: 1 as const,
@@ -92,7 +92,8 @@ function fakeModule(): GameIntegrationModule {
       deniedFamilies: Object.freeze([]),
     }),
     parsePolicy: (value: unknown) => {
-      if (typeof value !== "object" || value === null) throw new Error("invalid_test_arcade_policy");
+      if (typeof value !== "object" || value === null)
+        throw new Error("invalid_test_arcade_policy");
       return value as never;
     },
     assertIdentityBinding: (connection, identity) => {
@@ -105,17 +106,33 @@ function fakeModule(): GameIntegrationModule {
     },
     worldScope: () => null,
     createToolSet: (context: IntegrationToolContext) => {
-      const state = context.connection.state as { capabilities?: readonly string[] };
-      const visible = fakeCatalog.visibleActions(state.capabilities ?? [], context.policy);
+      const state = context.connection.state as {
+        capabilities?: readonly string[];
+        registrations?: typeof fakeRegistrations;
+      };
+      const visible = fakeCatalog.visibleActions(
+        state.registrations ?? fakeRegistrations,
+        state.capabilities ?? [],
+        context.policy,
+      );
       return {
         observation: [inspectZone],
-        actions: visible.some((entry) => entry.actionId === "activate_console") ? [activateConsole] : [],
+        actions: visible.some((entry) => entry.actionId === "activate_console")
+          ? [activateConsole]
+          : [],
         knowledge: [],
       };
     },
-    knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
+    knowledgeMetadata: () => ({
+      mounted: false,
+      gameVersion: null,
+      bundleVersion: null,
+    }),
     status: (connection) => {
-      const state = connection.state as { connected?: boolean; capabilities?: readonly string[] };
+      const state = connection.state as {
+        connected?: boolean;
+        capabilities?: readonly string[];
+      };
       return {
         connected: state.connected === true,
         capabilities: state.capabilities ?? [],
@@ -125,11 +142,16 @@ function fakeModule(): GameIntegrationModule {
       };
     },
     readState: (connection) => {
-      const state = connection.state as { connected?: boolean; capabilities?: readonly string[] };
+      const state = connection.state as {
+        connected?: boolean;
+        capabilities?: readonly string[];
+        registrations?: typeof fakeRegistrations;
+      };
       return {
         connected: state.connected === true,
         sessionId: null,
         capabilities: state.capabilities ?? [],
+        registrations: state.registrations ?? fakeRegistrations,
         snapshotRevision: null,
         activeExecution: null,
         latestReceipt: null,
@@ -145,7 +167,9 @@ function fakeModule(): GameIntegrationModule {
       )
         return null;
       try {
-        const receipt = JSON.parse((details as { receiptJson: string }).receiptJson) as Record<string, unknown>;
+        const receipt = JSON.parse(
+          (details as { receiptJson: string }).receiptJson,
+        ) as Record<string, unknown>;
         return typeof receipt.requestId === "string" &&
           typeof receipt.executionId === "string" &&
           typeof receipt.state === "string" &&
@@ -155,9 +179,12 @@ function fakeModule(): GameIntegrationModule {
               executionId: receipt.executionId,
               state: receipt.state,
               reasonCode: receipt.reasonCode,
-              revision: typeof receipt.revision === "number" ? receipt.revision : null,
+              revision:
+                typeof receipt.revision === "number" ? receipt.revision : null,
               evidence:
-                typeof receipt.evidence === "object" && receipt.evidence !== null && !Array.isArray(receipt.evidence)
+                typeof receipt.evidence === "object" &&
+                receipt.evidence !== null &&
+                !Array.isArray(receipt.evidence)
                   ? (receipt.evidence as Record<string, unknown>)
                   : null,
             }
@@ -166,8 +193,10 @@ function fakeModule(): GameIntegrationModule {
         return null;
       }
     },
-    actionIdForToolName: (toolName: string) => (toolName === "arcade_activate_console" ? "activate_console" : null),
-    isCancellationTool: (toolName: string) => toolName === "arcade_cancel_execution",
+    actionIdForToolName: (toolName: string) =>
+      toolName === "arcade_activate_console" ? "activate_console" : null,
+    isCancellationTool: (toolName: string) =>
+      toolName === "arcade_cancel_execution",
   });
 }
 
@@ -175,27 +204,28 @@ test("integration action catalog is deterministic, capability gated, and fail cl
   assert.equal(fakeCatalog.entries.length, 3);
   assert.equal(
     fakeCatalog.revision,
-    createIntegrationActionCatalog(fakeCatalog.entries, fakeCatalog.hasCompletionEvidence).revision,
+    createIntegrationActionCatalog(
+      fakeCatalog.entries,
+      fakeCatalog.hasCompletionEvidence,
+    ).revision,
   );
-  assert.deepEqual(
-    fakeCatalog.visibleActions(["inspect_zone", "planned_action"]).map((entry) => entry.actionId),
-    ["inspect_zone"],
-  );
-  const nonPrimitiveClasses = ["composite", "coordinated", "content_operation"] as const;
-  for (const actionClass of nonPrimitiveClasses) {
-    const catalog = createIntegrationActionCatalog([
-      { ...fakeCatalog.entries[0]!, actionId: `plan_${actionClass}`, actionClass, lifecycle: "published" },
-    ]);
-    assert.deepEqual(
-      catalog.visibleActions([`plan_${actionClass}`]).map((entry) => entry.actionId),
-      [],
-    );
-    assert.equal(catalog.isPublished(`plan_${actionClass}`), false);
-  }
-  assert.deepEqual(fakeCatalog.searchVisibleActions(["inspect_zone"], "console"), []);
   assert.deepEqual(
     fakeCatalog
-      .visibleActions(["inspect_zone", "activate_console"], {
+      .visibleActions(fakeRegistrations, ["inspect_zone", "planned_action"])
+      .map((entry) => entry.actionId),
+    ["inspect_zone"],
+  );
+  assert.deepEqual(
+    fakeCatalog.searchVisibleActions(
+      fakeRegistrations,
+      ["inspect_zone"],
+      "console",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    fakeCatalog
+      .visibleActions(fakeRegistrations, ["inspect_zone", "activate_console"], {
         policyVersion: 1,
         deniedActions: ["activate_console"],
         deniedFamilies: [],
@@ -224,25 +254,14 @@ test("integration action catalog is deterministic, capability gated, and fail cl
 test("catalog rejects duplicate and malformed action descriptors", () => {
   const descriptor = {
     actionId: "same",
-    familyId: "one",
-    actionClass: "primitive" as const,
-    lifecycle: "published" as const,
-    label: "One",
-    description: "One",
-    targetKinds: ["zone"],
-    requiredCapability: "same",
   };
-  assert.throws(() => createIntegrationActionCatalog([descriptor, descriptor]), /duplicate_integration_action/);
   assert.throws(
-    () => createIntegrationActionCatalog([{ ...descriptor, actionId: "bad id" }]),
-    /invalid_integration_action_catalog/,
+    () => createIntegrationActionCatalog([descriptor, descriptor]),
+    /duplicate_integration_action/,
   );
   assert.throws(
-    () => createIntegrationActionCatalog([{ ...descriptor, lifecycle: "invalid" as never }]),
-    /invalid_integration_action_catalog/,
-  );
-  assert.throws(
-    () => createIntegrationActionCatalog([{ ...descriptor, actionClass: "invalid" as never }]),
+    () =>
+      createIntegrationActionCatalog([{ ...descriptor, actionId: "bad id" }]),
     /invalid_integration_action_catalog/,
   );
 });
@@ -250,27 +269,49 @@ test("catalog rejects duplicate and malformed action descriptors", () => {
 test("module descriptor must match the connection integration identity", () => {
   const module = fakeModule();
   assert.doesNotThrow(() => assertIntegrationModule(module, "test-arcade"));
-  assert.throws(() => assertIntegrationModule(module, "stardew"), /integration_module_scope_mismatch/);
   assert.throws(
-    () => assertIntegrationModule({ ...module, parsePolicy: undefined } as never, "test-arcade"),
-    /integration_module_scope_mismatch/,
-  );
-  assert.throws(
-    () => assertIntegrationModule({ ...module, knowledgeMetadata: undefined } as never, "test-arcade"),
-    /integration_module_scope_mismatch/,
-  );
-  assert.throws(
-    () => assertIntegrationModule({ ...module, status: undefined } as never, "test-arcade"),
-    /integration_module_scope_mismatch/,
-  );
-  assert.throws(
-    () => assertIntegrationModule({ ...module, assertIdentityBinding: undefined } as never, "test-arcade"),
+    () => assertIntegrationModule(module, "stardew"),
     /integration_module_scope_mismatch/,
   );
   assert.throws(
     () =>
       assertIntegrationModule(
-        { ...module, descriptor: { ...module.descriptor, toolNamePrefix: "invalid" } } as never,
+        { ...module, parsePolicy: undefined } as never,
+        "test-arcade",
+      ),
+    /integration_module_scope_mismatch/,
+  );
+  assert.throws(
+    () =>
+      assertIntegrationModule(
+        { ...module, knowledgeMetadata: undefined } as never,
+        "test-arcade",
+      ),
+    /integration_module_scope_mismatch/,
+  );
+  assert.throws(
+    () =>
+      assertIntegrationModule(
+        { ...module, status: undefined } as never,
+        "test-arcade",
+      ),
+    /integration_module_scope_mismatch/,
+  );
+  assert.throws(
+    () =>
+      assertIntegrationModule(
+        { ...module, assertIdentityBinding: undefined } as never,
+        "test-arcade",
+      ),
+    /integration_module_scope_mismatch/,
+  );
+  assert.throws(
+    () =>
+      assertIntegrationModule(
+        {
+          ...module,
+          descriptor: { ...module.descriptor, toolNamePrefix: "invalid" },
+        } as never,
         "test-arcade",
       ),
     /integration_module_scope_mismatch/,
@@ -292,6 +333,14 @@ test("module tools require their owning module and scope identity", () => {
       connected: true,
       sessionId: "session_01",
       capabilities: ["move_to_tile"],
+      catalogRegistrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+        },
+      ],
       snapshot: null,
       latestReceipt: null,
       latestReasonCode: null,
@@ -307,7 +356,11 @@ test("module tools require their owning module and scope identity", () => {
     /integration_module_scope_mismatch/,
   );
   assert.throws(
-    () => assertIntegrationModuleConformance(module, { ...connection, module: fakeModule() }),
+    () =>
+      assertIntegrationModuleConformance(module, {
+        ...connection,
+        module: fakeModule(),
+      }),
     /integration_module_scope_mismatch/,
   );
   assert.doesNotThrow(() =>
@@ -332,9 +385,19 @@ test("module tools require their owning module and scope identity", () => {
 
 test("fake second-game module owns its tools and does not expose Stardew tools", () => {
   const module = fakeModule();
-  const connection: IntegrationConnection = { scope, state: { capabilities: ["activate_console"] }, module };
+  const connection: IntegrationConnection = {
+    scope,
+    state: {
+      capabilities: ["activate_console"],
+      registrations: fakeRegistrations,
+    },
+    module,
+  };
   const conformance = assertIntegrationModuleConformance(module, connection);
-  assert.deepEqual(conformance.toolNames, ["arcade_activate_console", "arcade_inspect_zone"]);
+  assert.deepEqual(conformance.toolNames, [
+    "arcade_activate_console",
+    "arcade_inspect_zone",
+  ]);
   const tools = module.createToolSet({ connection });
   assert.deepEqual(
     tools.observation.map((tool) => tool.name),
@@ -347,7 +410,11 @@ test("fake second-game module owns its tools and does not expose Stardew tools",
   assert.deepEqual(
     module.createToolSet({
       connection,
-      policy: { policyVersion: 1, deniedActions: ["activate_console"], deniedFamilies: [] },
+      policy: {
+        policyVersion: 1,
+        deniedActions: ["activate_console"],
+        deniedFamilies: [],
+      },
     }).actions,
     [],
   );
@@ -388,90 +455,131 @@ test("Stardew refill completion evidence requires exact, internally consistent s
     state: "succeeded",
     reasonCode: "watering_can_refilled",
     evidence: {
-      detail: "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
+      detail:
+        "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
     },
   } as const;
-  assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", valid), true);
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;water_after=40",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      valid,
+    ),
+    true,
+  );
+  assert.equal(
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;water_after=40",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;unexpected=value",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;unexpected=value",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=not_a_number;water_max=40",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=not_a_number;water_max=40",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: {
-        detail: "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=40;water_after=40;water_max=40",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=40;water_after=40;water_max=40",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: {
-        detail: "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=39;water_max=40",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=39;water_max=40",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: { detail: "target=none;slot=-1;can=(T)WateringCan;water_before=39;water_after=40;water_max=40" },
-    }),
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=none;slot=-1;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
+        },
+      },
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: {
-        detail: "target=watering can refill;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=watering can refill;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: {
-        detail: "target=watering.can/refill;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=watering.can/refill;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("refill_watering_can", {
-      ...valid,
-      evidence: {
-        detail: `target=${"a".repeat(129)};slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40`,
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "refill_watering_can",
+      {
+        ...valid,
+        evidence: {
+          detail: `target=${"a".repeat(129)};slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40`,
+        },
       },
-    }),
+    ),
     false,
   );
 });
@@ -485,36 +593,54 @@ test("Stardew clear-hoedirt completion evidence requires exact removal fields", 
         "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true",
     },
   } as const;
-  assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("clear_hoedirt", valid), true);
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("clear_hoedirt", {
-      ...valid,
-      evidence: {
-        detail:
-          "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;extra=true",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "clear_hoedirt",
+      valid,
+    ),
+    true,
+  );
+  assert.equal(
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "clear_hoedirt",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;extra=true",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("clear_hoedirt", {
-      ...valid,
-      evidence: {
-        detail:
-          "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=true;removed=true",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "clear_hoedirt",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=true;removed=true",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("clear_hoedirt", { ...valid, state: "failed" }),
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "clear_hoedirt",
+      { ...valid, state: "failed" },
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("clear_hoedirt", {
-      ...valid,
-      reasonCode: "wrong_reason",
-    }),
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "clear_hoedirt",
+      {
+        ...valid,
+        reasonCode: "wrong_reason",
+      },
+    ),
     false,
   );
 });
@@ -528,45 +654,63 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
         "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
     },
   } as const;
-  assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("chop_tree_source", valid), true);
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("chop_tree_source", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;drop=(O)388",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "chop_tree_source",
+      valid,
+    ),
+    true,
+  );
+  assert.equal(
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "chop_tree_source",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;drop=(O)388",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("chop_tree_source", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=4;stump_before=false;stump_after=true;source_transformed=true",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "chop_tree_source",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=4;stump_before=false;stump_after=true;source_transformed=true",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("chop_tree_source", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;tree=Oak",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "chop_tree_source",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;tree=Oak",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("chop_tree_source", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=tree chop;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "chop_tree_source",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=tree chop;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
+        },
       },
-    }),
+    ),
     false,
   );
 });
@@ -580,43 +724,61 @@ test("Stardew break-rock-source completion evidence requires exact source-only r
         "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
     },
   } as const;
-  assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("break_rock_source", valid), true);
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("break_rock_source", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;drop=(O)390",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "break_rock_source",
+      valid,
+    ),
+    true,
+  );
+  assert.equal(
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "break_rock_source",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;drop=(O)390",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("break_rock_source", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=rock source;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "break_rock_source",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=rock source;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
+        },
       },
-    }),
+    ),
     false,
   );
   assert.equal(
-    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence("break_rock_source", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=1;removed=false",
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(
+      "break_rock_source",
+      {
+        ...valid,
+        evidence: {
+          detail:
+            "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=1;removed=false",
+        },
       },
-    }),
+    ),
     false,
   );
 });
 
-test("Stardew and fake catalogs remain isolated", () => {
+test("Stardew and fake adapter inventories remain isolated", () => {
   const module = fakeModule();
   assert.equal(STARDEW_INTEGRATION_MODULE.descriptor.integrationId, "stardew");
   assert.equal(module.descriptor.integrationId, "test-arcade");
-  assert.equal(STARDEW_INTEGRATION_MODULE.actionCatalog.get("activate_console"), undefined);
-  assert.equal(module.actionCatalog.get("move_to_tile"), undefined);
+  assert.equal(
+    STARDEW_INTEGRATION_MODULE.actionCatalog.hasAdapter("activate_console"),
+    false,
+  );
+  assert.equal(module.actionCatalog.hasAdapter("move_to_tile"), false);
 });

@@ -335,7 +335,7 @@ internal sealed class PortfolioMineElevatorActionCoordinator
             && observation.Scope is not null && observation.Scope.IsValid
             && (observation.ExtensionData is null || observation.ExtensionData.Count == 0)
             && observation.CurrentFloor >= 0 && observation.CurrentFloor <= MaximumCheckpoint
-            && observation.LowestMineLevel >= 0 && observation.LowestMineLevel <= MaximumCheckpoint
+            && observation.LowestMineLevel >= 0
             && PortfolioBridgeProtocol.IsOpaqueId(observation.OpaqueElevatorTarget)
             && !String.Equals(observation.OpaqueElevatorTarget, "none", StringComparison.Ordinal);
 
@@ -346,11 +346,13 @@ internal sealed class PortfolioMineElevatorActionCoordinator
             && (observation.ExtensionData is null || observation.ExtensionData.Count == 0)
             && observation.Fresh && observation.PlayerAvailable && observation.WorldReady && observation.PolicyAllowed
             && observation.MineEntryObserved && observation.UnlockedLevelObserved && observation.TargetUnlocked
+            && observation.ElevatorObserved
             && observation.Revision == request.ExpectedRevision && observation.CurrentFloor >= 0
             && observation.CurrentFloor <= MaximumCheckpoint && observation.LowestMineLevel >= 0
-            && observation.LowestMineLevel <= MaximumCheckpoint && observation.LowestMineLevel >= observation.CurrentFloor
+            && observation.LowestMineLevel >= observation.CurrentFloor
             && observation.CurrentFloor != request.SelectedCheckpoint
-            && IsCheckpoint(request.SelectedCheckpoint) && observation.LowestMineLevel >= request.SelectedCheckpoint
+            && IsCheckpoint(request.SelectedCheckpoint)
+            && request.SelectedCheckpoint <= Math.Min(observation.LowestMineLevel, MaximumCheckpoint)
             && PortfolioBridgeProtocol.IsOpaqueId(observation.OpaqueElevatorTarget)
             && !String.Equals(observation.OpaqueElevatorTarget, "none", StringComparison.Ordinal)
             && now < request.DeadlineMs;
@@ -362,7 +364,8 @@ internal sealed class PortfolioMineElevatorActionCoordinator
         if (now >= request.DeadlineMs) return "deadline_expired";
         if (!observation.PlayerAvailable || !observation.WorldReady) return "portfolio_world_not_ready";
         if (!observation.PolicyAllowed) return "portfolio_action_not_allowed";
-        if (!observation.MineEntryObserved || !observation.UnlockedLevelObserved || !observation.TargetUnlocked)
+        if (!observation.MineEntryObserved || !observation.UnlockedLevelObserved || !observation.TargetUnlocked
+            || !observation.ElevatorObserved)
             return "mine_observation_invalid";
         return "mine_elevator_target_invalid";
     }
@@ -401,7 +404,6 @@ internal sealed class PortfolioMineElevatorActionCoordinator
             && observation.SelectedCheckpoint == execution.SelectedCheckpoint
             && observation.ActualCurrentFloor == execution.SelectedCheckpoint
             && observation.LowestMineLevel >= execution.SelectedCheckpoint
-            && observation.LowestMineLevel <= MaximumCheckpoint
             && observation.Revision > execution.Revision
             && String.Equals(observation.OpaqueElevatorTarget, execution.OpaqueElevatorTarget, StringComparison.Ordinal)
             && execution.NativeElevatorTransitionObserved;
@@ -455,6 +457,17 @@ internal sealed class PortfolioMineElevatorActionCoordinator
             && !completedByIdempotency.ContainsKey(request.IdempotencyKey))
             completedByIdempotency.Add(request.IdempotencyKey, new ReplayEntry(request, receipt, receipt.Evidence.Scope));
         return receipt;
+    }
+
+    internal bool ArmNativeTransition(string executionId)
+    {
+        lock (this.gate)
+        {
+            if (active is null || active.ExecutionId != executionId || active.Cancelled)
+                return false;
+            active.TransitionArmed = true;
+            return true;
+        }
     }
 
     internal PortfolioMineElevatorActionReceipt? Invalidate(string reasonCode)

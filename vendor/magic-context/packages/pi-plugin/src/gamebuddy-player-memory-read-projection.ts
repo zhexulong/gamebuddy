@@ -6,6 +6,20 @@ import {
 import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { openDatabaseAsync } from "@magic-context/core/features/magic-context/storage-db";
 
+/**
+ * The vendor store is project-scoped.  A GameBuddy continuity gets a stable,
+ * private project identity beneath that project so independently mounted
+ * continuities never read or mutate one another's player-managed memories.
+ */
+export function resolveGameBuddyMemoryProjectPath(
+    runtimeCwd: string,
+    continuityId: string,
+): string {
+    const projectIdentity = resolveProjectIdentityForSession(runtimeCwd);
+    if (!projectIdentity) throw new Error("gamebuddy_memory_project_identity_unavailable");
+    return `gamebuddy:${projectIdentity}:continuity:${continuityId}`;
+}
+
 export type GameBuddyPlayerMemoryReadView = Readonly<{
     stateToken: string;
     content: string;
@@ -39,9 +53,12 @@ function sourceRefs(memory: Memory): readonly string[] | undefined {
     }
 }
 
-function view(memory: Memory, stateToken: string): GameBuddyPlayerMemoryReadView {
+function view(memory: Memory, stateToken: string): GameBuddyPlayerMemoryReadView | undefined {
+    // The shared Magic Context store can contain other product categories.
+    // They are outside the player-management contract, so omit them rather
+    // than failing an otherwise safe bounded projection.
     if (memory.category !== "SEMANTIC_MEMORY" && memory.category !== "INTERACTION_EPISODE")
-        throw new Error("gamebuddy_memory_category_invalid");
+        return undefined;
     return Object.freeze({
         stateToken,
         content: memory.content,
@@ -55,8 +72,7 @@ function view(memory: Memory, stateToken: string): GameBuddyPlayerMemoryReadView
 export function createGameBuddyPlayerMemoryReadProjection(
     args: Readonly<{ continuityId: string; runtimeCwd: string }>,
 ): GameBuddyPlayerMemoryReadProjection {
-    const projectPath = resolveProjectIdentityForSession(args.runtimeCwd);
-    if (!projectPath) throw new Error("gamebuddy_memory_project_identity_unavailable");
+    const projectPath = resolveGameBuddyMemoryProjectPath(args.runtimeCwd, args.continuityId);
     const assertContinuity = (continuityId: string): void => {
         if (continuityId !== args.continuityId)
             throw new Error("gamebuddy_memory_continuity_mismatch");
@@ -73,7 +89,10 @@ export function createGameBuddyPlayerMemoryReadProjection(
             assertContinuity(input.continuityId);
             return (await open())
                 .list(projectPath)
-                .map((entry) => view(entry.memory, entry.stateToken));
+                .flatMap((entry) => {
+                    const projected = view(entry.memory, entry.stateToken);
+                    return projected === undefined ? [] : [projected];
+                });
         },
         async getMemory(input) {
             assertContinuity(input.continuityId);
@@ -81,7 +100,9 @@ export function createGameBuddyPlayerMemoryReadProjection(
                 .list(projectPath)
                 .find((candidate) => candidate.stateToken === input.stateToken);
             if (!entry) throw new Error("gamebuddy_memory_not_found");
-            return view(entry.memory, entry.stateToken);
+            const projected = view(entry.memory, entry.stateToken);
+            if (projected === undefined) throw new Error("gamebuddy_memory_not_found");
+            return projected;
         },
     });
 }

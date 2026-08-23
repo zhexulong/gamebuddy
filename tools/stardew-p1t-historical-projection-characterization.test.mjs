@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  characterizeHistoricalProjection,
   PINNED_COMMIT,
   PINNED_PATH,
   PINNED_SHA256,
-  characterizeHistoricalProjection,
 } from "./stardew-p1t-historical-projection-characterization.mjs";
 
 const source = `private static IReadOnlyList<string> CreateCapabilities(IReadOnlySet<string>? enabledActions)
@@ -37,18 +37,46 @@ function gitFor(sourceText, overrides = {}) {
 test("P1T pinned Git characterization records only historical membership facts and explicit non-authority metadata", async () => {
   const result = await characterizeHistoricalProjection();
   assert.deepEqual(result, expectedPinnedRecord);
-  assert.doesNotMatch(JSON.stringify(result), /tree_first_hit|place_crab_pot|bait_crab_pot|chop_tree_source|capabilit(?:y|ies)|runtime|policy|publish/i);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /tree_first_hit|place_crab_pot|bait_crab_pot|chop_tree_source|capabilit(?:y|ies)|runtime|policy|publish/i,
+  );
 });
 
 test("P1T fails closed when pinned Git object identity or blob hash differs", async () => {
-  await assert.rejects(characterizeHistoricalProjection({ gitRunner: gitFor(source, { commitType: "blob\n" }) }), /commit_object_drift/);
-  await assert.rejects(characterizeHistoricalProjection({ gitRunner: gitFor(source, { resolvedCommit: "a".repeat(40) }) }), /commit_resolution_drift/);
-  await assert.rejects(characterizeHistoricalProjection({ gitRunner: gitFor(source, { blobType: "tree\n" }) }), /blob_object_drift/);
-  await assert.rejects(characterizeHistoricalProjection({ gitRunner: gitFor(`${source}\n// changed`) }), /blob_hash_drift/);
+  await assert.rejects(
+    characterizeHistoricalProjection({ gitRunner: gitFor(source, { commitType: "blob\n" }) }),
+    /commit_object_drift/,
+  );
+  await assert.rejects(
+    characterizeHistoricalProjection({ gitRunner: gitFor(source, { resolvedCommit: "a".repeat(40) }) }),
+    /commit_resolution_drift/,
+  );
+  await assert.rejects(
+    characterizeHistoricalProjection({ gitRunner: gitFor(source, { blobType: "tree\n" }) }),
+    /blob_object_drift/,
+  );
+  await assert.rejects(
+    characterizeHistoricalProjection({ gitRunner: gitFor(`${source}\n// changed`) }),
+    /blob_hash_drift/,
+  );
 });
 
 test("P1T constrained characterization fails closed before parsing altered CreateCapabilities form or membership", async () => {
-  await assert.rejects(characterizeHistoricalProjection({ gitRunner: gitFor(source.replace("private static", "public static")) }), /blob_hash_drift/);
-  await assert.rejects(characterizeHistoricalProjection({ gitRunner: gitFor(source.replace('result.Insert(0, "tree_first_hit")', 'result.Insert(0, "other_action")')) }), /blob_hash_drift/);
-  await assert.rejects(characterizeHistoricalProjection({ gitRunner: gitFor(source.replace("        return result;", "        return new List<string>();")) }), /blob_hash_drift/);
+  await assert.rejects(
+    characterizeHistoricalProjection({ gitRunner: gitFor(source.replace("private static", "public static")) }),
+    /blob_hash_drift/,
+  );
+  await assert.rejects(
+    characterizeHistoricalProjection({
+      gitRunner: gitFor(source.replace('result.Insert(0, "tree_first_hit")', 'result.Insert(0, "other_action")')),
+    }),
+    /blob_hash_drift/,
+  );
+  await assert.rejects(
+    characterizeHistoricalProjection({
+      gitRunner: gitFor(source.replace("        return result;", "        return new List<string>();")),
+    }),
+    /blob_hash_drift/,
+  );
 });

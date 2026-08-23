@@ -280,11 +280,10 @@ function parseStrictEvidence(evidence) {
     const index = part.indexOf("=");
     if (index <= 0 || index === part.length - 1) return {};
     const key = part.slice(0, index);
-    if (Object.prototype.hasOwnProperty.call(result, key)) return {};
+    if (Object.hasOwn(result, key)) return {};
     result[key] = part.slice(index + 1);
   }
-  return Object.keys(result).length === expected.length &&
-    expected.every((key) => Object.prototype.hasOwnProperty.call(result, key))
+  return Object.keys(result).length === expected.length && expected.every((key) => Object.hasOwn(result, key))
     ? result
     : {};
 }

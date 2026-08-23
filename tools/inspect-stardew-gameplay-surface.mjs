@@ -18,10 +18,10 @@ function argument(name) {
 
 function usage() {
   process.stderr.write(
-    [
+    `${[
       "Usage: node tools/inspect-stardew-gameplay-surface.mjs --game-path <absolute-path> [--out <file>] [--pretty]",
       "The target path may also be supplied through GAMEBUDDY_STARDEW_GAME_PATH.",
-    ].join("\n") + "\n",
+    ].join("\n")}\n`,
   );
 }
 

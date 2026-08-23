@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import test from "node:test";
 import {
   ANCHOR_DEFS,
-  MAP,
-  TARGET,
   buildProvenanceDigest,
   deriveMapRealization,
   extractSourceAnchors,
+  MAP,
   mint,
+  TARGET,
   validateDossier,
-  validateMapProbe,
   verify,
 } from "./stardew-portfolio-position-for-mine-entry-source-realization.mjs";
+
 const closure = [
   {
     relativeFileName: "Content/ContentHashes.json",
@@ -184,7 +184,7 @@ test("anchors are declaration bounded, unique, and complete", () => {
   assert.equal(extractSourceAnchors(sources()).length, ANCHOR_DEFS.length);
   const x = sources();
   x["StardewValley/Game1.cs"] = Buffer.from(
-    decl["StardewValley/Game1.cs"] + " public static bool tryToCheckAt(Vector2 grabTile, Farmer who){}",
+    `${decl["StardewValley/Game1.cs"]} public static bool tryToCheckAt(Vector2 grabTile, Farmer who){}`,
   );
   assert.throws(() => extractSourceAnchors(x));
 });
@@ -234,7 +234,7 @@ test("source semantics reject local-gate and ordered-handoff substitutions", () 
       )),
     (x) =>
       (x["StardewValley/GameLocation.cs"] = Buffer.from(
-        decl["StardewValley/GameLocation.cs"].replace('case \"Mine\":', 'case \"Other\":'),
+        decl["StardewValley/GameLocation.cs"].replace('case "Mine":', 'case "Other":'),
       )),
   ]) {
     const x = sources();

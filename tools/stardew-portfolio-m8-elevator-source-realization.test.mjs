@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import test from "node:test";
-import path from "node:path";
 import { lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
+import test from "node:test";
 import {
   extractAnchors,
   resolveLockedToolPath,
@@ -94,9 +94,9 @@ function dossier() {
     anchors: extractAnchors(source),
     semanticBoundary: {
       contextualEquivalence:
-        "Choosing one freshly observed materialized elevator checkpoint is equivalent to the native elevator selection semantic commit only while the local player's current reachable grab tile is MineShaft checkAction case 112 and mineLevel is at most 120; UI/click mechanics are presentation and are not bridge inputs, and this does not grant arbitrary enterMine authority.",
+        "A fresh current MineShaft Buildings-layer elevator facility supports selecting one materialized checkpoint in 5..120 without UI ingress pose; the checkpoint must be a non-current multiple of five no greater than Math.Min(lowestLevelReached, 120), and this does not grant arbitrary enterMine authority.",
       guardCommitContinuation:
-        "MineShaft checkAction permits only reachable case-112 elevator interaction at mineLevel <= 120; the native menu materializes five-floor checkpoints through Math.Min(lowestLevelReached, 120), rejects non-materialized/current-floor selection, sets ridingMineElevator, then enters the selected mine; enterMine delegates the native warp.",
+        "MineShaft checkAction case 112 and MineElevatorMenu are provenance for the ordinary UI ingress; the direct typed seam independently verifies facility presence and bounded unlocked checkpoint, sets ridingMineElevator, then enters the selected mine.",
       excluded: ["ladders", "combat", "route discovery", "new-depth progression", "persistence"],
     },
     conclusion: {

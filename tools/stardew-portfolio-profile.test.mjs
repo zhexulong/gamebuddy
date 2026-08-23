@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -68,7 +68,12 @@ function cleanConfig(dataRoot) {
 
 async function writeBundle(directory, contents) {
   await mkdir(directory, { recursive: true });
-  for (const file of ["GameBuddy.Stardew.dll", "manifest.json", "GameBuddy.Stardew.deps.json"])
+  for (const file of [
+    "GameBuddy.Stardew.dll",
+    "GameBuddy.Stardew.Core.dll",
+    "manifest.json",
+    "GameBuddy.Stardew.deps.json",
+  ])
     await writeFile(join(directory, file), `${contents}:${file}`);
 }
 async function writeConfig(path, value) {
@@ -141,7 +146,12 @@ test("Portfolio accepts either approved single Mod bundle layout", async (t) => 
   const bundle = await inspectPortfolioModBundle(context.profileRoot);
   assert.equal(bundle.state, "single_bundle");
   assert.equal(bundle.directory, join(context.profileRoot, "GameBuddy"));
-  assert.deepEqual(bundle.files, ["GameBuddy.Stardew.dll", "manifest.json", "GameBuddy.Stardew.deps.json"]);
+  assert.deepEqual(bundle.files, [
+    "GameBuddy.Stardew.dll",
+    "GameBuddy.Stardew.Core.dll",
+    "manifest.json",
+    "GameBuddy.Stardew.deps.json",
+  ]);
 
   const result = await checkPortfolioPrerequisites({ ...context, gamePath: context.gamePath });
   assert.equal(result.state, "PASS", JSON.stringify(result));
@@ -388,14 +398,15 @@ test("Portfolio P0b producer upgrade preserves a disarmed native-bootstrap scope
     written.Portfolio[key] = "injected-secret";
     await writeConfig(join(context.profileRoot, "GameBuddy", "config.json"), written);
     await assert.rejects(
-      () => preparePortfolioP0bLifecycleProducer({
-        ...context,
-        backupName: "native-bootstrap",
-        logicalSaveName: "GameBuddyPortfolioNative02",
-        observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
-        startManifestPath: join(context.root, "start-manifest.json"),
-        signingKeyEnvironmentVariableName: "GAMEBUDDY_P0B_KEY",
-      }),
+      () =>
+        preparePortfolioP0bLifecycleProducer({
+          ...context,
+          backupName: "native-bootstrap",
+          logicalSaveName: "GameBuddyPortfolioNative02",
+          observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
+          startManifestPath: join(context.root, "start-manifest.json"),
+          signingKeyEnvironmentVariableName: "GAMEBUDDY_P0B_KEY",
+        }),
       /portfolio_bootstrap_config_cross_topology_contamination/,
     );
     delete written.Portfolio[key];
@@ -417,7 +428,13 @@ test("Portfolio P0b producer seam rejects unsafe output paths, invalid environme
   await mkdir(join(context.dataRoot, ".stardew-portfolio-profile.lock"), { recursive: true });
   await writeFile(
     join(context.dataRoot, ".stardew-portfolio-profile.lock", "transaction.json"),
-    JSON.stringify({ version: 1, topology: PORTFOLIO_TOPOLOGY, backupName: "native-bootstrap", ownerId: "owner", startedAtUnixMs: 1 }),
+    JSON.stringify({
+      version: 1,
+      topology: PORTFOLIO_TOPOLOGY,
+      backupName: "native-bootstrap",
+      ownerId: "owner",
+      startedAtUnixMs: 1,
+    }),
   );
   await mkdir(join(context.dataRoot, "backups", "native-bootstrap"), { recursive: true });
   await writeFile(
@@ -447,7 +464,8 @@ test("Portfolio P0b producer seam rejects unsafe output paths, invalid environme
     /portfolio_p0b_start_manifest_path_overlap/,
   );
   await assert.rejects(
-    () => preparePortfolioP0bLifecycleProducer({ ...base, startManifestPath: join(context.root, "missing", "start.json") }),
+    () =>
+      preparePortfolioP0bLifecycleProducer({ ...base, startManifestPath: join(context.root, "missing", "start.json") }),
     /portfolio_p0b_start_manifest_path_missing/,
   );
   await assert.rejects(
@@ -514,6 +532,7 @@ test("Portfolio existing-save transaction only arms an explicitly observed nativ
     EnabledActions: ["select_mine_elevator_floor"],
     Bootstrap: { Enable: false, SaveName: context.saveName, PlayerName: "GameBuddy" },
     InitialNativeLoad: { Enable: true, ObservedSaveSlot: options.observedSaveSlot },
+    MineElevatorGivenFixture: { Enable: true },
   });
   await assert.rejects(
     () => preparePortfolioExistingSaveProfile({ ...options, backupName: "other" }),
@@ -524,12 +543,12 @@ test("Portfolio existing-save transaction only arms an explicitly observed nativ
   assert.equal((await inspectPortfolioProfile(context)).transactionLock.state, "absent");
 });
 
-test("Portfolio existing-save transaction arms the independent enter_mine route allowlist", async (t) => {
+test("Portfolio existing-save transaction derives the fixed elevator Given fixture and rejects caller control", async (t) => {
   const context = await createContext(t);
   await rm(context.profileRoot, { recursive: true, force: true });
   const options = {
     ...context,
-    backupName: "existing-save-route",
+    backupName: "existing-save-elevator",
     pipeName: "gamebuddy-stardew-portfolio-existing-save",
     bridgeToken: "portfolio_existing_save_token_1234",
     saveId: "445880081",
@@ -537,15 +556,123 @@ test("Portfolio existing-save transaction arms the independent enter_mine route 
     localPlayerId: "8474196460473483841",
     companionId: "portfolio_companion",
     observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
-    enabledActions: ["enter_mine", "use_mine_ladder"],
+    enabledActions: ["select_mine_elevator_floor"],
+  };
+  await preparePortfolioExistingSaveProfile(options);
+  const written = JSON.parse(await readFile(join(context.profileRoot, "GameBuddy", "config.json"), "utf8"));
+  assert.deepEqual(written.Portfolio.MineElevatorGivenFixture, { Enable: true });
+  assert.equal(Object.keys(written.Portfolio.MineElevatorGivenFixture).length, 1);
+  await restorePortfolioProfile(options);
+  await assert.rejects(
+    () => preparePortfolioExistingSaveProfile({ ...options, backupName: "existing-save-elevator-caller-field", mineElevatorGivenFixture: true }),
+    /portfolio_existing_save_mine_elevator_fixture_is_action_derived/,
+  );
+});
+
+test("Portfolio existing-save transaction arms an independent enter_mine action profile", async (t) => {
+  const context = await createContext(t);
+  await rm(context.profileRoot, { recursive: true, force: true });
+  const options = {
+    ...context,
+    backupName: "existing-save-entry",
+    pipeName: "gamebuddy-stardew-portfolio-existing-save",
+    bridgeToken: "portfolio_existing_save_token_1234",
+    saveId: "445880081",
+    worldId: "8474196460473483841",
+    localPlayerId: "8474196460473483841",
+    companionId: "portfolio_companion",
+    observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
+    enabledActions: ["enter_mine"],
   };
   const prepared = await preparePortfolioExistingSaveProfile(options);
   assert.equal(prepared.state, "existing_save_profile_prepared");
   const written = JSON.parse(await readFile(join(context.profileRoot, "GameBuddy", "config.json"), "utf8"));
-  assert.deepEqual(written.Portfolio.EnabledActions, ["enter_mine", "use_mine_ladder"]);
+  assert.deepEqual(written.Portfolio.EnabledActions, ["enter_mine"]);
+  assert.deepEqual(written.Portfolio.MineEntryGivenFixture, { Enable: true });
   const restored = await restorePortfolioProfile(options);
   assert.equal(restored.state, "restored");
   assert.equal((await inspectPortfolioProfile(context)).transactionLock.state, "absent");
+});
+
+test("Portfolio existing-save transaction derives the fixed ladder Given fixture and rejects caller control", async (t) => {
+  const context = await createContext(t);
+  await rm(context.profileRoot, { recursive: true, force: true });
+  const options = {
+    ...context,
+    backupName: "existing-save-ladder",
+    pipeName: "gamebuddy-stardew-portfolio-existing-save",
+    bridgeToken: "portfolio_existing_save_token_1234",
+    saveId: "445880081",
+    worldId: "8474196460473483841",
+    localPlayerId: "8474196460473483841",
+    companionId: "portfolio_companion",
+    observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
+    enabledActions: ["use_mine_ladder"],
+  };
+  await preparePortfolioExistingSaveProfile(options);
+  const written = JSON.parse(await readFile(join(context.profileRoot, "GameBuddy", "config.json"), "utf8"));
+  assert.deepEqual(written.Portfolio.MineLadderGivenFixture, { Enable: true });
+  assert.equal(Object.keys(written.Portfolio.MineLadderGivenFixture).length, 1);
+  await restorePortfolioProfile(options);
+  await assert.rejects(
+    () => preparePortfolioExistingSaveProfile({ ...options, backupName: "existing-save-ladder-caller-field", mineLadderGivenFixture: true }),
+    /portfolio_existing_save_mine_ladder_fixture_is_action_derived/,
+  );
+});
+
+test("Portfolio existing-save transaction rejects a caller-disarmed Mine-entry Given fixture", async (t) => {
+  const context = await createContext(t);
+  await rm(context.profileRoot, { recursive: true, force: true });
+  await assert.rejects(
+    () =>
+      preparePortfolioExistingSaveProfile({
+        ...context,
+        backupName: "existing-save-entry-disarmed",
+        pipeName: "gamebuddy-stardew-portfolio-existing-save",
+        bridgeToken: "portfolio_existing_save_token_1234",
+        saveId: "445880081",
+        worldId: "8474196460473483841",
+        localPlayerId: "8474196460473483841",
+        companionId: "portfolio_companion",
+        observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
+        enabledActions: ["enter_mine"],
+        mineEntryGivenFixture: false,
+      }),
+    /portfolio_existing_save_mine_entry_fixture_must_match_action/,
+  );
+});
+
+test("Portfolio existing-save transaction arms only the ordered skip_event then enter_mine sequence", async (t) => {
+  const context = await createContext(t);
+  await rm(context.profileRoot, { recursive: true, force: true });
+  const options = {
+    ...context,
+    backupName: "existing-save-skip-entry",
+    pipeName: "gamebuddy-stardew-portfolio-existing-save",
+    bridgeToken: "portfolio_existing_save_token_1234",
+    saveId: "445880081",
+    worldId: "8474196460473483841",
+    localPlayerId: "8474196460473483841",
+    companionId: "portfolio_companion",
+    observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
+    enabledActions: ["skip_event", "enter_mine"],
+  };
+  const prepared = await preparePortfolioExistingSaveProfile(options);
+  assert.equal(prepared.state, "existing_save_profile_prepared");
+  const written = JSON.parse(await readFile(join(context.profileRoot, "GameBuddy", "config.json"), "utf8"));
+  assert.deepEqual(written.Portfolio.EnabledActions, ["skip_event", "enter_mine"]);
+  assert.deepEqual(written.Portfolio.MineEntryGivenFixture, { Enable: true });
+  const restored = await restorePortfolioProfile(options);
+  assert.equal(restored.state, "restored");
+  await assert.rejects(
+    () =>
+      preparePortfolioExistingSaveProfile({
+        ...options,
+        backupName: "existing-save-invalid-combined",
+        enabledActions: ["enter_mine", "use_mine_ladder"],
+      }),
+    /portfolio_existing_save_enabled_actions_invalid/,
+  );
 });
 
 test("Portfolio existing-save transaction rejects an observed slot without a decimal native ID suffix", async (t) => {
@@ -582,7 +709,16 @@ test("Portfolio existing-save profile requires the closed non-sleep action allow
     companionId: "portfolio_companion",
     observedSaveSlot: "GameBuddyPortfolioNative02_445880081",
   };
-  for (const enabledActions of [undefined, [], ["select_mine_elevator_floor", "select_mine_elevator_floor"], ["unknown"], ["sleep"], ["select_mine_elevator_floor", "sleep"], ["enter_mine", "sleep"], [42]]) {
+  for (const enabledActions of [
+    undefined,
+    [],
+    ["select_mine_elevator_floor", "select_mine_elevator_floor"],
+    ["unknown"],
+    ["sleep"],
+    ["select_mine_elevator_floor", "sleep"],
+    ["enter_mine", "sleep"],
+    [42],
+  ]) {
     const options = { ...base, ...(enabledActions === undefined ? {} : { enabledActions }) };
     await assert.rejects(
       () => preparePortfolioExistingSaveProfile(options),

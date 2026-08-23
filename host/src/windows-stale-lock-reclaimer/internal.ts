@@ -18,6 +18,8 @@ export function createReclaimerCapability(state: ReclaimerState): WindowsStaleLo
   return capability;
 }
 
-export function reclaimerState(capability: WindowsStaleLockReclaimerCapability | undefined): ReclaimerState | undefined {
+export function reclaimerState(
+  capability: WindowsStaleLockReclaimerCapability | undefined,
+): ReclaimerState | undefined {
   return capability === undefined || !capabilities.has(capability) ? undefined : states.get(capability);
 }

@@ -1,8 +1,8 @@
-import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import {
   isCurrentMountedChatRuntimeLease,
   type MountedChatRuntimeLease,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { AcceptedQueuedTurn } from "./chat-thread-store.js";
 import { acceptMountedP4DurableTurnFromFacade } from "./p4-durable-turn-acceptance.internal.js";
 
@@ -29,17 +29,27 @@ export function createP4DurableTurnAcceptanceFacade(
   return Object.freeze({
     async accept(command): Promise<AcceptedQueuedTurn> {
       try {
-        return await acceptMountedP4DurableTurnFromFacade(manifest, lease, Object.freeze({
-          text: command.text.normalize("NFC"),
-          locale: command.locale,
-          idempotencyKey: command.idempotencyKey,
-          expectedDraftRevision: command.expectedDraftRevision,
-        }));
+        return await acceptMountedP4DurableTurnFromFacade(
+          manifest,
+          lease,
+          Object.freeze({
+            text: command.text.normalize("NFC"),
+            locale: command.locale,
+            idempotencyKey: command.idempotencyKey,
+            expectedDraftRevision: command.expectedDraftRevision,
+          }),
+        );
       } catch (error) {
-        if (error instanceof Error && /semantic_chat_runtime_p4_admission_rejected|semantic_chat_runtime_authority_closed/.test(error.message)) throw unavailable();
+        if (
+          error instanceof Error &&
+          /semantic_chat_runtime_p4_admission_rejected|semantic_chat_runtime_authority_closed/.test(error.message)
+        )
+          throw unavailable();
         throw error;
       }
     },
   });
 }
-function unavailable(): Error { return new Error("p4_durable_turn_acceptance_unavailable"); }
+function unavailable(): Error {
+  return new Error("p4_durable_turn_acceptance_unavailable");
+}

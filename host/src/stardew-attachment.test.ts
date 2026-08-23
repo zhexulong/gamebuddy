@@ -1,9 +1,9 @@
+import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHmac } from "node:crypto";
 import test from "node:test";
-import assert from "node:assert/strict";
 import { StardewAttachmentFlow } from "./stardew-attachment.js";
 
 const token = "test-session-token-012345";

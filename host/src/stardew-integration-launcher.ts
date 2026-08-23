@@ -1,22 +1,17 @@
 import { resolve } from "node:path";
-import { type WorldFact } from "./event-pump.js";
+import type { WorldFact } from "./event-pump.js";
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
+import type { ConfigurableIntegrationLauncher, PreparedIntegrationLaunch } from "./integration-catalog.js";
 import {
-  RECEIPT_BACKED_INTEGRATION_AUTHORITY,
-  type IntegrationEventSource,
-  type IntegrationLauncher,
-  type IntegrationLifecycleEvent,
-  type IntegrationLaunchHandle,
   type ExecutionWake,
+  type IntegrationEventSource,
+  type IntegrationLaunchHandle,
+  type IntegrationLifecycleEvent,
+  RECEIPT_BACKED_INTEGRATION_AUTHORITY,
 } from "./integration-launcher.js";
-import { loadKnowledgeBundle, parseKnowledgeBundle, type KnowledgeBundle } from "./knowledge.js";
-import {
-  LocalStardewBridgeClient,
-  type LocalStardewBridgeFact,
-  type LocalStardewConnectionFact,
-} from "./local-stardew-bridge.js";
-import { type ExecutionReceiptQuery, type Scope } from "./protocol.js";
-import { type ConfigurableIntegrationLauncher, type PreparedIntegrationLaunch } from "./integration-catalog.js";
+import { type KnowledgeBundle, loadKnowledgeBundle, parseKnowledgeBundle } from "./knowledge.js";
+import { LocalStardewBridgeClient, type LocalStardewBridgeFact } from "./local-stardew-bridge.js";
+import type { ExecutionReceiptQuery, Scope } from "./protocol.js";
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 
 /** Operator-owned local configuration for the receipt-backed Stardew adapter. */
@@ -113,12 +108,18 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
         disconnect("fact_listener_failed");
         return;
       }
-      if (fact.type === "semantic_event" && (fact.payload.kind === "player_input" || fact.payload.kind === "stop_all")) {
+      if (
+        fact.type === "semantic_event" &&
+        (fact.payload.kind === "player_input" || fact.payload.kind === "stop_all")
+      ) {
         console.debug("GameBuddy native chat ingress stage=native_chat_adapter_fact_forwarded");
         try {
           // The listener has synchronously accepted the exact typed fact. The
           // receipt confirms delivery to Host, never model completion or output.
-          bridge.acknowledgePlayerControl(fact.payload.playerControl!.controlId, fact.payload.playerControl!.sourceEventId);
+          bridge.acknowledgePlayerControl(
+            fact.payload.playerControl!.controlId,
+            fact.payload.playerControl!.sourceEventId,
+          );
         } catch {
           // The Host has the fact but the Mod cannot prove receipt delivery.
           // Do not retry or claim acceptance on a possibly closed generation.

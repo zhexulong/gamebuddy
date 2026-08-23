@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
+import { type TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
 import type {
   ChatThread,
   ChatThreadState,
@@ -10,14 +10,14 @@ import type {
   TavernStableArtifactBinding,
   TavernStableWorldBookBinding,
 } from "./chat-thread-store.js";
-import { tavernRevisionPath, type TavernPaths } from "./tavern-paths.js";
+import { type TavernPaths, tavernRevisionPath } from "./tavern-paths.js";
 import {
-  validateTavernArtifact,
   type DialogueExamples,
   type GreetingSet,
   type Scenario,
   type TavernCompanion,
   type UserPersona,
+  validateTavernArtifact,
 } from "./types.js";
 
 /**
@@ -66,7 +66,7 @@ export function createTavernLibraryService(
     tavernRevisionPath(join(paths.playerRoot, "personas", personaId), revision);
   const scenarioPath = (scenarioId: string, revision: number) =>
     tavernRevisionPath(join(paths.companionRoot, "scenarios", scenarioId), revision);
-  const greetingPath = (greetingSetId: string, revision: number) =>
+  const _greetingPath = (greetingSetId: string, revision: number) =>
     tavernRevisionPath(join(paths.companionRoot, "greetings", greetingSetId), revision);
   const examplesPath = (examplesId: string, revision: number) =>
     tavernRevisionPath(join(paths.companionRoot, "dialogue-examples", examplesId), revision);

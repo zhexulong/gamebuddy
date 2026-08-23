@@ -62,12 +62,11 @@ test("safe Tavern chat interchange exports ST-compatible header and selected pla
 });
 
 test("ST Chat JSONL import accepts only header and safe bubbles, and remains inert", () => {
-  const input =
-    [
-      JSON.stringify({ user_name: "User", character_name: "Companion", chat_metadata: {} }),
-      JSON.stringify({ name: "Companion", is_user: false, is_system: false, send_date: 10, mes: "Hi" }),
-      JSON.stringify({ name: "User", is_user: true, is_system: false, send_date: 11, mes: "Hello" }),
-    ].join("\n") + "\n";
+  const input = `${[
+    JSON.stringify({ user_name: "User", character_name: "Companion", chat_metadata: {} }),
+    JSON.stringify({ name: "Companion", is_user: false, is_system: false, send_date: 10, mes: "Hi" }),
+    JSON.stringify({ name: "User", is_user: true, is_system: false, send_date: 11, mes: "Hello" }),
+  ].join("\n")}\n`;
   const imported = decodeSafeInterchange(input);
   assert.equal(imported.kind, "chat");
   assert.equal(imported.jsonl, input);

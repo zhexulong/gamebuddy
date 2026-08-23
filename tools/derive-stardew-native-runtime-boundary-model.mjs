@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
-  runtimeBoundaryModelDigest,
   validateNativeRuntimeBoundaryModel,
   validateToolContentRuntimeRecord,
 } from "./lib/stardew-native-runtime-boundary-model.mjs";

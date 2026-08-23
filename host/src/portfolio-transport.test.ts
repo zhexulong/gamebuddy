@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { writePortfolioFrame, type PortfolioFrameWriter } from "./portfolio-transport.js";
+import { type PortfolioFrameWriter, writePortfolioFrame } from "./portfolio-transport.js";
 
 test("frame writer treats false as backpressure and resolves on callback success", async () => {
   let callback!: (error?: Error | null) => void;
@@ -16,6 +16,13 @@ test("frame writer treats false as backpressure and resolves on callback success
   await pending;
 });
 
+test("frame writer rejects a callback that never settles within its bounded timeout", async () => {
+  await assert.rejects(
+    () => writePortfolioFrame({ write: () => true }, Buffer.alloc(0), 10),
+    /portfolio_pipe_write_timeout/,
+  );
+});
+
 test("frame writer rejects callback errors and synchronous write throws", async () => {
   const callbackError = new Error("local_write_failure");
   await assert.rejects(
@@ -23,7 +30,15 @@ test("frame writer rejects callback errors and synchronous write throws", async 
     /local_write_failure/,
   );
   await assert.rejects(
-    () => writePortfolioFrame({ write: () => { throw new Error("synchronous_write_failure"); } }, Buffer.alloc(0)),
+    () =>
+      writePortfolioFrame(
+        {
+          write: () => {
+            throw new Error("synchronous_write_failure");
+          },
+        },
+        Buffer.alloc(0),
+      ),
     /synchronous_write_failure/,
   );
 });
