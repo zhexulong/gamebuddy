@@ -578,5 +578,6 @@ test("CI invokes the static verifier and permits the target-assembly blocked out
   const ci = await readFile(resolve(root, ".github", "workflows", "ci.yml"), "utf8");
   assert.match(ci, /- run: pnpm test:stardew:static/);
   assert.match(ci, /node tools\/verify-stardew-static\.mjs/);
-  assert.match(ci, /\$LASTEXITCODE -notin 0, 2/);
+  assert.match(ci, /\$LASTEXITCODE -eq 2/);
+  assert.match(ci, /\$LASTEXITCODE -ne 0/);
 });

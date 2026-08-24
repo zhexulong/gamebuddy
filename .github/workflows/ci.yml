@@ -40,9 +40,10 @@ jobs:
       # this isolated job must build them before Host resolves the dependency.
       - run: pnpm --filter @gamebuddy/voice-protocol build
       - run: pnpm typecheck
-      # The production artifact only accepts a verified, repository-built
-      # stale-lock helper pair; construct it before assembling the Host.
+      # The production artifact and browser build accept only these verified,
+      # repository-built native helper pairs.
       - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
+      - run: node host/scripts/build-windows-reparse-inspector.mjs
       - run: pnpm build
       # Requires the freshly assembled Host production generation: it launches
       # the shipped browser artifact against the one-listener P3 composition.
@@ -99,4 +100,6 @@ jobs:
       - shell: pwsh
         run: |
           node tools/verify-stardew-static.mjs
-          if ($LASTEXITCODE -notin 0, 2) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -eq 2) { exit 0 }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          exit 0
