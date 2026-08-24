@@ -577,6 +577,6 @@ test("missing target assemblies canary emits a blocked report with no verifier r
 test("CI invokes the static verifier and permits the target-assembly blocked outcome", async () => {
   const ci = await readFile(resolve(root, ".github", "workflows", "ci.yml"), "utf8");
   assert.match(ci, /- run: pnpm test:stardew:static/);
-  assert.match(ci, /pnpm verify:stardew:static/);
+  assert.match(ci, /node tools\/verify-stardew-static\.mjs/);
   assert.match(ci, /\$LASTEXITCODE -notin 0, 2/);
 });
