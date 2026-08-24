@@ -445,7 +445,10 @@ async function verifyPhysicalPath(path: string): Promise<void> {
 function samePhysicalPath(left: string, right: string): boolean {
   const a = resolve(left).replaceAll("\\", "/");
   const b = resolve(right).replaceAll("\\", "/");
-  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+  // Windows `realpath()` may canonically add or remove the extended-length
+  // prefix. This is spelling normalization, not a reparse traversal.
+  const normalizeWindowsPath = (value: string) => value.replace(/^\/\/\?\//, "").toLowerCase();
+  return process.platform === "win32" ? normalizeWindowsPath(a) === normalizeWindowsPath(b) : a === b;
 }
 
 function assertContained(path: string, root: string | undefined): void {
