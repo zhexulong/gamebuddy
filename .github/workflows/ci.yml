@@ -44,10 +44,9 @@ jobs:
       # repository-built native helper pairs.
       - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
       - run: node host/scripts/build-windows-reparse-inspector.mjs
+      # The Host build owns the browser build inside its private emitted
+      # generation; dialogue-web cannot be built as a separate post-build step.
       - run: pnpm build
-      # The Host build produces the emitted adapter consumed by Vite. Build the
-      # browser only after that artifact exists.
-      - run: pnpm --filter @gamebuddy/dialogue-web build
       # Requires the freshly assembled Host production generation: it launches
       # the shipped browser artifact against the one-listener P3 composition.
       - run: pnpm test:dialogue-web
