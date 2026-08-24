@@ -1,8 +1,8 @@
 import {
   consumeMountedP4AttemptInvocationAdmission,
   startMountedP4Attempt,
-} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
-import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
+  type MountedChatRuntimeLease,
+} from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import type { AttemptStartingTurn, CancelledTurn, CompletedTurn, FailedTurn } from "./chat-thread-store.js";
 import { runMountedP4ProviderStartLedger } from "./p4-provider-start-execution.js";

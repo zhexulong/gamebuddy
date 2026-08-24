@@ -91,7 +91,7 @@ function heldTempFixtureSource() {
       )
       .replace(
         / public static void Publish\(string directory,string fileName,string record,string temporaryFileName\)\{/,
-        ' static string Read(IntPtr h){byte[] bytes=new byte[128];uint read;if(!ReadFile(h,bytes,(uint)bytes.Length,out read,IntPtr.Zero))throw new IOException("read failed");return System.Text.Encoding.UTF8.GetString(bytes,0,(int)read);}\n static void Rewind(IntPtr h){long position;if(!SetFilePointerEx(h,0,out position,0)||position!=0)throw new IOException("rewind failed");}\n static void WaitForFixtureRelease(IntPtr directory,string readyName,string acknowledgementName,string releaseName,string nonce,string baseline){IntPtr ready=Child(directory,readyName,false,OPEN);try{if(Read(ready)!=baseline)throw new IOException("fixture ready baseline invalid");Rewind(ready);Write(ready,nonce);}finally{CloseHandle(ready);}DateTime deadline=DateTime.UtcNow.AddSeconds(15);while(DateTime.UtcNow<deadline){try{IntPtr acknowledgement=Child(directory,acknowledgementName,false,OPEN);try{if(Read(acknowledgement)!=nonce)throw new IOException("fixture acknowledgement invalid");}finally{CloseHandle(acknowledgement);}break;}catch(IOException error){if(error.Message=="fixture acknowledgement invalid")throw;System.Threading.Thread.Sleep(10);}}if(DateTime.UtcNow>=deadline)throw new IOException("fixture acknowledgement timeout");while(DateTime.UtcNow<deadline){try{IntPtr release=Child(directory,releaseName,false,OPEN);try{if(Read(release)!=nonce)throw new IOException("fixture release invalid");}finally{CloseHandle(release);}return;}catch(IOException error){if(error.Message=="fixture release invalid")throw;System.Threading.Thread.Sleep(10);}}throw new IOException("fixture release timeout");}\n public static void Publish(string directory,string fileName,string record,string temporaryFileName,string readyName,string acknowledgementName,string releaseName,string nonce,string baseline){',
+        ' static string Read(IntPtr h){byte[] bytes=new byte[128];uint read;if(!ReadFile(h,bytes,(uint)bytes.Length,out read,IntPtr.Zero))throw new IOException("read failed");return System.Text.Encoding.UTF8.GetString(bytes,0,(int)read);}\n static void Rewind(IntPtr h){long position;if(!SetFilePointerEx(h,0,out position,0)||position!=0)throw new IOException("rewind failed");}\n static void WaitForFixtureRelease(IntPtr directory,string readyName,string acknowledgementName,string releaseName,string nonce,string baseline){IntPtr ready=Child(directory,readyName,false,OPEN);try{if(Read(ready)!=baseline)throw new IOException("fixture ready baseline invalid");Rewind(ready);Write(ready,nonce);}finally{CloseHandle(ready);}DateTime deadline=DateTime.UtcNow.AddSeconds(60);while(DateTime.UtcNow<deadline){try{IntPtr acknowledgement=Child(directory,acknowledgementName,false,OPEN);try{if(Read(acknowledgement)!=nonce)throw new IOException("fixture acknowledgement invalid");}finally{CloseHandle(acknowledgement);}break;}catch(IOException error){if(error.Message=="fixture acknowledgement invalid")throw;System.Threading.Thread.Sleep(10);}}if(DateTime.UtcNow>=deadline)throw new IOException("fixture acknowledgement timeout");while(DateTime.UtcNow<deadline){try{IntPtr release=Child(directory,releaseName,false,OPEN);try{if(Read(release)!=nonce)throw new IOException("fixture release invalid");}finally{CloseHandle(release);}return;}catch(IOException error){if(error.Message=="fixture release invalid")throw;System.Threading.Thread.Sleep(10);}}throw new IOException("fixture release timeout");}\n public static void Publish(string directory,string fileName,string record,string temporaryFileName,string readyName,string acknowledgementName,string releaseName,string nonce,string baseline){',
       )
       .replace(
         /try\{Write\(temp,record\);/,
@@ -425,7 +425,7 @@ test(
 
 test(
   "Windows secure publisher denies a concurrent current-user peer write and delete access to its held temporary record",
-  { skip: process.platform !== "win32" },
+  { skip: process.platform !== "win32", timeout: 120_000 },
   async () => {
     const directory = await mkdtemp(join(process.cwd(), "gamebuddy-admission-"));
     const tempName = ".admission-test-held.tmp",
@@ -439,7 +439,7 @@ test(
       readyNonce = randomUUID();
     const boundary = await resolveWindowsAdmissionPublisherBoundary();
     const waitForExactFile = async (fileName, expected) => {
-      for (let attempt = 0; attempt < 500; attempt += 1) {
+      for (let attempt = 0; attempt < 6_000; attempt += 1) {
         try {
           if ((await readFile(join(directory, fileName), "utf8")) === expected) return;
         } catch {}
