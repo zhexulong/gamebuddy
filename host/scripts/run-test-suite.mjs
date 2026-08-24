@@ -12,7 +12,10 @@ const repositoryRoot = resolve(hostRoot, "..");
 
 async function prepareTestDependencies() {
   const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const bun = process.platform === "win32" ? "bun.cmd" : "bun";
+  // setup-bun exposes the Windows executable as `bun`, not a pnpm-style
+  // `.cmd` shim. With the intentional shell execution below, that command
+  // resolves on Windows and POSIX alike.
+  const bun = "bun";
   const commandOptions = { cwd: repositoryRoot, shell: process.platform === "win32", windowsHide: true };
   await execFileAsync(pnpm, ["--filter", "@gamebuddy/voice-protocol", "build"], commandOptions);
   await execFileAsync(bun, ["install", "--cwd", "../vendor/magic-context", "--frozen-lockfile"], {

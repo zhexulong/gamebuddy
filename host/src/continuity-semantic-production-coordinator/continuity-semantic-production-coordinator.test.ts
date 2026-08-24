@@ -234,10 +234,12 @@ test("v38 coordinator Chat request boundary reaches the actual store with an exa
 test("production coordinator exports only the known Game constructor and its safe authority surface", () => {
   assert.deepEqual(Object.keys(publicCoordinator).sort(), [
     "SemanticProductionCoordinatorError",
+    "consumeMountedP4AttemptInvocationAdmission",
     "createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
+    "startMountedP4Attempt",
     "stopMountedChatPresentationEpoch",
   ]);
   const authorityType: SemanticGameProductionAuthority | undefined = undefined;
@@ -739,6 +741,9 @@ test(
     const leaseRoot = mkdtempSync(join(tmpdir(), "semantic-mounted-lease-lifecycle-"));
     const closeRoot = mkdtempSync(join(tmpdir(), "semantic-mounted-authority-close-"));
     try {
+      const { bindWindowsStaleLockReclaimer } = await import("../path-lock.js");
+      const { createBuildWindowsStaleLockReclaimer } = await import("../windows-stale-lock-reclaimer/index.js");
+      bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
       const leaseManifest = await loadHostDeploymentManifest(manifest(leaseRoot));
       const leaseAuthority =
         await publicCoordinator.createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(leaseManifest);
