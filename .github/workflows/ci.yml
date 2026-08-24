@@ -47,6 +47,9 @@ jobs:
       # The Host build owns the browser build inside its private emitted
       # generation; dialogue-web cannot be built as a separate post-build step.
       - run: pnpm build
+      # Dialogue Web uses Playwright's pinned Chromium for browser, mounted
+      # Reference, and mounted management journeys.
+      - run: pnpm --filter @gamebuddy/dialogue-web exec playwright install chromium
       # Requires the freshly assembled Host production generation: it launches
       # the shipped browser artifact against the one-listener P3 composition.
       - run: pnpm test:dialogue-web
