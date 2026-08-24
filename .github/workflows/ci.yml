@@ -36,6 +36,9 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm check:host-production-import-boundary
+      # Workspace protocol declarations are emitted rather than checked in;
+      # this isolated job must build them before Host resolves the dependency.
+      - run: pnpm --filter @gamebuddy/voice-protocol build
       - run: pnpm typecheck
       - run: pnpm build
       # Requires the freshly assembled Host production generation: it launches
