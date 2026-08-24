@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -50,7 +50,10 @@ async function startMountedManagementComposition() {
     reclaimerModule,
     pathLock,
   ] = await loadGenerationModules(artifactRoot);
-  const root = resolve(tmpdir(), `gamebuddy-management-browser-${process.pid}-${Date.now()}`);
+  // The durable path-lock boundary compares physical identities. On Windows
+  // hosted runners, tmpdir() may be an alias, so mint the fixture under its
+  // canonical parent before it becomes the deployment runtime root.
+  const root = resolve(await realpath(tmpdir()), `gamebuddy-management-browser-${process.pid}-${Date.now()}`);
   await rm(root, { recursive: true, force: true });
   await mkdir(root, { recursive: true });
   const principal = { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" };
