@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -14,27 +14,39 @@ const lockTarget = (runtimeRoot: string, continuityId: string) =>
     `continuity-surface-transition-${createHash("sha256").update(`gamebuddy:continuity-surface-transition-lock:v1\0${continuityId}`, "utf8").digest("hex")}`,
   );
 
-test("continuity surface transition lock serializes competing callers without placing the opaque id in its path", async () => {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-continuity-transition-"));
-  const continuityId = "opaque_continuity_42";
-  const order: string[] = [];
-  const first = withContinuitySurfaceTransitionLock(runtimeRoot, continuityId, async () => {
-    order.push("first-start");
-    const entries = await readdir(join(runtimeRoot, ".gamebuddy-internal-locks"), { recursive: true });
-    assert.equal(
-      entries.some((entry) => entry.includes(continuityId)),
-      false,
-    );
-    await delay(20);
-    order.push("first-end");
-  });
-  await delay(1);
-  const second = withContinuitySurfaceTransitionLock(runtimeRoot, continuityId, async () => {
-    order.push("second");
-  });
+async function createRuntimeRoot(): Promise<string> {
+  return await realpath(await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-continuity-transition-")));
+}
 
-  await Promise.all([first, second]);
-  assert.deepEqual(order, ["first-start", "first-end", "second"]);
+async function removeRuntimeRoot(root: string): Promise<void> {
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
+test("continuity surface transition lock serializes competing callers without placing the opaque id in its path", async () => {
+  const runtimeRoot = await createRuntimeRoot();
+  try {
+    const continuityId = "opaque_continuity_42";
+    const order: string[] = [];
+    const first = withContinuitySurfaceTransitionLock(runtimeRoot, continuityId, async () => {
+      order.push("first-start");
+      const entries = await readdir(join(runtimeRoot, ".gamebuddy-internal-locks"), { recursive: true });
+      assert.equal(
+        entries.some((entry) => entry.includes(continuityId)),
+        false,
+      );
+      await delay(20);
+      order.push("first-end");
+    });
+    await delay(1);
+    const second = withContinuitySurfaceTransitionLock(runtimeRoot, continuityId, async () => {
+      order.push("second");
+    });
+
+    await Promise.all([first, second]);
+    assert.deepEqual(order, ["first-start", "first-end", "second"]);
+  } finally {
+    await removeRuntimeRoot(runtimeRoot);
+  }
 });
 
 test("continuity surface transition lock rejects malformed root and continuity partition before work", async () => {
@@ -58,16 +70,20 @@ test("continuity surface transition lock rejects malformed root and continuity p
 });
 
 test("continuity surface transition lock fails closed when its durable lock acquisition times out", async () => {
-  const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-continuity-transition-"));
-  const continuityId = "opaque_timeout_partition";
-  const target = lockTarget(runtimeRoot, continuityId);
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(`${target}.lock`, "malformed-owner", "utf8");
+  const runtimeRoot = await createRuntimeRoot();
+  try {
+    const continuityId = "opaque_timeout_partition";
+    const target = lockTarget(runtimeRoot, continuityId);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(`${target}.lock`, "malformed-owner", "utf8");
 
-  await assert.rejects(
-    withContinuitySurfaceTransitionLock(runtimeRoot, continuityId, async () =>
-      assert.fail("work must not run without lock ownership"),
-    ),
-    /durable_path_lock_timeout/,
-  );
+    await assert.rejects(
+      withContinuitySurfaceTransitionLock(runtimeRoot, continuityId, async () =>
+        assert.fail("work must not run without lock ownership"),
+      ),
+      /durable_path_lock_timeout/,
+    );
+  } finally {
+    await removeRuntimeRoot(runtimeRoot);
+  }
 });
