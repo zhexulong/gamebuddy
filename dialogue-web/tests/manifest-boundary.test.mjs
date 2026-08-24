@@ -228,7 +228,10 @@ test("artifact verifier rejects preexisting symbolic-link files before manifest 
       if (error?.code === "EPERM" || error?.code === "ENOTSUP") return;
       throw error;
     }
-    await assert.rejects(verifyProductionArtifactManifest(artifactRoot), /symlink or reparse point/);
+    // This case proves the independent Node link check. The Windows policy is
+    // covered separately with a real helper pair and may reject the link
+    // earlier as unavailable, so inject the inert policy here.
+    await assert.rejects(verifyProductionArtifactManifest(artifactRoot, nodeDefensePolicy), /symlink or reparse point/);
   } finally {
     await rm(artifactRoot, { recursive: true, force: true });
   }
