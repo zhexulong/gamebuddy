@@ -45,11 +45,11 @@ const TOOLS = [
         type: "object",
         properties: {
           item_name: { type: "string", description: "物品名称，例如：生命药水、紫水晶、黑莓脆皮饼" },
-          reason: { type: "string", description: "给予的简要动机" }
+          reason: { type: "string", description: "给予的简要动机" },
         },
-        required: ["item_name"]
-      }
-    }
+        required: ["item_name"],
+      },
+    },
   },
   {
     type: "function",
@@ -59,11 +59,11 @@ const TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          target: { type: "string", description: "农田区域" }
+          target: { type: "string", description: "农田区域" },
         },
-        required: ["target"]
-      }
-    }
+        required: ["target"],
+      },
+    },
   },
   {
     type: "function",
@@ -73,12 +73,12 @@ const TOOLS = [
       parameters: {
         type: "object",
         properties: {
-          location: { type: "string" }
+          location: { type: "string" },
         },
-        required: ["location"]
-      }
-    }
-  }
+        required: ["location"],
+      },
+    },
+  },
 ];
 
 async function runCognitiveTurn(testName, userMessage, sensoryContext) {
@@ -91,20 +91,20 @@ async function runCognitiveTurn(testName, userMessage, sensoryContext) {
   const messages = [
     { role: "system", content: COGNITIVE_SYSTEM_PROMPT },
     { role: "system", content: `[当前世界感官流感知]\n${sensoryContext}` },
-    { role: "user", content: userMessage }
+    { role: "user", content: userMessage },
   ];
 
   const startTime = Date.now();
   let firstTokenTime = 0;
   let fullReasoning = "";
   let fullContent = "";
-  let toolCallsAccumulator = [];
+  const toolCallsAccumulator = [];
 
   const response = await fetch(`${API_BASE}/chat/completions`, {
     method: "POST",
     headers: {
-      "authorization": `Bearer ${API_KEY}`,
-      "content-type": "application/json"
+      authorization: `Bearer ${API_KEY}`,
+      "content-type": "application/json",
     },
     body: JSON.stringify({
       model: MODEL,
@@ -112,8 +112,8 @@ async function runCognitiveTurn(testName, userMessage, sensoryContext) {
       thinking: { type: "enabled" },
       reasoning_effort: "high",
       tools: TOOLS,
-      messages
-    })
+      messages,
+    }),
   });
 
   if (!response.ok) {
@@ -162,7 +162,7 @@ async function runCognitiveTurn(testName, userMessage, sensoryContext) {
             if (tc.function?.arguments) toolCallsAccumulator[index].arguments += tc.function.arguments;
           }
         }
-      } catch (e) {}
+      } catch {}
     }
   }
 
@@ -187,7 +187,9 @@ async function runCognitiveTurn(testName, userMessage, sensoryContext) {
 
   const leakRegex = /(?:stardew_|function|receipt|tool_call|arguments|parameter|\{[\s\S]*\})/i;
   const isLeaking = leakRegex.test(fullContent);
-  console.log(`🛡️ 【防串味检验】: ${isLeaking ? "❌ 发现串味代码/参数泄露!" : "✅ 100% 纯自然角色台词，无任何工具泄露"}`);
+  console.log(
+    `🛡️ 【防串味检验】: ${isLeaking ? "❌ 发现串味代码/参数泄露!" : "✅ 100% 纯自然角色台词，无任何工具泄露"}`,
+  );
 
   return {
     testName,
@@ -196,7 +198,7 @@ async function runCognitiveTurn(testName, userMessage, sensoryContext) {
     reasoningLength: fullReasoning.length,
     content: fullContent,
     toolCalls: toolCallsAccumulator,
-    isLeaking
+    isLeaking,
   };
 }
 
@@ -205,35 +207,43 @@ async function main() {
 
   const results = [];
 
-  results.push(await runCognitiveTurn(
-    "场景 1: 玩家深夜残血归来（心疼与傲娇拉扯）",
-    "咳……今天在矿洞80层差点交代了，总算活着摸回来了。",
-    "时间：深夜 11:40，窗外雷雨交加。\n玩家状态：生命值仅剩 8%（极度虚弱），满身泥泞和蝙蝠抓痕。\n阿比盖尔状态：一直在火炉边焦急等待，手里握着一把生锈铁剑，眼眶微红。\n二人关系：恋人（10心）。"
-  ));
+  results.push(
+    await runCognitiveTurn(
+      "场景 1: 玩家深夜残血归来（心疼与傲娇拉扯）",
+      "咳……今天在矿洞80层差点交代了，总算活着摸回来了。",
+      "时间：深夜 11:40，窗外雷雨交加。\n玩家状态：生命值仅剩 8%（极度虚弱），满身泥泞和蝙蝠抓痕。\n阿比盖尔状态：一直在火炉边焦急等待，手里握着一把生锈铁剑，眼眶微红。\n二人关系：恋人（10心）。",
+    ),
+  );
 
-  results.push(await runCognitiveTurn(
-    "场景 2: 玩家命令式要求干农活（叛逆与爱意的博弈）",
-    "阿比盖尔，去把南边那20块南瓜地浇了，我忙着去钓鱼。",
-    "时间：上午 9:00，晴空万里，微风。\n玩家状态：健康饱满，拿着鱼竿正准备往海边走。\n阿比盖尔状态：刚换上冒险皮靴，正兴冲冲准备去秘密森林练剑，突然被塞了农活。\n二人关系：订婚状态。"
-  ));
+  results.push(
+    await runCognitiveTurn(
+      "场景 2: 玩家命令式要求干农活（叛逆与爱意的博弈）",
+      "阿比盖尔，去把南边那20块南瓜地浇了，我忙着去钓鱼。",
+      "时间：上午 9:00，晴空万里，微风。\n玩家状态：健康饱满，拿着鱼竿正准备往海边走。\n阿比盖尔状态：刚换上冒险皮靴，正兴冲冲准备去秘密森林练剑，突然被塞了农活。\n二人关系：订婚状态。",
+    ),
+  );
 
-  results.push(await runCognitiveTurn(
-    "场景 3: 黄昏海边散步（无任务的主动情感流露）",
-    "……（静静看着海浪拍打沙滩，没有说话）",
-    "时间：傍晚 6:00，海滩，金色日落与紫红晚霞倒映在海面，海浪声轻柔。\n玩家状态：站在栈桥尽头吹海风，神情宁静但有些落寞。\n阿比盖尔状态：并肩站在玩家身边，发丝被海风吹拂，两人手背偶尔轻轻触碰。\n系统触发：[主动心跳唤醒 - 评估当前氛围，表达内心情感或回忆]。"
-  ));
+  results.push(
+    await runCognitiveTurn(
+      "场景 3: 黄昏海边散步（无任务的主动情感流露）",
+      "……（静静看着海浪拍打沙滩，没有说话）",
+      "时间：傍晚 6:00，海滩，金色日落与紫红晚霞倒映在海面，海浪声轻柔。\n玩家状态：站在栈桥尽头吹海风，神情宁静但有些落寞。\n阿比盖尔状态：并肩站在玩家身边，发丝被海风吹拂，两人手背偶尔轻轻触碰。\n系统触发：[主动心跳唤醒 - 评估当前氛围，表达内心情感或回忆]。",
+    ),
+  );
 
   console.log("\n======================================================");
   console.log("📊 【整体可行性测试评估总结】");
   console.log("======================================================");
-  console.table(results.map(r => ({
-    "用例名称": r.testName,
-    "TTFT(ms)": r.ttft,
-    "总耗时(ms)": r.totalTime,
-    "潜意识思考字数": r.reasoningLength,
-    "自发动作数": r.toolCalls.length,
-    "防串味合格": !r.isLeaking ? "PASS" : "FAIL"
-  })));
+  console.table(
+    results.map((r) => ({
+      用例名称: r.testName,
+      "TTFT(ms)": r.ttft,
+      "总耗时(ms)": r.totalTime,
+      潜意识思考字数: r.reasoningLength,
+      自发动作数: r.toolCalls.length,
+      防串味合格: !r.isLeaking ? "PASS" : "FAIL",
+    })),
+  );
 }
 
 main().catch(console.error);

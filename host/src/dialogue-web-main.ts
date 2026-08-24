@@ -40,7 +40,15 @@ async function runReferenceProfile(manifest: HostDeploymentManifest, mode: "fres
   const profile = composeTavernProfile({
     profileId: "gamebuddy.chat-core.reference-pipeline",
     releaseTier: "chat_core",
-    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status", "events"],
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "chat.submit",
+      "chat.cancel",
+      "chat.submission_status",
+      "events",
+    ],
     operationIds: ["chat.submit", "chat.cancel"],
     navigationItemIds: ["chat"],
   });
@@ -79,7 +87,19 @@ async function runManagementProfile(manifest: HostDeploymentManifest, mode: "fre
   const profile = composeTavernProfile({
     profileId: "gamebuddy.tavern-management.chat-list-title",
     releaseTier: "tavern_management",
-    routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "memory.read", "memory.mutate", "world-info.read", "world-info.bind"],
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "draft.save",
+      "draft.discard",
+      "chat.list",
+      "chat.rename",
+      "memory.read",
+      "memory.mutate",
+      "world-info.read",
+      "world-info.bind",
+    ],
     operationIds: ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds.
@@ -107,12 +127,7 @@ async function runManagementProfile(manifest: HostDeploymentManifest, mode: "fre
       profile,
       repository: worldInfoRepository,
     });
-    const managementStateFacade = await createTavernManagementStateFacade(
-      manifest,
-      lease,
-      profile,
-      worldInfoService,
-    );
+    const managementStateFacade = await createTavernManagementStateFacade(manifest, lease, profile, worldInfoService);
     managementService = createChatManagementService({ manifest, lease, profile });
     memoryService = createMemoryManagementService({ manifest, lease, profile });
     const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));

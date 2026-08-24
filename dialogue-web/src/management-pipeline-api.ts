@@ -45,7 +45,14 @@ export type BrowserTurnV1 = Readonly<{
 }>;
 
 export type TavernBrowserOperationV1 = Readonly<{
-  operationId: "chat.submit" | "chat.cancel" | "draft.save" | "draft.discard" | "chat.rename" | "memory.mutate" | "world-info.bind";
+  operationId:
+    | "chat.submit"
+    | "chat.cancel"
+    | "draft.save"
+    | "draft.discard"
+    | "chat.rename"
+    | "memory.mutate"
+    | "world-info.bind";
   labelKey:
     | "tavern.nav.chat"
     | "tavern.nav.memory"
@@ -159,7 +166,13 @@ export type MemoryReadV1 = Readonly<{
 
 export type MemoryMutationCommandV1 =
   | Readonly<{ apiVersion: 1; operation: "create"; expectedProjectionRevision: string; content: string }>
-  | Readonly<{ apiVersion: 1; operation: "update"; expectedProjectionRevision: string; handle: string; content: string }>
+  | Readonly<{
+      apiVersion: 1;
+      operation: "update";
+      expectedProjectionRevision: string;
+      handle: string;
+      content: string;
+    }>
   | Readonly<{ apiVersion: 1; operation: "archive"; expectedProjectionRevision: string; handle: string }>;
 
 export type TavernProblemV1 = Readonly<{
@@ -221,7 +234,15 @@ const TURN_PROBLEM_CODES = [
   "runtime_unavailable",
   "storage_unavailable",
 ] as const;
-const OPERATION_IDS = ["chat.submit", "chat.cancel", "draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"] as const;
+const OPERATION_IDS = [
+  "chat.submit",
+  "chat.cancel",
+  "draft.save",
+  "draft.discard",
+  "chat.rename",
+  "memory.mutate",
+  "world-info.bind",
+] as const;
 const LABEL_KEYS = [
   "tavern.nav.chat",
   "tavern.nav.memory",
@@ -266,7 +287,12 @@ const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
 const WORLD_INFO_KEYS = ["state", "revision", "items"] as const;
 const WORLD_INFO_ITEM_KEYS = ["handle", "title", "summary", "selected"] as const;
-const SET_WORLD_INFO_BINDING_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "sourceHandle"] as const;
+const SET_WORLD_INFO_BINDING_COMMAND_KEYS = [
+  "apiVersion",
+  "selectionGeneration",
+  "expectedRevision",
+  "sourceHandle",
+] as const;
 const SNAPSHOT_KEYS = [
   "apiVersion",
   "build",
@@ -289,7 +315,13 @@ const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"]
 const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "pinned"] as const;
 const MEMORY_READ_KEYS = ["apiVersion", "projectionRevision", "memories"] as const;
 const MEMORY_MUTATION_CREATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "content"] as const;
-const MEMORY_MUTATION_UPDATE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "handle", "content"] as const;
+const MEMORY_MUTATION_UPDATE_KEYS = [
+  "apiVersion",
+  "operation",
+  "expectedProjectionRevision",
+  "handle",
+  "content",
+] as const;
 const MEMORY_MUTATION_ARCHIVE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "handle"] as const;
 const MEMORY_CATEGORIES = ["semantic", "interaction"] as const;
 const MEMORY_STATUSES = ["active", "permanent", "archived"] as const;
@@ -679,12 +711,23 @@ function isMemoryRead(value: unknown): value is MemoryReadV1 {
 }
 
 function isMemoryMutationCommand(value: unknown): value is MemoryMutationCommandV1 {
-  if (!isRecord(value) || value.apiVersion !== TAVERN_BROWSER_API_VERSION || !isOpaqueHandle(value.expectedProjectionRevision)) return false;
+  if (
+    !isRecord(value) ||
+    value.apiVersion !== TAVERN_BROWSER_API_VERSION ||
+    !isOpaqueHandle(value.expectedProjectionRevision)
+  )
+    return false;
   if (value.operation === "create")
     return hasExactKeys(value, MEMORY_MUTATION_CREATE_KEYS) && isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES);
   if (value.operation === "update")
-    return hasExactKeys(value, MEMORY_MUTATION_UPDATE_KEYS) && isOpaqueHandle(value.handle) && isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES);
-  return value.operation === "archive" && hasExactKeys(value, MEMORY_MUTATION_ARCHIVE_KEYS) && isOpaqueHandle(value.handle);
+    return (
+      hasExactKeys(value, MEMORY_MUTATION_UPDATE_KEYS) &&
+      isOpaqueHandle(value.handle) &&
+      isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES)
+    );
+  return (
+    value.operation === "archive" && hasExactKeys(value, MEMORY_MUTATION_ARCHIVE_KEYS) && isOpaqueHandle(value.handle)
+  );
 }
 
 // --- Public strict closed validators. ---

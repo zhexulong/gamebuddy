@@ -54,10 +54,7 @@ test("inspectWindowsReparse returns reparse for symbolic links", async (t) => {
 
     const capability = await createBuildWindowsReparseInspector();
     assert.equal(await inspectWindowsReparse(capability, linkPath), "reparse");
-    await assert.rejects(
-      assertNoWindowsReparse(capability, linkPath),
-      /windows_reparse_inspection_unavailable/,
-    );
+    await assert.rejects(assertNoWindowsReparse(capability, linkPath), /windows_reparse_inspection_unavailable/);
   } finally {
     await item.dispose();
   }
@@ -109,10 +106,7 @@ test("createTestWindowsReparseInspector supports custom inspection behavior", as
   const errorCapability = createTestWindowsReparseInspector(() => {
     throw new Error("fail");
   });
-  await assert.rejects(
-    inspectWindowsReparse(errorCapability, "/mock/path"),
-    /windows_reparse_inspection_unavailable/,
-  );
+  await assert.rejects(inspectWindowsReparse(errorCapability, "/mock/path"), /windows_reparse_inspection_unavailable/);
 });
 
 test("public policy entry does not expose test-only capability minting", async () => {

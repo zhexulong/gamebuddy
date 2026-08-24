@@ -254,11 +254,7 @@ test(
       if (entry.turn !== null) {
         assert.equal(TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(entry.turn), true, entry.target);
         assert.equal(entry.turn.projectionRevision, 1, entry.target);
-        assert.equal(
-          entry.turn.canCancel,
-          entry.target === "running",
-          entry.target,
-        );
+        assert.equal(entry.turn.canCancel, entry.target === "running", entry.target);
         assert.match(entry.turn.handle, /^[A-Za-z0-9_-]{43}$/, entry.target);
         assert.notEqual(entry.turn.handle, entry.turnId, entry.target);
       }
@@ -271,9 +267,8 @@ test(
           {
             operationId: "chat.submit",
             labelKey: "tavern.operation.submit",
-            availability: entry.turn === null || ["completed", "cancelled", "failed"].includes(entry.target)
-              ? "available"
-              : "busy",
+            availability:
+              entry.turn === null || ["completed", "cancelled", "failed"].includes(entry.target) ? "available" : "busy",
             routeId: "chat.submit",
           },
           {
@@ -416,7 +411,12 @@ test(
     assert.equal(queued.turn?.state, "queued");
     assert.deepEqual(queued.operations, [
       { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "busy", routeId: "chat.submit" },
-      { operationId: "chat.cancel", labelKey: "tavern.operation.cancel", availability: "unavailable", routeId: "chat.cancel" },
+      {
+        operationId: "chat.cancel",
+        labelKey: "tavern.operation.cancel",
+        availability: "unavailable",
+        routeId: "chat.cancel",
+      },
     ]);
     for (const operation of [...pristine.operations, ...queued.operations])
       assert.equal(TavernBrowserValidatorsV1.TavernBrowserOperationV1Schema.Check(operation), true);

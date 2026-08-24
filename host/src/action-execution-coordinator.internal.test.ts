@@ -245,7 +245,13 @@ test("coordinator executes ActionBatch sequentially when all actions succeed", a
         requestId: "req_1",
         execute: async () => {
           executedActions.push("move_1");
-          return receipt({ requestId: "req_1", executionId: "exec_1", state: "succeeded", reasonCode: "arrived", evidence: { x: 1 } });
+          return receipt({
+            requestId: "req_1",
+            executionId: "exec_1",
+            state: "succeeded",
+            reasonCode: "arrived",
+            evidence: { x: 1 },
+          });
         },
       },
       {
@@ -253,7 +259,14 @@ test("coordinator executes ActionBatch sequentially when all actions succeed", a
         requestId: "req_2",
         execute: async () => {
           executedActions.push("till_2");
-          return receipt({ requestId: "req_2", executionId: "exec_2", state: "succeeded", revision: 2, reasonCode: "tilled", evidence: { tile: "1,1" } });
+          return receipt({
+            requestId: "req_2",
+            executionId: "exec_2",
+            state: "succeeded",
+            revision: 2,
+            reasonCode: "tilled",
+            evidence: { tile: "1,1" },
+          });
         },
       },
     ],
@@ -280,7 +293,13 @@ test("coordinator executes ActionBatch with Fail-Fast semantics on action failur
         requestId: "req_1",
         execute: async () => {
           executedActions.push("action_1");
-          return receipt({ requestId: "req_1", executionId: "exec_1", state: "succeeded", reasonCode: "done", evidence: { ok: true } });
+          return receipt({
+            requestId: "req_1",
+            executionId: "exec_1",
+            state: "succeeded",
+            reasonCode: "done",
+            evidence: { ok: true },
+          });
         },
       },
       {
@@ -288,7 +307,14 @@ test("coordinator executes ActionBatch with Fail-Fast semantics on action failur
         requestId: "req_2",
         execute: async () => {
           executedActions.push("action_2_fail");
-          return receipt({ requestId: "req_2", executionId: "exec_2", state: "failed", revision: 2, reasonCode: "no_energy", evidence: null });
+          return receipt({
+            requestId: "req_2",
+            executionId: "exec_2",
+            state: "failed",
+            revision: 2,
+            reasonCode: "no_energy",
+            evidence: null,
+          });
         },
       },
       {
@@ -296,7 +322,14 @@ test("coordinator executes ActionBatch with Fail-Fast semantics on action failur
         requestId: "req_3",
         execute: async () => {
           executedActions.push("action_3_unreached");
-          return receipt({ requestId: "req_3", executionId: "exec_3", state: "succeeded", revision: 3, reasonCode: "done", evidence: {} });
+          return receipt({
+            requestId: "req_3",
+            executionId: "exec_3",
+            state: "succeeded",
+            revision: 3,
+            reasonCode: "done",
+            evidence: {},
+          });
         },
       },
     ],
@@ -328,7 +361,13 @@ test("coordinator intercepts ActionBatch upon Epoch interruption", async () => {
           executedActions.push("action_1");
           // Trigger global interruption during first action
           await coordinator.interrupt("voice_stopped_and_halted");
-          return receipt({ requestId: "req_1", executionId: "exec_1", state: "succeeded", reasonCode: "done", evidence: { ok: true } });
+          return receipt({
+            requestId: "req_1",
+            executionId: "exec_1",
+            state: "succeeded",
+            reasonCode: "done",
+            evidence: { ok: true },
+          });
         },
       },
       {
@@ -336,7 +375,13 @@ test("coordinator intercepts ActionBatch upon Epoch interruption", async () => {
         requestId: "req_2",
         execute: async () => {
           executedActions.push("action_2");
-          return receipt({ requestId: "req_2", executionId: "exec_2", state: "succeeded", reasonCode: "done", evidence: { ok: true } });
+          return receipt({
+            requestId: "req_2",
+            executionId: "exec_2",
+            state: "succeeded",
+            reasonCode: "done",
+            evidence: { ok: true },
+          });
         },
       },
     ],
@@ -352,67 +397,63 @@ test("coordinator intercepts ActionBatch upon Epoch interruption", async () => {
 
 test("coordinator: PBT - ActionBatch causal invariant under random batch sizes and failure points", async () => {
   await fc.assertAsync(
-    fc.property(
-      fc.integer({ min: 1, max: 10 }),
-      fc.integer({ min: 0, max: 12 }),
-      async (batchSize, failIndex) => {
-        const { coordinator } = coordinatorFixture([]);
-        const executedActions: number[] = [];
+    fc.property(fc.integer({ min: 1, max: 10 }), fc.integer({ min: 0, max: 12 }), async (batchSize, failIndex) => {
+      const { coordinator } = coordinatorFixture([]);
+      const executedActions: number[] = [];
 
-        const actions = Array.from({ length: batchSize }, (_, i) => ({
-          actionId: `action_${i}`,
-          requestId: `req_${i}`,
-          execute: async () => {
-            executedActions.push(i);
-            if (i === failIndex) {
-              return receipt({
-                requestId: `req_${i}`,
-                executionId: `exec_${i}`,
-                state: "failed",
-                revision: i + 1,
-                reasonCode: "simulated_action_failure",
-                evidence: null,
-              });
-            }
+      const actions = Array.from({ length: batchSize }, (_, i) => ({
+        actionId: `action_${i}`,
+        requestId: `req_${i}`,
+        execute: async () => {
+          executedActions.push(i);
+          if (i === failIndex) {
             return receipt({
               requestId: `req_${i}`,
               executionId: `exec_${i}`,
-              state: "succeeded",
+              state: "failed",
               revision: i + 1,
-              reasonCode: "ok",
-              evidence: { step: i },
+              reasonCode: "simulated_action_failure",
+              evidence: null,
             });
-          },
-        }));
-
-        const batch: ActionBatch = {
-          batchId: `batch_pbt_${batchSize}_${failIndex}`,
-          actions,
-        };
-
-        const result = await coordinator.executeBatch(batch);
-
-        // Invariant 1: Total receipts matches batch size
-        assert.equal(result.receipts.length, batchSize);
-
-        if (failIndex < batchSize) {
-          // Failure occurred
-          assert.equal(result.failedFast, true);
-          // Actions up to and including failIndex were executed
-          assert.equal(executedActions.length, failIndex + 1);
-          // Subsequent actions were never executed and are marked batch_fail_fast_aborted
-          for (let j = failIndex + 1; j < batchSize; j++) {
-            assert.equal(result.receipts[j]?.state, "cancelled");
-            assert.equal(result.receipts[j]?.reasonCode, "batch_fail_fast_aborted");
           }
-        } else {
-          // All succeeded
-          assert.equal(result.failedFast, false);
-          assert.equal(executedActions.length, batchSize);
-          assert.equal(result.completedCount, batchSize);
+          return receipt({
+            requestId: `req_${i}`,
+            executionId: `exec_${i}`,
+            state: "succeeded",
+            revision: i + 1,
+            reasonCode: "ok",
+            evidence: { step: i },
+          });
+        },
+      }));
+
+      const batch: ActionBatch = {
+        batchId: `batch_pbt_${batchSize}_${failIndex}`,
+        actions,
+      };
+
+      const result = await coordinator.executeBatch(batch);
+
+      // Invariant 1: Total receipts matches batch size
+      assert.equal(result.receipts.length, batchSize);
+
+      if (failIndex < batchSize) {
+        // Failure occurred
+        assert.equal(result.failedFast, true);
+        // Actions up to and including failIndex were executed
+        assert.equal(executedActions.length, failIndex + 1);
+        // Subsequent actions were never executed and are marked batch_fail_fast_aborted
+        for (let j = failIndex + 1; j < batchSize; j++) {
+          assert.equal(result.receipts[j]?.state, "cancelled");
+          assert.equal(result.receipts[j]?.reasonCode, "batch_fail_fast_aborted");
         }
-      },
-    ),
+      } else {
+        // All succeeded
+        assert.equal(result.failedFast, false);
+        assert.equal(executedActions.length, batchSize);
+        assert.equal(result.completedCount, batchSize);
+      }
+    }),
     { numRuns: 50 },
   );
 });

@@ -45,7 +45,9 @@ test("M8 elevator Given is a closed pre-binding native facility observer", async
     integration.indexOf("private void TryInitializePortfolioBinding"),
     integration.indexOf("private void UpdatePortfolioBridge"),
   );
-  assert.ok(binding.indexOf("this.TryPreparePortfolioMineElevatorGivenFixture()") < binding.indexOf("this.portfolioBinding ="));
+  assert.ok(
+    binding.indexOf("this.TryPreparePortfolioMineElevatorGivenFixture()") < binding.indexOf("this.portfolioBinding ="),
+  );
 
   assert.match(arm, /Game1\.warpFarmer\("UndergroundMine5", 6, 6, 2\)/);
   assert.equal((arm.match(/Game1\.warpFarmer\(/g) ?? []).length, 1);
@@ -55,14 +57,23 @@ test("M8 elevator Given is a closed pre-binding native facility observer", async
   assert.doesNotMatch(fixture, /setMapTile\(|createLadderDown\(|Game1\.enterMine\(/);
   assert.doesNotMatch(fixture, /GetGrabTile\(|PathFindController|MineElevatorMenu|checkAction\(/);
   assert.doesNotMatch(fixture, /\.Tile|new Vector2\(6, 6\)/);
-  assert.doesNotMatch(fixture, /PortfolioBridgeSession|PortfolioLocalPipeBridge|Portfolio\w*Receipt|Portfolio\w*Evidence|HandlePortfolio\w+/);
+  assert.doesNotMatch(
+    fixture,
+    /PortfolioBridgeSession|PortfolioLocalPipeBridge|Portfolio\w*Receipt|Portfolio\w*Evidence|HandlePortfolio\w+/,
+  );
 
   assert.match(nativeObserver, /ReferenceEquals\(Game1\.locationRequest, request\)/);
   assert.match(nativeObserver, /portfolioMineElevatorGivenFixtureNativeWarpObserved = true/);
   assert.match(playerObserver, /portfolioMineElevatorGivenFixtureNativeWarpObserved/);
-  assert.match(playerObserver, /ReferenceEquals\(e\.OldLocation, this\.portfolioMineElevatorGivenFixtureSourceLocation\)/);
+  assert.match(
+    playerObserver,
+    /ReferenceEquals\(e\.OldLocation, this\.portfolioMineElevatorGivenFixtureSourceLocation\)/,
+  );
   assert.match(playerObserver, /portfolioMineElevatorGivenFixturePlayerWarpObserved = true/);
-  assert.match(settle, /!this\.portfolioMineElevatorGivenFixtureNativeWarpObserved\s*\|\|\s*!this\.portfolioMineElevatorGivenFixturePlayerWarpObserved/);
+  assert.match(
+    settle,
+    /!this\.portfolioMineElevatorGivenFixtureNativeWarpObserved\s*\|\|\s*!this\.portfolioMineElevatorGivenFixturePlayerWarpObserved/,
+  );
   assert.match(settle, /mine\.NameOrUniqueName != "UndergroundMine5" \|\| mine\.mineLevel != 5/);
   assert.match(settle, /MineShaft\.lowestLevelReached < 10/);
   assert.match(settle, /fixture_elevator_not_observed/);

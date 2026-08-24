@@ -42,10 +42,7 @@ test("narrative gate creates the exact schema-v2 independent-surface deployment 
 
 test("narrative gate distinguishes a provider wait from a missing durable terminal signal", () => {
   assert.equal(classifyNarrativeTurnOutcome("timeout", []), "provider_request_pending");
-  assert.equal(
-    classifyNarrativeTurnOutcome("timeout", ["turn.state_changed"]),
-    "dialogue_terminal_signal_unobserved",
-  );
+  assert.equal(classifyNarrativeTurnOutcome("timeout", ["turn.state_changed"]), "dialogue_terminal_signal_unobserved");
   assert.equal(classifyNarrativeTurnOutcome("turn_failed", ["turn.state_changed"]), undefined);
 });
 
@@ -126,7 +123,7 @@ test("Reference live runner stays on authenticated Chat API and never opens SQLi
   assert.match(source, /dialogue_terminal_signal_unobserved/);
   assert.match(
     source,
-    /evaluateNarrativeGateMarker\(\r?\n      marker,\r?\n      nonceSha256,\r?\n      runtimeSession\.observed \? runtimeSession\.piSessionId : undefined,/,
+    /evaluateNarrativeGateMarker\(\r?\n {6}marker,\r?\n {6}nonceSha256,\r?\n {6}runtimeSession\.observed \? runtimeSession\.piSessionId : undefined,/,
   );
   assert.doesNotMatch(source, /markerSessionId = typeof marker\?\.sessionId/);
 });

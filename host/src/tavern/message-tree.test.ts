@@ -48,8 +48,14 @@ test("groupSwipesByParent groups sibling nodes under matching parentId", () => {
   const grouped = groupSwipesByParent(entries);
 
   assert.equal(grouped.size, 2);
-  assert.deepEqual(grouped.get(null)?.map((n) => n.id), ["root-1", "root-2"]);
-  assert.deepEqual(grouped.get("root-1")?.map((n) => n.id), ["c-1a", "c-1b", "c-1c"]);
+  assert.deepEqual(
+    grouped.get(null)?.map((n) => n.id),
+    ["root-1", "root-2"],
+  );
+  assert.deepEqual(
+    grouped.get("root-1")?.map((n) => n.id),
+    ["c-1a", "c-1b", "c-1c"],
+  );
   assert.equal(grouped.get("unknown"), undefined);
 });
 
@@ -102,7 +108,10 @@ test("projectActiveBranch projects linear and branched conversation trees", () =
 
   const linear = [root, u1, b1, u2, b2];
   const activeLinear = projectActiveBranch(linear);
-  assert.deepEqual(activeLinear.map((n) => n.id), ["root", "u1", "b1", "u2", "b2"]);
+  assert.deepEqual(
+    activeLinear.map((n) => n.id),
+    ["root", "u1", "b1", "u2", "b2"],
+  );
 
   // Fork / Swipe at b1:
   // b1_v1 ("b1a"), b1_v2 ("b1b"), b1_v3 ("b1c")
@@ -116,15 +125,24 @@ test("projectActiveBranch projects linear and branched conversation trees", () =
 
   // Default selection selects latest swipe at u1 (b1c)
   const defaultBranch = projectActiveBranch(branched);
-  assert.deepEqual(defaultBranch.map((n) => n.id), ["root", "u1", "b1c"]);
+  assert.deepEqual(
+    defaultBranch.map((n) => n.id),
+    ["root", "u1", "b1c"],
+  );
 
   // Explicit swipe selection via Record: select b1b (index 1 under u1)
   const swipeVarB = projectActiveBranch(branched, { u1: 1 });
-  assert.deepEqual(swipeVarB.map((n) => n.id), ["root", "u1", "b1b", "u2-b", "b2-b"]);
+  assert.deepEqual(
+    swipeVarB.map((n) => n.id),
+    ["root", "u1", "b1b", "u2-b", "b2-b"],
+  );
 
   // Explicit swipe selection via Map: select b1a (index 0 under u1)
   const swipeVarA = projectActiveBranch(branched, new Map([["u1", 0]]));
-  assert.deepEqual(swipeVarA.map((n) => n.id), ["root", "u1", "b1a"]);
+  assert.deepEqual(
+    swipeVarA.map((n) => n.id),
+    ["root", "u1", "b1a"],
+  );
 });
 
 test("getBranchToNode and findLeaves navigate and identify leaves in tree", () => {
@@ -137,10 +155,16 @@ test("getBranchToNode and findLeaves navigate and identify leaves in tree", () =
   const entries = [root, a, b1, b2, c];
 
   const branchToC = getBranchToNode(entries, "c");
-  assert.deepEqual(branchToC.map((n) => n.id), ["r", "a", "b1", "c"]);
+  assert.deepEqual(
+    branchToC.map((n) => n.id),
+    ["r", "a", "b1", "c"],
+  );
 
   const branchToB2 = getBranchToNode(entries, "b2");
-  assert.deepEqual(branchToB2.map((n) => n.id), ["r", "a", "b2"]);
+  assert.deepEqual(
+    branchToB2.map((n) => n.id),
+    ["r", "a", "b2"],
+  );
 
   const leaves = findLeaves(entries);
   assert.deepEqual(leaves.map((n) => n.id).sort(), ["b2", "c"].sort());
@@ -244,39 +268,37 @@ test("PBT Property 2: Path Monotonicity and Parent Continuity", () => {
 
 test("PBT Property 3: Deterministic Swipe Selection Monotonicity", () => {
   fc.assert(
-    fc.property(
-      fc.integer({ min: 1, max: 8 }),
-      fc.integer({ min: 0, max: 7 }),
-      (siblingCount, selectedSwipeIndex) => {
-        const root = createChildBranchNode(null, "system", "Root", { id: "root" });
-        const siblings: MessageTreeNode[] = [];
-        for (let i = 0; i < siblingCount; i++) {
-          siblings.push(createChildBranchNode("root", "companion", `Variant ${i}`, { id: `sib-${i}` }));
-        }
+    fc.property(fc.integer({ min: 1, max: 8 }), fc.integer({ min: 0, max: 7 }), (siblingCount, selectedSwipeIndex) => {
+      const root = createChildBranchNode(null, "system", "Root", { id: "root" });
+      const siblings: MessageTreeNode[] = [];
+      for (let i = 0; i < siblingCount; i++) {
+        siblings.push(createChildBranchNode("root", "companion", `Variant ${i}`, { id: `sib-${i}` }));
+      }
 
-        const entries = [root, ...siblings];
-        const activeBranch = projectActiveBranch(entries, { root: selectedSwipeIndex });
+      const entries = [root, ...siblings];
+      const activeBranch = projectActiveBranch(entries, { root: selectedSwipeIndex });
 
-        const expectedChildIndex = Math.min(selectedSwipeIndex, siblingCount - 1);
-        const expectedNode = siblings[expectedChildIndex]!;
+      const expectedChildIndex = Math.min(selectedSwipeIndex, siblingCount - 1);
+      const expectedNode = siblings[expectedChildIndex]!;
 
-        assert.equal(activeBranch.length, 2);
-        assert.equal(activeBranch[0]?.id, "root");
-        assert.equal(activeBranch[1]?.id, expectedNode.id);
-      },
-    ),
+      assert.equal(activeBranch.length, 2);
+      assert.equal(activeBranch[0]?.id, "root");
+      assert.equal(activeBranch[1]?.id, expectedNode.id);
+    }),
     { numRuns: 100 },
   );
 });
 
 test("PBT Property 4: Graph Robustness under arbitrary noisy topologies", () => {
   // Generate arbitrary node lists with random IDs and arbitrary parentIds (including self-cycles, disconnected nodes)
-  const nodeArb = fc.record({
-    id: fc.constantFrom("a", "b", "c", "d", "e", "f", "g"),
-    parentId: fc.constantFrom(null, "a", "b", "c", "d", "e", "f", "g", "orphan-1"),
-    content: fc.string({ minLength: 0, maxLength: 20 }),
-    role: fc.constantFrom("player", "companion", "system"),
-  }).map((r) => createChildBranchNode(r.parentId, r.role, r.content, { id: r.id }));
+  const nodeArb = fc
+    .record({
+      id: fc.constantFrom("a", "b", "c", "d", "e", "f", "g"),
+      parentId: fc.constantFrom(null, "a", "b", "c", "d", "e", "f", "g", "orphan-1"),
+      content: fc.string({ minLength: 0, maxLength: 20 }),
+      role: fc.constantFrom("player", "companion", "system"),
+    })
+    .map((r) => createChildBranchNode(r.parentId, r.role, r.content, { id: r.id }));
 
   const arbitraryEntries = fc.array(nodeArb, { minLength: 0, maxLength: 15 });
 

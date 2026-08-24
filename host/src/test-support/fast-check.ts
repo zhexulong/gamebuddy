@@ -16,7 +16,7 @@ export class XorShift128Plus implements RandomGenerator {
   private s1: number;
 
   constructor(seed = Date.now()) {
-    let s = (seed ^ 0xdeadbeef) >>> 0;
+    const s = (seed ^ 0xdeadbeef) >>> 0;
     this.s0 = s || 1;
     this.s1 = ((s * 1812433253 + 1) ^ 0x1337cafe) >>> 0 || 2;
   }
@@ -367,9 +367,14 @@ export interface Property<TArgs extends readonly unknown[]> {
 }
 
 export function property<TArgs extends readonly unknown[]>(
-  ...argsAndPredicate: [...{ [K in keyof TArgs]: Arbitrary<TArgs[K]> }, (...args: TArgs) => boolean | void | Promise<boolean | void>]
+  ...argsAndPredicate: [
+    ...{ [K in keyof TArgs]: Arbitrary<TArgs[K]> },
+    (...args: TArgs) => boolean | void | Promise<boolean | void>,
+  ]
 ): Property<TArgs> {
-  const predicate = argsAndPredicate[argsAndPredicate.length - 1] as (...args: TArgs) => boolean | void | Promise<boolean | void>;
+  const predicate = argsAndPredicate[argsAndPredicate.length - 1] as (
+    ...args: TArgs
+  ) => boolean | void | Promise<boolean | void>;
   const arbitraries = argsAndPredicate.slice(0, -1) as unknown as { [K in keyof TArgs]: Arbitrary<TArgs[K]> };
   return {
     run: (args: TArgs) => predicate(...args),
@@ -420,7 +425,7 @@ export async function assertAsync<TArgs extends readonly unknown[]>(
       }
 
       const counterexample = JSON.stringify(bestArgs, null, 2);
-      const message = `Property failed after ${run + 1} tests (seed: ${seed})\nCounterexample: ${counterexample}\nCaused by: ${err instanceof Error ? err.stack ?? err.message : String(err)}`;
+      const message = `Property failed after ${run + 1} tests (seed: ${seed})\nCounterexample: ${counterexample}\nCaused by: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`;
       const error = new Error(message);
       (error as unknown as { seed: number; counterexample: unknown }).seed = seed;
       (error as unknown as { seed: number; counterexample: unknown }).counterexample = bestArgs;
@@ -429,10 +434,7 @@ export async function assertAsync<TArgs extends readonly unknown[]>(
   }
 }
 
-export function assertSync<TArgs extends readonly unknown[]>(
-  prop: Property<TArgs>,
-  options: AssertOptions = {},
-): void {
+export function assertSync<TArgs extends readonly unknown[]>(prop: Property<TArgs>, options: AssertOptions = {}): void {
   const numRuns = options.numRuns ?? 100;
   const seed = options.seed ?? Date.now();
   const rng = new XorShift128Plus(seed);
@@ -474,7 +476,7 @@ export function assertSync<TArgs extends readonly unknown[]>(
       }
 
       const counterexample = JSON.stringify(bestArgs, null, 2);
-      const message = `Property failed after ${run + 1} tests (seed: ${seed})\nCounterexample: ${counterexample}\nCaused by: ${err instanceof Error ? err.stack ?? err.message : String(err)}`;
+      const message = `Property failed after ${run + 1} tests (seed: ${seed})\nCounterexample: ${counterexample}\nCaused by: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`;
       const error = new Error(message);
       (error as unknown as { seed: number; counterexample: unknown }).seed = seed;
       (error as unknown as { seed: number; counterexample: unknown }).counterexample = bestArgs;

@@ -11,17 +11,38 @@ export const DEFAULT_MAX_CHUNK_LENGTH = 35;
 export const DEFAULT_MIN_FIRST_CHUNK_LENGTH = 5;
 
 export const DEFAULT_PAUSE_PUNCTUATIONS = Object.freeze(
-  new Set([
-    "，", "。", "！", "？", "；", "：", "、", "…", "—", "～",
-    ",", ".", "!", "?", ";", ":", "~",
-    "\n", "\r",
-  ]),
+  new Set(["，", "。", "！", "？", "；", "：", "、", "…", "—", "～", ",", ".", "!", "?", ";", ":", "~", "\n", "\r"]),
 );
 
 export const DEFAULT_TRAILING_PUNCTUATIONS = Object.freeze(
   new Set([
-    "”", "’", "\"", "'", "）", ")", "】", "]", "》", ">", "」", "』",
-    "…", "—", "～", ".", "!", "?", "！", "？", ",", "，", "；", ";", "~", ":", "：",
+    "”",
+    "’",
+    '"',
+    "'",
+    "）",
+    ")",
+    "】",
+    "]",
+    "》",
+    ">",
+    "」",
+    "』",
+    "…",
+    "—",
+    "～",
+    ".",
+    "!",
+    "?",
+    "！",
+    "？",
+    ",",
+    "，",
+    "；",
+    ";",
+    "~",
+    ":",
+    "：",
   ]),
 );
 
@@ -85,7 +106,14 @@ export function createSentenceChunker(
 
         // If for the first chunk we require a minimum length before minor punctuation (like comma):
         // Major punctuations (. ! ? \n) break regardless; commas break if minFirstChunkLength is met.
-        const isMajorPunct = char === "。" || char === "！" || char === "？" || char === "\n" || char === "." || char === "!" || char === "?";
+        const isMajorPunct =
+          char === "。" ||
+          char === "！" ||
+          char === "？" ||
+          char === "\n" ||
+          char === "." ||
+          char === "!" ||
+          char === "?";
         if (isFirstChunk && !isMajorPunct && punctEnd < minFirstChunkLength && punctEnd < buffer.length) {
           // Continue scanning to see if another punctuation arrives later, unless buffer gets too long
           i = punctEnd;

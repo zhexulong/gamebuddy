@@ -11,11 +11,93 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
-export const EXECUTION_STATE_DTOS = Object.freeze(["accepted","running","meaningful_progress","blocked","invalidated","succeeded","partially_succeeded","failed","cancelled","expired","rejected","uncertain"] as const);
-export type ExecutionStateDto = "accepted" | "running" | "meaningful_progress" | "blocked" | "invalidated" | "succeeded" | "partially_succeeded" | "failed" | "cancelled" | "expired" | "rejected" | "uncertain";
+export const EXECUTION_STATE_DTOS = Object.freeze([
+  "accepted",
+  "running",
+  "meaningful_progress",
+  "blocked",
+  "invalidated",
+  "succeeded",
+  "partially_succeeded",
+  "failed",
+  "cancelled",
+  "expired",
+  "rejected",
+  "uncertain",
+] as const);
+export type ExecutionStateDto =
+  | "accepted"
+  | "running"
+  | "meaningful_progress"
+  | "blocked"
+  | "invalidated"
+  | "succeeded"
+  | "partially_succeeded"
+  | "failed"
+  | "cancelled"
+  | "expired"
+  | "rejected"
+  | "uncertain";
 
-export const EXECUTION_ACTION_DTOS = Object.freeze(["move_to_tile","equip_tool","travel","enter_exit","till_soil","pickup_forage","pickup_item","water_crop","harvest_crop","plant_seed","fertilize_tile","place_wood_fence","place_crab_pot","bait_crab_pot","clear_debris","machine_inspect","machine_load","machine_collect_output","npc_relationship","pet_animal","collect_animal_product","feed_animal","use_item","chop_tree_source","break_rock_source","clear_hoedirt","dig_artifact_spot","refill_watering_can"] as const);
-export type ExecutionActionDto = "move_to_tile" | "equip_tool" | "travel" | "enter_exit" | "till_soil" | "pickup_forage" | "pickup_item" | "water_crop" | "harvest_crop" | "plant_seed" | "fertilize_tile" | "place_wood_fence" | "place_crab_pot" | "bait_crab_pot" | "clear_debris" | "machine_inspect" | "machine_load" | "machine_collect_output" | "npc_relationship" | "pet_animal" | "collect_animal_product" | "feed_animal" | "use_item" | "chop_tree_source" | "break_rock_source" | "clear_hoedirt" | "dig_artifact_spot" | "refill_watering_can";
+export const EXECUTION_ACTION_DTOS = Object.freeze([
+  "move_to_tile",
+  "equip_tool",
+  "travel",
+  "enter_exit",
+  "till_soil",
+  "pickup_forage",
+  "pickup_item",
+  "water_crop",
+  "harvest_crop",
+  "plant_seed",
+  "fertilize_tile",
+  "place_wood_fence",
+  "place_crab_pot",
+  "bait_crab_pot",
+  "clear_debris",
+  "machine_inspect",
+  "machine_load",
+  "machine_collect_output",
+  "npc_relationship",
+  "pet_animal",
+  "collect_animal_product",
+  "feed_animal",
+  "use_item",
+  "chop_tree_source",
+  "break_rock_source",
+  "clear_hoedirt",
+  "dig_artifact_spot",
+  "refill_watering_can",
+] as const);
+export type ExecutionActionDto =
+  | "move_to_tile"
+  | "equip_tool"
+  | "travel"
+  | "enter_exit"
+  | "till_soil"
+  | "pickup_forage"
+  | "pickup_item"
+  | "water_crop"
+  | "harvest_crop"
+  | "plant_seed"
+  | "fertilize_tile"
+  | "place_wood_fence"
+  | "place_crab_pot"
+  | "bait_crab_pot"
+  | "clear_debris"
+  | "machine_inspect"
+  | "machine_load"
+  | "machine_collect_output"
+  | "npc_relationship"
+  | "pet_animal"
+  | "collect_animal_product"
+  | "feed_animal"
+  | "use_item"
+  | "chop_tree_source"
+  | "break_rock_source"
+  | "clear_hoedirt"
+  | "dig_artifact_spot"
+  | "refill_watering_can";
 
 export interface ExecutionRequestDto {
   readonly requestId: string;
@@ -48,7 +130,8 @@ export function deserializeExecutionRequest(json: string): ExecutionRequestDto {
   }
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) throw new Error("invalid_request_json");
   if (!obj.requestId || typeof obj.requestId !== "string") throw new Error("missing_required_field:requestId");
-  if (!obj.idempotencyKey || typeof obj.idempotencyKey !== "string") throw new Error("missing_required_field:idempotencyKey");
+  if (!obj.idempotencyKey || typeof obj.idempotencyKey !== "string")
+    throw new Error("missing_required_field:idempotencyKey");
   if (!obj.action || typeof obj.action !== "string") throw new Error("missing_required_field:action");
 
   const validActions = new Set<string>(EXECUTION_ACTION_DTOS);

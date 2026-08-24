@@ -1839,10 +1839,15 @@ test("Entry request with a stuck local write callback closes rather than hanging
             frame({
               ...request,
               type: "hello_ack",
-              payload: { sessionId: "session_entry_write_timeout", bindingGeneration: 1, bindingHash: scope.bindingHash },
+              payload: {
+                sessionId: "session_entry_write_timeout",
+                bindingGeneration: 1,
+                bindingHash: scope.bindingHash,
+              },
             }),
           );
-        else if (request.type === "observe_request") socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
+        else if (request.type === "observe_request")
+          socket.write(frame({ ...request, type: "snapshot", payload: snapshot }));
       }
     });
   });
@@ -1857,7 +1862,11 @@ test("Entry request with a stuck local write callback closes rather than hanging
       (socket: Socket) => ({
         write(frameBytes: Uint8Array, callback: (error?: Error | null) => void): boolean {
           const length = Buffer.from(frameBytes).readInt32LE(0);
-          const outbound = JSON.parse(Buffer.from(frameBytes).subarray(4, length + 4).toString()) as PortfolioMessage;
+          const outbound = JSON.parse(
+            Buffer.from(frameBytes)
+              .subarray(4, length + 4)
+              .toString(),
+          ) as PortfolioMessage;
           if (outbound.type === "enter_mine_request") return true;
           return socket.write(frameBytes, callback);
         },

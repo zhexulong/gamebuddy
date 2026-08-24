@@ -27,7 +27,10 @@ test("M8 ladder Given fixture is fixed, pre-binding, and only settles from both 
   assert.doesNotMatch(executable, /createLadderDown\([^)]*,[^)]*,/);
   assert.doesNotMatch(executable, /setMapTile\(/);
   assert.doesNotMatch(executable, /Game1\.enterMine\(/);
-  assert.doesNotMatch(fixture, /\b(?:PortfolioMineLadderActionCoordinator|PortfolioMineLadderSemanticAdapter|PortfolioBridgeSession|PortfolioLocalPipeBridge)\b/);
+  assert.doesNotMatch(
+    fixture,
+    /\b(?:PortfolioMineLadderActionCoordinator|PortfolioMineLadderSemanticAdapter|PortfolioBridgeSession|PortfolioLocalPipeBridge)\b/,
+  );
   assert.doesNotMatch(fixture, /\bHandlePortfolio\w+/);
   assert.doesNotMatch(fixture, /GetGrabTile\(|PathFindController|MineElevatorMenu/);
   assert.doesNotMatch(fixture, /\b(?:Game1\.)?player\.Position\s*=|\.faceDirection\s*\(/);
@@ -47,7 +50,10 @@ test("M8 ladder Given fixture is fixed, pre-binding, and only settles from both 
     fixture.indexOf("private bool TrySettlePortfolioMineLadderGivenFixture"),
   );
   assert.match(playerObserver, /portfolioMineLadderGivenFixtureNativeWarpObserved/);
-  assert.match(playerObserver, /ReferenceEquals\(e\.OldLocation, this\.portfolioMineLadderGivenFixtureSourceLocation\)/);
+  assert.match(
+    playerObserver,
+    /ReferenceEquals\(e\.OldLocation, this\.portfolioMineLadderGivenFixtureSourceLocation\)/,
+  );
   assert.match(playerObserver, /ReferenceEquals\(e\.NewLocation, request\.Location\)/);
   assert.match(playerObserver, /ReferenceEquals\(e\.Player, Game1\.player\)/);
   assert.match(playerObserver, /portfolioMineLadderGivenFixturePlayerWarpObserved = true/);
@@ -55,7 +61,10 @@ test("M8 ladder Given fixture is fixed, pre-binding, and only settles from both 
     fixture.indexOf("private bool TrySettlePortfolioMineLadderGivenFixture"),
     fixture.indexOf("private bool TryCreatePortfolioMineLadderGivenFacility"),
   );
-  assert.match(settle, /!this\.portfolioMineLadderGivenFixtureNativeWarpObserved\s*\|\|\s*!this\.portfolioMineLadderGivenFixturePlayerWarpObserved/);
+  assert.match(
+    settle,
+    /!this\.portfolioMineLadderGivenFixtureNativeWarpObserved\s*\|\|\s*!this\.portfolioMineLadderGivenFixturePlayerWarpObserved/,
+  );
   assert.match(settle, /Game1\.locationRequest is not null/);
   assert.match(settle, /mine\.NameOrUniqueName != "UndergroundMine2" \|\| mine\.mineLevel != 2/);
   assert.doesNotMatch(settle, /player\.Tile|freshPlayer\.Tile|new Vector2\(6, 6\)/);
@@ -84,7 +93,9 @@ test("M8 ladder Given fixture is fixed, pre-binding, and only settles from both 
     integration.indexOf("private void TryInitializePortfolioBinding"),
     integration.indexOf("private void UpdatePortfolioBridge"),
   );
-  assert.ok(binding.indexOf("this.TryPreparePortfolioMineLadderGivenFixture()") < binding.indexOf("this.portfolioBinding ="));
+  assert.ok(
+    binding.indexOf("this.TryPreparePortfolioMineLadderGivenFixture()") < binding.indexOf("this.portfolioBinding ="),
+  );
   assert.match(entry, /this\.ObservePortfolioMineLadderGivenWarped\(e\)/);
   assert.match(entry, /this\.ResetPortfolioMineLadderGivenFixture\("saving"\)/);
   assert.match(entry, /this\.ResetPortfolioMineLadderGivenFixture\("returned_to_title"\)/);

@@ -35,9 +35,9 @@ test("Pullback Universal Property: ActiveActions == Published ∩ LiveCapabiliti
           const shouldBeIncluded = isPublished && isLive && isNotDeniedAction && isNotDeniedFamily;
           assert.equal(resultSet.has(action.actionId), shouldBeIncluded);
         }
-      }
+      },
     ),
-    { numRuns: 100 }
+    { numRuns: 100 },
   );
 });
 

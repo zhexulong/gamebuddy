@@ -138,7 +138,10 @@ export function createReferencePipelineDialogueWebRequestHandler(
           throw new Error("chat_pipeline_service_unavailable");
         return;
       }
-      if (request.method === "POST" && /^\/api\/tavern\/v1\/turns\/[A-Za-z0-9_-]{22,128}\/cancel$/u.test(url.pathname)) {
+      if (
+        request.method === "POST" &&
+        /^\/api\/tavern\/v1\/turns\/[A-Za-z0-9_-]{22,128}\/cancel$/u.test(url.pathname)
+      ) {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = authenticate(request, browser, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
@@ -156,7 +159,8 @@ export function createReferencePipelineDialogueWebRequestHandler(
         );
         if (!TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(turn))
           throw new Error("chat_pipeline_service_unavailable");
-        const disposition = turn.state === "cancelled" ? "cancelled" : turn.state === "completed" ? "completion_won" : "already_terminal";
+        const disposition =
+          turn.state === "cancelled" ? "cancelled" : turn.state === "completed" ? "completion_won" : "already_terminal";
         const result = Object.freeze({ apiVersion: 1 as const, disposition, turn });
         if (!TavernBrowserValidatorsV1.CancelTurnResultV1Schema.Check(result))
           throw new Error("chat_pipeline_service_unavailable");

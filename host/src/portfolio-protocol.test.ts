@@ -975,13 +975,7 @@ test("skip_event fixes probe facts, request/cancel bounds, and success receipt l
   assert.equal(validatePortfolioSkipEventRequest(request, scope, now), null);
   assert.equal(
     validatePortfolioMessage(
-      newPortfolioEnvelope(
-        "skip_event_request",
-        scope,
-        request,
-        "00000000-0000-4000-8000-000000000011",
-        now,
-      ),
+      newPortfolioEnvelope("skip_event_request", scope, request, "00000000-0000-4000-8000-000000000011", now),
       scope,
       now,
     ),
@@ -1011,13 +1005,7 @@ test("skip_event fixes probe facts, request/cancel bounds, and success receipt l
   };
   assert.equal(
     validatePortfolioMessage(
-      newPortfolioEnvelope(
-        "skip_event_probe_request",
-        scope,
-        request,
-        "00000000-0000-4000-8000-000000000012",
-        now,
-      ),
+      newPortfolioEnvelope("skip_event_probe_request", scope, request, "00000000-0000-4000-8000-000000000012", now),
       scope,
       now,
     ),
@@ -1029,7 +1017,10 @@ test("skip_event fixes probe facts, request/cancel bounds, and success receipt l
     validatePortfolioSkipEventProbe({ ...probe, scope: { ...scope, worldId: "other" } }, scope),
     "invalid_portfolio_skip_event_probe",
   );
-  assert.equal(validatePortfolioSkipEventProbe({ ...probe, fresh: false }, scope), "invalid_portfolio_skip_event_probe");
+  assert.equal(
+    validatePortfolioSkipEventProbe({ ...probe, fresh: false }, scope),
+    "invalid_portfolio_skip_event_probe",
+  );
   assert.throws(
     () => materializePortfolioSkipEventProbe({ ...probe, revision: 2 }, request, scope),
     /portfolio_skip_event_probe_correlation_mismatch/,
@@ -1122,19 +1113,13 @@ test("skip_event fixes probe facts, request/cancel bounds, and success receipt l
   // The skippable bit describes the player UI affordance; a direct native
   // Event.skipEvent terminal remains valid for any observed active Event.
   assert.equal(
-    validatePortfolioSkipEventReceipt(
-      { ...receipt, evidence: { ...receipt.evidence, eventSkippable: false } },
-      scope,
-    ),
+    validatePortfolioSkipEventReceipt({ ...receipt, evidence: { ...receipt.evidence, eventSkippable: false } }, scope),
     null,
   );
   // Success requires a fully observed-and-clean postcondition, so an
   // incomplete cleanup or a mismatched terminal reason must fail closed.
   assert.equal(
-    validatePortfolioSkipEventReceipt(
-      { ...receipt, evidence: { ...receipt.evidence, eventCleared: false } },
-      scope,
-    ),
+    validatePortfolioSkipEventReceipt({ ...receipt, evidence: { ...receipt.evidence, eventCleared: false } }, scope),
     "invalid_portfolio_skip_event_receipt",
   );
   assert.equal(
@@ -1203,7 +1188,10 @@ test("skip_event fixes probe facts, request/cancel bounds, and success receipt l
     "invalid_portfolio_skip_event_phase_trace",
   );
   assert.equal(
-    validatePortfolioSkipEventReceipt({ ...postNativeUncertain, evidence: { ...postNativeUncertain.evidence, nativeSkipObserved: false } }, scope),
+    validatePortfolioSkipEventReceipt(
+      { ...postNativeUncertain, evidence: { ...postNativeUncertain.evidence, nativeSkipObserved: false } },
+      scope,
+    ),
     "invalid_portfolio_skip_event_phase_trace",
   );
   // A pre-native fault may settle short and uncertain, but it must not claim

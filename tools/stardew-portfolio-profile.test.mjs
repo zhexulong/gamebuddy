@@ -564,7 +564,12 @@ test("Portfolio existing-save transaction derives the fixed elevator Given fixtu
   assert.equal(Object.keys(written.Portfolio.MineElevatorGivenFixture).length, 1);
   await restorePortfolioProfile(options);
   await assert.rejects(
-    () => preparePortfolioExistingSaveProfile({ ...options, backupName: "existing-save-elevator-caller-field", mineElevatorGivenFixture: true }),
+    () =>
+      preparePortfolioExistingSaveProfile({
+        ...options,
+        backupName: "existing-save-elevator-caller-field",
+        mineElevatorGivenFixture: true,
+      }),
     /portfolio_existing_save_mine_elevator_fixture_is_action_derived/,
   );
 });
@@ -615,7 +620,12 @@ test("Portfolio existing-save transaction derives the fixed ladder Given fixture
   assert.equal(Object.keys(written.Portfolio.MineLadderGivenFixture).length, 1);
   await restorePortfolioProfile(options);
   await assert.rejects(
-    () => preparePortfolioExistingSaveProfile({ ...options, backupName: "existing-save-ladder-caller-field", mineLadderGivenFixture: true }),
+    () =>
+      preparePortfolioExistingSaveProfile({
+        ...options,
+        backupName: "existing-save-ladder-caller-field",
+        mineLadderGivenFixture: true,
+      }),
     /portfolio_existing_save_mine_ladder_fixture_is_action_derived/,
   );
 });

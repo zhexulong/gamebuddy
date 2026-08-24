@@ -222,16 +222,15 @@ export function ManagementApp() {
 
   const [draftText, setDraftText] = useState("");
 
-  const memoryReadAvailable =
-    view.kind === "ready" && view.session.snapshot.memory.readAvailable === true;
-  const memoryMutationAvailable =
-    view.kind === "ready" && view.session.snapshot.memory.mutationAvailable === true;
+  const memoryReadAvailable = view.kind === "ready" && view.session.snapshot.memory.readAvailable === true;
+  const memoryMutationAvailable = view.kind === "ready" && view.session.snapshot.memory.mutationAvailable === true;
   const loadMemory = (): void => {
     setMemoryView({ kind: "loading" });
     void (async () => {
       try {
         const result = await apiRef.current.readMemory();
-        if (result.memories.length === 0) setMemoryView({ kind: "empty", projectionRevision: result.projectionRevision });
+        if (result.memories.length === 0)
+          setMemoryView({ kind: "empty", projectionRevision: result.projectionRevision });
         else setMemoryView({ kind: "ready", rows: result.memories, projectionRevision: result.projectionRevision });
       } catch {
         setMemoryView({ kind: "error" });
@@ -244,10 +243,16 @@ export function ManagementApp() {
     else setMemoryView({ kind: "ready", rows: result.memories, projectionRevision: result.projectionRevision });
   };
 
-  const handleMemoryMutation = (input: { operation: "create"; content: string } | { operation: "update"; handle: string; content: string } | { operation: "archive"; handle: string }): void => {
+  const handleMemoryMutation = (
+    input:
+      | { operation: "create"; content: string }
+      | { operation: "update"; handle: string; content: string }
+      | { operation: "archive"; handle: string },
+  ): void => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
-    const projectionRevision = memoryView.kind === "ready" || memoryView.kind === "empty" ? memoryView.projectionRevision : null;
+    const projectionRevision =
+      memoryView.kind === "ready" || memoryView.kind === "empty" ? memoryView.projectionRevision : null;
     if (projectionRevision === null) return;
     void (async () => {
       try {
@@ -387,12 +392,7 @@ export function ManagementApp() {
           <header className="app-bar">
             <div className="app-bar-title">{view.session.snapshot.chat.companion.name}</div>
             <div className="app-bar-actions">
-              <button
-                type="button"
-                className="small-button"
-                onClick={() => setDrawerOpen(true)}
-                title={labels().chats}
-              >
+              <button type="button" className="small-button" onClick={() => setDrawerOpen(true)} title={labels().chats}>
                 {labels().chats}
               </button>
               {memoryReadAvailable && (
@@ -568,7 +568,12 @@ function MemoryPanel({
   locale: Locale;
   onRefresh: () => void;
   mutationAvailable: boolean;
-  onMutate: (input: { operation: "create"; content: string } | { operation: "update"; handle: string; content: string } | { operation: "archive"; handle: string }) => void;
+  onMutate: (
+    input:
+      | { operation: "create"; content: string }
+      | { operation: "update"; handle: string; content: string }
+      | { operation: "archive"; handle: string },
+  ) => void;
 }>): ReactElement {
   const statusText = (status: string, pinned: boolean): string => {
     const base = MEMORY_STATUS_LABELS[status]?.[locale === "zh-CN" ? "zh" : "en"] ?? status;
@@ -598,7 +603,9 @@ function MemoryPanel({
           <p className="loading-text">{labels.failure}</p>
         </div>
       )}
-      {mutationAvailable && <MemoryCreateForm label={labels.create} onCreate={(content) => onMutate({ operation: "create", content })} />}
+      {mutationAvailable && (
+        <MemoryCreateForm label={labels.create} onCreate={(content) => onMutate({ operation: "create", content })} />
+      )}
       {memoryView.kind === "empty" && (
         <div className="state-placeholder" data-memory-state="empty">
           <p className="loading-text">{labels.noMemories}</p>
@@ -623,12 +630,29 @@ function MemoryPanel({
   );
 }
 
-function MemoryCreateForm({ label, onCreate }: Readonly<{ label: string; onCreate: (content: string) => void }>): ReactElement {
+function MemoryCreateForm({
+  label,
+  onCreate,
+}: Readonly<{ label: string; onCreate: (content: string) => void }>): ReactElement {
   const [content, setContent] = useState("");
   return (
     <div className="composer-actions">
-      <textarea aria-label="Memory content" className="form-textarea" value={content} onChange={(event) => setContent(event.target.value)} rows={2} />
-      <button type="button" className="small-button" disabled={content.trim().length === 0} onClick={() => { onCreate(content.trim()); setContent(""); }}>
+      <textarea
+        aria-label="Memory content"
+        className="form-textarea"
+        value={content}
+        onChange={(event) => setContent(event.target.value)}
+        rows={2}
+      />
+      <button
+        type="button"
+        className="small-button"
+        disabled={content.trim().length === 0}
+        onClick={() => {
+          onCreate(content.trim());
+          setContent("");
+        }}
+      >
         {label}
       </button>
     </div>
@@ -665,17 +689,39 @@ function MemoryRow({
         <span className="memory-item-title">{item.title}</span>
         <span className="memory-item-meta">{statusText}</span>
       </div>
-      {editing ? <textarea aria-label={`${labels.memoryContent}: ${item.title}`} className="form-textarea" value={content} onChange={(event) => setContent(event.target.value)} rows={2} /> : <p>{item.content}</p>}
+      {editing ? (
+        <textarea
+          aria-label={`${labels.memoryContent}: ${item.title}`}
+          className="form-textarea"
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          rows={2}
+        />
+      ) : (
+        <p>{item.content}</p>
+      )}
       {mutationAvailable && item.status !== "archived" && (
         <div className="composer-actions">
           {editing ? (
-            <button type="button" className="small-button" disabled={content.trim().length === 0} onClick={() => { onUpdate(content.trim()); setEditing(false); }}>
+            <button
+              type="button"
+              className="small-button"
+              disabled={content.trim().length === 0}
+              onClick={() => {
+                onUpdate(content.trim());
+                setEditing(false);
+              }}
+            >
               {labels.save}
             </button>
           ) : (
-            <button type="button" className="small-button" onClick={beginEditing}>{labels.editMemory}</button>
+            <button type="button" className="small-button" onClick={beginEditing}>
+              {labels.editMemory}
+            </button>
           )}
-          <button type="button" className="small-button" onClick={onArchive}>{labels.archiveMemory}</button>
+          <button type="button" className="small-button" onClick={onArchive}>
+            {labels.archiveMemory}
+          </button>
         </div>
       )}
     </div>

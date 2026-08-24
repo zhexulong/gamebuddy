@@ -42,11 +42,7 @@ import {
   type IntegrationActionPolicy,
 } from "./integration-module.js";
 import type { IntegrationConnection } from "./integration-types.js";
-import type {
-  CompanionTextPort,
-  HostPresentationAdmissionProvider,
-  PresentationRuntime,
-} from "./presentation.js";
+import type { CompanionTextPort, HostPresentationAdmissionProvider, PresentationRuntime } from "./presentation.js";
 import type { ExecutionReceipt } from "./protocol.js";
 import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
 import {
@@ -151,9 +147,7 @@ export function createCompanionStatusTool(integration?: IntegrationConnection) {
 export const companionStatusTool = createCompanionStatusTool();
 export const PHASE_0B_ALLOWED_TOOL_NAMES = Object.freeze(["companion_status"]);
 
-function createChatPresentationTool(
-  presentation: PresentationRuntime | undefined,
-): ToolDefinition | undefined {
+function createChatPresentationTool(presentation: PresentationRuntime | undefined): ToolDefinition | undefined {
   if (
     presentation?.surface !== "chat" ||
     presentation.admissionProvider === undefined ||

@@ -308,7 +308,9 @@ test("generic runtime keeps an explicit game surface when the Host construction 
     assert.doesNotMatch(runtime.session.systemPrompt, /private/);
     assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
     assert.equal(
-      runtime.session.agent.state.tools.some((tool) => tool.name === "companion_text" || tool.name === "companion_speak"),
+      runtime.session.agent.state.tools.some(
+        (tool) => tool.name === "companion_text" || tool.name === "companion_speak",
+      ),
       false,
     );
     assert.equal(runtime.paths.surfaceSessionId, "game_surface_01");
@@ -338,7 +340,9 @@ test("Chat surface runtime has no presentation pseudo-tools before the Host moun
     assert.doesNotMatch(runtime.session.systemPrompt, /private/);
     assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
     assert.equal(
-      runtime.session.agent.state.tools.some((tool) => tool.name === "companion_text" || tool.name === "companion_speak"),
+      runtime.session.agent.state.tools.some(
+        (tool) => tool.name === "companion_text" || tool.name === "companion_speak",
+      ),
       false,
     );
     assert.equal(runtime.paths.surfaceSessionId, "chat_surface_01");

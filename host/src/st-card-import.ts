@@ -312,9 +312,18 @@ function parseExamples(value: string | undefined): readonly Readonly<{ user: str
       .filter(Boolean)
       .slice(0, 4)
       .flatMap((part) => {
-        const user = part.match(/(?:\{\{user\}\}|You|User)\s*:\s*([\s\S]*?)(?=(?:\{\{char\}\}|Character|Assistant)\s*:|$)/iu)?.[1]?.trim();
-        const companion = part.match(/(?:\{\{char\}\}|Character|Assistant)\s*:\s*([\s\S]*?)(?=(?:\{\{user\}\}|You|User)\s*:|$)/iu)?.[1]?.trim();
-        return user !== undefined && companion !== undefined && user.length > 0 && companion.length > 0 && user.length <= 512 && companion.length <= 512
+        const user = part
+          .match(/(?:\{\{user\}\}|You|User)\s*:\s*([\s\S]*?)(?=(?:\{\{char\}\}|Character|Assistant)\s*:|$)/iu)?.[1]
+          ?.trim();
+        const companion = part
+          .match(/(?:\{\{char\}\}|Character|Assistant)\s*:\s*([\s\S]*?)(?=(?:\{\{user\}\}|You|User)\s*:|$)/iu)?.[1]
+          ?.trim();
+        return user !== undefined &&
+          companion !== undefined &&
+          user.length > 0 &&
+          companion.length > 0 &&
+          user.length <= 512 &&
+          companion.length <= 512
           ? [Object.freeze({ user, companion })]
           : [];
       }),

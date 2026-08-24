@@ -57,9 +57,7 @@ function isNonTerminalLedger(ledger: ChatTurnLedger): boolean {
 
 /** Stop is actionable only after the exact prompt has reached durable arm. */
 function isCancellableLedger(ledger: ChatTurnLedger): boolean {
-  return (
-    (ledger.status === "attempt_starting" && ledger.observation?.phase === "armed") || ledger.status === "running"
-  );
+  return (ledger.status === "attempt_starting" && ledger.observation?.phase === "armed") || ledger.status === "running";
 }
 
 /**
@@ -172,9 +170,11 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
   )
     throw unavailable();
 
-  const start: ChatPipelineStartDependency = options.deps?.start ?? Object.freeze({
-    start: async () => await startMountedChatProvider(manifest, lease),
-  });
+  const start: ChatPipelineStartDependency =
+    options.deps?.start ??
+    Object.freeze({
+      start: async () => await startMountedChatProvider(manifest, lease),
+    });
   const eventStream = options.eventStream;
   const accept = createP4DurableTurnAcceptanceFacade(manifest, lease);
   const claim = createP4ProviderAttemptFacade(manifest, lease);
@@ -320,7 +320,8 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
       const state = await resumeState();
       const ledger = state.turnLedger;
-      if (ledger === null || lease.browserProjection.projectTurnHandle(ledger.turnId) !== turnHandle) throw unavailable();
+      if (ledger === null || lease.browserProjection.projectTurnHandle(ledger.turnId) !== turnHandle)
+        throw unavailable();
       if (!isNonTerminalLedger(ledger)) return projectTurn(lease, ledger);
       if (!isCancellableLedger(ledger) || !("attempt" in ledger)) return projectTurn(lease, ledger);
       const expected = Object.freeze({ turnId: ledger.turnId, attemptId: ledger.attempt.attemptId });
@@ -450,7 +451,10 @@ function projectTurn(lease: MountedChatRuntimeLease, ledger: ChatTurnLedger): Br
   const state =
     ledger.status === "accepted_queued" || ledger.status === "attempt_starting"
       ? "queued"
-      : ledger.status === "running" || ledger.status === "presentation_committed" || ledger.status === "completion_claimed" || ledger.status === "cancel_claimed"
+      : ledger.status === "running" ||
+          ledger.status === "presentation_committed" ||
+          ledger.status === "completion_claimed" ||
+          ledger.status === "cancel_claimed"
         ? "running"
         : ledger.status;
   return Object.freeze({

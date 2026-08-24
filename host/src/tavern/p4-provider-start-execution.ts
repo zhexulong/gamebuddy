@@ -236,13 +236,15 @@ export async function runMountedP4ProviderStart(scope: P4ProviderStartExecutionS
     // queued turn; a synchronous throw is equivalent to rejection.
     const settlePrompt = (): Promise<"fulfilled" | "rejected"> => {
       try {
-        return promptFn.call(runtimeSession.session, envelope, {
-          expandPromptTemplates: false,
-          source: "rpc",
-        }).then(
-          () => "fulfilled" as const,
-          () => "rejected" as const,
-        );
+        return promptFn
+          .call(runtimeSession.session, envelope, {
+            expandPromptTemplates: false,
+            source: "rpc",
+          })
+          .then(
+            () => "fulfilled" as const,
+            () => "rejected" as const,
+          );
       } catch {
         return Promise.resolve("rejected");
       }

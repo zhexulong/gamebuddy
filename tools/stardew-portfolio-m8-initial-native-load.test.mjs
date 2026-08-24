@@ -67,10 +67,16 @@ test("M8 one-shot initial native load opens a binding only after exact successfu
     /public PortfolioMineEntryGivenFixtureConfig\?? MineEntryGivenFixture \{ get; init; \}/,
   );
   assert.match(portfolioConfig, /MineEntryGivenFixture is null \|\| !MineEntryGivenFixture\.Enable/);
-  assert.match(portfolioConfig, /public PortfolioMineLadderGivenFixtureConfig\? MineLadderGivenFixture \{ get; init; \}/);
+  assert.match(
+    portfolioConfig,
+    /public PortfolioMineLadderGivenFixtureConfig\? MineLadderGivenFixture \{ get; init; \}/,
+  );
   assert.match(portfolioConfig, /MineLadderGivenFixture is null \|\| !MineLadderGivenFixture\.Enable/);
   assert.match(completion, /MineLadderGivenFixture = portfolio\.MineLadderGivenFixture/);
-  assert.match(portfolioConfig, /public PortfolioMineElevatorGivenFixtureConfig\? MineElevatorGivenFixture \{ get; init; \}/);
+  assert.match(
+    portfolioConfig,
+    /public PortfolioMineElevatorGivenFixtureConfig\? MineElevatorGivenFixture \{ get; init; \}/,
+  );
   assert.match(portfolioConfig, /MineElevatorGivenFixture is null \|\| !MineElevatorGivenFixture\.Enable/);
   assert.match(completion, /MineElevatorGivenFixture = portfolio\.MineElevatorGivenFixture/);
   assert.match(fixture, /PortfolioMineEntryGivenFixtureState\.Pending/);
@@ -95,22 +101,19 @@ test("M8 one-shot initial native load opens a binding only after exact successfu
     /\.Position\s*=|\.faceDirection\(|GetGrabTile\(|TilePoint/,
     "Mine-exterior setup must not mutate or require an interaction pose",
   );
-  assert.match(
-    settleMethod,
-    /IsBlockingForCurrentProfile\(player\)[\s\S]*?TryReadPortfolioMineEntryGiven\(player\)/,
-  );
+  assert.match(settleMethod, /IsBlockingForCurrentProfile\(player\)[\s\S]*?TryReadPortfolioMineEntryGiven\(player\)/);
   assert.doesNotMatch(fixture, /IsAwaitingSkippablePortfolioMineEntryEvent|CurrentEvent\?\.skippable != true/);
-  assert.match(
-    fixture,
-    /return !isSkipEventCombo\s*\|\|\s*!Game1\.eventUp\s*\|\|\s*Game1\.CurrentEvent is null;/,
-  );
+  assert.match(fixture, /return !isSkipEventCombo\s*\|\|\s*!Game1\.eventUp\s*\|\|\s*Game1\.CurrentEvent is null;/);
   assert.match(fixture, /return Game1\.dialogueUp \|\| Game1\.activeClickableMenu is not null \|\| !player\.CanMove;/);
   const succeededFixture = fixture.slice(
     fixture.indexOf("if (this.portfolioMineEntryGivenFixtureState == PortfolioMineEntryGivenFixtureState.Succeeded)"),
     fixture.indexOf("if (this.portfolioMineEntryGivenFixtureState == PortfolioMineEntryGivenFixtureState.Pending)"),
   );
   assert.match(succeededFixture, /PortfolioMineEntryGivenFixtureState\.Succeeded\)[\s\S]*?return true;/);
-  assert.doesNotMatch(succeededFixture, /IsBlockingForCurrentProfile|portfolioMineEntryGivenFixtureState = PortfolioMineEntryGivenFixtureState\.Rejected/);
+  assert.doesNotMatch(
+    succeededFixture,
+    /IsBlockingForCurrentProfile|portfolioMineEntryGivenFixtureState = PortfolioMineEntryGivenFixtureState\.Rejected/,
+  );
   assert.ok(
     binding.indexOf("this.TryPreparePortfolioMineEntryGivenFixture()") < binding.indexOf("this.portfolioBinding ="),
     "fixture preparation must complete before binding ownership in the lifecycle slice",
@@ -133,11 +136,13 @@ test("M8 one-shot initial native load opens a binding only after exact successfu
   );
   assert.match(postSkipObservation, /if \(!eventCleared\)\s*return;[\s\S]*?if \(!stateClean\)\s*return;/);
   assert.ok(
-    postSkipObservation.indexOf("if (!stateClean)") < postSkipObservation.indexOf("this.observePostcondition(postcondition)"),
+    postSkipObservation.indexOf("if (!stateClean)") <
+      postSkipObservation.indexOf("this.observePostcondition(postcondition)"),
     "a transient native UI/action lock must remain pending before any skip_event terminal postcondition is emitted",
   );
   assert.ok(
-    postSkipObservation.indexOf("if (!stateClean)") < postSkipObservation.indexOf("long revision = this.nextRevision()"),
+    postSkipObservation.indexOf("if (!stateClean)") <
+      postSkipObservation.indexOf("long revision = this.nextRevision()"),
     "the dirty transient branch must return before creating a terminal postcondition observation",
   );
 });

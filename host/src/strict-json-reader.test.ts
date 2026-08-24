@@ -10,10 +10,7 @@ import { readStrictJsonFile, STRICT_JSON_READER_MAX_BUDGET_BYTES } from "./stric
 
 const execFileAsync = promisify(execFile);
 
-async function runWithMockedFilesystem(
-  mode: "lstat_failure" | "read_failure",
-  path: string,
-): Promise<void> {
+async function runWithMockedFilesystem(mode: "lstat_failure" | "read_failure", path: string): Promise<void> {
   const readerUrl = new URL("./strict-json-reader.js", import.meta.url).href;
   const script = `
     import * as filesystem from "node:fs/promises";
@@ -89,7 +86,6 @@ test("strict JSON reader accepts bounded high-cardinality valid JSON", async () 
     await subject.dispose();
   }
 });
-
 
 test("strict JSON reader rejects invalid UTF-8 and files over its bounded limit", async () => {
   await rejects(Buffer.from([0xff]));

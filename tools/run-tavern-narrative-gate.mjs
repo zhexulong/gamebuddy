@@ -199,15 +199,16 @@ export function classifyNarrativeTurnOutcome(outcome, lifecycle) {
   // The marker fires directly at Pi's provider boundary. Seeing it without a
   // terminal lifecycle event distinguishes a live provider wait from an SSE,
   // controller, or presentation terminal-signal loss.
-  return lifecycle.includes("turn.state_changed")
-    ? "dialogue_terminal_signal_unobserved"
-    : "provider_request_pending";
+  return lifecycle.includes("turn.state_changed") ? "dialogue_terminal_signal_unobserved" : "provider_request_pending";
 }
 
 export async function sendTurn(origin, client) {
   const events = [];
   const abort = new AbortController();
-  const response = await fetch(`${origin}/api/tavern/v1/events?apiVersion=1`, { headers: { Cookie: client.cookie, Origin: origin }, signal: abort.signal });
+  const response = await fetch(`${origin}/api/tavern/v1/events?apiVersion=1`, {
+    headers: { Cookie: client.cookie, Origin: origin },
+    signal: abort.signal,
+  });
   if (!response.ok || response.body === null) throw new Error(`events_failed:${response.status}`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -290,14 +291,18 @@ export async function sendTurn(origin, client) {
       break;
     }
     if (terminal.ok && state === "failed") {
-      outcome = Object.freeze({ kind: "turn_failed", problemCode: sanitizeProblemCode(terminalSnapshot?.chat?.turn?.problemCode) });
+      outcome = Object.freeze({
+        kind: "turn_failed",
+        problemCode: sanitizeProblemCode(terminalSnapshot?.chat?.turn?.problemCode),
+      });
       break;
     }
     if (terminal.ok && state === "cancelled") {
       outcome = "cancelled";
       break;
     }
-    if (attempt + 1 < POST_SUBMIT_STATE_POLLS) await new Promise((resolvePoll) => setTimeout(resolvePoll, POST_SUBMIT_STATE_POLL_MS));
+    if (attempt + 1 < POST_SUBMIT_STATE_POLLS)
+      await new Promise((resolvePoll) => setTimeout(resolvePoll, POST_SUBMIT_STATE_POLL_MS));
   }
   return Object.freeze({ outcome, lifecycle: events });
 }

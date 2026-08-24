@@ -318,9 +318,15 @@ test("memory mutation command is a strict ordinary CRUD CAS command", () => {
   assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check(update), true);
   assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check(archive), true);
   assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...create, handle }), false);
-  assert.equal(TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...archive, content: "unexpected" }), false);
   assert.equal(
-    TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...create, expectedProjectionRevision: "opaque-but-not-canonical=" }),
+    TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({ ...archive, content: "unexpected" }),
+    false,
+  );
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryMutationCommandV1Schema.Check({
+      ...create,
+      expectedProjectionRevision: "opaque-but-not-canonical=",
+    }),
     false,
   );
   assert.equal(

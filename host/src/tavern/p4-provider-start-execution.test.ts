@@ -249,7 +249,8 @@ function createScope(overrides: ScopeOverrides = {}) {
       (async () => {
         const terminal = overrides.terminalLedger?.();
         if (terminal !== undefined) return terminal;
-        if (durablePresentation === undefined) return attemptStarting(Object.freeze({ phase: "armed", observedAtMs: 1 }));
+        if (durablePresentation === undefined)
+          return attemptStarting(Object.freeze({ phase: "armed", observedAtMs: 1 }));
         return durablePresentation;
       }),
     activatePresentation:
@@ -474,7 +475,10 @@ test("P4c returns a normal durable Stop winner when an aborted prompt rejects", 
   assert.equal(promptCalls, 1);
   assert.equal(result.outcome, "cancelled");
   assert.equal(result.ledger.status, "cancelled");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm"],
+  );
   assert.deepEqual(presentationTransitions, []);
 });
 
@@ -533,7 +537,10 @@ test("P4c rereads a normal Stop winner after provider settlement", async () => {
   assert.equal(promptCalls, 1);
   assert.equal(result.outcome, "cancelled");
   assert.equal(result.ledger.status, "cancelled");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "running"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "running"],
+  );
   assert.deepEqual(presentationTransitions, []);
 });
 
@@ -797,7 +804,10 @@ test("P4c persists an asynchronously rejected provider prompt as retryable failu
   assert.equal(result.ledger.status, "failed");
   assert.equal(result.ledger.reasonCode, "runtime_unavailable");
   assert.equal(result.ledger.observation.phase, "armed");
-  assert.deepEqual(transitions.map(({ operation }) => operation), ["arm", "fail"]);
+  assert.deepEqual(
+    transitions.map(({ operation }) => operation),
+    ["arm", "fail"],
+  );
 });
 
 test("P4c revalidates after asynchronous message read and records local pre-invocation revocation without prompting", async () => {

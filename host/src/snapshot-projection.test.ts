@@ -1,14 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fc } from "./test-support/fast-check.js";
-import {
-  projectMovementContext,
-  projectFarmingContext,
-  projectInventoryContext,
-  type MovementContextProjection,
-  type FarmingContextProjection,
-  type InventoryContextProjection,
-} from "./snapshot-projection.js";
+import { projectMovementContext, projectFarmingContext, projectInventoryContext } from "./snapshot-projection.js";
 import type { Snapshot } from "./protocol.js";
 
 function deepFreeze<T>(value: T): Readonly<T> {
@@ -47,10 +40,46 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         capabilities: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 5 }),
         presentationLocale: fc.constant("en-US"),
         inventorySlots: fc.option(fc.integer({ min: 12, max: 36 }), { nil: undefined }),
-        soilTiles: fc.option(fc.array(fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }), { minLength: 0, maxLength: 5 }), { nil: undefined }),
-        toolSlots: fc.option(fc.array(fc.record({ slot: fc.integer({ min: 0, max: 36 }), label: fc.string({ minLength: 1, maxLength: 20 }) }), { minLength: 0, maxLength: 5 }), { nil: undefined }),
-        warps: fc.option(fc.array(fc.record({ sourceX: fc.integer({ min: 0, max: 200 }), sourceY: fc.integer({ min: 0, max: 200 }), targetLocation: fc.string({ minLength: 1, maxLength: 20 }), targetX: fc.integer({ min: 0, max: 200 }), targetY: fc.integer({ min: 0, max: 200 }) }), { minLength: 0, maxLength: 3 }), { nil: undefined }),
-        doorTargets: fc.option(fc.array(fc.record({ sourceX: fc.integer({ min: 0, max: 200 }), sourceY: fc.integer({ min: 0, max: 200 }), targetLocation: fc.string({ minLength: 1, maxLength: 20 }), targetX: fc.integer({ min: 0, max: 200 }), targetY: fc.integer({ min: 0, max: 200 }) }), { minLength: 0, maxLength: 3 }), { nil: undefined }),
+        soilTiles: fc.option(
+          fc.array(fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }), {
+            minLength: 0,
+            maxLength: 5,
+          }),
+          { nil: undefined },
+        ),
+        toolSlots: fc.option(
+          fc.array(
+            fc.record({ slot: fc.integer({ min: 0, max: 36 }), label: fc.string({ minLength: 1, maxLength: 20 }) }),
+            { minLength: 0, maxLength: 5 },
+          ),
+          { nil: undefined },
+        ),
+        warps: fc.option(
+          fc.array(
+            fc.record({
+              sourceX: fc.integer({ min: 0, max: 200 }),
+              sourceY: fc.integer({ min: 0, max: 200 }),
+              targetLocation: fc.string({ minLength: 1, maxLength: 20 }),
+              targetX: fc.integer({ min: 0, max: 200 }),
+              targetY: fc.integer({ min: 0, max: 200 }),
+            }),
+            { minLength: 0, maxLength: 3 },
+          ),
+          { nil: undefined },
+        ),
+        doorTargets: fc.option(
+          fc.array(
+            fc.record({
+              sourceX: fc.integer({ min: 0, max: 200 }),
+              sourceY: fc.integer({ min: 0, max: 200 }),
+              targetLocation: fc.string({ minLength: 1, maxLength: 20 }),
+              targetX: fc.integer({ min: 0, max: 200 }),
+              targetY: fc.integer({ min: 0, max: 200 }),
+            }),
+            { minLength: 0, maxLength: 3 },
+          ),
+          { nil: undefined },
+        ),
       }),
       (generated) => {
         const snapshot = generated as unknown as Snapshot;
@@ -92,8 +121,14 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
     actionable: true,
     capabilities: ["till_soil", "water_crop"],
     presentationLocale: "en-US",
-    soilTiles: [{ x: 5, y: 10 }, { x: 5, y: 11 }],
-    toolSlots: [{ slot: 0, label: "Axe" }, { slot: 1, label: "Hoe" }],
+    soilTiles: [
+      { x: 5, y: 10 },
+      { x: 5, y: 11 },
+    ],
+    toolSlots: [
+      { slot: 0, label: "Axe" },
+      { slot: 1, label: "Hoe" },
+    ],
     inventorySlots: 24,
   };
 

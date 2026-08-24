@@ -245,7 +245,12 @@ const result: SubmitResultV1 = Object.freeze({
   }),
 });
 
-function service(recorder: { starts: number; statuses: number; closes: number; cancels?: string[] }): ChatPipelineService {
+function service(recorder: {
+  starts: number;
+  statuses: number;
+  closes: number;
+  cancels?: string[];
+}): ChatPipelineService {
   return Object.freeze({
     async submitAfterResponseCommit(command, idempotencyKey, commit202) {
       assert.equal(command.text, "Hello");
@@ -393,27 +398,47 @@ test("reference handler validates, authenticates, and returns the reread cancell
     assert.equal(unauthorized.status, 401);
     const csrfFailed = await fetch(`${server.origin}${path}`, {
       method: "POST",
-      headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": "B".repeat(43) },
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": "B".repeat(43),
+      },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1 }),
     });
     assert.equal(csrfFailed.status, 403);
     const invalid = await fetch(`${server.origin}${path}`, {
       method: "POST",
-      headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken },
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": snapshot.csrfToken,
+      },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 0 }),
     });
     assert.equal(invalid.status, 400);
     const stale = await fetch(`${server.origin}${path}`, {
       method: "POST",
-      headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken },
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": snapshot.csrfToken,
+      },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 2 }),
     });
     assert.equal(stale.status, 409);
-    assert.equal((await stale.json() as { code: string }).code, "selection_conflict");
+    assert.equal(((await stale.json()) as { code: string }).code, "selection_conflict");
     assert.deepEqual(recorder.cancels, []);
     const cancelled = await fetch(`${server.origin}${path}`, {
       method: "POST",
-      headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": snapshot.csrfToken },
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": snapshot.csrfToken,
+      },
       body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1 }),
     });
     assert.equal(cancelled.status, 200);

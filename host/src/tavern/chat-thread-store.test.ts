@@ -6,12 +6,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
-  type AttemptStartingTurn,
   claimP4MountedAttempt,
   createChatThreadStore,
   type GreetingSource,
   MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES,
-  type RunningTurn,
   transitionP4MountedProviderStart as rawTransitionP4MountedProviderStart,
   transitionP5MountedPresentation as rawTransitionP5MountedPresentation,
 } from "./chat-thread-store.js";

@@ -102,9 +102,6 @@ function _nonEmpty(value, label, errors) {
 function booleans(object, fields, label, errors) {
   for (const field of fields) value(object?.[field], true, `${label}.${field}`, errors);
 }
-function falseBooleans(object, fields, label, errors) {
-  for (const field of fields) value(object?.[field], false, `${label}.${field}`, errors);
-}
 function opaqueCorrelation(correlation, label, errors) {
   exact(correlation, ["kind", "source", "value"], label, errors);
   value(correlation?.kind, "opaque_runtime_correlation", `${label}.kind`, errors);
@@ -565,7 +562,12 @@ export function validateM8ElevatorActionContract(contract) {
     "fixtureStartingFacts.fixtureMutatesGameplayState",
     errors,
   );
-  value(contract?.fixtureStartingFacts?.fixtureWritesEvidence, false, "fixtureStartingFacts.fixtureWritesEvidence", errors);
+  value(
+    contract?.fixtureStartingFacts?.fixtureWritesEvidence,
+    false,
+    "fixtureStartingFacts.fixtureWritesEvidence",
+    errors,
+  );
   value(
     contract?.fixtureStartingFacts?.fixtureWritesSave,
     "declared_staged_slot_only_canonical_never_written",

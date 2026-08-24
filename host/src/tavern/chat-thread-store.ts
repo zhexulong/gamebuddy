@@ -904,8 +904,7 @@ export function createChatThreadStore(
         const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
         if (!threadRow) throw new ExactThreadNotFoundError();
         const thread = rowToThread(threadRow);
-        if (thread.chatSurfaceSessionId !== chatSurfaceSessionId)
-          throw new Error("chat_thread_surface_mismatch");
+        if (thread.chatSurfaceSessionId !== chatSurfaceSessionId) throw new Error("chat_thread_surface_mismatch");
 
         const selectedAtMs = now();
         db.prepare(
@@ -932,8 +931,7 @@ export function createChatThreadStore(
       assertId("chatThreadId", chatThreadId);
       return withDb((db) => {
         const state = readStateFromDb(db, chatThreadId);
-        if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId)
-          throw new Error("chat_thread_surface_mismatch");
+        if (state.thread.chatSurfaceSessionId !== chatSurfaceSessionId) throw new Error("chat_thread_surface_mismatch");
         return state;
       });
     },
@@ -1083,13 +1081,10 @@ export function createChatThreadStore(
       return withDb((db) => {
         const current = readStateFromDb(db, input.chatThreadId);
         const thread = current.thread;
-        if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId)
-          throw new Error("chat_thread_surface_mismatch");
-        if ((thread.lifecycleStatus ?? "active") !== "active")
-          throw new Error("chat_thread_lifecycle_not_active");
+        if (thread.chatSurfaceSessionId !== input.chatSurfaceSessionId) throw new Error("chat_thread_surface_mismatch");
+        if ((thread.lifecycleStatus ?? "active") !== "active") throw new Error("chat_thread_lifecycle_not_active");
         const ledger = current.turnLedger;
-        if (ledger === null || ledger.turnId !== input.expectedTurnId)
-          throw new Error("chat_turn_not_current");
+        if (ledger === null || ledger.turnId !== input.expectedTurnId) throw new Error("chat_turn_not_current");
         if (isTerminalLedger(ledger)) {
           if (!isTurnWithAttempt(ledger) || ledger.attempt.attemptId !== input.expectedAttemptId)
             throw new Error("chat_turn_not_current");
@@ -1196,7 +1191,7 @@ export function createChatThreadStore(
           "UPDATE tavern_threads SET lifecycle_status = ?, management_revision = ?, metadata_json = ? WHERE thread_id = ?",
         ).run(transition.status, nextRevision, JSON.stringify(metadata), input.chatThreadId);
 
-        return (readStateFromDb(db, input.chatThreadId)).thread;
+        return readStateFromDb(db, input.chatThreadId).thread;
       });
     },
 
@@ -1220,7 +1215,7 @@ export function createChatThreadStore(
           input.chatThreadId,
         );
 
-        return (readStateFromDb(db, input.chatThreadId)).thread;
+        return readStateFromDb(db, input.chatThreadId).thread;
       });
     },
 
@@ -1262,7 +1257,7 @@ export function createChatThreadStore(
           "UPDATE tavern_drafts SET revision = ?, draft_content = ?, updated_at_ms = ? WHERE thread_id = ?",
         ).run(nextRevision, text, updatedAt, input.chatThreadId);
 
-        return (readStateFromDb(db, input.chatThreadId)).draft;
+        return readStateFromDb(db, input.chatThreadId).draft;
       }),
     );
   }
@@ -1345,7 +1340,10 @@ export function createChatThreadStore(
       });
 
       const lockedAt = thread.openingLockedAtEventId ?? messageId;
-      const nextIdempotency = [...current.idempotency, Object.freeze({ key: input.idempotencyKey, fingerprint, result })];
+      const nextIdempotency = [
+        ...current.idempotency,
+        Object.freeze({ key: input.idempotencyKey, fingerprint, result }),
+      ];
 
       const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
       const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
@@ -1701,7 +1699,9 @@ function rowToThread(row: any): ChatThread {
     title: validateStoredThreadTitle(row.title),
     lifecycleStatus: validateLifecycleStatus(row.lifecycle_status),
     managementRevision: validateManagementRevision(row.management_revision),
-    ...(metadata.trashRestoreStatus ? { trashRestoreStatus: validateTrashRestoreStatus(metadata.trashRestoreStatus) } : {}),
+    ...(metadata.trashRestoreStatus
+      ? { trashRestoreStatus: validateTrashRestoreStatus(metadata.trashRestoreStatus) }
+      : {}),
     openingLockedAtEventId: metadata.openingLockedAtEventId ?? null,
   };
   return freezeThread(thread);
@@ -2089,7 +2089,11 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
   const observation = validateAttemptObservation(value.observation);
   if (status !== "failed" && status !== "cancelled" && observation.phase !== "running")
     throw new Error("invalid_chat_thread_turn_ledger");
-  if ((status === "failed" || status === "cancelled") && observation.phase !== "armed" && observation.phase !== "running")
+  if (
+    (status === "failed" || status === "cancelled") &&
+    observation.phase !== "armed" &&
+    observation.phase !== "running"
+  )
     throw new Error("invalid_chat_thread_turn_ledger");
   const presentation = value.presentation === null ? null : validatePresentationCommit(value.presentation);
   if (status === "completion_claimed" || status === "completed") {

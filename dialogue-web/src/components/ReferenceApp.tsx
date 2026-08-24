@@ -387,9 +387,10 @@ export function ReferenceApp() {
   const handleStop = async (): Promise<void> => {
     const current = viewRef.current;
     const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
-    const operation = current.kind === "ready"
-      ? current.session.snapshot.operations.find((op) => op.operationId === "chat.cancel")
-      : undefined;
+    const operation =
+      current.kind === "ready"
+        ? current.session.snapshot.operations.find((op) => op.operationId === "chat.cancel")
+        : undefined;
     if (current.kind !== "ready" || turn == null || operation?.availability !== "available" || !turn.canCancel) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
@@ -451,7 +452,9 @@ export function ReferenceApp() {
               labels={labels()}
             />
             {terminalTurnNotice !== null && (
-              <p className="reference-turn-notice" role="status">{terminalTurnNotice}</p>
+              <p className="reference-turn-notice" role="status">
+                {terminalTurnNotice}
+              </p>
             )}
             <section className="reference-draft-section" aria-label={labels().savedDraft}>
               {view.session.snapshot.chat.draft.present && view.draft.text !== null ? (

@@ -21,10 +21,7 @@ test("dialogue launch mode defaults to fresh and permits only an explicit Host r
     manifestPath: "C:/synthetic/manifest.json",
   });
   assert.deepEqual(
-    parseDialogueLaunchMode([
-      `--tavern-narrative-gate-nonce-sha256=${"a".repeat(64)}`,
-      "C:/synthetic/manifest.json",
-    ]),
+    parseDialogueLaunchMode([`--tavern-narrative-gate-nonce-sha256=${"a".repeat(64)}`, "C:/synthetic/manifest.json"]),
     {
       mode: "fresh",
       profile: "reference",

@@ -14,7 +14,8 @@ export function parseDialogueLaunchMode(args: readonly string[]): Readonly<{
   mode: DialogueLaunchMode;
   profile: DialogueLaunchProfile;
   manifestPath?: string;
-}> & DialogueLaunchOptions {
+}> &
+  DialogueLaunchOptions {
   if (!Array.isArray(args) || args.some((argument) => typeof argument !== "string"))
     throw new Error("dialogue_launch_mode_rejected");
 

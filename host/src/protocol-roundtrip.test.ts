@@ -27,9 +27,9 @@ test("Functorial Naturality Invariant: ExecutionRequest JSON roundtrip preserves
         const json = serializeExecutionRequest(request);
         const deserialized = deserializeExecutionRequest(json);
         assert.deepEqual(deserialized, request);
-      }
+      },
     ),
-    { numRuns: 100 }
+    { numRuns: 100 },
   );
 });
 
@@ -42,15 +42,18 @@ test("Functorial Naturality Invariant: ExecutionReceipt JSON roundtrip preserves
         state: fc.constantFrom(...EXECUTION_STATE_DTOS),
         reasonCode: fc.string({ minLength: 1, maxLength: 128 }),
         revision: fc.integer({ min: 0, max: 1000000 }),
-        evidence: fc.oneof(fc.dictionary(fc.string({ minLength: 1, maxLength: 20 }), fc.jsonValue()), fc.constant(null)),
+        evidence: fc.oneof(
+          fc.dictionary(fc.string({ minLength: 1, maxLength: 20 }), fc.jsonValue()),
+          fc.constant(null),
+        ),
       }),
       (receipt: ExecutionReceiptDto) => {
         const json = serializeExecutionReceipt(receipt);
         const deserialized = deserializeExecutionReceipt(json);
         assert.deepEqual(deserialized, receipt);
-      }
+      },
     ),
-    { numRuns: 100 }
+    { numRuns: 100 },
   );
 });
 
@@ -72,9 +75,9 @@ test("Negative Fuzzing PBT: Malformed execution request payloads fail-closed", (
         const mutated = { ...validReq };
         delete (mutated as any)[keyToOmit];
         assert.throws(() => deserializeExecutionRequest(JSON.stringify(mutated)));
-      }
+      },
     ),
-    { numRuns: 100 }
+    { numRuns: 100 },
   );
 });
 
@@ -87,7 +90,10 @@ test("Negative Fuzzing PBT: Unregistered or invalid action names fail-closed", (
     deadlineMs: 5000,
     args: {},
   };
-  assert.throws(() => deserializeExecutionRequest(JSON.stringify(invalidReq)), /invalid_action:invalid_unregistered_action/);
+  assert.throws(
+    () => deserializeExecutionRequest(JSON.stringify(invalidReq)),
+    /invalid_action:invalid_unregistered_action/,
+  );
 });
 
 test("Negative Fuzzing PBT: ExecutionReceipt missing evidence key fails closed", () => {
@@ -118,9 +124,9 @@ test("Negative Numeric Fuzzing PBT: Non-positive deadlines and negative revision
       }),
       (invalidReq) => {
         assert.throws(() => deserializeExecutionRequest(JSON.stringify(invalidReq)), /invalid_expectedRevision/);
-      }
+      },
     ),
-    { numRuns: 50 }
+    { numRuns: 50 },
   );
 
   fc.assert(
@@ -135,9 +141,9 @@ test("Negative Numeric Fuzzing PBT: Non-positive deadlines and negative revision
       }),
       (invalidReq) => {
         assert.throws(() => deserializeExecutionRequest(JSON.stringify(invalidReq)), /invalid_deadlineMs/);
-      }
+      },
     ),
-    { numRuns: 50 }
+    { numRuns: 50 },
   );
 });
 
@@ -145,12 +151,26 @@ test("ExecutionRequest deserializer fails closed on invalid or malformed payload
   assert.throws(() => deserializeExecutionRequest("invalid json"), /invalid_request_json/);
   assert.throws(() => deserializeExecutionRequest(JSON.stringify(null)), /invalid_request_json/);
   assert.throws(() => deserializeExecutionRequest(JSON.stringify({ requestId: "" })), /missing_required_field/);
-  assert.throws(() => deserializeExecutionRequest(JSON.stringify({ requestId: "r1", idempotencyKey: "k1", action: "till_soil", expectedRevision: "not_a_number" })), /invalid_expectedRevision/);
+  assert.throws(
+    () =>
+      deserializeExecutionRequest(
+        JSON.stringify({
+          requestId: "r1",
+          idempotencyKey: "k1",
+          action: "till_soil",
+          expectedRevision: "not_a_number",
+        }),
+      ),
+    /invalid_expectedRevision/,
+  );
 });
 
 test("ExecutionReceipt deserializer fails closed on invalid state or missing fields", () => {
   assert.throws(() => deserializeExecutionReceipt("null"), /invalid_receipt_json/);
-  assert.throws(() => deserializeExecutionReceipt(JSON.stringify({ executionId: "e1", requestId: "r1", state: "unknown_state" })), /missing_required_field/);
+  assert.throws(
+    () => deserializeExecutionReceipt(JSON.stringify({ executionId: "e1", requestId: "r1", state: "unknown_state" })),
+    /missing_required_field/,
+  );
 });
 
 test("Functorial Immutability Invariant: Deserialized DTOs and their nested structures are deeply frozen", () => {
@@ -162,7 +182,7 @@ test("Functorial Immutability Invariant: Deserialized DTOs and their nested stru
       expectedRevision: 1,
       deadlineMs: 5000,
       args: { nested: { prop: 42 } },
-    })
+    }),
   );
   assert.ok(Object.isFrozen(req));
   assert.ok(Object.isFrozen(req.args));
@@ -176,7 +196,7 @@ test("Functorial Immutability Invariant: Deserialized DTOs and their nested stru
       reasonCode: "ok",
       revision: 1,
       evidence: { subEvidence: { value: "ok" } },
-    })
+    }),
   );
   assert.ok(Object.isFrozen(rec));
   assert.ok(Object.isFrozen(rec.evidence));

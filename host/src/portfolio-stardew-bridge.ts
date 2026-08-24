@@ -1282,9 +1282,10 @@ export class PortfolioStardewBridgeClient {
         PORTFOLIO_PIPE_WRITE_TIMEOUT_MS,
       );
     } catch (error) {
-      const reasonCode = error instanceof Error && error.message === "portfolio_pipe_write_timeout"
-        ? "pipe_write_timeout"
-        : "pipe_write_error";
+      const reasonCode =
+        error instanceof Error && error.message === "portfolio_pipe_write_timeout"
+          ? "pipe_write_timeout"
+          : "pipe_write_error";
       if (!this.#closed) this.close(reasonCode);
       throw error;
     }
@@ -1455,17 +1456,17 @@ export class PortfolioStardewBridgeClient {
           message.type === "skip_event_phase" ||
           message.type === "skip_event_receipt") &&
         pending === undefined
-        ) {
-          // A terminal/phase frame without a live correlation is never allowed to
-          // create a new lifecycle (including after cancellation or duplicate
-          // delivery). Fail closed rather than treating it as a fresh result.
-          this.close(
-            message.type === "skip_event_phase" || message.type === "skip_event_receipt"
-              ? "portfolio_skip_event_unknown_correlation"
-              : "portfolio_mine_elevator_unknown_correlation",
-          );
-          return;
-        }
+      ) {
+        // A terminal/phase frame without a live correlation is never allowed to
+        // create a new lifecycle (including after cancellation or duplicate
+        // delivery). Fail closed rather than treating it as a fresh result.
+        this.close(
+          message.type === "skip_event_phase" || message.type === "skip_event_receipt"
+            ? "portfolio_skip_event_unknown_correlation"
+            : "portfolio_mine_elevator_unknown_correlation",
+        );
+        return;
+      }
       if (pending?.request !== undefined) {
         if (
           message.type === "mine_elevator_phase" ||

@@ -126,7 +126,11 @@ export async function runM8TargetVersionStagedFixtureAction(options = {}) {
     });
     await verifyFixtureReady(fixtureTransaction, options);
     await recordFixtureSetup(options, fixtureTransaction, "staged_given_ready", null);
-    const profileOptions = validateStagedProfileOptions(options.profile ?? defaultM8Profile(env), input, staged.stagedSlotName);
+    const profileOptions = validateStagedProfileOptions(
+      options.profile ?? defaultM8Profile(env),
+      input,
+      staged.stagedSlotName,
+    );
     await (options.prepareProfile ?? preparePortfolioExistingSaveProfile)({
       ...profileOptions,
       profileRoot: input.profileRoot,
@@ -459,11 +463,13 @@ async function verifyPreparedM8Profile(input, readConfig) {
     exact.some(([actual, expectedValue]) => actual !== expectedValue)
   )
     throw new Error("m8_live_prepared_config_invalid");
-  return input.action === MINE_ROUTE_ACTION &&
+  return (
+    input.action === MINE_ROUTE_ACTION &&
     Array.isArray(portfolio.EnabledActions) &&
     portfolio.EnabledActions.length === 2 &&
     portfolio.EnabledActions[0] === "skip_event" &&
-    portfolio.EnabledActions[1] === MINE_ROUTE_ACTION;
+    portfolio.EnabledActions[1] === MINE_ROUTE_ACTION
+  );
 }
 
 /**
@@ -474,17 +480,29 @@ async function verifyPreparedM8Profile(input, readConfig) {
  * All other actions require a strict exact match with their single-action set.
  */
 function validateStagedProfileOptions(profile, input, stagedSlotName) {
-  if (!profile || typeof profile !== "object" || Array.isArray(profile)) throw new Error("m8_live_profile_setup_invalid");
-  if (Object.hasOwn(profile, "enabledActions") || Object.hasOwn(profile, "observedSaveSlot") || Object.hasOwn(profile, "mineEntryGivenFixture") || Object.hasOwn(profile, "mineLadderGivenFixture") || Object.hasOwn(profile, "mineElevatorGivenFixture"))
+  if (!profile || typeof profile !== "object" || Array.isArray(profile))
+    throw new Error("m8_live_profile_setup_invalid");
+  if (
+    Object.hasOwn(profile, "enabledActions") ||
+    Object.hasOwn(profile, "observedSaveSlot") ||
+    Object.hasOwn(profile, "mineEntryGivenFixture") ||
+    Object.hasOwn(profile, "mineLadderGivenFixture") ||
+    Object.hasOwn(profile, "mineElevatorGivenFixture")
+  )
     throw new Error("m8_live_profile_setup_action_override");
   if (typeof profile.releaseDir !== "string") throw new Error("m8_live_profile_setup_invalid");
-  return Object.freeze({ ...profile, observedSaveSlot: stagedSlotName, enabledActions: ACTION_ENABLED_SETS[input.action] });
+  return Object.freeze({
+    ...profile,
+    observedSaveSlot: stagedSlotName,
+    enabledActions: ACTION_ENABLED_SETS[input.action],
+  });
 }
 function defaultM8Profile(env) {
   return Object.freeze({ releaseDir: absolute(env.GAMEBUDDY_PORTFOLIO_RELEASE_DIR, "m8_live_release_dir_invalid") });
 }
 function defaultM8SaveRoot(env) {
-  if (typeof env.APPDATA !== "string" || !/^[A-Za-z]:[\\/]/.test(env.APPDATA)) throw new Error("m8_live_save_root_invalid");
+  if (typeof env.APPDATA !== "string" || !/^[A-Za-z]:[\\/]/.test(env.APPDATA))
+    throw new Error("m8_live_save_root_invalid");
   return join(env.APPDATA, "StardewValley", "Saves");
 }
 function resolveM8SaveRoot(value) {
@@ -503,9 +521,14 @@ async function verifyFixtureTargetAssembly(gamePath, declaration) {
 }
 function validateFixtureTransaction(input, fixture) {
   if (fixture === undefined) return null;
-  if (!fixture || typeof fixture !== "object" || Array.isArray(fixture)) throw new Error("m8_live_fixture_transaction_invalid");
+  if (!fixture || typeof fixture !== "object" || Array.isArray(fixture))
+    throw new Error("m8_live_fixture_transaction_invalid");
   const expectedFixtureId = FIXTURE_FOR_ACTION[input.action];
-  if (!expectedFixtureId || fixture.fixtureId !== expectedFixtureId || fixture.declaration !== M8_STAGED_SAVE_FIXTURES[expectedFixtureId])
+  if (
+    !expectedFixtureId ||
+    fixture.fixtureId !== expectedFixtureId ||
+    fixture.declaration !== M8_STAGED_SAVE_FIXTURES[expectedFixtureId]
+  )
     throw new Error("m8_live_fixture_action_mismatch");
   if (fixture.stagedSlotName !== input.observedSaveSlot || typeof fixture.transactionId !== "string")
     throw new Error("m8_live_fixture_transaction_invalid");
@@ -529,7 +552,11 @@ async function verifyFixtureReady(fixture, options) {
     stagedSlotDirectory: fixture.stagedSlotDirectory,
     transactionId: fixture.transactionId,
   });
-  if (ready.fixtureId !== fixture.fixtureId || ready.actionId !== fixture.declaration.actionId || ready.stagedSlotName !== fixture.stagedSlotName)
+  if (
+    ready.fixtureId !== fixture.fixtureId ||
+    ready.actionId !== fixture.declaration.actionId ||
+    ready.stagedSlotName !== fixture.stagedSlotName
+  )
     throw new Error("m8_live_fixture_ready_mismatch");
   await (options.verifyCanonical ?? verifyM8CanonicalSaveUnchanged)({
     canonicalSlotDirectory: fixture.canonicalSlotDirectory,

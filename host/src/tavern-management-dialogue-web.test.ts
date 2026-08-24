@@ -24,7 +24,17 @@ const handle = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const profile = composeTavernProfile({
   profileId: "gamebuddy.tavern-management.chat-list-title",
   releaseTier: "tavern_management",
-  routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "world-info.read", "world-info.bind"],
+  routeIds: [
+    "bootstrap",
+    "state.read",
+    "draft.read",
+    "draft.save",
+    "draft.discard",
+    "chat.list",
+    "chat.rename",
+    "world-info.read",
+    "world-info.bind",
+  ],
   operationIds: ["draft.save", "draft.discard", "chat.rename", "world-info.bind"],
   navigationItemIds: ["chat"],
 });
@@ -87,7 +97,19 @@ const renameResult: import("./tavern/browser-contract/index.js").ChatTitleV1 = {
 const memoryProfile = composeTavernProfile({
   profileId: "gamebuddy.tavern-management.chat-list-title",
   releaseTier: "tavern_management",
-  routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "memory.read", "memory.mutate", "world-info.read", "world-info.bind"],
+  routeIds: [
+    "bootstrap",
+    "state.read",
+    "draft.read",
+    "draft.save",
+    "draft.discard",
+    "chat.list",
+    "chat.rename",
+    "memory.read",
+    "memory.mutate",
+    "world-info.read",
+    "world-info.bind",
+  ],
   operationIds: ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"],
   navigationItemIds: ["chat", "memory"],
 });
@@ -647,7 +669,12 @@ test("management handler does not activate an injected memory service when the p
   const bootstrap = new ControlledResponse("finish");
   await dispatch(
     handler,
-    request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, { apiVersion: 1, bootstrapToken: token }),
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
     bootstrap,
   );
   assert.equal(bootstrap.status, 200);
@@ -699,7 +726,16 @@ test("management handler rejects Memory mutation before service work for missing
     bootstrapToken: token,
   });
   const bootstrap = new ControlledResponse("finish");
-  await dispatch(handler, request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, { apiVersion: 1, bootstrapToken: token }), bootstrap);
+  await dispatch(
+    handler,
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
+    bootstrap,
+  );
   const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
   const csrf = (JSON.parse(bootstrap.body) as { csrfToken: string }).csrfToken;
   const command: MemoryMutationCommandV1 = {
@@ -715,7 +751,10 @@ test("management handler rejects Memory mutation before service work for missing
   };
   assert.equal(await run({ cookie, "x-csrf-token": csrf }), 401);
   assert.equal(await run({ origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": "B".repeat(43) }), 403);
-  assert.equal(await run({ origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf }, { ...command, extra: true }), 400);
+  assert.equal(
+    await run({ origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf }, { ...command, extra: true }),
+    400,
+  );
   assert.equal(
     await run(
       { origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf },
@@ -759,10 +798,7 @@ test("management handler rejects memory.read requests without the browser sessio
   };
 
   // No session cookie: rejected as unauthorized.
-  assert.equal(
-    (await run(request("GET", "/api/tavern/v1/memory", { "sec-fetch-site": "same-origin" }))).status,
-    401,
-  );
+  assert.equal((await run(request("GET", "/api/tavern/v1/memory", { "sec-fetch-site": "same-origin" }))).status, 401);
   // Foreign origin performs a non-safe cross-site fetch: rejected.
   assert.equal(
     (await run(request("GET", "/api/tavern/v1/memory", { origin: "http://evil.example", cookie }))).status,
@@ -770,9 +806,8 @@ test("management handler rejects memory.read requests without the browser sessio
   );
   // Query string is not part of the frozen memory.read route.
   assert.equal(
-    (
-      await run(request("GET", "/api/tavern/v1/memory?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" }))
-    ).status,
+    (await run(request("GET", "/api/tavern/v1/memory?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" })))
+      .status,
     400,
   );
   // Body is not allowed on the read route.
@@ -785,7 +820,10 @@ test("management handler rejects memory.read requests without the browser sessio
     400,
   );
   // Exact browser session read succeeds.
-  assert.equal((await run(request("GET", "/api/tavern/v1/memory", { cookie, "sec-fetch-site": "same-origin" }))).status, 200);
+  assert.equal(
+    (await run(request("GET", "/api/tavern/v1/memory", { cookie, "sec-fetch-site": "same-origin" }))).status,
+    200,
+  );
   await handler.close();
 });
 
@@ -813,7 +851,12 @@ test("management handler maps a Memory projection conflict to a safe 409 without
   const bootstrap = new ControlledResponse("finish");
   await dispatch(
     handler,
-    request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, { apiVersion: 1, bootstrapToken: token }),
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
     bootstrap,
   );
   const cookie = bootstrap.headers.get("Set-Cookie")!.split(";", 1)[0]!;
@@ -899,7 +942,12 @@ test("management handler projects the Memory navigation item as unavailable when
   const bootstrap = new ControlledResponse("finish");
   await dispatch(
     handler,
-    request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, { apiVersion: 1, bootstrapToken: token }),
+    request(
+      "POST",
+      "/api/tavern/v1/bootstrap",
+      { origin: "http://127.0.0.1:7331" },
+      { apiVersion: 1, bootstrapToken: token },
+    ),
     bootstrap,
   );
   assert.equal(bootstrap.status, 200);
@@ -926,7 +974,16 @@ test("management handler rejects a Memory-route profile that omits the Memory na
   const mismatchedProfile = composeTavernProfile({
     profileId: "gamebuddy.tavern-management.chat-list-title",
     releaseTier: "tavern_management",
-    routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "memory.read"],
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "draft.save",
+      "draft.discard",
+      "chat.list",
+      "chat.rename",
+      "memory.read",
+    ],
     operationIds: ["draft.save", "draft.discard", "chat.rename"],
     navigationItemIds: ["chat"],
   });
@@ -987,11 +1044,8 @@ test("management handler serves world-info read/bind with session, CSRF and stri
 
   // Query or body on the read route is rejected before the service runs.
   assert.equal(
-    (
-      await run(
-        request("GET", "/api/tavern/v1/world-info?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" }),
-      )
-    ).status,
+    (await run(request("GET", "/api/tavern/v1/world-info?apiVersion=1", { cookie, "sec-fetch-site": "same-origin" })))
+      .status,
     400,
   );
   assert.equal(
@@ -1236,8 +1290,6 @@ test("management handler maps world-info service and storage unavailability to s
   assert.equal(worldInfoRecorder.sets, 2);
   await handler.close();
 });
-
-
 
 class ControlledResponse extends EventEmitter {
   writableEnded = false;

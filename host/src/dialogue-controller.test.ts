@@ -163,10 +163,11 @@ test("DialogueController reports a failed turn without exposing provider detail"
 });
 
 test("DialogueController accepts only canonical player dialogue fields", () => {
-  assert.deepEqual(
-    validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN" }),
-    { clientMessageId: "input", text: "hello", locale: "zh-CN" },
-  );
+  assert.deepEqual(validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN" }), {
+    clientMessageId: "input",
+    text: "hello",
+    locale: "zh-CN",
+  });
   assert.throws(
     () => validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN", retiredOption: true }),
     /invalid_dialogue_input/,

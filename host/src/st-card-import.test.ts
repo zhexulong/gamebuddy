@@ -78,7 +78,8 @@ test("candidateToIdentityProfile creates valid IdentityProfile for 100% prefix c
       description: "Loves amethyst and gaming.",
       personality: "Adventurous and spirited.",
       scenario: "Living in Pelican Town.",
-      mes_example: "{{user}}: Want to play Journey of the Prairie King?\n{{char}}: Always! Let's beat level 1 together.",
+      mes_example:
+        "{{user}}: Want to play Journey of the Prairie King?\n{{char}}: Always! Let's beat level 1 together.",
     },
   });
 
@@ -331,9 +332,9 @@ test("PBT Property 2: Multiline formatting and newline preservation under fuzzin
 });
 
 test("PBT Property 3: Arbitrary byte payload never crashes PNG decoder", () => {
-  const bytesArb = fc.array(fc.integer({ min: 0, max: 255 }), { minLength: 0, maxLength: 200 }).map(
-    (arr) => new Uint8Array(arr),
-  );
+  const bytesArb = fc
+    .array(fc.integer({ min: 0, max: 255 }), { minLength: 0, maxLength: 200 })
+    .map((arr) => new Uint8Array(arr));
 
   fc.assert(
     fc.property(bytesArb, (bytes) => {

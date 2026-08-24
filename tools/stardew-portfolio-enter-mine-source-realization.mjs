@@ -403,7 +403,8 @@ export function validateDossier(d) {
   exact(d.bdd, ["scenario", "given", "when", "then", "verifier"], "bdd");
   if (
     d.bdd.scenario !== "enter_mine enters the native default floor" ||
-    d.bdd.given !== "Required runtime Given: a fresh native observation proves the local player is in Mine exterior; no UI interaction pose or producer reachability is required." ||
+    d.bdd.given !==
+      "Required runtime Given: a fresh native observation proves the local player is in Mine exterior; no UI interaction pose or producer reachability is required." ||
     d.bdd.when !== "One typed parameterless enter_mine request fixes the native level argument to 1." ||
     !d.bdd.then.includes("floor 1") ||
     !d.bdd.verifier.includes("fresh native location/floor observation")

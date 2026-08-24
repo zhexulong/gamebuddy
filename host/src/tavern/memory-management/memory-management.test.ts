@@ -344,7 +344,12 @@ test("mounted memory service mutates only after projection CAS and always return
     { operation: "update", stateToken: "tok_created", content: "Updated" },
     { operation: "archive", stateToken: "tok_updated" },
   ]);
-  assert.equal((results.archived as { memories: Array<{ content: string; status: string }> }).memories.find((row) => row.content === "Updated")?.status, "archived");
+  assert.equal(
+    (results.archived as { memories: Array<{ content: string; status: string }> }).memories.find(
+      (row) => row.content === "Updated",
+    )?.status,
+    "archived",
+  );
   assert.equal((results.stale as { ok: boolean }).ok, false);
   assert.match((results.stale as { error: string }).error, /memory_mutation_conflict/);
 });

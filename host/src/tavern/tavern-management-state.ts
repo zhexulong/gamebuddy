@@ -93,12 +93,8 @@ export async function createTavernManagementStateFacade(
   // A profile that declares either World Info route without a bound service
   // must fail closed before any durable I/O: the capability cannot be
   // advertised without the exact service backing it.
-  if (
-    profile.routeIds.includes("world-info.read") ||
-    profile.routeIds.includes("world-info.bind")
-  ) {
-    if (worldInfoService === undefined)
-      throw new Error("tavern_management_composition_unavailable");
+  if (profile.routeIds.includes("world-info.read") || profile.routeIds.includes("world-info.bind")) {
+    if (worldInfoService === undefined) throw new Error("tavern_management_composition_unavailable");
   }
   const resolvedWorldInfoService = worldInfoService;
 

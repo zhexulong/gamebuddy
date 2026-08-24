@@ -1,11 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import {
-  createInspectorCapability,
-  inspectorState,
-  type WindowsReparseInspectorCapability,
-} from "./internal.js";
+import { createInspectorCapability, inspectorState, type WindowsReparseInspectorCapability } from "./internal.js";
 
 export type { WindowsReparseInspectorCapability } from "./internal.js";
 

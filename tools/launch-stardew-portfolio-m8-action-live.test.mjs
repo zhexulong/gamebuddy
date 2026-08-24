@@ -67,7 +67,9 @@ function preparedConfig(actions = "select_mine_elevator_floor") {
       InitialNativeLoad: { Enable: true, ObservedSaveSlot: "GameBuddyPortfolioNative02_445880081" },
       ...(Array.isArray(enabled) && enabled.includes("enter_mine") ? { MineEntryGivenFixture: { Enable: true } } : {}),
       ...(enabled.length === 1 && enabled[0] === "use_mine_ladder" ? { MineLadderGivenFixture: { Enable: true } } : {}),
-      ...(enabled.length === 1 && enabled[0] === "select_mine_elevator_floor" ? { MineElevatorGivenFixture: { Enable: true } } : {}),
+      ...(enabled.length === 1 && enabled[0] === "select_mine_elevator_floor"
+        ? { MineElevatorGivenFixture: { Enable: true } }
+        : {}),
       P0bLifecycleProducer: { Enable: false },
     },
   });
@@ -121,7 +123,11 @@ test("M8 live runner rejects missing environment before process work", async () 
 
 test("M8 live runner rejects a fixture bound to another action before process work", async () => {
   const { options, spawned } = setup({
-    env: { ...environment, GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder", GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined },
+    env: {
+      ...environment,
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
     fixtureTransaction: {
       fixtureId: "m8_elevator_floor_5_given_v1",
       declaration: M8_STAGED_SAVE_FIXTURES.m8_elevator_floor_5_given_v1,
@@ -142,8 +148,14 @@ test("M8 live runner verifies and disposes an exact named staged fixture", async
   const stagedSlotName = "GameBuddyPortfolioNative02_M8Ladder_fixture-1_445880081";
   const declaration = M8_STAGED_SAVE_FIXTURES.m8_ladder_given_v1;
   const { options, spawned } = setup({
-    env: { ...environment, GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder", GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined, GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT: stagedSlotName },
-    readFile: async () => preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
+    env: {
+      ...environment,
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+      GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT: stagedSlotName,
+    },
+    readFile: async () =>
+      preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
     fixtureTransaction: {
       fixtureId: "m8_ladder_given_v1",
       declaration,
@@ -163,7 +175,11 @@ test("M8 live runner verifies and disposes an exact named staged fixture", async
   const result = await runM8TargetVersionLiveAction(options);
   assert.equal(result.state, "M8_ACTION_LIVE_TERMINAL");
   assert.equal(spawned.length, 2);
-  assert.equal(verified.length, 6, "fixture and canonical state are checked before launch, immediately before launch, and during cleanup");
+  assert.equal(
+    verified.length,
+    6,
+    "fixture and canonical state are checked before launch, immediately before launch, and during cleanup",
+  );
   assert.deepEqual(disposed, [{ stagedSlotDirectory: `C:/Saves/${stagedSlotName}`, transactionId: "fixture-1" }]);
 });
 
@@ -171,7 +187,12 @@ test("M8 staged fixture launcher derives the matching fixture, stages, patches, 
   const events = [];
   const stagedSlotName = "GameBuddyPortfolioNative02_M8Ladder_m8-use_mine_ladder-abc_445880081";
   const { options } = setup({
-    env: { ...environment, APPDATA: "C:/Users/test/AppData/Roaming", GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder", GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined },
+    env: {
+      ...environment,
+      APPDATA: "C:/Users/test/AppData/Roaming",
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
     profile: { releaseDir: "C:/release" },
     saveRoot: "C:/Users/test/AppData/Roaming/StardewValley/Saves",
     prepareFixture: async (value) => {
@@ -187,13 +208,17 @@ test("M8 staged fixture launcher derives the matching fixture, stages, patches, 
     verifyFixture: async () => ({ fixtureId: "m8_ladder_given_v1", actionId: "use_mine_ladder", stagedSlotName }),
     verifyCanonical: async () => {},
     prepareProfile: async (value) => events.push(["profile", value]),
-    readFile: async () => preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
+    readFile: async () =>
+      preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
     verifyTargetAssembly: async (gamePath, declaration) => events.push(["target", gamePath, declaration.fixtureId]),
     disposeFixture: async (value) => events.push(["dispose", value]),
   });
   const result = await runM8TargetVersionStagedFixtureAction(options);
   assert.equal(result.state, "M8_ACTION_LIVE_TERMINAL");
-  assert.deepEqual(events.map(([name]) => name), ["target", "prepare", "apply", "profile", "dispose"]);
+  assert.deepEqual(
+    events.map(([name]) => name),
+    ["target", "prepare", "apply", "profile", "dispose"],
+  );
   assert.equal(events[0][2], "m8_ladder_given_v1");
   assert.equal(events[1][1].saveRoot, "C:\\Users\\test\\AppData\\Roaming\\StardewValley\\Saves");
   assert.equal(events[3][1].observedSaveSlot, stagedSlotName);
@@ -204,16 +229,27 @@ test("M8 staged fixture launcher derives its profile release directory from the 
   const stagedSlotName = "GameBuddyPortfolioNative02_M8Ladder_m8-use_mine_ladder-abc_445880081";
   const profiles = [];
   const { options } = setup({
-    env: { ...environment, APPDATA: "C:/Users/test/AppData/Roaming", GAMEBUDDY_PORTFOLIO_RELEASE_DIR: "C:/release", GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder", GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined },
+    env: {
+      ...environment,
+      APPDATA: "C:/Users/test/AppData/Roaming",
+      GAMEBUDDY_PORTFOLIO_RELEASE_DIR: "C:/release",
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
     saveRoot: "C:/Users/test/AppData/Roaming/StardewValley/Saves",
     verifyTargetAssembly: async () => {},
-    prepareFixture: async () => ({ stagedSlotDirectory: `C:/Users/test/AppData/Roaming/StardewValley/Saves/${stagedSlotName}`, stagedSlotName, canonicalManifestSha256: "a".repeat(64) }),
+    prepareFixture: async () => ({
+      stagedSlotDirectory: `C:/Users/test/AppData/Roaming/StardewValley/Saves/${stagedSlotName}`,
+      stagedSlotName,
+      canonicalManifestSha256: "a".repeat(64),
+    }),
     applyFixture: async () => {},
     verifyFixture: async () => ({ fixtureId: "m8_ladder_given_v1", actionId: "use_mine_ladder", stagedSlotName }),
     verifyCanonical: async () => {},
     disposeFixture: async () => {},
     prepareProfile: async (value) => profiles.push(value),
-    readFile: async () => preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
+    readFile: async () =>
+      preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
   });
   await runM8TargetVersionStagedFixtureAction(options);
   assert.equal(profiles[0].releaseDir, "C:\\release");
@@ -222,17 +258,27 @@ test("M8 staged fixture launcher derives its profile release directory from the 
 test("M8 closure command routes ladder through the staged fixture launcher", async () => {
   const stagedSlotName = "GameBuddyPortfolioNative02_M8Ladder_m8-use_mine_ladder-abc_445880081";
   const { options } = setup({
-    env: { ...environment, APPDATA: "C:/Users/test/AppData/Roaming", GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder", GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined },
+    env: {
+      ...environment,
+      APPDATA: "C:/Users/test/AppData/Roaming",
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
     profile: { releaseDir: "C:/release" },
     saveRoot: "C:/Users/test/AppData/Roaming/StardewValley/Saves",
     verifyTargetAssembly: async () => {},
-    prepareFixture: async () => ({ stagedSlotDirectory: `C:/Users/test/AppData/Roaming/StardewValley/Saves/${stagedSlotName}`, stagedSlotName, canonicalManifestSha256: "a".repeat(64) }),
+    prepareFixture: async () => ({
+      stagedSlotDirectory: `C:/Users/test/AppData/Roaming/StardewValley/Saves/${stagedSlotName}`,
+      stagedSlotName,
+      canonicalManifestSha256: "a".repeat(64),
+    }),
     applyFixture: async () => {},
     verifyFixture: async () => ({ fixtureId: "m8_ladder_given_v1", actionId: "use_mine_ladder", stagedSlotName }),
     verifyCanonical: async () => {},
     disposeFixture: async () => {},
     prepareProfile: async () => {},
-    readFile: async () => preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
+    readFile: async () =>
+      preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
   });
   const result = await runM8TargetVersionM8Closure(options);
   assert.equal(result.state, "M8_ACTION_LIVE_TERMINAL");
@@ -242,24 +288,45 @@ test("M8 staged fixture launcher records redacted Given setup separately from ac
   const stagedSlotName = "GameBuddyPortfolioNative02_M8Ladder_m8-use_mine_ladder-abc_445880081";
   const records = [];
   const { options } = setup({
-    env: { ...environment, APPDATA: "C:/Users/test/AppData/Roaming", GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder", GAMEBUDDY_PORTFOLIO_M8_MODE: "preflight", GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined },
+    env: {
+      ...environment,
+      APPDATA: "C:/Users/test/AppData/Roaming",
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder",
+      GAMEBUDDY_PORTFOLIO_M8_MODE: "preflight",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
     profile: { releaseDir: "C:/release" },
     saveRoot: "C:/Users/test/AppData/Roaming/StardewValley/Saves",
     verifyTargetAssembly: async () => {},
-    prepareFixture: async () => ({ stagedSlotDirectory: `C:/Users/test/AppData/Roaming/StardewValley/Saves/${stagedSlotName}`, stagedSlotName, canonicalManifestSha256: "a".repeat(64) }),
+    prepareFixture: async () => ({
+      stagedSlotDirectory: `C:/Users/test/AppData/Roaming/StardewValley/Saves/${stagedSlotName}`,
+      stagedSlotName,
+      canonicalManifestSha256: "a".repeat(64),
+    }),
     applyFixture: async () => {},
     verifyFixture: async () => ({ fixtureId: "m8_ladder_given_v1", actionId: "use_mine_ladder", stagedSlotName }),
     verifyCanonical: async () => {},
     disposeFixture: async () => {},
     prepareProfile: async () => {},
-    readFile: async () => preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
+    readFile: async () =>
+      preparedConfig("use_mine_ladder").replaceAll(environment.GAMEBUDDY_PORTFOLIO_OBSERVED_SAVE_SLOT, stagedSlotName),
     runAction: async () => ({ state: "M8_GIVEN_READY", action: "use_mine_ladder", probe: { facility: true } }),
     recordFixtureSetup: async (record) => records.push(record),
   });
   const result = await runM8TargetVersionStagedFixtureAction(options);
   assert.equal(result.state, "M8_ACTION_LIVE_PREFLIGHT_READY");
-  assert.deepEqual(records.map((record) => record.outcome), ["staged_given_ready", "fresh_given_observed"]);
-  assert.deepEqual(Object.keys(records[0]).sort(), ["canonicalIntegrity", "fixtureId", "outcome", "ownership", "stagedSlotName", "targetVersion"]);
+  assert.deepEqual(
+    records.map((record) => record.outcome),
+    ["staged_given_ready", "fresh_given_observed"],
+  );
+  assert.deepEqual(Object.keys(records[0]).sort(), [
+    "canonicalIntegrity",
+    "fixtureId",
+    "outcome",
+    "ownership",
+    "stagedSlotName",
+    "targetVersion",
+  ]);
   assert.equal("probe" in records[1], false);
 });
 
@@ -267,11 +334,20 @@ test("M8 staged fixture launcher restores its profile if profile deployment succ
   const stagedSlotName = "GameBuddyPortfolioNative02_M8Ladder_m8-use_mine_ladder-abc_445880081";
   const restores = [];
   const { options } = setup({
-    env: { ...environment, APPDATA: "C:/Users/test/AppData/Roaming", GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder", GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined },
+    env: {
+      ...environment,
+      APPDATA: "C:/Users/test/AppData/Roaming",
+      GAMEBUDDY_PORTFOLIO_M8_ACTION: "use_mine_ladder",
+      GAMEBUDDY_PORTFOLIO_M8_CHECKPOINT: undefined,
+    },
     profile: { releaseDir: "C:/release" },
     saveRoot: "C:/Users/test/AppData/Roaming/StardewValley/Saves",
     verifyTargetAssembly: async () => {},
-    prepareFixture: async () => ({ stagedSlotDirectory: `C:/Users/test/AppData/Roaming/StardewValley/Saves/${stagedSlotName}`, stagedSlotName, canonicalManifestSha256: "a".repeat(64) }),
+    prepareFixture: async () => ({
+      stagedSlotDirectory: `C:/Users/test/AppData/Roaming/StardewValley/Saves/${stagedSlotName}`,
+      stagedSlotName,
+      canonicalManifestSha256: "a".repeat(64),
+    }),
     applyFixture: async () => {},
     verifyFixture: async () => ({ fixtureId: "m8_ladder_given_v1", actionId: "use_mine_ladder", stagedSlotName }),
     verifyCanonical: async () => {},

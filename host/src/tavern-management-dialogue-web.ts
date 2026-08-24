@@ -60,8 +60,19 @@ const MANAGEMENT_ROUTE_IDS_WITHOUT_MEMORY = [
   "world-info.read",
   "world-info.bind",
 ] as const;
-const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"] as const;
-const MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY = ["draft.save", "draft.discard", "chat.rename", "world-info.bind"] as const;
+const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = [
+  "draft.save",
+  "draft.discard",
+  "chat.rename",
+  "memory.mutate",
+  "world-info.bind",
+] as const;
+const MANAGEMENT_OPERATION_IDS_WITHOUT_MEMORY = [
+  "draft.save",
+  "draft.discard",
+  "chat.rename",
+  "world-info.bind",
+] as const;
 // Legal navigation projections paired with the route sets above: a profile
 // that declares `memory.read` must also declare the `memory` navigation item,
 // and a profile without the Memory route must not. Both derive from the same
@@ -127,7 +138,10 @@ export function createTavernManagementDialogueWebRequestHandler(
   // The production profile declares `memory.read`; it is reachable only when a
   // Host-owned MemoryManagementService is injected. A profile that advertises
   // the capability without the bound service fails closed before any route.
-  if ((profile.routeIds.includes("memory.read") || profile.routeIds.includes("memory.mutate")) && memoryService === undefined)
+  if (
+    (profile.routeIds.includes("memory.read") || profile.routeIds.includes("memory.mutate")) &&
+    memoryService === undefined
+  )
     throw new Error("tavern_management_composition_unavailable");
   // The World Info routes are mounted only when the exact binding service is
   // injected; a profile that advertises either route without the bound
@@ -168,13 +182,27 @@ export function createTavernManagementDialogueWebRequestHandler(
         });
         browser = session;
         response.setHeader("Set-Cookie", `gb_tavern_session=${session.bearer}; HttpOnly; SameSite=Strict; Path=/`);
-        return await sendProjectedSnapshot(response, managementStateFacade, profile, session, memoryService, worldInfoService);
+        return await sendProjectedSnapshot(
+          response,
+          managementStateFacade,
+          profile,
+          session,
+          memoryService,
+          worldInfoService,
+        );
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/state") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
         const session = authenticate(request, browser, origin);
         if (session === null) return sendProblem(response, 401, "unauthorized");
-        return await sendProjectedSnapshot(response, managementStateFacade, profile, session, memoryService, worldInfoService);
+        return await sendProjectedSnapshot(
+          response,
+          managementStateFacade,
+          profile,
+          session,
+          memoryService,
+          worldInfoService,
+        );
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
@@ -372,13 +400,15 @@ async function sendProjectedSnapshot(
       ? memoryService.read().catch(() => undefined)
       : undefined,
   ]);
-  const memoryProjection = memoryResult !== undefined
-    ? ({
-        readAvailable: true as const,
-        mutationAvailable: profile.routeIds.includes("memory.mutate") && profile.operationIds.includes("memory.mutate"),
-        projectionRevision: memoryResult.projectionRevision,
-      } as const)
-    : ({ readAvailable: false as const, mutationAvailable: false as const, projectionRevision: null } as const);
+  const memoryProjection =
+    memoryResult !== undefined
+      ? ({
+          readAvailable: true as const,
+          mutationAvailable:
+            profile.routeIds.includes("memory.mutate") && profile.operationIds.includes("memory.mutate"),
+          projectionRevision: memoryResult.projectionRevision,
+        } as const)
+      : ({ readAvailable: false as const, mutationAvailable: false as const, projectionRevision: null } as const);
   // A World Info-capable profile always projects a validated World Info
   // state: the facade supplies it in production; handler-level stubs obtain
   // it from the bound service and it is re-validated before projection.
@@ -485,10 +515,7 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "chat_management_revision_conflict") return { status: 409, code: "draft_conflict" };
   if (message === "world_info_binding_conflict" || message === "world_info_binding_locked")
     return { status: 409, code: "state_reconciliation_required" };
-  if (
-    message === "world_info_binding_service_unavailable" ||
-    message === "world_info_binding_service_closed"
-  )
+  if (message === "world_info_binding_service_unavailable" || message === "world_info_binding_service_closed")
     return { status: 503, code: "runtime_unavailable" };
   if (message === "world_info_binding_storage_unavailable") return { status: 503, code: "storage_unavailable" };
   if (message === "chat_management_service_unavailable" || message === "chat_management_service_closed")

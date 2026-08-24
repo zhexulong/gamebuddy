@@ -800,13 +800,8 @@ function validateExistingSaveOptions(options, context) {
   if (mineEntryGivenFixture) {
     // Only the exact ordered skip/entry sequence or the single entry action
     // exists as an M8 entry Given. Do not generalize arbitrary arrays.
-    if (!isMineEntryActionSequence(enabledActions))
-      throw new Error("portfolio_existing_save_enabled_actions_invalid");
-  } else if (
-    !Array.isArray(enabledActions) ||
-    enabledActions.length !== 1 ||
-    enabledActions[0] !== "enter_mine"
-  ) {
+    if (!isMineEntryActionSequence(enabledActions)) throw new Error("portfolio_existing_save_enabled_actions_invalid");
+  } else if (!Array.isArray(enabledActions) || enabledActions.length !== 1 || enabledActions[0] !== "enter_mine") {
     // Non-entry profiles remain single-action within the closed allowlist.
     if (
       !Array.isArray(enabledActions) ||
@@ -869,7 +864,9 @@ function isMineLadderActionSequence(enabledActions) {
 }
 
 function isMineElevatorActionSequence(enabledActions) {
-  return Array.isArray(enabledActions) && enabledActions.length === 1 && enabledActions[0] === "select_mine_elevator_floor";
+  return (
+    Array.isArray(enabledActions) && enabledActions.length === 1 && enabledActions[0] === "select_mine_elevator_floor"
+  );
 }
 
 function isValidPortfolioSaveName(value) {

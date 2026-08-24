@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { cp, lstat, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 
 const JOURNAL_FILE = ".gamebuddy-m8-staged-save-transaction.json";
 const TARGET_VERSION = "1.6.15.24356";
@@ -120,7 +120,10 @@ export async function applyM8StagedSaveGiven(input) {
       canonicalSlotDirectory: journal.canonicalSlotDirectory,
       expectedManifestSha256: journal.canonicalManifestSha256,
     });
-    return Object.freeze({ changedPaths: Object.freeze([slotName]), allowedXmlTextChanges: Object.freeze(["mine_lowestLevelReached"]) });
+    return Object.freeze({
+      changedPaths: Object.freeze([slotName]),
+      allowedXmlTextChanges: Object.freeze(["mine_lowestLevelReached"]),
+    });
   } catch (error) {
     await writeFile(main, original, "utf8");
     throw error;
@@ -130,7 +133,8 @@ export async function applyM8StagedSaveGiven(input) {
 export async function verifyM8StagedSaveFixtureReady(input) {
   const stagedSlotDirectory = absoluteDirectory(input?.stagedSlotDirectory, "m8_stage_directory_invalid");
   const transactionId = input?.transactionId;
-  if (typeof transactionId !== "string" || !TRANSACTION_ID.test(transactionId)) throw new Error("m8_stage_transaction_id_invalid");
+  if (typeof transactionId !== "string" || !TRANSACTION_ID.test(transactionId))
+    throw new Error("m8_stage_transaction_id_invalid");
   const journal = await readJournalForStage(stagedSlotDirectory);
   if (journal.transactionId !== transactionId) throw new Error("m8_stage_transaction_owner_mismatch");
   if (typeof journal.stagedPatchedManifestSha256 !== "string" || !SHA256.test(journal.stagedPatchedManifestSha256))
@@ -141,7 +145,12 @@ export async function verifyM8StagedSaveFixtureReady(input) {
     canonicalSlotDirectory: journal.canonicalSlotDirectory,
     expectedManifestSha256: journal.canonicalManifestSha256,
   });
-  return Object.freeze({ stagedSlotName: journal.stagedSlotName, stagedSaveName: journal.stagedSaveName, fixtureId: journal.fixtureId, actionId: journal.actionId });
+  return Object.freeze({
+    stagedSlotName: journal.stagedSlotName,
+    stagedSaveName: journal.stagedSaveName,
+    fixtureId: journal.fixtureId,
+    actionId: journal.actionId,
+  });
 }
 
 export async function verifyM8CanonicalSaveUnchanged(input) {
@@ -156,7 +165,8 @@ export async function verifyM8CanonicalSaveUnchanged(input) {
 export async function disposeM8StagedSaveFixture(input) {
   const stagedSlotDirectory = absoluteDirectory(input?.stagedSlotDirectory, "m8_stage_directory_invalid");
   const transactionId = input?.transactionId;
-  if (typeof transactionId !== "string" || !TRANSACTION_ID.test(transactionId)) throw new Error("m8_stage_transaction_id_invalid");
+  if (typeof transactionId !== "string" || !TRANSACTION_ID.test(transactionId))
+    throw new Error("m8_stage_transaction_id_invalid");
   const journal = await readJournalForStage(stagedSlotDirectory);
   if (journal.transactionId !== transactionId) throw new Error("m8_stage_transaction_owner_mismatch");
   await assertSafeExistingDirectory(stagedSlotDirectory, "m8_stage_directory");
@@ -172,7 +182,8 @@ function validatePrepareInput(input) {
   const saveRoot = absoluteDirectory(input?.saveRoot, "m8_stage_save_root_invalid");
   const declaration = validateDeclaration(input?.declaration);
   const transactionId = input?.transactionId;
-  if (typeof transactionId !== "string" || !TRANSACTION_ID.test(transactionId)) throw new Error("m8_stage_transaction_id_invalid");
+  if (typeof transactionId !== "string" || !TRANSACTION_ID.test(transactionId))
+    throw new Error("m8_stage_transaction_id_invalid");
   return Object.freeze({ canonicalSlotDirectory, saveRoot, declaration, transactionId });
 }
 function validateDeclaration(value) {
@@ -192,7 +203,8 @@ function patchClosedFixtureXml(xml, declaration, slotName, options = {}) {
   const leadingBom = xml.startsWith("\ufeff") ? "\ufeff" : "";
   const withoutBom = leadingBom ? xml.slice(1) : xml;
   if (!withoutBom.startsWith("<?xml")) throw new Error("m8_stage_save_xml_invalid");
-  if (!/^<SaveGame(?:\s[^>]*)?>/.test(withoutBom.replace(/^<\?xml[^>]*>\s*/, ""))) throw new Error("m8_stage_save_root_invalid");
+  if (!/^<SaveGame(?:\s[^>]*)?>/.test(withoutBom.replace(/^<\?xml[^>]*>\s*/, "")))
+    throw new Error("m8_stage_save_root_invalid");
   const rootId = readSingleText(withoutBom, "uniqueIDForThisGame");
   const suffix = slotName.slice(slotName.lastIndexOf("_") + 1);
   if (rootId !== suffix) throw new Error("m8_stage_save_slot_identity_mismatch");
@@ -248,7 +260,10 @@ async function renameStagedSlotFiles(directory, oldName, newName) {
   }
 }
 function assertOnlyMainXmlTextChanged(before, after, slotName) {
-  const names = new Set([...before.files.map((entry) => entry.relativePath), ...after.files.map((entry) => entry.relativePath)]);
+  const names = new Set([
+    ...before.files.map((entry) => entry.relativePath),
+    ...after.files.map((entry) => entry.relativePath),
+  ]);
   for (const name of names) {
     const first = before.files.find((entry) => entry.relativePath === name);
     const second = after.files.find((entry) => entry.relativePath === name);
@@ -265,7 +280,8 @@ async function buildManifest(root) {
       const path = join(current, entry.name);
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
       const info = await lstat(path);
-      if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) throw new Error("m8_stage_reparse_or_special_path");
+      if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile()))
+        throw new Error("m8_stage_reparse_or_special_path");
       if (info.isDirectory()) await visit(path, relativePath);
       else files.push(Object.freeze({ relativePath, sha256: sha256(await readFile(path)) }));
     }
@@ -307,7 +323,9 @@ function assertRequiredSlotFiles(files, slotName) {
 function assertCanonicalIsDirectChild(slot, root) {
   if (resolve(slot, "..") !== resolve(root)) throw new Error("m8_stage_canonical_not_in_save_root");
 }
-function assertSlotShape(name) { if (!SLOT_NAME.test(name)) throw new Error("m8_stage_slot_name_invalid"); }
+function assertSlotShape(name) {
+  if (!SLOT_NAME.test(name)) throw new Error("m8_stage_slot_name_invalid");
+}
 async function assertSafeExistingDirectory(path, code) {
   const info = await lstat(path).catch(() => null);
   if (!info?.isDirectory() || info.isSymbolicLink()) throw new Error(`${code}_invalid`);
@@ -323,7 +341,10 @@ async function hasReparsePathComponent(path) {
     current = parent;
   }
 }
-function absoluteDirectory(value, code) { if (typeof value !== "string" || !isAbsolute(value)) throw new Error(code); return resolve(value); }
+function absoluteDirectory(value, code) {
+  if (typeof value !== "string" || !isAbsolute(value)) throw new Error(code);
+  return resolve(value);
+}
 async function writeJournalPatchManifest(stagedSlotDirectory, journal, stagedPatchedManifestSha256) {
   const path = join(stagedSlotDirectory, JOURNAL_FILE);
   const updated = Object.freeze({ ...journal, stagedPatchedManifestSha256 });
@@ -331,14 +352,38 @@ async function writeJournalPatchManifest(stagedSlotDirectory, journal, stagedPat
 }
 async function readJournalForStage(stagedSlotDirectory) {
   const journal = await readJson(join(stagedSlotDirectory, JOURNAL_FILE), "m8_stage_transaction_journal_invalid");
-  if (journal?.version !== 1 || journal?.kind !== "m8_staged_save_fixture" || journal.stagedSlotDirectory !== stagedSlotDirectory)
+  if (
+    journal?.version !== 1 ||
+    journal?.kind !== "m8_staged_save_fixture" ||
+    journal.stagedSlotDirectory !== stagedSlotDirectory
+  )
     throw new Error("m8_stage_transaction_owner_mismatch");
   return journal;
 }
-async function readJson(path, code) { try { return JSON.parse(await readFile(path, "utf8")); } catch { throw new Error(code); } }
-async function writeExclusiveJson(path, value, code) {
-  try { await writeFile(path, `${JSON.stringify(value)}\n`, { encoding: "utf8", flag: "wx" }); }
-  catch (error) { if (error?.code === "EEXIST") throw new Error(code); throw error; }
+async function readJson(path, code) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    throw new Error(code);
+  }
 }
-async function pathExists(path) { try { await stat(path); return true; } catch (error) { if (error?.code === "ENOENT") return false; throw error; } }
-function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
+async function writeExclusiveJson(path, value, code) {
+  try {
+    await writeFile(path, `${JSON.stringify(value)}\n`, { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if (error?.code === "EEXIST") throw new Error(code);
+    throw error;
+  }
+}
+async function pathExists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}

@@ -81,8 +81,7 @@ export function createMemoryManagementService(
     options.lease.chatSurfaceSessionId,
   ).runtimeCwd;
   const mutationEnabled =
-    options.profile.routeIds.includes("memory.mutate") &&
-    options.profile.operationIds.includes("memory.mutate");
+    options.profile.routeIds.includes("memory.mutate") && options.profile.operationIds.includes("memory.mutate");
   const lease = options.lease;
   const handleSecret = randomBytes(32);
   const projectHandle = (stateToken: string): string =>
@@ -99,7 +98,9 @@ export function createMemoryManagementService(
     facadePromise ??= (async () => {
       const magicContextEntry = resolveMagicContextExtensionEntry();
       const module = (await import(pathToFileURL(magicContextEntry).href)) as {
-        createGameBuddyPlayerMemoryCrudFacade?: (args: Readonly<{ continuityId: string; runtimeCwd: string }>) => unknown;
+        createGameBuddyPlayerMemoryCrudFacade?: (
+          args: Readonly<{ continuityId: string; runtimeCwd: string }>,
+        ) => unknown;
       };
       const value = module.createGameBuddyPlayerMemoryCrudFacade?.({ continuityId, runtimeCwd });
       if (
@@ -244,7 +245,8 @@ function mapReadError(error: unknown): Error {
 }
 
 function mapMutationError(error: unknown): Error {
-  if (error instanceof Error && /memory_(?:read_service_unavailable|mutation_conflict)/.test(error.message)) return error;
+  if (error instanceof Error && /memory_(?:read_service_unavailable|mutation_conflict)/.test(error.message))
+    return error;
   const message = error instanceof Error ? error.message : "";
   if (/storage|sqlite|eio|enoent/i.test(message)) return new Error("memory_read_storage_unavailable");
   if (/conflict|stale|not.?found|missing/i.test(message)) return conflict();

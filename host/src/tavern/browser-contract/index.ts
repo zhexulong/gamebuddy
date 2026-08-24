@@ -30,7 +30,9 @@ const isNfcUtf8Text = (value: string): boolean =>
   value === value.normalize("NFC") &&
   new TextEncoder().encode(value).byteLength <= MAX_TEXT_UTF8_BYTES;
 const isMemoryText = (value: string): boolean =>
-  !hasUnpairedUtf16Surrogate(value) && value === value.normalize("NFC") && new TextEncoder().encode(value).byteLength <= 4096;
+  !hasUnpairedUtf16Surrogate(value) &&
+  value === value.normalize("NFC") &&
+  new TextEncoder().encode(value).byteLength <= 4096;
 const isCanonicalUnpaddedBase64Url = (value: string): boolean => {
   if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) return false;
   const finalValue = BASE64URL_ALPHABET.indexOf(value.at(-1)!);

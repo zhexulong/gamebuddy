@@ -44,7 +44,14 @@ test("M8 ladder dossier rejects promotion or target drift", () => {
   };
   assert.equal(validateDossier(d), true);
   assert.throws(
-    () => validateDossier({ ...d, semanticBoundary: { contextualEquivalence: "A fresh existing ladder in the current MineShaft Buildings layer derives exactly mineLevel + 1 only when adjacent." } }),
+    () =>
+      validateDossier({
+        ...d,
+        semanticBoundary: {
+          contextualEquivalence:
+            "A fresh existing ladder in the current MineShaft Buildings layer derives exactly mineLevel + 1 only when adjacent.",
+        },
+      }),
     /direct facility boundary invalid/,
   );
   assert.throws(() => validateDossier({ ...d, actionId: "select_mine_elevator_floor" }), /invalid/);

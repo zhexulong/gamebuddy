@@ -17,7 +17,9 @@ declare module "@cortexkit/pi-magic-context" {
   export type GameBuddyPlayerMemoryCrudFacade = GameBuddyPlayerMemoryReadProjection &
     Readonly<{
       create(input: Readonly<{ continuityId: string; content: string }>): Promise<GameBuddyMemoryView>;
-      update(input: Readonly<{ continuityId: string; stateToken: string; content: string }>): Promise<GameBuddyMemoryView>;
+      update(
+        input: Readonly<{ continuityId: string; stateToken: string; content: string }>,
+      ): Promise<GameBuddyMemoryView>;
       archive(input: Readonly<{ continuityId: string; stateToken: string }>): Promise<void>;
     }>;
   export function createGameBuddyPlayerMemoryCrudFacade(

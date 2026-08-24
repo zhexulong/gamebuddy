@@ -2594,87 +2594,203 @@ function validPortfolioSkipEventTerminalReason(
   reason: PortfolioReasonCode,
 ): boolean {
   switch (state) {
-    case "succeeded": return reason === "skip_event_completed";
-    case "cancelled": return reason === "cancelled";
-    case "expired": return reason === "deadline_expired";
-    case "failed": return reason === "native_operation_failed";
-    case "uncertain": return SKIP_EVENT_UNCERTAIN_REASONS.has(reason);
+    case "succeeded":
+      return reason === "skip_event_completed";
+    case "cancelled":
+      return reason === "cancelled";
+    case "expired":
+      return reason === "deadline_expired";
+    case "failed":
+      return reason === "native_operation_failed";
+    case "uncertain":
+      return SKIP_EVENT_UNCERTAIN_REASONS.has(reason);
     case "rejected":
-      return reason.startsWith("invalid_") || reason === "revision_mismatch" || reason === "deadline_expired" ||
-        reason === "skip_event_no_active_event" || reason === "skip_event_target_invalid" ||
+      return (
+        reason.startsWith("invalid_") ||
+        reason === "revision_mismatch" ||
+        reason === "deadline_expired" ||
+        reason === "skip_event_no_active_event" ||
+        reason === "skip_event_target_invalid" ||
         reason === "execution_not_active" ||
-        reason === "cancellation_token_mismatch" || reason === "idempotency_key_reused_with_different_request";
+        reason === "cancellation_token_mismatch" ||
+        reason === "idempotency_key_reused_with_different_request"
+      );
     case "blocked":
-      return reason.startsWith("portfolio_") || reason === "execution_already_active" ||
-        reason === "adapter_unavailable" || reason === "irreversible_phase_reached";
+      return (
+        reason.startsWith("portfolio_") ||
+        reason === "execution_already_active" ||
+        reason === "adapter_unavailable" ||
+        reason === "irreversible_phase_reached"
+      );
   }
 }
-export function validatePortfolioSkipEventRequest(
-  v: unknown,
-  s: PortfolioScope,
-  n = Date.now(),
-): string | null {
-  return isRecord(v) && hasExactKeys(v, ["action", "requestId", "traceId", "idempotencyKey", "expectedRevision", "deadlineMs", "cancellationToken", "scope"]) &&
-    v.action === PORTFOLIO_SKIP_EVENT_ACTION && validId(v.requestId) && validId(v.traceId) && validId(v.idempotencyKey) &&
-    Number.isSafeInteger(v.expectedRevision) && v.expectedRevision >= 0 && Number.isSafeInteger(v.deadlineMs) &&
-    v.deadlineMs > n && v.deadlineMs <= n + 1800000 && validToken(v.cancellationToken) && samePortfolioScope(v.scope, s)
-    ? null : "invalid_portfolio_skip_event_request";
+export function validatePortfolioSkipEventRequest(v: unknown, s: PortfolioScope, n = Date.now()): string | null {
+  return isRecord(v) &&
+    hasExactKeys(v, [
+      "action",
+      "requestId",
+      "traceId",
+      "idempotencyKey",
+      "expectedRevision",
+      "deadlineMs",
+      "cancellationToken",
+      "scope",
+    ]) &&
+    v.action === PORTFOLIO_SKIP_EVENT_ACTION &&
+    validId(v.requestId) &&
+    validId(v.traceId) &&
+    validId(v.idempotencyKey) &&
+    Number.isSafeInteger(v.expectedRevision) &&
+    v.expectedRevision >= 0 &&
+    Number.isSafeInteger(v.deadlineMs) &&
+    v.deadlineMs > n &&
+    v.deadlineMs <= n + 1800000 &&
+    validToken(v.cancellationToken) &&
+    samePortfolioScope(v.scope, s)
+    ? null
+    : "invalid_portfolio_skip_event_request";
 }
 export function validatePortfolioSkipEventCancelRequest(v: unknown, s: PortfolioScope): string | null {
-  return isRecord(v) && hasExactKeys(v, ["action", "requestId", "traceId", "executionId", "cancellationToken", "scope"]) &&
-    v.action === PORTFOLIO_SKIP_EVENT_ACTION && validId(v.requestId) && validId(v.traceId) && validId(v.executionId) &&
-    validToken(v.cancellationToken) && samePortfolioScope(v.scope, s)
-    ? null : "invalid_portfolio_skip_event_cancel_request";
+  return isRecord(v) &&
+    hasExactKeys(v, ["action", "requestId", "traceId", "executionId", "cancellationToken", "scope"]) &&
+    v.action === PORTFOLIO_SKIP_EVENT_ACTION &&
+    validId(v.requestId) &&
+    validId(v.traceId) &&
+    validId(v.executionId) &&
+    validToken(v.cancellationToken) &&
+    samePortfolioScope(v.scope, s)
+    ? null
+    : "invalid_portfolio_skip_event_cancel_request";
 }
 export function validatePortfolioSkipEventProbe(v: unknown, s: PortfolioScope): string | null {
-  return isRecord(v) && hasExactKeys(v, ["requestId", "traceId", "scope", "revision", "fresh", "eventObserved", "eventSkippable", "opaqueEventTarget"]) &&
-    validId(v.requestId) && validId(v.traceId) && samePortfolioScope(v.scope, s) && Number.isSafeInteger(v.revision) && v.revision >= 0 &&
-    v.fresh === true && typeof v.eventObserved === "boolean" && typeof v.eventSkippable === "boolean" &&
+  return isRecord(v) &&
+    hasExactKeys(v, [
+      "requestId",
+      "traceId",
+      "scope",
+      "revision",
+      "fresh",
+      "eventObserved",
+      "eventSkippable",
+      "opaqueEventTarget",
+    ]) &&
+    validId(v.requestId) &&
+    validId(v.traceId) &&
+    samePortfolioScope(v.scope, s) &&
+    Number.isSafeInteger(v.revision) &&
+    v.revision >= 0 &&
+    v.fresh === true &&
+    typeof v.eventObserved === "boolean" &&
+    typeof v.eventSkippable === "boolean" &&
     (v.opaqueEventTarget === null || (validId(v.opaqueEventTarget) && v.opaqueEventTarget !== "none"))
-    ? null : "invalid_portfolio_skip_event_probe";
+    ? null
+    : "invalid_portfolio_skip_event_probe";
 }
 export function validatePortfolioSkipEventPhase(v: unknown): string | null {
-  return isRecord(v) && hasExactKeys(v, ["requestId", "traceId", "executionId", "phase", "revision", "reasonCode"]) &&
-    validId(v.requestId) && validId(v.traceId) && validId(v.executionId) &&
-    typeof v.phase === "string" && (PORTFOLIO_SKIP_EVENT_PHASES as readonly string[]).includes(v.phase) &&
-    Number.isSafeInteger(v.revision) && v.revision >= 0 && validReason(v.reasonCode)
-    ? null : "invalid_portfolio_skip_event_phase";
+  return isRecord(v) &&
+    hasExactKeys(v, ["requestId", "traceId", "executionId", "phase", "revision", "reasonCode"]) &&
+    validId(v.requestId) &&
+    validId(v.traceId) &&
+    validId(v.executionId) &&
+    typeof v.phase === "string" &&
+    (PORTFOLIO_SKIP_EVENT_PHASES as readonly string[]).includes(v.phase) &&
+    Number.isSafeInteger(v.revision) &&
+    v.revision >= 0 &&
+    validReason(v.reasonCode)
+    ? null
+    : "invalid_portfolio_skip_event_phase";
 }
 export function validatePortfolioSkipEventReceipt(v: unknown, s?: PortfolioScope): string | null {
-  if (!isRecord(v) || !hasExactKeys(v, ["requestId", "traceId", "executionId", "state", "revision", "reasonCode", "evidence", "postcondition"]) ||
-    !validId(v.requestId) || !validId(v.traceId) || !validId(v.executionId) || !isPortfolioSkipEventTerminalState(v.state) ||
-    !Number.isSafeInteger(v.revision) || v.revision < 0 || !validReason(v.reasonCode) || !isRecord(v.evidence) || !isRecord(v.postcondition))
+  if (
+    !isRecord(v) ||
+    !hasExactKeys(v, [
+      "requestId",
+      "traceId",
+      "executionId",
+      "state",
+      "revision",
+      "reasonCode",
+      "evidence",
+      "postcondition",
+    ]) ||
+    !validId(v.requestId) ||
+    !validId(v.traceId) ||
+    !validId(v.executionId) ||
+    !isPortfolioSkipEventTerminalState(v.state) ||
+    !Number.isSafeInteger(v.revision) ||
+    v.revision < 0 ||
+    !validReason(v.reasonCode) ||
+    !isRecord(v.evidence) ||
+    !isRecord(v.postcondition)
+  )
     return "invalid_portfolio_skip_event_receipt";
-  const e = v.evidence, p = v.postcondition;
-  if (!hasExactKeys(e, ["scope", "phaseTrace", "eventObserved", "eventSkippable", "opaqueEventTarget", "nativeEventId", "nativeSkipObserved", "eventCleared", "postEventStateClean"]) ||
-    !validPortfolioScope(e.scope as PortfolioScope) || (s !== undefined && !samePortfolioScope(e.scope, s)) || !Array.isArray(e.phaseTrace) || e.phaseTrace.length < 2 ||
-    e.phaseTrace.some(validatePortfolioSkipEventPhase) || typeof e.eventObserved !== "boolean" || typeof e.eventSkippable !== "boolean" ||
+  const e = v.evidence,
+    p = v.postcondition;
+  if (
+    !hasExactKeys(e, [
+      "scope",
+      "phaseTrace",
+      "eventObserved",
+      "eventSkippable",
+      "opaqueEventTarget",
+      "nativeEventId",
+      "nativeSkipObserved",
+      "eventCleared",
+      "postEventStateClean",
+    ]) ||
+    !validPortfolioScope(e.scope as PortfolioScope) ||
+    (s !== undefined && !samePortfolioScope(e.scope, s)) ||
+    !Array.isArray(e.phaseTrace) ||
+    e.phaseTrace.length < 2 ||
+    e.phaseTrace.some(validatePortfolioSkipEventPhase) ||
+    typeof e.eventObserved !== "boolean" ||
+    typeof e.eventSkippable !== "boolean" ||
     (e.opaqueEventTarget !== null && (!validId(e.opaqueEventTarget) || e.opaqueEventTarget === "none")) ||
-    (e.nativeEventId !== null && !validId(e.nativeEventId)) || typeof e.nativeSkipObserved !== "boolean" || typeof e.eventCleared !== "boolean" ||
-    typeof e.postEventStateClean !== "boolean" || !hasExactKeys(p, ["postEventStateClean", "freshObservation", "sameExecution"]) ||
-    typeof p.postEventStateClean !== "boolean" || typeof p.freshObservation !== "boolean" || typeof p.sameExecution !== "boolean")
+    (e.nativeEventId !== null && !validId(e.nativeEventId)) ||
+    typeof e.nativeSkipObserved !== "boolean" ||
+    typeof e.eventCleared !== "boolean" ||
+    typeof e.postEventStateClean !== "boolean" ||
+    !hasExactKeys(p, ["postEventStateClean", "freshObservation", "sameExecution"]) ||
+    typeof p.postEventStateClean !== "boolean" ||
+    typeof p.freshObservation !== "boolean" ||
+    typeof p.sameExecution !== "boolean"
+  )
     return "invalid_portfolio_skip_event_receipt";
   const phases = e.phaseTrace as PortfolioSkipEventPhase[];
-  if (phases[0]?.phase !== "fresh_observed" || phases.at(-1)?.phase !== "terminal" || !isMonotonicPortfolioSkipEventPhaseTrace(phases) ||
-    phases.at(-1)?.reasonCode !== v.reasonCode || phases.at(-1)?.revision !== v.revision ||
+  if (
+    phases[0]?.phase !== "fresh_observed" ||
+    phases.at(-1)?.phase !== "terminal" ||
+    !isMonotonicPortfolioSkipEventPhaseTrace(phases) ||
+    phases.at(-1)?.reasonCode !== v.reasonCode ||
+    phases.at(-1)?.revision !== v.revision ||
     phases.some((x) => x.requestId !== v.requestId || x.traceId !== v.traceId || x.executionId !== v.executionId) ||
-    !validPortfolioSkipEventTerminalReason(v.state, v.reasonCode))
+    !validPortfolioSkipEventTerminalReason(v.state, v.reasonCode)
+  )
     return "invalid_portfolio_skip_event_phase_trace";
-  const shortFailure = v.state !== "succeeded" && ((phases.length === 2 && phases[0]?.revision === phases[1]?.revision) ||
-    (phases.length === 3 && phases[1]?.phase === "accepted" && phases[1]?.revision === phases[2]?.revision));
+  const shortFailure =
+    v.state !== "succeeded" &&
+    ((phases.length === 2 && phases[0]?.revision === phases[1]?.revision) ||
+      (phases.length === 3 && phases[1]?.phase === "accepted" && phases[1]?.revision === phases[2]?.revision));
   // A native Event.skipEvent boundary is irreversible. If a later lifecycle
   // invalidation prevents a clean reread, preserve the exact observed native
   // skip as an uncertain terminal rather than discarding its receipt.
-  const postNativeFailure = v.state === "uncertain" && v.reasonCode === "native_operation_uncertain" &&
+  const postNativeFailure =
+    v.state === "uncertain" &&
+    v.reasonCode === "native_operation_uncertain" &&
     phases.length === 4 &&
-    phases[0]?.phase === "fresh_observed" && phases[0]?.reasonCode === "fresh_observed" &&
-    phases[1]?.phase === "accepted" && phases[1]?.reasonCode === "accepted" &&
-    phases[2]?.phase === "native_skip" && phases[2]?.reasonCode === "skip_event_native_skip" &&
-    phases[3]?.phase === "terminal" && phases[3]?.reasonCode === "native_operation_uncertain" &&
+    phases[0]?.phase === "fresh_observed" &&
+    phases[0]?.reasonCode === "fresh_observed" &&
+    phases[1]?.phase === "accepted" &&
+    phases[1]?.reasonCode === "accepted" &&
+    phases[2]?.phase === "native_skip" &&
+    phases[2]?.reasonCode === "skip_event_native_skip" &&
+    phases[3]?.phase === "terminal" &&
+    phases[3]?.reasonCode === "native_operation_uncertain" &&
     phases[0]?.revision === phases[1]?.revision &&
     phases[2]!.revision > phases[1]!.revision &&
     phases[3]?.revision === phases[2]?.revision &&
-    e.eventObserved && e.nativeSkipObserved;
+    e.eventObserved &&
+    e.nativeSkipObserved;
   const expectedPhaseReasons = [
     "fresh_observed",
     "accepted",
@@ -2682,32 +2798,64 @@ export function validatePortfolioSkipEventReceipt(v: unknown, s?: PortfolioScope
     "postcondition_observed",
     "skip_event_completed",
   ];
-  const successTrace = phases.length === 5 && phases.every((phase, index) =>
-    phase.phase === PORTFOLIO_SKIP_EVENT_PHASES[index] && phase.reasonCode === expectedPhaseReasons[index]
-  );
-  const successRevisions = phases.length === 5 &&
+  const successTrace =
+    phases.length === 5 &&
+    phases.every(
+      (phase, index) =>
+        phase.phase === PORTFOLIO_SKIP_EVENT_PHASES[index] && phase.reasonCode === expectedPhaseReasons[index],
+    );
+  const successRevisions =
+    phases.length === 5 &&
     phases[0]?.revision === phases[1]?.revision &&
     phases[2]!.revision > phases[1]!.revision &&
     phases[3]!.revision > phases[2]!.revision &&
     phases[4]!.revision === phases[3]!.revision;
   const success = successTrace && successRevisions;
-  if (v.state === "succeeded" && (!success || !e.eventObserved || !e.nativeSkipObserved || !e.eventCleared || !e.postEventStateClean ||
-    !p.postEventStateClean || !p.freshObservation || !p.sameExecution)) return "invalid_portfolio_skip_event_receipt";
+  if (
+    v.state === "succeeded" &&
+    (!success ||
+      !e.eventObserved ||
+      !e.nativeSkipObserved ||
+      !e.eventCleared ||
+      !e.postEventStateClean ||
+      !p.postEventStateClean ||
+      !p.freshObservation ||
+      !p.sameExecution)
+  )
+    return "invalid_portfolio_skip_event_receipt";
   return v.state === "succeeded" || shortFailure || postNativeFailure
     ? null
     : "invalid_portfolio_skip_event_phase_trace";
 }
-export function materializePortfolioSkipEventProbe(v: unknown, r: Pick<PortfolioSkipEventRequest, "requestId" | "traceId" | "expectedRevision">, s: PortfolioScope): PortfolioSkipEventProbe {
+export function materializePortfolioSkipEventProbe(
+  v: unknown,
+  r: Pick<PortfolioSkipEventRequest, "requestId" | "traceId" | "expectedRevision">,
+  s: PortfolioScope,
+): PortfolioSkipEventProbe {
   if (validatePortfolioSkipEventProbe(v, s) !== null) throw new Error("invalid_portfolio_skip_event_probe");
   const p = v as PortfolioSkipEventProbe;
-  if (p.requestId !== r.requestId || p.traceId !== r.traceId || p.revision !== r.expectedRevision) throw new Error("portfolio_skip_event_probe_correlation_mismatch");
+  if (p.requestId !== r.requestId || p.traceId !== r.traceId || p.revision !== r.expectedRevision)
+    throw new Error("portfolio_skip_event_probe_correlation_mismatch");
   return Object.freeze({ ...p, scope: Object.freeze({ ...p.scope }) });
 }
-export function materializePortfolioSkipEventReceipt(v: unknown, r: Pick<PortfolioSkipEventRequest, "requestId" | "traceId" | "expectedRevision">, s: PortfolioScope): PortfolioSkipEventReceipt {
+export function materializePortfolioSkipEventReceipt(
+  v: unknown,
+  r: Pick<PortfolioSkipEventRequest, "requestId" | "traceId" | "expectedRevision">,
+  s: PortfolioScope,
+): PortfolioSkipEventReceipt {
   if (validatePortfolioSkipEventReceipt(v, s) !== null) throw new Error("invalid_portfolio_skip_event_receipt");
   const x = v as PortfolioSkipEventReceipt;
-  if (x.requestId !== r.requestId || x.traceId !== r.traceId || x.evidence.phaseTrace[0]?.revision !== r.expectedRevision) throw new Error("portfolio_skip_event_request_correlation_mismatch");
-  return Object.freeze({ ...x, evidence: Object.freeze({ ...x.evidence, phaseTrace: Object.freeze([...x.evidence.phaseTrace]) }), postcondition: Object.freeze({ ...x.postcondition }) });
+  if (
+    x.requestId !== r.requestId ||
+    x.traceId !== r.traceId ||
+    x.evidence.phaseTrace[0]?.revision !== r.expectedRevision
+  )
+    throw new Error("portfolio_skip_event_request_correlation_mismatch");
+  return Object.freeze({
+    ...x,
+    evidence: Object.freeze({ ...x.evidence, phaseTrace: Object.freeze([...x.evidence.phaseTrace]) }),
+    postcondition: Object.freeze({ ...x.postcondition }),
+  });
 }
 export function materializePortfolioMineEntryReceipt(
   v: unknown,

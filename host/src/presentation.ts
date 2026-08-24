@@ -1,7 +1,4 @@
-import type {
-  VoiceAudioEpochAdmission,
-  VoiceSpeechPort,
-} from "./voice.js";
+import type { VoiceAudioEpochAdmission, VoiceSpeechPort } from "./voice.js";
 
 export type PresentationProfile = Readonly<{
   locale: string;
