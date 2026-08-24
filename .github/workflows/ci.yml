@@ -47,6 +47,11 @@ jobs:
       # The Host build owns the browser build inside its private emitted
       # generation; dialogue-web cannot be built as a separate post-build step.
       - run: pnpm build
+      # The browser manifest suite resolves its inspection adapter from the
+      # Host verification artifact; build that artifact before the standalone
+      # browser bundle it verifies.
+      - run: pnpm --filter @gamebuddy/companion-host build:test
+      - run: pnpm --filter @gamebuddy/dialogue-web build
       # Dialogue Web uses Playwright's pinned Chromium for browser, mounted
       # Reference, and mounted management journeys.
       - run: pnpm --filter @gamebuddy/dialogue-web exec playwright install chromium
