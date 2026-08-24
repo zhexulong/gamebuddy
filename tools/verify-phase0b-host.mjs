@@ -23,7 +23,8 @@ try {
       [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort(),
     );
     assert.equal(runtime.extensions.length, 1);
-    assert.match(runtime.extensions[0], /vendor[\\/]magic-context[\\/]packages[\\/]pi-plugin[\\/]dist[\\/]index\.js$/);
+    assert.match(runtime.extensions[0], /@cortexkit[\\/]pi-magic-context[\\/]dist[\\/]index\.js$/);
+    assert.doesNotMatch(runtime.extensions[0], /(?:^|[\\/])vendor(?:[\\/]|$)/);
   } finally {
     runtime.session.dispose();
   }

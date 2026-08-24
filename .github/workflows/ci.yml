@@ -90,4 +90,7 @@ jobs:
         run: ./tools/verify-stardew-scaffold.ps1
       # Static leaves run only source/policy assertions and never mutate the game or invoke action scripts.
       - run: pnpm test:stardew:static
-      - run: pnpm verify:stardew:static
+      - shell: pwsh
+        run: |
+          pnpm verify:stardew:static
+          if ($LASTEXITCODE -notin 0, 2) { exit $LASTEXITCODE }

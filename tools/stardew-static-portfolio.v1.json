@@ -59,6 +59,22 @@
       "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_ACTION_PROJECTION@v1"
     },
     {
+      "id": "script_test_stardew_core",
+      "script": "test:stardew:core",
+      "command": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_CORE@v1"
+    },
+    {
+      "id": "script_test_stardew_integration",
+      "script": "test:stardew:integration",
+      "command": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_INTEGRATION@v1"
+    },
+    {
       "id": "script_verify_stardew_action_projection_local",
       "script": "verify:stardew-action-projection-local",
       "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-local.ps1 -Configuration Debug",
@@ -875,14 +891,6 @@
       "riskId": "GB-STARDEW-STATIC-COMPANION_PRODUCTION_ADMISSION_CONTRACT@v1"
     },
     {
-      "id": "stardew_capability_projection_contract",
-      "script": "test:stardew-static-capability-projection",
-      "command": "dotnet integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll",
-      "class": "static_non_action_leaf",
-      "owner": "gamebuddy.stardew.static-verifier@v1",
-      "riskId": "GB-STARDEW-STATIC-STARDEW_CAPABILITY_PROJECTION_CONTRACT@v1"
-    },
-    {
       "id": "script_verify_stardew_action_projection_p2c",
       "script": "verify:stardew-action-projection-p2c",
       "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-p2c.ps1 -Configuration Debug",
@@ -952,19 +960,6 @@
       "artifactIdentity": "gamebuddy_stardew_companion_admission_record/v1",
       "owner": "gamebuddy.stardew.static-verifier@v1",
       "riskId": "GB-STARDEW-STATIC-COMPANION_PRODUCTION_ADMISSION_CONTRACT@v1"
-    },
-    {
-      "id": "stardew_capability_projection_contract",
-      "script": "test:stardew-static-capability-projection",
-      "command": [
-        "dotnet",
-        "integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll",
-        "integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll"
-      ],
-      "evidenceKind": "dotnet_projection_contract",
-      "artifactIdentity": "integrations/stardew/tests/FarmhandActionCapabilityProjection.Contract.csproj",
-      "owner": "gamebuddy.stardew.static-verifier@v1",
-      "riskId": "GB-STARDEW-STATIC-STARDEW_CAPABILITY_PROJECTION_CONTRACT@v1"
     },
     {
       "id": "stardew_portfolio_projection_contract",

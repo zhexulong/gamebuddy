@@ -359,8 +359,7 @@ export type ExecutionRequest = Readonly<{
     | "chop_tree_source"
     | "break_rock_source"
     | "clear_hoedirt"
-    | "dig_artifact_spot"
-    | "sop_composite_pipeline";
+    | "dig_artifact_spot";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -600,7 +599,6 @@ const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"]
   break_rock_source: ["slot", "x", "y", "expectedTargetId"],
   clear_hoedirt: ["slot", "x", "y", "expectedTargetId"],
   dig_artifact_spot: ["slot", "x", "y", "expectedTargetId"],
-  sop_composite_pipeline: ["pipelinePayload"],
 };
 
 export function newEnvelope<TType extends BridgeMessage["type"], TPayload>(
@@ -814,8 +812,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "chop_tree_source" &&
     value.action !== "break_rock_source" &&
     value.action !== "clear_hoedirt" &&
-    value.action !== "dig_artifact_spot" &&
-    value.action !== "sop_composite_pipeline"
+    value.action !== "dig_artifact_spot"
   )
     return "unknown_action";
   if (!isRecord(value.args)) return "invalid_args";
@@ -1058,8 +1055,6 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       value.args.expectedQualifiedItemId.length > 128
     )
       return "invalid_item_use_target";
-  } else if (value.action === "sop_composite_pipeline") {
-    if (!isRecord(value.args.pipelinePayload)) return "invalid_sop_payload";
   }
   return null;
 }
@@ -1447,8 +1442,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "chop_tree_source" ||
       value.action === "break_rock_source" ||
       value.action === "clear_hoedirt" ||
-      value.action === "dig_artifact_spot" ||
-      value.action === "sop_composite_pipeline") &&
+      value.action === "dig_artifact_spot") &&
     isRecord(value.args) &&
     hasExactKeys(value.args, EXECUTION_ACTION_ARGUMENT_KEYS[value.action as ExecutionRequest["action"]]) &&
     Number.isSafeInteger(value.expectedRevision) &&

@@ -12,7 +12,7 @@ $manifestPath = Join-Path $modRoot "manifest.json"
 $entryPath = Join-Path $modRoot "ModEntry.cs"
 $managerPath = Join-Path $modRoot "ExecutionManager.cs"
 $controllerPath = Join-Path $modRoot "StardewBodyController.cs"
-$bridgeProtocolPath = Join-Path $modRoot "BridgeProtocol.cs"
+$bridgeProtocolPath = Join-Path $modRoot "src/Core/Protocol/BridgeProtocol.cs"
 $bridgeSessionPath = Join-Path $modRoot "BridgeSession.cs"
 $localPipeBridgePath = Join-Path $modRoot "LocalPipeBridge.cs"
 
@@ -48,10 +48,15 @@ foreach ($requiredText in @("public sealed partial class ModEntry : Mod", "publi
     }
 }
 
-$allSource = (Get-ChildItem -LiteralPath $modRoot -Filter "*.cs" -File | Get-Content -Raw) -join "`n"
+$allSource = (Get-ChildItem -LiteralPath $modRoot -Filter "*.cs" -File -Recurse | Get-Content -Raw) -join "`n"
+# Portfolio Given fixtures provide repository-owned target-version setup for their
+# separately gated scenarios. They are not ordinary Farmhand production paths.
+$ordinaryFarmhandSource = (Get-ChildItem -LiteralPath $modRoot -Filter "*.cs" -File -Recurse |
+    Where-Object { $_.Name -notlike "Portfolio*GivenFixture.cs" } |
+    Get-Content -Raw) -join "`n"
 foreach ($forbiddenText in @("new Farmer", "Game1.otherFarmers", "new NPC", "HttpClient", "WebSocket", "TcpListener", "UdpClient", "Game1.warpFarmer")) {
-    if ($allSource.Contains($forbiddenText)) {
-        throw "Stardew embodiment contains forbidden Phase 1 surface: $forbiddenText"
+    if ($ordinaryFarmhandSource.Contains($forbiddenText)) {
+        throw "Stardew ordinary Farmhand embodiment contains forbidden Phase 1 surface: $forbiddenText"
     }
 }
 

@@ -87,10 +87,7 @@ internal sealed class BridgeSession
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "execution_request", out reasonCode)) return false;
         BridgeExecutionRequest request = envelope!.Payload;
         if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;
-        string pipelinePart = request.Action == "sop_composite_pipeline" && request.Args.AdditionalProperties != null && request.Args.AdditionalProperties.TryGetValue("pipelinePayload", out JsonElement pipeElem)
-            ? pipeElem.GetRawText().Length.ToString()
-            : "none";
-        string fingerprint = $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.Args.Slot}:{request.Args.ExpectedQualifiedItemId}:{request.Args.ExpectedTargetId}:{request.ExpectedRevision}:{pipelinePart}";
+        string fingerprint = $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.Args.Slot}:{request.Args.ExpectedQualifiedItemId}:{request.Args.ExpectedTargetId}:{request.ExpectedRevision}";
         // Replays return a durable receipt but remain current bridge requests:
         // they must satisfy the same owner-thread, published-capability, revision,
         // and deadline gates before the ledger is consulted.
@@ -563,11 +560,6 @@ internal sealed class BridgeSession
             if (!request.Args.Slot.HasValue || request.Args.Slot.Value < 0 || request.Args.Slot.Value > 36)
             { reasonCode = "invalid_execution_request"; return false; }
         }
-        else if (request.Action == "sop_composite_pipeline")
-        {
-            if (request.Args.AdditionalProperties is null || !request.Args.AdditionalProperties.TryGetValue("pipelinePayload", out JsonElement elem) || elem.ValueKind != JsonValueKind.Object)
-            { reasonCode = "invalid_execution_request"; return false; }
-        }
         else
         { reasonCode = "invalid_execution_request"; return false; }
         reasonCode = "accepted"; return true;
@@ -575,13 +567,6 @@ internal sealed class BridgeSession
 
     private static bool HasExactArgumentShape(string action, BridgeExecutionArgs args)
     {
-        if (action == "sop_composite_pipeline")
-        {
-            return args.AdditionalProperties != null &&
-                   args.AdditionalProperties.ContainsKey("pipelinePayload") &&
-                   !args.X.HasValue && !args.Y.HasValue && !args.Slot.HasValue &&
-                   args.ExpectedQualifiedItemId is null && args.ExpectedTargetId is null;
-        }
         if (args.AdditionalProperties is { Count: > 0 }) return false;
         bool x = args.X.HasValue;
         bool y = args.Y.HasValue;

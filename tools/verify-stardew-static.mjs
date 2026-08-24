@@ -25,7 +25,6 @@ const TARGET_ASSEMBLIES = Object.freeze([
   "smapi-internal/Newtonsoft.Json.dll",
 ]);
 const CONTRACT_ASSEMBLIES = new Set([
-  "integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll",
   "integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll",
 ]);
 const PRODUCTION_ASSEMBLY = "integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll";

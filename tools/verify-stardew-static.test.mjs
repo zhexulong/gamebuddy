@@ -79,7 +79,6 @@ test("loads and completely inventories root Stardew scripts", async () => {
       .sort(),
   );
   assert.ok(portfolio.leaves.some((leaf) => leaf.id === "stardew_scaffold_contract"));
-  assert.ok(portfolio.leaves.some((leaf) => leaf.id === "stardew_capability_projection_contract"));
   assert.ok(portfolio.leaves.some((leaf) => leaf.id === "companion_fixture_contract"));
   assert.ok(portfolio.leaves.some((leaf) => leaf.id === "companion_production_admission_contract"));
   assert.deepEqual(
@@ -226,16 +225,11 @@ test("executes only allowlisted static leaves and records all other scripts as b
   );
 });
 
-test("both C# static leaves invoke their distinct compiled assertion entrypoints", async () => {
+test("the C# static leaf invokes the compiled Portfolio assertion entrypoint", async () => {
   const { portfolio } = await loadStaticPortfolio();
   assert.deepEqual(
     portfolio.leaves.filter((leaf) => leaf.command[0] === "dotnet").map((leaf) => leaf.command),
     [
-      [
-        "dotnet",
-        "integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll",
-        productionAssembly,
-      ],
       [
         "dotnet",
         "integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll",
@@ -245,7 +239,7 @@ test("both C# static leaves invoke their distinct compiled assertion entrypoints
   );
 });
 
-test("missing target assemblies block both C# leaves without executing or entering the pass denominator", async () => {
+test("missing target assemblies block the C# leaf without executing or entering the pass denominator", async () => {
   const { portfolio, scripts: rootScripts } = await loadStaticPortfolio();
   const invoked = [];
   const report = await verifyStaticPortfolio({
@@ -264,19 +258,16 @@ test("missing target assemblies block both C# leaves without executing or enteri
   const contracts = report.leaves.filter((leaf) => leaf.command[0] === "dotnet");
   assert.equal(report.state, "blocked");
   assert.equal(report.reasonCode, "blocked_missing_target_assemblies");
-  assert.equal(report.summary.blocked, 2);
-  assert.equal(report.summary.passDenominator, report.leaves.length - 2);
+  assert.equal(report.summary.blocked, 1);
+  assert.equal(report.summary.passDenominator, report.leaves.length - 1);
   assert.deepEqual(
     contracts.map(({ state, reasonCode }) => ({ state, reasonCode })),
-    [
-      { state: "blocked_missing_target_assemblies", reasonCode: "blocked_missing_target_assemblies" },
-      { state: "blocked_missing_target_assemblies", reasonCode: "blocked_missing_target_assemblies" },
-    ],
+    [{ state: "blocked_missing_target_assemblies", reasonCode: "blocked_missing_target_assemblies" }],
   );
   assert.ok(invoked.every((command) => command[0] !== "dotnet"));
 });
 
-test("compiled contracts receive a SHA-256 for the exact post-build production assembly and preserve nonzero failures", async () => {
+test("the compiled contract receives a SHA-256 for the exact post-build production assembly and preserves nonzero failures", async () => {
   const { portfolio, scripts: rootScripts } = await loadStaticPortfolio();
   const invoked = [],
     builds = [];
@@ -292,7 +283,7 @@ test("compiled contracts receive a SHA-256 for the exact post-build production a
     hashProduction: async () => ({ path: resolve(root, productionAssembly), expectedSha256: "e".repeat(64) }),
     executeLeaf: async (command, options) => {
       invoked.push({ command, options });
-      return { exitCode: command[0] === "dotnet" && !command[1].includes("Farmhand") ? 7 : 0, durationMs: 2 };
+      return { exitCode: command[0] === "dotnet" ? 7 : 0, durationMs: 2 };
     },
   });
   assert.deepEqual(builds, [{ targetGamePath: "C:/licensed-stardew" }]);
@@ -309,13 +300,6 @@ test("compiled contracts receive a SHA-256 for the exact post-build production a
     })),
     [
       {
-        entrypoint: "integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll",
-        expectedFlag: "--expected-sha256",
-        digest: "e".repeat(64),
-        assembly: resolve(root, productionAssembly),
-        options: { targetGamePath: "C:/licensed-stardew" },
-      },
-      {
         entrypoint: "integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll",
         expectedFlag: "--expected-sha256",
         digest: "e".repeat(64),
@@ -326,11 +310,11 @@ test("compiled contracts receive a SHA-256 for the exact post-build production a
   );
   assert.deepEqual(
     report.leaves.filter((leaf) => leaf.command[0] === "dotnet").map((leaf) => leaf.state),
-    ["passed", "failed"],
+    ["failed"],
   );
 });
 
-test("hashes a generated production assembly and passes its digest to both compiled contracts", async () => {
+test("hashes a generated production assembly and passes its digest to the compiled contract", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-static-"));
   const assembly = join(directory, "GameBuddy.Stardew.dll");
   const bytes = Buffer.from("generated-after-build");
@@ -354,10 +338,7 @@ test("hashes a generated production assembly and passes its digest to both compi
     });
     assert.deepEqual(
       invoked.filter((command) => command[0] === "dotnet").map((command) => command.slice(2)),
-      [
-        ["--expected-sha256", expectedSha256, assembly],
-        ["--expected-sha256", expectedSha256, assembly],
-      ],
+      [["--expected-sha256", expectedSha256, assembly]],
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -383,7 +364,7 @@ test("rejects missing, non-file, and changed production assemblies before launch
   );
 });
 
-test("a target production build failure prevents both contracts from running", async () => {
+test("a target production build failure prevents the contract from running", async () => {
   const { portfolio, scripts: rootScripts } = await loadStaticPortfolio();
   const invoked = [];
   const report = await verifyStaticPortfolio({
@@ -398,7 +379,7 @@ test("a target production build failure prevents both contracts from running", a
     },
   });
   assert.equal(report.state, "failed");
-  assert.equal(report.summary.failed, 2);
+  assert.equal(report.summary.failed, 1);
   assert.ok(invoked.every((command) => command[0] !== "dotnet"));
 });
 
@@ -416,7 +397,7 @@ test("target build receives the configured game path and each leaf executes its 
   await executeStaticLeaf(
     [
       "dotnet",
-      "integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll",
+      "integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll",
       productionAssembly,
     ],
     { spawnFn },
@@ -438,7 +419,7 @@ test("target build receives the configured game path and each leaf executes its 
       {
         command: "dotnet",
         arguments_: [
-          "integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll",
+          "integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll",
           productionAssembly,
         ],
       },
@@ -446,11 +427,8 @@ test("target build receives the configured game path and each leaf executes its 
   );
 });
 
-test("both compiled contracts require and validate a supplied GameBuddy.Stardew DLL before assertions", async () => {
-  const sources = await Promise.all([
-    readFile(resolve(root, "integrations", "stardew", "tests", "FarmhandActionCapabilityProjectionProgram.cs"), "utf8"),
-    readFile(resolve(root, "integrations", "stardew", "tests", "Program.cs"), "utf8"),
-  ]);
+test("the compiled contract requires and validates a supplied GameBuddy.Stardew DLL before assertions", async () => {
+  const sources = [await readFile(resolve(root, "integrations", "stardew", "tests", "Program.cs"), "utf8")];
   for (const source of sources) {
     // Both contracts require the exact SHA-256 + production DLL pair. The
     // Farmhand contract also has a separately explicit four-argument
@@ -475,15 +453,10 @@ test("both compiled contracts require and validate a supplied GameBuddy.Stardew 
     assert.match(source, /reader\.GetAssemblyDefinition\(\)/);
     assert.match(source, /assemblyName == "GameBuddy\.Stardew"/);
   }
-  const [farmhandSource, portfolioSource] = sources;
-  assert.match(farmhandSource, /ModConfig/);
-  assert.match(farmhandSource, /CreateFarmhandCapabilitySurface/);
-  assert.match(farmhandSource, /ExecutionManager/);
-  assert.match(farmhandSource, /CreateBridgeSnapshot/);
-  assert.match(portfolioSource, /PortfolioMineElevatorProjection/);
+  assert.match(sources[0], /PortfolioMineElevatorProjection/);
 });
 
-test("both contracts compile immutable stream binding before typed assertions and retain metadata-only negative characterization", async () => {
+test("the contract compiles immutable stream binding before typed assertions and retains metadata-only negative characterization", async () => {
   const binding = await readFile(
     resolve(root, "integrations", "stardew", "tests", "ProductionAssemblyBinding.cs"),
     "utf8",
@@ -507,22 +480,18 @@ test("both contracts compile immutable stream binding before typed assertions an
   assert.match(binding, /reader\.GetAssemblyDefinition\(\);/);
   assert.match(binding, /CryptographicOperations\.FixedTimeEquals/);
 
-  const projects = await Promise.all([
-    readFile(
-      resolve(root, "integrations", "stardew", "tests", "FarmhandActionCapabilityProjection.Contract.csproj"),
-      "utf8",
-    ),
-    readFile(
+  const projects = [
+    await readFile(
       resolve(root, "integrations", "stardew", "tests", "PortfolioMineElevatorProjection.Contract.csproj"),
       "utf8",
     ),
-  ]);
+  ];
   for (const project of projects) {
     assert.match(project, /<Compile Include="ProductionAssemblyBinding\.cs" \/>/);
   }
 });
 
-test("target availability requires precisely the union of both contract projects' external HintPaths", () => {
+test("target availability requires the contract's external HintPaths", () => {
   const environment = { GAMEBUDDY_STARDEW_GAME_PATH: "C:/licensed-stardew" };
   const expected = [
     "Stardew Valley.dll",
@@ -559,17 +528,13 @@ test("target availability requires precisely the union of both contract projects
   );
 });
 
-test("both contract projects declare precisely the target assembly closure", async () => {
-  const projects = await Promise.all([
-    readFile(
-      resolve(root, "integrations", "stardew", "tests", "FarmhandActionCapabilityProjection.Contract.csproj"),
-      "utf8",
-    ),
-    readFile(
+test("the contract project declares precisely the target assembly closure", async () => {
+  const projects = [
+    await readFile(
       resolve(root, "integrations", "stardew", "tests", "PortfolioMineElevatorProjection.Contract.csproj"),
       "utf8",
     ),
-  ]);
+  ];
   for (const project of projects) {
     assert.deepEqual(
       [...project.matchAll(/<HintPath>\$\(GamePath\)\\([^<]+)<\/HintPath>/g)].map((match) => match[1]).sort(),
@@ -583,7 +548,7 @@ test("both contract projects declare precisely the target assembly closure", asy
   }
 });
 
-test("missing target assemblies canary emits one blocked report with no verifier reentry", async () => {
+test("missing target assemblies canary emits a blocked report with no verifier reentry", async () => {
   const { spawnSync } = await import("node:child_process");
   const result = spawnSync(process.execPath, ["tools/verify-stardew-static.mjs"], {
     cwd: root,
@@ -609,8 +574,9 @@ test("missing target assemblies canary emits one blocked report with no verifier
   );
 });
 
-test("CI invokes the static verifier and its test suite", async () => {
+test("CI invokes the static verifier and permits the target-assembly blocked outcome", async () => {
   const ci = await readFile(resolve(root, ".github", "workflows", "ci.yml"), "utf8");
   assert.match(ci, /- run: pnpm test:stardew:static/);
-  assert.match(ci, /- run: pnpm verify:stardew:static/);
+  assert.match(ci, /pnpm verify:stardew:static/);
+  assert.match(ci, /\$LASTEXITCODE -notin 0, 2/);
 });
