@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, mkdtemp, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { before } from "node:test";
@@ -71,7 +71,7 @@ test("opaque identity keys partition contexts without display names", () => {
 });
 
 test("runtime paths stay outside the repository workspace", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-")));
   const paths = resolveRuntimePaths(identity, root);
 
   assert.equal(paths.root, root);
@@ -156,7 +156,7 @@ test("mounted Companion status reports live integration facts without inferring 
 });
 
 test("runtime mounts a fake integration through the module port", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-fake-integration-runtime-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-fake-integration-runtime-")));
   const entries = [
     {
       actionId: "activate_console",
@@ -262,7 +262,7 @@ test("runtime mounts a fake integration through the module port", async () => {
 });
 
 test("runtime rejects a mounted integration whose save identity does not match", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase3-scope-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-phase3-scope-")));
   const wrongScope: Scope = {
     integrationId: "stardew",
     saveId: "other_save",
@@ -280,7 +280,7 @@ test("runtime rejects a mounted integration whose save identity does not match",
 });
 
 test("generic runtime keeps an explicit game surface when the Host construction zone supplies it", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-game-surface-runtime-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-game-surface-runtime-")));
   const scope: Scope = {
     integrationId: "stardew",
     saveId: identity.saveId,
@@ -321,7 +321,7 @@ test("generic runtime keeps an explicit game surface when the Host construction 
 });
 
 test("Chat surface runtime has no presentation pseudo-tools before the Host mounts a presentation authority", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-chat-surface-runtime-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-chat-surface-runtime-")));
   const runtime = await createCompanionRuntime(
     { ...identity, continuityId: "continuity_chat_01" },
     root,
@@ -352,7 +352,7 @@ test("Chat surface runtime has no presentation pseudo-tools before the Host moun
 });
 
 test("formal Preview Game composition does not load Magic Context", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-preview-no-magic-context-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-preview-no-magic-context-")));
   const scope: Scope = {
     integrationId: "stardew",
     saveId: identity.saveId,
@@ -396,7 +396,7 @@ test("formal Preview Game composition does not load Magic Context", async () => 
 });
 
 test("Stardew action tools fail closed when a connection lacks the launcher execution gate", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-no-execution-gate-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-runtime-no-execution-gate-")));
   const scope: Scope = {
     integrationId: "stardew",
     saveId: identity.saveId,
@@ -445,7 +445,7 @@ test("Stardew action tools fail closed when a connection lacks the launcher exec
 });
 
 test("runtime composes a ledger admission before mounting and executing a live Stardew action", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-admission-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-runtime-admission-")));
   const scope: Scope = {
     integrationId: "stardew",
     saveId: identity.saveId,
@@ -513,7 +513,7 @@ test("runtime composes a ledger admission before mounting and executing a live S
 });
 
 test("runtime mounts only the explicitly verified Stardew product tools", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase3-tools-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-phase3-tools-")));
   const scope: Scope = {
     integrationId: "stardew",
     saveId: identity.saveId,
@@ -542,8 +542,8 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
 });
 
 test("runtime materializes the optional gameplay subagent without exposing its tools to the parent by default", async () => {
-  const offlineRoot = await mkdtemp(join(tmpdir(), "gamebuddy-gameplay-subagent-offline-"));
-  const delegatedRoot = await mkdtemp(join(tmpdir(), "gamebuddy-gameplay-subagent-enabled-"));
+  const offlineRoot = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-gameplay-subagent-offline-")));
+  const delegatedRoot = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-gameplay-subagent-enabled-")));
   const scope: Scope = {
     integrationId: "stardew",
     saveId: identity.saveId,
@@ -609,7 +609,7 @@ test("runtime materializes the optional gameplay subagent without exposing its t
 });
 
 test("runtime mounts Host-owned version-bound knowledge only when explicitly configured", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase3-knowledge-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-phase3-knowledge-")));
   const scope: Scope = {
     integrationId: "stardew",
     saveId: identity.saveId,
@@ -649,7 +649,7 @@ test("runtime resolves Magic Context from the Host-declared package dependency",
 });
 
 test("runtime loads only Magic Context and preserves a session partition", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-runtime-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-runtime-")));
   const runtime = await createCompanionRuntime(identity, root);
 
   try {
@@ -760,7 +760,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
 });
 
 test("concurrent runtime bootstraps retain separate Magic Context data roots", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-concurrency-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-runtime-concurrency-")));
   const cwdBefore = process.cwd();
   const firstIdentity = { ...identity, saveId: "save_concurrent_01" };
   const secondIdentity = { ...identity, saveId: "save_concurrent_02" };
@@ -780,7 +780,7 @@ test("concurrent runtime bootstraps retain separate Magic Context data roots", a
 });
 
 test("internal Historian fixture override can disable automatic authoring without changing Memory gates", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-historian-off-fixture-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-historian-off-fixture-")));
   const runtime = await createCompanionRuntime(
     identity,
     root,
@@ -809,7 +809,7 @@ test("internal Historian fixture override can disable automatic authoring withou
 });
 
 test("Tavern stable context is available only through the exact live chat Pi binding", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-tavern-stable-context-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-tavern-stable-context-")));
   const tavernIdentity = { ...identity, continuityId: "continuity_01" };
   const runtime = await createCompanionRuntime(
     tavernIdentity,
@@ -898,7 +898,7 @@ test("Game operational marker registration is Game-only and initialization clean
 });
 
 test("runtime construction failure disposes the Pi session and clears stable publication", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-cleanup-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-runtime-cleanup-")));
   const chatIdentity = { ...identity, continuityId: "cleanup_continuity_01" };
   const first = await createCompanionRuntime(
     chatIdentity,
@@ -959,7 +959,7 @@ test("runtime construction failure disposes the Pi session and clears stable pub
 });
 
 test("runtime binds the Host-owned IdentityProfile to Pi system prompt and fails closed on mismatch", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-runtime-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-runtime-")));
   const runtime = await createCompanionRuntime(identity, root);
   try {
     assert.match(runtime.session.systemPrompt, /<gamebuddy_companion_identity/);
@@ -984,7 +984,7 @@ test("runtime binds the Host-owned IdentityProfile to Pi system prompt and fails
   );
   await assert.rejects(() => createCompanionRuntime(identity, root), /identity_profile_mismatch/);
 
-  const secondRoot = await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-binding-"));
+  const secondRoot = await realpath(await mkdtemp(join(tmpdir(), "gamebuddy-identity-profile-binding-")));
   const first = await createCompanionRuntime(identity, secondRoot);
   const bindingPath = first.paths.identityProfileBindingPath;
   first.session.dispose();
