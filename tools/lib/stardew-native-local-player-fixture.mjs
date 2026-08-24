@@ -1,8 +1,13 @@
-import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
+import { cp, lstat, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
-const BUNDLE_FILES = Object.freeze(["GameBuddy.Stardew.dll", "manifest.json", "GameBuddy.Stardew.deps.json"]);
+const BUNDLE_FILES = Object.freeze([
+  "GameBuddy.Stardew.dll",
+  "GameBuddy.Stardew.Core.dll",
+  "manifest.json",
+  "GameBuddy.Stardew.deps.json",
+]);
 const LOCK_DIRECTORY = ".stardew-native-local-player-fixture.lock";
 
 export async function prepareNativeLocalPlayerFixture(options) {
@@ -11,7 +16,8 @@ export async function prepareNativeLocalPlayerFixture(options) {
   assertObservedSaveSlot(options.saveName);
   const actions = fixtureActions(options.action);
   await assertSafeContext(context);
-  if (await exists(join(context.root, options.backupName))) throw new Error(`fixture_backup_already_exists:${join(context.root, options.backupName)}`);
+  if (await exists(join(context.root, options.backupName)))
+    throw new Error(`fixture_backup_already_exists:${join(context.root, options.backupName)}`);
   await beginTransaction(context, options.backupName);
   const backup = join(context.root, options.backupName);
   let backupCreated = false;
@@ -22,11 +28,23 @@ export async function prepareNativeLocalPlayerFixture(options) {
     await mkdir(backup, { recursive: true });
     backupCreated = true;
     await backupManagedFiles(context, backup);
-    const configured = configureNativeLocalPlayer(original, options.saveName, options.timeoutSeconds ?? 90, actions, options.binding);
+    const configured = configureNativeLocalPlayer(
+      original,
+      options.saveName,
+      options.timeoutSeconds ?? 90,
+      actions,
+      options.binding,
+    );
     await writeJson(context.configPath, configured);
     await deployBundle(context);
     await verifyNativeLocalPlayerFixture({ ...options, ...context });
-    return Object.freeze({ state: "prepared", backup, saveName: options.saveName, configPath: context.configPath, modsPath: context.modsPath });
+    return Object.freeze({
+      state: "prepared",
+      backup,
+      saveName: options.saveName,
+      configPath: context.configPath,
+      modsPath: context.modsPath,
+    });
   } catch (error) {
     await rollbackFailedPreparation(context, backup, options.backupName, backupCreated, error);
   }
@@ -37,7 +55,8 @@ export async function bootstrapNativeLocalPlayerFixture(options) {
   await assertSafeContext(context);
   assertFixtureLogicalName(options.logicalSaveName);
   const actions = fixtureActions(options.action);
-  if (await exists(join(context.root, options.backupName))) throw new Error(`fixture_backup_already_exists:${join(context.root, options.backupName)}`);
+  if (await exists(join(context.root, options.backupName)))
+    throw new Error(`fixture_backup_already_exists:${join(context.root, options.backupName)}`);
   await beginTransaction(context, options.backupName);
   const backup = join(context.root, options.backupName);
   let backupCreated = false;
@@ -48,9 +67,18 @@ export async function bootstrapNativeLocalPlayerFixture(options) {
     await mkdir(backup, { recursive: true });
     backupCreated = true;
     await backupManagedFiles(context, backup);
-    await writeJson(context.configPath, configureNativeLocalPlayerBootstrap(original, options.logicalSaveName, options.timeoutSeconds ?? 90, actions));
+    await writeJson(
+      context.configPath,
+      configureNativeLocalPlayerBootstrap(original, options.logicalSaveName, options.timeoutSeconds ?? 90, actions),
+    );
     await deployBundle(context);
-    return Object.freeze({ state: "bootstrap_prepared", backup, logicalSaveName: options.logicalSaveName, configPath: context.configPath, modsPath: context.modsPath });
+    return Object.freeze({
+      state: "bootstrap_prepared",
+      backup,
+      logicalSaveName: options.logicalSaveName,
+      configPath: context.configPath,
+      modsPath: context.modsPath,
+    });
   } catch (error) {
     await rollbackFailedPreparation(context, backup, options.backupName, backupCreated, error);
   }
@@ -63,12 +91,33 @@ export async function verifyNativeLocalPlayerFixture(options) {
   const actions = fixtureActions(options.action);
   const config = await readJson(context.configPath);
   const fixture = config.NativeLocalPlayerFixture;
-  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.LogicalSaveName !== logicalNameForObservedSlot(options.saveName) || fixture.ObservedSaveSlot !== options.saveName || !Number.isInteger(fixture.TimeoutSeconds) || fixture.FixtureScenario !== fixtureScenario(actions)) throw new Error("native_local_fixture_config_invalid");
-  if (config.Portfolio?.Enable === true || config.HostAutomation?.Enable === true || config.HostFarmhandProvisioning?.Enable === true || config.FarmhandProvisioner?.Enable === true) throw new Error("native_local_fixture_topology_not_isolated");
-  if (config.ActionPolicyVersion !== 0 || JSON.stringify(config.EnabledActions) !== JSON.stringify(actions)) throw new Error("native_local_fixture_action_policy_invalid");
+  if (
+    fixture?.Enable !== true ||
+    fixture.Bootstrap?.Enable === true ||
+    fixture.LogicalSaveName !== logicalNameForObservedSlot(options.saveName) ||
+    fixture.ObservedSaveSlot !== options.saveName ||
+    !Number.isInteger(fixture.TimeoutSeconds) ||
+    fixture.FixtureScenario !== fixtureScenario(actions)
+  )
+    throw new Error("native_local_fixture_config_invalid");
+  if (
+    config.Portfolio?.Enable === true ||
+    config.HostAutomation?.Enable === true ||
+    config.HostFarmhandProvisioning?.Enable === true ||
+    config.FarmhandProvisioner?.Enable === true
+  )
+    throw new Error("native_local_fixture_topology_not_isolated");
+  if (config.ActionPolicyVersion !== 0 || JSON.stringify(config.EnabledActions) !== JSON.stringify(actions))
+    throw new Error("native_local_fixture_action_policy_invalid");
   assertBridgeConfig(config);
-  for (const name of BUNDLE_FILES) if (!await exists(join(context.modRoot, name))) throw new Error(`native_local_fixture_bundle_missing:${name}`);
-  return Object.freeze({ state: "verified", saveName: options.saveName, actions, topology: "native_local_player_fixture" });
+  for (const name of BUNDLE_FILES)
+    if (!(await exists(join(context.modRoot, name)))) throw new Error(`native_local_fixture_bundle_missing:${name}`);
+  return Object.freeze({
+    state: "verified",
+    saveName: options.saveName,
+    actions,
+    topology: "native_local_player_fixture",
+  });
 }
 
 export async function restoreNativeLocalPlayerFixture(options) {
@@ -83,12 +132,27 @@ export async function restoreNativeLocalPlayerFixture(options) {
 }
 
 function resolveContext(options) {
-  if (!options.root || !isAbsolute(options.root) || !options.modsPath || !isAbsolute(options.modsPath) || !options.releaseDir || !isAbsolute(options.releaseDir)) throw new Error("native_local_fixture_absolute_paths_required");
+  if (
+    !options.root ||
+    !isAbsolute(options.root) ||
+    !options.modsPath ||
+    !isAbsolute(options.modsPath) ||
+    !options.releaseDir ||
+    !isAbsolute(options.releaseDir)
+  )
+    throw new Error("native_local_fixture_absolute_paths_required");
   const modRoot = join(options.modsPath, "GameBuddy");
-  return Object.freeze({ root: options.root, modsPath: options.modsPath, releaseDir: options.releaseDir, modRoot, configPath: join(modRoot, "config.json") });
+  return Object.freeze({
+    root: options.root,
+    modsPath: options.modsPath,
+    releaseDir: options.releaseDir,
+    modRoot,
+    configPath: join(modRoot, "config.json"),
+  });
 }
 async function assertSafeContext(context) {
-  for (const path of [context.root, context.modsPath, context.releaseDir, context.modRoot]) await assertDirectoryNotLink(path);
+  for (const path of [context.root, context.modsPath, context.releaseDir, context.modRoot])
+    await assertDirectoryNotLink(path);
   for (const name of ["config.json", ...BUNDLE_FILES]) {
     const path = join(context.modRoot, name);
     if (await exists(path)) await assertNotLink(path);
@@ -96,24 +160,40 @@ async function assertSafeContext(context) {
 }
 async function assertDirectoryNotLink(path) {
   let metadata;
-  try { metadata = await lstat(path); } catch (error) { if (error?.code === "ENOENT") throw new Error(`native_local_fixture_path_missing:${path}`); throw error; }
+  try {
+    metadata = await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") throw new Error(`native_local_fixture_path_missing:${path}`);
+    throw error;
+  }
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error(`native_local_fixture_unsafe_path:${path}`);
 }
 async function assertNotLink(path) {
   const metadata = await lstat(path);
   if (metadata.isSymbolicLink()) throw new Error(`native_local_fixture_unsafe_path:${path}`);
 }
-function fixtureObservedSlotMatch(value) { return typeof value === "string" ? /^(GameBuddyFixture[A-Za-z0-9]{0,64})_([0-9]{1,32})$/.exec(value) : null; }
-function assertObservedSaveSlot(value) { if (!fixtureObservedSlotMatch(value)) throw new Error("invalid_fixture_observed_save_slot"); }
-function assertFixtureLogicalName(value) { if (typeof value !== "string" || !/^GameBuddyFixture[A-Za-z0-9]{0,64}$/.test(value)) throw new Error("invalid_fixture_logical_save_name"); }
-function logicalNameForObservedSlot(value) { const match = fixtureObservedSlotMatch(value); if (!match) throw new Error("invalid_fixture_observed_save_slot"); return match[1]; }
-function assertBackupName(value) { if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,95}-fixture-backup$/.test(value)) throw new Error("invalid_fixture_backup_name"); }
+function fixtureObservedSlotMatch(value) {
+  return typeof value === "string" ? /^(GameBuddyFixture[A-Za-z0-9]{0,64})_([0-9]{1,32})$/.exec(value) : null;
+}
+function assertObservedSaveSlot(value) {
+  if (!fixtureObservedSlotMatch(value)) throw new Error("invalid_fixture_observed_save_slot");
+}
+function assertFixtureLogicalName(value) {
+  if (typeof value !== "string" || !/^GameBuddyFixture[A-Za-z0-9]{0,64}$/.test(value))
+    throw new Error("invalid_fixture_logical_save_name");
+}
+function logicalNameForObservedSlot(value) {
+  const match = fixtureObservedSlotMatch(value);
+  if (!match) throw new Error("invalid_fixture_observed_save_slot");
+  return match[1];
+}
+function assertBackupName(value) {
+  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,95}-fixture-backup$/.test(value))
+    throw new Error("invalid_fixture_backup_name");
+}
 export function fixtureActions(action) {
   if (action === undefined || action === "move_to_tile") return ["move_to_tile"];
   if (action === "equip_tool") return ["equip_tool"];
-  // Tree discovery is a read-only snapshot probe. inspect_self is intrinsic to
-  // BridgeSession and must not be configured as an enabled fixture action.
-  if (action === "tree_discovery") return [];
   if (action === "travel") return ["move_to_tile", "travel"];
   // The fixture supplies one intact target-version ResourceClump and a basic
   // Pickaxe before attachment. Travel/movement/equipment and each hit remain
@@ -156,7 +236,9 @@ export function fixtureActions(action) {
   // validated water target's unique cardinal standing tile. Placement remains
   // exclusively a future typed production action.
   if (action === "place_crab_pot") return ["move_to_tile", "travel", "place_crab_pot"];
-  if (action === "tree_first_hit") return ["move_to_tile", "travel", "equip_tool", "tree_first_hit"];
+  // A bait fixture creates a current-player-owned unbaited pot and exactly one
+  // Bait pre-attachment; production alone performs the native interaction.
+  if (action === "bait_crab_pot") return ["bait_crab_pot"];
   if (action === "chop_tree_source") return ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
   if (action === "break_rock_source") return ["move_to_tile", "travel", "equip_tool", "break_rock_source"];
   if (action === "clear_hoedirt") return ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"];
@@ -187,8 +269,8 @@ export function fixtureScenario(actions) {
   if (actions.includes("pet_animal")) return "native_pet_animal_v1";
   if (actions.includes("use_item")) return "native_use_item_v1";
   if (actions.includes("place_wood_fence")) return "native_place_wood_fence_v1";
+  if (actions.includes("bait_crab_pot")) return "native_bait_crab_pot_v1";
   if (actions.includes("place_crab_pot")) return "native_place_crab_pot_v1";
-  if (actions.includes("tree_first_hit")) return "native_tree_first_hit_v1";
   if (actions.includes("chop_tree_source")) return "native_chop_tree_source_v1";
   if (actions.includes("break_rock_source")) return "native_break_rock_source_v1";
   if (actions.includes("clear_hoedirt")) return "native_clear_hoedirt_v1";
@@ -200,23 +282,43 @@ export function fixtureScenario(actions) {
   return "";
 }
 function assertNativeLocalBinding(binding, observedSaveSlot) {
-  if (!binding || typeof binding !== "object" || binding.version !== 1 || binding.observedSaveSlot !== observedSaveSlot || binding.logicalSaveName !== logicalNameForObservedSlot(observedSaveSlot)) throw new Error("native_local_fixture_binding_invalid");
+  if (
+    !binding ||
+    typeof binding !== "object" ||
+    binding.version !== 1 ||
+    binding.observedSaveSlot !== observedSaveSlot ||
+    binding.logicalSaveName !== logicalNameForObservedSlot(observedSaveSlot)
+  )
+    throw new Error("native_local_fixture_binding_invalid");
   const opaque = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
-  if (![binding.saveId, binding.worldId, binding.playerId, binding.companionId].every(opaque)) throw new Error("native_local_fixture_binding_invalid");
+  if (![binding.saveId, binding.worldId, binding.playerId, binding.companionId].every(opaque))
+    throw new Error("native_local_fixture_binding_invalid");
 }
 function assertBridgeConfig(config) {
   const opaque = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
-  if (config?.EnableLocalBridge !== true
-    || !opaque(config.PipeName)
-    || typeof config.BridgeToken !== "string" || config.BridgeToken.length < 16 || config.BridgeToken.length > 256
-    || ![config.SaveId, config.WorldId, config.PlayerId, config.CompanionId].every(opaque)) throw new Error("native_local_fixture_bridge_config_invalid");
+  if (
+    config?.EnableLocalBridge !== true ||
+    !opaque(config.PipeName) ||
+    typeof config.BridgeToken !== "string" ||
+    config.BridgeToken.length < 16 ||
+    config.BridgeToken.length > 256 ||
+    ![config.SaveId, config.WorldId, config.PlayerId, config.CompanionId].every(opaque)
+  )
+    throw new Error("native_local_fixture_bridge_config_invalid");
 }
 function assertSourceTopologyIsolated(config) {
-  if (config.Portfolio?.Enable === true || config.HostAutomation?.Enable === true || config.HostFarmhandProvisioning?.Enable === true || config.FarmhandProvisioner?.Enable === true) throw new Error("native_local_fixture_topology_not_isolated");
+  if (
+    config.Portfolio?.Enable === true ||
+    config.HostAutomation?.Enable === true ||
+    config.HostFarmhandProvisioning?.Enable === true ||
+    config.FarmhandProvisioner?.Enable === true
+  )
+    throw new Error("native_local_fixture_topology_not_isolated");
 }
 function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSeconds, actions) {
   assertFixtureLogicalName(logicalSaveName);
-  if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300) throw new Error("invalid_native_local_fixture_timeout");
+  if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
+    throw new Error("invalid_native_local_fixture_timeout");
   const result = structuredClone(config);
   result.NativeLocalPlayerFixture = {
     Enable: true,
@@ -227,7 +329,7 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
     ObservedSaveSlot: `${logicalSaveName}_0`,
     TimeoutSeconds: timeoutSeconds,
     FixtureScenario: fixtureScenario(actions),
-    Bootstrap: { Enable: true, SaveName: logicalSaveName, PlayerName: "GameBuddy" }
+    Bootstrap: { Enable: true, SaveName: logicalSaveName, PlayerName: "GameBuddy" },
   };
   result.Portfolio = { ...(result.Portfolio ?? {}), Enable: false };
   result.HostAutomation = { ...(result.HostAutomation ?? {}), Enable: false };
@@ -236,12 +338,15 @@ function configureNativeLocalPlayerBootstrap(config, logicalSaveName, timeoutSec
   result.ActionPolicyVersion = 0;
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
-  result.ExperimentalActions = actions.filter((action) => ["clear_debris", "npc_relationship", "pet_animal"].includes(action));
+  result.ExperimentalActions = actions.filter((action) =>
+    ["clear_debris", "npc_relationship", "pet_animal"].includes(action),
+  );
   result.EnabledActions = actions;
   return result;
 }
 function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, actions, binding) {
-  if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300) throw new Error("invalid_native_local_fixture_timeout");
+  if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
+    throw new Error("invalid_native_local_fixture_timeout");
   assertNativeLocalBinding(binding, observedSaveSlot);
   const result = structuredClone(config);
   result.SaveId = binding.saveId;
@@ -253,7 +358,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
     LogicalSaveName: logicalNameForObservedSlot(observedSaveSlot),
     ObservedSaveSlot: observedSaveSlot,
     TimeoutSeconds: timeoutSeconds,
-    FixtureScenario: fixtureScenario(actions)
+    FixtureScenario: fixtureScenario(actions),
   };
   result.Portfolio = { ...(result.Portfolio ?? {}), Enable: false };
   result.HostAutomation = { ...(result.HostAutomation ?? {}), Enable: false };
@@ -262,7 +367,9 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.ActionPolicyVersion = 0;
   result.DeniedActions = [];
   result.DeniedActionFamilies = [];
-  result.ExperimentalActions = actions.filter((action) => ["clear_debris", "npc_relationship", "pet_animal"].includes(action));
+  result.ExperimentalActions = actions.filter((action) =>
+    ["clear_debris", "npc_relationship", "pet_animal"].includes(action),
+  );
   result.EnabledActions = actions;
   return result;
 }
@@ -271,7 +378,7 @@ async function rollbackFailedPreparation(context, backup, backupName, backupCrea
   // A manifest means every managed source byte was registered before mutation.
   // If its restoration fails, preserve both the backup and owning lock for
   // explicit recovery rather than deleting the only recovery material.
-  if (backupCreated && await exists(manifestPath)) {
+  if (backupCreated && (await exists(manifestPath))) {
     try {
       await restoreManagedFiles(context, backup, false);
     } catch (restoreError) {
@@ -303,13 +410,23 @@ async function backupManagedFiles(context, backup) {
 }
 async function restoreManagedFiles(context, backup, removeBackup) {
   const manifest = await readJson(join(backup, "manifest.json"));
-  if (manifest?.version !== 1 || !Array.isArray(manifest.entries) || manifest.entries.length !== 4) throw new Error("invalid_fixture_backup_manifest");
+  if (manifest?.version !== 1 || !Array.isArray(manifest.entries)) throw new Error("invalid_fixture_backup_manifest");
   const expectedNames = ["config.json", ...BUNDLE_FILES];
-  if (new Set(manifest.entries.map((entry) => entry?.name)).size !== expectedNames.length) throw new Error("invalid_fixture_backup_manifest");
+  if (manifest.entries.length !== expectedNames.length) throw new Error("invalid_fixture_backup_manifest");
+  if (new Set(manifest.entries.map((entry) => entry?.name)).size !== expectedNames.length)
+    throw new Error("invalid_fixture_backup_manifest");
   for (const entry of manifest.entries) {
-    if (!expectedNames.includes(entry.name) || typeof entry.existed !== "boolean" || entry.backupFile !== `${entry.name}.backup`) throw new Error("invalid_fixture_backup_entry");
+    if (
+      !expectedNames.includes(entry.name) ||
+      typeof entry.existed !== "boolean" ||
+      entry.backupFile !== `${entry.name}.backup`
+    )
+      throw new Error("invalid_fixture_backup_entry");
     const target = join(context.modRoot, entry.name);
-    if (!entry.existed) { await rm(target, { force: true }); continue; }
+    if (!entry.existed) {
+      await rm(target, { force: true });
+      continue;
+    }
     const bytes = await readFile(join(backup, entry.backupFile));
     if (digest(bytes) !== entry.sha256) throw new Error(`fixture_backup_hash_mismatch:${entry.name}`);
     await mkdir(dirname(target), { recursive: true });
@@ -322,26 +439,58 @@ async function deployBundle(context) {
   await mkdir(context.modRoot, { recursive: true });
   for (const name of BUNDLE_FILES) {
     const source = join(context.releaseDir, name);
-    if (!await exists(source)) throw new Error(`release_bundle_missing:${source}`);
+    if (!(await exists(source))) throw new Error(`release_bundle_missing:${source}`);
     const sourceBytes = await readFile(source);
     await cp(source, join(context.modRoot, name));
     const deployedBytes = await readFile(join(context.modRoot, name));
-    if (digest(sourceBytes) !== digest(deployedBytes)) throw new Error(`native_local_fixture_bundle_deploy_hash_mismatch:${name}`);
+    if (digest(sourceBytes) !== digest(deployedBytes))
+      throw new Error(`native_local_fixture_bundle_deploy_hash_mismatch:${name}`);
   }
 }
-function lockPath(context) { return join(context.root, LOCK_DIRECTORY); }
+function lockPath(context) {
+  return join(context.root, LOCK_DIRECTORY);
+}
 async function beginTransaction(context, backupName) {
   const path = lockPath(context);
   await mkdir(context.root, { recursive: true });
-  try { await mkdir(path); } catch (error) { if (error?.code === "EEXIST") throw new Error("native_local_fixture_transaction_locked"); throw error; }
-  await writeJson(join(path, "transaction.json"), { version: 1, backupName, ownerId: randomUUID(), startedAtUnixMs: Date.now() });
+  try {
+    await mkdir(path);
+  } catch (error) {
+    if (error?.code === "EEXIST") throw new Error("native_local_fixture_transaction_locked");
+    throw error;
+  }
+  await writeJson(join(path, "transaction.json"), {
+    version: 1,
+    backupName,
+    ownerId: randomUUID(),
+    startedAtUnixMs: Date.now(),
+  });
 }
 async function assertTransaction(context, backupName) {
   const owner = await readJson(join(lockPath(context), "transaction.json"));
-  if (owner?.version !== 1 || owner.backupName !== backupName || typeof owner.ownerId !== "string") throw new Error("native_local_fixture_transaction_owner_mismatch");
+  if (owner?.version !== 1 || owner.backupName !== backupName || typeof owner.ownerId !== "string")
+    throw new Error("native_local_fixture_transaction_owner_mismatch");
 }
-async function endTransaction(context, backupName) { await assertTransaction(context, backupName); await rm(lockPath(context), { recursive: true, force: false }); }
-async function exists(path) { try { await stat(path); return true; } catch (error) { if (error?.code === "ENOENT") return false; throw error; } }
-async function readJson(path) { return JSON.parse(await readFile(path, "utf8")); }
-async function writeJson(path, value) { await mkdir(dirname(path), { recursive: true }); await writeFile(path, `${JSON.stringify(value, null, 2)}\n`); }
-function digest(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
+async function endTransaction(context, backupName) {
+  await assertTransaction(context, backupName);
+  await rm(lockPath(context), { recursive: true, force: false });
+}
+async function exists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+}
+async function readJson(path) {
+  return JSON.parse(await readFile(path, "utf8"));
+}
+async function writeJson(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+function digest(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}

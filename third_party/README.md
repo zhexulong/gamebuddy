@@ -4,19 +4,21 @@ This directory records the reproducible dependency evidence required for GameBud
 
 ## Node dependency inventory
 
-Generate the lockfile-derived inventory after `pnpm install --frozen-lockfile`:
+Generate the narrow Node dependency inventory after `pnpm install --frozen-lockfile`:
 
 ```powershell
 node tools/generate-sbom.mjs
 ```
 
-It invokes `pnpm licenses list --json` and emits `sbom-node.json` in CycloneDX-shaped JSON. The committed npm `pnpm-lock.yaml` remains the exact package/integrity source; this report preserves package name, resolved version(s), license expression, and upstream homepage for review.
+It invokes the fixed `pnpm licenses list --json` command and emits `sbom-node.json` in CycloneDX-shaped JSON. The report records the exact SHA-256 of the current `pnpm-lock.yaml` and deterministic generator-input metadata without recording local paths, environment values, or secrets. Output is published atomically and refuses to overwrite an existing destination. Input claims outside Node, Bun, or C# are rejected.
+
+This is only a lockfile-bound Node inventory, not an artifact-scoped or multi-ecosystem release SBOM: product artifact identity and a release manifest are not available in this scope. The report is regenerated as part of the dependency-upgrade workflow and remains bound to the exact current `pnpm-lock.yaml` hash. It is still only a Node inventory, not an artifact-scoped or multi-ecosystem release SBOM.
 
 ## Direct dependencies
 
 | Component | Locked source/version | License | Product use / removal path |
 |---|---|---|---|
-| Pi coding-agent SDK | `@earendil-works/pi-coding-agent@0.82.1` | MIT | Restricted Companion session runtime. Remove by replacing `host/src/runtime.ts` session construction. |
+| Pi coding-agent SDK | `@earendil-works/pi-coding-agent@0.84.1` | MIT | Restricted Companion session runtime. Remove by replacing `host/src/runtime.ts` session construction. |
 | Magic Context | `@cortexkit/pi-magic-context@0.33.0` | MIT | Explicitly loaded extension only; remove by deleting the locked extension path/config in `host/src/runtime.ts`. |
 | SMAPI build integration | `Pathoschild.Stardew.ModBuildConfig@4.4.0` | MIT | Build-time SMAPI Mod packaging; no Stardew binaries are distributed. |
 | Stardew Valley / SMAPI runtime | locally installed Stardew `1.6.15`, SMAPI `4.5.2` | proprietary game / SMAPI license | Required only for local Mod build and game validation; never copied into this repository. |

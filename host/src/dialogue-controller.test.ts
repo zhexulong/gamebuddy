@@ -10,61 +10,174 @@ function fakeSession() {
   let block = false;
   return {
     session: {
-      get isIdle() { return !block; },
+      get isIdle() {
+        return !block;
+      },
       async prompt(text: string, options: unknown) {
         prompts.push({ text, options });
-        if (block) await new Promise<void>((resolvePromise) => { release = resolvePromise; });
+        if (block)
+          await new Promise<void>((resolvePromise) => {
+            release = resolvePromise;
+          });
       },
-      async abort() { aborted++; block = false; release?.(); },
-      clearQueue() { cleared++; return { steering: [], followUp: [] }; },
+      async abort() {
+        aborted++;
+        block = false;
+        release?.();
+      },
+      clearQueue() {
+        cleared++;
+        return { steering: [], followUp: [] };
+      },
     },
     prompts,
-    blockNext() { block = true; },
-    get aborted() { return aborted; },
-    get cleared() { return cleared; },
+    blockNext() {
+      block = true;
+    },
+    get aborted() {
+      return aborted;
+    },
+    get cleared() {
+      return cleared;
+    },
   };
 }
 
 test("DialogueController serializes canonical browser envelopes and deduplicates IDs", async () => {
   const fake = fakeSession();
   const controller = new DialogueController(fake.session, () => 42);
-  assert.equal(await controller.submit({ clientMessageId: "input_01", text: "/should-not-be-a-command", locale: "zh-CN" }), "accepted");
-  assert.equal(await controller.submit({ clientMessageId: "input_01", text: "duplicate", locale: "zh-CN" }), "duplicate");
+  assert.equal(
+    await controller.submit({ clientMessageId: "input_01", text: "/should-not-be-a-command", locale: "zh-CN" }),
+    "accepted",
+  );
+  assert.equal(
+    await controller.submit({ clientMessageId: "input_01", text: "duplicate", locale: "zh-CN" }),
+    "duplicate",
+  );
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
   assert.equal(fake.prompts.length, 1);
-  assert.deepEqual(JSON.parse(fake.prompts[0]!.text), { kind: "gamebuddy_dialogue_input_v1", clientMessageId: "input_01", text: "/should-not-be-a-command", locale: "zh-CN", receivedAtMs: 42 });
+  assert.deepEqual(JSON.parse(fake.prompts[0]!.text), {
+    kind: "gamebuddy_dialogue_input_v1",
+    clientMessageId: "input_01",
+    text: "/should-not-be-a-command",
+    locale: "zh-CN",
+    receivedAtMs: 42,
+  });
   assert.deepEqual(fake.prompts[0]!.options, { expandPromptTemplates: false, source: "rpc" });
 });
 
-test("DialogueController stop aborts the active dialogue turn and clears Pi queues", async () => {
-  const fake = fakeSession(); fake.blockNext();
+test("DialogueController waits at the actual prompt boundary for an evidence mutation", async () => {
+  const fake = fakeSession();
+  let releaseAdmission!: () => void;
+  const controller = new DialogueController(
+    fake.session,
+    Date.now,
+    () => true,
+    async () =>
+      new Promise<() => void>((resolve) => {
+        releaseAdmission = () => resolve(() => undefined);
+      }),
+  );
+  await controller.submit({ clientMessageId: "wait_01", text: "hello", locale: "en-US" });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(fake.prompts.length, 0);
+  releaseAdmission();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(fake.prompts.length, 1);
+});
+
+test("DialogueController does not queue a player turn when its durable boundary fails", async () => {
+  const fake = fakeSession();
+  const controller = new DialogueController(fake.session);
+  await assert.rejects(
+    () =>
+      controller.submit({ clientMessageId: "input_01", text: "hello", locale: "en-US" }, async () => {
+        throw new Error("storage_unavailable");
+      }),
+    /storage_unavailable/,
+  );
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+  assert.equal(fake.prompts.length, 0);
+});
+
+test("DialogueController stop aborts the active dialogue turn, revokes its current identity, and clears Pi queues", async () => {
+  const fake = fakeSession();
+  fake.blockNext();
   const controller = new DialogueController(fake.session);
   await controller.submit({ clientMessageId: "input_01", text: "hello", locale: "en-US" });
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
+  assert.equal(controller.currentTurnId(), "input_01");
   await controller.stop();
-  assert.equal(fake.aborted, 1); assert.equal(fake.cleared, 1);
+  assert.equal(controller.currentTurnId(), undefined);
+  assert.equal(fake.aborted, 1);
+  assert.equal(fake.cleared, 1);
 });
 
 test("DialogueController fails a player turn when no explicit presentation was emitted", async () => {
   const events: string[] = [];
-  const controller = new DialogueController({ async prompt() {}, async abort() {}, clearQueue() { return { steering: [], followUp: [] }; }, get isIdle() { return true; } }, Date.now, () => false);
+  const controller = new DialogueController(
+    {
+      async prompt() {},
+      async abort() {},
+      clearQueue() {
+        return { steering: [], followUp: [] };
+      },
+      get isIdle() {
+        return true;
+      },
+    },
+    Date.now,
+    () => false,
+  );
   controller.subscribe((event) => events.push(JSON.stringify(event)));
   await controller.submit({ clientMessageId: "silent_01", text: "hello", locale: "en-US" });
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.deepEqual(events.map((event) => JSON.parse(event).type), ["turn_queued", "turn_started", "turn_failed"]);
+  assert.deepEqual(
+    events.map((event) => JSON.parse(event).type),
+    ["turn_queued", "turn_started", "turn_failed"],
+  );
 });
 
 test("DialogueController reports a failed turn without exposing provider detail", async () => {
   const events: string[] = [];
-  const controller = new DialogueController({ async prompt() { throw new Error("provider secret"); }, async abort() {}, clearQueue() { return { steering: [], followUp: [] }; }, get isIdle() { return true; } });
+  const controller = new DialogueController({
+    async prompt() {
+      throw new Error("provider secret");
+    },
+    async abort() {},
+    clearQueue() {
+      return { steering: [], followUp: [] };
+    },
+    get isIdle() {
+      return true;
+    },
+  });
   controller.subscribe((event) => events.push(JSON.stringify(event)));
   await controller.submit({ clientMessageId: "failed_01", text: "hello", locale: "en-US" });
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.deepEqual(events.map((event) => JSON.parse(event).type), ["turn_queued", "turn_started", "turn_failed"]);
+  assert.deepEqual(
+    events.map((event) => JSON.parse(event).type),
+    ["turn_queued", "turn_started", "turn_failed"],
+  );
   assert.doesNotMatch(events.join("\n"), /provider secret/);
 });
 
-test("DialogueController rejects browser control fields and UTF-8 byte overflow", () => {
-  assert.throws(() => validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN", model: "wrong" }), /invalid_dialogue_input/);
-  assert.throws(() => validateDialogueInput({ clientMessageId: "input", text: "你".repeat(1_334), locale: "zh-CN" }), /invalid_dialogue_input/);
+test("DialogueController accepts only canonical player dialogue fields", () => {
+  assert.deepEqual(validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN" }), {
+    clientMessageId: "input",
+    text: "hello",
+    locale: "zh-CN",
+  });
+  assert.throws(
+    () => validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN", retiredOption: true }),
+    /invalid_dialogue_input/,
+  );
+  assert.throws(
+    () => validateDialogueInput({ clientMessageId: "input", text: "hello", locale: "zh-CN", model: "wrong" }),
+    /invalid_dialogue_input/,
+  );
+  assert.throws(
+    () => validateDialogueInput({ clientMessageId: "input", text: "你".repeat(1_334), locale: "zh-CN" }),
+    /invalid_dialogue_input/,
+  );
 });

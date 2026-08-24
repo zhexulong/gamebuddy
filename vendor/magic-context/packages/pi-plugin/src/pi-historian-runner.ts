@@ -1109,6 +1109,18 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				return;
 			}
 
+			// XML facts never invent provenance. For this runtime the only
+			// trustworthy candidate span is the exact published compartment range.
+			// Carry it as an opaque Pi range so a player exclusion can veto both
+			// candidate evaluation and the durable promotion commit.
+			const publishedFactSourceRefs = [
+				`pi-range:${sessionId}:${newCompartments[0]?.startMessage ?? chunk.startIndex}:${lastNewEnd}`,
+			];
+			const promotionFacts = (validatedPass.facts ?? []).map((fact) => ({
+				...fact,
+				sourceRefs: fact.sourceRefs ?? publishedFactSourceRefs,
+			}));
+
 			const markerSummary = buildPiCompactionSummary(newCompartments);
 			const lastNewEndMessageId =
 				newCompartments[newCompartments.length - 1]?.endMessageId;
@@ -1140,18 +1152,30 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			// skips unanchored promotion.
 			const discardedLast = newCompartments.length < emittedCompartments.length;
 			const weakLookaheadFinalCompartment = forceKeepLastCompartmentForChunk;
-			// discard-last runs must also skip unanchored promotion: facts cannot be
-			// attributed to the persisted range, and a reworded re-emission next run
-			// would double-store.
+			// Neither a discarded provisional tail nor an actual-final weak-lookahead
+			// tail has the durable source boundary required for promotion. The former
+			// will be re-derived; the latter is intentionally retained only so wrapup
+			// can preserve coverage. In both cases, facts/observations/primers must not
+			// become durable memory from an unanchored range.
 			const skipUnanchoredPromotion =
 				discardedLast || weakLookaheadFinalCompartment;
+			// `forceKeepLastCompartment` is a test-only terminal probe path.
+			// Unlike production's weak-lookahead preservation, it explicitly
+			// retains the final compartment as an anchored unit so the shared
+			// admission/promotion lifecycle can be exercised without inventing a
+			// near-limit player conversation. Normal final weak-lookahead behavior
+			// remains non-promotable because forceKeepLastCompartment is false.
 
 			// Two distinct gates (parity with OpenCode): embeddingActive = memory
 			// feature on (drives registration + embedding, the ctx_search / dreamer
 			// linking substrate); promotionActive additionally requires auto_promote
 			// (drives writing facts as memories).
 			const embeddingActive = memoryEnabled !== false;
-			const promotionActive = embeddingActive && autoPromote !== false;
+			const promotionActive =
+				embeddingActive &&
+				(memoryDomain === "ongoing-interaction"
+					? autoPromote === true
+					: autoPromote !== false);
 
 			// Events: stored, NOT rendered. Best-effort. discard-last: drop events
 			// anchored to the discarded provisional compartment.
@@ -1213,7 +1237,8 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 						db,
 						sessionId,
 						projectPath,
-						validatedPass.facts ?? [],
+						promotionFacts,
+						memoryDomain,
 					);
 				}
 

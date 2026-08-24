@@ -17,17 +17,38 @@ microphone audio, or own provider credentials.
 - Provider-neutral fake ASR/TTS/mixer adapters for deterministic CI.
 - `MimoTtsProvider` for the locked `mimo-v2.5-tts` SSE/PCM16 contract. The
   caller owns `MIMO_API_KEY`; it is never read from a repository file or
-  logged. A missing key/model/device preserves text interaction.
-- `SenseVoiceCliAsrProvider` for the external CPU-only FunASR llama.cpp runtime.
-  Before it can run, the operator supplies a JSON asset manifest containing the
-  runtime/model/VAD paths, locked runtime revision, and SHA-256 hashes. Gateway
-  startup verifies both files and hashes; PCM is converted to a transient WAV
-  and removed on success, failure, or cancellation. Model metadata tags are
-  stripped and never interpreted as player emotion, identity, or consent.
+  logged. A missing key/model/device preserves text interaction. Startup sends
+  one bounded non-player probe and requires its first PCM frame to complete a
+  real Windows output write before the Gateway reports speech ready.
+- `windows-waveout.ps1` plus `WindowsAudioMixer` implement the narrow Windows
+  output adapter. Set `GAMEBUDDY_WINDOWS_OUTPUT_DEVICE=default` to select the
+  current Windows default multimedia output at each open, or explicitly select
+  an enumerated `waveout:N` endpoint. Explicit selection never silently falls
+  back to another device. A failed open/write/completion revokes readiness for
+  the process; Host then refuses speech presentation.
+- `windows-wavein.ps1` plus `WindowsPttCapture` implement a PTT-only Windows
+  input adapter. Set `GAMEBUDDY_WINDOWS_INPUT_DEVICE=default` for the current
+  Windows default capture device, or an explicit `wavein:N` endpoint. The
+  driver must open/start and return bounded 16 kHz mono PCM at an input probe
+  before PTT is enabled. The Gateway pulls raw PCM locally only at PTT stop;
+  Host never sends or receives PCM. Capture remains disabled unless the
+  SenseVoice asset manifest has passed its independent hash audit.
+- `SenseVoiceCliAsrProvider` for the external CPU-only Fun-ASR native GGUF
+  runtime. Before it can run, the operator supplies a JSON asset manifest for
+  the native executable, audio encoder, llama.cpp decoder, and FSMN-VAD, with a
+  locked runtime revision and SHA-256 hashes for all three GGUF assets. Gateway
+  startup verifies paths and hashes; PCM is converted to a transient WAV and
+  removed on success, failure, or cancellation. Bounded PTT runs are decoded as
+  fixed sequential chunks; the audited VAD asset is retained for a separately
+  reviewed long-audio mode, and does not silently discard early PTT speech.
+  Model metadata tags are stripped and never interpreted as player emotion,
+  identity, or consent. User PTT validation must not reveal, hash, compare,
+  score, or persist a transcript outside the user's own local product UI.
 
-The SenseVoice runtime, GGUF model, FSMN-VAD asset, license/model card, and
-Windows fixture are intentionally **not** bundled or silently downloaded. Set
-`GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST` only after separately auditing them. With
+The Fun-ASR native runtime, SenseVoice encoder GGUF, decoder GGUF, FSMN-VAD
+asset, license/model card, and Windows fixture are intentionally **not**
+bundled or silently downloaded. Set `GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST` only
+after separately auditing all of them. With
 no manifest, the Gateway stays in text-safe fake-ASR mode rather than claiming
 real local ASR. Set `MIMO_API_KEY` plus `GAMEBUDDY_MIMO_VOICE` only when the
 operator explicitly enables the cloud TTS provider.
@@ -36,11 +57,22 @@ operator explicitly enables the cloud TTS provider.
 
 ```powershell
 $env:GAMEBUDDY_VOICE_TOKEN = '<16+ opaque local token>'
+# Current Windows default output. Or list and choose a stable endpoint:
+# powershell -ExecutionPolicy Bypass -File voice-gateway/windows-waveout.ps1 -Mode list
+$env:GAMEBUDDY_WINDOWS_OUTPUT_DEVICE = 'default'
+$env:GAMEBUDDY_MIMO_VOICE = 'Chloe'
+# Requires GAMEBUDDY_SENSEVOICE_ASSET_MANIFEST to have passed hash audit:
+$env:GAMEBUDDY_WINDOWS_INPUT_DEVICE = 'default'
 pnpm --filter @gamebuddy/voice-gateway start
 ```
 
 Use `pnpm --filter @gamebuddy/voice-gateway test` for the fake-provider and
-local-server contract suite.
+local-server contract suite. The startup log says `listening`, not `ready`:
+protocol `ready` is false without a provider probe and real mixer. Gateway
+close performs `STOP_ALL`, destroys authenticated sockets, and then closes the
+listener so a persistent Host socket cannot block shutdown. `waveOut` is an
+output-only adapter: microphone capture remains unavailable until separately
+configured audited SenseVoice assets complete their own PTT open/read/ASR gate.
 
 ## Demo Gate Preflight
 

@@ -1,0 +1,80 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "package.json",
+      "biome.json",
+      ".ci/**",
+      ".github/workflows/**",
+      "tools/**/*.mjs",
+      "host/src/**/*.ts",
+      "voice-gateway/src/**/*.ts",
+      "dialogue-web/src/**/*.{ts,tsx,css}"
+    ]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "a11y": {
+        "recommended": false,
+        "noStaticElementInteractions": "off",
+        "useKeyWithClickEvents": "off",
+        "useSemanticElements": "off",
+        "noAutofocus": "off",
+        "useValidAnchor": "warn"
+      },
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": {
+          "level": "error",
+          "options": {
+            "ignoreRestSiblings": true
+          }
+        },
+        "noConstAssign": "error",
+        "useExhaustiveDependencies": "warn",
+        "useUniqueElementIds": "off",
+        "noVoidTypeReturn": "off",
+        "noUnsafeFinally": "off"
+      },
+      "complexity": {
+        "noCommaOperator": "off"
+      },
+      "performance": {
+        "noAccumulatingSpread": "off"
+      },
+      "security": {
+        "noDangerouslySetInnerHtml": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noAssignInExpressions": "off",
+        "noControlCharactersInRegex": "off",
+        "noDuplicateProperties": "off",
+        "noShadowRestrictedNames": "off",
+        "noImplicitAnyLet": "off",
+        "noThenProperty": "off",
+        "useIterableCallbackReturn": "off",
+        "noTemplateCurlyInString": "off"
+      },
+      "style": {
+        "useImportType": "error",
+        "useNodejsImportProtocol": "error",
+        "noNonNullAssertion": "off"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always"
+    }
+  }
+}

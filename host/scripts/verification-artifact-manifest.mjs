@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import ts from "typescript";
@@ -11,6 +11,7 @@ export const HOST_TEST_ARTIFACT_TOPOLOGY = "host_test_verification/v1";
 
 const slash = (value) => value.replaceAll("\\", "/");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
+const repositoryRoot = resolve(hostRoot, "..");
 
 function manifestError(code) {
   return new Error(`host_verification_artifact_${code}`);
@@ -60,6 +61,85 @@ async function collectRegularFiles(root, code, ignored = new Set()) {
   return files.sort((left, right) => left.path.localeCompare(right.path, "en"));
 }
 
+async function packageFiles(packageRoot) {
+  const files = [];
+  async function walk(directory) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.name === "node_modules") continue;
+      const absolute = resolve(directory, entry.name);
+      const state = await lstat(absolute);
+      if (state.isSymbolicLink()) throw manifestError("dependency_tree_invalid");
+      if (state.isDirectory()) await walk(absolute);
+      else if (state.isFile()) files.push({ path: slash(relative(packageRoot, absolute)), sha256: digest(await readFile(absolute)) });
+      else throw manifestError("dependency_tree_invalid");
+    }
+  }
+  await walk(packageRoot);
+  return files.sort((left, right) => left.path.localeCompare(right.path, "en"));
+}
+
+function dependencyNames(packageJson, includeDev = false) {
+  return [...new Set([...(Object.keys(packageJson.dependencies ?? {})), ...(Object.keys(packageJson.optionalDependencies ?? {})), ...(includeDev ? Object.keys(packageJson.devDependencies ?? {}) : [])])].sort();
+}
+
+function optionalDependencyNames(packageJson) {
+  return new Set(Object.keys(packageJson.optionalDependencies ?? {}));
+}
+
+async function resolveDependencyPackage(packageDirectory, name) {
+  let directory = packageDirectory;
+  for (;;) {
+    const candidate = resolve(directory, "node_modules", name);
+    try {
+      const target = await realpath(candidate);
+      const targetRelative = relative(repositoryRoot, target);
+      if (isAbsolute(targetRelative) || targetRelative.startsWith(`..${sep}`) || targetRelative === "..") throw manifestError("dependency_outside_repository");
+      await regularDirectory(target, "dependency_tree_invalid");
+      return target;
+    } catch (error) {
+      if (error?.code !== "ENOENT" && !String(error?.message ?? error).startsWith("host_verification_artifact_")) throw error;
+    }
+    const parent = resolve(directory, "..");
+    if (parent === directory) break;
+    directory = parent;
+  }
+  throw manifestError("dependency_missing");
+}
+
+async function dependencySnapshot(root) {
+  const lockCandidates = [resolve(root, "pnpm-lock.yaml"), resolve(root, "..", "pnpm-lock.yaml"), resolve(repositoryRoot, "pnpm-lock.yaml")];
+  let lockPath;
+  for (const candidate of lockCandidates) {
+    try { await regularFile(candidate, "dependency_lock_missing"); lockPath = candidate; break; } catch (error) {
+      if (!String(error?.message ?? error).endsWith("dependency_lock_missing")) throw error;
+    }
+  }
+  if (lockPath === undefined) throw manifestError("dependency_lock_missing");
+  const packages = [];
+  const visited = new Set();
+  async function visit(directory, name) {
+    const target = await realpath(directory);
+    if (visited.has(target)) return;
+    visited.add(target);
+    const packagePath = resolve(target, "package.json");
+    await regularFile(packagePath, "dependency_package_invalid");
+    let packageJson;
+    try { packageJson = JSON.parse(await readFile(packagePath, "utf8")); } catch { throw manifestError("dependency_package_invalid"); }
+    packages.push({ name, path: slash(relative(repositoryRoot, target)), packageJson: digest(await readFile(packagePath)), files: await packageFiles(target) });
+    const optional = optionalDependencyNames(packageJson);
+    for (const dependency of dependencyNames(packageJson)) {
+      try { await visit(await resolveDependencyPackage(target, dependency), dependency); }
+      catch (error) { if (!optional.has(dependency) || !String(error?.message ?? error).endsWith("dependency_missing")) throw error; }
+    }
+  }
+  const hostPackagePath = resolve(root, "package.json");
+  let hostPackage;
+  try { hostPackage = JSON.parse(await readFile(hostPackagePath, "utf8")); } catch { throw manifestError("source_config_invalid"); }
+  for (const name of dependencyNames(hostPackage, true)) await visit(await resolveDependencyPackage(root, name), name);
+  packages.sort((left, right) => `${left.name}:${left.path}`.localeCompare(`${right.name}:${right.path}`, "en"));
+  return Object.freeze({ lockfile: { path: "pnpm-lock.yaml", sha256: digest(await readFile(lockPath)) }, packages });
+}
+
 async function sourceSnapshot(root) {
   const configs = ["package.json", "tsconfig.json", "tsconfig.test.json"];
   const configEntries = [];
@@ -84,7 +164,8 @@ async function sourceSnapshot(root) {
     .map((entry) => ({ path: `scripts/${entry.path}`, sha256: entry.sha256 }));
   if (sources.length === 0 || resources.length === 0 || runnerScripts.length === 0) throw manifestError("source_tree_empty");
   const entries = [...configEntries, ...sources, ...resources, ...runnerScripts];
-  return Object.freeze({ digest: digest(JSON.stringify(entries)), entries });
+  const dependencies = await dependencySnapshot(root);
+  return Object.freeze({ digest: digest(JSON.stringify({ entries, dependencies })), entries, dependencies });
 }
 
 async function compilerConfig(root) {
@@ -120,7 +201,11 @@ function validateManifest(value) {
   if (!isExactRecord(value.toolchain, ["node", "typescriptVersion", "compilerConfig"]) || typeof value.toolchain.node !== "string"
     || typeof value.toolchain.typescriptVersion !== "string" || !isExactRecord(value.toolchain.compilerConfig, ["path", "sha256"])
     || value.toolchain.compilerConfig.path !== "tsconfig.test.json" || !/^[a-f0-9]{64}$/.test(value.toolchain.compilerConfig.sha256)) throw manifestError("manifest_invalid");
-  if (!isExactRecord(value.source, ["digest", "entries"]) || !/^[a-f0-9]{64}$/.test(value.source.digest) || !validInventory(value.source.entries)) throw manifestError("manifest_invalid");
+  if (!isExactRecord(value.source, ["digest", "entries", "dependencies"]) || !/^[a-f0-9]{64}$/.test(value.source.digest) || !validInventory(value.source.entries)
+    || !isExactRecord(value.source.dependencies, ["lockfile", "packages"]) || !isExactRecord(value.source.dependencies.lockfile, ["path", "sha256"])
+    || value.source.dependencies.lockfile.path !== "pnpm-lock.yaml" || !/^[a-f0-9]{64}$/.test(value.source.dependencies.lockfile.sha256)
+    || !Array.isArray(value.source.dependencies.packages) || !value.source.dependencies.packages.every((entry) => isExactRecord(entry, ["name", "path", "packageJson", "files"])
+      && typeof entry.name === "string" && typeof entry.path === "string" && /^[a-f0-9]{64}$/.test(entry.packageJson) && validInventory(entry.files))) throw manifestError("manifest_invalid");
   if (!isExactRecord(value.output, ["digest", "entries"]) || !/^[a-f0-9]{64}$/.test(value.output.digest) || !validInventory(value.output.entries)) throw manifestError("manifest_invalid");
   return value;
 }
@@ -166,7 +251,7 @@ export async function assertHostVerificationArtifactManifest({ root = hostRoot, 
   try { manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8"))); }
   catch (error) { if (String(error?.message ?? error).startsWith("host_verification_artifact_")) throw error; throw manifestError("manifest_invalid"); }
   const [currentSource, currentConfig, currentOutput] = await Promise.all([sourceSnapshot(resolvedRoot), compilerConfig(resolvedRoot), outputSnapshot(resolvedOutput)]);
-  if (manifest.source.digest !== currentSource.digest || JSON.stringify(manifest.source.entries) !== JSON.stringify(currentSource.entries)) throw manifestError("source_snapshot_mismatch");
+  if (manifest.source.digest !== currentSource.digest || JSON.stringify(manifest.source) !== JSON.stringify(currentSource)) throw manifestError("source_snapshot_mismatch");
   if (manifest.toolchain.node !== process.version || manifest.toolchain.typescriptVersion !== currentConfig.typescriptVersion
     || manifest.toolchain.compilerConfig.sha256 !== currentConfig.sha256) throw manifestError("toolchain_mismatch");
   if (manifest.output.digest !== currentOutput.digest || JSON.stringify(manifest.output.entries) !== JSON.stringify(currentOutput.entries)) throw manifestError("output_inventory_mismatch");

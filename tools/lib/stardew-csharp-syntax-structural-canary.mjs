@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { Language, Parser } from "web-tree-sitter";
 
 const require = createRequire(import.meta.url);
@@ -138,45 +138,53 @@ function collectSyntax(root, source, relativePath) {
     }
 
     if (CONTROL_KINDS.has(node.type)) {
-      controlSyntax.push(Object.freeze({
-        syntaxKind: node.type,
-        ownerDeclarationLocator: ownerDeclaration,
-        locator: syntaxLocator(relativePath, node, source),
-      }));
+      controlSyntax.push(
+        Object.freeze({
+          syntaxKind: node.type,
+          ownerDeclarationLocator: ownerDeclaration,
+          locator: syntaxLocator(relativePath, node, source),
+        }),
+      );
     }
 
     if (node.type === "invocation_expression") {
       const functionNode = field(node, "function");
       const argumentsNode = field(node, "arguments");
-      invocationSyntax.push(Object.freeze({
-        syntaxKind: "invocation_expression",
-        ownerDeclarationLocator: ownerDeclaration,
-        locator: syntaxLocator(relativePath, node, source),
-        calleeLocator: functionNode ? sourceLocator(relativePath, functionNode, source) : null,
-        calleeSyntaxKind: functionNode?.type ?? null,
-        calleeSyntaxSha256: functionNode ? sha256(slice(functionNode, source)) : null,
-        argumentsSyntaxKind: argumentsNode?.type ?? null,
-        argumentsSyntaxSha256: argumentsNode ? sha256(slice(argumentsNode, source)) : null,
-        argumentSyntaxCount: argumentsNode?.namedChildCount ?? 0,
-      }));
+      invocationSyntax.push(
+        Object.freeze({
+          syntaxKind: "invocation_expression",
+          ownerDeclarationLocator: ownerDeclaration,
+          locator: syntaxLocator(relativePath, node, source),
+          calleeLocator: functionNode ? sourceLocator(relativePath, functionNode, source) : null,
+          calleeSyntaxKind: functionNode?.type ?? null,
+          calleeSyntaxSha256: functionNode ? sha256(slice(functionNode, source)) : null,
+          argumentsSyntaxKind: argumentsNode?.type ?? null,
+          argumentsSyntaxSha256: argumentsNode ? sha256(slice(argumentsNode, source)) : null,
+          argumentSyntaxCount: argumentsNode?.namedChildCount ?? 0,
+        }),
+      );
     }
 
     if (node.type === "assignment_expression") {
       const targetNode = field(node, "left");
       const rightNode = field(node, "right");
-      const operatorNode = node.children.find((child) => /=$/.test(child.type) || ["+=", "-=", "*=", "/=", "%=", "??="].includes(slice(child, source)));
-      assignmentSyntax.push(Object.freeze({
-        syntaxKind: "assignment_expression",
-        ownerDeclarationLocator: ownerDeclaration,
-        locator: syntaxLocator(relativePath, node, source),
-        targetLocator: targetNode ? sourceLocator(relativePath, targetNode, source) : null,
-        targetSyntaxKind: targetNode?.type ?? null,
-        targetSyntaxSha256: targetNode ? sha256(slice(targetNode, source)) : null,
-        memberAccessAssignmentTargetSyntax: isMemberAccess(targetNode),
-        operatorSyntax: operatorNode ? slice(operatorNode, source) : null,
-        rightSyntaxKind: rightNode?.type ?? null,
-        rightSyntaxSha256: rightNode ? sha256(slice(rightNode, source)) : null,
-      }));
+      const operatorNode = node.children.find(
+        (child) => /=$/.test(child.type) || ["+=", "-=", "*=", "/=", "%=", "??="].includes(slice(child, source)),
+      );
+      assignmentSyntax.push(
+        Object.freeze({
+          syntaxKind: "assignment_expression",
+          ownerDeclarationLocator: ownerDeclaration,
+          locator: syntaxLocator(relativePath, node, source),
+          targetLocator: targetNode ? sourceLocator(relativePath, targetNode, source) : null,
+          targetSyntaxKind: targetNode?.type ?? null,
+          targetSyntaxSha256: targetNode ? sha256(slice(targetNode, source)) : null,
+          memberAccessAssignmentTargetSyntax: isMemberAccess(targetNode),
+          operatorSyntax: operatorNode ? slice(operatorNode, source) : null,
+          rightSyntaxKind: rightNode?.type ?? null,
+          rightSyntaxSha256: rightNode ? sha256(slice(rightNode, source)) : null,
+        }),
+      );
     }
 
     for (const child of node.namedChildren) visit(child, nextOwner);
@@ -206,7 +214,11 @@ export async function parseCSharpSyntaxStructure({ source, relativePath = "<memo
       grammarPackageVersion: grammarPackage.version,
       grammarWasmSha256: sha256(await readFile(grammarWasmPath)),
     }),
-    sourceFile: Object.freeze({ relativePath, byteLength: Buffer.byteLength(source), sha256: sha256(sourceBytes(source)) }),
+    sourceFile: Object.freeze({
+      relativePath,
+      byteLength: Buffer.byteLength(source),
+      sha256: sha256(sourceBytes(source)),
+    }),
     parse: Object.freeze({
       rootSyntaxKind: tree.rootNode.type,
       hasError: tree.rootNode.hasError,

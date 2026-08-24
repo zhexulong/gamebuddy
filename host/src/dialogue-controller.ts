@@ -46,7 +46,8 @@ export class DialogueController {
   public constructor(
     private readonly session: DialogueSession,
     private readonly now: () => number = Date.now,
-    private readonly hasVisiblePresentation: (() => boolean) = () => true,
+    private readonly hasVisiblePresentation: () => boolean = () => true,
+    private readonly beforePrompt?: (input: DialogueInput) => Promise<() => void>,
   ) {}
 
   public subscribe(listener: (event: DialogueControllerEvent) => void): () => void {
@@ -54,11 +55,17 @@ export class DialogueController {
     return () => this.#listeners.delete(listener);
   }
 
-  public async submit(input: DialogueInput): Promise<"accepted" | "duplicate"> {
+  public async submit(
+    input: DialogueInput,
+    beforeQueue?: (input: DialogueInput) => Promise<void>,
+  ): Promise<"accepted" | "duplicate"> {
     this.#assertOpen();
     const normalized = validateDialogueInput(input);
     if (this.#seenIds.has(normalized.clientMessageId)) return "duplicate";
     if (this.#queue.length >= MAX_DIALOGUE_QUEUE) throw new Error("dialogue_queue_full");
+    // A player-facing surface may install its durable append boundary here.
+    // Refuse to enqueue if it cannot commit the visible player turn first.
+    await beforeQueue?.(normalized);
     this.#seenIds.add(normalized.clientMessageId);
     const pending = Object.freeze({ input: normalized, receivedAtMs: this.now() });
     this.#queue.push(pending);
@@ -67,10 +74,27 @@ export class DialogueController {
     return "accepted";
   }
 
+  /**
+   * Opaque Host-owned identity of the only turn currently permitted to make
+   * current-turn-scoped companion mutations. It is never accepted from a
+   * browser or model payload.
+   */
+  public currentTurnId(): string | undefined {
+    return this.#active?.input.clientMessageId;
+  }
+
+  /** True throughout the actual prompt drain, including its finally handoff. */
+  public hasActiveOrDrainingTurn(): boolean {
+    return this.#active !== undefined || this.#draining;
+  }
+
   public async stop(): Promise<void> {
     this.#assertOpen();
     const activeId = this.#active?.input.clientMessageId ?? null;
     this.#queue.length = 0;
+    // Revoke current-turn capabilities before abort crosses an async boundary.
+    // A late tool callback from the cancelled provider run must fail closed.
+    this.#active = undefined;
     await this.session.abort();
     this.session.clearQueue();
     this.#emit({ type: "turn_cancelled", clientMessageId: activeId });
@@ -90,7 +114,11 @@ export class DialogueController {
         const pending = this.#queue.shift()!;
         this.#active = pending;
         this.#emit({ type: "turn_started", clientMessageId: pending.input.clientMessageId });
+        let releasePromptAdmission: (() => void) | undefined;
         try {
+          // The Host admission provider is invoked at the exact provider
+          // boundary rather than merely during HTTP submission.
+          releasePromptAdmission = await this.beforePrompt?.(pending.input);
           await this.session.prompt(canonicalPrompt(pending), { expandPromptTemplates: false, source: "rpc" });
           if (!this.hasVisiblePresentation()) {
             // Ordinary assistant text is intentionally private. Do not report
@@ -104,6 +132,7 @@ export class DialogueController {
           if (!this.#closed) this.#emit({ type: "turn_failed", clientMessageId: pending.input.clientMessageId });
           void error;
         } finally {
+          releasePromptAdmission?.();
           this.#active = undefined;
         }
       }
@@ -123,13 +152,23 @@ export class DialogueController {
 }
 
 export function validateDialogueInput(value: unknown): DialogueInput {
-  if (!isRecord(value) || Object.keys(value).length !== 3
-    || !isOpaqueId(value.clientMessageId) || typeof value.text !== "string" || typeof value.locale !== "string"
-    || Buffer.byteLength(value.text, "utf8") < 1 || Buffer.byteLength(value.text, "utf8") > MAX_DIALOGUE_TEXT_BYTES
-    || !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(value.locale)) {
+  if (
+    !isRecord(value) ||
+    !Object.keys(value).every((key) => key === "clientMessageId" || key === "text" || key === "locale") ||
+    !isOpaqueId(value.clientMessageId) ||
+    typeof value.text !== "string" ||
+    typeof value.locale !== "string" ||
+    Buffer.byteLength(value.text, "utf8") < 1 ||
+    Buffer.byteLength(value.text, "utf8") > MAX_DIALOGUE_TEXT_BYTES ||
+    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/.test(value.locale)
+  ) {
     throw new Error("invalid_dialogue_input");
   }
-  return Object.freeze({ clientMessageId: value.clientMessageId, text: value.text, locale: value.locale });
+  return Object.freeze({
+    clientMessageId: value.clientMessageId,
+    text: value.text,
+    locale: value.locale,
+  });
 }
 
 function canonicalPrompt(pending: PendingInput): string {

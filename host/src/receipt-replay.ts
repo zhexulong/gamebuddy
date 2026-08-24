@@ -1,7 +1,14 @@
-import { type ExecutionReceipt, type ExecutionState } from "./protocol.js";
+import type { ExecutionReceipt, ExecutionState } from "./protocol.js";
 
 const TERMINAL_STATES = new Set<ExecutionState>([
-  "succeeded", "partially_succeeded", "failed", "cancelled", "expired", "invalidated", "rejected", "uncertain",
+  "succeeded",
+  "partially_succeeded",
+  "failed",
+  "cancelled",
+  "expired",
+  "invalidated",
+  "rejected",
+  "uncertain",
 ]);
 const PROGRESS_STATES = new Set<ExecutionState>(["accepted", "running", "meaningful_progress", "blocked"]);
 
@@ -21,7 +28,8 @@ export class ReceiptReplayLedger {
       if (TERMINAL_STATES.has(previous.state)) return "terminal_state_rewritten";
       if (!PROGRESS_STATES.has(previous.state)) return "invalid_previous_state";
     }
-    if (receipt.state === "succeeded" && (receipt.evidence === null || Object.keys(receipt.evidence).length === 0)) return "success_without_evidence";
+    if (receipt.state === "succeeded" && (receipt.evidence === null || Object.keys(receipt.evidence).length === 0))
+      return "success_without_evidence";
     this.#latest.set(receipt.executionId, Object.freeze({ ...receipt }));
     return null;
   }

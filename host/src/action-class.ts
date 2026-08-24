@@ -6,14 +6,9 @@
  * gameplay coverage contracts; they do not turn a generic dispatcher into a
  * permitted wire action.
  */
-export const ACTION_CLASSES = [
-  "primitive",
-  "composite",
-  "coordinated",
-  "content_operation",
-] as const;
+export const ACTION_CLASSES = ["primitive", "composite", "coordinated", "content_operation"] as const;
 
-export type ActionClass = typeof ACTION_CLASSES[number];
+export type ActionClass = (typeof ACTION_CLASSES)[number];
 
 const ACTION_CLASS_SET = new Set<string>(ACTION_CLASSES);
 

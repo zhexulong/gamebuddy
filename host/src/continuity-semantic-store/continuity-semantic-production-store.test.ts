@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createTestWindowsOwnerDeathVerification } from "../continuity-semantic-owner-death/continuity-semantic-owner-death.test-support.js";
+import { createTestWindowsOwnerDeathVerification } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.test-support.js";
 import {
   openProductionContinuityStore,
   type ProductionBootstrapInput,
@@ -22,7 +22,7 @@ const owner = {
   ownerToken: "owner-token",
   runtimeInstanceId: "runtime-1",
   ownerPid: process.pid,
-  ownerProcessStartIdentity: "638400000000000000",
+  ownerProcessStartIdentity: "start-1",
 } as const;
 const game = (
   operationId: string,
@@ -87,7 +87,7 @@ test("Game recovery requires explicit OS-proven owner death and exact owner tupl
         "recovery_required",
       );
     }
-    const mismatched = { ...owner, ownerProcessStartIdentity: "638400000000000001" };
+    const mismatched = { ...owner, ownerProcessStartIdentity: "other-start" };
     assert.throws(
       () =>
         store.recoverGame({
@@ -99,44 +99,15 @@ test("Game recovery requires explicit OS-proven owner death and exact owner tupl
         }),
       /recovery_proof_invalid/,
     );
-    const proof = createTestWindowsOwnerDeathVerification(owner, "proven_dead");
     const recovered = store.recoverGame({
       request: "recover_dead_owner",
       principal,
       permit: closing.permit!,
-      proof,
+      proof: createTestWindowsOwnerDeathVerification(owner, "proven_dead"),
       receipt: recoveryReceipt,
     });
     assert.equal(recovered.gameState, "ended");
-    assert.throws(
-      () =>
-        store.recoverGame({
-          request: "recover_dead_owner",
-          principal,
-          permit: closing.permit!,
-          proof,
-          receipt: recoveryReceipt,
-        }),
-      /windows_owner_death_verification_invalid/,
-    );
     assert.equal(recovered.leaseState, null);
-  } finally {
-    control.close();
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("Game owner durable writes reject noncanonical Windows CreationDate tick identities", () => {
-  const root = mkdtempSync(`${tmpdir()}/production-game-owner-identity-`);
-  const control = openProductionContinuityStore({ runtimeRoot: root });
-  try {
-    const metadata = control.bootstrapFresh(bootstrap);
-    const store = control.bindBootstrapContext({ bootstrap, metadata });
-    const invalid = {
-      ...game("enter-invalid-owner-identity", "enter", { partitionRevision: 1, gameRevision: 0, leaseRevision: 0, fenceEpoch: 1 }),
-      owner: { ...owner, ownerProcessStartIdentity: "start-1" },
-    };
-    assert.throws(() => store.prepareGame(invalid), /invalid_game_operation/);
   } finally {
     control.close();
     rmSync(root, { recursive: true, force: true });

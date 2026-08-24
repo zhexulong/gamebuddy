@@ -38,13 +38,19 @@ test("published action registry extraction is AST-based and excludes non-publish
 });
 
 test("published action registry extraction fails closed for a source token without the typed projection", async () => {
-  await withRegistry(registry.replace("STARDEW_ACTION_REGISTRY.filter(isMaterializablePublishedAction)", "STARDEW_ACTION_REGISTRY"), async (registryPath) => {
-    await assert.rejects(readPublishedStardewActionIds({ registryPath }), /invalid_published_projection/);
-  });
+  await withRegistry(
+    registry.replace("STARDEW_ACTION_REGISTRY.filter(isMaterializablePublishedAction)", "STARDEW_ACTION_REGISTRY"),
+    async (registryPath) => {
+      await assert.rejects(readPublishedStardewActionIds({ registryPath }), /invalid_published_projection/);
+    },
+  );
 });
 
 test("published action registry extraction rejects duplicate published identifiers", async () => {
-  await withRegistry(registry.replace('publishedAction("till_soil")', 'publishedAction("move_to_tile")'), async (registryPath) => {
-    await assert.rejects(readPublishedStardewActionIds({ registryPath }), /invalid_published_set/);
-  });
+  await withRegistry(
+    registry.replace('publishedAction("till_soil")', 'publishedAction("move_to_tile")'),
+    async (registryPath) => {
+      await assert.rejects(readPublishedStardewActionIds({ registryPath }), /invalid_published_set/);
+    },
+  );
 });

@@ -1,96 +1,368 @@
-import { access, readFile } from "node:fs/promises";
 import { constants } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { readPublishedStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
+import { pathToFileURL } from "node:url";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const files = Object.freeze({
-  registry: resolve(ROOT, "host/src/action-registry.ts"),
-  modConfig: resolve(ROOT, "integrations/stardew/ModConfig.cs"),
-  gameTools: resolve(ROOT, "host/src/game-tools.ts"),
-  registryTest: resolve(ROOT, "host/src/action-registry.test.ts"),
-  toolsTest: resolve(ROOT, "host/src/game-tools.test.ts"),
-  modEntry: resolve(ROOT, "integrations/stardew/ModEntry.cs"),
-  nativeFixture: resolve(ROOT, "tools/lib/stardew-native-local-player-fixture.mjs"),
-});
-const contents = Object.fromEntries(await Promise.all(Object.entries(files).map(async ([key, path]) => [key, await readFile(path, "utf8")] )));
-const published = await readPublishedStardewActionIds({ registryPath: files.registry });
-const modPublished = parseModPublishedActions(contents.modConfig);
-const fixtureAllowlist = parseModConfigFixtureAllowlist(contents.modConfig);
-const fixtureInitializerAllowlist = parseHostInitializerFixtureAllowlist(contents.modEntry);
-const transactionAllowlist = parseNativeLocalFixtureScenarios(contents.nativeFixture);
-const failures = [];
 
-if (new Set(published).size !== published.length) failures.push("registry_published_duplicates");
-if (new Set(modPublished).size !== modPublished.length) failures.push("mod_published_duplicates");
-for (const action of published) {
-  if (!modPublished.includes(action)) failures.push(`published_missing_in_mod:${action}`);
-  if (!contents.gameTools.includes(`isVisible("${action}")`)) failures.push(`published_missing_host_tool_gate:${action}`);
-}
-for (const action of modPublished) if (!published.includes(action)) failures.push(`mod_published_missing_registry:${action}`);
-for (const action of published) {
-  if (!contents.registryTest.includes(`"${action}"`)) failures.push(`published_missing_registry_test:${action}`);
-}
-const countMatch = contents.registryTest.match(/PUBLISHED_STARDEW_ACTIONS\.length, (\d+)/);
-if (!countMatch) failures.push("registry_published_count_assertion_missing");
-else if (Number(countMatch[1]) !== published.length) failures.push(`registry_published_count_mismatch:${countMatch[1]}!=${published.length}`);
-
-const gates = STARDEW_PUBLISHED_ACTION_GATES;
-const gateActionIds = gates.map((gate) => gate.actionId);
-if (new Set(gateActionIds).size !== gateActionIds.length) failures.push("gate_descriptor_duplicates");
-for (const action of published) if (!gateActionIds.includes(action)) failures.push(`published_missing_gate_descriptor:${action}`);
-for (const gate of gates) {
-  if (!published.includes(gate.actionId)) failures.push(`gate_descriptor_not_published:${gate.actionId}`);
-  if (!isIdentifier(gate.terminalReasonCode)) failures.push(`gate_descriptor_invalid_reason:${gate.actionId}`);
-  const runnerPath = resolve(ROOT, "tools", gate.runner);
-  try {
-    await access(runnerPath, constants.R_OK);
-  } catch {
-    failures.push(`gate_runner_missing:${gate.actionId}:${gate.runner}`);
+export function validatePromotionSources({
+  farmhandActionDefinitions,
+  bridgeSession,
+  executionManager,
+  farmhandActionRouter,
+  handlerSources = [],
+  registry,
+  gameTools,
+  protocol,
+  schema,
+  descriptors = STARDEW_PUBLISHED_ACTION_GATES,
+}) {
+  const failures = [];
+  const definitions = parseModDefinitions(farmhandActionDefinitions);
+  const hostEntries = parseHostEntries(registry);
+  const routes = parseExplicitRoutes(gameTools, bridgeSession, handlerSources);
+  failures.push(...validateHostWrapperFactory(gameTools, routes));
+  failures.push(...validateRouterBoundary(bridgeSession, farmhandActionRouter));
+  const hostValidators = parseHostRequestValidators(protocol);
+  const envelopeValidators = parseEnvelopeValidators(protocol);
+  const executionRequestUnion = parseExecutionRequestUnion(protocol);
+  const hostMessageTypes = parseHostBridgeMessageTypes(protocol);
+  const schemaMessageTypes = parseSchemaBridgeMessageTypes(schema);
+  const hostSemanticEventKinds = parseHostSemanticEventKinds(protocol);
+  const schemaSemanticEventKinds = parseSchemaSemanticEventKinds(schema);
+  const schemaActions = parseSchemaExecutionActions(schema);
+  const descriptorIds = descriptors.map((descriptor) => descriptor.actionId);
+  failures.push(
+    ...findMissingBridgeHelloAdvertisements(
+      bridgeSession,
+      definitions.filter((definition) => definition.lifecycle === "Published").map((definition) => definition.actionId),
+    ),
+  );
+  if (!hasSnapshotCapabilitySurfaceProvenance(executionManager)) failures.push("snapshot_not_from_capability_surface");
+  assertUnique(
+    definitions.map((entry) => entry.actionId),
+    "mod_definition_duplicates",
+    failures,
+  );
+  assertUnique(
+    hostEntries.map((entry) => entry.actionId),
+    "host_registry_duplicates",
+    failures,
+  );
+  assertUnique(descriptorIds, "gate_descriptor_duplicates", failures);
+  assertUnique(routes.dispatchers, "dispatcher_route_duplicates", failures);
+  for (const definition of definitions) {
+    const host = hostEntries.filter((entry) => entry.actionId === definition.actionId);
+    if (definition.lifecycle === "Published") {
+      if (host.length !== 1) failures.push(`published_host_projection:${definition.actionId}`);
+      else if (
+        host[0].familyId !== definition.familyId ||
+        host[0].identityVersion !== definition.identityVersion ||
+        host[0].lifecycle !== "published"
+      )
+        failures.push(`published_identity_drift:${definition.actionId}`);
+      const descriptor = descriptors.filter((entry) => entry.actionId === definition.actionId);
+      if (descriptor.length !== 1) failures.push(`published_missing_gate_descriptor:${definition.actionId}`);
+      else if (descriptor[0].identityVersion !== definition.identityVersion)
+        failures.push(`gate_identity_drift:${definition.actionId}`);
+    } else if (
+      host.length !== 1 ||
+      host[0].familyId !== definition.familyId ||
+      host[0].identityVersion !== definition.identityVersion ||
+      host[0].lifecycle !== "experimental"
+    ) {
+      failures.push(`experimental_identity_drift:${definition.actionId}`);
+    }
+    if (!routes.validators.includes(definition.actionId)) failures.push(`missing_validator:${definition.actionId}`);
+    if (!routes.dispatchers.includes(definition.actionId)) failures.push(`missing_dispatcher:${definition.actionId}`);
+    if (!hostValidators.includes(definition.actionId))
+      failures.push(`missing_host_request_validator:${definition.actionId}`);
+    if (!envelopeValidators.includes(definition.actionId))
+      failures.push(`missing_envelope_validator:${definition.actionId}`);
+    if (!executionRequestUnion.includes(definition.actionId))
+      failures.push(`missing_execution_request_union:${definition.actionId}`);
+    if (!schemaActions.includes(definition.actionId))
+      failures.push(`missing_schema_execution_action:${definition.actionId}`);
   }
-  if (gate.fixtureScenario !== null) {
-    if (!fixtureAllowlist.has(gate.fixtureScenario)) failures.push(`gate_fixture_missing_mod_allowlist:${gate.actionId}:${gate.fixtureScenario}`);
-    if (!fixtureInitializerAllowlist.has(gate.fixtureScenario)) failures.push(`gate_fixture_missing_initializer_allowlist:${gate.actionId}:${gate.fixtureScenario}`);
-    if (!transactionAllowlist.has(gate.fixtureScenario)) failures.push(`gate_fixture_missing_transaction_allowlist:${gate.actionId}:${gate.fixtureScenario}`);
+  for (const actionId of routes.validators)
+    if (!definitions.some((definition) => definition.actionId === actionId))
+      failures.push(`validator_not_in_definition:${actionId}`);
+  for (const actionId of routes.dispatchers)
+    if (!definitions.some((definition) => definition.actionId === actionId))
+      failures.push(`dispatcher_not_in_definition:${actionId}`);
+  for (const actionId of hostValidators)
+    if (!definitions.some((definition) => definition.actionId === actionId))
+      failures.push(`host_request_validator_not_in_definition:${actionId}`);
+  for (const actionId of envelopeValidators)
+    if (!definitions.some((definition) => definition.actionId === actionId))
+      failures.push(`envelope_validator_not_in_definition:${actionId}`);
+  for (const actionId of executionRequestUnion)
+    if (!definitions.some((definition) => definition.actionId === actionId))
+      failures.push(`execution_request_union_not_in_definition:${actionId}`);
+  for (const actionId of schemaActions)
+    if (!definitions.some((definition) => definition.actionId === actionId))
+      failures.push(`schema_execution_action_not_in_definition:${actionId}`);
+  assertUnique(executionRequestUnion, "execution_request_union_duplicates", failures);
+  assertUnique(schemaActions, "schema_execution_action_duplicates", failures);
+  assertUnique(hostMessageTypes, "host_message_type_duplicates", failures);
+  assertUnique(schemaMessageTypes, "schema_message_type_duplicates", failures);
+  for (const type of hostMessageTypes)
+    if (!schemaMessageTypes.includes(type)) failures.push(`schema_missing_message_type:${type}`);
+  for (const type of schemaMessageTypes)
+    if (!hostMessageTypes.includes(type)) failures.push(`schema_orphan_message_type:${type}`);
+  assertUnique(hostSemanticEventKinds, "host_semantic_event_kind_duplicates", failures);
+  assertUnique(schemaSemanticEventKinds, "schema_semantic_event_kind_duplicates", failures);
+  for (const kind of hostSemanticEventKinds)
+    if (!schemaSemanticEventKinds.includes(kind)) failures.push(`schema_missing_semantic_event_kind:${kind}`);
+  for (const kind of schemaSemanticEventKinds)
+    if (!hostSemanticEventKinds.includes(kind)) failures.push(`schema_orphan_semantic_event_kind:${kind}`);
+  for (const host of hostEntries) {
+    const definition = definitions.find((entry) => entry.actionId === host.actionId);
+    if (!definition) failures.push(`host_registry_not_in_mod:${host.actionId}`);
+    const toolCount = routes.visibility.filter((actionId) => actionId === host.actionId).length;
+    if (host.lifecycle === "published" && toolCount !== 1)
+      failures.push(`host_tool_count:${host.actionId}:${toolCount}`);
+    if (host.lifecycle !== "published" && toolCount !== 0) failures.push(`experimental_host_tool:${host.actionId}`);
   }
+  for (const id of descriptorIds)
+    if (!hostEntries.some((entry) => entry.actionId === id && entry.lifecycle === "published"))
+      failures.push(`gate_descriptor_not_published:${id}`);
+  return { failures, definitions, hostEntries };
 }
 
-if (failures.length > 0) {
-  console.error(JSON.stringify({ state: "failed", failures, registryPublished: published, modPublished }, null, 2));
-  process.exitCode = 1;
-} else {
-  console.log(JSON.stringify({
-    state: "passed",
-    publishedCount: published.length,
-    publishedActions: published,
-    fixtureBackedPublishedCount: gates.filter((gate) => gate.fixtureScenario !== null).length,
+function assertUnique(values, label, failures) {
+  if (new Set(values).size !== values.length) failures.push(label);
+}
+function findMissingBridgeHelloAdvertisements(source, expectedActionIds) {
+  const capabilitiesExpression = source.match(
+    /new BridgeHelloAck\(Guid\.NewGuid\(\)\.ToString\("N"\),\s*([\s\S]*?),\s*locale\)/,
+  )?.[1];
+  if (capabilitiesExpression === "this.publishedCapabilities.Capabilities") return [];
+
+  const omitted = new Set(
+    [...(capabilitiesExpression ?? "").matchAll(/\b(?:capability|action)\s*!=\s*"([a-z0-9_]+)"/g)].map(
+      (match) => match[1],
+    ),
+  );
+  return expectedActionIds
+    .filter((actionId) => omitted.size === 0 || omitted.has(actionId))
+    .map((actionId) => `bridge_hello_advertisement_missing:${actionId}`);
+}
+function parseModDefinitions(source) {
+  const body = source.match(/Definitions\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)?.[1];
+  if (!body) throw new Error("mod_action_definitions_not_found");
+  return [
+    ...body.matchAll(
+      /Definition\("([a-z0-9_]+)", "([a-z0-9_]+)", (\d+)(?:, FarmhandActionLifecycle\.(Published|Experimental))?\)/g,
+    ),
+  ].map(([, actionId, familyId, identityVersion, lifecycle]) => ({
+    actionId,
+    familyId,
+    identityVersion: Number(identityVersion),
+    lifecycle: lifecycle ?? "Published",
   }));
 }
+function parseHostEntries(source) {
+  return [
+    ...source.matchAll(/(publishedAction|experimentalAction)\(\s*"([a-z0-9_]+)",\s*"([a-z0-9_]+)",\s*(\d+)/g),
+  ].map(([, kind, actionId, familyId, identityVersion]) => ({
+    actionId,
+    familyId,
+    identityVersion: Number(identityVersion),
+    lifecycle: kind === "publishedAction" ? "published" : "experimental",
+  }));
+}
+function hasSnapshotCapabilitySurfaceProvenance(source) {
+  const body =
+    source.match(
+      /public BridgeSnapshot CreateBridgeSnapshot\(\)[\s\S]*?\n {4}private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot/,
+    )?.[0] ?? "";
+  return (
+    body.includes("IReadOnlyList<string> advertisedCapabilities = this.capabilitySurface.Capabilities;") &&
+    /return CreateWorldNotReadyBridgeSnapshot\(advertisedCapabilities\);/.test(body) &&
+    /return new BridgeSnapshot\([\s\S]*?\n {12}advertisedCapabilities,/.test(body)
+  );
+}
+function parseHostRequestValidators(source) {
+  const body =
+    source.match(/export function validateExecutionRequest[\s\S]*?function validateExecutionRequestEnvelope/)?.[0] ??
+    "";
+  return [...new Set([...body.matchAll(/value\.action !== "([a-z0-9_]+)"/g)].map((entry) => entry[1]))];
+}
+function parseExecutionRequestUnion(source) {
+  const body = source.match(/export type ExecutionRequest[\s\S]*?;\n}>;/)?.[0] ?? "";
+  return [...body.matchAll(/\| "([a-z0-9_]+)"/g)].map((entry) => entry[1]);
+}
+function parseHostBridgeMessageTypes(source) {
+  const body = source.match(/export const BRIDGE_MESSAGE_TYPES = \[([\s\S]*?)\] as const;/)?.[1];
+  if (!body) throw new Error("host_bridge_message_types_not_found");
+  return [...body.matchAll(/"([a-z0-9_]+)"/g)].map((entry) => entry[1]);
+}
+function parseSchemaBridgeMessageTypes(source) {
+  const schema = JSON.parse(source);
+  return schema.properties.type.enum;
+}
+function parseHostSemanticEventKinds(source) {
+  const body = source.match(/export type SemanticEvent[\s\S]*?reasonCode: string;/)?.[0] ?? "";
+  const explicitKinds = [...body.matchAll(/\| "([a-z0-9_]+)"/g)].map((entry) => entry[1]);
+  const bodyTraceKinds = [
+    ...(source.match(/export type BodyTrace[\s\S]*?;\n}>;/)?.[0] ?? "").matchAll(/\| "([a-z0-9_]+)"/g),
+  ].map((entry) => entry[1]);
+  return [...explicitKinds, ...bodyTraceKinds];
+}
+function parseSchemaSemanticEventKinds(source) {
+  const schema = JSON.parse(source);
+  return schema.$defs.semanticEvent.properties.kind.enum;
+}
+function parseSchemaExecutionActions(source) {
+  const schema = JSON.parse(source);
+  return schema.$defs.executionRequest.properties.action.enum;
+}
+function parseEnvelopeValidators(source) {
+  const body = source.match(/function validateExecutionRequestEnvelope[\s\S]*?\n}\n/)?.[0] ?? "";
+  return [...new Set([...body.matchAll(/value\.action === "([a-z0-9_]+)"/g)].map((entry) => entry[1]))];
+}
+function parseExplicitRoutes(gameTools, bridgeSession, handlerSources) {
+  const visibility = [...gameTools.matchAll(/if \(isVisible\("([a-z0-9_]+)"\)\)/g)].map((entry) => entry[1]);
+  const tools = [
+    ...gameTools.matchAll(
+      /if \(isVisible\("([a-z0-9_]+)"\)\) \{\s*tools\.push\(\s*makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*\n\s*toArgs:/g,
+    ),
+  ].map((entry) => ({ visibleAction: entry[1], adapterAction: entry[2] }));
+  const validatorBody =
+    bridgeSession.match(
+      /private static bool IsStructurallyValidExecutionRequest[\s\S]*?private bool IsFreshExecutionRequest/,
+    )?.[0] ?? "";
+  const validators = [
+    ...new Set(
+      [...validatorBody.matchAll(/request\.Action[^\r\n{]*/g)].flatMap((entry) =>
+        [...entry[0].matchAll(/"([a-z0-9_]+)"/g)].map((action) => action[1]),
+      ),
+    ),
+  ];
+  const dispatchers = handlerSources.flatMap((src) => {
+    const match = src.match(/SupportedActions\s*\{\s*get;\s*\}\s*=\s*new\[\]\s*\{([\s\S]*?)\};/);
+    if (!match) return [];
+    return [...match[1].matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]);
+  });
+  return { tools, visibility, validators, dispatchers };
+}
 
-function parseModPublishedActions(source) {
-  const match = source.match(/PublishedActions = new HashSet<string>\(new\[\] \{([^}]+)\}/s);
-  if (!match) throw new Error("mod_published_actions_not_found");
-  return [...match[1].matchAll(/"([a-z0-9_]+)"/g)].map((entry) => entry[1]);
+function extractUniqueHostWrapperFactoryBody(gameTools) {
+  const matches = [
+    ...gameTools.matchAll(
+      /function gameActionToolFactory\([\s\S]*?\n}\n\n\/\*\* Caller-supplied identity fields read from the preserved concrete tool schema\. \*\//g,
+    ),
+  ];
+  if (matches.length !== 1) return null;
+  return matches[0][0].slice(
+    0,
+    -"\n\n/** Caller-supplied identity fields read from the preserved concrete tool schema. */".length,
+  );
 }
-function parseModConfigFixtureAllowlist(source) {
-  const match = source.match(/FixtureScenario is ([^\r\n;]+)/);
-  if (!match) throw new Error("mod_fixture_allowlist_not_found");
-  return parseNativeScenarioStrings(match[1]);
+
+function validateHostWrapperFactory(gameTools, routes) {
+  const failures = [];
+  const factory = extractUniqueHostWrapperFactoryBody(gameTools);
+  if (factory === null) failures.push("host_wrapper_factory_boundary_invalid");
+  if (
+    !factory?.includes("executeGameAction(") ||
+    !factory?.includes("definition.action") ||
+    !factory?.includes("definition.toArgs") ||
+    !factory?.includes("callerRequestIds(params)")
+  )
+    failures.push("host_shared_wrapper_factory_invalid");
+
+  const visibleActionIds = routes.visibility;
+  const adapterActionIds = routes.tools.map((entry) => entry.adapterAction);
+  assertUnique(visibleActionIds, "host_tool_visibility_duplicates", failures);
+  assertUnique(adapterActionIds, "host_tool_adapter_duplicates", failures);
+  for (const route of routes.tools)
+    if (route.visibleAction !== route.adapterAction)
+      failures.push(`host_tool_adapter_identity_drift:${route.visibleAction}:${route.adapterAction}`);
+  return failures;
 }
-function parseHostInitializerFixtureAllowlist(source) {
-  const match = source.match(/fixture\.FixtureScenario is not \(([^\r\n]+)\)/);
-  if (!match) throw new Error("native_local_initializer_fixture_allowlist_not_found");
-  return parseNativeScenarioStrings(match[1]);
+
+function validateRouterBoundary(bridgeSession, router) {
+  const failures = [];
+  const threadGuard = router?.indexOf("if (!this.IsOnOwnerThread)") ?? -1;
+  const replayLookup = router?.indexOf("if (ledger.TryGetExistingReceipt(request.RequestId") ?? -1;
+  const handlerLookup = router?.indexOf("if (!this.handlers.TryGetValue(request.Action") ?? -1;
+  const handlerExecution = router?.indexOf("receipt = handler.Execute(request, ledger);") ?? -1;
+  if (threadGuard < 0) failures.push("router_missing_game_thread_guard");
+  if (replayLookup < 0) failures.push("router_missing_replay_guard");
+  if (handlerLookup < 0) failures.push("router_missing_handler_lookup");
+  if (handlerExecution < 0) failures.push("router_missing_handler_execution");
+
+  const tryExecute =
+    bridgeSession.match(/internal bool TryExecute\([\s\S]*?\n {4}internal bool TryCreateReceiptEvent\(/)?.[0] ?? "";
+  const structuralGuard = tryExecute.indexOf(
+    "if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;",
+  );
+  const capabilityGuardInSession = tryExecute.indexOf(
+    "if (!this.publishedCapabilities.ContainsGameAction(request.Action))",
+  );
+  const freshnessGuard = tryExecute.indexOf("if (!IsFreshExecutionRequest(request, out reasonCode)) return false;");
+  const idempotencyLookup = tryExecute.indexOf("if (this.idempotency.TryGetValue(");
+  const routerCall = tryExecute.indexOf("if (!this.actionRouter.TryRoute(");
+  if (
+    !(
+      structuralGuard >= 0 &&
+      structuralGuard < capabilityGuardInSession &&
+      capabilityGuardInSession < freshnessGuard &&
+      freshnessGuard < idempotencyLookup &&
+      idempotencyLookup < routerCall
+    )
+  )
+    failures.push("bridge_session_router_guard_order_invalid");
+  return failures;
 }
-function parseNativeLocalFixtureScenarios(source) {
-  const scenarios = parseNativeScenarioStrings(source);
-  if (scenarios.size === 0) throw new Error("native_local_fixture_scenarios_not_found");
-  return scenarios;
+
+async function main() {
+  const paths = {
+    farmhandActionDefinitions: resolve(ROOT, "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"),
+    bridgeSession: resolve(ROOT, "integrations/stardew/BridgeSession.cs"),
+    executionManager: resolve(ROOT, "integrations/stardew/ExecutionManager.cs"),
+    farmhandActionRouter: resolve(ROOT, "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs"),
+    farmingHandler: resolve(ROOT, "integrations/stardew/Handlers/FarmingActionHandler.cs"),
+    gatheringHandler: resolve(ROOT, "integrations/stardew/Handlers/GatheringActionHandler.cs"),
+    movementHandler: resolve(ROOT, "integrations/stardew/Handlers/MovementActionHandler.cs"),
+    machineHandler: resolve(ROOT, "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs"),
+    resourceHandler: resolve(ROOT, "integrations/stardew/Handlers/ResourceToolActionHandler.cs"),
+    registry: resolve(ROOT, "host/src/action-registry.ts"),
+    gameTools: resolve(ROOT, "host/src/game-tools.ts"),
+    protocol: resolve(ROOT, "host/src/protocol.ts"),
+    schema: resolve(ROOT, "protocol/bridge-v1.schema.json"),
+  };
+  const source = Object.fromEntries(
+    await Promise.all(Object.entries(paths).map(async ([key, path]) => [key, await readFile(path, "utf8")])),
+  );
+  const handlerSources = [
+    source.farmingHandler,
+    source.gatheringHandler,
+    source.movementHandler,
+    source.machineHandler,
+    source.resourceHandler,
+  ];
+  const result = validatePromotionSources({ ...source, handlerSources });
+  for (const gate of STARDEW_PUBLISHED_ACTION_GATES)
+    await access(resolve(ROOT, "tools", gate.runner), constants.R_OK).catch(() =>
+      result.failures.push(`gate_runner_missing:${gate.actionId}:${gate.runner}`),
+    );
+  if (result.failures.length) {
+    console.error(JSON.stringify({ state: "failed", ...result }, null, 2));
+    process.exitCode = 1;
+  } else
+    console.log(
+      JSON.stringify(
+        {
+          state: "passed",
+          publishedCount: result.definitions.filter((entry) => entry.lifecycle === "Published").length,
+        },
+        null,
+        2,
+      ),
+    );
 }
-function parseNativeScenarioStrings(source) {
-  return new Set([...source.matchAll(/"(native_[a-z0-9_]+_v\d+)"/g)].map((entry) => entry[1]));
-}
-function isIdentifier(value) {
-  return typeof value === "string" && /^[a-z][a-z0-9_]{1,127}$/.test(value);
-}
+if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();

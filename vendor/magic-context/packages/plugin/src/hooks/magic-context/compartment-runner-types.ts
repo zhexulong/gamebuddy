@@ -178,7 +178,12 @@ export type ValidatedHistorianPassResult =
     | {
           ok: true;
           compartments: CandidateCompartment[];
-          facts: Array<{ category: string; content: string }>;
+          facts: Array<{
+              category: string;
+              content: string;
+              /** Adapter-supplied opaque provenance; never parsed from Historian XML. */
+              sourceRefs?: readonly string[];
+          }>;
           userObservations?: string[];
           /** Durable standing-question candidates for Primers v1 (stored side-table only).
            *  `originCompartmentIndex` is the 1-based index into THIS publish's

@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_focused_source_audit",
+  "auditId": "portfolio_m1_route_source_audit_v1",
+  "traceFamilyId": "portfolio_m1_leave_and_return_route",
+  "topology": "single_player_native_companion",
+  "charterAuthority": {
+    "modelId": "core_valley_milestone_portfolio_v1_command_path_charter",
+    "charterDocument": "tools/stardew-portfolio-command-path-charter.json",
+    "scopeDocument": "design/16_STARDEW_DEMO_SCOPE_AND_GOAL_CONTRACTS.md",
+    "scopeDocumentSha256": "b4a5120b698537b136edc2cfcbcd2681e5d1fb9802a8709df28eb06b1288a10b"
+  },
+  "auditSource": {
+    "provenanceDocument": "design/13_STARDEW_NATIVE_PROVENANCE.md",
+    "localSnapshotContentManifestSha256": "8ef8fc0a6eae9ca9064a37538c0bc017b0c8e4341a02441ddca072515d4c636c",
+    "targetAssemblySha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+    "disposition": "unverified_audit_aid_blocks_target_version_realization"
+  },
+  "anchors": [
+    {
+      "anchorId": "normal_player_warp_collision_ingress",
+      "relativePath": "StardewValley/Farmer.cs",
+      "startByte": 248199,
+      "endByte": 248610,
+      "fileSha256": "517e85af44a539f944048df715c4dbc4cfbd296ab8e330b700cad855f401eb33",
+      "sliceSha256": "5d8211ac8c8c1d1d593301386dad0090425dbcc8e8356ad70b02990de2e6e207",
+      "needle": "Warp warp = Game1.currentLocation.isCollidingWithWarp(targetPos, this);",
+      "semanticRole": "normal_player_movement_warp_guard_and_target_discovery"
+    },
+    {
+      "anchorId": "normal_player_warp_dispatch",
+      "relativePath": "StardewValley/Farmer.cs",
+      "startByte": 248478,
+      "endByte": 248846,
+      "fileSha256": "517e85af44a539f944048df715c4dbc4cfbd296ab8e330b700cad855f401eb33",
+      "sliceSha256": "571f827ef9c3e88d316d4c824a41391abc4dceff17195aaf4f080371088f37d1",
+      "needle": "warpFarmer(warp, direction);",
+      "semanticRole": "normal_player_native_warp_dispatch"
+    },
+    {
+      "anchorId": "normal_player_warp_native_delegation",
+      "relativePath": "StardewValley/Farmer.cs",
+      "startByte": 161914,
+      "endByte": 162319,
+      "fileSha256": "517e85af44a539f944048df715c4dbc4cfbd296ab8e330b700cad855f401eb33",
+      "sliceSha256": "af4633aa13c5277c88bd81059df09c0eeabc1eb96716ce9c09cdf592a529ba86",
+      "needle": "Game1.warpFarmer(w.TargetName, target_x, target_y, w.flipFarmer);",
+      "semanticRole": "normal_player_warp_delegation"
+    },
+    {
+      "anchorId": "warp_request_entry",
+      "relativePath": "StardewValley/Game1.cs",
+      "startByte": 280124,
+      "endByte": 280578,
+      "fileSha256": "09056204adb00f259dee184271e1f0d4c4023b472f752ee66cb652333f6343a9",
+      "sliceSha256": "863e8cc76155b21b61d324b6a669be7badf34f8451d7a6bbfe7f6d4b62a94030",
+      "needle": "public static void warpFarmer(LocationRequest locationRequest, int tileX, int tileY, int facingDirectionAfterWarp)",
+      "semanticRole": "native_location_warp_request_and_route_adjustment"
+    },
+    {
+      "anchorId": "warp_protocol_begin",
+      "relativePath": "StardewValley/Game1.cs",
+      "startByte": 286710,
+      "endByte": 287172,
+      "fileSha256": "09056204adb00f259dee184271e1f0d4c4023b472f752ee66cb652333f6343a9",
+      "sliceSha256": "f94f1c79e450a2edf86f8691fa9f1c87bf0d6f639aab30ac05b460f5a77db6e2",
+      "needle": "private static void performWarpFarmer(LocationRequest locationRequest, int tileX, int tileY, int facingDirectionAfterWarp)",
+      "semanticRole": "native_warp_protocol_start"
+    },
+    {
+      "anchorId": "warp_location_commit",
+      "relativePath": "StardewValley/Game1.cs",
+      "startByte": 180206,
+      "endByte": 180596,
+      "fileSha256": "09056204adb00f259dee184271e1f0d4c4023b472f752ee66cb652333f6343a9",
+      "sliceSha256": "8f0c8d8c07a60871540229fe25732a90c99ac96114b091768de93bbfc71c3ade",
+      "needle": "player.currentLocation = locationRequest.Location;",
+      "semanticRole": "native_location_and_player_location_commit"
+    },
+    {
+      "anchorId": "warp_post_commit_hook",
+      "relativePath": "StardewValley/Game1.cs",
+      "startByte": 181076,
+      "endByte": 181432,
+      "fileSha256": "09056204adb00f259dee184271e1f0d4c4023b472f752ee66cb652333f6343a9",
+      "sliceSha256": "2b0c8abb4acfa9d33ecc9e7a18062a05425f4569f1cab06b7399b36e3024653b",
+      "needle": "player.OnWarp();",
+      "semanticRole": "native_post_warp_lifecycle_hook"
+    },
+    {
+      "anchorId": "map_warp_population",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "startByte": 580665,
+      "endByte": 581038,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "80e1c35a3f74089bdaf4ad7e7027e0fb77c2b99f92f3c175860e9964675b5a32",
+      "needle": "public virtual void updateWarps()",
+      "semanticRole": "map_defined_native_warp_discovery"
+    },
+    {
+      "anchorId": "door_warp_resolution",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "startByte": 69009,
+      "endByte": 69424,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "493fadcebd87f9b75d36bc63b322fdc74318e6a119d412794f8fbaa9567f66d9",
+      "needle": "public virtual Warp getWarpFromDoor(Point door, Character character = null)",
+      "semanticRole": "native_door_transition_resolution"
+    },
+    {
+      "anchorId": "touch_warp_transition",
+      "relativePath": "StardewValley/GameLocation.cs",
+      "startByte": 117492,
+      "endByte": 117912,
+      "fileSha256": "36ce3fe592f0b4dcf46e906af31c114947b1af42b39e45223e8009693aa80d2d",
+      "sliceSha256": "2f56757ef55f669d1f9068d0cd72393f3ba06f45f9f39e614ff64972443cd2e0",
+      "needle": "case \"Warp\":\r\n\t\t\t{\r\n\t\t\t\tif (!ArgUtility.TryGet(action, 1, out var locationToWarp",
+      "semanticRole": "native_touch_transition_guard_and_dispatch"
+    }
+  ],
+  "observedSemanticConstraints": [
+    "normal_local_player_movement_discovers_a_live_map_warp_before_delegating_to_the_native_warp_lifecycle",
+    "a_warp_request_can_adjust_or reject route-dependent destination state before it starts the native fade/location-request protocol",
+    "the_location_transition_has_a_pending_protocol_boundary_before_current_location_and_player_current_location_commit",
+    "map_and_door_transition_targets_are_content_and_current-state dependent rather_than_a_static_bridge_coordinate_list",
+    "selected_outside_obligation_completion_is_not_implied_by_arrival_and_return_requires_a_fresh_current_location_observation",
+    "source_snapshot_does_not_authorize_raw_position_mutation_raw_ui_input_generic_route_dispatch_or_any_bridge_projection"
+  ],
+  "unresolvedQuestions": [
+    {
+      "questionId": "m1_target_version_decompilation_correlation",
+      "question": "The committed local source snapshot is an audit aid only; focused correlation to the actual target-version assembly/decompilation is required before Charter source realization may become realized.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m1_signed_route_and_outside_obligation_selection",
+      "question": "The DSM must select the route class, bounded checkpoints, outside-Farm obligation, return condition, and persisted checkpoint predicate without substituting a literal tile recording.",
+      "disposition": "requires_signed_dsm_selection"
+    },
+    {
+      "questionId": "m1_route_transition_partition",
+      "question": "The selected route may require ordinary map warps, doors, touch transitions, transport, or event-gated transitions; its finite native partition and all selected guards remain unclosed.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m1_typed_bridge_and_game_thread_contract",
+      "question": "The audit does not establish a safe typed Mod bridge ingress, native body/navigation ownership, game-thread revalidation, cancellation, stale-target, replay, or same-execution evidence contract.",
+      "disposition": "blocks_projection"
+    },
+    {
+      "questionId": "m1_target_version_live_route_reopen",
+      "question": "No formal target-version typed leave/outside-obligation/return run, receipt, fresh postcondition, native save/reopen reread, or recovery evidence exists.",
+      "disposition": "blocks_projection"
+    }
+  ],
+  "conclusion": {
+    "sourceRealizationStatus": "unknown",
+    "projectionState": "blocked",
+    "liveState": "not_performed",
+    "authorizationBoundary": {
+      "rawUiInput": "forbidden",
+      "rawPositionMutation": "forbidden",
+      "genericRouteDispatch": "forbidden",
+      "bridgeProjection": "forbidden",
+      "capabilityDerivation": "forbidden",
+      "ccmClosure": "forbidden",
+      "liveResult": "not_established"
+    },
+    "nonClaim": "This is a focused audit-aid dossier. It does not mark the Charter trace realized, derive a capability, authorize a bridge route, close a CCM row, or establish a live result."
+  }
+}

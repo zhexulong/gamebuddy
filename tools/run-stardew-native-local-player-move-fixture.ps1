@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ModsPath,
     [Parameter(Mandatory = $true)][string]$FixtureRoot,
     [Parameter(Mandatory = $true)][string]$SaveName,
-    [ValidateSet("move_to_tile", "tree_discovery", "tree_first_hit", "chop_tree_source", "break_rock_source", "clear_hoedirt", "dig_artifact_spot", "refill_watering_can", "feed_animal", "collect_animal_product", "travel", "clear_debris", "enter_exit", "equip_tool", "till_soil", "water_crop", "plant_seed", "fertilize_tile", "harvest_crop", "pickup_forage", "pickup_item", "machine_inspect", "machine_load", "machine_collect_output", "npc_relationship", "pet_animal", "use_item", "place_wood_fence", "place_crab_pot")][string]$Action = "move_to_tile",
+    [string]$Action = "move_to_tile",
     [switch]$BootstrapNativeSave,
     [ValidateRange(30, 300)][int]$TimeoutSeconds = 120
 )
@@ -18,36 +18,14 @@ $clientConfig = Join-Path $ModsPath "GameBuddy/config.json"
 $backupName = "native-local-$($Action.Replace('_', '-'))-fixture-backup"
 $fixtureSaveHarness = Join-Path $PSScriptRoot "prepare-stardew-action-fixture.ps1"
 $stardewSaveRoot = Join-Path $env:APPDATA "StardewValley\Saves"
-$smokeScript = switch ($Action) {
-    "tree_discovery" { "run-stardew-native-local-player-tree-discovery-probe.mjs" }
-    "tree_first_hit" { "run-stardew-native-local-player-tree-first-hit-smoke.mjs" }
-    "chop_tree_source" { "run-stardew-native-local-player-chop-tree-source-smoke.mjs" }
-    "break_rock_source" { "run-stardew-native-local-player-break-rock-source-smoke.mjs" }
-    "clear_hoedirt" { "run-stardew-native-local-player-clear-hoedirt-smoke.mjs" }
-    "dig_artifact_spot" { "run-stardew-native-local-player-dig-artifact-spot-smoke.mjs" }
-    "clear_debris" { "run-stardew-native-local-player-clear-debris-smoke.mjs" }
-    "refill_watering_can" { "run-stardew-native-local-player-refill-watering-can-smoke.mjs" }
-    "feed_animal" { "run-stardew-native-local-player-feed-animal-smoke.mjs" }
-    "collect_animal_product" { "run-stardew-native-local-player-collect-animal-product-smoke.mjs" }
-    "travel" { "run-stardew-native-local-player-travel-smoke.mjs" }
-    "enter_exit" { "run-stardew-native-local-player-enter-exit-smoke.mjs" }
-    "equip_tool" { "run-stardew-native-local-player-equip-tool-smoke.mjs" }
-    "till_soil" { "run-stardew-native-local-player-till-soil-smoke.mjs" }
-    "water_crop" { "run-stardew-native-local-player-water-crop-smoke.mjs" }
-    "plant_seed" { "run-stardew-native-local-player-plant-seed-smoke.mjs" }
-    "fertilize_tile" { "run-stardew-native-local-player-fertilize-tile-smoke.mjs" }
-    "harvest_crop" { "run-stardew-native-local-player-harvest-crop-smoke.mjs" }
-    "pickup_forage" { "run-stardew-native-local-player-pickup-forage-smoke.mjs" }
-    "pickup_item" { "run-stardew-native-local-player-pickup-item-smoke.mjs" }
-    "machine_inspect" { "run-stardew-machine-inspect-fixture-smoke.mjs" }
-    "machine_load" { "run-stardew-native-local-player-machine-load-smoke.mjs" }
-    "machine_collect_output" { "run-stardew-native-local-player-machine-collect-output-smoke.mjs" }
-    "npc_relationship" { "run-stardew-native-local-player-npc-relationship-smoke.mjs" }
-    "pet_animal" { "run-stardew-native-local-player-pet-animal-smoke.mjs" }
-    "use_item" { "run-stardew-native-local-player-use-item-smoke.mjs" }
-    "place_wood_fence" { "run-stardew-native-local-player-place-wood-fence-smoke.mjs" }
-    "place_crab_pot" { "run-stardew-native-local-player-place-crab-pot-smoke.mjs" }
-    default { "run-stardew-native-local-player-move-smoke.mjs" }
+$runnerResolver = Join-Path $PSScriptRoot "resolve-stardew-action-gate-runner.mjs"
+$smokeScript = node $runnerResolver --action $Action
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($smokeScript)) {
+    throw "Native-local action runner resolution failed for '$Action'."
+}
+$smokeScript = $smokeScript.Trim()
+if ($smokeScript -notmatch '^run-stardew-native-local-player-[a-z0-9-]+-smoke\.mjs$') {
+    throw "Native-local action runner resolution returned an invalid runner identity."
 }
 foreach ($path in @($smapi, $ModsPath, $FixtureRoot, $releaseDir, $clientConfig)) { if (-not (Test-Path -LiteralPath $path)) { throw "Missing harness path: $path" } }
 if (-not $BootstrapNativeSave -and $SaveName -notmatch '^GameBuddyFixture[A-Za-z0-9]{0,64}_[0-9]{1,32}$') { throw "A disposable action run requires an observed physical GameBuddyFixture slot ending in _<nativeUniqueId>." }

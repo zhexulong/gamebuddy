@@ -121,8 +121,10 @@ export function isGameplayType(typeName) {
   // Scan all target-game source files, but exclude engine/serialization
   // infrastructure which cannot itself be a player-reachable operation. New
   // location/menu/object classes remain visible without an allowlist entry.
-  return (typeName === "StardewValley" || typeName.startsWith("StardewValley."))
-    && !NON_GAMEPLAY_NAMESPACE_PREFIXES.some((prefix) => typeName === prefix || typeName.startsWith(`${prefix}.`));
+  return (
+    (typeName === "StardewValley" || typeName.startsWith("StardewValley.")) &&
+    !NON_GAMEPLAY_NAMESPACE_PREFIXES.some((prefix) => typeName === prefix || typeName.startsWith(`${prefix}.`))
+  );
 }
 
 export function classifyGameplayMember(typeName, methodName) {
@@ -137,19 +139,32 @@ export function classifyGameplayMember(typeName, methodName) {
   if (methodName === "warpFarmer") {
     return { mappingStatus: "not_surface", basisPrimitiveIds: [], semanticKind: "supporting_native_transition" };
   }
-  if ((typeName === "StardewValley.Crop" || typeName === "StardewValley.TerrainFeatures.Crop") && methodName === "harvest") {
+  if (
+    (typeName === "StardewValley.Crop" || typeName === "StardewValley.TerrainFeatures.Crop") &&
+    methodName === "harvest"
+  ) {
     return { mappingStatus: "mapped", basisPrimitiveIds: ["harvest_crop"], semanticKind: "native_lifecycle" };
   }
   if (typeName === "StardewValley.FarmAnimal" && methodName === "pet") {
     return { mappingStatus: "mapped", basisPrimitiveIds: ["pet_animal"], semanticKind: "native_lifecycle" };
   }
-  if ((typeName === "StardewValley.Event" || typeName === "StardewValley.GameLocation") && ["answerDialogue", "answerDialogueAction"].includes(methodName)) {
-    return { mappingStatus: "mapped", basisPrimitiveIds: ["select_dialogue_response"], semanticKind: "native_lifecycle" };
+  if (
+    (typeName === "StardewValley.Event" || typeName === "StardewValley.GameLocation") &&
+    ["answerDialogue", "answerDialogueAction"].includes(methodName)
+  ) {
+    return {
+      mappingStatus: "mapped",
+      basisPrimitiveIds: ["select_dialogue_response"],
+      semanticKind: "native_lifecycle",
+    };
   }
   if (typeName === "StardewValley.Farmer" && methodName === "completeQuest") {
     return { mappingStatus: "mapped", basisPrimitiveIds: ["submit_quest"], semanticKind: "native_lifecycle" };
   }
-  if ((typeName === "StardewValley.Farm" || typeName === "StardewValley.Buildings.ShippingBin") && methodName === "shipItem") {
+  if (
+    (typeName === "StardewValley.Farm" || typeName === "StardewValley.Buildings.ShippingBin") &&
+    methodName === "shipItem"
+  ) {
     return { mappingStatus: "mapped", basisPrimitiveIds: ["ship_item"], semanticKind: "native_lifecycle" };
   }
   if (typeName === "StardewValley.Menus.MuseumMenu" && methodName === "donate") {
@@ -158,13 +173,19 @@ export function classifyGameplayMember(typeName, methodName) {
   if (typeName === "StardewValley.Game1" && ["newDay", "newDayAfterFade"].includes(methodName)) {
     return { mappingStatus: "not_surface", basisPrimitiveIds: [], semanticKind: "supporting_native_transition" };
   }
-  if ((typeName === "StardewValley.Game1" || typeName === "StardewValley.GameLocation") && ["startEvent", "startSleep"].includes(methodName)) {
+  if (
+    (typeName === "StardewValley.Game1" || typeName === "StardewValley.GameLocation") &&
+    ["startEvent", "startSleep"].includes(methodName)
+  ) {
     return { mappingStatus: "not_surface", basisPrimitiveIds: [], semanticKind: "supporting_native_transition" };
   }
   if (typeName === "StardewValley.Crop" && methodName === "newDay") {
     return { mappingStatus: "not_surface", basisPrimitiveIds: [], semanticKind: "supporting_native_transition" };
   }
-  if (typeName === "StardewValley.TerrainFeatures.Tree" && ["performToolAction", "performTreeFall"].includes(methodName)) {
+  if (
+    typeName === "StardewValley.TerrainFeatures.Tree" &&
+    ["performToolAction", "performTreeFall"].includes(methodName)
+  ) {
     return { mappingStatus: "mapped", basisPrimitiveIds: ["chop_tree_source"], semanticKind: "native_lifecycle" };
   }
   if (typeName === "StardewValley.TerrainFeatures.ResourceClump" && methodName === "performToolAction") {
@@ -254,11 +275,11 @@ export function contentAssetIsGameplayRelevant(assetPath) {
   const normalized = assetPath.replaceAll("\\", "/");
   const dataFamily = normalized.match(/^Data\/([^./]+)(?:\.[^.]+)?\.xnb$/i)?.[1];
   return Boolean(
-    (dataFamily && CONTENT_DATA_FAMILIES.has(dataFamily))
-      || /^Data\/Events\//i.test(normalized)
-      || /^Maps\//i.test(normalized)
-      || /^Minigames\//i.test(normalized)
-      || /^Characters\/(?:Dialogue|schedules)\//i.test(normalized),
+    (dataFamily && CONTENT_DATA_FAMILIES.has(dataFamily)) ||
+      /^Data\/Events\//i.test(normalized) ||
+      /^Maps\//i.test(normalized) ||
+      /^Minigames\//i.test(normalized) ||
+      /^Characters\/(?:Dialogue|schedules)\//i.test(normalized),
   );
 }
 
@@ -275,11 +296,15 @@ export function contentAssetMappingStatus(assetPath) {
   const extension = base.split(".").at(-1)?.toLowerCase();
   if (extension !== "xnb") return { mappingStatus: "needs_expansion", semanticKind: "content_operation" };
   if (/^Data\/Events\//i.test(normalized)) return { mappingStatus: "needs_expansion", semanticKind: "event_content" };
-  if (/^Data\/([^./]+)(?:\.[^.]+)?\.xnb$/i.test(normalized)) return { mappingStatus: "needs_expansion", semanticKind: "data_driven_operation" };
-  if (/^Maps\//i.test(normalized)) return { mappingStatus: "needs_expansion", semanticKind: "map_properties_and_dispatch" };
+  if (/^Data\/([^./]+)(?:\.[^.]+)?\.xnb$/i.test(normalized))
+    return { mappingStatus: "needs_expansion", semanticKind: "data_driven_operation" };
+  if (/^Maps\//i.test(normalized))
+    return { mappingStatus: "needs_expansion", semanticKind: "map_properties_and_dispatch" };
   if (/^Minigames\//i.test(normalized)) return { mappingStatus: "needs_expansion", semanticKind: "minigame_content" };
-  if (/^Characters\/Dialogue\//i.test(normalized)) return { mappingStatus: "needs_expansion", semanticKind: "social_content" };
-  if (/^Characters\/schedules\//i.test(normalized)) return { mappingStatus: "needs_expansion", semanticKind: "social_schedule_content" };
+  if (/^Characters\/Dialogue\//i.test(normalized))
+    return { mappingStatus: "needs_expansion", semanticKind: "social_content" };
+  if (/^Characters\/schedules\//i.test(normalized))
+    return { mappingStatus: "needs_expansion", semanticKind: "social_schedule_content" };
   return { mappingStatus: "needs_expansion", semanticKind: "content_operation" };
 }
 
@@ -309,14 +334,28 @@ export function logicalContentOperationFamily(assetPath) {
 export function contentOperationDomain(assetPath) {
   const normalized = logicalContentAssetPath(assetPath);
   const family = logicalContentOperationFamily(normalized);
-  if (/^Data\/Events\//i.test(normalized)) return { domainKind: "event_map", keyDomain: normalized.slice("Data/Events/".length).replace(/\.xnb$/i, "") };
-  if (/^Data\/Festivals\//i.test(normalized)) return { domainKind: "festival_map", keyDomain: normalized.slice("Data/Festivals/".length).replace(/\.xnb$/i, "") };
-  if (/^Data\/TV\//i.test(normalized)) return { domainKind: "tv_channel_map", keyDomain: normalized.slice("Data/TV/".length).replace(/\.xnb$/i, "") };
-  if (/^Data\/([^/]+)\.xnb$/i.test(normalized)) return { domainKind: "data_table", keyDomain: normalized.slice("Data/".length, -4) };
-  if (family === "Maps") return { domainKind: "map_asset", keyDomain: normalized.slice("Maps/".length).replace(/\.xnb$/i, "") };
-  if (family === "Minigames") return { domainKind: "minigame_asset", keyDomain: normalized.slice("Minigames/".length).replace(/\.xnb$/i, "") };
-  if (family === "Characters/Dialogue") return { domainKind: "dialogue_asset", keyDomain: normalized.slice("Characters/Dialogue/".length).replace(/\.xnb$/i, "") };
-  if (family === "Characters/schedules") return { domainKind: "schedule_asset", keyDomain: normalized.slice("Characters/schedules/".length).replace(/\.xnb$/i, "") };
+  if (/^Data\/Events\//i.test(normalized))
+    return { domainKind: "event_map", keyDomain: normalized.slice("Data/Events/".length).replace(/\.xnb$/i, "") };
+  if (/^Data\/Festivals\//i.test(normalized))
+    return { domainKind: "festival_map", keyDomain: normalized.slice("Data/Festivals/".length).replace(/\.xnb$/i, "") };
+  if (/^Data\/TV\//i.test(normalized))
+    return { domainKind: "tv_channel_map", keyDomain: normalized.slice("Data/TV/".length).replace(/\.xnb$/i, "") };
+  if (/^Data\/([^/]+)\.xnb$/i.test(normalized))
+    return { domainKind: "data_table", keyDomain: normalized.slice("Data/".length, -4) };
+  if (family === "Maps")
+    return { domainKind: "map_asset", keyDomain: normalized.slice("Maps/".length).replace(/\.xnb$/i, "") };
+  if (family === "Minigames")
+    return { domainKind: "minigame_asset", keyDomain: normalized.slice("Minigames/".length).replace(/\.xnb$/i, "") };
+  if (family === "Characters/Dialogue")
+    return {
+      domainKind: "dialogue_asset",
+      keyDomain: normalized.slice("Characters/Dialogue/".length).replace(/\.xnb$/i, ""),
+    };
+  if (family === "Characters/schedules")
+    return {
+      domainKind: "schedule_asset",
+      keyDomain: normalized.slice("Characters/schedules/".length).replace(/\.xnb$/i, ""),
+    };
   return { domainKind: "content_asset", keyDomain: normalized };
 }
 

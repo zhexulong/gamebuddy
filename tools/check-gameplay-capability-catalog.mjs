@@ -66,13 +66,16 @@ function enumHas(catalog, name, value) {
 /** Parse the actual registered implementation surface; test expectations are
  * intentionally not a source of truth for this audit. */
 export function publishedRegistryEntries(registrySource) {
-  const match = registrySource.match(/export const STARDEW_ACTION_REGISTRY\s*:\s*readonly PublishedAction\[\]\s*=\s*Object\.freeze\(\[([\s\S]*?)\n\]\);/);
+  const match = registrySource.match(
+    /export const STARDEW_ACTION_REGISTRY\s*:\s*readonly PublishedAction\[\]\s*=\s*Object\.freeze\(\[([\s\S]*?)\n\]\);/,
+  );
   if (!match) throw new Error("Unable to locate STARDEW_ACTION_REGISTRY in host/src/action-registry.ts.");
   const entries = [];
-  for (const item of match[1].matchAll(/publishedAction\("([a-z0-9_]+)",\s*"([a-z0-9_]+)"/g)) {
+  for (const item of match[1].matchAll(/publishedAction\(\s*"([a-z0-9_]+)",\s*"([a-z0-9_]+)"/g)) {
     entries.push(Object.freeze({ actionId: item[1], familyId: item[2], actionClass: "primitive" }));
   }
-  if (entries.length === 0) throw new Error("Unable to parse published action entries from host/src/action-registry.ts.");
+  if (entries.length === 0)
+    throw new Error("Unable to parse published action entries from host/src/action-registry.ts.");
   return entries;
 }
 
@@ -99,7 +102,9 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
   const seenVariants = new Set();
   const graphById = new Map(catalog.compositeGraphs.map((graph) => [graph?.id, graph]));
   const graphIds = new Set(graphById.keys());
-  const coordinationContracts = new Map((catalog.coordinationContracts || []).map((contract) => [contract?.coordinationContractId, contract]));
+  const coordinationContracts = new Map(
+    (catalog.coordinationContracts || []).map((contract) => [contract?.coordinationContractId, contract]),
+  );
   if (!Array.isArray(catalog.coordinationContracts)) errors.push("Catalog must declare coordinationContracts.");
   for (const [contractId, schema] of Object.entries(COORDINATION_CONTRACT_SCHEMAS)) {
     const contract = coordinationContracts.get(contractId);
@@ -116,7 +121,11 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
   for (const graph of catalog.compositeGraphs) {
     for (const step of graph.steps || []) {
       if (step?.kind === "primitive" && typeof step.basisPrimitiveId === "string") continue;
-      if (step?.kind === "coordination" && typeof step.coordinationContractId === "string" && coordinationContracts.has(step.coordinationContractId)) {
+      if (
+        step?.kind === "coordination" &&
+        typeof step.coordinationContractId === "string" &&
+        coordinationContracts.has(step.coordinationContractId)
+      ) {
         const contract = coordinationContracts.get(step.coordinationContractId);
         // Contract-level requirements are mandatory whenever the declared
         // contract has them. A graph cannot opt out by deleting a step field.
@@ -124,24 +133,45 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
         const requirements = requirementSchema || contract;
         for (const field of ["requiredNativeFacts", "unsatisfiedTerminalStates"]) {
           if (requirements[field] !== undefined) {
-            if (!Array.isArray(requirements[field]) || requirements[field].length === 0 || requirements[field].some((value) => !nonEmptyString(value))) {
-              errors.push(`${contract.coordinationContractId}: ${field} must be a nonempty string array when declared.`);
+            if (
+              !Array.isArray(requirements[field]) ||
+              requirements[field].length === 0 ||
+              requirements[field].some((value) => !nonEmptyString(value))
+            ) {
+              errors.push(
+                `${contract.coordinationContractId}: ${field} must be a nonempty string array when declared.`,
+              );
             } else {
               if (JSON.stringify(step[field]) !== JSON.stringify(requirements[field])) {
-                errors.push(`${graph?.id || "<missing graph id>"}: coordination step ${step.coordinationContractId} must match contract ${field}.`);
+                errors.push(
+                  `${graph?.id || "<missing graph id>"}: coordination step ${step.coordinationContractId} must match contract ${field}.`,
+                );
               }
-              if (field === "unsatisfiedTerminalStates" && (!(graph.terminalStates || []).every((state) => typeof state === "string") || !requirements.unsatisfiedTerminalStates.every((state) => graph.terminalStates.includes(state)))) {
-                errors.push(`${graph?.id || "<missing graph id>"}: terminalStates must contain ${step.coordinationContractId} unsatisfiedTerminalStates.`);
+              if (
+                field === "unsatisfiedTerminalStates" &&
+                (!(graph.terminalStates || []).every((state) => typeof state === "string") ||
+                  !requirements.unsatisfiedTerminalStates.every((state) => graph.terminalStates.includes(state)))
+              ) {
+                errors.push(
+                  `${graph?.id || "<missing graph id>"}: terminalStates must contain ${step.coordinationContractId} unsatisfiedTerminalStates.`,
+                );
               }
             }
           }
         }
-        if (requirements.requiredFreshObservation !== undefined && step.requiredFreshObservation !== requirements.requiredFreshObservation) {
-          errors.push(`${graph?.id || "<missing graph id>"}: coordination step ${step.coordinationContractId} must match contract requiredFreshObservation.`);
+        if (
+          requirements.requiredFreshObservation !== undefined &&
+          step.requiredFreshObservation !== requirements.requiredFreshObservation
+        ) {
+          errors.push(
+            `${graph?.id || "<missing graph id>"}: coordination step ${step.coordinationContractId} must match contract requiredFreshObservation.`,
+          );
         }
         continue;
       }
-      errors.push(`${graph?.id || "<missing graph id>"}: graph step must be a typed primitive or declared coordination contract.`);
+      errors.push(
+        `${graph?.id || "<missing graph id>"}: graph step must be a typed primitive or declared coordination contract.`,
+      );
     }
   }
   const primitiveDecisionIds = new Set(
@@ -158,7 +188,8 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
     seenVariants.add(record.intentVariantId);
 
     for (const field of ["implementationLifecycle", "coverageKind", "coverageState"]) {
-      if (!enumHas(catalog, field, record[field])) errors.push(`${label}: invalid ${field}=${JSON.stringify(record[field])}.`);
+      if (!enumHas(catalog, field, record[field]))
+        errors.push(`${label}: invalid ${field}=${JSON.stringify(record[field])}.`);
     }
     for (const field of ["closedParameterDomain", "nativeBoundaries", "aggregateSuccess", "evidenceState"]) {
       if (!nonEmptyString(record[field])) errors.push(`${label}: ${field} must be a nonempty auditable string.`);
@@ -170,7 +201,10 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
       errors.push(`${label}: coordinated record must declare a non-none coordinationDependency.`);
     }
     for (const field of ["basisPrimitiveIds", "implementationActionIds"]) {
-      if (!Array.isArray(record[field]) || record[field].some((value) => typeof value !== "string" || value.length === 0)) {
+      if (
+        !Array.isArray(record[field]) ||
+        record[field].some((value) => typeof value !== "string" || value.length === 0)
+      ) {
         errors.push(`${label}: ${field} must be a string array.`);
       }
     }
@@ -189,21 +223,30 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
         }
         for (const primitiveId of graphPrimitiveIds) {
           if (!primitiveDecisionIds.has(primitiveId)) {
-            errors.push(`${label}: composite graph primitive ${primitiveId} requires a standalone primitive decision record.`);
+            errors.push(
+              `${label}: composite graph primitive ${primitiveId} requires a standalone primitive decision record.`,
+            );
           }
         }
-        const graphDependencies = new Set((graph.steps || [])
-          .filter((step) => step?.kind === "coordination")
-          .map((step) => coordinationContracts.get(step.coordinationContractId)?.dependency));
+        const graphDependencies = new Set(
+          (graph.steps || [])
+            .filter((step) => step?.kind === "coordination")
+            .map((step) => coordinationContracts.get(step.coordinationContractId)?.dependency),
+        );
         if (record.coordinationDependency !== "none" && !graphDependencies.has(record.coordinationDependency)) {
-          errors.push(`${label}: composite graph must contain a typed coordination step for ${record.coordinationDependency}.`);
+          errors.push(
+            `${label}: composite graph must contain a typed coordination step for ${record.coordinationDependency}.`,
+          );
         }
       }
     } else if (record.compositeGraphRef !== null) {
       errors.push(`${label}: non-composite record must have compositeGraphRef=null.`);
     }
-    if (record.coverageKind === "content_operation" && record.coverageState === "covered" &&
-      (typeof record.contentOperationId !== "string" || record.contentOperationId === "UNEXPANDED")) {
+    if (
+      record.coverageKind === "content_operation" &&
+      record.coverageState === "covered" &&
+      (typeof record.contentOperationId !== "string" || record.contentOperationId === "UNEXPANDED")
+    ) {
       errors.push(`${label}: covered content_operation must have a concrete contentOperationId.`);
     }
     if (record.coverageState === "covered" && record.implementationLifecycle !== "published") {
@@ -214,8 +257,10 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
     }
     if (record.coverageKind === "primitive") {
       for (const actionId of record.implementationActionIds || []) {
-        if (publishedIds.includes(actionId) &&
-          (record.coverageState !== "covered" || record.implementationLifecycle !== "published")) {
+        if (
+          publishedIds.includes(actionId) &&
+          (record.coverageState !== "covered" || record.implementationLifecycle !== "published")
+        ) {
           errors.push(`${label}: published primitive implementation action ${actionId} must be covered/published.`);
         }
       }
@@ -238,19 +283,28 @@ export function validateGameplayCapabilityCatalog(catalog, publishedEntries, bas
   );
   const missingPublished = publishedIds.filter((actionId) => !coveredActionIds.has(actionId));
   const unknownCatalogPublished = [...coveredActionIds].filter((actionId) => !publishedIds.includes(actionId));
-  if (missingPublished.length) errors.push(`Published registry actions missing covered catalog rows: ${missingPublished.join(", ")}.`);
-  if (unknownCatalogPublished.length) errors.push(`Catalog declares non-registry actions as published/covered: ${unknownCatalogPublished.join(", ")}.`);
+  if (missingPublished.length)
+    errors.push(`Published registry actions missing covered catalog rows: ${missingPublished.join(", ")}.`);
+  if (unknownCatalogPublished.length)
+    errors.push(`Catalog declares non-registry actions as published/covered: ${unknownCatalogPublished.join(", ")}.`);
   return errors;
 }
 
-export async function checkGameplayCapabilityCatalog({ catalogFile = catalogPath, registryFile = registrySourcePath } = {}) {
+export async function checkGameplayCapabilityCatalog({
+  catalogFile = catalogPath,
+  registryFile = registrySourcePath,
+} = {}) {
   const [catalogSource, registrySource, basisSource] = await Promise.all([
     readFile(catalogFile, "utf8"),
     readFile(registryFile, "utf8"),
     readFile(basisSourcePath, "utf8"),
   ]);
   let catalog;
-  try { catalog = JSON.parse(catalogSource); } catch (error) { throw new Error(`Catalog is not valid JSON: ${error.message}`); }
+  try {
+    catalog = JSON.parse(catalogSource);
+  } catch (error) {
+    throw new Error(`Catalog is not valid JSON: ${error.message}`);
+  }
   const entries = publishedRegistryEntries(registrySource);
   const basisIds = basisPrimitiveIdsFromSource(basisSource);
   const errors = validateGameplayCapabilityCatalog(catalog, entries, basisIds);
@@ -268,5 +322,8 @@ export async function checkGameplayCapabilityCatalog({ catalogFile = catalogPath
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   checkGameplayCapabilityCatalog()
     .then((result) => process.stdout.write(`${JSON.stringify(result)}\n`))
-    .catch((error) => { process.stderr.write(`${error.code || "error"}: ${error.message}\n`); process.exitCode = 1; });
+    .catch((error) => {
+      process.stderr.write(`${error.code || "error"}: ${error.message}\n`);
+      process.exitCode = 1;
+    });
 }

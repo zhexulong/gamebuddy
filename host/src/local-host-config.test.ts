@@ -19,21 +19,73 @@ test("Host config owns only companion and integration-selection fields", () => {
   assert.equal(parsed.thinkingLevel, "high");
   assert.equal(parsed.integrationId, "stardew");
   assert.deepEqual(parsed.integration, baseConfig.integration);
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, pipeName: "host_must_not_parse_adapter_fields" }), /invalid_host_config/);
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, saveId: "host_must_not_parse_adapter_fields" }), /invalid_host_config/);
+  assert.throws(
+    () => validateLocalHostConfig({ ...baseConfig, pipeName: "host_must_not_parse_adapter_fields" }),
+    /invalid_host_config/,
+  );
+  assert.throws(
+    () => validateLocalHostConfig({ ...baseConfig, saveId: "host_must_not_parse_adapter_fields" }),
+    /invalid_host_config/,
+  );
 });
 
 test("Host config rejects unknown, malformed, and non-object integration selection", () => {
   assert.throws(() => validateLocalHostConfig({ ...baseConfig, unexpected: true }), /invalid_host_config/);
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, integrationId: "not/a-valid-id" }), /invalid_host_config/);
+  assert.throws(
+    () => validateLocalHostConfig({ ...baseConfig, integrationId: "not/a-valid-id" }),
+    /invalid_host_config/,
+  );
   assert.throws(() => validateLocalHostConfig({ ...baseConfig, integration: [] }), /invalid_host_config/);
   assert.throws(() => validateLocalHostConfig({ ...baseConfig, model: "gpt-5.6-luna" }), /invalid_host_config/);
   assert.throws(() => validateLocalHostConfig({ ...baseConfig, thinkingLevel: "medium" }), /invalid_host_config/);
 });
 
 test("Host config keeps presentation and voice boundaries strict", () => {
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, presentation: { speech: { voiceProfile: "safe" } } }), /invalid_host_config/);
-  assert.throws(() => validateLocalHostConfig({ ...baseConfig, voiceGateway: { port: 0, token: "1234567890abcdef" } }), /invalid_host_config/);
-  const parsed = validateLocalHostConfig({ ...baseConfig, continuityId: "continuity-01", voiceGateway: { port: 8383, token: "1234567890abcdef" }, presentation: { speech: { voiceProfile: "safe" } } });
+  assert.throws(
+    () => validateLocalHostConfig({ ...baseConfig, presentation: { speech: { voiceProfile: "safe" } } }),
+    /invalid_host_config/,
+  );
+  assert.throws(
+    () => validateLocalHostConfig({ ...baseConfig, voiceGateway: { port: 0, token: "1234567890abcdef" } }),
+    /invalid_host_config/,
+  );
+  const parsed = validateLocalHostConfig({
+    ...baseConfig,
+    continuityId: "continuity-01",
+    voiceGateway: { port: 8383, token: "1234567890abcdef" },
+    voiceSessionId: "voice-session-01",
+    presentation: { speech: { voiceProfile: "safe" } },
+  });
   assert.equal(parsed.continuityId, "continuity-01");
+  assert.equal(parsed.voiceSessionId, "voice-session-01");
+});
+
+test("Host voice polling requires an explicit session binding and never derives one", () => {
+  const parsed = validateLocalHostConfig({
+    ...baseConfig,
+    voiceGateway: { port: 8383, token: "1234567890abcdef" },
+  });
+  assert.equal(parsed.voiceSessionId, undefined);
+  assert.throws(
+    () => validateLocalHostConfig({ ...baseConfig, voiceSessionId: "voice-session-01" }),
+    /invalid_host_config/,
+  );
+  assert.throws(
+    () =>
+      validateLocalHostConfig({
+        ...baseConfig,
+        voiceGateway: { port: 8383, token: "1234567890abcdef" },
+        voiceSessionId: "bad session",
+      }),
+    /invalid_host_config/,
+  );
+  assert.throws(
+    () =>
+      validateLocalHostConfig({
+        ...baseConfig,
+        voiceGateway: { port: 8383, token: "1234567890abcdef" },
+        voiceSessionId: "",
+      }),
+    /invalid_host_config/,
+  );
 });

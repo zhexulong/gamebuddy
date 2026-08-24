@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { StardewAttachmentFlow } from "../host/dist/stardew-attachment.js";
+import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+
+const { StardewAttachmentFlow } = await loadHostProductionModule("stardew-attachment.js");
 
 function option(name) {
   const index = process.argv.indexOf(name);
@@ -42,22 +44,33 @@ while (Date.now() < deadline) {
     // `stardew_attachment_rejected_*`, it is terminal regardless of its reason
     // code; never reinterpret a rejected response as save lifecycle progress.
     if (requestId !== undefined && /stardew_attachment_rejected_/.test(lastError)) throw error;
-    if (!/stardew_session_(expired|host_not_ready|awaiting_save)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique|stardew_attachment_timeout/.test(lastError)) throw error;
-    await new Promise(resolve => setTimeout(resolve, 100));
+    if (
+      !/stardew_session_(expired|host_not_ready|awaiting_save)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique|stardew_attachment_timeout/.test(
+        lastError,
+      )
+    )
+      throw error;
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 if (!manifest) throw new Error(lastError);
-console.log(JSON.stringify({
-  state: "ready",
-  requestId,
-  companionId: manifest.companionId,
-  farmhandId: manifest.farmhandId,
-  cabinId: manifest.cabinId,
-  saveId: manifest.saveId,
-  worldId: manifest.worldId,
-  sessionNoncePresent: Boolean(manifest.sessionNonce),
-  manifestExpiresAtUnixMs: manifest.expiresAtUnixMs,
-}, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      state: "ready",
+      requestId,
+      companionId: manifest.companionId,
+      farmhandId: manifest.farmhandId,
+      cabinId: manifest.cabinId,
+      saveId: manifest.saveId,
+      worldId: manifest.worldId,
+      sessionNoncePresent: Boolean(manifest.sessionNonce),
+      manifestExpiresAtUnixMs: manifest.expiresAtUnixMs,
+    },
+    null,
+    2,
+  ),
+);
 
 async function readLiveSessionWithRetry() {
   while (Date.now() < deadline) {
@@ -75,15 +88,22 @@ async function readLiveSessionWithRetry() {
       return await flow.readLiveSession();
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
-      if (!/stardew_session_(expired|host_not_ready)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique/.test(lastError)) throw error;
-      await new Promise(resolve => setTimeout(resolve, 100));
+      if (
+        !/stardew_session_(expired|host_not_ready)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique/.test(
+          lastError,
+        )
+      )
+        throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
   throw new Error(lastError);
 }
 
 function findCabinId(session, farmhandId) {
-  const matches = Array.isArray(session.cabins) ? session.cabins.filter(cabin => cabin.ownerFarmhandId === farmhandId) : [];
+  const matches = Array.isArray(session.cabins)
+    ? session.cabins.filter((cabin) => cabin.ownerFarmhandId === farmhandId)
+    : [];
   if (matches.length !== 1) throw new Error("target_cabin_not_unique");
   return matches[0].cabinId;
 }

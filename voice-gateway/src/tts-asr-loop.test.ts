@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { type AsrProvider, type SpeechJob, type TtsProvider } from "./gateway.js";
+import type { AsrProvider, SpeechJob, TtsProvider } from "./gateway.js";
 import { runTtsAsrLoop } from "./tts-asr-loop.js";
 
 const job: SpeechJob = {
@@ -30,7 +30,10 @@ test("TTS-to-ASR diagnostic loop preserves PCM16 chunk order and provider revisi
   const asr: AsrProvider = {
     providerId: "test-asr",
     modelRevision: "test-asr-v1",
-    async transcribe(pcm16) { received = pcm16; return "测试转写"; },
+    async transcribe(pcm16) {
+      received = pcm16;
+      return "测试转写";
+    },
   };
 
   const result = await runTtsAsrLoop(tts, asr, job, new AbortController().signal);
@@ -48,9 +51,24 @@ test("TTS-to-ASR diagnostic loop preserves PCM16 chunk order and provider revisi
 test("TTS-to-ASR diagnostic loop propagates cancellation and rejects malformed audio", async () => {
   const cancelled = new AbortController();
   cancelled.abort();
-  const asr: AsrProvider = { providerId: "test-asr", modelRevision: "test-asr-v1", async transcribe() { return "unexpected"; } };
+  const asr: AsrProvider = {
+    providerId: "test-asr",
+    modelRevision: "test-asr-v1",
+    async transcribe() {
+      return "unexpected";
+    },
+  };
   await assert.rejects(() => runTtsAsrLoop(tts, asr, job, cancelled.signal), /tts_asr_loop_cancelled/);
 
-  const malformedTts: TtsProvider = { providerId: "malformed", modelRevision: "v1", async *synthesize() { yield new Uint8Array([1]); } };
-  await assert.rejects(() => runTtsAsrLoop(malformedTts, asr, job, new AbortController().signal), /tts_asr_invalid_pcm16/);
+  const malformedTts: TtsProvider = {
+    providerId: "malformed",
+    modelRevision: "v1",
+    async *synthesize() {
+      yield new Uint8Array([1]);
+    },
+  };
+  await assert.rejects(
+    () => runTtsAsrLoop(malformedTts, asr, job, new AbortController().signal),
+    /tts_asr_invalid_pcm16/,
+  );
 });

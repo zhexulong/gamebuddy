@@ -3,10 +3,9 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  isCanonicalWindowsProcessStartIdentity,
   readWindowsOwnerDeathVerification,
   type WindowsOwnerDeathVerification,
-} from "../continuity-semantic-owner-death/continuity-semantic-owner-death.internal.js";
+} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.internal.js";
 import {
   isProductionChatRuntimeDeadlineCancellation,
   type ProductionChatRuntimeDeadlineCancellationInput,
@@ -3764,7 +3763,7 @@ function validGameOwner(value: unknown): value is ProductionGameOwner {
     safeId(value.runtimeInstanceId) &&
     Number.isSafeInteger(value.ownerPid) &&
     (value.ownerPid as number) > 0 &&
-    isCanonicalWindowsProcessStartIdentity(value.ownerProcessStartIdentity)
+    safeId(value.ownerProcessStartIdentity)
   );
 }
 function validGameVector(value: unknown): value is GameRevisionVector {

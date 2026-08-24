@@ -21,6 +21,51 @@ single-player fixture safe. Neither lane permits save-XML editing, a
 hand-written receipt, an in-memory `Farmer`, UI automation, or raw native-call
 fallback.
 
+## Farmhand Companion Preview entry (preview-only)
+
+The formal Preview entry is a separate, short-lived Host-first attachment surface. It is not semantic authority, a Portfolio entry, a local bootstrap, or a publication/release gate. The trusted launcher must create an absolute JSON config with exactly this shape and must never source any field from model output:
+
+```json
+{"schemaVersion":1,"runtimeRoot":"<absolute Host-owned GameBuddy root>","runtimeInstanceId":"<opaque per-launch id>","requiredPresentationLocale":"zh-CN","identity":{"playerId":"<opaque>","companionId":"<opaque>","saveId":"<opaque>","worldId":"<opaque>"},"bridge":{"pipeName":"<short-lived pipe>","bridgeToken":"<short-lived token>"},"evidence":{"path":"<new absolute JSONL path>","manifestSha256":"<64 lowercase hex>"}}
+```
+
+The only supported Preview orchestration is `tools/start-farmhand-launcher.ps1`. It is Windows-only and requires the native Stardew `startup_preferences` language setting to be `zh` before starting either title. The launcher embeds required `zh-CN` in its private Preview config, and Preview passes that bounded expectation to the authenticated bridge launch: the observed Farmhand snapshot must exactly match it or the run fails closed before Pi construction. Any missing, non-Chinese, or mismatched locale fails closed rather than rendering CJK input/output with an English font. It then starts the Host first under the reversible A-host/A-ai-client transaction using the existing `native_pickup_item_v1` fixture semantics; Preview introduces no action setup. After authenticated fixture/native readiness, it obtains a **fresh** signed attachment manifest while the expected Farmhand remains offline and validates it against the fresh Host advertisement. It writes the manifest's exact identity plus one run's short-lived pipe/token credentials into the transaction-owned AI config. The attachment manifest and launcher startup deadline bound pre-ready admission only; after receipt-backed Preview readiness, bridge authority remains bound to the authenticated token, exact scope, live generation, game-thread policy, and launcher-owned teardown rather than a fixed wall-clock lease. It launches the AI title next, then immediately starts immutable Preview. Preview's successful receipt-backed exact bridge snapshot admission is both the external AI-ready proof and Preview start; there is no separate log-derived ready state.
+
+The required launcher input `-HostRuntimeRoot` is an existing absolute Host-owned root. Its optional `settings/model-profiles.json` is read only when present; when absent, the Host-owned `ModelProfileStore` uses its fixed game default. The launcher never creates, copies, deletes, restores, or treats a model profile as a caller-supplied bridge credential. The root is passed only as Preview's current immutable entry dependency. The separate run-owned root contains only short-lived preview config/evidence/session exchange files and is deleted at teardown. No CLI/env accepts pipe, token, manifest, policy, capability, control endpoint, or credentials. The launcher owns Host, AI, and Preview children; it tears down Preview → AI → Host, deletes known attachment exchange artifacts, and restores the transaction only after all children exit. Failed restore deliberately retains backup and lock for recovery.
+
+For the immutable entry, the launcher uses:
+
+```powershell
+cd host
+pnpm start:farmhand-preview --config '<absolute-preview-config.json>'
+```
+
+The entry validates the entire config before bridge I/O; connects through `STARDEW_INTEGRATION_LAUNCHER`; requires the adapter-observed exact initial snapshot before Pi construction; then installs the current runtime, native chat/player-control Host path, STOP/ledger/worker bindings and optional read-only hash-only evidence artifact before releasing initial facts. `Ctrl+C` first revokes bridge execution and then closes Host/runtime/bridge. It neither accepts capabilities, policies, credentials nor action authority from a model, configures a control endpoint, or performs attachment itself. Delete the short-lived config and bridge token after close.
+
+## Native ordinary-chat and `/stop` live observation (read-only)
+
+The Farmhand companion preview may observe the already-implemented native ordinary
+chat and bare `/stop` ingress without adding a control port or injecting UI/input.
+Start only the official production Host, AI Farmhand, Mod bridge and the existing
+`native_ai_farmhand_multiplayer` runbook profile. Configure the Host process with
+both `GAMEBUDDY_COMPANION_LIVE_EVIDENCE_ARTIFACT=<new absolute JSONL path>` and
+`GAMEBUDDY_COMPANION_LIVE_EVIDENCE_MANIFEST_SHA256=<64 lowercase hex manifest digest>`.
+The path must be a new run-owned file; the Host appends only redacted records.
+
+After the attached Farmhand is ready, a human opens Stardew's native chat and
+submits one ordinary chat line, waits for the corresponding real Pi turn, then
+submits bare `/stop` during an active execution or provider/tool wait. The observer
+stores hashes only: native ingress kind/source/control identity, authenticated
+Farmhand bridge lineage, Pi accepted/settled disposition, and STOP epoch seal/settle.
+It never stores ordinary-chat text, prompt, token, audio, receipt bodies or hidden
+reasoning. After the typed STOP settles, the production observer requires a fresh
+Mod/game-thread `body_settled` observation with its authoritative revision and the
+same hashed stop/source/epoch lineage. It records `old_epoch_quiet` only after that
+observation and the already-settled old-epoch ledger, Pi, worker, presentation, and
+voice cancellation fence; this is a state proof, not a timed quiet-window inference.
+If either exact proof is absent or mismatched, the runner remains `blocked`. Do not
+hand-write, edit, or treat a fixture artifact as live evidence.
+
 ## Farmhand promotion standard (Farmhand lane only)
 
 An action is eligible for `published` only when all of the following are true:
@@ -78,6 +123,39 @@ If any item is missing, keep the action `experimental` (or withdraw it).
 - Do not leave a modified profile, working fixture, session exchange, game
   process, UDP listener, or locked DLL behind.
 
+## `collect_crab_pot_output` fixture provenance contract (bounded, non-live)
+
+Before any future collection implementation, the only approved Batch 4
+artifact is `fixtures/stardew/crab-pot-output.fixture.example.json`. Validate
+its metadata with:
+
+```text
+node tools/check-crab-pot-output-fixture-contract.mjs --contract fixtures/stardew/crab-pot-output.fixture.example.json
+```
+
+The checker is fail-closed for unknown/missing fields, placeholder or
+unprovisioned template hashes, unapproved target-version assembly/content
+hashes, weakened native lifecycle or forbidden behavior controls, production or
+live-closure claim escalation, and accidental opaque target IDs. The checked-in
+contract is explicitly `save.provisioningState=unprovisioned` with
+`templatePayloadSha256=null` and `provisioningAttestation=null`; therefore a successful check reports
+`fixture_needed`, `provenance_contract_only`, `liveClosure=none`, and no template
+validation. It is provenance planning metadata only. A real provisioned
+instance would require a canonical native template payload hash, a nonempty
+attestation reference, and independent native `Saving/Saved` and reload proof.
+It must still not be
+called action evidence, publication, release evidence, or live closure.
+
+Its bounded lifecycle is ordinary target-version CrabPot placement, ordinary
+bait interaction, an ordinary day transition running `CrabPot.DayUpdate`, then
+native save/reload before capture. Save/XML edits, direct readiness/output/bait/
+owner/inventory mutation, UI/input automation, raw dispatchers, collection
+ingress, bridge requests, receipts, and fixture-produced success evidence are
+forbidden. The production target is not stored; it must be rediscovered as a
+fresh opaque target from a future live snapshot. This section does not authorize
+or execute a production action, Host/Mod protocol, registry publication, smoke
+runner, game launch, or template provisioning.
+
 ## Native-local single-player SOP
 
 Use this lane to validate an existing shared typed action when a second player
@@ -127,25 +205,54 @@ an alternate action runtime.
 2. Start the same runner without `-BootstrapNativeSave`. It requires the
    bootstrap-captured binding for the exact observed slot, acquires its
    profile transaction, deploys the one Release bundle, and exposes only the
-   bounded legacy `EnabledActions` needed by the slice.
+   bounded legacy `EnabledActions` needed by the slice. A harness or protocol
+   failure after production ingress is a **real mutation**, even if the
+   disposable save is later restored. Never recast it as a dry run, and do not
+   rerun a mutation merely to repair its evidence: stop and obtain an explicit
+   acceptance decision for a new fixture identity/lane before any further
+   mutation gate.
 3. Fixture setup may provide only reviewed native prerequisites before bridge
    attachment (for example, a Hoe and bare diggable ground for `till_soil`, an
    intact adjacent `(O)590` artifact spot plus one Basic Hoe for
    `dig_artifact_spot`, or one untouched `(O)710` plus a read-only CrabPot
    predicate-discovered target and exactly one cardinal standing tile for
-   `place_crab_pot`). The CrabPot fixture must reject Caldera,
-   VolcanoDungeon, and MineShaft, require the exact native predicate, and must
-   find exactly one valid `(O)710` stack with **exactly one** item. An existing
-   pot stack is reused by object identity and count; duplicate, invalid, or
-   conflicting pot stacks fail closed. Native inventory insertion may normalize
-   unrelated item object references, so the fixture preserves their slot,
-   qualified-ID, and stack facts rather than their object references.
-   Only a genuinely empty inventory slot in an otherwise fresh disposable save
-   may receive one one-time pot, and the postcondition must prove every
-   pre-existing item identity and count is unchanged. The fixture must never
-   remove or rebuild a pot, call `placementAction`, reduce inventory, modify
-   water/objects, create output, or emit a receipt. Its preparation runner stops
-   after fixture invocation and fresh target/capability isolation; it sends no production request. The fixture-only CrabPot runner is `run-stardew-native-local-player-place-crab-pot-fixture-smoke.mjs`; production is separately mapped to `run-stardew-native-local-player-place-crab-pot-smoke.mjs`. The completed native-local mechanics gate selected opaque target `crab_pot_f64d58b4927b2be4` at Farm `(34,52)`, returned same-request/execution `succeeded/crab_pot_placed`, and proved source disappearance, result appearance, owner binding, inventory `1→0`, and fresh `actionable=true` without an active execution. Its all-water neighborhood produced native `directionOffset=(0,0)` and no overlay tiles; both are valid target-version facts, not failure signals. This is not bait/output/day/collection, Farmhand, Portfolio, publication, release, or save/reopen closure. The artifact fixture must not invoke `Hoe.DoFunction`,
+   `place_crab_pot`). The CrabPot fixture must reject Caldera, VolcanoDungeon,
+   and MineShaft, require the exact native predicate, and find exactly one valid
+   `(O)710` stack with **exactly one** item. An existing pot stack is reused by
+   object identity and count; duplicate, invalid, or conflicting pot stacks fail
+   closed. Native inventory insertion may normalize unrelated item object
+   references, so the fixture preserves their slot, qualified-ID, and stack facts
+   rather than their object references. Only a genuinely empty inventory slot in
+   an otherwise fresh disposable save may receive one one-time pot, and the
+   postcondition must prove every pre-existing item identity and count is
+   unchanged. The fixture must never remove or rebuild a pot, call
+   `placementAction`, reduce inventory, modify water/objects, create output, or
+   emit a receipt. Its preparation runner stops after fixture invocation and
+   fresh target/capability isolation; it sends no production request. The
+   fixture-only CrabPot runner is
+   `run-stardew-native-local-player-place-crab-pot-fixture-smoke.mjs`; production
+   is separately mapped to `run-stardew-native-local-player-place-crab-pot-smoke.mjs`.
+   For `native_bait_crab_pot_v1`, the pre-attachment initializer may use only a
+   native-owned, exact `(O)710` CrabPot candidate that is already current-player
+   owned, unbaited, has no held output, and is adjacent to a cardinal standing
+   tile; it may supply exactly one `(O)685` Bait stack and select it. It must not
+   call `performObjectDropInAction`, `checkAction`, `CrabPot` bait methods, a raw
+   dispatcher, direct bait/object/inventory mutation, or emit a receipt. It must
+   preserve the existing pot identity. The unique production mutation gate is
+   `run-stardew-native-local-player-bait-crab-pot-smoke.mjs`; it must use one
+   guarded `GameLocation.checkAction` ingress and prove same request/execution,
+   the original opaque pot identity, current-player owner, unbaited→baited,
+   Bait `1→0`, revision advance, and fresh `actionable=true` with no active
+   execution. It must not claim pot output/collection, Farmhand, Portfolio,
+   publication, release, or save/reopen closure.
+   The completed native-local mechanics gate selected opaque target
+   `crab_pot_f64d58b4927b2be4` at Farm `(34,52)`, returned same-request/execution
+   `succeeded/crab_pot_placed`, and proved source disappearance, result
+   appearance, owner binding, inventory `1→0`, and fresh `actionable=true`
+   without an active execution. Its all-water neighborhood produced native
+   `directionOffset=(0,0)` and no overlay tiles; both are valid target-version
+   facts, not failure signals. This is not bait/output/day/collection, Farmhand,
+   Portfolio, publication, release, or save/reopen closure. The artifact fixture must not invoke `Hoe.DoFunction`,
    `digUpArtifactSpot`, remove the source, manipulate rewards/debris, change
    inventory as an outcome, or emit a receipt. `native_dig_artifact_spot_v1`
    has target-version native-local mechanics evidence only: the production
@@ -258,23 +365,7 @@ an alternate action runtime.
    Production returned same-execution `succeeded/item_used` for `(O)216` in
    slot `5`; invariant-culture stamina/health evidence matched fresh before/after state and the food target
    disappeared after native animation. This is only `native_local_player_fixture`
-   shared mechanics evidence.
-14. `native_tree_first_hit_v1` has met this lane's target-version live mechanics
-   closure. Before bridge attachment, fixture setup uses target-version native
-   world/inventory APIs only in the disposable Farm working save to place one
-   mature ordinary tree (`health=10`, non-moss, untapped) with a legal approach
-   tile and supply exactly one Axe. It does not invoke Axe/`tree_first_hit`,
-   damage the tree, create a terminal state, or emit a receipt. Its exact
-   legacy allowlist is `move_to_tile`, `travel`, `equip_tool`,
-   `tree_first_hit`. The production runner separately receipts travel and
-   movement, equips `(T)Axe` in slot `4`, then targets the fresh opaque
-   `tree_shake_source_af99b95b5acdd092` at Farm `(64,17)`. The same execution
-   returned `succeeded/tree_first_hit` with native evidence `before=10`,
-   `after=9`, and `delta=-1`; the following fresh snapshot retained the same
-   tree source with health `9`. This is only
-   `native_local_player_fixture` shared mechanics evidence, never Portfolio or
-   Farmhand publication evidence.
-15. `native_feed_animal_v1` is a native-local-only disposable-working-save
+   shared mechanics evidence.15. `native_feed_animal_v1` is a native-local-only disposable-working-save
     slice with exact legacy profile `move_to_tile`, `travel`, `enter_exit`,
     `feed_animal`. Before bridge attachment, it may call target-version
     `SetupBigFarm` only to create and verify one native `AnimalHouse`, its
@@ -313,15 +404,15 @@ an alternate action runtime.
    no backup, lock, SMAPI/Stardew process, or working save remains.
 Current native-local validation record: `move_to_tile`, `till_soil`,
 `equip_tool`, `travel`, `enter_exit`, `plant_seed`, `fertilize_tile`,
-`harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `tree_first_hit`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
+`harvest_crop`, `pickup_forage`, `pickup_item`, `machine_inspect`, `use_item`, `chop_tree_source`, `clear_debris`, `clear_hoedirt`, `refill_watering_can`, `feed_animal`, `break_rock_source`, `collect_animal_product`, `pet_animal`, and `npc_relationship` have met this lane's live
 receipt-plus-fresh-postcondition standard. `water_crop` has also met this lane's live
 receipt-plus-fresh-postcondition standard. Its scenario first uses the exact
 pre-attachment native setup `SpreadDirt → SpreadSeeds 472` to make dry crops;
 that initializer itself is not evidence. The action run independently equipped
 `(T)WateringCan`, traveled to Farm, and reached the fresh opaque crop target
 at Farm `(62,18)`: same-execution receipt
-`succeeded/crop_watered` recorded `before_watered=False`,
-`after_watered=True`, and water `40→39`; the exact target was absent from the
+`succeeded/crop_watered` recorded `before_watered=false`,
+`after_watered=true`, and water `40→39`; the exact target was absent from the
 following production snapshot. `plant_seed` independently traveled to Farm,
 reached the fresh opaque seed target at `(62,18)`, and received same-execution
 `succeeded/seed_planted` evidence with matching target,

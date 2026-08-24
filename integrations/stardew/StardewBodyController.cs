@@ -78,6 +78,19 @@ internal sealed class StardewBodyController
 
     public void Invalidate(string reasonCode) => this.Stop(ExecutionState.Invalidated, reasonCode, "lifecycle_or_world_change");
 
+    public void Halt()
+    {
+        if (ReferenceEquals(Game1.player?.controller, this.pathController))
+        {
+            if (Game1.player is not null)
+                Game1.player.controller = null;
+        }
+        Game1.player?.Halt();
+        this.active = null;
+        this.pathController = null;
+        this.hasEmittedRunning = false;
+    }
+
     public void Update(int tick)
     {
         LocalMoveSpec? specification = this.active;
@@ -201,5 +214,5 @@ internal sealed class StardewBodyController
         return deltaX + deltaY == 1;
     }
 
-    private static string FormatTile(Vector2 tile) => $"{tile.X:0.##},{tile.Y:0.##}";
+    private static string FormatTile(Vector2 tile) => $"{tile.X.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)},{tile.Y.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}";
 }

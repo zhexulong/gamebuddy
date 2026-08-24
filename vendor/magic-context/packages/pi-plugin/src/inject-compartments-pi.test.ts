@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import {
 	getMemoriesByProject,
 	insertMemory,
 } from "@magic-context/core/features/magic-context/memory/storage-memory";
+import { MemoryCommandFacade } from "@magic-context/core/features/magic-context/memory/command-facade";
 import {
 	getCompartments,
 	getOrCreateSessionMeta,
@@ -30,7 +32,45 @@ import {
 	renderM0Pi,
 	renderM1Pi,
 } from "./inject-compartments-pi";
+import { materializeGameBuddyStableContextSnapshot } from "./gamebuddy-stable-context-source";
 import { createTestDb, textOf, userMessage } from "./test-utils.test";
+
+const stableContextBinding = {
+	continuityId: "continuity-stable-source",
+	sessionId: "stable-source-session",
+	surface: "tavern" as const,
+};
+
+function canonicalStableJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonicalStableJson).join(",")}]`;
+	if (value !== null && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalStableJson(record[key])}`).join(",")}}`;
+	}
+	return JSON.stringify(value);
+}
+
+function stableContext(content: string, sources = true) {
+	const source = {
+		sourceId: "scenario",
+		kind: "scenario" as const,
+		revision: "1",
+		canonicalHash: createHash("sha256").update(content).digest("hex"),
+		content,
+		budgetTokens: 20,
+		totalOrderKey: "0001",
+		provenance: "test/tavern/scenario",
+	};
+	const body = {
+		version: "gamebuddy-stable-context-source/v1" as const,
+		...stableContextBinding,
+		sources: sources ? [source] : [],
+	};
+	return materializeGameBuddyStableContextSnapshot(
+		{ ...body, canonicalHash: createHash("sha256").update(canonicalStableJson(body)).digest("hex") },
+		stableContextBinding,
+	);
+}
 
 function user(text: string, timestamp = 1) {
 	return { role: "user" as const, content: text, timestamp };
@@ -62,6 +102,57 @@ function result(toolCallId: string) {
 		timestamp: 1,
 	};
 }
+
+describe("GameBuddy stable source m[0]/m[1] lifecycle", () => {
+	it("serializes replacement and tombstone once into m[1], then folds the final source only on HARD", () => {
+		const db = createTestDb();
+		try {
+			const initial = stableContext("initial premise");
+			const initialMessages = [user("first")];
+			injectM0M1Pi(
+				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: initial },
+				db,
+				initialMessages,
+			);
+			expect(textOf(initialMessages[0])).toContain("initial premise");
+
+			const replacement = stableContext("revised premise");
+			const replacementMessages = [user("second")];
+			injectM0M1Pi(
+				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: replacement },
+				db,
+				replacementMessages,
+				undefined,
+				true,
+			);
+			expect(textOf(replacementMessages[0])).toContain("initial premise");
+			expect(textOf(replacementMessages[1])).toContain("revised premise");
+			expect(textOf(replacementMessages[1])).toContain("old-canonical-hash");
+
+			const tombstoneMessages = [user("third")];
+			injectM0M1Pi(
+				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: stableContext("", false) },
+				db,
+				tombstoneMessages,
+				undefined,
+				true,
+			);
+			expect(textOf(tombstoneMessages[1])).toContain("tombstone");
+
+			const hardFoldMessages = [user("fourth")];
+			injectM0M1Pi(
+				{ ...stableContextBinding, projectIdentity: "stable-source", projectDirectory: process.cwd(), stableContext: stableContext("", false), hardSignals: { systemHash: "", modelKey: "new-model", cacheExpired: false, lastResponseTime: 0 } },
+				db,
+				hardFoldMessages,
+			);
+			expect(textOf(hardFoldMessages[0])).toContain("gamebuddy-stable-context");
+			expect(textOf(hardFoldMessages[0])).not.toContain("initial premise");
+			expect(textOf(hardFoldMessages[1])).not.toContain("gamebuddy-stable-context-updates");
+		} finally {
+			db.close();
+		}
+	});
+});
 
 describe("workspace memory sharing", () => {
 	it("filters foreign categories consistently in Pi m[0] and status counts", () => {
@@ -407,7 +498,7 @@ describe("injectM0M1Pi memory feature gate", () => {
 });
 
 describe("ongoing-interaction read-only injection", () => {
-	it("renders only same-project Semantic Memory and never unrelated or non-semantic rows", () => {
+	it("renders same-project Semantic Memory and Interaction Episode rows, never unrelated or coding rows", () => {
 		const db = createTestDb();
 		const ownCwd = mkdtempSync(join(tmpdir(), "pi-ongoing-own-"));
 		const otherCwd = mkdtempSync(join(tmpdir(), "pi-ongoing-other-"));
@@ -419,6 +510,12 @@ describe("ongoing-interaction read-only injection", () => {
 				category: "SEMANTIC_MEMORY",
 				content: "The player prefers options before consequential decisions.",
 				sourceType: "historian",
+			});
+			insertMemory(db, {
+				projectPath: own.projectIdentity,
+				category: "INTERACTION_EPISODE",
+				content: "The player and Companion agreed to revisit the named topic later.",
+				sourceType: "user",
 			});
 			insertMemory(db, {
 				projectPath: own.projectIdentity,
@@ -437,6 +534,7 @@ describe("ongoing-interaction read-only injection", () => {
 			injectM0M1Pi({ ...own, memoryEnabled: true, memoryDomain: "ongoing-interaction" }, db, ownMessages as never, undefined, true);
 			const ownM0 = textOf(ownMessages[0] as never);
 			expect(ownM0).toContain("The player prefers options before consequential decisions.");
+			expect(ownM0).toContain("The player and Companion agreed to revisit the named topic later.");
 			expect(ownM0).not.toContain("Coding taxonomy must not appear");
 			expect(ownM0).not.toContain("Other continuity memory must not cross");
 
@@ -1142,6 +1240,92 @@ describe("injectM0M1Pi", () => {
 				"New additive memory appears only after a bust.",
 			);
 		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("refreshes externally committed Memory before a provider invocation without folding m[0]", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-external-memory-"));
+		try {
+			const state = piState("ses-pi-m1-external-memory", cwd);
+			const first = [userMessage("hello", 10)];
+			injectM0M1Pi(state, db, first as never, undefined, true, true);
+			const initialM0 = textOf(first[0] as never);
+			insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "Player-managed Memory arrives before this turn.",
+				sourceType: "user",
+			});
+			const provider = [userMessage("provider", 20)];
+			injectM0M1Pi(state, db, provider as never, undefined, false, true);
+			expect(textOf(provider[0] as never)).toBe(initialM0);
+			expect(textOf(provider[1] as never)).toContain("Player-managed Memory arrives before this turn.");
+			const deferred = [userMessage("defer", 30)];
+			injectM0M1Pi(state, db, deferred as never, undefined, false, false);
+			expect(textOf(deferred[1] as never)).toBe(textOf(provider[1] as never));
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("refreshes a player mutation across separate Chat and Game sessions on their next provider invocations", () => {
+		const db = createTestDb();
+		const sharedCwd = mkdtempSync(join(tmpdir(), "pi-cross-surface-memory-"));
+		const foreignCwd = mkdtempSync(join(tmpdir(), "pi-cross-surface-memory-foreign-"));
+		try {
+			const chat = {
+				...piState("chat-surface-session", sharedCwd),
+				memoryEnabled: true,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+			const game = {
+				...piState("game-surface-session", sharedCwd),
+				memoryEnabled: true,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+			const foreign = {
+				...piState("other-continuity-session", foreignCwd),
+				memoryEnabled: true,
+				memoryDomain: "ongoing-interaction" as const,
+			};
+
+			// Establish independent surface caches before the player mutation.
+			const chatInitial = [userMessage("Chat initial", 10)];
+			const gameInitial = [userMessage("Game initial", 11)];
+			injectM0M1Pi(chat, db, chatInitial as never, undefined, true, true);
+			injectM0M1Pi(game, db, gameInitial as never, undefined, true, true);
+			const chatM0 = textOf(chatInitial[0] as never);
+			const gameM0 = textOf(gameInitial[0] as never);
+
+			// This is the same governed command facade used by the player API,
+			// not a direct storage insert. It queues the mutation cursor that each
+			// independently cached surface must consume before its provider call.
+			new MemoryCommandFacade(db).create({
+				actor: { principal: "player_direct", delegated: false },
+				projectPath: chat.projectIdentity,
+				category: "SEMANTIC_MEMORY",
+				content: "The player prefers calm options before consequential decisions.",
+				sourceType: "user",
+			});
+
+			const gameNextInvocation = [userMessage("Game next", 20)];
+			injectM0M1Pi(game, db, gameNextInvocation as never, undefined, false, true);
+			expect(textOf(gameNextInvocation[0] as never)).toBe(gameM0);
+			expect(textOf(gameNextInvocation[1] as never)).toContain("The player prefers calm options");
+
+			const chatReturnInvocation = [userMessage("Chat return", 30)];
+			injectM0M1Pi(chat, db, chatReturnInvocation as never, undefined, false, true);
+			expect(textOf(chatReturnInvocation[0] as never)).toBe(chatM0);
+			expect(textOf(chatReturnInvocation[1] as never)).toContain("The player prefers calm options");
+
+			const foreignInvocation = [userMessage("Foreign continuity", 40)];
+			injectM0M1Pi(foreign, db, foreignInvocation as never, undefined, false, true);
+			expect(`${textOf(foreignInvocation[0] as never)}${textOf(foreignInvocation[1] as never)}`).not.toContain("The player prefers calm options");
+		} finally {
+			rmSync(sharedCwd, { recursive: true, force: true });
+			rmSync(foreignCwd, { recursive: true, force: true });
 			closeQuietly(db);
 		}
 	});

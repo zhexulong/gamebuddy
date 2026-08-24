@@ -277,17 +277,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-stardew-attachment
 
 The runner does not use Computer Use, keyboard injection, or UI navigation. It only starts isolated SMAPI profiles, reads the signed session exchange, invokes the existing Companion App attachment flow, and asserts native game-thread/log evidence.
 
-## Verified native mechanics smoke
+## Native-local action runners
 
-When a formal AI-client is already at `readyToPlay`, `run-stardew-equip-tool-smoke.mjs` sends one `equip_tool` request through the production named-pipe bridge. The Mod must advertise `equip_tool` in the local player's `EnabledActions`; the script never enables capabilities itself.
+Farmhand action runners are selected only through `tools/stardew-action-gate-descriptors.mjs`. Each published action resolves to one `run-stardew-native-local-player-*-smoke.mjs` runner, which uses the shared `stardew-native-smoke-harness-v1.mjs` connection, receipt, fresh-reread, and teardown mechanics. The disposable fixture launcher selects the same runner identity:
 
 ```powershell
-node tools/run-stardew-equip-tool-smoke.mjs `
-  --client-config "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-profiles\\A-ai-client\\GameBuddy\\config.json" `
-  --slot 3
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-stardew-native-local-player-move-fixture.ps1 `
+  -GamePath "D:\\Steam\\steamapps\\common\\Stardew Valley" `
+  -ModsPath "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-fixture-mods" `
+  -FixtureRoot "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-fixtures" `
+  -SaveName "GameBuddyFixture_445094166" `
+  -Action equip_tool
 ```
 
-The result is accepted only when the Mod receipt is `state=succeeded`, `reasonCode=tool_selected`, and its evidence contains matching `before`, `expected`, and `after` tool identities. This is a single non-resource-changing capability proof, not complete mechanics or Agent acceptance.
+The runner never enables capabilities itself. A passed result requires its exact action-specific terminal evidence and fresh postcondition; it is not a release or whole-product acceptance claim.
 
 ## Windows TTS output gate
 
@@ -366,35 +369,6 @@ node tools/run-stardew-bridge-ledger-smoke.mjs `
 ```
 
 This checks a stale revision rejection, idempotency-key conflict rejection, and a final Tool restore through the formal named-pipe bridge.
-
-
-## Version-locked native architecture input accounting
-
-```powershell
-pnpm derive:stardew-native-action-architecture-map -- `
-  --game-path $env:GAMEBUDDY_STARDEW_GAME_PATH `
-  --out .worktree/stardew-native-action-architecture-map.json
-pnpm test:stardew-native-architecture-accounting
-```
-
-The derivation requires Windows, the exact target `Stardew Valley.dll` (`1.6.15.24356`, SHA-256 `7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee`), the exact `Content/ContentHashes.json` (SHA-256 `8143aa3110810e0039282ab8e9989417092388edb84c8c3b6c0b6f23840a4349`), and `ILSPYCMD_PATH` set to the audited per-user .NET tool shim `~/.dotnet/tools/ilspycmd.exe` (`9.1.0.7988`, executable SHA-256 `5da34ef8b7a3d7e2057d27a0a84ec8e1ccdddb35d6d519058fce1e2f374c4c7f`, package SHA-512 `52af105a73cbca189fe10af74f36d4a709761879b02a96c9a084ba43bd70b45f1c4f22d9eb327864395042b947ccecc1bc9f0c45041bcef2732be78fb41ce481`). It snapshots those inputs and the verified decompiler shim before inspection, verifies every declared content file against its manifest MD5, then produces a fresh decompilation and hashes every emitted C# source file. It fails closed if either path universe has unsafe or case-colliding entries, or a registered architecture root/handoff anchor is absent from the exact source.
-
-`--out` must name a new ordinary file below this repository's `.worktree/` directory; the tool rejects traversal, symlink/reparse-point escapes, existing targets, and paths outside that local evidence root.
-
-A passing report proves only `inputAccountingState: source_and_content_input_accounting_complete`. It deliberately reports `architectureAccountingState: incomplete_pending_exhaustive_root_and_handoff_review`: the checked-in root/handoff register is a conservative reviewed seed, not an exhaustive operation graph. It does **not** infer source semantics, primitive actions, player-action completeness, contracts, capability policy, receipts, live behavior, or GameBuddy public API projection. The generated report remains local under `.worktree/`; this checked-in section is the complete normative boundary for the tool.
-
-## Version-locked C# syntax structural canary
-
-```powershell
-pnpm test:stardew-csharp-syntax-structural-canary
-pnpm derive:stardew-csharp-syntax-structural-canary -- `
-  --game-path $env:GAMEBUDDY_STARDEW_GAME_PATH `
-  --out .worktree/stardew-csharp-syntax-structural-canary.json
-```
-
-This local Windows-only tool requires the exact target `Stardew Valley.dll` version `1.6.15.24356` (SHA-256 `7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee`) and `ilspycmd: 9.1.0.7988`. It re-decompiles three fixed source canaries and uses the checked-in Tree-sitter C# grammar to produce source-attested syntax facts: declarations, control syntax, invocation syntax, assignment syntax, parse gaps, and UTF-8 byte locators. It rejects mismatched target/decompiler/source bytes and parse errors. Reports must use a new direct filename beneath repository `.worktree/`; the tool refuses existing paths, nested paths, and all paths outside that root.
-
-A passing report is a static parser and syntax-input compatibility check only. It does **not** infer source semantics, operation ownership, primitive actions, player reachability, contracts, capabilities, gameplay behavior, receipts, live evidence, or release readiness. The generated report is local evidence and should be written beneath `.worktree/`.
 
 
 ## Ongoing-interaction Historian authoring gate

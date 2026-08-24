@@ -1,12 +1,56 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { deriveNativeVirtualMemberInvocationRegister } from "./lib/stardew-native-virtual-member-invocation-register.mjs";
 import { validateNativeToolOwnerSlice } from "./lib/stardew-native-tool-owner-slice.mjs";
+import { deriveNativeVirtualMemberInvocationRegister } from "./lib/stardew-native-virtual-member-invocation-register.mjs";
+
 const h = (text) => createHash("sha256").update(text).digest("hex");
 const tool = `class Tool { public virtual bool beginUsing(GameLocation l, int x, int y, Farmer who) { who.Halt(); return false; } }`;
 const pan = `class Pan : Tool { public override bool beginUsing(GameLocation l, int x, int y, Farmer who) { who.Halt(); return true; } }`;
-const sourceFiles = { "StardewValley/Tool.cs": { text: tool, sha256: h(tool) }, "StardewValley/Tools/Pan.cs": { text: pan, sha256: h(pan) } };
-test("requires an exact neutral owner record for every implementation invocation", async () => { const inventory = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" }); const implementation = inventory.implementations.find((item) => item.receiverType === "Pan"); const invocation = implementation.invocations[0]; const slice = { schemaVersion: 1, artifactKind: "native_tool_owner_slice", implementationId: implementation.implementationId, declaration: implementation.declaration, records: [{ invocationId: invocation.invocationId, sourceLocator: invocation.sourceLocator, kind: "source_local_state_write", regionLocator: implementation.declaration, note: "exact source-local invocation region" }] }; const result = validateNativeToolOwnerSlice(slice, { inventory }, { sourceFiles }); assert.equal(result.invocationCount, 1); assert.equal(result.classificationState, "not_completion_claimed"); });
-test("fails closed for omitted invocation or an unanchored dynamic gap", async () => { const inventory = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" }); const implementation = inventory.implementations.find((item) => item.receiverType === "Pan"); const slice = { schemaVersion: 1, artifactKind: "native_tool_owner_slice", implementationId: implementation.implementationId, declaration: implementation.declaration, records: [] }; assert.throws(() => validateNativeToolOwnerSlice(slice, { inventory }, { sourceFiles }), { code: "tool_owner_slice_unclassified" }); });
-test("forbids product vocabulary", async () => { const inventory = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" }); assert.throws(() => validateNativeToolOwnerSlice({ actionId: "no" }, { inventory }, { sourceFiles }), { code: "tool_owner_slice_forbidden_field" }); });
+const sourceFiles = {
+  "StardewValley/Tool.cs": { text: tool, sha256: h(tool) },
+  "StardewValley/Tools/Pan.cs": { text: pan, sha256: h(pan) },
+};
+test("requires an exact neutral owner record for every implementation invocation", async () => {
+  const inventory = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" });
+  const implementation = inventory.implementations.find((item) => item.receiverType === "Pan");
+  const invocation = implementation.invocations[0];
+  const slice = {
+    schemaVersion: 1,
+    artifactKind: "native_tool_owner_slice",
+    implementationId: implementation.implementationId,
+    declaration: implementation.declaration,
+    records: [
+      {
+        invocationId: invocation.invocationId,
+        sourceLocator: invocation.sourceLocator,
+        kind: "source_local_state_write",
+        regionLocator: implementation.declaration,
+        note: "exact source-local invocation region",
+      },
+    ],
+  };
+  const result = validateNativeToolOwnerSlice(slice, { inventory }, { sourceFiles });
+  assert.equal(result.invocationCount, 1);
+  assert.equal(result.classificationState, "not_completion_claimed");
+});
+test("fails closed for omitted invocation or an unanchored dynamic gap", async () => {
+  const inventory = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" });
+  const implementation = inventory.implementations.find((item) => item.receiverType === "Pan");
+  const slice = {
+    schemaVersion: 1,
+    artifactKind: "native_tool_owner_slice",
+    implementationId: implementation.implementationId,
+    declaration: implementation.declaration,
+    records: [],
+  };
+  assert.throws(() => validateNativeToolOwnerSlice(slice, { inventory }, { sourceFiles }), {
+    code: "tool_owner_slice_unclassified",
+  });
+});
+test("forbids product vocabulary", async () => {
+  const inventory = await deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing" });
+  assert.throws(() => validateNativeToolOwnerSlice({ actionId: "no" }, { inventory }, { sourceFiles }), {
+    code: "tool_owner_slice_forbidden_field",
+  });
+});

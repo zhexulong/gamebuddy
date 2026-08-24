@@ -46,8 +46,6 @@ internal sealed record PortfolioLocalPlayerBinding(
         string worldId,
         string localPlayerId,
         string companionId,
-        string gameVersion,
-        int gameBuildNumber,
         long generation,
         long revision,
         long tick) => new(
@@ -56,23 +54,16 @@ internal sealed record PortfolioLocalPlayerBinding(
             worldId,
             localPlayerId,
             companionId,
-            gameVersion,
-            gameBuildNumber,
+            PortfolioBridgeProtocol.TargetGameVersion,
+            PortfolioBridgeProtocol.TargetGameBuildNumber,
             generation,
             revision,
             tick,
-            ComputeHash(saveId, worldId, localPlayerId, companionId, gameVersion, gameBuildNumber, generation));
+            ComputeHash(saveId, worldId, localPlayerId, companionId, generation));
 
-    internal bool MatchesRuntimeVersion(string gameVersion, int gameBuildNumber) =>
-        GameVersion == gameVersion && GameBuildNumber == gameBuildNumber;
-
-    internal static bool IsPinnedRuntimeVersion(string gameVersion, int gameBuildNumber) =>
-        gameVersion == PortfolioBridgeProtocol.TargetGameVersion
-        && gameBuildNumber == PortfolioBridgeProtocol.TargetGameBuildNumber;
-
-    private static string ComputeHash(string saveId, string worldId, string playerId, string companionId, string gameVersion, int gameBuildNumber, long generation)
+    private static string ComputeHash(string saveId, string worldId, string playerId, string companionId, long generation)
     {
-        string canonical = $"{PortfolioBridgeProtocol.Topology}\n{saveId}\n{worldId}\n{playerId}\n{companionId}\n{gameVersion}\n{gameBuildNumber}\n{generation}";
+        string canonical = $"{PortfolioBridgeProtocol.Topology}\n{saveId}\n{worldId}\n{playerId}\n{companionId}\n{PortfolioBridgeProtocol.TargetGameVersion}\n{PortfolioBridgeProtocol.TargetGameBuildNumber}\n{generation}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 }

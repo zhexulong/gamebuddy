@@ -1,20 +1,157 @@
 import { createHash } from "node:crypto";
+
 const SHA256 = /^[a-f0-9]{64}$/;
-const KINDS = new Set(["source_local_state_write", "direct_source_handoff", "dynamic_dispatch_boundary", "event_continuation_registration", "unresolved_gap"]);
+const KINDS = new Set([
+  "source_local_state_write",
+  "direct_source_handoff",
+  "dynamic_dispatch_boundary",
+  "event_continuation_registration",
+  "unresolved_gap",
+]);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-function fail(code, message, details = {}) { const error = new Error(message); error.code = code; error.details = details; throw error; }
-function noProductTerms(value, at = "$") { const forbidden = new Set(["action", "actionId", "primitive", "primitiveId", "operation", "operationId", "semanticFamily", "intent", "contract", "receipt", "evidence", "policy", "capability", "publicActionId", "projection", "reuse"]); if (Array.isArray(value)) return value.forEach((entry, index) => noProductTerms(entry, `${at}[${index}]`)); if (!value || typeof value !== "object") return; for (const [key, entry] of Object.entries(value)) { if (forbidden.has(key)) fail("tool_owner_slice_forbidden_field", `Tool owner slice must not infer ${key}.`, { at: `${at}.${key}` }); noProductTerms(entry, `${at}.${key}`); } }
-function exact(locator, sourceFiles, label, details) { if (!locator || typeof locator.relativePath !== "string" || !Number.isInteger(locator.startByte) || !Number.isInteger(locator.endByte) || locator.endByte <= locator.startByte || !SHA256.test(locator.sliceSha256 ?? "") || !SHA256.test(locator.sourceFileSha256 ?? "")) fail("tool_owner_slice_locator_invalid", `Expected exact ${label} locator.`, details); const record = sourceFiles?.[locator.relativePath]; if (!record || typeof record.text !== "string" || record.sha256 !== locator.sourceFileSha256) fail("tool_owner_slice_source_missing", `Exact source missing/stale for ${label}.`, details); const bytes = Buffer.from(record.text, "utf8"); if (locator.endByte > bytes.length || hash(bytes.subarray(locator.startByte, locator.endByte)) !== locator.sliceSha256) fail("tool_owner_slice_locator_stale", `Exact source locator stale for ${label}.`, details); return bytes.subarray(locator.startByte, locator.endByte).toString("utf8"); }
-function same(left, right) { return left?.relativePath === right?.relativePath && left?.startByte === right?.startByte && left?.endByte === right?.endByte && left?.sliceSha256 === right?.sliceSha256 && left?.sourceFileSha256 === right?.sourceFileSha256; }
+function fail(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.details = details;
+  throw error;
+}
+function noProductTerms(value, at = "$") {
+  const forbidden = new Set([
+    "action",
+    "actionId",
+    "primitive",
+    "primitiveId",
+    "operation",
+    "operationId",
+    "semanticFamily",
+    "intent",
+    "contract",
+    "receipt",
+    "evidence",
+    "policy",
+    "capability",
+    "publicActionId",
+    "projection",
+    "reuse",
+  ]);
+  if (Array.isArray(value)) return value.forEach((entry, index) => noProductTerms(entry, `${at}[${index}]`));
+  if (!value || typeof value !== "object") return;
+  for (const [key, entry] of Object.entries(value)) {
+    if (forbidden.has(key))
+      fail("tool_owner_slice_forbidden_field", `Tool owner slice must not infer ${key}.`, { at: `${at}.${key}` });
+    noProductTerms(entry, `${at}.${key}`);
+  }
+}
+function exact(locator, sourceFiles, label, details) {
+  if (
+    !locator ||
+    typeof locator.relativePath !== "string" ||
+    !Number.isInteger(locator.startByte) ||
+    !Number.isInteger(locator.endByte) ||
+    locator.endByte <= locator.startByte ||
+    !SHA256.test(locator.sliceSha256 ?? "") ||
+    !SHA256.test(locator.sourceFileSha256 ?? "")
+  )
+    fail("tool_owner_slice_locator_invalid", `Expected exact ${label} locator.`, details);
+  const record = sourceFiles?.[locator.relativePath];
+  if (!record || typeof record.text !== "string" || record.sha256 !== locator.sourceFileSha256)
+    fail("tool_owner_slice_source_missing", `Exact source missing/stale for ${label}.`, details);
+  const bytes = Buffer.from(record.text, "utf8");
+  if (
+    locator.endByte > bytes.length ||
+    hash(bytes.subarray(locator.startByte, locator.endByte)) !== locator.sliceSha256
+  )
+    fail("tool_owner_slice_locator_stale", `Exact source locator stale for ${label}.`, details);
+  return bytes.subarray(locator.startByte, locator.endByte).toString("utf8");
+}
+function same(left, right) {
+  return (
+    left?.relativePath === right?.relativePath &&
+    left?.startByte === right?.startByte &&
+    left?.endByte === right?.endByte &&
+    left?.sliceSha256 === right?.sliceSha256 &&
+    left?.sourceFileSha256 === right?.sourceFileSha256
+  );
+}
 /** A source-attested, nonsemantic partition of a single tool implementation's
  * exact invocation inventory. It inventories owner-region records but never
  * calls the region a transition or decides its gameplay meaning. */
 export function validateNativeToolOwnerSlice(slice, { inventory } = {}, { sourceFiles } = {}) {
-  noProductTerms(slice); if (!inventory || inventory.schemaVersion !== 1 || inventory.artifactKind !== "native_virtual_member_invocation_register") fail("tool_owner_slice_inventory_invalid", "Exact virtual-member inventory report is required.");
-  if (!slice || slice.schemaVersion !== 1 || slice.artifactKind !== "native_tool_owner_slice" || typeof slice.implementationId !== "string") fail("tool_owner_slice_schema_invalid", "Expected native tool owner slice schema version 1.");
-  const implementation = inventory.implementations.find((item) => item.implementationId === slice.implementationId); if (!implementation || !same(slice.declaration, implementation.declaration)) fail("tool_owner_slice_implementation_missing", "Slice must bind exactly to one inventory implementation.");
-  if (!Array.isArray(slice.records)) fail("tool_owner_slice_records_missing", "Slice requires one record per exact invocation."); const expected = new Map(implementation.invocations.map((item) => [item.invocationId, item])), seen = new Set();
-  for (const record of slice.records) { const details = { invocationId: record?.invocationId }; if (!record || !expected.has(record.invocationId) || seen.has(record.invocationId) || !KINDS.has(record.kind) || typeof record.note !== "string" || !record.note.trim()) fail("tool_owner_slice_record_invalid", "Each exact invocation requires one neutral owner-slice record.", details); seen.add(record.invocationId); const invocation = expected.get(record.invocationId); if (!same(record.sourceLocator, invocation.sourceLocator)) fail("tool_owner_slice_locator_mismatch", "Record must retain exact invocation locator.", details); if (record.kind === "source_local_state_write") { const text = exact(record.regionLocator, sourceFiles, "source-local region", details); if (!text.trim()) fail("tool_owner_slice_region_empty", "Source-local region must be nonempty.", details); } if (record.kind === "direct_source_handoff") exact(record.targetDeclaration, sourceFiles, "handoff target", details); if (record.kind === "event_continuation_registration") { if (typeof record.eventId !== "string" || !record.eventId) fail("tool_owner_slice_event_missing", "Event registration record requires exact event ID.", details); } if (record.kind === "dynamic_dispatch_boundary" || record.kind === "unresolved_gap") { if (typeof record.gapId !== "string" || !record.gapId || record.possiblyGameplayBearing !== true) fail("tool_owner_slice_gap_missing", "Dynamic/unresolved records require a blocking gap.", details); } }
-  const missing = [...expected.keys()].filter((id) => !seen.has(id)); if (missing.length) fail("tool_owner_slice_unclassified", "All exact implementation invocations require a record.", { missing }); const gaps = [...new Set(slice.records.filter((x) => x.kind === "dynamic_dispatch_boundary" || x.kind === "unresolved_gap").map((x) => x.gapId))].sort();
-  return Object.freeze({ invocationCount: expected.size, blockingGapIds: gaps, classificationState: gaps.length ? "partial_with_blocking_dynamic_exits" : "not_completion_claimed", analysisBoundary: Object.freeze({ stateFootprint: "not_inferred", continuationTerminality: "not_inferred", transitionDerivation: "not_performed", primitiveDerivation: "not_performed", publicActionProjection: "not_performed" }) });
+  noProductTerms(slice);
+  if (
+    !inventory ||
+    inventory.schemaVersion !== 1 ||
+    inventory.artifactKind !== "native_virtual_member_invocation_register"
+  )
+    fail("tool_owner_slice_inventory_invalid", "Exact virtual-member inventory report is required.");
+  if (
+    !slice ||
+    slice.schemaVersion !== 1 ||
+    slice.artifactKind !== "native_tool_owner_slice" ||
+    typeof slice.implementationId !== "string"
+  )
+    fail("tool_owner_slice_schema_invalid", "Expected native tool owner slice schema version 1.");
+  const implementation = inventory.implementations.find((item) => item.implementationId === slice.implementationId);
+  if (!implementation || !same(slice.declaration, implementation.declaration))
+    fail("tool_owner_slice_implementation_missing", "Slice must bind exactly to one inventory implementation.");
+  if (!Array.isArray(slice.records))
+    fail("tool_owner_slice_records_missing", "Slice requires one record per exact invocation.");
+  const expected = new Map(implementation.invocations.map((item) => [item.invocationId, item])),
+    seen = new Set();
+  for (const record of slice.records) {
+    const details = { invocationId: record?.invocationId };
+    if (
+      !record ||
+      !expected.has(record.invocationId) ||
+      seen.has(record.invocationId) ||
+      !KINDS.has(record.kind) ||
+      typeof record.note !== "string" ||
+      !record.note.trim()
+    )
+      fail(
+        "tool_owner_slice_record_invalid",
+        "Each exact invocation requires one neutral owner-slice record.",
+        details,
+      );
+    seen.add(record.invocationId);
+    const invocation = expected.get(record.invocationId);
+    if (!same(record.sourceLocator, invocation.sourceLocator))
+      fail("tool_owner_slice_locator_mismatch", "Record must retain exact invocation locator.", details);
+    if (record.kind === "source_local_state_write") {
+      const text = exact(record.regionLocator, sourceFiles, "source-local region", details);
+      if (!text.trim()) fail("tool_owner_slice_region_empty", "Source-local region must be nonempty.", details);
+    }
+    if (record.kind === "direct_source_handoff")
+      exact(record.targetDeclaration, sourceFiles, "handoff target", details);
+    if (record.kind === "event_continuation_registration") {
+      if (typeof record.eventId !== "string" || !record.eventId)
+        fail("tool_owner_slice_event_missing", "Event registration record requires exact event ID.", details);
+    }
+    if (record.kind === "dynamic_dispatch_boundary" || record.kind === "unresolved_gap") {
+      if (typeof record.gapId !== "string" || !record.gapId || record.possiblyGameplayBearing !== true)
+        fail("tool_owner_slice_gap_missing", "Dynamic/unresolved records require a blocking gap.", details);
+    }
+  }
+  const missing = [...expected.keys()].filter((id) => !seen.has(id));
+  if (missing.length)
+    fail("tool_owner_slice_unclassified", "All exact implementation invocations require a record.", { missing });
+  const gaps = [
+    ...new Set(
+      slice.records
+        .filter((x) => x.kind === "dynamic_dispatch_boundary" || x.kind === "unresolved_gap")
+        .map((x) => x.gapId),
+    ),
+  ].sort();
+  return Object.freeze({
+    invocationCount: expected.size,
+    blockingGapIds: gaps,
+    classificationState: gaps.length ? "partial_with_blocking_dynamic_exits" : "not_completion_claimed",
+    analysisBoundary: Object.freeze({
+      stateFootprint: "not_inferred",
+      continuationTerminality: "not_inferred",
+      transitionDerivation: "not_performed",
+      primitiveDerivation: "not_performed",
+      publicActionProjection: "not_performed",
+    }),
+  });
 }

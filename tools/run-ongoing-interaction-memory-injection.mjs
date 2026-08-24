@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 /**
  * Controlled live verification for GameBuddy's first ongoing-interaction Memory
  * gate. This is deliberately NOT a Host Memory API: it seeds an ephemeral,
@@ -13,15 +14,23 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
-import { startDialogueWebServer } from "../host/dist/dialogue-web.js";
+import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
+
+const selectedProductionArtifact = await selectHostProductionArtifact();
+const [{ startDialogueWebServer }, { createProductionGameContinuity }] = await Promise.all([
+  loadSelectedHostProductionModule(selectedProductionArtifact, "dialogue-web.js"),
+  loadSelectedHostProductionModule(selectedProductionArtifact, "production-game-continuity.js"),
+]);
 
 const TIMEOUT_MS = 45_000;
-const MEMORY_CONTENT = "For consequential decisions, explicitly offer the player the calm option keyword 月桂 before choosing.";
+const MEMORY_CONTENT =
+  "For consequential decisions, explicitly offer the player the calm option keyword 月桂 before choosing.";
 const PROMPT = "请只回答长期互动记忆中、在重要决定前需要提供给我的关键词；若没有相关长期互动记忆，只回答“无记录”。";
 
 function redact(error) {
-  return String(error).replace(/(?:sk-|Bearer\s+)[A-Za-z0-9_\-.]+/g, "[redacted]").slice(0, 300);
+  return String(error)
+    .replace(/(?:sk-|Bearer\s+)[A-Za-z0-9_\-.]+/g, "[redacted]")
+    .slice(0, 300);
 }
 
 function databasePath(server) {
@@ -99,7 +108,10 @@ async function bootstrap(server) {
 async function sendAndObserve(server, client, messageId) {
   const lifecycle = [];
   const unsubscribe = server.runtime.session.subscribe((event) => {
-    if (["agent_start", "agent_end", "agent_settled", "tool_execution_start", "tool_execution_end"].includes(event.type)) lifecycle.push(event.type);
+    if (
+      ["agent_start", "agent_end", "agent_settled", "tool_execution_start", "tool_execution_end"].includes(event.type)
+    )
+      lifecycle.push(event.type);
   });
   const eventsAbort = new AbortController();
   const eventsResponse = await fetch(`${client.origin}/events`, {
@@ -111,7 +123,9 @@ async function sendAndObserve(server, client, messageId) {
   const decoder = new TextDecoder();
   let buffer = "";
   let resolveResult;
-  const result = new Promise((resolve) => { resolveResult = resolve; });
+  const result = new Promise((resolve) => {
+    resolveResult = resolve;
+  });
   const timeout = setTimeout(() => {
     // A provider turn can otherwise keep Pi's queue alive after the browser
     // observation deadline. Abort only this ephemeral probe session.
@@ -189,53 +203,71 @@ async function removeRoot(root) {
 }
 
 const root = await mkdtemp(join(tmpdir(), "gamebuddy-ongoing-memory-live-"));
+const controlIdentity = {
+  playerId: "memory_probe_player",
+  companionId: "memory_probe_companion",
+  continuityId: "memory_probe_control",
+};
+const seededIdentity = {
+  playerId: "memory_probe_player",
+  companionId: "memory_probe_companion",
+  continuityId: "memory_probe_seeded",
+};
 let seeded;
 let control;
 try {
-  // First establish that this CPA/DeepSeek route completes a normal embedded
+  // First establish that this CPA/Grok route completes a normal embedded
   // Chat turn under the exact same tool surface and temporary root.
   control = await startDialogueWebServer({
-    identity: { playerId: "memory_probe_player", companionId: "memory_probe_companion", continuityId: "memory_probe_control" },
+    identity: controlIdentity,
     runtimeRoot: root,
+    continuity: createProductionGameContinuity(controlIdentity, root),
   });
   const controlResult = await sendAndObserve(control, await bootstrap(control), "control_memory_turn");
 
   // If the baseline cannot settle, a Memory comparison would be meaningless.
   let projectIdentity = null;
-  const seededResult = controlResult.type !== "presentation_text"
-    ? { type: "skipped_after_control_failure", lifecycle: [] }
-    : await (async () => {
-        seeded = await startDialogueWebServer({
-          identity: { playerId: "memory_probe_player", companionId: "memory_probe_companion", continuityId: "memory_probe_seeded" },
-          runtimeRoot: root,
-        });
-        projectIdentity = seedSemanticMemory(seeded);
-        return sendAndObserve(seeded, await bootstrap(seeded), "seeded_memory_turn");
-      })();
+  const seededResult =
+    controlResult.type !== "presentation_text"
+      ? { type: "skipped_after_control_failure", lifecycle: [] }
+      : await (async () => {
+          seeded = await startDialogueWebServer({
+            identity: seededIdentity,
+            runtimeRoot: root,
+            continuity: createProductionGameContinuity(seededIdentity, root),
+          });
+          projectIdentity = seedSemanticMemory(seeded);
+          return sendAndObserve(seeded, await bootstrap(seeded), "seeded_memory_turn");
+        })();
 
-  const passed = seededResult.type === "presentation_text"
-    && seededResult.text.includes("月桂")
-    && controlResult.type === "presentation_text"
-    && !controlResult.text.includes("月桂")
-    && seeded !== undefined
-    && seeded.runtime.session.agent.state.tools.every((tool) => !tool.name.startsWith("ctx_"))
-    && control.runtime.session.agent.state.tools.every((tool) => !tool.name.startsWith("ctx_"));
-  console.log(JSON.stringify({
-    state: passed ? "passed" : "failed",
-    provider: "cpa-oai",
-    model: "deepseek-v4-flash",
-    thinkingLevel: "high",
-    memoryDomain: "ongoing-interaction",
-    memoryMode: "native_read_only_injection",
-    seededProjectIdentity: projectIdentity,
-    seeded: seededResult,
-    control: controlResult,
-    ctxToolsExposed: [
-      ...(seeded?.runtime.session.agent.state.tools ?? []),
-      ...(control?.runtime.session.agent.state.tools ?? []),
-    ].filter((tool) => tool.name.startsWith("ctx_")).map((tool) => tool.name),
-    note: "Ephemeral fixture only: validates native injected Semantic Memory, not promotion, authoring, auto-search, embedding, Dreamer, Sidekick, or cross-surface recall.",
-  }));
+  const passed =
+    seededResult.type === "presentation_text" &&
+    seededResult.text.includes("月桂") &&
+    controlResult.type === "presentation_text" &&
+    !controlResult.text.includes("月桂") &&
+    seeded !== undefined &&
+    seeded.runtime.session.agent.state.tools.every((tool) => !tool.name.startsWith("ctx_")) &&
+    control.runtime.session.agent.state.tools.every((tool) => !tool.name.startsWith("ctx_"));
+  console.log(
+    JSON.stringify({
+      state: passed ? "passed" : "failed",
+      provider: "cpa-oai",
+      model: "deepseek-v4-flash",
+      thinkingLevel: "high",
+      memoryDomain: "ongoing-interaction",
+      memoryMode: "native_read_only_injection",
+      seededProjectIdentity: projectIdentity,
+      seeded: seededResult,
+      control: controlResult,
+      ctxToolsExposed: [
+        ...(seeded?.runtime.session.agent.state.tools ?? []),
+        ...(control?.runtime.session.agent.state.tools ?? []),
+      ]
+        .filter((tool) => tool.name.startsWith("ctx_"))
+        .map((tool) => tool.name),
+      note: "Ephemeral fixture only: validates native injected Semantic Memory, not promotion, authoring, auto-search, embedding, Dreamer, Sidekick, or cross-surface recall.",
+    }),
+  );
   if (!passed) process.exitCode = 2;
 } catch (error) {
   console.error(JSON.stringify({ state: "blocked", reasonCode: redact(error) }));

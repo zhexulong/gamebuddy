@@ -1,37 +1,162 @@
-import { readFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { dirname, resolve } from "node:path";
-import { startDialogueWebServer } from "./dialogue-web.js";
-import { validateIdentityProfile, type IdentityProfile } from "./identity-profile.js";
-import { readWorldBook, worldBookMetadata, type WorldBookBinding } from "./worldbook.js";
+import { fileURLToPath } from "node:url";
+import {
+  createFreshUnmountedChatSemanticFacade,
+  createKnownUnmountedChatSemanticFacade,
+} from "./continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.js";
+import { type HostDeploymentManifest, loadHostDeploymentManifest } from "./deployment-manifest.js";
+import { parseDialogueLaunchMode } from "./dialogue-launch-mode.js";
+import { composeTavernProfile } from "./tavern/browser-contract/index.js";
+import { createChatEventStream } from "./tavern/chat-event-stream.js";
+import { createChatManagementService } from "./tavern/chat-management/chat-management-service.js";
+import { createChatPipelineService } from "./tavern/chat-pipeline-service.js";
+import { createMemoryManagementService } from "./tavern/memory-management/memory-management.js";
+import { closeReferencePipelineRuntime } from "./tavern/reference-pipeline-runtime-lifecycle.js";
+import { createReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
+import { startReferencePipelineStaticShellComposition } from "./tavern/reference-pipeline-static-shell-composition.js";
+import { createTavernManagementStateFacade } from "./tavern/tavern-management-state.js";
+import { startTavernManagementStaticShellComposition } from "./tavern/tavern-management-static-shell-composition.js";
+import { createWorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
+import { createWorldInfoManagementRepository } from "./tavern/world-info-management/world-info-management.js";
+import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 
-const configPath = process.argv[2] ?? process.env.GAMEBUDDY_DIALOGUE_CONFIG;
-if (configPath === undefined) throw new Error("dialogue_config_path_required");
-const resolvedConfigPath = resolve(configPath);
-const configDirectory = dirname(resolvedConfigPath);
-const config = JSON.parse(await readFile(resolvedConfigPath, "utf8")) as unknown;
-if (typeof config !== "object" || config === null || Array.isArray(config)) throw new Error("invalid_dialogue_config");
-const value = config as Record<string, unknown>;
-const opaque = (key: string): string => {
-  const candidate = value[key];
-  if (typeof candidate !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(candidate)) throw new Error("invalid_dialogue_config");
-  return candidate;
-};
-const initialProfile = value.profile === undefined ? undefined : validateIdentityProfile(value.profile) as IdentityProfile;
-const surfaceSessionId = value.surfaceSessionId === undefined ? undefined : typeof value.surfaceSessionId === "string" ? value.surfaceSessionId : (() => { throw new Error("invalid_dialogue_config"); })();
-const worldBook = value.worldBookPath === undefined ? undefined : await loadWorldBook(value.worldBookPath, configDirectory);
-const server = await startDialogueWebServer({
-  identity: { playerId: opaque("playerId"), companionId: opaque("companionId"), continuityId: opaque("continuityId") },
-  runtimeRoot: value.runtimeRoot === undefined ? undefined : typeof value.runtimeRoot === "string" ? value.runtimeRoot : (() => { throw new Error("invalid_dialogue_config"); })(),
-  initialProfile,
-  worldBook,
-  surfaceSessionId,
-});
+const launch = parseDialogueLaunchMode(process.argv.slice(2));
+const manifestPath = launch.manifestPath ?? process.env.GAMEBUDDY_DIALOGUE_CONFIG;
+if (manifestPath === undefined) throw new Error("dialogue_deployment_manifest_path_required");
 
-async function loadWorldBook(path: unknown, baseDirectory: string): Promise<WorldBookBinding> {
-  if (typeof path !== "string" || path.length === 0) throw new Error("invalid_dialogue_config");
-  const book = await readWorldBook(resolve(baseDirectory, path));
-  return Object.freeze({ book, metadata: worldBookMetadata(book) });
+const manifest = await loadHostDeploymentManifest(resolve(manifestPath));
+if (launch.profile === "management") {
+  await runManagementProfile(manifest, launch.mode);
+} else {
+  await runReferenceProfile(manifest, launch.mode);
 }
-process.stdout.write(`GameBuddy Dialogue is ready at ${server.url}\n`);
-await new Promise<void>((resolveStop) => { process.once("SIGINT", resolveStop); process.once("SIGTERM", resolveStop); });
-await server.close();
+
+async function runReferenceProfile(manifest: HostDeploymentManifest, mode: "fresh" | "known"): Promise<void> {
+  const launchOptions =
+    launch.tavernNarrativeGateNonceSha256 === undefined
+      ? undefined
+      : { tavernNarrativeGateNonceSha256: launch.tavernNarrativeGateNonceSha256 };
+  const profile = composeTavernProfile({
+    profileId: "gamebuddy.chat-core.reference-pipeline",
+    releaseTier: "chat_core",
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "chat.submit",
+      "chat.cancel",
+      "chat.submission_status",
+      "events",
+    ],
+    operationIds: ["chat.submit", "chat.cancel"],
+    navigationItemIds: ["chat"],
+  });
+  const bootstrapToken = randomBytes(32).toString("base64url");
+  const facade =
+    mode === "known"
+      ? await createKnownUnmountedChatSemanticFacade(manifest, launchOptions)
+      : await createFreshUnmountedChatSemanticFacade(manifest, launchOptions);
+  let lease: Awaited<ReturnType<typeof facade.startMountedChatRuntime>> | undefined;
+  let pipelineService: ReturnType<typeof createChatPipelineService> | undefined;
+  let server: Awaited<ReturnType<typeof startReferencePipelineStaticShellComposition>> | undefined;
+  const eventStream = createChatEventStream();
+  try {
+    lease = await facade.startMountedChatRuntime();
+    const referenceStateFacade = await createReferencePipelineStateFacade(manifest, lease, profile, eventStream);
+    pipelineService = createChatPipelineService({ manifest, lease, profile, eventStream });
+    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+    const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
+    server = await startReferencePipelineStaticShellComposition({
+      referenceStateFacade,
+      pipelineService,
+      eventStream,
+      profile,
+      bootstrapToken,
+      inspector,
+      artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
+    });
+    process.stdout.write(`GameBuddy Dialogue is ready at ${server.launchUrl}\n`);
+    await waitForSignal();
+  } finally {
+    await closeReferencePipelineRuntime({ server, pipelineService, lease, facade });
+  }
+}
+
+async function runManagementProfile(manifest: HostDeploymentManifest, mode: "fresh" | "known"): Promise<void> {
+  const profile = composeTavernProfile({
+    profileId: "gamebuddy.tavern-management.chat-list-title",
+    releaseTier: "tavern_management",
+    routeIds: [
+      "bootstrap",
+      "state.read",
+      "draft.read",
+      "draft.save",
+      "draft.discard",
+      "chat.list",
+      "chat.rename",
+      "memory.read",
+      "memory.mutate",
+      "world-info.read",
+      "world-info.bind",
+    ],
+    operationIds: ["draft.save", "draft.discard", "chat.rename", "memory.mutate", "world-info.bind"],
+    // A mounted Memory route is paired with the Memory navigation item; the
+    // item only projects `available` after the exact-bound read succeeds.
+    navigationItemIds: ["chat", "memory"],
+  });
+  const bootstrapToken = randomBytes(32).toString("base64url");
+  const facade =
+    mode === "known"
+      ? await createKnownUnmountedChatSemanticFacade(manifest)
+      : await createFreshUnmountedChatSemanticFacade(manifest);
+  let lease: Awaited<ReturnType<typeof facade.startMountedChatRuntime>> | undefined;
+  let managementService: ReturnType<typeof createChatManagementService> | undefined;
+  let memoryService: ReturnType<typeof createMemoryManagementService> | undefined;
+  let worldInfoService: Awaited<ReturnType<typeof createWorldInfoBindingManagementService>> | undefined;
+  let worldInfoRepository: ReturnType<typeof createWorldInfoManagementRepository> | undefined;
+  let server: Awaited<ReturnType<typeof startTavernManagementStaticShellComposition>> | undefined;
+  try {
+    lease = await facade.startMountedChatRuntime();
+    // The real durable managed repository backs the lease-bound binding
+    // service; no browser fixture or alternate resolver is ever injected.
+    worldInfoRepository = createWorldInfoManagementRepository(manifest.runtimeRoot);
+    worldInfoService = createWorldInfoBindingManagementService({
+      manifest,
+      lease,
+      profile,
+      repository: worldInfoRepository,
+    });
+    const managementStateFacade = await createTavernManagementStateFacade(manifest, lease, profile, worldInfoService);
+    managementService = createChatManagementService({ manifest, lease, profile });
+    memoryService = createMemoryManagementService({ manifest, lease, profile });
+    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+    const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
+    server = await startTavernManagementStaticShellComposition({
+      managementStateFacade,
+      managementService,
+      memoryService,
+      worldInfoService,
+      profile,
+      bootstrapToken,
+      inspector,
+      artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
+    });
+    process.stdout.write(`GameBuddy Tavern management is ready at ${server.launchUrl}\n`);
+    await waitForSignal();
+  } finally {
+    await closeReferencePipelineRuntime({
+      server,
+      pipelineService: managementService,
+      lease,
+      facade,
+    });
+  }
+}
+
+async function waitForSignal(): Promise<void> {
+  await new Promise<void>((resolveStop) => {
+    process.once("SIGINT", resolveStop);
+    process.once("SIGTERM", resolveStop);
+  });
+}

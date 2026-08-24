@@ -17,12 +17,17 @@ const valid = (runtimeRoot: string) => ({
 async function fixture(
   value: string | Record<string, unknown>,
 ): Promise<{ root: string; path: string; runtimeRoot: string; dispose(): Promise<void> }> {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-deployment-manifest-"));
+  const root = await realpath(await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-deployment-manifest-")));
   const runtimeRoot = join(root, "runtime");
   const path = join(root, "manifest.json");
   await mkdir(runtimeRoot);
   await writeFile(path, typeof value === "string" ? value : JSON.stringify(value), "utf8");
-  return { root, path, runtimeRoot, dispose: () => rm(root, { recursive: true, force: true }) };
+  return {
+    root,
+    path,
+    runtimeRoot,
+    dispose: () => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+  };
 }
 
 async function rejects(
@@ -42,7 +47,7 @@ test("loads a strict v2 manifest as a deeply frozen plain DTO", async () => {
   try {
     await writeFile(subject.path, JSON.stringify(valid(subject.runtimeRoot)), "utf8");
     const manifest = await loadHostDeploymentManifest(subject.path);
-    assert.deepEqual(manifest, valid(await realpath(subject.runtimeRoot)));
+    assert.deepEqual(manifest, valid(subject.runtimeRoot));
     assert.equal(Object.getPrototypeOf(manifest), Object.prototype);
     assert.ok(Object.isFrozen(manifest));
     assert.ok(Object.isFrozen(manifest.principal));

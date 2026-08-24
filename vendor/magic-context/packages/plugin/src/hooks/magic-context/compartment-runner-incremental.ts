@@ -558,6 +558,16 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
 
         const lastCompartmentEnd = lastNewEnd;
         const lastNewEndMessageId = newCompartments[newCompartments.length - 1]?.endMessageId;
+        // Historian XML never carries a model-invented provenance field. The
+        // runner attaches the exact persisted range as an opaque source ref so
+        // source exclusion is enforceable at candidate and commit time.
+        const publishedFactSourceRefs = [
+            `pi-range:${sessionId}:${newCompartments[0]?.startMessage ?? chunk.startIndex}:${lastNewEnd}`,
+        ];
+        const promotionFacts = (validatedPass.facts ?? []).map((fact) => ({
+            ...fact,
+            sourceRefs: fact.sourceRefs ?? publishedFactSourceRefs,
+        }));
 
         // Use the RESOLVED session directory for memory project identity, not
         // raw deps.directory. deps.directory can be empty even
@@ -656,7 +666,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                         db,
                         sessionId,
                         promotionProjectIdentity,
-                        validatedPass.facts ?? [],
+                        promotionFacts,
                     );
                 } catch (error) {
                     if (error instanceof ModuleMemoryAuthorityError) {

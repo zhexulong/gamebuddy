@@ -7,6 +7,9 @@
         "requested": "[4.4.0, )",
         "resolved": "4.4.0",
         "contentHash": "Yi7/8bZlLS1bqZxft1yZWxJmIBfIoRxQBFIwWrF0AjC4/j/HmWdDC7dbNzzM4ZtOTtjOAQ8AC7WjP6KHgLPpdg=="
+      },
+      "gamebuddy.stardew.core": {
+        "type": "Project"
       }
     }
   }

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { loadHostProductionModule } from "./lib/host-production-module.mjs";
 
-import { CHAT_PHASE_0B_ALLOWED_TOOL_NAMES, createChatCompanionRuntime } from "../host/dist/runtime-chat.js";
+const { createCompanionRuntime, PHASE_0B_ALLOWED_TOOL_NAMES } = await loadHostProductionModule("runtime.js");
 
 const root = await mkdtemp(join(tmpdir(), "gamebuddy-phase0b-smoke-"));
 const identity = {
@@ -15,11 +16,15 @@ const identity = {
 };
 
 try {
-  const runtime = await createChatCompanionRuntime({ identity, root });
+  const runtime = await createCompanionRuntime(identity, root);
   try {
-    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [...CHAT_PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort());
+    assert.deepEqual(
+      runtime.session.agent.state.tools.map((tool) => tool.name).sort(),
+      [...PHASE_0B_ALLOWED_TOOL_NAMES, "todowrite"].sort(),
+    );
     assert.equal(runtime.extensions.length, 1);
-    assert.match(runtime.extensions[0], /vendor[\\/]magic-context[\\/]packages[\\/]pi-plugin[\\/]dist[\\/]index\.js$/);
+    assert.match(runtime.extensions[0], /@cortexkit[\\/]pi-magic-context[\\/]dist[\\/]index\.js$/);
+    assert.doesNotMatch(runtime.extensions[0], /(?:^|[\\/])vendor(?:[\\/]|$)/);
   } finally {
     runtime.session.dispose();
   }

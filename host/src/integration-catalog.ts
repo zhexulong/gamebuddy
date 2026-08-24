@@ -1,5 +1,5 @@
-import { type IntegrationLauncher } from "./integration-launcher.js";
-import type { GameCompanionIdentity } from "./runtime-core.js";
+import type { IntegrationLauncher } from "./integration-launcher.js";
+import type { GameCompanionIdentity } from "./runtime.js";
 
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -20,17 +20,24 @@ export type PreparedIntegrationLaunch = Readonly<{
   identityScope: Readonly<{ saveId: string; worldId: string }>;
 }>;
 
-export type ConfigurableIntegrationLauncher = IntegrationLauncher & Readonly<{
-  prepare(config: unknown, context: Readonly<{ configDirectory: string }>): Promise<PreparedIntegrationLaunch>;
-}>;
+export type ConfigurableIntegrationLauncher = IntegrationLauncher &
+  Readonly<{
+    prepare(config: unknown, context: Readonly<{ configDirectory: string }>): Promise<PreparedIntegrationLaunch>;
+  }>;
 
 export type IntegrationCatalog = Readonly<{
   ids: readonly string[];
   get(integrationId: string): ConfigurableIntegrationLauncher | undefined;
-  select(integrationId: string, config: unknown, context: Readonly<{ configDirectory: string }>): Promise<Readonly<{
-    launcher: ConfigurableIntegrationLauncher;
-    prepared: PreparedIntegrationLaunch;
-  }>>;
+  select(
+    integrationId: string,
+    config: unknown,
+    context: Readonly<{ configDirectory: string }>,
+  ): Promise<
+    Readonly<{
+      launcher: ConfigurableIntegrationLauncher;
+      prepared: PreparedIntegrationLaunch;
+    }>
+  >;
 }>;
 
 /**
@@ -70,10 +77,13 @@ export function bindIntegrationIdentity(
   identity: Readonly<{ playerId: string; companionId: string; continuityId?: string }>,
   scope: IntegrationIdentityScope,
 ): GameCompanionIdentity {
-  if (!isOpaque(identity.playerId) || !isOpaque(identity.companionId)
-    || (identity.continuityId !== undefined && !isOpaque(identity.continuityId))
-    || !isOpaque(scope.saveId)
-    || !isOpaque(scope.worldId)) {
+  if (
+    !isOpaque(identity.playerId) ||
+    !isOpaque(identity.companionId) ||
+    (identity.continuityId !== undefined && !isOpaque(identity.continuityId)) ||
+    !isOpaque(scope.saveId) ||
+    !isOpaque(scope.worldId)
+  ) {
     throw new Error("invalid_integration_identity_scope");
   }
   const scoped: GameCompanionIdentity = {
@@ -97,9 +107,13 @@ function assertPreparedLaunch(value: unknown): asserts value is PreparedIntegrat
 }
 
 function isLauncher(value: unknown): value is ConfigurableIntegrationLauncher {
-  return isRecord(value)
-    && typeof value.integrationId === "string" && IDENTIFIER.test(value.integrationId)
-    && typeof value.launch === "function" && typeof value.prepare === "function";
+  return (
+    isRecord(value) &&
+    typeof value.integrationId === "string" &&
+    IDENTIFIER.test(value.integrationId) &&
+    typeof value.launch === "function" &&
+    typeof value.prepare === "function"
+  );
 }
 
 function isOpaque(value: unknown): value is string {

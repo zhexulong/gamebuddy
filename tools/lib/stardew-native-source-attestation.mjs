@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 export function sha256(bytes) {
@@ -25,9 +25,13 @@ export async function collectCSharpSources(root) {
 }
 
 export function sourceManifestSha256(sourceFiles) {
-  return sha256(JSON.stringify(Object.entries(sourceFiles)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([relativePath, source]) => ({ relativePath, sha256: source.sha256 }))));
+  return sha256(
+    JSON.stringify(
+      Object.entries(sourceFiles)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([relativePath, source]) => ({ relativePath, sha256: source.sha256 })),
+    ),
+  );
 }
 
 export async function fileSha256(filePath) {

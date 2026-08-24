@@ -1,9 +1,82 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { createHash } from "node:crypto";
-import { validateMechanismReport, validateNativeMechanismReviewRegister } from "./lib/stardew-native-mechanism-review-register.mjs";
-function fail(code, message, details = {}) { const error = new Error(message); error.code = code; error.details = details; throw error; }
-function args(argv) { const result = {}; for (let index = 0; index < argv.length; index += 1) { const key = argv[index]; const value = argv[++index]; if (!key?.startsWith("--") || !value || value.startsWith("--")) fail("mechanism_review_register_argument_invalid", "Usage: --mechanism-report <exact-report.json> --register <review-register.json> --source-root <fresh-exact-decompile-root>"); result[key.slice(2)] = value; } if (!result["mechanism-report"] || !result.register || !result["source-root"]) fail("mechanism_review_register_arguments_required", "Usage: --mechanism-report <exact-report.json> --register <review-register.json> --source-root <fresh-exact-decompile-root>"); return result; }
-async function exactSources(sourceRoot, report) { const sources = {}; for (const source of validateMechanismReport(report).sourceFiles.values()) { const candidate = path.resolve(sourceRoot, source.relativePath); const relative = path.relative(sourceRoot, candidate); if (relative.startsWith("..") || path.isAbsolute(relative)) fail("mechanism_review_register_source_root_unsafe", "Source manifest path escaped the declared source root.", { relativePath: source.relativePath }); let text; try { text = await readFile(candidate, "utf8"); } catch (error) { fail("mechanism_review_register_source_missing", "Exact source root is missing a manifest file.", { relativePath: source.relativePath, cause: error.message }); } const actual = createHash("sha256").update(text).digest("hex"); if (actual !== source.sha256) fail("mechanism_review_register_source_stale", "Exact source root does not match the mechanism report source manifest.", { relativePath: source.relativePath, expected: source.sha256, actual }); sources[source.relativePath] = text; } return sources; }
-async function main() { const input = args(process.argv.slice(2).filter((value) => value !== "--")); const [mechanismReport, register] = await Promise.all([readFile(input["mechanism-report"], "utf8").then(JSON.parse), readFile(input.register, "utf8").then(JSON.parse)]); const sourceTexts = await exactSources(path.resolve(input["source-root"]), mechanismReport); const result = validateNativeMechanismReviewRegister(register, { mechanismReport, sourceTexts }); const dispositionCounts = Object.values(result.dispositionByMechanismId).reduce((counts, disposition) => ({ ...counts, [disposition]: (counts[disposition] ?? 0) + 1 }), {}); process.stdout.write(`${JSON.stringify({ status: "valid", mechanismCount: result.mechanismCount, recordCount: result.recordCount, unresolvedCount: result.unresolvedCount, inScopeMechanismCount: result.inScopeMechanismIds.length, dispositionCounts })}\n`); }
-main().catch((error) => { console.error(`${error.code ?? "mechanism_review_register_check_failed"}: ${error.message}`); process.exitCode = 1; });
+import {
+  validateMechanismReport,
+  validateNativeMechanismReviewRegister,
+} from "./lib/stardew-native-mechanism-review-register.mjs";
+
+function fail(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.details = details;
+  throw error;
+}
+function args(argv) {
+  const result = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const key = argv[index];
+    const value = argv[++index];
+    if (!key?.startsWith("--") || !value || value.startsWith("--"))
+      fail(
+        "mechanism_review_register_argument_invalid",
+        "Usage: --mechanism-report <exact-report.json> --register <review-register.json> --source-root <fresh-exact-decompile-root>",
+      );
+    result[key.slice(2)] = value;
+  }
+  if (!result["mechanism-report"] || !result.register || !result["source-root"])
+    fail(
+      "mechanism_review_register_arguments_required",
+      "Usage: --mechanism-report <exact-report.json> --register <review-register.json> --source-root <fresh-exact-decompile-root>",
+    );
+  return result;
+}
+async function exactSources(sourceRoot, report) {
+  const sources = {};
+  for (const source of validateMechanismReport(report).sourceFiles.values()) {
+    const candidate = path.resolve(sourceRoot, source.relativePath);
+    const relative = path.relative(sourceRoot, candidate);
+    if (relative.startsWith("..") || path.isAbsolute(relative))
+      fail("mechanism_review_register_source_root_unsafe", "Source manifest path escaped the declared source root.", {
+        relativePath: source.relativePath,
+      });
+    let text;
+    try {
+      text = await readFile(candidate, "utf8");
+    } catch (error) {
+      fail("mechanism_review_register_source_missing", "Exact source root is missing a manifest file.", {
+        relativePath: source.relativePath,
+        cause: error.message,
+      });
+    }
+    const actual = createHash("sha256").update(text).digest("hex");
+    if (actual !== source.sha256)
+      fail(
+        "mechanism_review_register_source_stale",
+        "Exact source root does not match the mechanism report source manifest.",
+        { relativePath: source.relativePath, expected: source.sha256, actual },
+      );
+    sources[source.relativePath] = text;
+  }
+  return sources;
+}
+async function main() {
+  const input = args(process.argv.slice(2).filter((value) => value !== "--"));
+  const [mechanismReport, register] = await Promise.all([
+    readFile(input["mechanism-report"], "utf8").then(JSON.parse),
+    readFile(input.register, "utf8").then(JSON.parse),
+  ]);
+  const sourceTexts = await exactSources(path.resolve(input["source-root"]), mechanismReport);
+  const result = validateNativeMechanismReviewRegister(register, { mechanismReport, sourceTexts });
+  const dispositionCounts = Object.values(result.dispositionByMechanismId).reduce(
+    (counts, disposition) => ({ ...counts, [disposition]: (counts[disposition] ?? 0) + 1 }),
+    {},
+  );
+  process.stdout.write(
+    `${JSON.stringify({ status: "valid", mechanismCount: result.mechanismCount, recordCount: result.recordCount, unresolvedCount: result.unresolvedCount, inScopeMechanismCount: result.inScopeMechanismIds.length, dispositionCounts })}\n`,
+  );
+}
+main().catch((error) => {
+  console.error(`${error.code ?? "mechanism_review_register_check_failed"}: ${error.message}`);
+  process.exitCode = 1;
+});

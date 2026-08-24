@@ -1,0 +1,978 @@
+{
+  "schema": "gamebuddy_stardew_static_portfolio/v2",
+  "portfolioId": "stardew_non_action_engineering_v1",
+  "scripts": [
+    {
+      "id": "stardew_scaffold_contract",
+      "script": "test:stardew-scaffold",
+      "command": "node --test tools/verify-stardew-scaffold.test.mjs",
+      "class": "static_non_action_leaf",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-STARDEW_SCAFFOLD_CONTRACT@v1"
+    },
+    {
+      "id": "script_check_stardew_action_surface",
+      "script": "check:stardew-action-surface",
+      "command": "node tools/check-stardew-action-promotion.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_ACTION_SURFACE@v1"
+    },
+    {
+      "id": "script_run_stardew_companion_fixture",
+      "script": "run:stardew-companion-fixture",
+      "command": "node tools/run-stardew-companion-fixture.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_RUN_STARDEW_COMPANION_FIXTURE@v1"
+    },
+    {
+      "id": "script_check_stardew_companion_production_admission",
+      "script": "check:stardew-companion-production-admission",
+      "command": "node tools/check-stardew-companion-production-admission.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_COMPANION_PRODUCTION_ADMISSION@v1"
+    },
+    {
+      "id": "script_run_stardew_companion_live",
+      "script": "run:stardew-companion-live",
+      "command": "node tools/run-stardew-companion-live-scenarios.mjs",
+      "class": "blocked_target_live",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_RUN_STARDEW_COMPANION_LIVE@v1"
+    },
+    {
+      "id": "script_verify_stardew_static",
+      "script": "verify:stardew:static",
+      "command": "node tools/verify-stardew-static.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_VERIFY_STARDEW_STATIC@v1"
+    },
+    {
+      "id": "script_test_stardew_action_projection",
+      "script": "test:stardew-action-projection",
+      "command": "node --test tools/check-stardew-action-promotion.test.mjs tools/stardew-action-gate-descriptors.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_ACTION_PROJECTION@v1"
+    },
+    {
+      "id": "script_test_stardew_core",
+      "script": "test:stardew:core",
+      "command": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_CORE@v1"
+    },
+    {
+      "id": "script_test_stardew_integration",
+      "script": "test:stardew:integration",
+      "command": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_INTEGRATION@v1"
+    },
+    {
+      "id": "script_verify_stardew_action_projection_local",
+      "script": "verify:stardew-action-projection-local",
+      "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-local.ps1 -Configuration Debug",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_VERIFY_STARDEW_ACTION_PROJECTION_LOCAL@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_prerequisites",
+      "script": "check:stardew-portfolio-prerequisites",
+      "command": "node tools/check-stardew-portfolio-prerequisites.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_PREREQUISITES@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_p0b",
+      "script": "check:stardew-portfolio-p0b",
+      "command": "node tools/check-stardew-portfolio-p0b.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_P0B@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_isolation",
+      "script": "check:stardew-portfolio-isolation",
+      "command": "node tools/check-stardew-portfolio-isolation.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_ISOLATION@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_p3",
+      "script": "check:stardew-portfolio-p3",
+      "command": "node tools/check-stardew-portfolio-p3.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_P3@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_command_path_charter",
+      "script": "check:stardew-portfolio-command-path-charter",
+      "command": "node tools/check-stardew-portfolio-command-path-charter.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_COMMAND_PATH_CHARTER@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_command_path_charter",
+      "script": "test:stardew-portfolio-command-path-charter",
+      "command": "node --test tools/stardew-portfolio-command-path-charter.test.mjs tools/check-stardew-portfolio-command-path-charter.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_COMMAND_PATH_CHARTER@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m1_source_audit",
+      "script": "test:stardew-portfolio-m1-source-audit",
+      "command": "node --test tools/stardew-portfolio-m1-route-source-audit.test.mjs tools/check-stardew-portfolio-m1-route-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M1_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m1_source_audit",
+      "script": "check:stardew-portfolio-m1-source-audit",
+      "command": "node tools/check-stardew-portfolio-m1-route-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M1_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m2_source_audit",
+      "script": "test:stardew-portfolio-m2-source-audit",
+      "command": "node --test tools/stardew-portfolio-m2-crop-source-audit.test.mjs tools/check-stardew-portfolio-m2-crop-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M2_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m2_source_audit",
+      "script": "check:stardew-portfolio-m2-source-audit",
+      "command": "node tools/check-stardew-portfolio-m2-crop-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M2_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m3_source_audit",
+      "script": "test:stardew-portfolio-m3-source-audit",
+      "command": "node --test tools/stardew-portfolio-m3-forage-source-audit.test.mjs tools/check-stardew-portfolio-m3-forage-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M3_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m3_source_audit",
+      "script": "check:stardew-portfolio-m3-source-audit",
+      "command": "node tools/check-stardew-portfolio-m3-forage-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M3_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m4_source_audit",
+      "script": "test:stardew-portfolio-m4-source-audit",
+      "command": "node --test tools/stardew-portfolio-m4-resource-source-audit.test.mjs tools/check-stardew-portfolio-m4-resource-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M4_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m4_source_audit",
+      "script": "check:stardew-portfolio-m4-source-audit",
+      "command": "node tools/check-stardew-portfolio-m4-resource-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M4_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m5_source_audit",
+      "script": "test:stardew-portfolio-m5-source-audit",
+      "command": "node --test tools/stardew-portfolio-m5-animal-source-audit.test.mjs tools/check-stardew-portfolio-m5-animal-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M5_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m5_source_audit",
+      "script": "check:stardew-portfolio-m5-source-audit",
+      "command": "node tools/check-stardew-portfolio-m5-animal-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M5_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m6_source_audit",
+      "script": "test:stardew-portfolio-m6-source-audit",
+      "command": "node --test tools/stardew-portfolio-m6-machine-source-audit.test.mjs tools/check-stardew-portfolio-m6-machine-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M6_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m6_source_audit",
+      "script": "check:stardew-portfolio-m6-source-audit",
+      "command": "node tools/check-stardew-portfolio-m6-machine-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M6_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m7_source_audit",
+      "script": "test:stardew-portfolio-m7-source-audit",
+      "command": "node --test tools/stardew-portfolio-m7-bundle-source-audit.test.mjs tools/check-stardew-portfolio-m7-bundle-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M7_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m7_source_audit",
+      "script": "check:stardew-portfolio-m7-source-audit",
+      "command": "node tools/check-stardew-portfolio-m7-bundle-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M7_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m8_source_audit",
+      "script": "test:stardew-portfolio-m8-source-audit",
+      "command": "node --test tools/stardew-portfolio-m8-mine-source-audit.test.mjs tools/check-stardew-portfolio-m8-mine-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M8_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m8_source_audit",
+      "script": "check:stardew-portfolio-m8-source-audit",
+      "command": "node tools/check-stardew-portfolio-m8-mine-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M8_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m8_mine_route_source_realization",
+      "script": "test:stardew-portfolio-m8-mine-route-source-realization",
+      "command": "node --test tools/stardew-portfolio-m8-mine-route-source-realization.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M8_MINE_ROUTE_SOURCE_REALIZATION@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m8_mine_route_source_realization",
+      "script": "check:stardew-portfolio-m8-mine-route-source-realization",
+      "command": "node tools/stardew-portfolio-m8-mine-route-source-realization.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M8_MINE_ROUTE_SOURCE_REALIZATION@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m8_source_realization",
+      "script": "test:stardew-portfolio-m8-source-realization",
+      "command": "node --test tools/stardew-portfolio-m8-elevator-source-realization.test.mjs tools/stardew-portfolio-m8-ladder-source-realization.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M8_SOURCE_REALIZATION@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m8_ladder_source_realization",
+      "script": "check:stardew-portfolio-m8-ladder-source-realization",
+      "command": "node tools/stardew-portfolio-m8-ladder-source-realization.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M8_LADDER_SOURCE_REALIZATION@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m8_ladder_runner",
+      "script": "test:stardew-portfolio-m8-ladder-runner",
+      "command": "node --test tools/run-stardew-portfolio-m8-ladder-action.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M8_LADDER_RUNNER@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m9_source_audit",
+      "script": "test:stardew-portfolio-m9-source-audit",
+      "command": "node --test tools/stardew-portfolio-m9-special-order-source-audit.test.mjs tools/check-stardew-portfolio-m9-special-order-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M9_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m9_source_audit",
+      "script": "check:stardew-portfolio-m9-source-audit",
+      "command": "node tools/check-stardew-portfolio-m9-special-order-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M9_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_m10_source_audit",
+      "script": "test:stardew-portfolio-m10-source-audit",
+      "command": "node --test tools/stardew-portfolio-m10-museum-source-audit.test.mjs tools/check-stardew-portfolio-m10-museum-source-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M10_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_m10_source_audit",
+      "script": "check:stardew-portfolio-m10-source-audit",
+      "command": "node tools/check-stardew-portfolio-m10-museum-source-audit.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M10_SOURCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_pipeline",
+      "script": "test:stardew-portfolio-pipeline",
+      "command": "node --test tools/stardew-portfolio-profile.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_PIPELINE@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_p3",
+      "script": "test:stardew-portfolio-p3",
+      "command": "node --test tools/stardew-portfolio-contracts.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_P3@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_p0b",
+      "script": "test:stardew-portfolio-p0b",
+      "command": "node --test tools/stardew-portfolio-p0b.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_P0B@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_installation_attestation",
+      "script": "test:stardew-portfolio-installation-attestation",
+      "command": "node --test tools/create-stardew-portfolio-installation-attestation.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_INSTALLATION_ATTESTATION@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_interop_contract",
+      "script": "test:stardew-portfolio-interop-contract",
+      "command": "powershell.exe -NoProfile -File tools/run-stardew-portfolio-interop-contract.ps1",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_INTEROP_CONTRACT@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_p1",
+      "script": "test:stardew-portfolio-p1",
+      "command": "pnpm --filter @gamebuddy/companion-host exec tsc --project tsconfig.portfolio.json && pnpm --filter @gamebuddy/companion-host exec node --test dist-portfolio/portfolio-protocol.test.js dist-portfolio/portfolio-stardew-bridge.test.js",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_P1@v1"
+    },
+    {
+      "id": "script_check_stardew_portfolio_p1c",
+      "script": "check:stardew-portfolio-p1c",
+      "command": "node tools/run-stardew-portfolio-observe-smoke.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_P1C@v1"
+    },
+    {
+      "id": "script_test_stardew_portfolio_p1c",
+      "script": "test:stardew-portfolio-p1c",
+      "command": "node --test tools/stardew-portfolio-observe-smoke.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_P1C@v1"
+    },
+    {
+      "id": "script_test_stardew_fixture_profile",
+      "script": "test:stardew-fixture-profile",
+      "command": "node --test tools/stardew-fixture-profile.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_FIXTURE_PROFILE@v1"
+    },
+    {
+      "id": "script_test_stardew_fixture_transaction_inspector",
+      "script": "test:stardew-fixture-transaction-inspector",
+      "command": "node --test tools/stardew-fixture-transaction-inspector.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_FIXTURE_TRANSACTION_INSPECTOR@v1"
+    },
+    {
+      "id": "script_inspect_stardew_fixture_transaction",
+      "script": "inspect:stardew-fixture-transaction",
+      "command": "node tools/inspect-stardew-fixture-transaction.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_INSPECT_STARDEW_FIXTURE_TRANSACTION@v1"
+    },
+    {
+      "id": "script_test_stardew_attachment_telemetry",
+      "script": "test:stardew-attachment-telemetry",
+      "command": "powershell.exe -NoProfile -File tools/stardew-attachment-telemetry.test.ps1",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_ATTACHMENT_TELEMETRY@v1"
+    },
+    {
+      "id": "script_test_stardew_fixture_readiness",
+      "script": "test:stardew-fixture-readiness",
+      "command": "node tools/await-stardew-fixture-readiness.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_FIXTURE_READINESS@v1"
+    },
+    {
+      "id": "script_test_stardew_formal_action_gate",
+      "script": "test:stardew-formal-action-gate",
+      "command": "node --test tools/stardew-formal-action-gate.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_FORMAL_ACTION_GATE@v1"
+    },
+    {
+      "id": "script_test_stardew_gate_failure_taxonomy",
+      "script": "test:stardew-gate-failure-taxonomy",
+      "command": "node --test tools/stardew-gate-failure-taxonomy.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_GATE_FAILURE_TAXONOMY@v1"
+    },
+    {
+      "id": "script_test_stardew_action_gate_descriptors",
+      "script": "test:stardew-action-gate-descriptors",
+      "command": "node --test tools/stardew-action-gate-descriptors.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_ACTION_GATE_DESCRIPTORS@v1"
+    },
+    {
+      "id": "script_inspect_stardew_gameplay_surface",
+      "script": "inspect:stardew-gameplay-surface",
+      "command": "node tools/inspect-stardew-gameplay-surface.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_INSPECT_STARDEW_GAMEPLAY_SURFACE@v1"
+    },
+    {
+      "id": "script_derive_stardew_soil_kernel",
+      "script": "derive:stardew-soil-kernel",
+      "command": "node tools/derive-stardew-soil-kernel.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_SOIL_KERNEL@v1"
+    },
+    {
+      "id": "script_derive_stardew_soil_itm_canary",
+      "script": "derive:stardew-soil-itm-canary",
+      "command": "node tools/derive-stardew-soil-itm-canary.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_SOIL_ITM_CANARY@v1"
+    },
+    {
+      "id": "script_test_stardew_soil_itm_canary",
+      "script": "test:stardew-soil-itm-canary",
+      "command": "node --test tools/stardew-soil-itm-canary.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_SOIL_ITM_CANARY@v1"
+    },
+    {
+      "id": "script_assess_stardew_soil_itm_conformance",
+      "script": "assess:stardew-soil-itm-conformance",
+      "command": "node tools/assess-stardew-soil-itm-conformance.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_ASSESS_STARDEW_SOIL_ITM_CONFORMANCE@v1"
+    },
+    {
+      "id": "script_test_stardew_soil_itm_conformance",
+      "script": "test:stardew-soil-itm-conformance",
+      "command": "node --test tools/stardew-soil-itm-conformance.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_SOIL_ITM_CONFORMANCE@v1"
+    },
+    {
+      "id": "script_derive_stardew_semantic_kernel_atlas",
+      "script": "derive:stardew-semantic-kernel-atlas",
+      "command": "node tools/derive-stardew-semantic-kernel-atlas.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_SEMANTIC_KERNEL_ATLAS@v1"
+    },
+    {
+      "id": "script_derive_stardew_tool_effect_ledger",
+      "script": "derive:stardew-tool-effect-ledger",
+      "command": "node tools/derive-stardew-tool-effect-ledger.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_TOOL_EFFECT_LEDGER@v1"
+    },
+    {
+      "id": "script_derive_stardew_csharp_syntax_structural_canary",
+      "script": "derive:stardew-csharp-syntax-structural-canary",
+      "command": "node tools/derive-stardew-csharp-syntax-structural-canary.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_CSHARP_SYNTAX_STRUCTURAL_CANARY@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_action_architecture_map",
+      "script": "derive:stardew-native-action-architecture-map",
+      "command": "node tools/derive-stardew-native-action-architecture-map.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_ACTION_ARCHITECTURE_MAP@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_interaction_mechanisms",
+      "script": "derive:stardew-native-interaction-mechanisms",
+      "command": "node tools/derive-stardew-native-interaction-mechanisms.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_INTERACTION_MECHANISMS@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_mechanism_family_register",
+      "script": "derive:stardew-native-mechanism-family-register",
+      "command": "node tools/derive-stardew-native-mechanism-family-register.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_MECHANISM_FAMILY_REGISTER@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_state_machine_family_register",
+      "script": "derive:stardew-native-state-machine-family-register",
+      "command": "node tools/derive-stardew-native-state-machine-family-register.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_STATE_MACHINE_FAMILY_REGISTER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_state_machine_family_register",
+      "script": "test:stardew-native-state-machine-family-register",
+      "command": "node --test tools/stardew-native-state-machine-family-register.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_STATE_MACHINE_FAMILY_REGISTER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_transition_family_universe",
+      "script": "test:stardew-native-transition-family-universe",
+      "command": "node --test tools/stardew-native-transition-family-universe.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_TRANSITION_FAMILY_UNIVERSE@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_transition_family_universe",
+      "script": "derive:stardew-native-transition-family-universe",
+      "command": "node tools/derive-stardew-native-transition-family-universe.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_TRANSITION_FAMILY_UNIVERSE@v1"
+    },
+    {
+      "id": "script_test_stardew_native_source_closure",
+      "script": "test:stardew-native-source-closure",
+      "command": "node --test tools/stardew-native-source-closure.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_SOURCE_CLOSURE@v1"
+    },
+    {
+      "id": "script_check_stardew_native_source_closure",
+      "script": "check:stardew-native-source-closure",
+      "command": "node tools/check-stardew-native-source-closure.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_NATIVE_SOURCE_CLOSURE@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_source_closure",
+      "script": "derive:stardew-native-source-closure",
+      "command": "node tools/derive-stardew-native-source-closure.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_SOURCE_CLOSURE@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_runtime_boundary_model",
+      "script": "derive:stardew-native-runtime-boundary-model",
+      "command": "node tools/derive-stardew-native-runtime-boundary-model.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_RUNTIME_BOUNDARY_MODEL@v1"
+    },
+    {
+      "id": "script_test_stardew_native_mechanism_family_register",
+      "script": "test:stardew-native-mechanism-family-register",
+      "command": "node --test tools/stardew-native-mechanism-family-register.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_MECHANISM_FAMILY_REGISTER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_normal_player_ingress_register",
+      "script": "test:stardew-native-normal-player-ingress-register",
+      "command": "node --test tools/stardew-native-normal-player-ingress-register.test.mjs tools/stardew-native-normal-player-ingress-control-slice.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_NORMAL_PLAYER_INGRESS_REGISTER@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_normal_player_ingress_control_slice",
+      "script": "derive:stardew-native-normal-player-ingress-control-slice",
+      "command": "node tools/derive-stardew-native-normal-player-ingress-control-slice.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_NORMAL_PLAYER_INGRESS_CONTROL_SLICE@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_router_invocation_inventory",
+      "script": "derive:stardew-native-router-invocation-inventory",
+      "command": "node tools/derive-stardew-native-router-invocation-inventory.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_ROUTER_INVOCATION_INVENTORY@v1"
+    },
+    {
+      "id": "script_test_stardew_native_router_invocation_inventory",
+      "script": "test:stardew-native-router-invocation-inventory",
+      "command": "node --test tools/stardew-native-router-invocation-inventory.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_ROUTER_INVOCATION_INVENTORY@v1"
+    },
+    {
+      "id": "script_test_stardew_native_router_exit_classifier",
+      "script": "test:stardew-native-router-exit-classifier",
+      "command": "node --test tools/stardew-native-router-exit-classifier.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_ROUTER_EXIT_CLASSIFIER@v1"
+    },
+    {
+      "id": "script_check_stardew_native_router_exit_classifier",
+      "script": "check:stardew-native-router-exit-classifier",
+      "command": "node tools/check-stardew-native-router-exit-classifier.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_NATIVE_ROUTER_EXIT_CLASSIFIER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_event_continuation_trace",
+      "script": "test:stardew-native-event-continuation-trace",
+      "command": "node --test tools/stardew-native-event-continuation-trace.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_EVENT_CONTINUATION_TRACE@v1"
+    },
+    {
+      "id": "script_test_stardew_native_field_continuation_trace",
+      "script": "test:stardew-native-field-continuation-trace",
+      "command": "node --test tools/stardew-native-field-continuation-trace.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_FIELD_CONTINUATION_TRACE@v1"
+    },
+    {
+      "id": "script_test_stardew_native_virtual_receiver_register",
+      "script": "test:stardew-native-virtual-receiver-register",
+      "command": "node --test tools/stardew-native-virtual-receiver-register.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_VIRTUAL_RECEIVER_REGISTER@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_virtual_receiver_register",
+      "script": "derive:stardew-native-virtual-receiver-register",
+      "command": "node tools/derive-stardew-native-virtual-receiver-register.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_VIRTUAL_RECEIVER_REGISTER@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_virtual_member_invocation_register",
+      "script": "derive:stardew-native-virtual-member-invocation-register",
+      "command": "node tools/derive-stardew-native-virtual-member-invocation-register.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_VIRTUAL_MEMBER_INVOCATION_REGISTER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_virtual_member_invocation_register",
+      "script": "test:stardew-native-virtual-member-invocation-register",
+      "command": "node --test tools/stardew-native-virtual-member-invocation-register.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_VIRTUAL_MEMBER_INVOCATION_REGISTER@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_completion_event_register",
+      "script": "derive:stardew-native-completion-event-register",
+      "command": "node tools/derive-stardew-native-completion-event-register.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_COMPLETION_EVENT_REGISTER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_completion_event_register",
+      "script": "test:stardew-native-completion-event-register",
+      "command": "node --test tools/stardew-native-completion-event-register.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_COMPLETION_EVENT_REGISTER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_tool_owner_slice",
+      "script": "test:stardew-native-tool-owner-slice",
+      "command": "node --test tools/stardew-native-tool-owner-slice.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_TOOL_OWNER_SLICE@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_tool_owner_slice",
+      "script": "derive:stardew-native-tool-owner-slice",
+      "command": "node tools/derive-stardew-native-tool-owner-slice.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_TOOL_OWNER_SLICE@v1"
+    },
+    {
+      "id": "script_test_stardew_native_tool_update_dispatch_boundary",
+      "script": "test:stardew-native-tool-update-dispatch-boundary",
+      "command": "node --test tools/stardew-native-tool-update-dispatch-boundary.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_TOOL_UPDATE_DISPATCH_BOUNDARY@v1"
+    },
+    {
+      "id": "script_test_stardew_native_farmer_sprite_callback_boundary",
+      "script": "test:stardew-native-farmer-sprite-callback-boundary",
+      "command": "node --test tools/stardew-native-farmer-sprite-callback-boundary.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_FARMER_SPRITE_CALLBACK_BOUNDARY@v1"
+    },
+    {
+      "id": "script_check_stardew_native_normal_player_ingress_register",
+      "script": "check:stardew-native-normal-player-ingress-register",
+      "command": "node tools/check-stardew-native-normal-player-ingress-register.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_NATIVE_NORMAL_PLAYER_INGRESS_REGISTER@v1"
+    },
+    {
+      "id": "script_check_stardew_native_transition_ledger",
+      "script": "check:stardew-native-transition-ledger",
+      "command": "node tools/check-stardew-native-transition-ledger.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_NATIVE_TRANSITION_LEDGER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_transition_ledger",
+      "script": "test:stardew-native-transition-ledger",
+      "command": "node --test tools/stardew-native-transition-ledger.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_TRANSITION_LEDGER@v1"
+    },
+    {
+      "id": "script_test_stardew_native_mechanism_review_register",
+      "script": "test:stardew-native-mechanism-review-register",
+      "command": "node --test tools/stardew-native-mechanism-review-register.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_NATIVE_MECHANISM_REVIEW_REGISTER@v1"
+    },
+    {
+      "id": "script_check_stardew_native_mechanism_review_register",
+      "script": "check:stardew-native-mechanism-review-register",
+      "command": "node tools/check-stardew-native-mechanism-review-register.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_NATIVE_MECHANISM_REVIEW_REGISTER@v1"
+    },
+    {
+      "id": "script_derive_stardew_native_mechanism_review_register_template",
+      "script": "derive:stardew-native-mechanism-review-register-template",
+      "command": "node tools/derive-stardew-native-mechanism-review-register-template.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_DERIVE_STARDEW_NATIVE_MECHANISM_REVIEW_REGISTER_TEMPLATE@v1"
+    },
+    {
+      "id": "script_check_stardew_gameplay_completeness",
+      "script": "check:stardew-gameplay-completeness",
+      "command": "node tools/check-stardew-gameplay-completeness.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_GAMEPLAY_COMPLETENESS@v1"
+    },
+    {
+      "id": "script_test_stardew_gameplay_completeness",
+      "script": "test:stardew-gameplay-completeness",
+      "command": "node --test tools/check-stardew-gameplay-completeness.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_GAMEPLAY_COMPLETENESS@v1"
+    },
+    {
+      "id": "script_test_stardew_player_command_graph",
+      "script": "test:stardew-player-command-graph",
+      "command": "node --test tools/stardew-player-command-graph.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PLAYER_COMMAND_GRAPH@v1"
+    },
+    {
+      "id": "script_test_stardew_player_command_equivalence_audit",
+      "script": "test:stardew-player-command-equivalence-audit",
+      "command": "node --test tools/stardew-player-command-equivalence-audit.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PLAYER_COMMAND_EQUIVALENCE_AUDIT@v1"
+    },
+    {
+      "id": "script_test_stardew_gameplay_surface_selector",
+      "script": "test:stardew-gameplay-surface-selector",
+      "command": "node --test tools/stardew-gameplay-surface-selector.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_GAMEPLAY_SURFACE_SELECTOR@v1"
+    },
+    {
+      "id": "script_test_stardew_gameplay_surface_rules",
+      "script": "test:stardew-gameplay-surface-rules",
+      "command": "node --test tools/stardew-gameplay-surface-rules.test.mjs",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_GAMEPLAY_SURFACE_RULES@v1"
+    },
+    {
+      "id": "companion_fixture_contract",
+      "script": "test:stardew-static-companion-fixture",
+      "command": "node --test tools/stardew-companion-live-scenario.test.mjs tools/stardew-companion-live-scorer.test.mjs",
+      "class": "static_non_action_leaf",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-COMPANION_FIXTURE_CONTRACT@v1"
+    },
+    {
+      "id": "companion_live_evidence_contract",
+      "script": "test:stardew-static-companion-evidence",
+      "command": "node --test tools/lib/stardew-companion-live-evidence.test.mjs",
+      "class": "static_non_action_leaf",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-COMPANION_LIVE_EVIDENCE_CONTRACT@v1"
+    },
+    {
+      "id": "companion_production_admission_contract",
+      "script": "test:stardew-static-companion-admission",
+      "command": "node --test tools/lib/stardew-companion-production-admission.test.mjs",
+      "class": "static_non_action_leaf",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-COMPANION_PRODUCTION_ADMISSION_CONTRACT@v1"
+    },
+    {
+      "id": "script_verify_stardew_action_projection_p2c",
+      "script": "verify:stardew-action-projection-p2c",
+      "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/verify-stardew-action-projection-p2c.ps1 -Configuration Debug",
+      "class": "out_of_scope_action_platform",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-SCRIPT_VERIFY_STARDEW_ACTION_PROJECTION_P2C@v1"
+    },
+    {
+      "id": "stardew_portfolio_projection_contract",
+      "script": "test:stardew-static-portfolio-projection",
+      "command": "dotnet integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll",
+      "class": "static_non_action_leaf",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-STARDEW_PORTFOLIO_PROJECTION_CONTRACT@v1"
+    }
+  ],
+  "leaves": [
+    {
+      "id": "stardew_scaffold_contract",
+      "script": "test:stardew-scaffold",
+      "command": [
+        "node",
+        "--test",
+        "tools/verify-stardew-scaffold.test.mjs"
+      ],
+      "evidenceKind": "scaffold_contract",
+      "artifactIdentity": "integrations/stardew/scaffold/v1",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-STARDEW_SCAFFOLD_CONTRACT@v1"
+    },
+    {
+      "id": "companion_fixture_contract",
+      "script": "test:stardew-static-companion-fixture",
+      "command": [
+        "node",
+        "--test",
+        "tools/stardew-companion-live-scenario.test.mjs",
+        "tools/stardew-companion-live-scorer.test.mjs"
+      ],
+      "evidenceKind": "deterministic_fixture_contract",
+      "artifactIdentity": "fixtures/stardew/companion-live/scenarios.v1.json+phrases.zh-CN.v1.json",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-COMPANION_FIXTURE_CONTRACT@v1"
+    },
+    {
+      "id": "companion_live_evidence_contract",
+      "script": "test:stardew-static-companion-evidence",
+      "command": [
+        "node",
+        "--test",
+        "tools/lib/stardew-companion-live-evidence.test.mjs"
+      ],
+      "evidenceKind": "target_live_evidence_schema",
+      "artifactIdentity": "gamebuddy_stardew_companion_live_evidence/v1",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-COMPANION_LIVE_EVIDENCE_CONTRACT@v1"
+    },
+    {
+      "id": "companion_production_admission_contract",
+      "script": "test:stardew-static-companion-admission",
+      "command": [
+        "node",
+        "--test",
+        "tools/lib/stardew-companion-production-admission.test.mjs"
+      ],
+      "evidenceKind": "production_admission_preflight",
+      "artifactIdentity": "gamebuddy_stardew_companion_admission_record/v1",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-COMPANION_PRODUCTION_ADMISSION_CONTRACT@v1"
+    },
+    {
+      "id": "stardew_portfolio_projection_contract",
+      "script": "test:stardew-static-portfolio-projection",
+      "command": [
+        "dotnet",
+        "integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll",
+        "integrations/stardew/bin/Release/net6.0/GameBuddy.Stardew.dll"
+      ],
+      "evidenceKind": "dotnet_portfolio_projection_contract",
+      "artifactIdentity": "integrations/stardew/tests/PortfolioMineElevatorProjection.Contract.csproj",
+      "owner": "gamebuddy.stardew.static-verifier@v1",
+      "riskId": "GB-STARDEW-STATIC-STARDEW_PORTFOLIO_PROJECTION_CONTRACT@v1"
+    }
+  ]
+}

@@ -1,0 +1,125 @@
+{
+  "schema": "gamebuddy-required-snapshot-inputs/v2",
+  "inputs": [
+    {
+      "path": "biome.json",
+      "owner": "release-baseline-snapshot",
+      "purpose": "biome configuration for repository-owned CI/configuration checks",
+      "type": "file",
+      "mode": 420,
+      "sha256": "8ed88c3ef6c87c29ad6f08e405b29efdab7d8fb608fb20cd8595f995a6462bce",
+      "referencedBy": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "marker": "gamebuddy-snapshot-input:biome.json"
+        }
+      ],
+      "referenceRequirement": "host CI has an explicit reviewed marker for this required snapshot input"
+    },
+    {
+      "path": "tools/check-text-hygiene.mjs",
+      "owner": "release-baseline-snapshot",
+      "purpose": "deterministic no-commit clean-room snapshot CI test closure",
+      "type": "file",
+      "mode": 420,
+      "sha256": "6e7939504ad82d0b1e1c8c14117c3f19f0eee4c5c74094f1c1af75d55668976b",
+      "referencedBy": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "marker": "gamebuddy-snapshot-input:tools/check-text-hygiene.mjs"
+        }
+      ],
+      "referenceRequirement": "host CI runs the repository-owned snapshot command and its reviewed test/quality closure"
+    },
+    {
+      "path": "tools/check-text-hygiene.test.mjs",
+      "owner": "release-baseline-snapshot",
+      "purpose": "deterministic text hygiene regression closure",
+      "type": "file",
+      "mode": 420,
+      "sha256": "fb4a00e272081b7115956dccec63baac053373f2458ccc4a61ba3c08e15472f9",
+      "referencedBy": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "marker": "gamebuddy-snapshot-input:tools/check-text-hygiene.test.mjs"
+        }
+      ],
+      "referenceRequirement": "host CI quality:check runs the repository-owned text hygiene test closure"
+    },
+    {
+      "path": "tools/ci-snapshot-lib.mjs",
+      "owner": "release-baseline-snapshot",
+      "purpose": "deterministic no-commit clean-room snapshot CI test closure",
+      "type": "file",
+      "mode": 420,
+      "sha256": "4e7d09c84124f682c2d60446746815dfaa200bd168f341fe0a197441f76e1706",
+      "referencedBy": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "marker": "gamebuddy-snapshot-input:tools/ci-snapshot-lib.mjs"
+        }
+      ],
+      "referenceRequirement": "host CI runs pnpm test:ci-snapshot; the marked files are its reviewed direct test entry and import closure"
+    },
+    {
+      "path": "tools/ci-snapshot.test.mjs",
+      "owner": "release-baseline-snapshot",
+      "purpose": "deterministic no-commit clean-room snapshot CI test closure",
+      "type": "file",
+      "mode": 420,
+      "sha256": "aa77ad1e28dc13e3ca8d1c83fbfa79222448970a335b1ccca26fd95ee5fe6a07",
+      "referencedBy": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "marker": "gamebuddy-snapshot-input:tools/ci-snapshot.test.mjs"
+        }
+      ],
+      "referenceRequirement": "host CI runs pnpm test:ci-snapshot; the marked files are its reviewed direct test entry and import closure"
+    },
+    {
+      "path": "tools/create-ci-snapshot.mjs",
+      "owner": "release-baseline-snapshot",
+      "purpose": "deterministic no-commit clean-room snapshot CI test closure",
+      "type": "file",
+      "mode": 420,
+      "sha256": "e8f621e406c44178e5d12a9e14764032b9e187b679dd5cbeeb7dad1b10ed1e56",
+      "referencedBy": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "marker": "gamebuddy-snapshot-input:tools/create-ci-snapshot.mjs"
+        }
+      ],
+      "referenceRequirement": "host CI runs pnpm test:ci-snapshot; the marked files are its reviewed direct test entry and import closure"
+    },
+    {
+      "path": "tools/materialize-ci-snapshot.mjs",
+      "owner": "release-baseline-snapshot",
+      "purpose": "deterministic no-commit clean-room snapshot CI test closure",
+      "type": "file",
+      "mode": 420,
+      "sha256": "616632c55853592d7b0171a53d2f83bf563f03acfecd8f69facd54d999b4e4a3",
+      "referencedBy": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "marker": "gamebuddy-snapshot-input:tools/materialize-ci-snapshot.mjs"
+        }
+      ],
+      "referenceRequirement": "host CI runs pnpm test:ci-snapshot; the marked files are its reviewed direct test entry and import closure"
+    },
+    {
+      "path": "tools/run-ci-snapshot.mjs",
+      "owner": "release-baseline-snapshot",
+      "purpose": "deterministic no-commit clean-room snapshot CI test closure",
+      "type": "file",
+      "mode": 420,
+      "sha256": "0cafec22b7f2d49ef51d7905df286feae766449be04d0fbe04c524826f48e14e",
+      "referencedBy": [
+        {
+          "path": ".github/workflows/ci.yml",
+          "marker": "gamebuddy-snapshot-input:tools/run-ci-snapshot.mjs"
+        }
+      ],
+      "referenceRequirement": "host CI runs the repository-owned snapshot command and its reviewed test/quality closure"
+    }
+  ]
+}

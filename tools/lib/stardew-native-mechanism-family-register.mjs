@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto";
 import { validateMechanismReport } from "./stardew-native-mechanism-review-register.mjs";
 
-function fail(code, message, details = {}) { const error = new Error(message); error.code = code; error.details = details; throw error; }
-function digest(value) { return createHash("sha256").update(value).digest("hex"); }
+function fail(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.details = details;
+  throw error;
+}
+function digest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
 function sourceCluster(sourcePath) {
   const segments = sourcePath.split("/");
   if (segments.length === 1) return sourcePath;
@@ -39,26 +46,37 @@ export function deriveNativeInteractionMechanismFamilyRegister(mechanismReport) 
     if (mechanism.lexicalMemberSyntax) group.lexicalMemberSyntaxes.add(mechanism.lexicalMemberSyntax);
     grouped.set(key, group);
   }
-  const families = [...grouped.values()].map((group) => Object.freeze({
-    familyId: group.familyId,
-    category: group.category,
-    discoveryFamily: group.discoveryFamily,
-    sourceCluster: group.sourceCluster,
-    memberCount: group.memberIds.length,
-    memberIds: Object.freeze(group.memberIds.sort()),
-    sourcePathCount: group.sourcePaths.size,
-    sourcePaths: Object.freeze([...group.sourcePaths].sort()),
-    fileSyntaxStates: Object.freeze([...group.syntaxStates].sort()),
-    lexicalOwnerSyntaxes: Object.freeze([...group.lexicalOwnerSyntaxes].sort()),
-    lexicalMemberSyntaxes: Object.freeze([...group.lexicalMemberSyntaxes].sort()),
-    reviewState: "unreviewed_source_mechanism_family",
-  })).sort((a, b) => a.familyId.localeCompare(b.familyId));
+  const families = [...grouped.values()]
+    .map((group) =>
+      Object.freeze({
+        familyId: group.familyId,
+        category: group.category,
+        discoveryFamily: group.discoveryFamily,
+        sourceCluster: group.sourceCluster,
+        memberCount: group.memberIds.length,
+        memberIds: Object.freeze(group.memberIds.sort()),
+        sourcePathCount: group.sourcePaths.size,
+        sourcePaths: Object.freeze([...group.sourcePaths].sort()),
+        fileSyntaxStates: Object.freeze([...group.syntaxStates].sort()),
+        lexicalOwnerSyntaxes: Object.freeze([...group.lexicalOwnerSyntaxes].sort()),
+        lexicalMemberSyntaxes: Object.freeze([...group.lexicalMemberSyntaxes].sort()),
+        reviewState: "unreviewed_source_mechanism_family",
+      }),
+    )
+    .sort((a, b) => a.familyId.localeCompare(b.familyId));
   const assigned = families.flatMap((family) => family.memberIds);
-  if (assigned.length !== exact.mechanisms.size || new Set(assigned).size !== assigned.length) fail("mechanism_family_register_non_exhaustive", "Every exact Stage-1 mechanism row must be assigned to exactly one family index row.");
+  if (assigned.length !== exact.mechanisms.size || new Set(assigned).size !== assigned.length)
+    fail(
+      "mechanism_family_register_non_exhaustive",
+      "Every exact Stage-1 mechanism row must be assigned to exactly one family index row.",
+    );
   return Object.freeze({
     schemaVersion: 1,
     artifactKind: "native_interaction_mechanism_family_register",
-    attestation: Object.freeze({ targetAssemblySha256: exact.targetAssemblySha256, sourceManifestSha256: exact.sourceManifestSha256 }),
+    attestation: Object.freeze({
+      targetAssemblySha256: exact.targetAssemblySha256,
+      sourceManifestSha256: exact.sourceManifestSha256,
+    }),
     inputMechanismCount: exact.mechanisms.size,
     familyCount: families.length,
     families: Object.freeze(families),

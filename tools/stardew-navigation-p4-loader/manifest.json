@@ -1,0 +1,10 @@
+{
+  "Name": "GameBuddy Navigation P4 Loader",
+  "Author": "GameBuddy contributors",
+  "Version": "0.0.1",
+  "Description": "One-shot native loader for the isolated P4 WorldMap probe fixture.",
+  "UniqueID": "zhexulong.GameBuddy.NavigationP4Loader",
+  "EntryDll": "StardewNavigationP4Loader.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}

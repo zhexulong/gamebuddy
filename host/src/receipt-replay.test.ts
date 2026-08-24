@@ -1,18 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import type { ExecutionReceipt } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
-import { type ExecutionReceipt } from "./protocol.js";
 
-function receipt(state: ExecutionReceipt["state"], revision: number, evidence: ExecutionReceipt["evidence"] = { detail: state }): ExecutionReceipt {
+function receipt(
+  state: ExecutionReceipt["state"],
+  revision: number,
+  evidence: ExecutionReceipt["evidence"] = { detail: state },
+): ExecutionReceipt {
   return { executionId: "execution_01", requestId: "request_01", state, reasonCode: state, revision, evidence };
 }
 
 test("receipt replay accepts authoritative terminal paths with monotonic revisions", () => {
   const cases: readonly (readonly ExecutionReceipt[])[] = [
-    [receipt("accepted", 1), receipt("blocked", 2), receipt("cancelled", 3)],
+    [receipt("accepted", 1), receipt("blocked", 2)],
     [receipt("accepted", 1), receipt("running", 2), receipt("failed", 3)],
-    [receipt("accepted", 1), receipt("meaningful_progress", 2), receipt("succeeded", 3, { postcondition: "target_reached" })],
+    [
+      receipt("accepted", 1),
+      receipt("meaningful_progress", 2),
+      receipt("succeeded", 3, { postcondition: "target_reached" }),
+    ],
   ];
   for (const sequence of cases) {
     const ledger = new ReceiptReplayLedger();

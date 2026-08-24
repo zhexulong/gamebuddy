@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 
 import {
+  type BridgeMessage,
   EVENT_WINDOW_MS,
   MAX_EVENTS_PER_WINDOW,
-  type BridgeMessage,
   type Scope,
   serializeBounded,
   validateBridgeMessage,
@@ -31,7 +31,9 @@ export class DeterministicBridgeEndpoint {
     this.#connected = true;
   }
 
-  public get connected(): boolean { return this.#connected && this.#peer !== undefined && this.#peer.#connected; }
+  public get connected(): boolean {
+    return this.#connected && this.#peer !== undefined && this.#peer.#connected;
+  }
 
   public onMessage(listener: (message: BridgeMessage) => void): () => void {
     this.#events.on("message", listener);
@@ -45,8 +47,16 @@ export class DeterministicBridgeEndpoint {
 
   public send(message: BridgeMessage, nowMs = Date.now()): BridgeFault | null {
     if (!this.connected || this.#peer === undefined) return "disconnected";
-    try { serializeBounded(message); } catch (error) { return error instanceof Error && error.message === "message_too_large" ? "message_too_large" : "invalid_message"; }
-    if (validateBridgeMessage(message, this.scope, nowMs) !== null || validateBridgeMessage(message, this.#peer.scope, nowMs) !== null) return "invalid_message";
+    try {
+      serializeBounded(message);
+    } catch (error) {
+      return error instanceof Error && error.message === "message_too_large" ? "message_too_large" : "invalid_message";
+    }
+    if (
+      validateBridgeMessage(message, this.scope, nowMs) !== null ||
+      validateBridgeMessage(message, this.#peer.scope, nowMs) !== null
+    )
+      return "invalid_message";
     if (message.type === "execution_request") {
       // Execution requests require snapshot-specific validation at the Mod;
       // transport only verifies their bounded, scoped envelope.
@@ -79,7 +89,9 @@ export class DeterministicBridgeEndpoint {
   }
 }
 
-export function createDeterministicBridgePair(scope: Scope): readonly [DeterministicBridgeEndpoint, DeterministicBridgeEndpoint] {
+export function createDeterministicBridgePair(
+  scope: Scope,
+): readonly [DeterministicBridgeEndpoint, DeterministicBridgeEndpoint] {
   const host = new DeterministicBridgeEndpoint(scope);
   const integration = new DeterministicBridgeEndpoint(scope);
   host.connect(integration);

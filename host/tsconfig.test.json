@@ -7,7 +7,9 @@
   },
   "include": [
     "src/**/*.ts",
-    "src/test-fixtures/windows-named-mutex-safety-seal-worker.ts"
+    "src/test-fixtures/windows-named-mutex-safety-seal-worker.ts",
+    "src/test-fixtures/semantic-known-game-process-worker.ts",
+    "src/test-fixtures/semantic-initial-chat-process-worker.ts"
   ],
   "exclude": [
     "src/main.ts",

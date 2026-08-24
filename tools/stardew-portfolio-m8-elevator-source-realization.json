@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "portfolio_primitive_exact_target_source_realization",
+  "realizationId": "portfolio_m8_elevator_source_realization_v1",
+  "actionId": "select_mine_elevator_floor",
+  "topology": "single_player_native_companion",
+  "target": {
+    "relativeFileName": "Stardew Valley.dll",
+    "fileVersion": "1.6.15.24356",
+    "productVersion": "1.6.15.24356",
+    "length": 6268416,
+    "sha256": "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee"
+  },
+  "decompiler": {
+    "tool": "ilspycmd",
+    "version": "ilspycmd: 9.1.0.7988",
+    "toolInstallRelativePath": ".dotnet/tools/ilspycmd.exe",
+    "toolSha256": "5da34ef8b7a3d7e2057d27a0a84ec8e1ccdddb35d6d519058fce1e2f374c4c7f",
+    "payloadInstallRelativePath": ".dotnet/tools/.store/ilspycmd/9.1.0.7988/ilspycmd/9.1.0.7988/tools/net8.0/any",
+    "payloadFileCount": 59,
+    "payloadCanonicalSha256": "4bfe5d499f00ffe9373d400ab68a069b8fed079a96ae3aaa7804423f0eba80ea",
+    "options": [
+      "--disable-updatecheck",
+      "-p",
+      "--nested-directories"
+    ],
+    "configurationDigest": "afc1caf0ffb44b34afc0817c0770a441c7d16e9d2c0040a672865c62d17d0b6d",
+    "extractedAtUtc": "2026-08-13T01:31:11.444Z"
+  },
+  "sourceManifest": {
+    "csharpFileCount": 948,
+    "canonicalSha256": "7285248f6f459bbe758eeab01808f2e1cf8af95dc460405f4a227156b7912b10"
+  },
+  "primitiveContract": {
+    "relativePath": "fixtures/stardew/portfolio-m8-elevator-contract.example.json",
+    "canonicalSha256": "08e9668903c48aa502c567db3ab1da9bf046ffcf1efeb40fd7069a83964e3ce8"
+  },
+  "provenanceBoundary": {
+    "snapshotThreatBoundary": "The input DLL is copied into a newly created Windows private temporary directory with inheritance removed and access restricted to the current user and SYSTEM; each snapshot root/file is rejected if it is a reparse point and its lstat identity, resolved path, size, and hash must match immediately before and after decompilation. This fails closed for observed drift, reparse substitution, and replacement by principals outside that private ACL. It does not claim resistance to malicious code already executing as this process/current user (which can alter ACLs or race a pathname open), kernel compromise, or a compromised .NET host."
+  },
+  "anchors": [
+    {
+      "anchorId": "mine_elevator_presentation",
+      "relativePath": "StardewValley/Locations/MineShaft.cs",
+      "declaration": "public override bool checkAction",
+      "startByte": 133217,
+      "endByte": 137016,
+      "fileSha256": "698a43e93ef609ccfa6afdced93121ac6ce5d09222aeed9cd60aa20f326442c2",
+      "sliceSha256": "5fcf088a48f9649ba74268fc81e83077aa4264ac49b2840d68c1daf3a9571f5e",
+      "needle": "Game1.activeClickableMenu = new MineElevatorMenu();",
+      "semanticRole": "elevator_presentation_guard_and_menu_construction"
+    },
+    {
+      "anchorId": "mine_elevator_finite_checkpoint_materialization",
+      "relativePath": "StardewValley/Menus/MineElevatorMenu.cs",
+      "declaration": "public MineElevatorMenu()",
+      "startByte": 348,
+      "endByte": 2600,
+      "fileSha256": "d712f558610d3f8e5e751e23a297e5b93eb7969d3ba659c4022906409296e328",
+      "sliceSha256": "e2bd1b95f1baa8b07656e656548efc10b2217ff3b79cd9160fb9409754747f1d",
+      "needle": "Math.Min(MineShaft.lowestLevelReached, 120) / 5",
+      "semanticRole": "finite_unlocked_five_floor_checkpoint_materialization"
+    },
+    {
+      "anchorId": "mine_elevator_selection_commit",
+      "relativePath": "StardewValley/Menus/MineElevatorMenu.cs",
+      "declaration": "public override void receiveLeftClick",
+      "startByte": 2768,
+      "endByte": 3602,
+      "fileSha256": "d712f558610d3f8e5e751e23a297e5b93eb7969d3ba659c4022906409296e328",
+      "sliceSha256": "8115ae0d2bd6c5fd1ed9f2e9f60487b3330b107e77184539a10edab530bd56e8",
+      "needle": "Game1.enterMine(Convert.ToInt32(elevator.name));",
+      "semanticRole": "materialized_selection_and_current_floor_guarded_native_commit"
+    },
+    {
+      "anchorId": "mine_elevator_enter_mine_warp",
+      "relativePath": "StardewValley/Game1.cs",
+      "declaration": "public static void enterMine(int whatLevel, int? forceLayout = null)",
+      "startByte": 380767,
+      "endByte": 381111,
+      "fileSha256": "532c935733e36c23084fcde3fef217e8c70a67f93295069e532530072e695265",
+      "sliceSha256": "ffb93ca420b3804e8c86e52938ad22b1d1559242d945162a685537ce1c3e17e6",
+      "needle": "warpFarmer(MineShaft.GetLevelName(whatLevel, forceLayout), 6, 6, 2);",
+      "semanticRole": "native_enter_mine_warp_delegation"
+    }
+  ],
+  "semanticBoundary": {
+    "contextualEquivalence": "Choosing one freshly observed materialized elevator checkpoint is equivalent to the native elevator selection semantic commit only while the local player's current reachable grab tile is MineShaft checkAction case 112 and mineLevel is at most 120; UI/click mechanics are presentation and are not bridge inputs, and this does not grant arbitrary enterMine authority.",
+    "guardCommitContinuation": "MineShaft checkAction permits only reachable case-112 elevator interaction at mineLevel <= 120; the native menu materializes five-floor checkpoints through Math.Min(lowestLevelReached, 120), rejects non-materialized/current-floor selection, sets ridingMineElevator, then enters the selected mine; enterMine delegates the native warp.",
+    "excluded": [
+      "ladders",
+      "combat",
+      "route discovery",
+      "new-depth progression",
+      "persistence"
+    ]
+  },
+  "conclusion": {
+    "primitiveSourceRealizationStatus": "realized",
+    "projectionState": "eligible_for_separate_projection_review",
+    "liveState": "not_performed",
+    "nonClaim": "This primitive source realization does not claim aggregate M8 route realization, publication, capability enablement, receipt evidence, liveness, or live closure."
+  }
+}

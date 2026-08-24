@@ -1,30 +1,44 @@
-import { spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { promisify } from "node:util";
 import { withTestArtifactLock } from "./test-artifact-lock.mjs";
+import { runCompiledTests, runScriptTests } from "./run-tests.mjs";
 
+const execFileAsync = promisify(execFile);
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = resolve(hostRoot, "..");
 
-function run(command, args) {
-  return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, {
-      cwd: hostRoot,
-      stdio: "inherit",
-      // Node's Windows .cmd execution requires cmd.exe. Keep the command and
-      // its arguments separate; protocol tests exercise the real wrapper
-      // lifecycle rather than treating wrapper launch as a detached success.
-      ...(process.platform === "win32" && command.endsWith(".cmd")
-        ? { shell: true }
-        : {}),
-    });
-    child.once("error", rejectRun);
-    child.once("exit", (code, signal) => code === 0 ? resolveRun() : rejectRun(new Error(`host_test_stage_failed:code=${code}:signal=${signal ?? "none"}`)));
+async function prepareTestDependencies() {
+  const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  // setup-bun exposes the Windows executable as `bun`, not a pnpm-style
+  // `.cmd` shim. With the intentional shell execution below, that command
+  // resolves on Windows and POSIX alike.
+  const bun = "bun";
+  const commandOptions = { cwd: repositoryRoot, shell: process.platform === "win32", windowsHide: true };
+  await execFileAsync(pnpm, ["--filter", "@gamebuddy/voice-protocol", "build"], commandOptions);
+  await execFileAsync(bun, ["install", "--cwd", "../vendor/magic-context", "--frozen-lockfile"], {
+    ...commandOptions,
+    cwd: hostRoot,
   });
+  await execFileAsync(bun, ["run", "--cwd", "../vendor/magic-context/packages/pi-plugin", "build"], {
+    ...commandOptions,
+    cwd: hostRoot,
+  });
+  const declaredArtifact = resolve(hostRoot, "node_modules", "@cortexkit", "pi-magic-context", "dist");
+  if (!existsSync(declaredArtifact)) throw new Error("magic_context_declared_artifact_missing_after_build");
+  await import("./sync-declared-magic-context-artifact.mjs");
 }
 
 await withTestArtifactLock(async () => {
+  await prepareTestDependencies();
   // Use the internal implementation: the public build:test wrapper acquires
   // this same lock for standalone callers and would otherwise self-deadlock.
   await import("./build-test-artifact-locked.mjs");
-  await run(process.execPath, ["scripts/run-tests.mjs"]);
+  await runCompiledTests();
 });
+
+// Script-level tests include lock protocol tests that intentionally invoke
+// public package scripts. They must run after the outer artifact lock closes.
+if (process.env.GAMEBUDDY_HOST_TEST_COMPILED_ONLY !== "1") await runScriptTests();

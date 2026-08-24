@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 const apiKey = process.env.CPA_OAI_API_KEY;
 if (!apiKey) throw new Error("CPA_OAI_API_KEY_required");
@@ -12,7 +12,9 @@ const requestPath = join(root, "request.json");
 try {
   const catalogResponse = await fetch(`${baseUrl}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
   const catalog = await catalogResponse.json().catch(() => null);
-  const catalogModels = Array.isArray(catalog?.data) ? catalog.data.map((entry) => entry?.id).filter((id) => typeof id === "string") : [];
+  const catalogModels = Array.isArray(catalog?.data)
+    ? catalog.data.map((entry) => entry?.id).filter((id) => typeof id === "string")
+    : [];
   if (!catalogResponse.ok || !catalogModels.includes(model)) throw new Error("deepseek_v4_flash_not_advertised_by_cpa");
 
   const body = {
@@ -26,7 +28,11 @@ try {
       { role: "user", content: "Confirm provider connectivity." },
     ],
   };
-  await writeFile(requestPath, JSON.stringify({ model, thinkingEnabled: true, reasoningEffort: "high", maxTokens: 128 }), "utf8");
+  await writeFile(
+    requestPath,
+    JSON.stringify({ model, thinkingEnabled: true, reasoningEffort: "high", maxTokens: 128 }),
+    "utf8",
+  );
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
@@ -36,14 +42,21 @@ try {
   const message = payload?.choices?.[0]?.message;
   const content = typeof message?.content === "string" ? message.content : "";
   const passed = response.ok && content.length > 0;
-  console.log(JSON.stringify({
-    provider: "cpa-oai",
-    model,
-    catalogAdvertised: catalogModels.includes(model),
-    request: { thinkingEnabled: true, reasoningEffort: "high", maxTokens: 128 },
-    response: { ok: response.ok, status: response.status, hasContent: content.length > 0, hasReasoning: typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0 },
-    passed,
-  }));
+  console.log(
+    JSON.stringify({
+      provider: "cpa-oai",
+      model,
+      catalogAdvertised: catalogModels.includes(model),
+      request: { thinkingEnabled: true, reasoningEffort: "high", maxTokens: 128 },
+      response: {
+        ok: response.ok,
+        status: response.status,
+        hasContent: content.length > 0,
+        hasReasoning: typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0,
+      },
+      passed,
+    }),
+  );
   if (!passed) process.exitCode = 1;
 } finally {
   await rm(root, { recursive: true, force: true });

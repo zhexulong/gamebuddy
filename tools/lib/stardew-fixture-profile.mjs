@@ -1,13 +1,24 @@
-import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
+import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const PROFILE_NAMES = Object.freeze(["A-host", "A-ai-client", "A-ai-probe"]);
 const ALLOWED_FIXTURE_SCENARIOS = Object.freeze([
-  "native_animal_product_v2", "native_feed_animal_v1", "native_water_crop_v1",
-  "native_fertilize_tile_v1", "native_plant_seed_v1", "native_till_soil_v1",
-  "native_machine_inspect_v1", "native_npc_relationship_v1", "native_pickup_forage_v1",
-  "native_pickup_item_v1", "native_use_item_v1", "native_harvest_crop_v1",
+  // HostAutomation is a separate Farmhand fixture topology. Native-local
+  // scenarios are owned by stardew-native-local-player-fixture.mjs and must
+  // not be inferred from this legacy profile transaction.
+  "native_animal_product_v2",
+  "native_feed_animal_v1",
+  "native_water_crop_v1",
+  "native_fertilize_tile_v1",
+  "native_plant_seed_v1",
+  "native_till_soil_v1",
+  "native_machine_inspect_v1",
+  "native_npc_relationship_v1",
+  "native_pickup_forage_v1",
+  "native_pickup_item_v1",
+  "native_use_item_v1",
+  "native_harvest_crop_v1",
 ]);
 const DEFAULT_PROCESS_NAMES = Object.freeze(["StardewModdingAPI.exe", "Stardew Valley.exe", "StardewValley.exe"]);
 const CONFIG_TARGETS = Object.freeze([
@@ -19,20 +30,29 @@ const CONFIG_TARGETS = Object.freeze([
 // SMAPI scans the complete custom --mods-path tree. A profile sidecar may be
 // useful configuration input, but it must never retain a second manifest/DLL
 // beside the deployed Mods/GameBuddy bundle during a fixture run.
-const BUNDLE_FILE_NAMES = Object.freeze(["GameBuddy.Stardew.dll", "manifest.json", "GameBuddy.Stardew.deps.json"]);
+const BUNDLE_FILE_NAMES = Object.freeze([
+  "GameBuddy.Stardew.dll",
+  "GameBuddy.Stardew.Core.dll",
+  "manifest.json",
+  "GameBuddy.Stardew.deps.json",
+]);
 const SIDECAR_BUNDLE_TARGETS = Object.freeze(
-  PROFILE_NAMES.flatMap((profile) => BUNDLE_FILE_NAMES.map((fileName) => ({
-    name: `${profile}-sidecar-${fileName === "GameBuddy.Stardew.dll" ? "dll" : fileName === "manifest.json" ? "manifest" : "deps"}`,
-    profile,
-    relativePath: ["GameBuddy", fileName],
-  }))),
+  PROFILE_NAMES.flatMap((profile) =>
+    BUNDLE_FILE_NAMES.map((fileName) => ({
+      name: `${profile}-sidecar-${fileName === "GameBuddy.Stardew.dll" ? "dll" : fileName === "manifest.json" ? "manifest" : "deps"}`,
+      profile,
+      relativePath: ["GameBuddy", fileName],
+    })),
+  ),
 );
 const MOD_BUNDLE_TARGETS = Object.freeze(
-  PROFILE_NAMES.flatMap((profile) => BUNDLE_FILE_NAMES.map((fileName) => ({
-    name: `${profile}-mod-${fileName === "GameBuddy.Stardew.dll" ? "dll" : fileName === "manifest.json" ? "manifest" : "deps"}`,
-    profile,
-    relativePath: ["Mods", "GameBuddy", fileName],
-  }))),
+  PROFILE_NAMES.flatMap((profile) =>
+    BUNDLE_FILE_NAMES.map((fileName) => ({
+      name: `${profile}-mod-${fileName === "GameBuddy.Stardew.dll" ? "dll" : fileName === "manifest.json" ? "manifest" : "deps"}`,
+      profile,
+      relativePath: ["Mods", "GameBuddy", fileName],
+    })),
+  ),
 );
 const MANAGED_PROFILE_TARGETS = Object.freeze([...CONFIG_TARGETS, ...SIDECAR_BUNDLE_TARGETS, ...MOD_BUNDLE_TARGETS]);
 const TRANSACTION_LOCK_DIRECTORY = ".stardew-fixture-profile.lock";
@@ -61,8 +81,8 @@ export async function prepareFixtureProfile(options) {
     if (await exists(backupDir)) throw new Error(`fixture_backup_already_exists:${backupDir}`);
     const sidecar = await readProfileConfigs(context);
     assertFormalAttachmentShape(sidecar.host, sidecar.ai);
-    const host = configureHost(sidecar.host, options.scenario, targetSave);
-    const ai = configureAi(sidecar.ai, experimentalActions);
+    const host = configureHost(sidecar.host, options.scenario, targetSave, options.requireFixtureLiveLocale);
+    const ai = configureAi(sidecar.ai, experimentalActions, options.bridgeOverride);
 
     await mkdir(backupDir, { recursive: true });
     backupCreated = true;
@@ -75,6 +95,7 @@ export async function prepareFixtureProfile(options) {
       scenario: options.scenario,
       targetSave,
       experimentalActions,
+      requireFixtureLiveLocale: options.requireFixtureLiveLocale,
       backupDir,
     });
     return Object.freeze({
@@ -89,7 +110,7 @@ export async function prepareFixtureProfile(options) {
       ...preflight,
     });
   } catch (error) {
-    if (backupCreated && await exists(join(backupDir, "manifest.json"))) {
+    if (backupCreated && (await exists(join(backupDir, "manifest.json")))) {
       await restoreFixtureProfileUnlocked(context, backupDir, { removeBackup: false }).catch(() => {});
     }
     if (backupCreated) await rm(backupDir, { recursive: true, force: true });
@@ -103,18 +124,38 @@ export async function verifyFixtureProfile(options) {
   return verifyFixtureProfileUnlocked({ ...resolveContext(options), ...options });
 }
 
+/** Apply one run's authenticated bridge binding after a fresh Host attachment
+ * manifest exists. The surrounding launcher owns the already-running Host and
+ * must call this before it starts the AI client. The backup/lock remain
+ * untouched so restore is still byte-for-byte. */
+export async function applyFixtureBridgeOverride(options) {
+  const context = resolveContext(options);
+  const backupName = assertBackupName(options.backupName);
+  await assertFixtureTransaction(context, backupName);
+  const ai = await readJson(context.aiSidecar);
+  assertFormalAttachmentShape(await readJson(context.hostSidecar), ai);
+  const configured = configureAi(ai, normalizeActionIds(options.experimentalActions ?? []), options.bridgeOverride);
+  await writeJson(context.aiSidecar, configured);
+  await writeJson(context.aiMod, configured);
+  return Object.freeze({
+    state: "fixture_bridge_override_applied",
+    effectiveConfigSources: Object.freeze([context.aiSidecar, context.aiMod]),
+  });
+}
+
 async function verifyFixtureProfileUnlocked(options) {
   const context = resolveContext(options);
   const expectedScenario = options.scenario;
   const expectedSave = options.targetSave ?? DEFAULT_FIXTURE_SAVE;
   const expectedExperimentalActions = normalizeActionIds(options.experimentalActions ?? []);
+  const requiredFixtureLiveLocale = normalizeFixtureLiveLocaleRequirement(options.requireFixtureLiveLocale);
   const hostSidecar = await readJson(context.hostSidecar);
   const aiSidecar = await readJson(context.aiSidecar);
   const hostMod = await readJson(context.hostMod);
   const aiMod = await readJson(context.aiMod);
 
-  assertHostFixtureConfig(hostSidecar, expectedScenario, expectedSave);
-  assertHostFixtureConfig(hostMod, expectedScenario, expectedSave);
+  assertHostFixtureConfig(hostSidecar, expectedScenario, expectedSave, requiredFixtureLiveLocale);
+  assertHostFixtureConfig(hostMod, expectedScenario, expectedSave, requiredFixtureLiveLocale);
   assertAiFixtureConfig(aiSidecar, expectedExperimentalActions);
   assertAiFixtureConfig(aiMod, expectedExperimentalActions);
   await assertSidecarBundlesAbsent(context);
@@ -145,28 +186,31 @@ export async function inspectFixtureTransaction(options = {}) {
   const requestedBackupName = options.backupName === undefined ? null : assertBackupName(options.backupName);
   const lock = await inspectTransactionLock(context);
   const discoveredBackups = await findFixtureBackups(context);
-  const backupName = requestedBackupName ?? lock.owner?.backupName ?? (discoveredBackups.length === 1 ? discoveredBackups[0] : null);
+  const backupName =
+    requestedBackupName ?? lock.owner?.backupName ?? (discoveredBackups.length === 1 ? discoveredBackups[0] : null);
   const backup = await inspectFixtureBackup(context, backupName);
   const configs = await Promise.all(CONFIG_TARGETS.map((target) => inspectConfigTarget(context, target)));
   const profileState = summarizeProfileState(configs);
   const processes = await inspectStardewProcesses(options.processNames ?? DEFAULT_PROCESS_NAMES);
   const hasSelectedBackup = backup.state !== "absent" && backup.state !== "not_selected";
-  const transactionState = lock.state === "valid"
-    ? "locked"
-    : lock.state === "invalid"
-      ? "lock_invalid"
-      : hasSelectedBackup
-        ? "orphaned_backup"
-        : discoveredBackups.length > 1
-          ? "ambiguous_backups"
-          : "idle";
-  const recommendation = transactionState === "idle"
-    ? "A new fixture prepare may proceed only after its normal process/profile preflight."
-    : transactionState === "orphaned_backup"
-      ? `Inspect the orphaned backup '${backupName}' and explicitly restore it only when it is known to own the modified profiles.`
-      : transactionState === "ambiguous_backups"
-        ? "Multiple fixture backups exist without a transaction lock. Do not prepare or delete files; inspect each named backup and explicitly restore only the confirmed owner."
-        : `Do not start another fixture prepare or delete the lock. Stop only known fixture processes, inspect backup '${backupName ?? "unknown"}', then use the matching restore command if its ownership is confirmed.`;
+  const transactionState =
+    lock.state === "valid"
+      ? "locked"
+      : lock.state === "invalid"
+        ? "lock_invalid"
+        : hasSelectedBackup
+          ? "orphaned_backup"
+          : discoveredBackups.length > 1
+            ? "ambiguous_backups"
+            : "idle";
+  const recommendation =
+    transactionState === "idle"
+      ? "A new fixture prepare may proceed only after its normal process/profile preflight."
+      : transactionState === "orphaned_backup"
+        ? `Inspect the orphaned backup '${backupName}' and explicitly restore it only when it is known to own the modified profiles.`
+        : transactionState === "ambiguous_backups"
+          ? "Multiple fixture backups exist without a transaction lock. Do not prepare or delete files; inspect each named backup and explicitly restore only the confirmed owner."
+          : `Do not start another fixture prepare or delete the lock. Stop only known fixture processes, inspect backup '${backupName ?? "unknown"}', then use the matching restore command if its ownership is confirmed.`;
   return Object.freeze({
     state: "inspection",
     mutationPerformed: false,
@@ -189,15 +233,9 @@ export async function restoreFixtureProfile(options) {
   const backupName = assertBackupName(options.backupName);
   await assertFixtureTransaction(context, backupName);
   const backupDir = join(context.root, backupName);
-  try {
-    const restored = await restoreFixtureProfileUnlocked(context, backupDir, { removeBackup: options.removeBackup });
-    if (options.removeBackup !== false) await endFixtureTransaction(context, backupName);
-    return restored;
-  } catch (error) {
-    // Preserve the transaction lock after a failed restore: another prepare
-    // must not overwrite the still-recoverable backup/profile state.
-    throw error;
-  }
+  const restored = await restoreFixtureProfileUnlocked(context, backupDir, { removeBackup: options.removeBackup });
+  if (options.removeBackup !== false) await endFixtureTransaction(context, backupName);
+  return restored;
 }
 
 async function restoreFixtureProfileUnlocked(context, backupDir, { removeBackup = true } = {}) {
@@ -288,7 +326,11 @@ async function assertFixtureTransaction(context, backupName) {
   const lockDir = transactionLockPath(context);
   const owner = await readFixtureTransaction(lockDir);
   if (owner === null) throw new Error("fixture_transaction_lock_missing");
-  if (owner.version !== TRANSACTION_LOCK_VERSION || typeof owner.ownerId !== "string" || !Number.isSafeInteger(owner.startedAtUnixMs)) {
+  if (
+    owner.version !== TRANSACTION_LOCK_VERSION ||
+    typeof owner.ownerId !== "string" ||
+    !Number.isSafeInteger(owner.startedAtUnixMs)
+  ) {
     throw new Error("fixture_transaction_lock_invalid");
   }
   if (owner.backupName !== backupName) throw new Error(`fixture_transaction_lock_owner_mismatch:${owner.backupName}`);
@@ -311,10 +353,16 @@ async function readFixtureTransaction(lockDir) {
 
 async function inspectTransactionLock(context) {
   const lockDir = transactionLockPath(context);
-  if (!await exists(lockDir)) return Object.freeze({ state: "absent", path: lockDir });
+  if (!(await exists(lockDir))) return Object.freeze({ state: "absent", path: lockDir });
   try {
     const owner = await readFixtureTransaction(lockDir);
-    if (owner === null || owner.version !== TRANSACTION_LOCK_VERSION || typeof owner.backupName !== "string" || typeof owner.ownerId !== "string" || !Number.isSafeInteger(owner.startedAtUnixMs)) {
+    if (
+      owner === null ||
+      owner.version !== TRANSACTION_LOCK_VERSION ||
+      typeof owner.backupName !== "string" ||
+      typeof owner.ownerId !== "string" ||
+      !Number.isSafeInteger(owner.startedAtUnixMs)
+    ) {
       return Object.freeze({ state: "invalid", path: lockDir });
     }
     return Object.freeze({
@@ -330,10 +378,12 @@ async function inspectTransactionLock(context) {
 async function findFixtureBackups(context) {
   try {
     const entries = await readdir(context.root, { withFileTypes: true });
-    return Object.freeze(entries
-      .filter((entry) => entry.isDirectory() && /^[a-z0-9][a-z0-9-]{0,95}-fixture-backup$/.test(entry.name))
-      .map((entry) => entry.name)
-      .sort());
+    return Object.freeze(
+      entries
+        .filter((entry) => entry.isDirectory() && /^[a-z0-9][a-z0-9-]{0,95}-fixture-backup$/.test(entry.name))
+        .map((entry) => entry.name)
+        .sort(),
+    );
   } catch (error) {
     if (error?.code === "ENOENT") return Object.freeze([]);
     throw error;
@@ -343,23 +393,36 @@ async function findFixtureBackups(context) {
 async function inspectFixtureBackup(context, backupName) {
   if (backupName === null) return Object.freeze({ state: "not_selected", backupName: null, entries: [] });
   const backupDir = join(context.root, backupName);
-  if (!await exists(backupDir)) return Object.freeze({ state: "absent", backupName, path: backupDir, entries: [] });
+  if (!(await exists(backupDir))) return Object.freeze({ state: "absent", backupName, path: backupDir, entries: [] });
   const manifestPath = join(backupDir, "manifest.json");
   let manifest;
   try {
     manifest = await readJson(manifestPath);
   } catch {
-    return Object.freeze({ state: "invalid", backupName, path: backupDir, reasonCode: "fixture_backup_manifest_unreadable", entries: [] });
+    return Object.freeze({
+      state: "invalid",
+      backupName,
+      path: backupDir,
+      reasonCode: "fixture_backup_manifest_unreadable",
+      entries: [],
+    });
   }
   if (manifest?.version !== 1 || !Array.isArray(manifest.entries) || !manifest.entries.every(isBackupEntry)) {
-    return Object.freeze({ state: "invalid", backupName, path: backupDir, reasonCode: "fixture_backup_manifest_invalid", entries: [] });
+    return Object.freeze({
+      state: "invalid",
+      backupName,
+      path: backupDir,
+      reasonCode: "fixture_backup_manifest_invalid",
+      entries: [],
+    });
   }
   const entries = [];
   for (const entry of manifest.entries) {
     let integrity = entry.existed ? "valid" : "not_applicable";
     if (entry.existed) {
       try {
-        integrity = sha256(await readFile(join(backupDir, entry.backupFile))) === entry.sha256 ? "valid" : "hash_mismatch";
+        integrity =
+          sha256(await readFile(join(backupDir, entry.backupFile))) === entry.sha256 ? "valid" : "hash_mismatch";
       } catch {
         integrity = "missing";
       }
@@ -382,25 +445,42 @@ function summarizeProfileState(configs) {
     ["host", byName.get("host-sidecar"), byName.get("host-mod")],
     ["ai", byName.get("ai-sidecar"), byName.get("ai-mod")],
   ];
-  return Object.freeze(pairs.map(([profile, sidecar, mod]) => Object.freeze({
-    profile,
-    state: sidecar?.exists === null || mod?.exists === null
-      ? "unreadable"
-      : sidecar?.exists !== mod?.exists
-        ? "diverged"
-        : sidecar.exists && sidecar.sha256 !== mod.sha256
-          ? "diverged"
-          : "consistent",
-  })));
+  return Object.freeze(
+    pairs.map(([profile, sidecar, mod]) =>
+      Object.freeze({
+        profile,
+        state:
+          sidecar?.exists === null || mod?.exists === null
+            ? "unreadable"
+            : sidecar?.exists !== mod?.exists
+              ? "diverged"
+              : sidecar.exists && sidecar.sha256 !== mod.sha256
+                ? "diverged"
+                : "consistent",
+      }),
+    ),
+  );
 }
 
 async function inspectConfigTarget(context, target) {
   const path = configPath(context, target.profile, target.relativePath);
   try {
-    return Object.freeze({ name: target.name, profile: target.profile, exists: true, sha256: sha256(await readFile(path)) });
+    return Object.freeze({
+      name: target.name,
+      profile: target.profile,
+      exists: true,
+      sha256: sha256(await readFile(path)),
+    });
   } catch (error) {
-    if (error?.code === "ENOENT") return Object.freeze({ name: target.name, profile: target.profile, exists: false, sha256: null });
-    return Object.freeze({ name: target.name, profile: target.profile, exists: null, sha256: null, reasonCode: "fixture_config_unreadable" });
+    if (error?.code === "ENOENT")
+      return Object.freeze({ name: target.name, profile: target.profile, exists: false, sha256: null });
+    return Object.freeze({
+      name: target.name,
+      profile: target.profile,
+      exists: null,
+      sha256: null,
+      reasonCode: "fixture_config_unreadable",
+    });
   }
 }
 
@@ -409,43 +489,101 @@ async function readProfileConfigs(context) {
 }
 
 function assertFormalAttachmentShape(host, ai) {
-  if (host?.HostAutomation?.Enable !== true || host?.HostFarmhandProvisioning?.Enable !== true || ai?.FarmhandProvisioner?.Enable !== true) {
+  if (
+    host?.HostAutomation?.Enable !== true ||
+    host?.HostFarmhandProvisioning?.Enable !== true ||
+    ai?.FarmhandProvisioner?.Enable !== true
+  ) {
     throw new Error("profiles_not_in_expected_formal_attachment_shape");
   }
   // The sidecar is only the transaction input. SMAPI loads the Mod-local copy,
   // which may be absent or stale before preparation; do not silently regard it
   // as a valid live attachment profile. `deployModBundle` writes the controlled
   // effective copy and `verifyFixtureProfile` proves equality before launch.
-  if (!host.HostFarmhandProvisioning.SessionDirectory || !host.HostFarmhandProvisioning.SessionToken || !ai.FarmhandProvisioner.ManifestPath || !ai.FarmhandProvisioner.SessionToken) {
+  if (
+    !host.HostFarmhandProvisioning.SessionDirectory ||
+    !host.HostFarmhandProvisioning.SessionToken ||
+    !ai.FarmhandProvisioner.ManifestPath ||
+    !ai.FarmhandProvisioner.SessionToken
+  ) {
     throw new Error("profiles_missing_formal_attachment_binding");
   }
 }
 
 function assertFixtureInputs(scenario, targetSave) {
   if (!ALLOWED_FIXTURE_SCENARIOS.includes(scenario)) throw new Error("fixture_scenario_not_allowlisted");
-  if (typeof targetSave !== "string" || !/^GameBuddyFixture_[A-Za-z0-9_-]{1,96}$/.test(targetSave)) throw new Error("invalid_fixture_save");
+  if (typeof targetSave !== "string" || !/^GameBuddyFixture_[A-Za-z0-9_-]{1,96}$/.test(targetSave))
+    throw new Error("invalid_fixture_save");
 }
 
-function configureHost(value, scenario, targetSave) {
+function configureHost(value, scenario, targetSave, requireFixtureLiveLocale = undefined) {
   assertFixtureInputs(scenario, targetSave);
+  const requiredFixtureLiveLocale = normalizeFixtureLiveLocaleRequirement(requireFixtureLiveLocale);
   const host = structuredClone(value);
   host.HostAutomation.SaveName = targetSave;
   host.HostAutomation.FixtureScenario = scenario;
   host.HostAutomation.TimeoutSeconds = 300;
+  host.HostAutomation.RequireFixtureLiveLocale = requiredFixtureLiveLocale;
   host.ActionPolicyVersion = 0;
   host.ExperimentalActions = [];
   host.EnabledActions = null;
   return host;
 }
 
-function configureAi(value, experimentalActions) {
+function configureAi(value, experimentalActions, bridgeOverride = undefined) {
   const ai = structuredClone(value);
   ai.ActionPolicyVersion = 1;
   ai.DeniedActions = [];
   ai.DeniedActionFamilies = [];
   ai.ExperimentalActions = experimentalActions;
   delete ai.EnabledActions;
+  if (bridgeOverride !== undefined) {
+    const bridge = assertFixtureBridgeOverride(bridgeOverride);
+    ai.EnableLocalBridge = true;
+    ai.PipeName = bridge.pipeName;
+    ai.BridgeToken = bridge.bridgeToken;
+    ai.SaveId = bridge.saveId;
+    ai.WorldId = bridge.worldId;
+    ai.PlayerId = bridge.playerId;
+    ai.CompanionId = bridge.companionId;
+  }
   return ai;
+}
+
+/**
+ * Trusted launcher-only override for a transaction-owned AI config. It is
+ * deliberately narrow: a fresh formal manifest supplies scope and the launcher
+ * supplies the pipe credentials. Nothing here accepts policy, capability,
+ * model, or external credentials.
+ */
+function assertFixtureBridgeOverride(value) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(",") !== "bridgeToken,companionId,pipeName,playerId,saveId,worldId" ||
+    !isOpaque(value.pipeName) ||
+    !isToken(value.bridgeToken) ||
+    !isOpaque(value.saveId) ||
+    !isOpaque(value.worldId) ||
+    !isOpaque(value.playerId) ||
+    !isOpaque(value.companionId)
+  )
+    throw new Error("invalid_fixture_bridge_override");
+  return Object.freeze({ ...value });
+}
+
+function normalizeFixtureLiveLocaleRequirement(value) {
+  if (value === undefined || value === "") return "";
+  if (value !== "zh-CN" && value !== "en-US") throw new Error("invalid_fixture_live_locale_requirement");
+  return value;
+}
+
+function isOpaque(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+function isToken(value) {
+  return typeof value === "string" && value.length >= 16 && value.length <= 256 && /^[A-Za-z0-9_-]+$/.test(value);
 }
 
 async function backupConfigs(context, backupDir) {
@@ -460,7 +598,14 @@ async function backupConfigs(context, backupDir) {
       digest = sha256(bytes);
       await writeFile(join(backupDir, backupFile), bytes);
     }
-    entries.push({ name: target.name, profile: target.profile, relativePath: target.relativePath, backupFile, existed, sha256: digest });
+    entries.push({
+      name: target.name,
+      profile: target.profile,
+      relativePath: target.relativePath,
+      backupFile,
+      existed,
+      sha256: digest,
+    });
   }
   const manifest = Object.freeze({ version: 1, entries });
   await writeJson(join(backupDir, "manifest.json"), manifest);
@@ -478,8 +623,10 @@ async function assertSidecarBundlesAbsent(context) {
 async function deployModBundle(context, host, ai) {
   const releaseDll = join(context.releaseDir, "GameBuddy.Stardew.dll");
   const releaseManifest = join(context.releaseDir, "manifest.json");
+  const releaseCoreDll = join(context.releaseDir, "GameBuddy.Stardew.Core.dll");
   const releaseDeps = join(context.releaseDir, "GameBuddy.Stardew.deps.json");
-  for (const file of [releaseDll, releaseManifest, releaseDeps]) if (!await exists(file)) throw new Error(`release_bundle_missing:${file}`);
+  for (const file of [releaseDll, releaseCoreDll, releaseManifest, releaseDeps])
+    if (!(await exists(file))) throw new Error(`release_bundle_missing:${file}`);
   for (const profile of PROFILE_NAMES) {
     const sidecarRoot = join(context.profiles, profile, "GameBuddy");
     const modRoot = join(context.profiles, profile, "Mods", "GameBuddy");
@@ -490,6 +637,7 @@ async function deployModBundle(context, host, ai) {
     // remains available as the transaction input and is restored separately.
     await Promise.all(BUNDLE_FILE_NAMES.map((fileName) => rm(join(sidecarRoot, fileName), { force: true })));
     await cp(releaseDll, join(modRoot, "GameBuddy.Stardew.dll"));
+    await cp(releaseCoreDll, join(modRoot, "GameBuddy.Stardew.Core.dll"));
     await cp(releaseManifest, join(modRoot, "manifest.json"));
     await cp(releaseDeps, join(modRoot, "GameBuddy.Stardew.deps.json"));
   }
@@ -497,14 +645,31 @@ async function deployModBundle(context, host, ai) {
   await writeJson(context.aiMod, ai);
 }
 
-function assertHostFixtureConfig(value, scenario, targetSave) {
-  if (value?.HostAutomation?.Enable !== true || value.HostAutomation.SaveName !== targetSave || value.HostAutomation.FixtureScenario !== scenario || value.HostAutomation.TimeoutSeconds !== 300 || value.ActionPolicyVersion !== 0 || !Array.isArray(value.ExperimentalActions) || value.ExperimentalActions.length !== 0 || value.EnabledActions !== null) {
+function assertHostFixtureConfig(value, scenario, targetSave, requiredFixtureLiveLocale = "") {
+  if (
+    value?.HostAutomation?.Enable !== true ||
+    value.HostAutomation.SaveName !== targetSave ||
+    value.HostAutomation.FixtureScenario !== scenario ||
+    value.HostAutomation.TimeoutSeconds !== 300 ||
+    value.HostAutomation.RequireFixtureLiveLocale !== requiredFixtureLiveLocale ||
+    value.ActionPolicyVersion !== 0 ||
+    !Array.isArray(value.ExperimentalActions) ||
+    value.ExperimentalActions.length !== 0 ||
+    value.EnabledActions !== null
+  ) {
     throw new Error("host_fixture_config_mismatch");
   }
 }
 
 function assertAiFixtureConfig(value, experimentalActions) {
-  if (value?.FarmhandProvisioner?.Enable !== true || value.ActionPolicyVersion !== 1 || !sameStrings(value.DeniedActions, []) || !sameStrings(value.DeniedActionFamilies, []) || !sameStrings(value.ExperimentalActions, experimentalActions) || Object.hasOwn(value, "EnabledActions")) {
+  if (
+    value?.FarmhandProvisioner?.Enable !== true ||
+    value.ActionPolicyVersion !== 1 ||
+    !sameStrings(value.DeniedActions, []) ||
+    !sameStrings(value.DeniedActionFamilies, []) ||
+    !sameStrings(value.ExperimentalActions, experimentalActions) ||
+    Object.hasOwn(value, "EnabledActions")
+  ) {
     throw new Error("ai_fixture_config_mismatch");
   }
 }
@@ -515,7 +680,8 @@ async function assertNoStardewProcesses(processNames) {
 }
 
 async function inspectStardewProcesses(processNames) {
-  if (!Array.isArray(processNames) || processNames.some((name) => typeof name !== "string" || name.length === 0)) throw new Error("invalid_fixture_process_names");
+  if (!Array.isArray(processNames) || processNames.some((name) => typeof name !== "string" || name.length === 0))
+    throw new Error("invalid_fixture_process_names");
   if (process.platform !== "win32") return Object.freeze([]);
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
@@ -523,8 +689,10 @@ async function inspectStardewProcesses(processNames) {
   const matches = [];
   for (const imageName of processNames) {
     try {
-      const { stdout } = await tasklist("tasklist.exe", ["/FI", `IMAGENAME eq ${imageName}`, "/NH", "/FO", "CSV"], { windowsHide: true });
-      if (stdout.split(/\r?\n/).some((line) => line.includes(`\"${imageName}\"`))) matches.push(imageName);
+      const { stdout } = await tasklist("tasklist.exe", ["/FI", `IMAGENAME eq ${imageName}`, "/NH", "/FO", "CSV"], {
+        windowsHide: true,
+      });
+      if (stdout.split(/\r?\n/).some((line) => line.includes(`"${imageName}"`))) matches.push(imageName);
     } catch (error) {
       // tasklist uses exit code 1 when a filter has no matching process.
       if (error?.code !== 1) throw new Error(`fixture_process_guard_failed:${imageName}:${error?.code ?? "unknown"}`);
@@ -534,17 +702,21 @@ async function inspectStardewProcesses(processNames) {
 }
 
 function assertBackupName(value) {
-  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,95}$/.test(value) || !value.endsWith("-fixture-backup")) throw new Error("invalid_fixture_backup_name");
+  if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,95}$/.test(value) || !value.endsWith("-fixture-backup"))
+    throw new Error("invalid_fixture_backup_name");
   return value;
 }
 
 function normalizeActionIds(value) {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !/^[a-z0-9_]{1,128}$/.test(item))) throw new Error("invalid_experimental_actions");
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !/^[a-z0-9_]{1,128}$/.test(item)))
+    throw new Error("invalid_experimental_actions");
   return [...new Set(value)].sort();
 }
 
 function sameStrings(value, expected) {
-  return Array.isArray(value) && value.length === expected.length && value.every((item, index) => item === expected[index]);
+  return (
+    Array.isArray(value) && value.length === expected.length && value.every((item, index) => item === expected[index])
+  );
 }
 
 function configPath(context, profile, relativePath) {
@@ -552,8 +724,25 @@ function configPath(context, profile, relativePath) {
 }
 
 function isBackupEntry(entry) {
-  if (!entry || typeof entry.name !== "string" || typeof entry.profile !== "string" || !Array.isArray(entry.relativePath) || !entry.relativePath.every((part) => typeof part === "string" && /^[A-Za-z0-9_.-]+$/.test(part)) || typeof entry.backupFile !== "string" || !/^[A-Za-z0-9_.-]+\.json$/.test(entry.backupFile) || typeof entry.existed !== "boolean" || !(entry.sha256 === null || /^[a-f0-9]{64}$/.test(entry.sha256))) return false;
-  return MANAGED_PROFILE_TARGETS.some((target) => target.name === entry.name && target.profile === entry.profile && target.relativePath.length === entry.relativePath.length && target.relativePath.every((part, index) => part === entry.relativePath[index]));
+  if (
+    !entry ||
+    typeof entry.name !== "string" ||
+    typeof entry.profile !== "string" ||
+    !Array.isArray(entry.relativePath) ||
+    !entry.relativePath.every((part) => typeof part === "string" && /^[A-Za-z0-9_.-]+$/.test(part)) ||
+    typeof entry.backupFile !== "string" ||
+    !/^[A-Za-z0-9_.-]+\.json$/.test(entry.backupFile) ||
+    typeof entry.existed !== "boolean" ||
+    !(entry.sha256 === null || /^[a-f0-9]{64}$/.test(entry.sha256))
+  )
+    return false;
+  return MANAGED_PROFILE_TARGETS.some(
+    (target) =>
+      target.name === entry.name &&
+      target.profile === entry.profile &&
+      target.relativePath.length === entry.relativePath.length &&
+      target.relativePath.every((part, index) => part === entry.relativePath[index]),
+  );
 }
 
 async function readJson(path) {
@@ -566,8 +755,18 @@ async function writeJson(path, value) {
 }
 
 async function exists(path) {
-  try { await stat(path); return true; } catch (error) { if (error?.code === "ENOENT") return false; throw error; }
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
-async function hashFile(path) { return sha256(await readFile(path)); }
-function sha256(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
+async function hashFile(path) {
+  return sha256(await readFile(path));
+}
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}

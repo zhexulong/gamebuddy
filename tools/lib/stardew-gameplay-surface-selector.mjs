@@ -20,10 +20,7 @@ function dispatchKeyNames(methodName) {
 }
 
 function isOperationLiteral(value) {
-  return value !== "..."
-    && value.length <= 160
-    && !/^\([A-Z]\)/.test(value)
-    && !/^-?\d{4,}$/.test(value);
+  return value !== "..." && value.length <= 160 && !/^\([A-Z]\)/.test(value) && !/^-?\d{4,}$/.test(value);
 }
 
 export function extractLiteralOperationSelectors(source, methodName) {
@@ -34,7 +31,8 @@ export function extractLiteralOperationSelectors(source, methodName) {
   function add(selector, selectorKind, variableName = null) {
     if (!isOperationLiteral(selector)) return;
     const key = `${selectorKind}:${variableName ?? ""}:${selector}`;
-    if (!selectors.has(key)) selectors.set(key, { selector, selectorKind, ...(variableName ? { selectorVariable: variableName } : {}) });
+    if (!selectors.has(key))
+      selectors.set(key, { selector, selectorKind, ...(variableName ? { selectorVariable: variableName } : {}) });
   }
 
   function bodyAfter(openBrace) {
@@ -155,8 +153,10 @@ export function extractLiteralOperationSelectors(source, methodName) {
     }
   }
 
-  return [...selectors.values()].sort((left, right) =>
-    left.selector.localeCompare(right.selector)
-      || left.selectorKind.localeCompare(right.selectorKind)
-      || (left.selectorVariable ?? "").localeCompare(right.selectorVariable ?? ""));
+  return [...selectors.values()].sort(
+    (left, right) =>
+      left.selector.localeCompare(right.selector) ||
+      left.selectorKind.localeCompare(right.selectorKind) ||
+      (left.selectorVariable ?? "").localeCompare(right.selectorVariable ?? ""),
+  );
 }

@@ -13,6 +13,7 @@ async function fixture() {
   await mkdir(join(root, "resources"), { recursive: true });
   await mkdir(join(root, "dist-test"), { recursive: true });
   await writeFile(join(root, "package.json"), JSON.stringify({ name: "verification-artifact-fixture", private: true, type: "module" }));
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   await writeFile(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext" } }));
   await writeFile(join(root, "tsconfig.test.json"), JSON.stringify({ extends: "./tsconfig.json", compilerOptions: { outDir: "dist-test", noEmit: false }, include: ["src/**/*.ts"] }));
   await writeFile(join(root, "src", "fixture.ts"), "export const fixture = 1;\n");
@@ -41,6 +42,10 @@ test("verification artifact manifest rejects an output mutation and a current so
   await assert.rejects(assertHostVerificationArtifactManifest({ root }), /host_verification_artifact_output_inventory_mismatch/);
 
   await writeHostVerificationArtifactManifest({ root });
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\nchanged: true\n");
+  await assert.rejects(assertHostVerificationArtifactManifest({ root }), /host_verification_artifact_source_snapshot_mismatch/);
+
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   await writeFile(join(root, "src", "fixture.ts"), "export const fixture = 2;\n");
   await assert.rejects(assertHostVerificationArtifactManifest({ root }), /host_verification_artifact_source_snapshot_mismatch/);
 
