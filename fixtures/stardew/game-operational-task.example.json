@@ -1,6 +1,6 @@
 {
   "schema": "gamebuddy-stardew-game-operational-task/v1",
-  "task": "Walk to the farm chest, inspect its current contents, and put one ordinary item away if the game makes that action possible.",
+  "task": "Make the farm's stored supplies more useful for the player, if the current game world makes that possible.",
   "targetVersion": "1.6.8",
   "profile": "stardew-farmhand-v1",
   "environment": {

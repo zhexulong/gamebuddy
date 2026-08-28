@@ -86,14 +86,13 @@ async function passed(harness, options = {}) {
   return result;
 }
 
-test("parser accepts only config and optional report", () => {
+test("parser accepts only config and the runner owns the report location", () => {
   assert.deepEqual(parseArguments(["--config", "C:/gate.json"]), {
     configPath: resolve("C:/gate.json"),
-    reportPath: undefined,
   });
   assert.throws(() => parseArguments([]), /usage:/);
   assert.throws(() => parseArguments(["--report", "x"]), /usage:/);
-  assert.throws(() => parseArguments(["--config", "x", "--config", "y"]), /usage:/);
+  assert.throws(() => parseArguments(["--config", "C:/gate.json", "--report", "x"]), /usage:/);
 });
 
 test("production IPC dispatches exactly one natural-language task and accepts one correlated terminal aggregate", async () => {
@@ -188,6 +187,7 @@ test("fixture contains only schema, natural language task, target facts, and env
   const fixture = JSON.parse(await readFile(new URL("../fixtures/stardew/game-operational-task.example.json", import.meta.url), "utf8"));
   assert.deepEqual(Object.keys(fixture).sort(), ["environment", "profile", "schema", "targetVersion", "task"]);
   assert.equal(typeof fixture.task, "string");
+  assert.doesNotMatch(fixture.task, /\b(?:walk|inspect|put|equip|use|move|route|then|after)\b/i);
   for (const key of ["actions", "routes", "tools", "capabilitySubset", "budget"]) assert.equal(Object.hasOwn(fixture, key), false);
   assert.equal(fixture.environment.platform, "windows");
 });
@@ -208,6 +208,8 @@ test("runner source uses the production launcher-owned manifest and fresh STOP c
   assert.match(source, /gamebuddy-game-operational-gate-evidence\/v2/);
   assert.match(source, /taskkill\.exe/);
   assert.match(source, /harness_timeout/);
+  assert.match(source, /RELEASE_EVIDENCE_ROOT/);
+  assert.match(source, /prepareReleaseReportTarget\(runId\)/);
   assert.match(source, /stdout.*never parsed/i);
   assert.doesNotMatch(source, /verifyGameOperationalGateMarkerReport/);
   assert.doesNotMatch(source, /game_operational_runtime_or_bridge_receipt_ipc_unavailable/);
