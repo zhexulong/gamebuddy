@@ -239,6 +239,12 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  reserveOwnedPlayerHostPhaseAForActivation(
+    runtimeRoot: string,
+    claim: StardewPlayerHostBootstrapClaim,
+  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
+  stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
+  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
 }>;
 
@@ -262,6 +268,9 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
     createOwnedPlayerHostManifestHandoffCoordinator: closed.createOwnedPlayerHostManifestHandoffCoordinator,
     materializeAiClientProfileAfterManifestAdmission: closed.materializeAiClientProfileAfterManifestAdmission,
     launchOwnedPlayerHostStageC: closed.launchOwnedPlayerHostStageC,
+    reserveOwnedPlayerHostPhaseAForActivation: closed.reserveOwnedPlayerHostPhaseAForActivation,
+    stageOwnedPlayerHostPhaseB: closed.stageOwnedPlayerHostPhaseB,
+    terminalizeOwnedPlayerHostOwner: closed.terminalizeOwnedPlayerHostOwner,
     quarantineOwnedPlayerHostOwner: closed.quarantineOwnedPlayerHostOwner,
   });
 }
@@ -297,6 +306,12 @@ export function createStardewPrivateBootstrapTestCore(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  reserveOwnedPlayerHostPhaseAForActivation(
+    runtimeRoot: string,
+    claim: StardewPlayerHostBootstrapClaim,
+  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
+  stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
+  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
   bindOwnedPlayerHostPhaseAOwner(
     owner: StardewOwnedPlayerHostPhaseAOwner,
@@ -340,6 +355,15 @@ export function createStardewPrivateBootstrapTestCore(
       // cross-composition owners are rejected before the launch attempt.
       return base.launchOwnedPlayerHostStageC(owner, installation);
     },
+    reserveOwnedPlayerHostPhaseAForActivation(runtimeRoot, claim) {
+      return base.reserveOwnedPlayerHostPhaseAForActivation(runtimeRoot, claim);
+    },
+    stageOwnedPlayerHostPhaseB(owner) {
+      return base.stageOwnedPlayerHostPhaseB(owner);
+    },
+    terminalizeOwnedPlayerHostOwner(owner) {
+      base.terminalizeOwnedPlayerHostOwner(owner);
+    },
     quarantineOwnedPlayerHostOwner(owner) {
       return base.quarantineOwnedPlayerHostOwner(owner);
     },
@@ -380,6 +404,12 @@ type ClosedBootstrapCore = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  reserveOwnedPlayerHostPhaseAForActivation(
+    runtimeRoot: string,
+    claim: StardewPlayerHostBootstrapClaim,
+  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
+  stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
+  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
 }>;
 
@@ -602,10 +632,65 @@ function createClosedComposition(
        installation: AdmittedStardewInstallation,
      ): Promise<StardewOwnedPlayerHostStageCResult> =>
        launchOwnedPlayerHostStageC(owner, installation, compositionIdentity),
-     quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
-       const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
-       return facts.quarantineOwner();
-     },
+      reserveOwnedPlayerHostPhaseAForActivation: async (
+        runtimeRoot: string,
+        claim: StardewPlayerHostBootstrapClaim,
+      ): Promise<StardewOwnedPlayerHostPhaseAOwner> => {
+        const claimRegistration = claims.get(claim);
+        if (claimRegistration === undefined || claimRegistration.state !== "available")
+          throw new Error("stardew_bootstrap_claim_not_available");
+        let playerReservation: StardewPlayerHostLaunchReservation | undefined;
+        let aiReservation: StardewAiClientLaunchReservation | undefined;
+        try {
+          playerReservation = playerHostProcessOwner.reservePlayerHostLaunch();
+          aiReservation = aiClientProcessOwner.reserveAiClientLaunch();
+          return await composition.reserveOwnedPlayerHostPhaseA(
+            runtimeRoot,
+            claim,
+            playerReservation,
+            aiReservation,
+          );
+        } catch (error) {
+          // No reservation or claim may survive a pre-owner failure. Exact
+          // registrations remain closure-private and are revoked here even
+          // when the second manager reservation fails synchronously.
+          if (playerReservation !== undefined) {
+            try { playerHostLaunches.get(playerReservation)?.registration.revoke(); } catch { /* fail closed */ }
+            const registration = playerHostLaunches.get(playerReservation);
+            if (registration !== undefined) registration.state = "consumed";
+          }
+          if (aiReservation !== undefined) {
+            try { aiLaunches.get(aiReservation)?.registration.revoke(); } catch { /* fail closed */ }
+            const registration = aiLaunches.get(aiReservation);
+            if (registration !== undefined) registration.state = "consumed";
+          }
+          claimRegistration.state = "consumed";
+          throw error;
+        }
+      },
+      stageOwnedPlayerHostPhaseB: async (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
+        requireOwnedPhaseAFacts(owner, compositionIdentity);
+        await consumeOwnedPlayerHostPhaseAOwner(owner, async () => {
+          try {
+            await stageOwnedPlayerHostPhaseB(owner);
+          } catch (error) {
+            try {
+              await requireOwnedPhaseAFacts(owner, compositionIdentity).quarantineOwner();
+            } finally {
+              terminalizeOwnedPlayerHostPhaseAOwner(owner);
+            }
+            throw error;
+          }
+        });
+      },
+      terminalizeOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): void => {
+        requireOwnedPhaseAFacts(owner, compositionIdentity);
+        terminalizeOwnedPlayerHostPhaseAOwner(owner);
+      },
+      quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
+        const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+        return facts.quarantineOwner();
+      },
   });
 }
 

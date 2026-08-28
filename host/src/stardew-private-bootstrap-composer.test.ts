@@ -73,7 +73,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedPlayerHostStageC" | "quarantineOwnedPlayerHostOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -216,6 +216,29 @@ test.after(async () => {
   for (const root of temporaryRoots.splice(0)) {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("activation reservation atomically compensates Player Host when AI generation fails", async () => {
+  const harness = createHarness({ launchGenerations: [""] });
+  const internal = createStardewPrivateBootstrapCompositionForTesting(harness.dependencies);
+  const browserSessionId = "browser-session-activation-compensation";
+  const claim = internal.composition.broker.confirm({
+    playerId: "player-1",
+    companionId: "companion-1",
+    browserSessionId,
+    expiresAtMs: 10_000,
+  }).consume(browserSessionId);
+
+  await assert.rejects(
+    internal.reserveOwnedPlayerHostPhaseAForActivation(await createRoot(), claim),
+    /invalid_launch_generation/,
+  );
+  assert.deepEqual(internal.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
+  assert.deepEqual(internal.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
+  await assert.rejects(
+    internal.reserveOwnedPlayerHostPhaseAForActivation(await createRoot(), claim),
+    /stardew_bootstrap_claim_not_available/,
+  );
 });
 
 type SpawnCall = Readonly<{
@@ -559,6 +582,8 @@ test("only the production internal and dedicated test-only adapter import the co
   assert.deepEqual(testInternalImporters.sort(), [
     "stardew-private-bootstrap-composer.test-support.ts",
     "stardew-private-bootstrap-composer.test.ts",
+    "stardew-production-lifecycle-coordinator.internal.test.ts",
+    "stardew-production-lifecycle-coordinator.test-support-internal.ts",
   ]);
   const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
   assert.doesNotMatch(productionInternal, /test-support|ForTesting|TestView|TestingComposition/);
@@ -574,6 +599,9 @@ test("production internal composition exposes only the private C1 materializer w
     "launchOwnedPlayerHostStageC",
     "materializeAiClientProfileAfterManifestAdmission",
     "quarantineOwnedPlayerHostOwner",
+    "reserveOwnedPlayerHostPhaseAForActivation",
+    "stageOwnedPlayerHostPhaseB",
+    "terminalizeOwnedPlayerHostOwner",
   ].sort());
   assert.equal(typeof internal.materializeAiClientProfileAfterManifestAdmission, "function");
   assert.equal(typeof internal.quarantineOwnedPlayerHostOwner, "function");

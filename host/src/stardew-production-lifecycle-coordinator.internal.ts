@@ -1,31 +1,50 @@
-import { createStardewPrivateBootstrapComposition } from "./stardew-private-bootstrap-composer.internal.js";
-import type {
-  StopOwnedAiClientResult,
-  StardewAiClientProcessOwner,
-} from "./stardew-ai-client-process-owner.js";
-import type {
-  StopOwnedPlayerHostResult,
-  StardewPlayerHostProcessOwner,
-} from "./stardew-player-host-process-owner.js";
+import {
+  consumeComposedReferenceGameBrowserLifecycleActivationAdmission,
+  type ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  type ComposedReferenceGameBrowserLifecycleActivationIssuer,
+} from "./composed-reference-game-browser.js";
+import type { HostDeploymentManifest } from "./deployment-manifest.js";
+import {
+  createStardewPrivateBootstrapComposition,
+} from "./stardew-private-bootstrap-composer.internal.js";
+import type { StardewOwnedPlayerHostPhaseAOwner } from "./stardew-private-bootstrap-composer.js";
+import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
+import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-owner.js";
 import {
   createStardewRoleLifecycleFacade,
-  type StardewRoleLifecycleFacade,
   type StardewRoleLifecycleReader,
 } from "./stardew-role-lifecycle-facade.js";
 
-/** The production lifecycle surface deliberately exposes reads only. */
+export type StardewPrivateActivationSnapshot = Readonly<{
+  schemaVersion: 1;
+  requestId: string;
+  authorityGeneration: number;
+  revision: number;
+  state: "inactive" | "reserving" | "staging" | "staged" | "failed" | "closing" | "closed";
+}>;
+
+export type StardewLifecycleActivationIssuerBindingSink = Readonly<{
+  bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
+}>;
+
+export type StardewProductionLifecycleActivationOwner = Readonly<{
+  bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
+  activate(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewPrivateActivationSnapshot>;
+  readPrivateActivationSnapshot(): StardewPrivateActivationSnapshot;
+}>;
+
+/** Internal production lifecycle authority; no launch or browser admission is returned. */
 export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly lifecycleReader: StardewRoleLifecycleReader;
+  readonly activationOwner: StardewProductionLifecycleActivationOwner;
   close(): Promise<void>;
 }>;
 
-type CloseState = "open" | "closing" | "closed";
+type BootstrapComposition = ReturnType<typeof createStardewPrivateBootstrapComposition>;
+type ActivationState = StardewPrivateActivationSnapshot["state"];
 
-/**
- * A close failure never converts an uncertain owner into a successful stop.
- * The next close may retry the exact owner operation that did not produce a
- * terminal result.
- */
 class StardewProductionLifecycleCloseError extends Error {
   public constructor() {
     super("stardew_lifecycle_close_incomplete");
@@ -33,114 +52,190 @@ class StardewProductionLifecycleCloseError extends Error {
   }
 }
 
-function isSuccessfulAiStop(result: StopOwnedAiClientResult): boolean {
-  return (
-    result.kind === "no_owned_ai_client" ||
-    result.kind === "already_stopped" ||
-    result.kind === "terminated"
-  );
+function successfulAiStop(result: StopOwnedAiClientResult): boolean {
+  return result.kind === "no_owned_ai_client" || result.kind === "already_stopped" || result.kind === "terminated";
 }
 
-function isSuccessfulPlayerHostStop(result: StopOwnedPlayerHostResult): boolean {
-  return (
-    result.kind === "no_owned_player_host" ||
-    result.kind === "already_stopped" ||
-    result.kind === "terminated"
-  );
+function successfulPlayerStop(result: StopOwnedPlayerHostResult): boolean {
+  return result.kind === "no_owned_player_host" || result.kind === "already_stopped" || result.kind === "terminated";
 }
 
-function closeIncomplete(): StardewProductionLifecycleCloseError {
-  return new StardewProductionLifecycleCloseError();
-}
-
-type ProductionBootstrapComposition = ReturnType<typeof createStardewPrivateBootstrapComposition>["composition"];
-
-function createCoordinatorFromComposition(
-  composition: ProductionBootstrapComposition,
+function createCoordinator(
+  manifest: HostDeploymentManifest,
+  internal: BootstrapComposition,
 ): StardewProductionLifecycleCoordinator {
-  const facade: StardewRoleLifecycleFacade = createStardewRoleLifecycleFacade(
-    null,
-    composition.aiClientProcessOwner,
-  );
+  const runtimeRoot = `${manifest.runtimeRoot}`;
+  const playerId = `${manifest.principal.playerId}`;
+  const companionId = `${manifest.principal.companionId}`;
+  const requestId = `${manifest.bootstrapOperationId}`;
+  const authorityGeneration = manifest.authorityGeneration;
+  const composition = internal.composition;
+  const facade = createStardewRoleLifecycleFacade(null, composition.aiClientProcessOwner);
 
-  // Keep the read-only projection separate from the facade so no consumer can
-  // reach either role's stop authority through the coordinator result.
-  let state: CloseState = "open";
+  let activationState: ActivationState = "inactive";
+  let revision = 0;
+  let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
+  let acceptedAdmission: ComposedReferenceGameBrowserLifecycleActivationAdmission | undefined;
+  let activationPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
+  let exactOwner: StardewOwnedPlayerHostPhaseAOwner | undefined;
+  let ownerQuarantined = false;
   let brokerClosed = false;
-  let aiClientStopped = false;
-  let playerHostStopped = false;
+  let aiStopped = false;
+  let playerStopped = false;
   let closePromise: Promise<void> | undefined;
 
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
-      if (state === "closed") throw new Error("stardew_lifecycle_closed");
+      if (activationState === "closed") throw new Error("stardew_lifecycle_closed");
       return facade.readRoleLifecycleView();
     },
   });
+  const isClosing = (): boolean => activationState === "closing" || activationState === "closed";
 
-  const closeImpl = async (): Promise<void> => {
-    if (state === "closed") return;
-    state = "closing";
+  const transition = (next: ActivationState): void => {
+    if (activationState === next) return;
+    activationState = next;
+    revision += 1;
+  };
+  const snapshot = (): StardewPrivateActivationSnapshot => Object.freeze({
+    schemaVersion: 1,
+    requestId,
+    authorityGeneration,
+    revision,
+    state: activationState,
+  });
 
+  const bindBrowserAdmissionIssuer = (
+    candidate: ComposedReferenceGameBrowserLifecycleActivationIssuer,
+  ): void => {
+    if (isClosing()) throw new Error("stardew_lifecycle_closing");
+    if (issuer !== undefined) throw new Error("stardew_lifecycle_activation_issuer_already_bound");
+    issuer = candidate;
+  };
+
+  const runActivation = async (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewPrivateActivationSnapshot> => {
+    const boundIssuer = issuer;
+    if (boundIssuer === undefined) throw new Error("stardew_lifecycle_activation_issuer_unbound");
+    transition("reserving");
+    try {
+      const ownerPromise = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        boundIssuer,
+        admission,
+        ({ browserSessionId, expiresAtMs }) => {
+          const claim = composition.broker.confirm({
+            playerId,
+            companionId,
+            browserSessionId,
+            expiresAtMs: Math.min(expiresAtMs, Date.now() + 10 * 60_000),
+          }).consume(browserSessionId);
+           return internal.reserveOwnedPlayerHostPhaseAForActivation(runtimeRoot, claim);
+        },
+      );
+      if (ownerPromise === undefined) throw new Error("stardew_lifecycle_activation_admission_invalid");
+      const owner = await ownerPromise;
+      exactOwner = owner;
+      if (isClosing()) {
+        await internal.quarantineOwnedPlayerHostOwner(owner);
+        ownerQuarantined = true;
+        throw new Error("stardew_lifecycle_closing");
+      }
+      transition("staging");
+       await internal.stageOwnedPlayerHostPhaseB(owner);
+       if (isClosing()) {
+         await internal.quarantineOwnedPlayerHostOwner(owner);
+         ownerQuarantined = true;
+         internal.terminalizeOwnedPlayerHostOwner(owner);
+         throw new Error("stardew_lifecycle_closing");
+       }
+      transition("staged");
+      return snapshot();
+    } catch (error) {
+      if (!isClosing()) transition("failed");
+      throw new Error("stardew_lifecycle_activation_failed", { cause: error });
+    }
+  };
+
+  const activate = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewPrivateActivationSnapshot> => {
+    if (activationState === "closing" || activationState === "closed")
+      return Promise.reject(new Error("stardew_lifecycle_closing"));
+    if (acceptedAdmission !== undefined) {
+      if (acceptedAdmission !== admission)
+        return Promise.reject(new Error("stardew_lifecycle_activation_conflict"));
+      return activationPromise!;
+    }
+    acceptedAdmission = admission;
+    activationPromise = runActivation(admission);
+    return activationPromise;
+  };
+
+  const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
+    bindBrowserAdmissionIssuer,
+    activate,
+    readPrivateActivationSnapshot: snapshot,
+  });
+
+  const closeAttempt = async (): Promise<void> => {
+    if (activationState !== "closed") transition("closing");
+    const activation = activationPromise;
+    if (activation !== undefined) await activation.catch(() => undefined);
+    let incomplete = false;
+    if (exactOwner !== undefined && !ownerQuarantined) {
+      try {
+        await internal.quarantineOwnedPlayerHostOwner(exactOwner);
+        ownerQuarantined = true;
+      } catch {
+        incomplete = true;
+      }
+    }
     if (!brokerClosed) {
-      try {
-        composition.broker.close();
-        brokerClosed = true;
-      } catch {
-        throw closeIncomplete();
-      }
+      try { composition.broker.close(); brokerClosed = true; } catch { incomplete = true; }
     }
-
-    if (!aiClientStopped) {
-      let result: StopOwnedAiClientResult;
-      try {
-        result = composition.aiClientProcessOwner.stopOwnedAiClient();
-      } catch {
-        throw closeIncomplete();
-      }
-      if (!isSuccessfulAiStop(result)) throw closeIncomplete();
-      aiClientStopped = true;
+    if (!aiStopped) {
+      try { aiStopped = successfulAiStop(composition.aiClientProcessOwner.stopOwnedAiClient()); } catch { /* retry */ }
+      if (!aiStopped) incomplete = true;
     }
-
-    if (!playerHostStopped) {
-      let result: StopOwnedPlayerHostResult;
-      try {
-        result = composition.playerHostProcessOwner.stopOwnedPlayerHost();
-      } catch {
-        throw closeIncomplete();
-      }
-      if (!isSuccessfulPlayerHostStop(result)) throw closeIncomplete();
-      playerHostStopped = true;
+    if (!playerStopped) {
+      try { playerStopped = successfulPlayerStop(composition.playerHostProcessOwner.stopOwnedPlayerHost()); } catch { /* retry */ }
+      if (!playerStopped) incomplete = true;
     }
-
-    state = "closed";
+    if (incomplete) throw new StardewProductionLifecycleCloseError();
+    transition("closed");
   };
 
   const close = (): Promise<void> => {
-    if (state === "closed") return closePromise ?? Promise.resolve();
+    if (activationState === "closed") return closePromise ?? Promise.resolve();
     if (closePromise !== undefined) return closePromise;
-
-    const attempt = closeImpl();
+    // Reject bind/activate synchronously before any drain starts.
+    transition("closing");
+    const attempt = closeAttempt();
     closePromise = attempt;
-    void attempt.then(
-      () => undefined,
-      () => {
-        // A failed close retains all unproven owner authority. Clear only the
-        // in-flight promise so a later caller can retry the failed operation.
-        if (state !== "closed") closePromise = undefined;
-      },
-    );
+    void attempt.catch(() => { if (activationState !== "closed") closePromise = undefined; });
     return attempt;
   };
 
-  return Object.freeze({ lifecycleReader, close });
+  return Object.freeze({ lifecycleReader, activationOwner, close });
 }
 
 /**
- * Constructs the production coordinator from the closed first-party
- * composition. No caller-supplied dependency can become lifecycle authority.
+ * Residual internal test join. It is imported only by the source-named
+ * `*.test-support-internal.ts` adapter; production composition never accepts
+ * caller dependencies. The adapter remains temporary until the wider Host
+ * test-support registry is consolidated.
  */
-export function createStardewProductionLifecycleCoordinator(): StardewProductionLifecycleCoordinator {
-  const internal = createStardewPrivateBootstrapComposition();
-  return createCoordinatorFromComposition(internal.composition);
+export function createStardewProductionLifecycleCoordinatorFromTestingComposition(
+  manifest: HostDeploymentManifest,
+  internal: BootstrapComposition,
+): StardewProductionLifecycleCoordinator {
+  return createCoordinator(manifest, internal);
+}
+
+/** Constructs the coordinator exclusively from the closed first-party composition. */
+export function createStardewProductionLifecycleCoordinator(
+  manifest: HostDeploymentManifest,
+): StardewProductionLifecycleCoordinator {
+  return createCoordinator(manifest, createStardewPrivateBootstrapComposition());
 }

@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 
 import {
   createComposedReferenceGameBrowserRequestHandler,
+  type ComposedReferenceGameBrowserLifecycleActivationIssuer,
   type ComposedReferenceGameBrowserReadContext,
 } from "../composed-reference-game-browser.js";
 import {
@@ -45,6 +46,9 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
   eventStream?: ChatEventStream;
   artifactRoot: string;
   inspector?: WindowsReparseInspectorCapability;
+  lifecycleActivationBindingSink?: Readonly<{
+    bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
+  }>;
 }>;
 
 export type ComposedReferenceGameStaticShellComposition = Readonly<{
@@ -89,6 +93,23 @@ export async function startComposedReferenceGameStaticShellComposition(
     eventStream: options.eventStream,
     capability: composedHandler.delegatedAuthCapability,
   });
+  try {
+    options.lifecycleActivationBindingSink?.bindBrowserAdmissionIssuer(
+      composedHandler.lifecycleActivationIssuer,
+    );
+  } catch (bindError) {
+    const cleanup = await Promise.allSettled([composedHandler.close(), referenceHandler.close()]);
+    const cleanupErrors = cleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []
+    );
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [bindError, ...cleanupErrors],
+        "composed_reference_game_lifecycle_bind_cleanup_failed",
+      );
+    }
+    throw bindError;
+  }
   let closed = false;
   const server = createServer((request, response) => {
     const port = (server.address() as { port: number }).port;
