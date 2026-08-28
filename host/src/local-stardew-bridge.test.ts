@@ -47,7 +47,24 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
           ...request,
           messageId: "mod_hello_01",
           type: "hello_ack",
-          payload: { sessionId: "session_01", capabilities: ["inspect_self"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+          payload: {
+            sessionId: "session_01",
+            capabilities: ["inspect_self"],
+            catalogRevision: 1,
+            enabledActionIds: [],
+            presentationLocale: "en-US",
+            registrations: [
+              {
+                actionId: "move_to_tile",
+                familyId: "movement_navigation",
+                identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+              },
+            ],
+            runtimeRole: "native_local_fixture",
+            launchGeneration: null,
+          },
         }),
       );
       socket.write(
@@ -64,6 +81,8 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
             health: 100,
             actionable: true,
             capabilities: ["inspect_self"],
+            catalogRevision: 1,
+            enabledActionIds: [],
             presentationLocale: "en-US",
             activeExecution: null,
           },
@@ -83,6 +102,8 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
             health: 100,
             actionable: true,
             capabilities: ["inspect_self"],
+            catalogRevision: 1,
+            enabledActionIds: [],
             presentationLocale: "en-US",
             activeExecution: null,
           },
@@ -99,7 +120,164 @@ test("local Stardew bridge keeps the newest snapshot revision from a delayed res
     await written;
     await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
     assert.equal(client.state.snapshot?.revision, 8);
+    assert.equal(client.state.catalogRevision, 1);
+    assert.deepEqual(client.state.enabledActionIds, []);
     client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("local Stardew bridge coalesces catalog refreshes and rejects stale authority", async () => {
+  const pipeName = `gamebuddy_catalog_refresh_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let observeRequests = 0;
+  const observeResponses: Array<() => void> = [];
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "catalog_hello",
+              type: "hello_ack",
+              payload: {
+                sessionId: "catalog_session",
+                capabilities: ["inspect_self"],
+                catalogRevision: 1,
+                enabledActionIds: [],
+                presentationLocale: "en-US",
+                registrations: [
+                  {
+                    actionId: "move_to_tile",
+                    familyId: "movement_navigation",
+                    identityVersion: 1,
+                    lifecycle: "published",
+                    kind: "execution",
+                  },
+                ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
+              },
+            }),
+          );
+          continue;
+        }
+        if (request.type === "observe_request") {
+          observeRequests++;
+          const catalogRevision = observeRequests === 1 ? 2 : 3;
+          const snapshotRevision = observeRequests === 1 ? 20 : 21;
+          observeResponses.push(() =>
+            socket.write(
+              frame({
+                ...request,
+                messageId: `catalog_snapshot_${catalogRevision}`,
+                type: "snapshot",
+                payload: {
+                  revision: snapshotRevision,
+                  location: "Farm",
+                  tile: { x: 5, y: 8 },
+                  stamina: 250,
+                  health: 100,
+                  actionable: true,
+                  capabilities: ["inspect_self"],
+                  catalogRevision,
+                  enabledActionIds: ["move_to_tile"],
+                  presentationLocale: "en-US",
+                  activeExecution: null,
+                },
+              }),
+            ),
+          );
+        }
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const catalogUpdate = (revision: number) =>
+      peer?.write(
+        frame({
+          protocolVersion: 1,
+          messageId: `catalog_update_${revision}`,
+          correlationId: `catalog_update_${revision}`,
+          timestampMs: Date.now(),
+          scope,
+          type: "catalog_update",
+          payload: { catalogRevision: revision, enabledActionIds: ["move_to_tile"] },
+        }),
+      );
+
+    catalogUpdate(2);
+    for (let attempt = 0; attempt < 20 && client.state.catalogRevision !== 2; attempt++)
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+    assert.equal(client.state.snapshot, null);
+    assert.equal(client.state.catalogRevision, 2);
+    assert.equal(observeRequests, 1);
+    const refresh1 = client.refreshAfterCatalogUpdate();
+    const refresh2 = client.refreshAfterCatalogUpdate();
+    assert.strictEqual(refresh1, refresh2);
+
+    catalogUpdate(3);
+    for (let attempt = 0; attempt < 20 && client.state.catalogRevision !== 3; attempt++)
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+    assert.equal(client.state.catalogRevision, 3);
+    assert.equal(observeRequests, 1);
+    observeResponses[0]?.();
+    for (let attempt = 0; attempt < 20 && observeRequests < 2; attempt++)
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+    assert.equal(observeRequests, 2);
+    observeResponses[1]?.();
+    const snapshot = await refresh1;
+    assert.equal(snapshot.catalogRevision, 3);
+    assert.equal(client.state.snapshot?.revision, 21);
+
+    peer?.write(
+      frame({
+        protocolVersion: 1,
+        messageId: "catalog_snapshot_stale",
+        correlationId: "catalog_snapshot_stale",
+        timestampMs: Date.now(),
+        scope,
+        type: "snapshot",
+        payload: {
+          revision: 22,
+          location: "Farm",
+          tile: { x: 1, y: 1 },
+          stamina: 1,
+          health: 1,
+          actionable: true,
+          capabilities: ["inspect_self"],
+          catalogRevision: 2,
+          enabledActionIds: ["move_to_tile"],
+          presentationLocale: "en-US",
+          activeExecution: null,
+        },
+      }),
+    );
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    assert.equal(client.state.snapshot?.revision, 21);
+
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
+      client.onConnectionFact(resolvePromise),
+    );
+    catalogUpdate(3);
+    assert.deepEqual(await disconnected, {
+      state: "disconnected",
+      reasonCode: "invalid_catalog_update_authority",
+    });
   } finally {
     peer?.destroy();
     await close(server);
@@ -119,7 +297,16 @@ test("local Stardew bridge rejects a duplicate-key raw named-pipe frame before J
           ...request,
           messageId: "mod_hello_duplicate_key",
           type: "hello_ack",
-          payload: { sessionId: "session_duplicate_key", capabilities: [], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+          payload: {
+            sessionId: "session_duplicate_key",
+            capabilities: [],
+            catalogRevision: 1,
+            enabledActionIds: [],
+            presentationLocale: "en-US",
+            registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+            runtimeRole: "native_local_fixture",
+            launchGeneration: null,
+          },
         }),
       );
     });
@@ -168,7 +355,7 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
                   ...request,
                   messageId: "mod_hello_player_control",
                   type: "hello_ack",
-                  payload: { sessionId: "session_player_control", capabilities: [], presentationLocale: "zh-CN", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+                  payload: { sessionId: "session_player_control", capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "zh-CN", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
                 }
               : {
                   ...request,
@@ -261,7 +448,7 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
             ...request,
             messageId: "mod_hello_player_control_reject",
             type: "hello_ack",
-            payload: { sessionId: "session_player_control_reject", capabilities: [], presentationLocale: "zh-CN", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+             payload: { sessionId: "session_player_control_reject", capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "zh-CN", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
           }),
         );
       }
@@ -351,15 +538,19 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
               ...request,
               messageId: "mod_hello_execution_receipt",
               type: "hello_ack",
-              payload: {
-                sessionId: "session_execution_receipt",
-                capabilities: ["move_to_tile"],
-                presentationLocale: "en-US",
-                registrations: [
-                  { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published" },
-                ],
-              },
-            }),
+               payload: {
+                 sessionId: "session_execution_receipt",
+                 capabilities: ["move_to_tile"],
+                 catalogRevision: 1,
+                 enabledActionIds: ["move_to_tile"],
+                 presentationLocale: "en-US",
+                 registrations: [
+                   { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" },
+                 ],
+                 runtimeRole: "native_local_fixture",
+                 launchGeneration: null,
+               },
+             }),
           );
           continue;
         }
@@ -459,7 +650,7 @@ test("local Stardew bridge delivers an exact-correlated system notice receipt", 
               ...request,
               messageId: "mod_hello_system_notice",
               type: "hello_ack",
-              payload: { sessionId: "session_system_notice", capabilities: [], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+              payload: { sessionId: "session_system_notice", capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
             }),
           );
           continue;
@@ -523,7 +714,7 @@ test("local Stardew bridge authenticates and observes Mod-declared capabilities"
                 ...request,
                 messageId: "mod_hello_01",
                 type: "hello_ack",
-                payload: { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+                 payload: { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
               }
             : {
                 ...request,
@@ -537,6 +728,8 @@ test("local Stardew bridge authenticates and observes Mod-declared capabilities"
                   health: 100,
                   actionable: true,
                   capabilities: ["move_to_tile"],
+                  catalogRevision: 1,
+                  enabledActionIds: ["move_to_tile"],
                   presentationLocale: "en-US",
                   activeExecution: null,
                 },
@@ -585,10 +778,14 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
               payload: {
                 sessionId: "session_cancel_identity",
                 capabilities: ["move_to_tile"],
+                catalogRevision: 1,
+                enabledActionIds: ["move_to_tile"],
                 presentationLocale: "en-US",
                 registrations: [
-                  { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published" },
+                  { actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" },
                 ],
+                runtimeRole: "native_local_fixture",
+                launchGeneration: null,
               },
             }),
           );

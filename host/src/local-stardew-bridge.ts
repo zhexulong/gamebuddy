@@ -22,7 +22,13 @@ import {
 import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
 import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 
-export type LocalStardewBridgeState = CompanionIntegrationState & Readonly<{ authenticated: boolean }>;
+export type LocalStardewBridgeState = CompanionIntegrationState &
+  Readonly<{
+    authenticated: boolean;
+    /** Current authenticated Mod availability publication for this bridge generation. */
+    catalogRevision?: number;
+    enabledActionIds?: readonly string[];
+  }>;
 /** Validated Mod-originated facts forwarded to the Host event pump. */
 export type LocalStardewBridgeFact = Extract<
   BridgeMessage,
@@ -66,6 +72,10 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
   #capabilities: readonly string[] = [];
   #catalogRegistrations: readonly ActionRegistration[] = [];
   #snapshot: Snapshot | null = null;
+  #catalogRevision: number | undefined;
+  #enabledActionIds: readonly string[] | undefined;
+  #catalogRefresh: Promise<Snapshot> | undefined;
+  #catalogRefreshGeneration = 0;
   #latestReceipt: LocalStardewBridgeState["latestReceipt"] = null;
   #latestReasonCode: string | null = null;
   #initialSnapshotReceived = false;
@@ -93,8 +103,12 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       this.#authenticated = false;
       this.#initialSnapshotReceived = false;
       this.#sessionId = null;
-      this.#capabilities = [];
-      this.#catalogRegistrations = [];
+      this.#capabilities = Object.freeze([]);
+      this.#catalogRegistrations = Object.freeze([]);
+      this.#catalogRevision = undefined;
+      this.#enabledActionIds = undefined;
+      this.#catalogRefresh = undefined;
+      this.#catalogRefreshGeneration++;
       this.#snapshot = null;
       this.#latestReceipt = null;
       this.#latestReasonCode = reasonCode;
@@ -134,6 +148,8 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       sessionId: this.#sessionId,
       capabilities: this.#capabilities,
       catalogRegistrations: this.#catalogRegistrations,
+      ...(this.#catalogRevision === undefined ? {} : { catalogRevision: this.#catalogRevision }),
+      ...(this.#enabledActionIds === undefined ? {} : { enabledActionIds: this.#enabledActionIds }),
       snapshot: this.#snapshot,
       latestReceipt: this.#latestReceipt,
       latestReasonCode: this.#latestReasonCode,
@@ -145,7 +161,38 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     const response = await this.request("observe_request", {});
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "snapshot") throw new Error("unexpected_observe_response");
+    this.acceptSnapshot(response.payload);
     return response.payload;
+  }
+
+  /**
+   * Refresh the world projection once after a catalog publication changes.
+   * Concurrent callers share one exact observe request, while the response is
+   * admitted only if it still binds the current authenticated publication.
+   */
+  public refreshAfterCatalogUpdate(): Promise<Snapshot> {
+    this.requireAuthenticated();
+    if (this.#catalogRefresh !== undefined) return this.#catalogRefresh;
+    const refresh = this.chaseCatalogRefresh();
+    this.#catalogRefresh = refresh;
+    const clear = () => {
+      if (this.#catalogRefresh === refresh) this.#catalogRefresh = undefined;
+    };
+    void refresh.then(clear, clear);
+    return refresh;
+  }
+
+  private async chaseCatalogRefresh(): Promise<Snapshot> {
+    while (true) {
+      const generation = this.#catalogRefreshGeneration;
+      const targetRevision = this.#catalogRevision;
+      if (targetRevision === undefined) throw new Error("catalog_revision_unavailable");
+      const snapshot = await this.observe();
+      if (!this.transport.connected || !this.#authenticated) throw new Error("bridge_not_authenticated");
+      if (generation !== this.#catalogRefreshGeneration || targetRevision !== this.#catalogRevision) continue;
+      if (snapshot.catalogRevision !== targetRevision) throw new Error("catalog_refresh_stale_snapshot");
+      return snapshot;
+    }
   }
 
   public async execute(request: ExecutionRequest): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
@@ -249,8 +296,10 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     if (response.type !== "hello_ack") throw new Error("unexpected_hello_response");
     this.#authenticated = true;
     this.#sessionId = response.payload.sessionId;
-    this.#capabilities = [...response.payload.capabilities];
-    this.#catalogRegistrations = [...response.payload.registrations];
+    this.#capabilities = Object.freeze([...response.payload.capabilities]);
+    this.#catalogRegistrations = Object.freeze([...response.payload.registrations]);
+    this.#catalogRevision = response.payload.catalogRevision;
+    this.#enabledActionIds = Object.freeze([...response.payload.enabledActionIds]);
   }
 
   private request(type: OutboundRequestType, payload: Record<string, unknown>): Promise<BridgeMessage> {
@@ -330,31 +379,34 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       this.#snapshot = null;
       this.#initialSnapshotReceived = false;
       this.#latestReceipt = null;
-      this.#capabilities = [...message.payload.capabilities];
-      this.#catalogRegistrations = [...message.payload.registrations];
+      this.#catalogRevision = message.payload.catalogRevision;
+      this.#enabledActionIds = Object.freeze([...message.payload.enabledActionIds]);
+      this.#capabilities = Object.freeze([...message.payload.capabilities]);
+      this.#catalogRegistrations = Object.freeze([...message.payload.registrations]);
       this.#latestReasonCode = null;
     } else if (message.type === "catalog_update") {
-      const registeredIds = new Set(this.#catalogRegistrations.map((registration) => registration.actionId));
+      const registeredIds = new Set(
+        this.#catalogRegistrations
+          .filter((registration) => registration.kind === "execution")
+          .map((registration) => registration.actionId),
+      );
       if (
-        message.payload.enabledActionIds.some((actionId) => !registeredIds.has(actionId)) ||
-        (this.#snapshot !== null && message.payload.catalogRevision < this.#snapshot.catalogRevision)
+        this.#catalogRevision === undefined ||
+        message.payload.catalogRevision <= this.#catalogRevision ||
+        message.payload.enabledActionIds.some((actionId) => !registeredIds.has(actionId))
       ) {
         this.transport.close("invalid_catalog_update_authority");
         return;
       }
-      this.#capabilities = [...message.payload.enabledActionIds];
-      if (this.#snapshot !== null) {
-        this.#snapshot = Object.freeze({
-          ...this.#snapshot,
-          capabilities: [...message.payload.enabledActionIds],
-          catalogRevision: message.payload.catalogRevision,
-          enabledActionIds: [...message.payload.enabledActionIds],
-        });
-      }
+      this.#catalogRevision = message.payload.catalogRevision;
+      this.#enabledActionIds = Object.freeze([...message.payload.enabledActionIds]);
+      this.#catalogRefreshGeneration++;
+      // Catalog availability is immutable per publication. Do not rewrite an
+      // old snapshot into the new revision; the next fresh observe must bind it.
+      this.#snapshot = null;
+      void this.refreshAfterCatalogUpdate().catch(() => undefined);
     } else if (message.type === "snapshot") {
-      // A delayed observation response must never replace newer Mod state.
-      if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision)
-        this.#snapshot = message.payload;
+      this.acceptSnapshot(message.payload);
       this.#initialSnapshotReceived = true;
     } else if (message.type === "execution_receipt" && !isSolicitedReceiptQueryResponse) {
       this.#latestReceipt = message.payload;
@@ -377,6 +429,20 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     }
   }
 
+  private acceptSnapshot(snapshot: Snapshot): void {
+    if (
+      snapshot.catalogRevision !== this.#catalogRevision ||
+      !sameActionIds(snapshot.enabledActionIds, this.#enabledActionIds ?? []) ||
+      (this.#snapshot !== null && snapshot.revision <= this.#snapshot.revision)
+    )
+      return;
+    this.#snapshot = Object.freeze({
+      ...snapshot,
+      capabilities: Object.freeze([...snapshot.capabilities]),
+      enabledActionIds: Object.freeze([...snapshot.enabledActionIds]),
+    });
+  }
+
   private requireAuthenticated(): void {
     if (!this.transport.connected || !this.#authenticated) throw new Error("bridge_not_authenticated");
   }
@@ -395,6 +461,10 @@ function isPurportedPlayerControlSemanticEvent(message: unknown): boolean {
     return false;
   const kind = (record.payload as Record<string, unknown>).kind;
   return kind === "player_input" || kind === "stop_all";
+}
+
+function sameActionIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((actionId, index) => actionId === right[index]);
 }
 
 function isPlayerControlSemanticEvent(message: BridgeMessage): boolean {
