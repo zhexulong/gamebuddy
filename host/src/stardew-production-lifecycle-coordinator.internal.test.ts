@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { EventEmitter } from "node:events";
@@ -205,6 +206,8 @@ async function createFixture(input: Readonly<{
   playerSpawnFailure?: boolean;
   playerProbeFailure?: boolean;
   playerKillResults?: readonly boolean[];
+  nowMs?: () => number;
+  afterPlayerSpawn?(): void;
 }> = {}) {
   const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-lifecycle-coordinator-"));
   const packageRoot = join(runtimeRoot, "package");
@@ -234,6 +237,7 @@ async function createFixture(input: Readonly<{
     rawProbe: (pid) => ({ pid, creationDate: "20260101010101.000000+000" }),
     rawPlayerHostSpawn(executable, args, options) {
       playerSpawnCalls.push(Object.freeze({ executable, args: Object.freeze([...args]), options }));
+      input.afterPlayerSpawn?.();
       if (input.playerSpawnFailure) throw new Error("controlled-player-spawn-failure");
       return Object.freeze({
         pid: 4102,
@@ -247,7 +251,7 @@ async function createFixture(input: Readonly<{
     createBootstrapIdentity: () => "bootstrap-coordinator-1",
     createLaunchGeneration: () => "ai-generation-1",
     createPlayerHostLaunchGeneration: () => "player-generation-1",
-    nowMs: () => Date.now(),
+    nowMs: input.nowMs ?? (() => Date.now()),
     staging: {
       async readPackage() {
         packageReadCount += 1;
@@ -256,7 +260,7 @@ async function createFixture(input: Readonly<{
         return { root: packageRoot, entries: packageEntries };
       },
       createSecret: () => "session-secret-coordinator-012345",
-      nowMs: () => Date.now(),
+      nowMs: input.nowMs ?? (() => Date.now()),
     },
   };
   const manifest: HostDeploymentManifest = Object.freeze({
@@ -289,6 +293,46 @@ async function createFixture(input: Readonly<{
     playerKillCalls,
     packageReadCount: () => packageReadCount,
   };
+}
+
+async function publishSignedPlayerHostSession(
+  runtimeRoot: string,
+  launchGeneration = "player-generation-1",
+): Promise<void> {
+  const sessionDirectory = join(
+    runtimeRoot,
+    "stardew-private-bootstrap",
+    "bootstrap-coordinator-1",
+    "session",
+  );
+  await mkdir(sessionDirectory, { recursive: true });
+  const session = {
+    schemaVersion: 1,
+    integrationId: "stardew",
+    integrationVersion: "0.1.0",
+    gameVersion: "1.6.15",
+    gameBuildNumber: 24356,
+    smapiVersion: "4.5.2",
+    multiplayerProtocol: "1.6.15",
+    endpoint: "127.0.0.1:24642",
+    saveId: "save-coordinator",
+    worldId: "world-coordinator",
+    publishedAtUnixMs: Date.now(),
+    expiresAtUnixMs: Date.now() + 60_000,
+    nonce: "nonce-coordinator",
+    state: "ready",
+    hostPlayerId: "player-1",
+    runtimeRole: "player_host",
+    launchGeneration,
+    cabins: [],
+    signature: "",
+  };
+  const unsigned = { ...session };
+  delete (unsigned as Partial<typeof session>).signature;
+  const signature = createHmac("sha256", "session-secret-coordinator-012345")
+    .update(JSON.stringify(unsigned), "utf8")
+    .digest("base64url");
+  await writeFile(join(sessionDirectory, "stardew-session.json"), JSON.stringify({ ...session, signature }));
 }
 
 async function ownerRecord(runtimeRoot: string) {
@@ -426,6 +470,92 @@ test("Stage-C admits internally, direct-spawns once, and projects only awaiting 
         state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
       });
       assert.equal(fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate), first);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("signed Player Host advertisement is consumed privately with exact generation correlation", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture();
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await publishSignedPlayerHostSession(fixture.runtimeRoot);
+      const result = await fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      assert.equal(result.state, "awaiting_player_host_attestation");
+      assert.deepEqual(Object.keys(result).sort(), ["authorityGeneration", "requestId", "revision", "schemaVersion", "state"]);
+      assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
+        state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
+      });
+      const serialized = JSON.stringify(result);
+      for (const forbidden of ["player-generation-1", "session", "advertisement", "pid", "owner"])
+        assert.equal(serialized.includes(forbidden), false, forbidden);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("missing Player Host advertisement remains privately retryable before owner deadline", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture();
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const result = await fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      assert.equal(result.state, "awaiting_player_host_attestation");
+      await publishSignedPlayerHostSession(fixture.runtimeRoot);
+      assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
+        state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
+      });
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "awaiting_player_host_attestation");
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("missing Player Host advertisement becomes terminal after the retained owner deadline", async () => {
+  await withWindowsPlatform(async () => {
+    let now = Date.now();
+    const fixture = await createFixture({
+      nowMs: () => now,
+      afterPlayerSpawn: () => { now += 11 * 60_000; },
+    });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate),
+        /stardew_player_host_launch_failed/,
+      );
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "failed");
+      assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("Player Host advertisement generation mismatch fails closed and quarantines", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture();
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await publishSignedPlayerHostSession(fixture.runtimeRoot, "wrong-player-generation");
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate),
+        /stardew_player_host_launch_failed/,
+      );
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "failed");
+      assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate),
+        /stardew_player_host_launch_quarantined/,
+      );
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();

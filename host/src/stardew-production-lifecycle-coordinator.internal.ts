@@ -94,6 +94,7 @@ function createCoordinator(
   let launchCandidate: string | undefined;
   let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   let launchTerminal = false;
+  let playerHostAttestationCorrelated = false;
   let brokerClosed = false;
   let aiStopped = false;
   let playerStopped = false;
@@ -101,6 +102,8 @@ function createCoordinator(
 
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
+      if (activationState === "awaiting_player_host_attestation" && !playerHostAttestationCorrelated)
+        await correlatePlayerHostAttestation();
       return facade.readRoleLifecycleView();
     },
   });
@@ -186,6 +189,24 @@ function createCoordinator(
     return activationPromise;
   };
 
+  const correlatePlayerHostAttestation = async (): Promise<void> => {
+    const owner = exactOwner;
+    if (owner === undefined) throw new Error("stardew_player_host_attestation_owner_missing");
+    try {
+      playerHostAttestationCorrelated = await internal.readAndCorrelateOwnedPlayerHostSession(owner);
+    } catch (error) {
+      launchTerminal = true;
+      if (!isClosing()) transition("failed");
+      try {
+        await internal.quarantineOwnedPlayerHostOwner(owner);
+        ownerQuarantined = true;
+      } catch {
+        // Preserve the terminal private correlation failure.
+      }
+      throw new Error("stardew_player_host_attestation_failed", { cause: error });
+    }
+  };
+
   const runPlayerHostLaunch = async (
     candidate: string,
   ): Promise<StardewPrivateActivationSnapshot> => {
@@ -202,8 +223,9 @@ function createCoordinator(
       if (result.status.kind !== "awaiting_player_host_attestation")
         throw new Error("stardew_player_host_launch_terminal_projection_invalid");
       if (isClosing()) throw new Error("stardew_lifecycle_closing");
-      transition("awaiting_player_host_attestation");
-      return snapshot();
+       transition("awaiting_player_host_attestation");
+       await correlatePlayerHostAttestation();
+       return snapshot();
     } catch (error) {
       const launchMayHaveRun = launchCompleted || didStardewOwnedPlayerHostStageCEnterControlledLaunch(error);
       if (launchMayHaveRun) {
