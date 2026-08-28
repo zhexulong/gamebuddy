@@ -94,14 +94,14 @@ test("refuses relative/example/placeholder profiles and static brief", async () 
 
 test("rejects invalid release bundles and release/deployment overlap", async () => fixture(async ({ root, profile, profileFile }) => {
   await writeFile(path.join(root, "release", "manifest.json"), JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "wrong" }));
-  assert.deepEqual((await run(profileFile, deps().value)).reasons, ["release_manifest_identity_mismatch"]);
+  assert.deepEqual((await run(profileFile, deps().value)).reasons, ["stardew_immutable_release_bundle_manifest_identity_mismatch"]);
   await writeFile(profileFile, JSON.stringify({ ...profile, releaseDir: path.join(root, "game", "Mods", "GameBuddy") }));
   for (const [name, contents] of [
     ["GameBuddy.Stardew.dll", "mod"], ["GameBuddy.Stardew.Core.dll", "core"],
     ["manifest.json", JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" })],
     ["GameBuddy.Stardew.deps.json", "{}"],
   ]) await writeFile(path.join(root, "game", "Mods", "GameBuddy", name), contents);
-  assert.deepEqual((await run(profileFile, deps().value)).reasons, ["release_target_overlap"]);
+  assert.deepEqual((await run(profileFile, deps().value)).reasons, ["stardew_immutable_release_bundle_path_overlap"]);
 }));
 
 test("rejects secret/endpoint fields and untrusted or missing paths", async (t) => fixture(async ({ root, profile, profileFile }) => {

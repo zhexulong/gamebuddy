@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspectExactReleaseBundle } from "./immutable-release-bundle.mjs";
 import { assertReadyTargetProfile, parseTargetProfileText } from "./profile.mjs";
 
 const PACKAGE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -11,12 +11,6 @@ const PREFLIGHT_BRIEF = path.join(PACKAGE_ROOT, "briefs", "equip_tool.preflight.
 const LEASE_NAME = ".gamebuddy-target-runtime-lease-v1";
 const readyProfiles = new WeakMap();
 
-const BUNDLE_FILES = Object.freeze([
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
-  "manifest.json",
-  "GameBuddy.Stardew.deps.json",
-]);
 function blocked(...reasons) { return Object.freeze({ gameId: "stardew", actionId: "equip_tool", status: "preflight", state: "BLOCKED", ready: false, reasons: Object.freeze([...new Set(reasons)]) }); }
 
 async function trustedDirectory(candidate) {
@@ -36,33 +30,12 @@ async function trustedFile(candidate) {
 async function leaseUnheld(root) {
   try { await lstat(path.join(root, LEASE_NAME)); return false; } catch (error) { if (error?.code === "ENOENT") return true; throw error; }
 }
-function pathsOverlap(first, second) {
-  const firstRoot = path.parse(first).root;
-  const secondRoot = path.parse(second).root;
-  if (process.platform === "win32") {
-    if (firstRoot.toLowerCase() !== secondRoot.toLowerCase()) return false;
-  } else if (firstRoot !== secondRoot) return false;
-  const relative = path.relative(first, second);
-  return relative === "" || (!path.isAbsolute(relative) && !relative.startsWith(`..${path.sep}`) && relative !== "..");
-}
 export async function inspectEquipToolReleaseBundle(profile) {
-  const releaseRoot = await realpath(profile.releaseDir);
-  const deployedRoot = await realpath(path.join(profile.modsPath, "GameBuddy"));
-  if (pathsOverlap(releaseRoot, deployedRoot) || pathsOverlap(deployedRoot, releaseRoot)) throw new Error("release_target_overlap");
-  const hash = createHash("sha256");
-  let manifest;
-  for (const name of BUNDLE_FILES) {
-    const file = path.join(profile.releaseDir, name);
-    if (!await trustedFile(file)) throw new Error("release_bundle_untrusted");
-    const bytes = await readFile(file);
-    if (bytes.length === 0) throw new Error("release_bundle_empty");
-    hash.update(Buffer.from(name, "utf8"));
-    hash.update(Buffer.from([0]));
-    hash.update(bytes);
-    if (name === "manifest.json") manifest = JSON.parse(bytes.toString("utf8"));
-  }
-  if (manifest?.Name !== "GameBuddy" || manifest?.UniqueID !== "zhexulong.GameBuddy" || manifest?.EntryDll !== "GameBuddy.Stardew.dll" || manifest?.Version !== profile.adapterVersion) throw new Error("release_manifest_identity_mismatch");
-  return Object.freeze({ algorithm: "sha256", digest: hash.digest("hex"), adapterVersion: manifest.Version, files: BUNDLE_FILES.length });
+  return await inspectExactReleaseBundle({
+    releaseDir: profile.releaseDir,
+    modsPath: profile.modsPath,
+    expectedAdapterVersion: profile.adapterVersion,
+  });
 }
 async function loadCanonicalDependencies() {
   const [fixture, installation] = await Promise.all([

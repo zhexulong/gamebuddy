@@ -4,6 +4,11 @@ export {
   runBoundedChild,
 } from "./process-supervisor.mjs";
 export {
+  cleanupAtomicDirectory,
+  commitAtomicDirectory,
+  prepareAtomicDirectory,
+} from "./atomic-directory.mjs";
+export {
   beginEvidenceRun,
   finalizeEvidenceRun,
   finalizeIncompleteEvidenceRun,

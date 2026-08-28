@@ -44,7 +44,7 @@ function exactProof(runId) {
   });
 }
 
-function harness({ lifecycleFails = false, proofVerdict = "passed" } = {}) {
+function harness({ lifecycleFails = false, bundleFailureCode, proofVerdict = "passed" } = {}) {
   const order = [];
   const finalizations = [];
   const value = {
@@ -57,6 +57,7 @@ function harness({ lifecycleFails = false, proofVerdict = "passed" } = {}) {
     beginEvidence: async ({ root, identity }) => { order.push(`evidence:${root}:${identity.runId}`); return { identity }; },
     createBundle: async ({ runIdentity, expectedDigest }) => {
       order.push(`bundle:${runIdentity}:${expectedDigest}`);
+      if (bundleFailureCode) throw new Error(bundleFailureCode);
       return {
         async runLifecycle(operation) {
           order.push("lifecycle");
@@ -109,16 +110,33 @@ test("two attempts with one profile use distinct evidence destinations while sha
   assert.ok(second.order.includes("lease:target-machine-lease"));
 });
 
-test("lifecycle failure produces incomplete evidence once and never reports passed", async () => {
-  const fake = harness({ lifecycleFails: true });
+test("immutable admission failure records exact stage and code without starting lifecycle", async () => {
+  const fake = harness({ bundleFailureCode: "stardew_immutable_release_bundle_source_untrusted" });
   const report = await invoke("ar1_failed", fake.value);
   assert.equal(report.state, "INCOMPLETE");
   assert.equal(report.verdict, "uncertain");
   assert.equal(fake.order.filter((entry) => entry.startsWith("child:")).length, 0);
   assert.ok(fake.order.indexOf("lease-release") < fake.order.indexOf("finalize-incomplete"));
-  assert.equal(fake.finalizations[0].metadata.cleanup.lifecycle, false);
-  assert.equal(fake.finalizations[0].metadata.cleanup.immutableStaging, false);
-  assert.equal(fake.finalizations[0].metadata.cleanup.runtimeLease, true);
+  const metadata = fake.finalizations[0].metadata;
+  assert.equal(metadata.failureStage, "immutable_bundle");
+  assert.equal(metadata.failureCode, "source_untrusted");
+  assert.deepEqual(metadata.cleanup, { lifecycle: false, immutableStaging: false, runtimeLease: true });
+});
+
+test("blocked preflight creates no lease, evidence, bundle, or lifecycle", async () => {
+  const calls = [];
+  const report = await invoke("ar1_blocked", {
+    preflight: async () => Object.freeze({ state: "BLOCKED", ready: false, reasons: Object.freeze(["stardew_immutable_release_bundle_source_untrusted"]) }),
+    consumeReadyProfile: () => { calls.push("profile"); },
+    acquireLease: async () => { calls.push("lease"); },
+    beginEvidence: async () => { calls.push("evidence"); },
+    createBundle: async () => { calls.push("bundle"); },
+    runLifecycle: async () => { calls.push("lifecycle"); },
+    finalizeComplete: async () => { calls.push("complete"); },
+    finalizeIncomplete: async () => { calls.push("incomplete"); },
+  });
+  assert.deepEqual(report, { gameId: "stardew", actionId: "equip_tool", status: "live", state: "BLOCKED", runId: "ar1_blocked", reasons: ["stardew_immutable_release_bundle_source_untrusted"] });
+  assert.deepEqual(calls, []);
 });
 
 test("non-passing exact proof is incomplete even after successful cleanup", async () => {
@@ -140,7 +158,9 @@ test("real immutable binding and Devkit claims turn missing cleanup receipt into
   const files = ["GameBuddy.Stardew.dll", "GameBuddy.Stardew.Core.dll", "manifest.json", "GameBuddy.Stardew.deps.json"];
   const hash = createHash("sha256");
   for (const name of files) {
-    const bytes = Buffer.from(`fixture:${name}`, "utf8");
+    const bytes = Buffer.from(name === "manifest.json"
+      ? JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" })
+      : `fixture:${name}`, "utf8");
     await writeFile(path.join(releaseDir, name), bytes);
     hash.update(Buffer.from(name, "utf8"));
     hash.update(Buffer.from([0]));

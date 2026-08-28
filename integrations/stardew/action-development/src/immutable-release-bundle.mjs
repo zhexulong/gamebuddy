@@ -115,6 +115,7 @@ async function copyPinnedFile(source, destination, hash, name) {
 async function digestTrustedBundle(directory, directoryDetails, code) {
   await exactEntries(directory, code);
   const hash = createHash("sha256");
+  let manifest;
   for (const name of BUNDLE_FILES) {
     const source = await openTrustedSource(directory, directoryDetails, name);
     try {
@@ -123,6 +124,10 @@ async function digestTrustedBundle(directory, directoryDetails, code) {
       hash.update(Buffer.from(name, "utf8"));
       hash.update(Buffer.from([0]));
       hash.update(bytes);
+      if (name === "manifest.json") {
+        try { manifest = JSON.parse(bytes.toString("utf8")); }
+        catch (error) { fail(code, error); }
+      }
       const afterHandle = await source.handle.stat();
       const afterPath = await lstat(source.candidate);
       if (!sameFile(source.opened, afterHandle) || !sameFile(source.opened, afterPath)
@@ -130,7 +135,26 @@ async function digestTrustedBundle(directory, directoryDetails, code) {
         || source.opened.ctimeNs !== afterHandle.ctimeNs) fail(code);
     } finally { await source.handle.close().catch(() => {}); }
   }
-  return hash.digest("hex");
+  return Object.freeze({ digest: hash.digest("hex"), manifest });
+}
+
+async function inspectReleaseSource({ releaseDir, modsPath, expectedAdapterVersion }) {
+  const source = await trustedDirectory(releaseDir, "source_untrusted");
+  const mods = await trustedDirectory(modsPath, "mods_path_untrusted");
+  const target = path.join(mods.absolute, "GameBuddy");
+  if (overlaps(source.absolute, target) || overlaps(target, source.absolute)) fail("path_overlap");
+  const inspected = await digestTrustedBundle(source.absolute, source.details, "source_untrusted");
+  const manifest = inspected.manifest;
+  if (manifest?.Name !== "GameBuddy" || manifest?.UniqueID !== "zhexulong.GameBuddy"
+    || manifest?.EntryDll !== "GameBuddy.Stardew.dll" || typeof manifest?.Version !== "string"
+    || expectedAdapterVersion !== undefined && manifest.Version !== expectedAdapterVersion) fail("manifest_identity_mismatch");
+  return Object.freeze({ source, mods, target, digest: inspected.digest, adapterVersion: manifest.Version, files: BUNDLE_FILES.length });
+}
+
+export async function inspectExactReleaseBundle({ releaseDir, modsPath, expectedAdapterVersion } = {}) {
+  if (![releaseDir, modsPath].every((value) => typeof value === "string" && path.isAbsolute(value) && !value.includes("\0"))) fail("invalid_input");
+  const inspected = await inspectReleaseSource({ releaseDir, modsPath, expectedAdapterVersion });
+  return Object.freeze({ algorithm: "sha256", digest: inspected.digest, adapterVersion: inspected.adapterVersion, files: inspected.files });
 }
 
 async function strictCleanup(directory, directoryDetails) {
@@ -161,15 +185,12 @@ function validateOptions(options) {
 
 export async function createImmutableReleaseBundleBinding(options) {
   const input = validateOptions(options);
-  const source = await trustedDirectory(input.releaseDir, "source_untrusted");
+  const release = await inspectReleaseSource({ releaseDir: input.releaseDir, modsPath: input.modsPath });
+  const { source, mods, target } = release;
   const root = await trustedDirectory(input.runRoot, "run_root_untrusted");
-  const mods = await trustedDirectory(input.modsPath, "mods_path_untrusted");
-  const target = path.join(mods.absolute, "GameBuddy");
-  if (overlaps(source.absolute, target) || overlaps(target, source.absolute)
-    || overlaps(root.absolute, source.absolute) || overlaps(source.absolute, root.absolute)
+  if (overlaps(root.absolute, source.absolute) || overlaps(source.absolute, root.absolute)
     || overlaps(root.absolute, target) || overlaps(target, root.absolute)) fail("path_overlap");
-  await exactEntries(source.absolute, "source_untrusted");
-  if (await digestTrustedBundle(source.absolute, source.details, "source_drift") !== input.expectedDigest) fail("digest_mismatch");
+  if (release.digest !== input.expectedDigest) fail("digest_mismatch");
 
   const stagingDirectory = path.join(root.absolute, `.gamebuddy-release-${input.runIdentity}`);
   const currentRoot = await lstat(root.absolute).catch((error) => fail("run_root_ownership_lost", error));
@@ -189,8 +210,8 @@ export async function createImmutableReleaseBundleBinding(options) {
     await exactEntries(source.absolute, "source_drift");
     const copiedDigest = hash.digest("hex");
     if (copiedDigest !== input.expectedDigest) fail("source_drift");
-    if (await digestTrustedBundle(source.absolute, source.details, "source_drift") !== input.expectedDigest) fail("source_drift");
-    if (await digestTrustedBundle(staging.absolute, staging.details, "staged_tamper") !== input.expectedDigest) fail("staged_tamper");
+    if ((await digestTrustedBundle(source.absolute, source.details, "source_drift")).digest !== input.expectedDigest) fail("source_drift");
+    if ((await digestTrustedBundle(staging.absolute, staging.details, "staged_tamper")).digest !== input.expectedDigest) fail("staged_tamper");
   } catch (error) {
     try { await strictCleanup(staging.absolute, staging.details); } catch (cleanupError) { fail("cleanup_uncertain", new AggregateError([error, cleanupError])); }
     throw error;
@@ -205,7 +226,7 @@ export async function createImmutableReleaseBundleBinding(options) {
   };
   const assertStaged = async () => {
     const current = await lstat(staging.absolute).catch((error) => fail("staged_tamper", error));
-    if (!sameFile(current, staging.details) || await digestTrustedBundle(staging.absolute, staging.details, "staged_tamper") !== input.expectedDigest) fail("staged_tamper");
+    if (!sameFile(current, staging.details) || (await digestTrustedBundle(staging.absolute, staging.details, "staged_tamper")).digest !== input.expectedDigest) fail("staged_tamper");
   };
   const binding = Object.freeze({
     inspect() {

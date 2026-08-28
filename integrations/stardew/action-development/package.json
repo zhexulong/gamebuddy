@@ -16,6 +16,7 @@
     "action:extraction-rehearsal": "node src/standalone-extraction-rehearsal.mjs",
     "action:check:equip-tool": "node ../../../packages/game-action-devkit/bin/game-action.mjs check --project game-action-project.json --action equip_tool",
     "action:preflight": "node ../../../packages/game-action-devkit/bin/game-action.mjs preflight --project game-action-project.json",
+    "action:publish-release-bundle": "node src/publish-release-bundle.mjs",
     "action:portfolio": "node src/portfolio.mjs",
     "action:ci": "node src/portfolio.mjs --ci"
   }

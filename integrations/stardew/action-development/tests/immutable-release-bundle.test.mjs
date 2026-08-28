@@ -9,7 +9,7 @@ import { createImmutableReleaseBundleBinding, IMMUTABLE_RELEASE_BUNDLE_FILES } f
 const CONTENTS = Object.freeze({
   "GameBuddy.Stardew.dll": "mod",
   "GameBuddy.Stardew.Core.dll": "core",
-  "manifest.json": JSON.stringify({ Name: "GameBuddy" }),
+  "manifest.json": JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" }),
   "GameBuddy.Stardew.deps.json": "{}",
 });
 function digest(contents = CONTENTS) {
