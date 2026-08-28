@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { link, lstat, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
+import { link, lstat, mkdtemp, open, readdir, realpath, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -115,7 +115,14 @@ export async function cleanupPrivateResultFile(claim) {
     if (!contained(canonicalParent, directory)) fail("path_escape");
     const stat = await lstat(directory);
     if (stat.isSymbolicLink() || !stat.isDirectory()) fail("root_untrusted");
-    await rm(directory, { recursive: true, force: false });
+    const entries = await readdir(directory);
+    for (const entry of entries) {
+      const file = path.join(directory, entry);
+      const details = await lstat(file);
+      if (details.isDirectory() && !details.isSymbolicLink()) fail("cleanup_not_private_leaf");
+      await unlink(file);
+    }
+    await rmdir(directory);
     state.set(claim, "cleaned");
   } catch (error) {
     state.set(claim, "failed");

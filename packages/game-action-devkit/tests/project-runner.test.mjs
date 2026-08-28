@@ -1,9 +1,41 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readdir, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { normalizeInvocation, readActionProjectManifest, runActionProject } from "../src/project-runner.mjs";
+
+async function removeTree(root) {
+  const pending = [{ target: root, visited: false }];
+  let operations = 0;
+  while (pending.length > 0) {
+    if (++operations > 10_000) throw new Error("project_runner_test_cleanup_did_not_converge");
+    const current = pending.pop();
+    let details;
+    try {
+      details = await lstat(current.target);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    if (details.isSymbolicLink() || !details.isDirectory()) {
+      await unlink(current.target);
+      continue;
+    }
+    if (current.visited) {
+      try {
+        await rmdir(current.target);
+        continue;
+      } catch (error) {
+        if (error?.code !== "ENOTEMPTY") throw error;
+      }
+    }
+    pending.push({ target: current.target, visited: true });
+    for (const entry of await readdir(current.target, { withFileTypes: true })) {
+      pending.push({ target: path.join(current.target, entry.name), visited: false });
+    }
+  }
+}
 
 async function withProject(files, callback) {
   const root = await mkdtemp(path.join(os.tmpdir(), "action-project-"));
@@ -14,27 +46,68 @@ async function withProject(files, callback) {
       await writeFile(target, text);
     }
     await callback(root);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally { await removeTree(root); }
 }
 
-const adapter = `export async function runActionProject({ manifest, invocation }) { return { gameId: manifest.gameId, status: invocation.command, actionId: invocation.actionId ?? null }; }`;
-const manifest = JSON.stringify({ schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "./adapter.mjs", toolInventory: "./inventory.json" });
+const adapter = `export async function runActionProject({ manifest, invocation }) { return { gameId: manifest.gameId, status: invocation.command, actionId: invocation.actionId ?? null, runId: invocation.runId ?? null, evidenceRoot: manifest.evidenceRoot, briefFile: invocation.briefFile ?? null }; }`;
+const manifestValue = { schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "./adapter.mjs", portfolio: "./portfolio.json", toolInventory: "./inventory.json", evidenceRoot: "./artifacts/action-runs", defaultProfileExample: "./profile.json" };
+const manifest = JSON.stringify(manifestValue);
+const dependencies = { "adapter.mjs": adapter, "portfolio.json": "{}", "inventory.json": "{}", "profile.json": "{}" };
 
 test("normalizes only explicit immutable invocation fields", () => {
-  const invocation = normalizeInvocation({ command: "check", actionId: "equip_tool", profileFile: "profiles/default.json" });
-  assert.deepEqual(invocation, { command: "check", actionId: "equip_tool", profileFile: "profiles/default.json" });
+  const profileFile = path.join(os.tmpdir(), "profiles", "default.json");
+  const invocation = normalizeInvocation({ command: "preflight", actionId: "equip_tool", profileFile });
+  assert.deepEqual(invocation, { command: "preflight", actionId: "equip_tool", profileFile });
   assert.ok(Object.isFrozen(invocation));
-  assert.throws(() => normalizeInvocation({ command: "check", gameId: "stardew" }), /invalid_invocation_key/);
+    assert.throws(() => normalizeInvocation({ command: "check", gameId: "stardew" }), /invalid_invocation_key/);
+    assert.throws(() => normalizeInvocation({ command: "run-live", runId: "operator-run" }), /invalid_invocation_key/);
+    assert.throws(() => normalizeInvocation({ command: "run-live", evidenceRoot: "C:/operator" }), /invalid_invocation_key/);
   assert.throws(() => normalizeInvocation({ command: "check", actionId: "../equip" }), /invalid_action_id/);
   assert.throws(() => normalizeInvocation({ command: "check", briefFile: "../brief.json" }), /invalid_briefFile/);
 });
 
 test("loads a strict project manifest and delegates without a game registry", async () => {
-  await withProject({ "project.json": manifest, "adapter.mjs": adapter, "inventory.json": "{}" }, async (root) => {
+  await withProject({ "project.json": manifest, ...dependencies }, async (root) => {
     const loaded = await readActionProjectManifest(path.join(root, "project.json"));
     assert.equal(loaded.gameId, "stardew");
     const result = await runActionProject({ projectFile: loaded.manifestFile, invocation: { command: "status", actionId: "equip_tool" } });
-    assert.deepEqual(result, { gameId: "stardew", status: "status", actionId: "equip_tool" });
+    assert.deepEqual(result, { gameId: "stardew", status: "status", actionId: "equip_tool", runId: null, evidenceRoot: path.join(root, "artifacts", "action-runs"), briefFile: null });
+  });
+});
+
+test("mints a fresh bounded opaque run id and passes canonical manifest roots for every run-live attempt", async () => {
+  await withProject({ "project.json": manifest, ...dependencies }, async (root) => {
+    const projectFile = path.join(root, "project.json");
+    const [first, second] = await Promise.all([
+      runActionProject({ projectFile, invocation: { command: "run-live", actionId: "equip_tool", profileFile: path.join(root, "profile.json") } }),
+      runActionProject({ projectFile, invocation: { command: "run-live", actionId: "equip_tool", profileFile: path.join(root, "profile.json") } }),
+    ]);
+    assert.match(first.runId, /^ar1_[a-z0-9]+_[a-f0-9]{32}$/);
+    assert.notEqual(first.runId, second.runId);
+    assert.equal(first.evidenceRoot, path.join(root, "artifacts", "action-runs"));
+  });
+});
+
+test("resolves a declared brief to one canonical project-owned regular file", async (t) => {
+  await withProject({ "project.json": manifest, ...dependencies, "briefs/equip.json": "{}" }, async (root) => {
+    const result = await runActionProject({
+      projectFile: path.join(root, "project.json"),
+      invocation: { command: "preflight", actionId: "equip_tool", profileFile: path.join(root, "profile.json"), briefFile: "briefs/equip.json" },
+    });
+    assert.equal(result.briefFile, path.join(root, "briefs", "equip.json"));
+
+    const outside = await mkdtemp(path.join(os.tmpdir(), "action-project-brief-outside-"));
+    try {
+      await writeFile(path.join(outside, "brief.json"), "{}");
+      try { await symlink(path.join(outside, "brief.json"), path.join(root, "briefs", "linked.json"), "file"); } catch (error) {
+        if (error?.code === "EPERM") return t.skip("file symlinks unavailable");
+        throw error;
+      }
+      await assert.rejects(
+        runActionProject({ projectFile: path.join(root, "project.json"), invocation: { command: "preflight", actionId: "equip_tool", profileFile: path.join(root, "profile.json"), briefFile: "briefs/linked.json" } }),
+        /brief_dependency_escape/,
+      );
+    } finally { await removeTree(outside); }
   });
 });
 
@@ -44,10 +117,10 @@ test("rejects adapter and inventory dependencies that physically escape the proj
     await writeFile(path.join(outside, "adapter.mjs"), adapter);
     await writeFile(path.join(outside, "inventory.json"), "{}");
     for (const [linkName, targetName, localFiles] of [
-      ["adapter.mjs", "adapter.mjs", { "inventory.json": "{}" }],
-      ["inventory.json", "inventory.json", { "adapter.mjs": adapter }],
+      ["adapter.mjs", "adapter.mjs", { ...dependencies, "adapter.mjs": undefined }],
+      ["inventory.json", "inventory.json", { ...dependencies, "inventory.json": undefined }],
     ]) {
-      await withProject(localFiles, async (root) => {
+       await withProject(Object.fromEntries(Object.entries(localFiles).filter(([, value]) => value !== undefined)), async (root) => {
         try { await symlink(path.join(outside, targetName), path.join(root, linkName), "file"); } catch (error) {
           if (error?.code === "EPERM") return t.skip("file symlinks unavailable");
           throw error;
@@ -56,17 +129,17 @@ test("rejects adapter and inventory dependencies that physically escape the proj
         await assert.rejects(readActionProjectManifest(path.join(root, "project.json")), /manifest_dependency_escape/);
       });
     }
-  } finally { await rm(outside, { recursive: true, force: true }); }
+  } finally { await removeTree(outside); }
 });
 
 test("fails closed for malformed manifests, escaping references, missing dependencies, and invalid reports", async () => {
-  await withProject({ "adapter.mjs": adapter, "inventory.json": "{}" }, async (root) => {
-    await writeFile(path.join(root, "bad.json"), JSON.stringify({ schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "../adapter.mjs", toolInventory: "./inventory.json" }));
+  await withProject(dependencies, async (root) => {
+    await writeFile(path.join(root, "bad.json"), JSON.stringify({ ...manifestValue, adapter: "../adapter.mjs" }));
     await assert.rejects(readActionProjectManifest(path.join(root, "bad.json")), /invalid_adapter/);
-    await writeFile(path.join(root, "missing.json"), JSON.stringify({ schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "./missing.mjs", toolInventory: "./inventory.json" }));
+    await writeFile(path.join(root, "missing.json"), JSON.stringify({ ...manifestValue, adapter: "./missing.mjs" }));
     await assert.rejects(readActionProjectManifest(path.join(root, "missing.json")), /manifest_dependency_missing/);
     await writeFile(path.join(root, "invalid.mjs"), "export async function runActionProject() { return { status: 'ok' }; }");
-    await writeFile(path.join(root, "invalid.json"), JSON.stringify({ schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "./invalid.mjs", toolInventory: "./inventory.json" }));
+    await writeFile(path.join(root, "invalid.json"), JSON.stringify({ ...manifestValue, adapter: "./invalid.mjs" }));
     await assert.rejects(runActionProject({ projectFile: path.join(root, "invalid.json"), invocation: { command: "check" } }), /adapter_report_invalid/);
   });
 });

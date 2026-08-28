@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rename, rmdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -6,6 +6,7 @@ const FINAL_STATUSES = new Set(["complete", "incomplete"]);
 const VERDICTS = new Set(["passed", "blocked", "failed", "uncertain"]);
 const MAX_METADATA_BYTES = 32 * 1024;
 const MANIFEST_KEYS = new Set(["schema", "identity", "status", "verdict", "metadata"]);
+const LATEST_KEYS = new Set(["schema", "identity"]);
 const runState = new WeakMap();
 
 function fail(code) { throw new Error(`game_action_evidence_${code}`); }
@@ -20,12 +21,38 @@ function validateIdentity(identity) {
 }
 function runDirectory(root, identity) { return path.join(root, identity.gameId, identity.actionId, identity.runId); }
 function stagingDirectory(root, identity) { return `${runDirectory(root, identity)}.staging`; }
+function latestFile(root, identity) { return path.join(root, identity.gameId, identity.actionId, "latest.json"); }
 function identityEquals(left, right) { return left.gameId === right.gameId && left.actionId === right.actionId && left.runId === right.runId; }
+function samePath(left, right) {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
 
-async function trustedRoot(root) {
+async function trustedRoot(root, { create = false } = {}) {
   const resolved = assertRoot(root);
-  const stat = await lstat(resolved);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) fail("path_symlink");
+  const parsed = path.parse(resolved);
+  let current = parsed.root;
+  for (const part of resolved.slice(parsed.root.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    let stat;
+    try {
+      stat = await lstat(current);
+    } catch (error) {
+      if (error?.code !== "ENOENT" || !create) throw error;
+      try {
+        await mkdir(current);
+      } catch (mkdirError) {
+        if (mkdirError?.code !== "EEXIST") throw mkdirError;
+      }
+      stat = await lstat(current);
+    }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) fail("path_symlink");
+    const canonical = await realpath(current);
+    if (!samePath(canonical, current)) fail("path_symlink");
+  }
   return realpath(resolved);
 }
 
@@ -38,14 +65,22 @@ async function assertTrustedPath(root, target, { createParents = false } = {}) {
   let current = canonicalRoot;
   for (let i = 0; i < end; i++) {
     current = path.join(current, parts[i]);
+    let stat;
     try {
-      const stat = await lstat(current);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) fail("path_symlink");
+      stat = await lstat(current);
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
       if (!createParents) fail("bundle_unreadable");
-      await mkdir(current);
+      try {
+        await mkdir(current);
+      } catch (mkdirError) {
+        if (mkdirError?.code !== "EEXIST") throw mkdirError;
+      }
+      stat = await lstat(current);
     }
+    if (stat.isSymbolicLink() || !stat.isDirectory()) fail("path_symlink");
+    const canonical = await realpath(current);
+    if (!samePath(canonical, current)) fail("path_symlink");
   }
   return canonicalRoot;
 }
@@ -82,8 +117,29 @@ async function readTrustedFile(file) {
   return readFile(file, "utf8");
 }
 
+async function removePrivateStaging(staging) {
+  try { await unlink(path.join(staging, "bundle.json")); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  try { await rmdir(staging); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+}
+
+async function publishLatest(root, identity) {
+  const file = latestFile(root, identity);
+  await assertTrustedPath(root, file, { createParents: true });
+  const value = JSON.stringify({ schema: "gamebuddy-action-evidence-latest/v1", identity });
+  const temporary = `${file}.${identity.runId}.tmp`;
+  await writeFile(temporary, value, { encoding: "utf8", flag: "wx" });
+  try { await rename(temporary, file); } catch (error) {
+    try { await unlink(temporary); } catch {}
+    throw error;
+  }
+}
+
+function unavailable(reason) {
+  return Object.freeze({ availability: "unavailable", reason });
+}
+
 export async function beginEvidenceRun({ root, identity }) {
-  const canonicalRoot = await trustedRoot(root);
+  const canonicalRoot = await trustedRoot(root, { create: true });
   const canonicalIdentity = validateIdentity(identity);
   const finalDirectory = runDirectory(canonicalRoot, canonicalIdentity);
   const staging = stagingDirectory(canonicalRoot, canonicalIdentity);
@@ -109,11 +165,12 @@ export async function finalizeEvidenceRun(run, { status, verdict, metadata = {} 
     await assertTrustedDirectory(run.staging);
     await writeFile(path.join(run.staging, "bundle.json"), prepared.text, { encoding: "utf8", flag: "wx" });
     await rename(run.staging, run.finalDirectory);
+    await publishLatest(run.root, run.identity);
     runState.set(run, "finalized");
     return Object.freeze({ ...prepared.manifest, directory: run.finalDirectory });
   } catch (error) {
     runState.set(run, "failed");
-    await rm(run.staging, { recursive: true, force: true });
+    await removePrivateStaging(run.staging);
     throw error;
   }
 }
@@ -123,7 +180,7 @@ export async function finalizeIncompleteEvidenceRun(run, { verdict = "uncertain"
   return finalizeEvidenceRun(run, { status: "incomplete", verdict, metadata });
 }
 
-export async function readPassedEvidence({ root, identity }) {
+export async function readEvidenceStatus({ root, identity }) {
   const canonicalRoot = await trustedRoot(root);
   const canonicalIdentity = validateIdentity(identity);
   const directory = runDirectory(canonicalRoot, canonicalIdentity);
@@ -133,7 +190,41 @@ export async function readPassedEvidence({ root, identity }) {
     if (String(error?.message).includes("path_symlink")) throw error;
     fail("bundle_unreadable");
   }
-  const { manifest } = prepareManifest(parsed, canonicalIdentity);
+  return prepareManifest(parsed, canonicalIdentity).manifest;
+}
+
+export async function readLatestEvidenceStatus({ root, gameId, actionId }) {
+  let canonicalRoot;
+  try {
+    canonicalRoot = await trustedRoot(root);
+  } catch (error) {
+    if (error?.code === "ENOENT") return unavailable("missing");
+    throw error;
+  }
+  const expected = { gameId, actionId, runId: "placeholder" };
+  validateIdentity(expected);
+  const file = latestFile(canonicalRoot, expected);
+  try { await assertTrustedPath(canonicalRoot, path.dirname(file)); } catch (error) {
+    if (String(error?.message).includes("path_symlink")) throw error;
+    return unavailable("missing");
+  }
+  let index;
+  try {
+    index = JSON.parse(await readTrustedFile(file));
+    assertObject(index, "latest_invalid");
+    if (Object.keys(index).some((key) => !LATEST_KEYS.has(key)) || Object.keys(index).length !== LATEST_KEYS.size || index.schema !== "gamebuddy-action-evidence-latest/v1") fail("latest_invalid");
+    const identity = validateIdentity(index.identity);
+    if (identity.gameId !== gameId || identity.actionId !== actionId) fail("latest_invalid");
+    const manifest = await readEvidenceStatus({ root: canonicalRoot, identity });
+    return Object.freeze({ availability: "available", ...manifest });
+  } catch (error) {
+    if (String(error?.message).includes("path_symlink")) throw error;
+    return unavailable(error?.code === "ENOENT" ? "missing" : "corrupt");
+  }
+}
+
+export async function readPassedEvidence(options) {
+  const manifest = await readEvidenceStatus(options);
   if (manifest.status !== "complete" || manifest.verdict !== "passed") fail("bundle_not_passing");
   return manifest;
 }
