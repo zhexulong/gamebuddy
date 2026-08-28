@@ -13,6 +13,9 @@ if (rootElement) {
   const profile = searchParams.get("profile") ?? hashParams.get("profile");
   if (profile === "reference") {
     createRoot(rootElement).render(<ReferenceApp />);
+  } else if (profile === "composed-reference-game") {
+    const { ComposedReferenceGameApp } = await import("./components/ComposedReferenceGameApp");
+    createRoot(rootElement).render(<ComposedReferenceGameApp />);
   } else if (profile === "management") {
     const { ManagementApp } = await import("./components/ManagementApp");
     createRoot(rootElement).render(<ManagementApp />);
