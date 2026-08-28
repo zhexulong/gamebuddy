@@ -50,6 +50,12 @@ export function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
     defaultPolicy: DEFAULT_INTEGRATION_ACTION_POLICY,
     parsePolicy: (value: unknown): IntegrationActionPolicy =>
       parseActionPolicy(value),
+    actorId: (connection) => {
+      const scope = (connection as StardewBridgeConnection).scope;
+      if (!sameScope(scope, connection.scope) || !/^[A-Za-z0-9_-]{1,128}$/.test(scope.playerId))
+        throw new Error("integration_identity_mismatch");
+      return scope.playerId;
+    },
     assertIdentityBinding: (
       connection,
       identity: IntegrationIdentityBinding,
@@ -57,7 +63,6 @@ export function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       const scope = (connection as StardewBridgeConnection).scope;
       if (
         !sameScope(scope, connection.scope) ||
-        scope.playerId !== identity.playerId ||
         scope.companionId !== identity.companionId ||
         identity.saveId === undefined ||
         identity.worldId === undefined ||

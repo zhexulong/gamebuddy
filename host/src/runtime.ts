@@ -631,6 +631,9 @@ async function createRuntime(
       integration.module,
       integration.scope.integrationId,
     );
+    const actorId = integration.module.actorId(integration);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(actorId))
+      throw new Error("integration_actor_required");
     integration.module.assertIdentityBinding(integration, identity);
   }
   const mountedPolicy =

@@ -79,14 +79,13 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
   if (!(bridge instanceof LocalStardewBridgeClient)) throw new Error("authenticated_stardew_bridge_required");
   if (identity.saveId === undefined || identity.worldId === undefined)
     throw new Error("stardew_identity_scope_required");
-  const scope: Scope = {
-    integrationId: "stardew",
-    saveId: identity.saveId,
-    worldId: identity.worldId,
-    playerId: identity.playerId,
-    companionId: identity.companionId,
-  };
-  if (!sameScope(bridge.scope, scope)) {
+  const scope = bridge.scope;
+  if (
+    scope.integrationId !== "stardew" ||
+    scope.saveId !== identity.saveId ||
+    scope.worldId !== identity.worldId ||
+    scope.companionId !== identity.companionId
+  ) {
     bridge.close();
     throw new Error("stardew_bridge_identity_scope_mismatch");
   }
@@ -412,16 +411,6 @@ function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
         payload: message.payload,
       };
   }
-}
-
-function sameScope(left: Scope, right: Scope): boolean {
-  return (
-    left.integrationId === right.integrationId &&
-    left.saveId === right.saveId &&
-    left.worldId === right.worldId &&
-    left.playerId === right.playerId &&
-    left.companionId === right.companionId
-  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

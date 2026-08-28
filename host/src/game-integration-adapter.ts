@@ -6,9 +6,8 @@ import type {
 } from "./execution-correlation-ledger.js";
 import type { GameConnection } from "./game-connection.js";
 
-/** Host-owned identity fields that a selected adapter may bind to its connection. */
+/** Host-owned companion and world facts bound to one authenticated integration connection. */
 export type IntegrationIdentityBinding = Readonly<{
-  playerId: string;
   companionId: string;
   saveId?: string;
   worldId?: string;
@@ -179,7 +178,9 @@ export type GameIntegrationAdapter = Readonly<{
   actionCatalog: IntegrationActionCatalog;
   defaultPolicy: IntegrationActionPolicy;
   parsePolicy(value: unknown): IntegrationActionPolicy;
-  /** Reject a connection that does not match the Host-owned Companion identity. */
+  /** Return the adapter-authenticated embodied actor for this connection. */
+  actorId(connection: GameConnection): string;
+  /** Reject a connection that does not match the Host-owned companion/world identity. */
   assertIdentityBinding(
     connection: GameConnection,
     identity: IntegrationIdentityBinding,
@@ -320,6 +321,7 @@ export function assertIntegrationAdapter(
     !VERSION.test(adapter.descriptor.version) ||
     !isToolNamePrefix(adapter.descriptor.toolNamePrefix) ||
     adapter.descriptor.integrationId !== integrationId ||
+    typeof adapter.actorId !== "function" ||
     typeof adapter.assertIdentityBinding !== "function" ||
     typeof adapter.worldScope !== "function" ||
     typeof adapter.createToolSet !== "function" ||
