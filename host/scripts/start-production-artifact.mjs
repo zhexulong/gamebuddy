@@ -36,6 +36,14 @@ const child = spawn(process.execPath, [selected.entryPath, ...configArgs], {
   env: createProductionChildEnvironment(entry, process.env, undefined, undefined, activeStopProofBinding),
 });
 const ACTIVE_STOP_PROOF_RECEIPT = "active_stop_proof_verified";
+const GAME_TASK_INGRESS_SCHEMA = "gamebuddy-production-game-task-ingress/v1";
+const GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA = "gamebuddy-game-operational-gate-evidence/v2";
+let task9Mode = false;
+let childReady = false;
+let parentReadyRelayed = false;
+let taskForwarded = false;
+let terminalEvidenceRelayed = false;
+let task9Ready;
 
 function forwardChildStdout(stream) {
   let pending = "";
@@ -90,7 +98,112 @@ function stopChild(signal) {
   forcedStopTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
   forcedStopTimer.unref();
 }
+process.on("message", (message) => {
+  const dispatch = parseGameTaskDispatch(message);
+  const taskSchemaMessage = message?.schema === GAME_TASK_INGRESS_SCHEMA || dispatch !== null;
+  if (taskSchemaMessage) {
+    if (
+      !task9Mode ||
+      !childReady ||
+      !parentReadyRelayed ||
+      taskForwarded ||
+      dispatch === null ||
+      !sameTaskCorrelation(dispatch, true)
+    ) {
+      failProtocol();
+      return;
+    }
+    taskForwarded = true;
+    if (!child.connected) {
+      failProtocol();
+      return;
+    }
+    try {
+      if (!child.send(dispatch, undefined, undefined, (error) => {
+        if (error) failProtocol();
+      })) failProtocol();
+    } catch {
+      failProtocol();
+    }
+    return;
+  }
+  // Non-Task 9 entries retain ordinary IPC relay semantics until a child
+  // publishes the exact Task 9 ready record. Once pinned, no generic message
+  // may cross this launch boundary.
+  if (task9Mode) {
+    failProtocol();
+    return;
+  }
+  if (!child.connected) {
+    failProtocol();
+    return;
+  }
+  try {
+    if (!child.send(message, undefined, undefined, (error) => {
+      if (error) failProtocol();
+    })) failProtocol();
+  } catch {
+    failProtocol();
+  }
+});
+
 child.on("message", (message, sendHandle) => {
+  const ready = parseGameTaskReady(message);
+  if (ready !== null) {
+    if (task9Mode || childReady || taskForwarded || !child.connected) {
+      failProtocol();
+      return;
+    }
+    task9Mode = true;
+    childReady = true;
+    task9Ready = ready;
+    if (process.connected !== true) {
+      failProtocol();
+      return;
+    }
+    try {
+      if (!process.send(ready, undefined, undefined, (error) => {
+        if (error) {
+          failProtocol();
+        } else {
+          parentReadyRelayed = true;
+        }
+      })) failProtocol();
+    } catch {
+      failProtocol();
+    }
+    return;
+  }
+  if (message?.schema === GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA) {
+    const evidence = parseGameOperationalGateEvidence(message);
+    if (
+      !task9Mode ||
+      !taskForwarded ||
+      terminalEvidenceRelayed ||
+      evidence === null ||
+      !sameTaskCorrelation(evidence, false)
+    ) {
+      failProtocol();
+      return;
+    }
+    terminalEvidenceRelayed = true;
+    if (process.connected !== true) {
+      failProtocol();
+      return;
+    }
+    try {
+      if (!process.send(evidence, undefined, undefined, (error) => {
+        if (error) failProtocol();
+      })) failProtocol();
+    } catch {
+      failProtocol();
+    }
+    return;
+  }
+  if (message?.schema === GAME_TASK_INGRESS_SCHEMA) {
+    failProtocol();
+    return;
+  }
   if (message?.schema === "gamebuddy-production-live-source-attestation/v1") {
     if (!isLiveSourceEvidenceEnvelope(message)) {
       process.exitCode = 1;
@@ -113,8 +226,88 @@ child.on("message", (message, sendHandle) => {
     if (process.connected === true) process.send(message);
     return;
   }
+  if (task9Mode) {
+    failProtocol();
+    return;
+  }
   if (process.connected === true) process.send(message, sendHandle);
 });
+
+function parseGameTaskReady(value) {
+  if (!exactKeys(value, ["gameSessionId", "kind", "nonceSha256", "piSessionId", "schema", "surface"]) || value.schema !== GAME_TASK_INGRESS_SCHEMA || value.kind !== "ready" || value.surface !== "game" || !identifier(value.gameSessionId) || !identifier(value.piSessionId) || !sha256(value.nonceSha256)) return null;
+  return Object.freeze({ schema: GAME_TASK_INGRESS_SCHEMA, kind: "ready", surface: "game", nonceSha256: value.nonceSha256, gameSessionId: value.gameSessionId, piSessionId: value.piSessionId });
+}
+function parseGameTaskDispatch(value) {
+  if (!exactKeys(value, ["gameSessionId", "kind", "nonceSha256", "piSessionId", "schema", "surface", "task"]) || value.schema !== GAME_TASK_INGRESS_SCHEMA || value.kind !== "dispatch_task" || value.surface !== "game" || !identifier(value.gameSessionId) || !identifier(value.piSessionId) || !sha256(value.nonceSha256) || !canonicalTask(value.task)) return null;
+  return Object.freeze({ schema: GAME_TASK_INGRESS_SCHEMA, kind: "dispatch_task", surface: "game", nonceSha256: value.nonceSha256, gameSessionId: value.gameSessionId, piSessionId: value.piSessionId, task: value.task });
+}
+function parseGameOperationalGateEvidence(value) {
+  if (
+    !exactKeys(value, ["capabilityCount", "capabilityRevision", "nonceSha256", "piSessionId", "schema", "stopSettled", "surface", "terminalState", "transitions"]) ||
+    value.schema !== GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA ||
+    !sha256(value.nonceSha256) ||
+    !identifier(value.piSessionId) ||
+    value.surface !== "game" ||
+    !revision(value.capabilityRevision) ||
+    !count(value.capabilityCount) ||
+    value.terminalState !== "completed" ||
+    value.stopSettled !== true ||
+    !exactKeys(value.transitions, ["allPostconditionsObserved", "count", "distinctActionCount", "freshObservationCount"]) ||
+    value.transitions.count !== 2 ||
+    value.transitions.distinctActionCount !== 2 ||
+    value.transitions.freshObservationCount !== 2 ||
+    value.transitions.allPostconditionsObserved !== true
+  ) return null;
+  return Object.freeze({
+    schema: GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA,
+    nonceSha256: value.nonceSha256,
+    piSessionId: value.piSessionId,
+    surface: "game",
+    capabilityRevision: value.capabilityRevision,
+    capabilityCount: value.capabilityCount,
+    transitions: Object.freeze({
+      count: 2,
+      distinctActionCount: 2,
+      freshObservationCount: 2,
+      allPostconditionsObserved: true,
+    }),
+    terminalState: "completed",
+    stopSettled: true,
+  });
+}
+function revision(value) { return Number.isSafeInteger(value) && value >= 0; }
+function count(value) { return Number.isSafeInteger(value) && value >= 0 && value <= 512; }
+function sameTaskCorrelation(value, requireGameSession) {
+  return task9Ready !== undefined &&
+    value.nonceSha256 === task9Ready.nonceSha256 &&
+    value.piSessionId === task9Ready.piSessionId &&
+    (!requireGameSession || value.gameSessionId === task9Ready.gameSessionId);
+}
+function failProtocol() {
+  process.exitCode = 1;
+  stopChild("SIGTERM");
+}
+function exactKeys(value, keys) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype && Object.getOwnPropertySymbols(value).length === 0 && Object.getOwnPropertyNames(value).sort().join(",") === [...keys].sort().join(",");
+}
+function sha256(value) { return typeof value === "string" && /^[a-f0-9]{64}$/.test(value); }
+function identifier(value) { return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value); }
+function canonicalTask(value) {
+  if (typeof value !== "string") return false;
+  let scalarValues = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit === 0) return false;
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) return false;
+    scalarValues += 1;
+    if (scalarValues > 2_000) return false;
+  }
+  return scalarValues >= 1;
+}
 child.once("error", () => process.exit(1));
 child.once("exit", (code, signal) => {
   if (forcedStopTimer !== undefined) clearTimeout(forcedStopTimer);
@@ -127,3 +320,4 @@ child.once("exit", (code, signal) => {
 });
 process.once("SIGINT", () => stopChild("SIGINT"));
 process.once("SIGTERM", () => stopChild("SIGTERM"));
+process.once("disconnect", () => stopChild("SIGTERM"));

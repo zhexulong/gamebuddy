@@ -236,3 +236,21 @@ test("close races remove both listeners and reject an admitted task without repl
   assert.equal(h.removeMessageCalls, 1);
   assert.equal(h.removeDisconnectCalls, 1);
 });
+
+
+test("ready send failure never arms the one-shot ingress", async () => {
+  const h = transportHarness();
+  const controller = createProductionGameTaskIngressController({
+    ...readyFields,
+    transport: h.transport,
+    dispatchTask: async () => undefined,
+  });
+  const starting = controller.start();
+  assert.equal(controller.state(), "sealed");
+  h.deliverReady(new Error("ready_delivery_failed"));
+  await assert.rejects(starting, /ready_delivery_failed/);
+  await assert.rejects(controller.fatal, /ready_delivery_failed/);
+  assert.equal(controller.state(), "closing");
+  assert.equal(h.removeMessageCalls, 1);
+  assert.equal(h.removeDisconnectCalls, 1);
+});

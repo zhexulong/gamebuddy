@@ -38,6 +38,10 @@ export type ConnectedSemanticGameLease = Readonly<{
   activateCommittedIngress(): void;
   /** Source-owned, content-free operational-gate evidence; absent unless armed at construction. */
   nextOperationalGateEvidence?(): Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">>;
+  /** Launch-owned one-shot prompt task; its worker result is intentionally discarded. */
+  dispatchPromptDefinedTask(task: string): Promise<void>;
+  /** Seals and cancels the exact active prompt task before close waits for drain. */
+  cancelPromptDefinedTask(): void;
 }>;
 
 /** Internal construction product; the public module narrows it to its facade type. */
@@ -84,6 +88,7 @@ export function constructKnownUnmountedGameSemanticFacade(
   let closePromise: Promise<void> | undefined;
   let connectedLease: ConnectedSemanticGameLease | undefined;
   let ingressActivated = false;
+  let promptTaskConsumed = false;
   let drainResolve: (() => void) | undefined;
   const drain = (): Promise<void> =>
     active
@@ -158,6 +163,26 @@ export function constructKnownUnmountedGameSemanticFacade(
         ...(connected.nextOperationalGateEvidence === undefined
           ? {}
           : { nextOperationalGateEvidence: connected.nextOperationalGateEvidence }),
+        dispatchPromptDefinedTask: async (task: string): Promise<void> => {
+          if (!ingressActivated) throw new Error("semantic_game_ingress_not_activated");
+          if (closing || live === undefined) throw new Error("semantic_game_lease_unavailable");
+          if (promptTaskConsumed) throw new Error("semantic_game_prompt_task_already_consumed");
+          // Linearize before entering the async worker seam. A rejected worker
+          // may have produced a native side effect and must never be replayed.
+          promptTaskConsumed = true;
+          active = true;
+          try {
+            await connected.dispatchPromptDefinedTask(task);
+          } finally {
+            active = false;
+            drainResolve?.();
+            drainResolve = undefined;
+          }
+        },
+        cancelPromptDefinedTask: (): void => {
+          if (closing || live === undefined) return;
+          connected.cancelPromptDefinedTask();
+        },
       }) as ConnectedSemanticGameLease;
       return connectedLease;
     } finally {

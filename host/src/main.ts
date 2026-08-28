@@ -7,6 +7,7 @@ import {
 } from "./companion-control-server.js";
 import { createCompanionLiveEvidenceArtifact } from "./companion-live-evidence-artifact.js";
 import { createLiveSourceAttester } from "./companion-live-source-attestation.js";
+import { createProductionGameTaskIngressController } from "./production-game-task-ingress.internal.js";
 import {
   createKnownSemanticGameDeadOwnerRecoveryFacadeFromOperatorConfig,
   createKnownSemanticGameFacadeFromOperatorConfig,
@@ -41,13 +42,11 @@ if (command.kind === "recover_dead_owner") {
 } else await enterSemanticGame(command.operatorConfigPath, readGameOperationalGateNonceSha256());
 
 async function emitGameOperationalGateEvidence(
-  lease: Readonly<{
-    piSessionId: string;
-    nextOperationalGateEvidence?(): Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">>;
-  }>,
+  lease: Readonly<{ piSessionId: string }>,
   nonceSha256: string,
+  projectionPromise: Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">>,
 ): Promise<void> {
-  const projection = await lease.nextOperationalGateEvidence!();
+  const projection = await projectionPromise;
   const evidence = validateGameOperationalGateEvidence(
     Object.freeze({ ...projection, nonceSha256, piSessionId: lease.piSessionId }),
   );
@@ -145,6 +144,27 @@ async function enterSemanticGame(operatorConfigPath: string, gameOperationalGate
   let controlServer: CompanionControlServer | undefined;
   let detachVoice: (() => Promise<void>) | undefined;
   let voicePoll: ReturnType<typeof createVoicePollingSupervisor> | undefined;
+  let taskIngress: ReturnType<typeof createProductionGameTaskIngressController> | undefined;
+  let operationalGateEvidencePromise: Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">> | undefined;
+  let taskLease: Awaited<ReturnType<typeof createKnownSemanticGameFacadeFromOperatorConfig>> extends infer T
+    ? T extends { runEnter(): infer R }
+      ? Awaited<R>
+      : never
+    : never;
+  let signalStop: Promise<void> | undefined;
+  if (gameOperationalGateNonceSha256 !== undefined) {
+    signalStop = new Promise<void>((resolveStop) => {
+      const stop = () => {
+        taskIngress?.close();
+        taskLease?.cancelPromptDefinedTask();
+        void controlServer?.close();
+        void facade?.close();
+        resolveStop();
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+    });
+  }
   try {
     // The Game runtime never receives an entry-selected session id or epoch:
     // its materializer supplies both from the receipt-backed Game binding.
@@ -162,6 +182,7 @@ async function enterSemanticGame(operatorConfigPath: string, gameOperationalGate
     // Game session is compared to the independently configured Gateway session
     // before any initial fact can reach Pi or enqueue speech.
     const lease = await facade.runEnter();
+    taskLease = lease;
     if (voice !== undefined && voiceConfig !== undefined) {
       if (voiceConfig.voiceSessionId !== lease.gameSessionId) throw new Error("voice_session_receipt_mismatch");
       await voice.bootstrapSession(lease.gameSessionId);
@@ -185,17 +206,24 @@ async function enterSemanticGame(operatorConfigPath: string, gameOperationalGate
     liveSourceAttester?.activate(controlServer.runtimeInstanceId);
     await emitDeterministicBootstrapEvidence(controlLaunch, controlServer.runtimeInstanceId);
     if (gameOperationalGateNonceSha256 !== undefined) {
-      if (typeof process.send !== "function" || lease.nextOperationalGateEvidence === undefined)
+      if (
+        typeof process.send !== "function" ||
+        process.connected !== true ||
+        lease.nextOperationalGateEvidence === undefined
+      )
         throw new Error("game_operational_gate_evidence_unavailable");
-      void emitGameOperationalGateEvidence(lease, gameOperationalGateNonceSha256).catch(async () => {
-        // The gate has no fallback channel or synthetic evidence. Tear down the
-        // exact semantic facade so an unavailable IPC path cannot remain live.
-        try {
-          await facade?.close();
-        } finally {
-          process.exitCode = 1;
-        }
+      // Arm the source-owned aggregate before publishing readiness. The waiter
+      // subscribes synchronously, so a fast parent dispatch cannot outrun it.
+      operationalGateEvidencePromise = lease.nextOperationalGateEvidence();
+      taskIngress = createProductionGameTaskIngressController({
+        nonceSha256: gameOperationalGateNonceSha256,
+        gameSessionId: lease.gameSessionId,
+        piSessionId: lease.piSessionId,
+        dispatchTask: lease.dispatchPromptDefinedTask,
       });
+      // Readiness is not visible to the parent until the Node IPC send callback
+      // succeeds; a task received during this barrier is fatal, never queued.
+      await taskIngress.start();
     }
   } catch (error) {
     if (controlServer !== undefined) {
@@ -229,7 +257,10 @@ async function enterSemanticGame(operatorConfigPath: string, gameOperationalGate
   }
   if (facade === undefined) throw new Error("semantic_game_facade_missing");
   const shutdown = createHostShutdownLifecycle({
-    closeControlIngress: () => controlServer!.close(),
+    closeControlIngress: async () => {
+      taskIngress?.close();
+      await controlServer!.close();
+    },
     stopPolling: voicePoll === undefined ? undefined : () => voicePoll.close(),
     detachVoice,
     closeVoice: voice === undefined ? undefined : closeVoiceOnce,
@@ -239,11 +270,37 @@ async function enterSemanticGame(operatorConfigPath: string, gameOperationalGate
   let primaryError: unknown;
   const cleanupErrors: unknown[] = [];
   try {
-    await new Promise<void>((resolveStop) => {
+    signalStop ??= new Promise<void>((resolveStop) => {
       const stop = () => resolveStop();
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
     });
+    if (taskIngress !== undefined && operationalGateEvidencePromise !== undefined) {
+      const completeTask = (async () => {
+        await taskIngress!.task;
+        if (taskLease === undefined) throw new Error("semantic_game_lease_missing");
+        await emitGameOperationalGateEvidence(
+          { piSessionId: taskLease.piSessionId },
+          gameOperationalGateNonceSha256!,
+          operationalGateEvidencePromise!,
+        );
+      })();
+      let signalObserved = false;
+      const observedSignalStop = signalStop.then(() => {
+        signalObserved = true;
+      });
+      try {
+        await Promise.race([taskIngress.fatal, completeTask, observedSignalStop]);
+      } finally {
+        if (signalObserved || taskIngress.state() === "closing") {
+          taskIngress.close();
+          taskLease?.cancelPromptDefinedTask();
+        }
+      }
+      if (!signalObserved) await signalStop;
+    } else {
+      await signalStop;
+    }
     const preparationErrors = await shutdown.prepareForReturn();
     if (preparationErrors.length > 0) throw new AggregateError(preparationErrors, "host_shutdown_prepare_failed");
   } catch (error) {

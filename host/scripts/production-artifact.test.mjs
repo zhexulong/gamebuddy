@@ -928,15 +928,137 @@ test("non-D0 starter relays ordinary child IPC and leaves the child live", async
   await cp(join(hostRoot, "node_modules", "typescript", "lib"), join(root, "node_modules", "typescript", "lib"), { recursive: true });
   await writeFile(join(root, "node_modules", "typescript", "package.json"), JSON.stringify({ name: "typescript", main: "./lib/typescript.js" }));
   const emitted = await emit(root);
-  await writeFile(join(emitted, "main.js"), 'import "typebox"; process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(0), 40);');
+  await writeFile(join(emitted, "main.js"), 'import "typebox"; process.on("message", (message) => process.send?.({ schema: "ordinary-parent-ipc-ack", received: message })); process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(0), 80);');
   await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
   const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
   const messages = []; let stderr = "";
   child.on("message", (message) => messages.push(message));
   child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.send({ schema: "ordinary-parent-ipc", value: 2 });
   const result = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code) => resolve(code)); });
   assert.equal(result, 0, `starter stderr: ${stderr}`);
-  assert.deepEqual(messages, [{ schema: "ordinary-production-ipc", value: 1 }]);
+  assert.deepEqual(messages, [
+    { schema: "ordinary-production-ipc", value: 1 },
+    { schema: "ordinary-parent-ipc-ack", received: { schema: "ordinary-parent-ipc", value: 2 } },
+  ]);
+}));
+
+test("Task 9 starter relays one exact correlated task and one validated v2 terminal aggregate", async () => withFixture(async (root) => {
+  const dist = join(root, "dist");
+  await mkdir(join(root, "scripts"));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
+  await installArtifactTestDependencies(root);
+  const emitted = await emit(root);
+  const nonceSha256 = "a".repeat(64);
+  const ready = { schema: "gamebuddy-production-game-task-ingress/v1", kind: "ready", surface: "game", nonceSha256, gameSessionId: "game_session_01", piSessionId: "pi_session_01" };
+  const dispatch = { ...ready, kind: "dispatch_task", task: "walk to the chest" };
+  const terminal = {
+    schema: "gamebuddy-game-operational-gate-evidence/v2",
+    nonceSha256,
+    piSessionId: ready.piSessionId,
+    surface: "game",
+    capabilityRevision: 3,
+    capabilityCount: 4,
+    transitions: { count: 2, distinctActionCount: 2, freshObservationCount: 2, allPostconditionsObserved: true },
+    terminalState: "completed",
+    stopSettled: true,
+  };
+  await writeFile(join(emitted, "main.js"), `import "typebox";
+process.send?.(${JSON.stringify(ready)});
+process.on("message", (message) => {
+  if (message?.kind !== "dispatch_task") process.exit(11);
+  process.send?.(${JSON.stringify(terminal)});
+  setTimeout(() => process.exit(0), 40);
+});
+`);
+  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  const messages = []; let stderr = "";
+  child.on("message", (message) => {
+    messages.push(message);
+    if (message?.kind === "ready") child.send(dispatch);
+  });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const result = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code) => resolve(code)); });
+  assert.equal(result, 0, `starter stderr: ${stderr}`);
+  assert.deepEqual(messages, [ready, terminal]);
+}));
+
+test("Task 9 starter rejects dispatch before ready and every malformed, foreign, or duplicate terminal protocol message", async () => withFixture(async (root) => {
+  const dist = join(root, "dist");
+  await mkdir(join(root, "scripts"));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"]) await cp(join(scriptRoot, script), join(root, "scripts", script));
+  await installArtifactTestDependencies(root);
+  const emitted = await emit(root);
+  const nonceSha256 = "b".repeat(64);
+  const ready = { schema: "gamebuddy-production-game-task-ingress/v1", kind: "ready", surface: "game", nonceSha256, gameSessionId: "game_session_02", piSessionId: "pi_session_02" };
+  const validDispatch = { ...ready, kind: "dispatch_task", task: "do the task" };
+  const terminal = {
+    schema: "gamebuddy-game-operational-gate-evidence/v2",
+    nonceSha256,
+    piSessionId: ready.piSessionId,
+    surface: "game",
+    capabilityRevision: 1,
+    capabilityCount: 2,
+    transitions: { count: 2, distinctActionCount: 2, freshObservationCount: 2, allPostconditionsObserved: true },
+    terminalState: "completed",
+    stopSettled: true,
+  };
+  async function runCase(childSource, parentMessage) {
+    await writeFile(join(emitted, "main.js"), `import "typebox";\n${childSource}`);
+    await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+    const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    const messages = []; let stderr = "";
+    child.on("message", (message) => {
+      messages.push(message);
+      if (message?.kind === "ready") child.send(parentMessage);
+    });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (value) => resolve(value)); });
+    assert.notEqual(code, 0, `starter unexpectedly accepted invalid Task 9 case: ${stderr}`);
+    return messages;
+  }
+  const early = await (async () => {
+    await writeFile(join(emitted, "main.js"), `import "typebox"; setTimeout(() => process.send?.(${JSON.stringify(ready)}), 100);`);
+    await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+    const child = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    child.send(validDispatch);
+    return new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", (code) => { assert.notEqual(code, 0); resolve(code); }); });
+  })();
+  assert.notEqual(early, 0);
+  await runCase(`process.send?.(${JSON.stringify(ready)}); process.on("message", () => process.send?.(${JSON.stringify(terminal)}));`, { ...validDispatch, task: "\ud800" });
+  await runCase(`process.send?.(${JSON.stringify(ready)}); process.on("message", () => process.send?.(${JSON.stringify({ ...terminal, capabilityCount: 2, extra: true })}));`, validDispatch);
+  await runCase(`process.send?.(${JSON.stringify(ready)}); process.on("message", () => { process.send?.(${JSON.stringify({ ...terminal, nonceSha256: "c".repeat(64) })}); });`, validDispatch);
+  await runCase(`process.send?.(${JSON.stringify(ready)}); process.on("message", () => { process.send?.(${JSON.stringify(terminal)}); process.send?.(${JSON.stringify(terminal)}); });`, validDispatch);
+}));
+
+test("Task 9 starter terminates its direct child when the parent IPC disconnects", async () => withFixture(async (root) => {
+  const dist = join(root, "dist");
+  await mkdir(join(root, "scripts"));
+  for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"])
+    await cp(join(scriptRoot, script), join(root, "scripts", script));
+  await installArtifactTestDependencies(root);
+  const emitted = await emit(root);
+  const ready = { schema: "gamebuddy-production-game-task-ingress/v1", kind: "ready", surface: "game", nonceSha256: "d".repeat(64), gameSessionId: "game_session_disconnect", piSessionId: "pi_session_disconnect" };
+  await writeFile(join(emitted, "main.js"), `import "typebox";
+process.send?.(${JSON.stringify(ready)});
+process.once("SIGTERM", () => process.exit(23));
+setInterval(() => undefined, 1000);
+`);
+  await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
+  const wrapper = spawn(process.execPath, [join(root, "scripts", "start-production-artifact.mjs"), "main.js"], { cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+  await new Promise((resolve, reject) => {
+    wrapper.once("error", reject);
+    wrapper.on("message", (message) => {
+      if (message?.kind === "ready") resolve();
+    });
+  });
+  wrapper.disconnect();
+  const code = await new Promise((resolve, reject) => {
+    wrapper.once("error", reject);
+    wrapper.once("exit", resolve);
+  });
+  assert.notEqual(code, 0);
 }));
 
 test("starter forwards a fixed ingress stage from its immutable child stdout", async () => withFixture(async (root) => {
