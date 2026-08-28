@@ -1,5 +1,5 @@
 export type DialogueLaunchMode = "fresh" | "known";
-export type DialogueLaunchProfile = "reference" | "management";
+export type DialogueLaunchProfile = "reference" | "reference-game" | "management";
 
 export type DialogueLaunchOptions = Readonly<{
   tavernNarrativeGateNonceSha256?: string;
@@ -20,12 +20,15 @@ export function parseDialogueLaunchMode(args: readonly string[]): Readonly<{
 
   const knownRootRecoveryCount = args.filter((argument) => argument === "--known-root-recovery").length;
   const managementProfileCount = args.filter((argument) => argument === "--tavern-management").length;
+  const referenceGameProfileCount = args.filter((argument) => argument === "--reference-game").length;
   const nonceFlags = args.filter((argument) => argument.startsWith("--tavern-narrative-gate-nonce-sha256="));
   if (
     knownRootRecoveryCount > 1 ||
     managementProfileCount > 1 ||
+    referenceGameProfileCount > 1 ||
     nonceFlags.length > 1 ||
-    (managementProfileCount === 1 && nonceFlags.length === 1)
+    (managementProfileCount === 1 && referenceGameProfileCount === 1) ||
+    ((managementProfileCount === 1 || referenceGameProfileCount === 1) && nonceFlags.length === 1)
   )
     throw new Error("dialogue_launch_mode_rejected");
   const nonce = nonceFlags[0]?.slice("--tavern-narrative-gate-nonce-sha256=".length);
@@ -35,6 +38,7 @@ export function parseDialogueLaunchMode(args: readonly string[]): Readonly<{
     (argument) =>
       argument !== "--known-root-recovery" &&
       argument !== "--tavern-management" &&
+      argument !== "--reference-game" &&
       !argument.startsWith("--tavern-narrative-gate-nonce-sha256="),
   );
   if (positional.length > 1 || positional.some((argument) => argument.length === 0 || argument.startsWith("--")))
@@ -42,7 +46,8 @@ export function parseDialogueLaunchMode(args: readonly string[]): Readonly<{
 
   return Object.freeze({
     mode: knownRootRecoveryCount === 1 ? "known" : "fresh",
-    profile: managementProfileCount === 1 ? "management" : "reference",
+    profile:
+      managementProfileCount === 1 ? "management" : referenceGameProfileCount === 1 ? "reference-game" : "reference",
     ...(positional[0] === undefined ? {} : { manifestPath: positional[0] }),
     ...(nonce === undefined ? {} : { tavernNarrativeGateNonceSha256: nonce }),
   });

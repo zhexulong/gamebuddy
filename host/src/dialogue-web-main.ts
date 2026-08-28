@@ -7,6 +7,10 @@ import {
 } from "./continuity-semantic-deployment-composition/continuity-semantic-chat-facade.internal.js";
 import { type HostDeploymentManifest, loadHostDeploymentManifest } from "./deployment-manifest.js";
 import { parseDialogueLaunchMode } from "./dialogue-launch-mode.js";
+import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
+import { composeGameProfile } from "./game-browser-contract/index.js";
+import { createGameBrowserStateProvider } from "./game-browser/game-browser-state-provider.js";
+import { createStardewProductionLifecycleCoordinator } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { composeTavernProfile } from "./tavern/browser-contract/index.js";
 import { createChatEventStream } from "./tavern/chat-event-stream.js";
 import { createChatManagementService } from "./tavern/chat-management/chat-management-service.js";
@@ -15,6 +19,7 @@ import { createMemoryManagementService } from "./tavern/memory-management/memory
 import { closeReferencePipelineRuntime } from "./tavern/reference-pipeline-runtime-lifecycle.js";
 import { createReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
 import { startReferencePipelineStaticShellComposition } from "./tavern/reference-pipeline-static-shell-composition.js";
+import { startComposedReferenceGameStaticShellComposition } from "./tavern/composed-reference-game-static-shell-composition.js";
 import { createTavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import { startTavernManagementStaticShellComposition } from "./tavern/tavern-management-static-shell-composition.js";
 import { createWorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
@@ -28,6 +33,8 @@ if (manifestPath === undefined) throw new Error("dialogue_deployment_manifest_pa
 const manifest = await loadHostDeploymentManifest(resolve(manifestPath));
 if (launch.profile === "management") {
   await runManagementProfile(manifest, launch.mode);
+} else if (launch.profile === "reference-game") {
+  await runReferenceGameProfile(manifest, launch.mode);
 } else {
   await runReferenceProfile(manifest, launch.mode);
 }
@@ -72,6 +79,61 @@ async function runReferenceProfile(manifest: HostDeploymentManifest, mode: "fres
     await waitForSignal();
   } finally {
     await closeReferencePipelineRuntime({ server, pipelineService, lease, facade });
+  }
+}
+
+async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "fresh" | "known"): Promise<void> {
+  const tavernProfile = composeTavernProfile({
+    profileId: "gamebuddy.chat-core.reference-pipeline",
+    releaseTier: "chat_core",
+    routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status", "events"],
+    operationIds: ["chat.submit", "chat.cancel"],
+    navigationItemIds: ["chat"],
+  });
+  const gameProfile = composeGameProfile({
+    profileId: "gamebuddy.game.preview",
+    releaseTier: "game_preview",
+    operationIds: ["game.state.read"],
+    navigationItemIds: ["game"],
+  });
+  const profile = composeReferenceGameBrowserProfile({ tavernProfile, gameProfile });
+  const bootstrapToken = randomBytes(32).toString("base64url");
+  const eventStream = createChatEventStream();
+  const facade =
+    mode === "known"
+      ? await createKnownUnmountedChatSemanticFacade(manifest)
+      : await createFreshUnmountedChatSemanticFacade(manifest);
+  const lifecycleCoordinator = createStardewProductionLifecycleCoordinator();
+  let lease: Awaited<ReturnType<typeof facade.startMountedChatRuntime>> | undefined;
+  let pipelineService: ReturnType<typeof createChatPipelineService> | undefined;
+  let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>> | undefined;
+  try {
+    lease = await facade.startMountedChatRuntime();
+    const referenceStateFacade = await createReferencePipelineStateFacade(manifest, lease, tavernProfile, eventStream);
+    pipelineService = createChatPipelineService({ manifest, lease, profile: tavernProfile, eventStream });
+    const gameStateProvider = createGameBrowserStateProvider(gameProfile, lifecycleCoordinator.lifecycleReader);
+    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+    const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
+    server = await startComposedReferenceGameStaticShellComposition({
+      profile,
+      bootstrapToken,
+      referenceStateFacade,
+      pipelineService,
+      eventStream,
+      readGame: gameStateProvider.readState,
+      inspector,
+      artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
+    });
+    process.stdout.write(`GameBuddy Reference Game is ready at ${server.launchUrl}\n`);
+    await waitForSignal();
+  } finally {
+    try {
+      await closeReferencePipelineRuntime({ server, pipelineService, lease, facade });
+    } finally {
+      // The Game mount/process owner closes its lifecycle coordinator. Chat's
+      // lease/runtime close above deliberately has no ownership of this reader.
+      await lifecycleCoordinator.close();
+    }
   }
 }
 
