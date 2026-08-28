@@ -18,6 +18,7 @@ import {
 } from "./continuity-semantic-game-runtime-binding.internal.js";
 import {
   createGameRuntimeBinding,
+  createGameRuntimeBindingFromReceiptBackedLaunch,
   createWindowsRuntimeOwnerIdentityPort,
 } from "./continuity-semantic-game-runtime-binding.js";
 
@@ -43,9 +44,9 @@ function fixture(
     ]),
     defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
     parsePolicy: (value) => value as never,
+    actorId: () => "arcade_actor",
     assertIdentityBinding: (_connection, identity) => {
       if (
-        identity.playerId !== principal.playerId ||
         identity.companionId !== principal.companionId ||
         identity.saveId !== "save_01" ||
         identity.worldId !== "world_01"
@@ -71,6 +72,15 @@ function fixture(
       connected: true,
       sessionId: "session_01",
       capabilities: ["activate"],
+      registrations: [
+        {
+          actionId: "activate",
+          familyId: "interaction",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        },
+      ],
       snapshotRevision: 1,
       activeExecution: null,
       latestReceipt: null,
@@ -184,6 +194,90 @@ test("mints an opaque one-shot token and exposes only executeWithBinding/close",
   assert.throws(() => consumeBindingToken(saved), /replay_rejected/);
   await binding.close();
   await binding.close();
+  assert.equal(revoked, 1);
+  assert.equal(closed, 1);
+});
+
+test("mints the same one-shot binding from an existing receipt-backed launch", async () => {
+  let revoked = 0;
+  let closed = 0;
+  const current = fixture(
+    () => {
+      closed += 1;
+    },
+    () => {
+      revoked += 1;
+    },
+  );
+  const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(
+    Object.freeze({
+      manifest: await manifest(),
+      launcher: current.launcher,
+      launch: current.handle,
+      expectedWorld: Object.freeze({ saveId: "save_01", worldId: "world_01" }),
+    }),
+  );
+  await binding.executeWithBinding((token) => {
+    const execution = consumeBindingToken(token);
+    assert.equal(execution.connection, current.handle.connection);
+    assert.equal(execution.world.saveId, "save_01");
+    assert.equal(execution.world.worldId, "world_01");
+    assert.equal(execution.principal.playerId, principal.playerId);
+    assert.match(execution.bindingFacts.bindingDigest, /^[a-f0-9]{64}$/);
+  });
+  await binding.close();
+  assert.equal(revoked, 1);
+  assert.equal(closed, 1);
+});
+
+test("receipt-backed binding rejects world drift and closes the exact launch", async () => {
+  let revoked = 0;
+  let closed = 0;
+  const current = fixture(
+    () => {
+      closed += 1;
+    },
+    () => {
+      revoked += 1;
+    },
+  );
+  await assert.rejects(
+    createGameRuntimeBindingFromReceiptBackedLaunch(
+      Object.freeze({
+        manifest: await manifest(),
+        launcher: current.launcher,
+        launch: current.handle,
+        expectedWorld: Object.freeze({ saveId: "save_01", worldId: "foreign_world" }),
+      }),
+    ),
+    /identity_drift/,
+  );
+  assert.equal(revoked, 1);
+  assert.equal(closed, 1);
+});
+
+test("receipt-backed binding rejects a non-exact world input and closes the exact launch", async () => {
+  let revoked = 0;
+  let closed = 0;
+  const current = fixture(
+    () => {
+      closed += 1;
+    },
+    () => {
+      revoked += 1;
+    },
+  );
+  await assert.rejects(
+    createGameRuntimeBindingFromReceiptBackedLaunch(
+      Object.freeze({
+        manifest: await manifest(),
+        launcher: current.launcher,
+        launch: current.handle,
+        expectedWorld: Object.freeze({ saveId: "save_01", worldId: "world_01", hidden: true }),
+      }) as never,
+    ),
+    /invalid_receipt_backed_game_runtime_binding_input/,
+  );
   assert.equal(revoked, 1);
   assert.equal(closed, 1);
 });
