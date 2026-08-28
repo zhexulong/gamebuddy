@@ -27,6 +27,12 @@ const gameProfile = composeGameProfile({
   operationIds: ["game.state.read"],
   navigationItemIds: ["game"],
 });
+const gameProfileWithCabins = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: ["game.state.read", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+  navigationItemIds: ["game"],
+});
 
 function stateForChat(context: ComposedReferenceGameBrowserReadContext) {
   const base = TavernBrowserFixtureV1.snapshot();
@@ -83,7 +89,7 @@ function lifecycleRequest(
   const originUrl = new URL(origin);
   return {
     method: overrides.method ?? "POST",
-    url: overrides.url ?? "/internal/lifecycle-activation",
+    url: overrides.url ?? "/api/composed-reference-game/v1/lifecycle/activate",
     headers: {
       host: originUrl.host,
       origin,
@@ -229,11 +235,42 @@ test("lifecycle activation admission is fieldless, exact-session-bound, and one-
     );
     assert.ok(secondAdmission);
 
+    const cabinReadAdmission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+      issuer,
+      lifecycleRequest(server.origin, cookie, root.chat.csrfToken, {
+        method: "GET",
+        url: "/api/composed-reference-game/v1/game/stardew/cabins",
+      }),
+      server.origin,
+    );
+    assert.ok(cabinReadAdmission);
+    let wrongOperationCallbackCalls = 0;
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        cabinReadAdmission,
+        "lifecycle_activation",
+        () => { wrongOperationCallbackCalls += 1; return "wrong-operation"; },
+      ),
+      undefined,
+    );
+    assert.equal(wrongOperationCallbackCalls, 0);
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        cabinReadAdmission,
+        "cabin_read",
+        () => "cabin-read",
+      ),
+      "cabin-read",
+    );
+
     let callbackCalls = 0;
     let firstBrowserSessionId: string | undefined;
     const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
       issuer,
       admission,
+      "lifecycle_activation",
       (facts) => {
         callbackCalls += 1;
         assert.deepEqual(Object.keys(facts).sort(), ["browserSessionId", "expiresAtMs"]);
@@ -250,6 +287,7 @@ test("lifecycle activation admission is fieldless, exact-session-bound, and one-
           consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
             issuer,
             admission,
+            "lifecycle_activation",
             () => "reentered",
           ),
           undefined,
@@ -263,6 +301,7 @@ test("lifecycle activation admission is fieldless, exact-session-bound, and one-
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         issuer,
         secondAdmission,
+        "lifecycle_activation",
         (facts) => facts.browserSessionId,
       ),
       firstBrowserSessionId,
@@ -271,6 +310,7 @@ test("lifecycle activation admission is fieldless, exact-session-bound, and one-
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         issuer,
         admission,
+        "lifecycle_activation",
         () => "replayed",
       ),
       undefined,
@@ -318,6 +358,7 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         foreignHandler.lifecycleActivationIssuer,
         admission,
+        "lifecycle_activation",
         () => "foreign",
       ),
       undefined,
@@ -326,6 +367,7 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         issuer,
         Object.freeze({}) as ComposedReferenceGameBrowserLifecycleActivationAdmission,
+        "lifecycle_activation",
         () => "forged",
       ),
       undefined,
@@ -335,6 +377,7 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         issuer,
         admission,
+        "lifecycle_activation",
         (facts) => {
           browserSessionId = facts.browserSessionId;
           return "rightful";
@@ -356,6 +399,7 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         foreignHandler.lifecycleActivationIssuer,
         foreignAdmission,
+        "lifecycle_activation",
         (facts) => facts.browserSessionId,
       );
     assert.match(foreignBrowserSessionId!, /^[A-Za-z0-9_-]{43}$/);
@@ -403,6 +447,7 @@ test("lifecycle admission fails after expiry or broker close and publishes no ro
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         issuer,
         expiringAdmission,
+        "lifecycle_activation",
         () => "expired",
       ),
       undefined,
@@ -429,6 +474,7 @@ test("lifecycle admission fails after expiry or broker close and publishes no ro
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         issuer,
         closedAdmission,
+        "lifecycle_activation",
         () => "closed",
       ),
       undefined,
@@ -437,6 +483,182 @@ test("lifecycle admission fails after expiry or broker close and publishes no ro
     Date.now = realDateNow;
     await handler.close();
     await closeServer(server.server);
+  }
+});
+
+test("authenticated Stardew cabin routes dispatch only exact frozen wire contracts", async () => {
+  const choiceHandle = "A".repeat(43);
+  const idempotencyKey = "A".repeat(22);
+  const rawCabinId = "raw-cabin-id-must-not-cross-wire";
+  let readCalls = 0;
+  let confirmCalls = 0;
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+    bootstrapToken,
+    async readChat(context) { return stateForChat(context); },
+    async readGame(context) { return stateForGame(context); },
+    stardewCabins: {
+      async read(admission) {
+        readCalls += 1;
+        return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "cabin_read",
+          () => ({
+            apiVersion: 1 as const,
+            choices: [{
+              displayLabel: "Cabin 1",
+              availability: "available" as const,
+              choiceHandle,
+              expiresAtMs: Date.now() + 60_000,
+            }],
+          }),
+        )!;
+      },
+      async confirm(admission, command) {
+        confirmCalls += 1;
+        return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "cabin_confirm",
+          () => {
+            assert.deepEqual(command, {
+              apiVersion: 1,
+              idempotencyKey,
+              choiceHandle,
+              confirmed: true,
+            });
+            return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
+          },
+        )!;
+      },
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const cabinPath = `${server.origin}/api/composed-reference-game/v1/game/stardew/cabins`;
+
+    const choicesResponse = await fetch(cabinPath, {
+      headers: { origin: server.origin, cookie },
+    });
+    assert.equal(choicesResponse.status, 200);
+    const choicesText = await choicesResponse.text();
+    assert.deepEqual(JSON.parse(choicesText), {
+      apiVersion: 1,
+      choices: [{ displayLabel: "Cabin 1", availability: "available", choiceHandle, expiresAtMs: JSON.parse(choicesText).choices[0].expiresAtMs }],
+    });
+    assert.equal(readCalls, 1);
+    for (const forbidden of [rawCabinId, "cabinId", "companionId", "ownerFarmhandId", "AI", "Bridge", "ready"])
+      assert.equal(choicesText.includes(forbidden), false);
+
+    const command = { apiVersion: 1, idempotencyKey, choiceHandle, confirmed: true };
+    const confirmResponse = await fetch(`${cabinPath}/confirm`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "content-type": "application/json",
+        "x-csrf-token": root.chat.csrfToken,
+      },
+      body: JSON.stringify(command),
+    });
+    assert.equal(confirmResponse.status, 200);
+    const confirmationText = await confirmResponse.text();
+    assert.deepEqual(JSON.parse(confirmationText), { apiVersion: 1, status: "manifest_admitted" });
+    assert.equal(confirmCalls, 1);
+    for (const forbidden of [rawCabinId, "cabinId", "companionId", "ownerFarmhandId", "AI", "Bridge", "ready"])
+      assert.equal(confirmationText.includes(forbidden), false);
+  } finally { await server.close(); }
+});
+
+test("Stardew cabin routes reject wrong auth, origin, CSRF, and DTO before lifecycle callbacks", async () => {
+  let lifecycleCalls = 0;
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+    bootstrapToken,
+    async readChat(context) { return stateForChat(context); },
+    async readGame(context) { return stateForGame(context); },
+    stardewCabins: {
+      async read() { lifecycleCalls += 1; throw new Error("must-not-dispatch"); },
+      async confirm() { lifecycleCalls += 1; throw new Error("must-not-dispatch"); },
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const cabinPath = `${server.origin}/api/composed-reference-game/v1/game/stardew/cabins`;
+    const exactCommand = {
+      apiVersion: 1,
+      idempotencyKey: "A".repeat(22),
+      choiceHandle: "A".repeat(43),
+      confirmed: true,
+    };
+
+    assert.equal((await fetch(cabinPath, { headers: { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong" } })).status, 401);
+    assert.equal((await fetch(cabinPath, { headers: { origin: "http://127.0.0.1:1", cookie } })).status, 401);
+    assert.equal((await fetch(`${cabinPath}/confirm`, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "content-type": "application/json", "x-csrf-token": "wrong" },
+      body: JSON.stringify(exactCommand),
+    })).status, 401);
+    assert.equal((await fetch(`${cabinPath}/confirm`, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "content-type": "application/json", "x-csrf-token": root.chat.csrfToken },
+      body: JSON.stringify({ ...exactCommand, cabinId: "forbidden-raw-id" }),
+    })).status, 409);
+    assert.equal(lifecycleCalls, 0);
+  } finally { await server.close(); }
+});
+
+test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
+  const cases = [
+    ["stardew_cabin_choice_expired", "stardew_cabin_choice_stale"],
+    ["stardew_cabin_idempotency_conflict", "idempotency_conflict"],
+    ["stardew_cabin_confirmation_conflict", "game_operation_in_progress"],
+    ["stardew_cabin_publication_uncertain", "stardew_manifest_handoff_uncertain"],
+    ["private-sensitive-detail", "state_unavailable"],
+  ] as const;
+  for (const [internalMessage, expectedCode] of cases) {
+    const handler = createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+      bootstrapToken,
+      async readChat(context) { return stateForChat(context); },
+      async readGame(context) { return stateForGame(context); },
+      stardewCabins: {
+        async read() { return Object.freeze({ apiVersion: 1 as const, choices: [] }); },
+        async confirm() { throw new Error(internalMessage); },
+      },
+    });
+    const server = await start(handler);
+    try {
+      const initial = await bootstrap(server.origin);
+      const root = await initial.json() as { chat: { csrfToken: string } };
+      const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stardew/cabins/confirm`, {
+        method: "POST",
+        headers: {
+          origin: server.origin,
+          cookie,
+          "content-type": "application/json",
+          "x-csrf-token": root.chat.csrfToken,
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "A".repeat(22),
+          choiceHandle: "A".repeat(43),
+          confirmed: true,
+        }),
+      });
+      assert.equal(response.status, 409);
+      assert.deepEqual(await response.json(), { code: expectedCode });
+    } finally {
+      await server.close();
+    }
   }
 });
 

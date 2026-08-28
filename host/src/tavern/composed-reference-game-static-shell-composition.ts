@@ -48,6 +48,8 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
   inspector?: WindowsReparseInspectorCapability;
   lifecycleActivationBindingSink?: Readonly<{
     bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
+    readCabinChoices?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["stardewCabins"]>["read"];
+    confirmCabinChoice?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["stardewCabins"]>["confirm"];
   }>;
 }>;
 
@@ -85,6 +87,14 @@ export async function startComposedReferenceGameStaticShellComposition(
     bootstrapToken: options.bootstrapToken,
     readChat,
     readGame: options.readGame,
+    stardewCabins:
+      options.lifecycleActivationBindingSink?.readCabinChoices !== undefined &&
+      options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined
+        ? Object.freeze({
+            read: options.lifecycleActivationBindingSink.readCabinChoices.bind(options.lifecycleActivationBindingSink),
+            confirm: options.lifecycleActivationBindingSink.confirmCabinChoice.bind(options.lifecycleActivationBindingSink),
+          })
+        : undefined,
   });
   const referenceHandler = createReferencePipelineDialogueWebDelegatedHandler({
     profile: options.profile.tavernProfile,

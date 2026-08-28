@@ -54,6 +54,8 @@ export const GAME_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "game_instance_not_found",
   "game_attachment_conflict",
   "game_operation_in_progress",
+  "stardew_cabin_choice_stale",
+  "stardew_manifest_handoff_uncertain",
   "game_runtime_unavailable",
   "game_storage_unavailable",
 ] as const);
@@ -73,6 +75,8 @@ const GameProblemCode = Type.Union([
   Type.Literal("game_instance_not_found"),
   Type.Literal("game_attachment_conflict"),
   Type.Literal("game_operation_in_progress"),
+  Type.Literal("stardew_cabin_choice_stale"),
+  Type.Literal("stardew_manifest_handoff_uncertain"),
   Type.Literal("game_runtime_unavailable"),
   Type.Literal("game_storage_unavailable"),
 ]);
@@ -212,6 +216,16 @@ export const GameDiagnosticsReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
+export const StardewCabinChoicesV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  choices: Type.Array(strictObject({
+    displayLabel: Type.String({ minLength: 1, maxLength: 128 }),
+    availability: Type.Literal("available"),
+    choiceHandle: Type.String({ minLength: 43, maxLength: 43, format: "game-browser-canonical-base64url-v1" }),
+    expiresAtMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  }), { maxItems: 64 }),
+});
+
 // ─── Mutation commands ──────────────────────────────────────────────────────
 
 export const GamePrerequisitesSetupCommandV1Schema = strictObject({
@@ -249,6 +263,18 @@ export const GameDisconnectCommandV1Schema = strictObject({
   expectedAttachmentGeneration: PositiveGeneration,
 });
 
+export const StardewCabinConfirmCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  idempotencyKey: IdempotencyKey,
+  choiceHandle: Type.String({ minLength: 43, maxLength: 43, format: "game-browser-canonical-base64url-v1" }),
+  confirmed: Type.Literal(true),
+});
+
+export const StardewCabinConfirmResultV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  status: Type.Literal("manifest_admitted"),
+});
+
 // ─── Problem schema ─────────────────────────────────────────────────────────
 
 export const GameProblemV1Schema = strictObject({
@@ -273,6 +299,8 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.reconnect",
   "game.disconnect",
   "game.diagnostics.read",
+  "game.stardew.cabins.read",
+  "game.stardew.cabins.confirm",
 ] as const);
 
 const GameOperationId = Type.Union([
@@ -286,6 +314,8 @@ const GameOperationId = Type.Union([
   Type.Literal("game.reconnect"),
   Type.Literal("game.disconnect"),
   Type.Literal("game.diagnostics.read"),
+  Type.Literal("game.stardew.cabins.read"),
+  Type.Literal("game.stardew.cabins.confirm"),
 ]);
 
 const GameNavigationItemId = Type.Union([Type.Literal("game")]);
@@ -402,6 +432,9 @@ export const GameBrowserContractV1 = Object.freeze({
     GameReconnectCommandV1Schema,
     GameDisconnectCommandV1Schema,
     GameDiagnosticsReadCommandV1Schema,
+    StardewCabinChoicesV1Schema,
+    StardewCabinConfirmCommandV1Schema,
+    StardewCabinConfirmResultV1Schema,
     GameProblemV1Schema,
   }),
 });
@@ -432,6 +465,9 @@ export type GameReconnectCommandV1 = Static<typeof GameReconnectCommandV1Schema>
 export type GameDisconnectCommandV1 = Static<typeof GameDisconnectCommandV1Schema>;
 export type GameDiagnosticsReadCommandV1 = Static<typeof GameDiagnosticsReadCommandV1Schema>;
 export type GameProblemV1 = Static<typeof GameProblemV1Schema>;
+export type StardewCabinChoicesV1 = Static<typeof StardewCabinChoicesV1Schema>;
+export type StardewCabinConfirmCommandV1 = Static<typeof StardewCabinConfirmCommandV1Schema>;
+export type StardewCabinConfirmResultV1 = Static<typeof StardewCabinConfirmResultV1Schema>;
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 

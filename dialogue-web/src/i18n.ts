@@ -16,6 +16,14 @@ const en = {
   savedDraft: "Saved draft",
   noSavedDraft: "No saved draft.",
   openingChat: "Opening chat…",
+  gameState: "Game state",
+  stardewCabinSelection: "Stardew cabin selection",
+  stardewCabinsLoading: "Loading available cabins…",
+  stardewCabinsUnavailable: "Cabin choices are unavailable. Reload the page to try again.",
+  stardewCabinsEmpty: "No cabins are currently available.",
+  stardewCabinConfirm: "Confirm cabin",
+  stardewManifestAdmitted: "Cabin request admitted. Waiting for the next game setup step.",
+  stardewCabinConfirmationUncertain: "Confirmation is still awaiting verification. Do not confirm again. Wait for recovery or reload the page to recover manually.",
 
   // Navigation & Drawers
   chats: "Chats",
@@ -128,6 +136,14 @@ const zh: Messages = {
   savedDraft: "已保存草稿",
   noSavedDraft: "无本地草稿。",
   openingChat: "正在读取聊天…",
+  gameState: "游戏状态",
+  stardewCabinSelection: "星露谷小屋选择",
+  stardewCabinsLoading: "正在读取可用小屋…",
+  stardewCabinsUnavailable: "暂时无法读取小屋选项。请重新加载页面后再试。",
+  stardewCabinsEmpty: "当前没有可用小屋。",
+  stardewCabinConfirm: "确认小屋",
+  stardewManifestAdmitted: "小屋请求已接纳，正在等待下一步游戏设置。",
+  stardewCabinConfirmationUncertain: "确认结果仍在等待验证。请勿再次确认；等待恢复，或重新加载页面进行手动恢复。",
 
   // Navigation & Drawers
   chats: "会话",

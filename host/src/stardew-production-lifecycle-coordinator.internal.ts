@@ -4,6 +4,7 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationIssuer,
 } from "./composed-reference-game-browser.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
+import { randomBytes } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { admitStardewInstallation } from "./stardew-installation-admission.js";
@@ -13,7 +14,15 @@ import {
   createStardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.internal.js";
 import type { StardewOwnedPlayerHostPhaseAOwner } from "./stardew-private-bootstrap-composer.js";
-import { didStardewOwnedPlayerHostStageCEnterControlledLaunch } from "./stardew-private-bootstrap-composer.core.js";
+import {
+  didStardewOwnedPlayerHostStageCEnterControlledLaunch,
+  type StardewManifestHandoffChoice,
+} from "./stardew-private-bootstrap-composer.core.js";
+import type {
+  StardewCabinChoicesV1,
+  StardewCabinConfirmCommandV1,
+  StardewCabinConfirmResultV1,
+} from "./game-browser-contract/index.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-owner.js";
 import {
@@ -40,6 +49,13 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
   ): Promise<StardewPrivateActivationSnapshot>;
   launchStagedPlayerHost(gameDirectoryCandidate: string): Promise<StardewPrivateActivationSnapshot>;
   readPrivateActivationSnapshot(): StardewPrivateActivationSnapshot;
+  readCabinChoices(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewCabinChoicesV1>;
+  confirmCabinChoice(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: StardewCabinConfirmCommandV1,
+  ): Promise<StardewCabinConfirmResultV1>;
 }>;
 
 /** Internal production lifecycle authority; no launch or browser admission is returned. */
@@ -99,6 +115,21 @@ function createCoordinator(
   let aiStopped = false;
   let playerStopped = false;
   let closePromise: Promise<void> | undefined;
+  const handoffCoordinator = internal.createOwnedPlayerHostManifestHandoffCoordinator();
+  const cabinHandles = new Map<string, Readonly<{
+    browserSessionId: string;
+    owner: StardewOwnedPlayerHostPhaseAOwner;
+    revision: number;
+    expiresAtMs: number;
+    choice: StardewManifestHandoffChoice;
+    consumed: { value: boolean };
+  }>>();
+  const cabinConfirmations = new Map<string, Readonly<{
+    payload: string;
+    promise: Promise<StardewCabinConfirmResultV1>;
+    uncertain: { value: boolean };
+  }>>();
+  let cabinConfirmationKey: string | undefined;
 
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
@@ -140,6 +171,7 @@ function createCoordinator(
       const ownerPromise = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         boundIssuer,
         admission,
+        "lifecycle_activation",
         ({ browserSessionId, expiresAtMs }) => {
           const claim = composition.broker.confirm({
             playerId,
@@ -263,11 +295,92 @@ function createCoordinator(
     return launchPromise;
   };
 
+  const consumeCabinAdmission = <T>(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    expectedOperation: "cabin_read" | "cabin_confirm",
+    callback: (browserSessionId: string, expiresAtMs: number) => T,
+  ): T => {
+    const boundIssuer = issuer;
+    if (boundIssuer === undefined) throw new Error("stardew_lifecycle_activation_issuer_unbound");
+    const result = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+      boundIssuer,
+      admission,
+      expectedOperation,
+      ({ browserSessionId, expiresAtMs }) => callback(browserSessionId, expiresAtMs),
+    );
+    if (result === undefined) throw new Error("stardew_cabin_browser_admission_invalid");
+    return result;
+  };
+
+  const readCabinChoices = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewCabinChoicesV1> => consumeCabinAdmission(admission, "cabin_read", async (browserSessionId, sessionExpiry) => {
+    const owner = exactOwner;
+    if (owner === undefined || activationState !== "awaiting_player_host_attestation")
+      throw new Error("stardew_cabin_handoff_unavailable");
+    const boundRevision = revision;
+    const choices = await handoffCoordinator.list(owner);
+    if (revision !== boundRevision || isClosing()) throw new Error("stardew_cabin_handoff_revision_changed");
+    return {
+      apiVersion: 1 as const,
+      choices: choices.map((choice) => {
+        const choiceHandle = randomBytes(32).toString("base64url");
+        const expiresAtMs = Math.min(choice.expiresAtMs, sessionExpiry, Date.now() + 60_000);
+        cabinHandles.set(choiceHandle, Object.freeze({
+          browserSessionId, owner, revision: boundRevision, expiresAtMs, choice, consumed: { value: false },
+        }));
+        return { displayLabel: choice.displayLabel, availability: "available" as const, choiceHandle, expiresAtMs };
+      }),
+    };
+  });
+
+  const confirmCabinChoice = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: StardewCabinConfirmCommandV1,
+  ): Promise<StardewCabinConfirmResultV1> => consumeCabinAdmission(admission, "cabin_confirm", (browserSessionId) => {
+    const payload = JSON.stringify(command);
+    const existing = cabinConfirmations.get(command.idempotencyKey);
+    if (existing !== undefined) {
+      if (existing.payload !== payload) throw new Error("stardew_cabin_idempotency_conflict");
+      if (existing.uncertain.value) throw new Error("stardew_cabin_publication_uncertain");
+      return existing.promise;
+    }
+    const handle = cabinHandles.get(command.choiceHandle);
+    if (handle === undefined) throw new Error("stardew_cabin_choice_handle_invalid");
+    if (handle.browserSessionId !== browserSessionId) throw new Error("stardew_cabin_choice_session_conflict");
+    if (handle.owner !== exactOwner || handle.revision !== revision)
+      throw new Error("stardew_cabin_choice_revision_stale");
+    if (handle.expiresAtMs <= Date.now()) throw new Error("stardew_cabin_choice_expired");
+    if (handle.consumed.value) throw new Error("stardew_cabin_choice_consumed");
+    if (cabinConfirmationKey !== undefined)
+      throw new Error("stardew_cabin_confirmation_conflict");
+
+    handle.consumed.value = true;
+    cabinConfirmationKey = command.idempotencyKey;
+    const uncertain = { value: false };
+    const promise = handoffCoordinator.confirmAndAdmit(handle.choice.selection, { confirmed: true })
+      .then(() => Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const }))
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.message === "stardew_manifest_handoff_publication_uncertain") {
+          uncertain.value = true;
+          throw new Error("stardew_cabin_publication_uncertain", { cause: error });
+        }
+        cabinConfirmations.delete(command.idempotencyKey);
+        cabinConfirmationKey = undefined;
+        handle.consumed.value = false;
+        throw error;
+      });
+    cabinConfirmations.set(command.idempotencyKey, Object.freeze({ payload, promise, uncertain }));
+    return promise;
+  });
+
   const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
     bindBrowserAdmissionIssuer,
     activate,
     launchStagedPlayerHost,
     readPrivateActivationSnapshot: snapshot,
+    readCabinChoices,
+    confirmCabinChoice,
   });
 
   const closeAttempt = async (): Promise<void> => {

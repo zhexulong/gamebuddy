@@ -14,6 +14,9 @@ import {
 import {
   GameBrowserValidatorsV1,
   type GameBrowserStateV1,
+  type StardewCabinChoicesV1,
+  type StardewCabinConfirmCommandV1,
+  type StardewCabinConfirmResultV1,
 } from "./game-browser-contract/index.js";
 
 export type ComposedReferenceGameBrowserReadContext = Readonly<{
@@ -30,6 +33,13 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
   readGame?: (
     context: ComposedReferenceGameBrowserReadContext,
   ) => Promise<GameBrowserStateV1>;
+  stardewCabins?: Readonly<{
+    read(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewCabinChoicesV1>;
+    confirm(
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      command: StardewCabinConfirmCommandV1,
+    ): Promise<StardewCabinConfirmResultV1>;
+  }>;
 }>;
 
 type BrowserSession = Readonly<{
@@ -49,6 +59,9 @@ type JsonObject = Record<string, unknown>;
 const BOOTSTRAP_PATH = "/api/composed-reference-game/v1/bootstrap";
 const STATE_PATH = "/api/composed-reference-game/v1/state";
 const GAME_PATH = "/api/composed-reference-game/v1/game";
+const LIFECYCLE_ACTIVATE_PATH = "/api/composed-reference-game/v1/lifecycle/activate";
+const STARDEW_CABINS_PATH = "/api/composed-reference-game/v1/game/stardew/cabins";
+const STARDEW_CABINS_CONFIRM_PATH = `${STARDEW_CABINS_PATH}/confirm`;
 const SESSION_COOKIE_NAME = "gb_composed_reference_game_session";
 const SESSION_DURATION_MS = 7_200_000;
 const MAX_BOOTSTRAP_BODY_BYTES = 4_096;
@@ -135,6 +148,26 @@ function sendJson(
 
 function sendProblem(response: ServerResponse, statusCode: number, code: string): void {
   sendJson(response, statusCode, { code });
+}
+
+function stardewCabinProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_cabin_choice_handle_invalid":
+    case "stardew_cabin_choice_session_conflict":
+    case "stardew_cabin_choice_revision_stale":
+    case "stardew_cabin_choice_expired":
+    case "stardew_cabin_choice_consumed":
+      return "stardew_cabin_choice_stale";
+    case "stardew_cabin_idempotency_conflict":
+      return "idempotency_conflict";
+    case "stardew_cabin_confirmation_conflict":
+      return "game_operation_in_progress";
+    case "stardew_cabin_publication_uncertain":
+      return "stardew_manifest_handoff_uncertain";
+    default:
+      return "state_unavailable";
+  }
 }
 
 async function readBody(
@@ -249,9 +282,15 @@ type LifecycleActivationIssuerState = Readonly<{
   currentSession(): BrowserSession | undefined;
 }>;
 
+type LifecycleAdmissionOperation =
+  | "lifecycle_activation"
+  | "cabin_read"
+  | "cabin_confirm";
+
 type LifecycleActivationAdmissionState = {
   readonly issuer: object;
   readonly session: BrowserSession;
+  readonly operation: LifecycleAdmissionOperation;
   consumed: boolean;
 };
 
@@ -353,7 +392,7 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
   origin: string,
 ): ComposedReferenceGameBrowserLifecycleActivationAdmission | null {
   const issuerState = lifecycleActivationIssuers.get(issuer);
-  if (issuerState === undefined || request.method !== "POST") {
+  if (issuerState === undefined) {
     return null;
   }
 
@@ -366,13 +405,29 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     return null;
   }
 
+  if (!isEmptyQuery(requestUrl)) {
+    return null;
+  }
+
+  let operation: LifecycleAdmissionOperation;
+  if (request.method === "POST" && requestUrl.pathname === LIFECYCLE_ACTIVATE_PATH) {
+    operation = "lifecycle_activation";
+  } else if (request.method === "GET" && requestUrl.pathname === STARDEW_CABINS_PATH) {
+    operation = "cabin_read";
+  } else if (request.method === "POST" && requestUrl.pathname === STARDEW_CABINS_CONFIRM_PATH) {
+    operation = "cabin_confirm";
+  } else {
+    return null;
+  }
+
   if (
     originUrl.protocol !== "http:" ||
     !isLiteralLoopbackOrigin(originUrl) ||
     requestUrl.origin !== originUrl.origin ||
     !requestHasExpectedHost(request, originUrl) ||
-    !isExactOrigin(request, origin) ||
-    !isExactJsonContentType(singleHeaderValue(request.headers["content-type"]))
+    (request.method === "POST"
+      ? (!isExactOrigin(request, origin) || !isExactJsonContentType(singleHeaderValue(request.headers["content-type"])))
+      : !isSameOriginSafeGet(request, origin))
   ) {
     return null;
   }
@@ -384,9 +439,9 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     activeSession === undefined ||
     activeSession.expiresAtMs <= Date.now() ||
     bearerToken === undefined ||
-    submittedCsrf === undefined ||
     !timingSafeStringEqual(bearerToken, activeSession.bearerToken) ||
-    !timingSafeStringEqual(submittedCsrf, activeSession.csrfToken)
+    (request.method === "POST" &&
+      (submittedCsrf === undefined || !timingSafeStringEqual(submittedCsrf, activeSession.csrfToken)))
   ) {
     return null;
   }
@@ -396,6 +451,7 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
   lifecycleActivationAdmissions.set(admission, {
     issuer,
     session: activeSession,
+    operation,
     consumed: false,
   });
   return admission;
@@ -409,6 +465,7 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
 export function consumeComposedReferenceGameBrowserLifecycleActivationAdmission<T>(
   issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer,
   admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  expectedOperation: LifecycleAdmissionOperation,
   callback: (facts: LifecycleActivationFacts) => T,
 ): T | undefined {
   const admissionState = lifecycleActivationAdmissions.get(admission);
@@ -420,6 +477,7 @@ export function consumeComposedReferenceGameBrowserLifecycleActivationAdmission<
   const activeSession = issuerState?.currentSession();
   if (
     admissionState.issuer !== issuer ||
+    admissionState.operation !== expectedOperation ||
     activeSession === undefined ||
     activeSession !== admissionState.session ||
     activeSession.expiresAtMs <= Date.now()
@@ -464,6 +522,12 @@ export function createComposedReferenceGameBrowserRequestHandler(
     (options.profile.gameProfile !== null && options.readGame === undefined)
   ) {
     throw new Error(INVALID_GAME_READER_ERROR);
+  }
+  const cabinOperationsMounted =
+    options.profile.gameProfile?.operationIds.includes("game.stardew.cabins.read") === true &&
+    options.profile.gameProfile.operationIds.includes("game.stardew.cabins.confirm");
+  if (cabinOperationsMounted !== (options.stardewCabins !== undefined)) {
+    throw new Error("Composed reference-game cabin operations are mismounted");
   }
 
   let closed = false;
@@ -659,6 +723,43 @@ export function createComposedReferenceGameBrowserRequestHandler(
         if (session === activeSession) session = undefined;
         sendProblem(response, 409, "state_unavailable");
       }
+      return;
+    }
+
+    if (requestUrl.pathname === STARDEW_CABINS_PATH && request.method === "GET") {
+      if (!isEmptyQuery(requestUrl) || !hasEmptyRequestBodyHeaders(request) || options.stardewCabins === undefined) {
+        sendProblem(response, options.stardewCabins === undefined ? 404 : 409, options.stardewCabins === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      try {
+        const result = await options.stardewCabins.read(admission);
+        if (!GameBrowserValidatorsV1.StardewCabinChoicesV1Schema.Check(result)) throw new ControlledStateError();
+        sendJson(response, 200, result);
+      } catch { sendProblem(response, 409, "state_unavailable"); }
+      return;
+    }
+
+    if (requestUrl.pathname === STARDEW_CABINS_CONFIRM_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.stardewCabins === undefined) {
+        sendProblem(response, options.stardewCabins === undefined ? 404 : 409, options.stardewCabins === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      let body: Buffer;
+      try { body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      let command: unknown;
+      try { command = JSON.parse(body.toString("utf8")); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      if (!GameBrowserValidatorsV1.StardewCabinConfirmCommandV1Schema.Check(command)) {
+        sendProblem(response, 409, "malformed_request"); return;
+      }
+      try {
+        const result = await options.stardewCabins.confirm(admission, command as StardewCabinConfirmCommandV1);
+        if (!GameBrowserValidatorsV1.StardewCabinConfirmResultV1Schema.Check(result)) throw new ControlledStateError();
+        sendJson(response, 200, result);
+      } catch (error) { sendProblem(response, 409, stardewCabinProblemCode(error)); }
       return;
     }
 

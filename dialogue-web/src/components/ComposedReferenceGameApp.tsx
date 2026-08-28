@@ -21,6 +21,7 @@ import {
   createComposedReferenceGameBrowserApi,
   type ComposedReferenceGameBrowserRootV1,
   type GameBrowserStateV1,
+  type StardewCabinChoiceV1,
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
 } from "../composed-reference-game-browser-api";
@@ -45,6 +46,13 @@ type ReadyView = Readonly<{
 }>;
 type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail: string }>;
 type ViewState = Readonly<{ kind: "loading" }> | ReadyView | ProblemViewState;
+type CabinViewState =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "choices"; choices: readonly StardewCabinChoiceV1[] }>
+  | Readonly<{ kind: "confirming"; choices: readonly StardewCabinChoiceV1[]; choiceHandle: string }>
+  | Readonly<{ kind: "admitted" }>
+  | Readonly<{ kind: "uncertain" }>
+  | Readonly<{ kind: "unavailable" }>;
 
 function newIdempotencyKey(): string {
   const bytes = new Uint8Array(16);
@@ -75,6 +83,9 @@ export function ComposedReferenceGameApp() {
   const cancelledRef = useRef(false);
   const pollActiveRef = useRef(false);
   const eventSourceRef = useRef<{ close(): void } | null>(null);
+  const [cabinView, setCabinView] = useState<CabinViewState>({ kind: "loading" });
+  const cabinConfirmationActiveRef = useRef(false);
+  const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
 
   const commit = useCallback((next: ViewState): void => {
     viewRef.current = next;
@@ -125,6 +136,24 @@ export function ComposedReferenceGameApp() {
   }, [commit]);
 
   const eventStreamEpoch = view.kind === "ready" ? view.session.snapshot.eventStream?.epoch : undefined;
+
+  const readCabins = useCallback(async (): Promise<void> => {
+    setCabinView({ kind: "loading" });
+    try {
+      const result = await composedApiRef.current.readStardewCabins();
+      cabinIdempotencyKeysRef.current = new Map(
+        result.choices.map((choice) => [choice.choiceHandle, newIdempotencyKey()]),
+      );
+      setCabinView({ kind: "choices", choices: result.choices });
+    } catch {
+      setCabinView({ kind: "unavailable" });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view.kind !== "ready") return;
+    void readCabins();
+  }, [view.kind, readCabins]);
 
   useEffect(() => {
     if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return;
@@ -351,6 +380,42 @@ export function ComposedReferenceGameApp() {
     commit({ ...current, root, session: current.session.applySnapshot(root.chat), draft });
   };
 
+  const handleCabinConfirmation = async (choice: StardewCabinChoiceV1): Promise<void> => {
+    if (cabinConfirmationActiveRef.current || cabinView.kind !== "choices") return;
+    if (choice.expiresAtMs <= Date.now()) {
+      void readCabins();
+      return;
+    }
+    const idempotencyKey = cabinIdempotencyKeysRef.current.get(choice.choiceHandle);
+    if (idempotencyKey === undefined) {
+      setCabinView({ kind: "unavailable" });
+      return;
+    }
+    cabinConfirmationActiveRef.current = true;
+    setCabinView({ kind: "confirming", choices: cabinView.choices, choiceHandle: choice.choiceHandle });
+    try {
+      await composedApiRef.current.confirmStardewCabin({
+        apiVersion: 1,
+        idempotencyKey,
+        choiceHandle: choice.choiceHandle,
+        confirmed: true,
+      });
+      setCabinView({ kind: "admitted" });
+    } catch (error) {
+      if (
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "stardew_cabin_choice_stale"
+      ) {
+        cabinConfirmationActiveRef.current = false;
+        await readCabins();
+        return;
+      }
+      // An explicit uncertain outcome or a missing/malformed response may have
+      // followed successful publication. Never refetch or replay this command.
+      setCabinView({ kind: "uncertain" });
+    }
+  };
+
   const handleStop = async (): Promise<void> => {
     const current = viewRef.current;
     const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
@@ -408,9 +473,14 @@ export function ComposedReferenceGameApp() {
                  <p>{labels().noSavedDraft}</p>
                )}
              </section>
-             <section className="composed-game-drawer" aria-label="Game state">
-              <GameProjection game={view.root.game} />
-            </section>
+              <section className="composed-game-drawer" aria-label={labels().gameState}>
+               <GameProjection game={view.root.game} />
+               <StardewCabinHandoff
+                 state={cabinView}
+                 labels={labels()}
+                 onConfirm={(choice) => void handleCabinConfirmation(choice)}
+               />
+             </section>
             <Composer
               value={inputText}
               onChange={setInputText}
@@ -424,6 +494,44 @@ export function ComposedReferenceGameApp() {
         </>
       )}
     </div>
+  );
+}
+
+function StardewCabinHandoff({
+  state,
+  labels,
+  onConfirm,
+}: {
+  state: CabinViewState;
+  labels: ReturnType<typeof messages>;
+  onConfirm(choice: StardewCabinChoiceV1): void;
+}) {
+  return (
+    <section className="stardew-cabin-handoff" aria-label={labels.stardewCabinSelection}>
+      <h3>{labels.stardewCabinSelection}</h3>
+      {state.kind === "loading" && <p>{labels.stardewCabinsLoading}</p>}
+      {state.kind === "unavailable" && <p role="status">{labels.stardewCabinsUnavailable}</p>}
+      {state.kind === "uncertain" && <p role="status">{labels.stardewCabinConfirmationUncertain}</p>}
+      {state.kind === "admitted" && <p role="status">{labels.stardewManifestAdmitted}</p>}
+      {(state.kind === "choices" || state.kind === "confirming") && (
+        state.choices.length === 0 ? <p>{labels.stardewCabinsEmpty}</p> : (
+          <ul>
+            {state.choices.map((choice) => (
+              <li key={choice.choiceHandle}>
+                <span>{choice.displayLabel}</span>
+                <button
+                  type="button"
+                  disabled={state.kind === "confirming"}
+                  onClick={() => onConfirm(choice)}
+                >
+                  {labels.stardewCabinConfirm}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )
+      )}
+    </section>
   );
 }
 

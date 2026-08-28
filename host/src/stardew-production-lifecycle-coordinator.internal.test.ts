@@ -167,11 +167,17 @@ async function createAdmissionBroker() {
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
   const root = await bootstrap.json() as { chat: { csrfToken: string } };
-  const request = (): IncomingMessage => {
+  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm"): IncomingMessage => {
     const originUrl = new URL(origin);
+    const method = operation === "cabin_read" ? "GET" : "POST";
+    const url = operation === "lifecycle_activation"
+      ? "/api/composed-reference-game/v1/lifecycle/activate"
+      : operation === "cabin_read"
+        ? "/api/composed-reference-game/v1/game/stardew/cabins"
+        : "/api/composed-reference-game/v1/game/stardew/cabins/confirm";
     return {
-      method: "POST",
-      url: "/internal/lifecycle-activation",
+      method,
+      url,
       headers: {
         host: originUrl.host,
         origin,
@@ -181,10 +187,12 @@ async function createAdmissionBroker() {
       },
     } as unknown as IncomingMessage;
   };
-  const issue = (): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
+  const issue = (
+    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" = "lifecycle_activation",
+  ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
-      request(),
+      request(operation),
       origin,
     );
     assert.notEqual(admission, null);
@@ -295,9 +303,18 @@ async function createFixture(input: Readonly<{
   };
 }
 
+type PublishedCabin = Readonly<{
+  cabinId: string;
+  ownerFarmhandId: string;
+  boundCompanionId: string;
+  isBusy: boolean;
+}>;
+
 async function publishSignedPlayerHostSession(
   runtimeRoot: string,
   launchGeneration = "player-generation-1",
+  cabins: readonly PublishedCabin[] = [],
+  expiresAtUnixMs = Date.now() + 60_000,
 ): Promise<void> {
   const sessionDirectory = join(
     runtimeRoot,
@@ -318,13 +335,13 @@ async function publishSignedPlayerHostSession(
     saveId: "save-coordinator",
     worldId: "world-coordinator",
     publishedAtUnixMs: Date.now(),
-    expiresAtUnixMs: Date.now() + 60_000,
+    expiresAtUnixMs,
     nonce: "nonce-coordinator",
     state: "ready",
     hostPlayerId: "player-1",
     runtimeRole: "player_host",
     launchGeneration,
-    cabins: [],
+    cabins,
     signature: "",
   };
   const unsigned = { ...session };
@@ -333,6 +350,65 @@ async function publishSignedPlayerHostSession(
     .update(JSON.stringify(unsigned), "utf8")
     .digest("base64url");
   await writeFile(join(sessionDirectory, "stardew-session.json"), JSON.stringify({ ...session, signature }));
+}
+
+function signAttachmentValue<T extends { signature: string }>(value: T): T {
+  const unsigned = { ...value } as Record<string, unknown>;
+  delete unsigned.signature;
+  return {
+    ...value,
+    signature: createHmac("sha256", "session-secret-coordinator-012345")
+      .update(JSON.stringify(unsigned), "utf8")
+      .digest("base64url"),
+  };
+}
+
+async function waitForAttachmentRequest(runtimeRoot: string): Promise<Record<string, unknown>> {
+  const path = join(runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "session", "stardew-attachment-request.json");
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    try { return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 5));
+    }
+  }
+  throw new Error("wait_for_attachment_request_timeout");
+}
+
+async function publishAttachmentAdmission(runtimeRoot: string, request: Record<string, unknown>, cabin: PublishedCabin): Promise<void> {
+  const directory = join(runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "session");
+  const requestId = request.requestId as string;
+  const now = Date.now();
+  await writeFile(join(directory, "stardew-attachment-response.json"), JSON.stringify(signAttachmentValue({
+    schemaVersion: 1,
+    requestId,
+    state: "ready",
+    reasonCode: "manifest_issued",
+    updatedAtUnixMs: now,
+    manifestPath: "stardew-farmhand-manifest.json",
+    signature: "",
+  })));
+  await writeFile(join(directory, "stardew-farmhand-manifest.json"), JSON.stringify(signAttachmentValue({
+    schemaVersion: 1,
+    requestId,
+    integrationId: "stardew",
+    integrationVersion: "0.1.0",
+    gameVersion: "1.6.15",
+    gameBuildNumber: 24356,
+    smapiVersion: "4.5.2",
+    multiplayerProtocol: "1.6.15",
+    endpoint: "127.0.0.1:24642",
+    saveId: "save-coordinator",
+    worldId: "world-coordinator",
+    companionId: "companion-1",
+    farmhandId: cabin.ownerFarmhandId,
+    cabinId: cabin.cabinId,
+    sessionNonce: "nonce-coordinator",
+    issuedAtUnixMs: now,
+    expiresAtUnixMs: now + 30_000,
+    signature: "",
+  })));
 }
 
 async function ownerRecord(runtimeRoot: string) {
@@ -520,7 +596,7 @@ test("missing Player Host advertisement remains privately retryable before owner
 
 test("missing Player Host advertisement becomes terminal after the retained owner deadline", async () => {
   await withWindowsPlatform(async () => {
-    let now = Date.now();
+    let now = Date.now() + 1_000;
     const fixture = await createFixture({
       nowMs: () => now,
       afterPlayerSpawn: () => { now += 11 * 60_000; },
@@ -802,5 +878,151 @@ test("production lifecycle construction is fail-closed off Windows", async () =>
       () => Promise.resolve(createStardewProductionLifecycleCoordinator(manifest)),
       /stardew_private_bootstrap_composition_requires_windows/,
     );
+  }
+});
+
+const availableCabins: readonly PublishedCabin[] = Object.freeze([
+  Object.freeze({ cabinId: "cabin-alpha", ownerFarmhandId: "101", boundCompanionId: "", isBusy: false }),
+  Object.freeze({ cabinId: "cabin-beta", ownerFarmhandId: "202", boundCompanionId: "companion-1", isBusy: false }),
+  Object.freeze({ cabinId: "cabin-busy", ownerFarmhandId: "303", boundCompanionId: "", isBusy: true }),
+  Object.freeze({ cabinId: "cabin-foreign", ownerFarmhandId: "404", boundCompanionId: "other-companion", isBusy: false }),
+]);
+
+async function prepareCabinCoordinator(expiresAtUnixMs = Date.now() + 5 * 60_000) {
+  const fixture = await createFixture();
+  await withWindowsPlatform(async () => {
+    await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+    await publishSignedPlayerHostSession(fixture.runtimeRoot, "player-generation-1", availableCabins, expiresAtUnixMs);
+    await fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+  });
+  return fixture;
+}
+
+test("dynamic cabin handoff lists only redacted available choices and admits exactly one manifest without launching AI", async () => {
+  const startedAt = Date.now();
+  const fixture = await prepareCabinCoordinator(startedAt + 5 * 60_000);
+  try {
+    const readStartedAt = Date.now();
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const readCompletedAt = Date.now();
+    assert.equal(choices.apiVersion, 1);
+    assert.deepEqual(choices.choices.map((choice) => choice.displayLabel), ["Cabin 1", "Cabin 2"]);
+    assert.equal(new Set(choices.choices.map((choice) => choice.choiceHandle)).size, 2);
+    for (const choice of choices.choices) {
+      assert.match(choice.choiceHandle, /^[A-Za-z0-9_-]{43}$/);
+      assert.equal(choice.availability, "available");
+      assert.ok(choice.expiresAtMs <= readCompletedAt + 60_000);
+      assert.ok(choice.expiresAtMs >= readStartedAt + 59_000);
+      assert.deepEqual(Object.keys(choice).sort(), ["availability", "choiceHandle", "displayLabel", "expiresAtMs"]);
+    }
+    const serialized = JSON.stringify(choices);
+    for (const forbidden of ["cabin-alpha", "cabin-beta", "101", "202", "companion-1", "ownerFarmhandId"])
+      assert.equal(serialized.includes(forbidden), false, forbidden);
+
+    const command = { apiVersion: 1 as const, choiceHandle: choices.choices[0]!.choiceHandle, idempotencyKey: "confirm-key-alpha", confirmed: true as const };
+    const first = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command);
+    const joined = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command);
+    assert.equal(joined, first);
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    assert.equal(request.cabinId, "cabin-alpha");
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    assert.deepEqual(await first, { apiVersion: 1, status: "manifest_admitted" });
+    assert.deepEqual(await fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command), {
+      apiVersion: 1, status: "manifest_admitted",
+    });
+    assert.deepEqual(fixture.spawnCalls, []);
+    assert.equal(fixture.playerSpawnCalls.length, 1);
+    assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "awaiting_player_host_attestation");
+    const transaction = join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1");
+    await assert.rejects(readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"), { code: "ENOENT" });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("dynamic cabin confirmation rejects cross-session, expiry, stale revision, conflicts, and closes fail-closed", async () => {
+  const fixture = await prepareCabinCoordinator();
+  const foreignBroker = await createAdmissionBroker();
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const firstChoice = choices.choices[0]!;
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(foreignBroker.issue("cabin_confirm"), {
+        apiVersion: 1, choiceHandle: firstChoice.choiceHandle, idempotencyKey: "foreign-key", confirmed: true,
+      }),
+      /stardew_cabin_browser_admission_invalid/,
+    );
+
+    const pendingCommand = { apiVersion: 1 as const, choiceHandle: firstChoice.choiceHandle, idempotencyKey: "single-confirmation-key", confirmed: true as const };
+    const pending = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), pendingCommand);
+    await waitForAttachmentRequest(fixture.runtimeRoot);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), {
+        ...pendingCommand, choiceHandle: choices.choices[1]!.choiceHandle,
+      }),
+      /stardew_cabin_idempotency_conflict/,
+    );
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), {
+        apiVersion: 1, choiceHandle: choices.choices[1]!.choiceHandle, idempotencyKey: "second-confirmation-key", confirmed: true,
+      }),
+      /stardew_cabin_confirmation_conflict/,
+    );
+
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    const directory = join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "session");
+    await writeFile(join(directory, "stardew-attachment-response.json"), JSON.stringify(signAttachmentValue({
+      schemaVersion: 1, requestId: request.requestId as string, state: "rejected",
+      reasonCode: "binding_readback_mismatch", updatedAtUnixMs: Date.now(), signature: "",
+    })));
+    await assert.rejects(pending, /stardew_cabin_publication_uncertain/);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), pendingCommand),
+      /stardew_cabin_publication_uncertain/,
+    );
+
+    await fixture.coordinator.close();
+    await assert.rejects(
+      fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read")),
+      /stardew_cabin_handoff_unavailable|stardew_cabin_handoff_revision_changed/,
+    );
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+    await foreignBroker.close();
+  }
+});
+
+test("dynamic cabin handles distinguish expired and revision-stale failures", async () => {
+  const expiring = await prepareCabinCoordinator(Date.now() + 1_500);
+  try {
+    const choices = await expiring.coordinator.activationOwner.readCabinChoices(expiring.broker.issue("cabin_read"));
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 1_600));
+    assert.throws(
+      () => expiring.coordinator.activationOwner.confirmCabinChoice(expiring.broker.issue("cabin_confirm"), {
+        apiVersion: 1, choiceHandle: choices.choices[0]!.choiceHandle, idempotencyKey: "expired-key", confirmed: true,
+      }),
+      /stardew_cabin_choice_expired/,
+    );
+  } finally {
+    await expiring.coordinator.close();
+    await expiring.broker.close();
+  }
+
+  const stale = await prepareCabinCoordinator();
+  try {
+    const choices = await stale.coordinator.activationOwner.readCabinChoices(stale.broker.issue("cabin_read"));
+    const confirmationAdmission = stale.broker.issue("cabin_confirm");
+    await stale.coordinator.close();
+    assert.throws(
+      () => stale.coordinator.activationOwner.confirmCabinChoice(confirmationAdmission, {
+        apiVersion: 1, choiceHandle: choices.choices[0]!.choiceHandle, idempotencyKey: "stale-key", confirmed: true,
+      }),
+      /stardew_cabin_choice_revision_stale/,
+    );
+  } finally {
+    await stale.coordinator.close();
+    await stale.broker.close();
   }
 });

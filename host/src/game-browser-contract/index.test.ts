@@ -17,6 +17,9 @@ import {
   GamePrerequisitesSetupCommandV1Schema,
   GameBrowserStateV1Schema,
   isComposedGameProfile,
+  StardewCabinChoicesV1Schema,
+  StardewCabinConfirmCommandV1Schema,
+  StardewCabinConfirmResultV1Schema,
 } from "./index.js";
 
 const handle = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
@@ -41,6 +44,27 @@ const baseState = {
     latestOutcome: "none" as const,
   },
 };
+
+test("Stardew cabin handoff contract exposes only opaque choices and exact confirmation", () => {
+  const opaque32 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  assert.equal(Compile(StardewCabinChoicesV1Schema).Check({
+    apiVersion: 1,
+    choices: [{ displayLabel: "Cabin 1", availability: "available", choiceHandle: opaque32, expiresAtMs: 100_000 }],
+  }), true);
+  assert.equal(Compile(StardewCabinChoicesV1Schema).Check({
+    apiVersion: 1,
+    choices: [{ displayLabel: "Cabin 1", availability: "available", choiceHandle: opaque32, expiresAtMs: 100_000, cabinId: "raw" }],
+  }), false);
+  assert.equal(Compile(StardewCabinConfirmCommandV1Schema).Check({
+    apiVersion: 1, idempotencyKey, choiceHandle: opaque32, confirmed: true,
+  }), true);
+  assert.equal(Compile(StardewCabinConfirmCommandV1Schema).Check({
+    apiVersion: 1, idempotencyKey, choiceHandle: opaque32, confirmed: false,
+  }), false);
+  assert.equal(Compile(StardewCabinConfirmResultV1Schema).Check({ apiVersion: 1, status: "manifest_admitted" }), true);
+  assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes("game.stardew.cabins.read"));
+  assert.ok(GAME_BROWSER_OPERATION_IDS_V1.includes("game.stardew.cabins.confirm"));
+});
 
 test("Game Browser v1 provides a bounded, unmounted Game lifecycle contract", () => {
   assert.equal(GameBrowserContractV1.id, GAME_BROWSER_API_V1);
