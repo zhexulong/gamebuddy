@@ -42,6 +42,9 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   bindOwnedPlayerHostPhaseAOwner(
     owner: StardewOwnedPlayerHostPhaseAOwner,
   ): StardewOwnedPlayerHostPhaseATestView;
+  quarantineOwnedPlayerHostOwner(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+  ): Promise<void>;
 }>;
 
 const testOwnerBinders = new WeakMap<

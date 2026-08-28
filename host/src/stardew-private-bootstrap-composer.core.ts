@@ -239,6 +239,7 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
 }>;
 
 export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBootstrapInternalComposition {
@@ -258,9 +259,10 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
   return Object.freeze({
     composition: closed.composition,
     createOwnedPlayerHostAttachmentFlow: closed.createOwnedPlayerHostAttachmentFlow,
-     createOwnedPlayerHostManifestHandoffCoordinator: closed.createOwnedPlayerHostManifestHandoffCoordinator,
-     materializeAiClientProfileAfterManifestAdmission: closed.materializeAiClientProfileAfterManifestAdmission,
-     launchOwnedPlayerHostStageC: closed.launchOwnedPlayerHostStageC,
+    createOwnedPlayerHostManifestHandoffCoordinator: closed.createOwnedPlayerHostManifestHandoffCoordinator,
+    materializeAiClientProfileAfterManifestAdmission: closed.materializeAiClientProfileAfterManifestAdmission,
+    launchOwnedPlayerHostStageC: closed.launchOwnedPlayerHostStageC,
+    quarantineOwnedPlayerHostOwner: closed.quarantineOwnedPlayerHostOwner,
   });
 }
 
@@ -286,16 +288,17 @@ export type StardewOwnedPlayerHostStageCResult = Readonly<{
 export function createStardewPrivateBootstrapTestCore(
   dependencies: StardewPrivateBootstrapCoreDependencies,
 ): Readonly<{
-   composition: StardewPrivateBootstrapComposition;
-   consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
-   createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow;
-   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
-   materializeAiClientProfileAfterManifestAdmission: MaterializeAiClientProfileAfterManifestAdmission;
-   launchOwnedPlayerHostStageC(
-     owner: StardewOwnedPlayerHostPhaseAOwner,
-     installation: AdmittedStardewInstallation,
-   ): Promise<StardewOwnedPlayerHostStageCResult>;
-   bindOwnedPlayerHostPhaseAOwner(
+  composition: StardewPrivateBootstrapComposition;
+  consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
+  createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow;
+  createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
+  materializeAiClientProfileAfterManifestAdmission: MaterializeAiClientProfileAfterManifestAdmission;
+  launchOwnedPlayerHostStageC(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedPlayerHostStageCResult>;
+  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
+  bindOwnedPlayerHostPhaseAOwner(
     owner: StardewOwnedPlayerHostPhaseAOwner,
   ): StardewOwnedPlayerHostPhaseACoreTestView;
 }> {
@@ -319,26 +322,28 @@ export function createStardewPrivateBootstrapTestCore(
       // other composition are rejected before the staged marker changes.
       base.consumeStagedOwnedPlayerHostPhaseB(owner);
     },
-     createOwnedPlayerHostAttachmentFlow(owner) {
-       // Composition-bound test-only attachment factory: the base closed
-       // composition supplies its stored identity, so forged and cross-
-       // composition owners are rejected before any flow is constructed.
-       return base.createOwnedPlayerHostAttachmentFlow(owner);
-     },
-     createOwnedPlayerHostManifestHandoffCoordinator() {
-       return base.createOwnedPlayerHostManifestHandoffCoordinator();
-     },
-     materializeAiClientProfileAfterManifestAdmission(owner, admission) {
-       return base.materializeAiClientProfileAfterManifestAdmission(owner, admission);
-     },
-     launchOwnedPlayerHostStageC(owner, installation) {
+    createOwnedPlayerHostAttachmentFlow(owner) {
+      // Composition-bound test-only attachment factory: the base closed
+      // composition supplies its stored identity, so forged and cross-
+      // composition owners are rejected before any flow is constructed.
+      return base.createOwnedPlayerHostAttachmentFlow(owner);
+    },
+    createOwnedPlayerHostManifestHandoffCoordinator() {
+      return base.createOwnedPlayerHostManifestHandoffCoordinator();
+    },
+    materializeAiClientProfileAfterManifestAdmission(owner, admission) {
+      return base.materializeAiClientProfileAfterManifestAdmission(owner, admission);
+    },
+    launchOwnedPlayerHostStageC(owner, installation) {
       // Composition-bound test-only Stage-C launch: the base closed
       // composition supplies its stored identity, so forged and
       // cross-composition owners are rejected before the launch attempt.
       return base.launchOwnedPlayerHostStageC(owner, installation);
     },
+    quarantineOwnedPlayerHostOwner(owner) {
+      return base.quarantineOwnedPlayerHostOwner(owner);
+    },
     bindOwnedPlayerHostPhaseAOwner(owner) {
-      if (!owned.has(owner)) throw new Error("stardew_owned_phase_a_owner_not_registered");
       const facts = requireOwnedPhaseAFacts(owner);
       return Object.freeze({
         get record() { return facts.durableOwner.record as StardewOwnedPlayerHostBootstrapOwnerRecord; },
@@ -375,6 +380,7 @@ type ClosedBootstrapCore = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
 }>;
 
 function createClosedComposition(
@@ -591,11 +597,15 @@ function createClosedComposition(
         owner: StardewOwnedPlayerHostPhaseAOwner,
         admission: StardewManifestAdmissionValue,
       ): Promise<void> => manifestHandoff.materialize(owner, admission),
-      launchOwnedPlayerHostStageC: (
-      owner: StardewOwnedPlayerHostPhaseAOwner,
-      installation: AdmittedStardewInstallation,
-    ): Promise<StardewOwnedPlayerHostStageCResult> =>
-      launchOwnedPlayerHostStageC(owner, installation, compositionIdentity),
+       launchOwnedPlayerHostStageC: (
+       owner: StardewOwnedPlayerHostPhaseAOwner,
+       installation: AdmittedStardewInstallation,
+     ): Promise<StardewOwnedPlayerHostStageCResult> =>
+       launchOwnedPlayerHostStageC(owner, installation, compositionIdentity),
+     quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
+       const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+       return facts.quarantineOwner();
+     },
   });
 }
 
@@ -682,9 +692,10 @@ async function persistPrivateBootstrapOwner(
     transactionDirectory: directory,
     replaceRecord(next: StardewPrivateBootstrapOwnerRecord): void { record = freezeRecord(next); },
     quarantine(): Promise<void> {
-      if (quarantineStarted) return quarantinePromise ?? Promise.resolve();
+      if (quarantinePromise !== null) return quarantinePromise;
+      if (quarantineStarted && record.state === "quarantined") return Promise.resolve();
       quarantineStarted = true;
-      quarantinePromise = (async () => {
+      const persistence = (async () => {
         await withPathLock(ownerPath, async () => {
           const current = await readAndValidateOwner(ownerPath, root);
           if (current.bootstrapId !== record.bootstrapId)
@@ -704,6 +715,16 @@ async function persistPrivateBootstrapOwner(
           record = next;
         }, { containmentRoot: root });
       })();
+      quarantinePromise = persistence.then(
+        () => undefined,
+        (error: unknown) => {
+          // A rejected persistence attempt is retryable. Keep the durable
+          // owner's quarantine-started state, but release only its in-flight
+          // promise so the exact owner can make a later durable attempt.
+          quarantinePromise = null;
+          throw error;
+        },
+      );
       return quarantinePromise;
     },
   });
@@ -1624,7 +1645,8 @@ function composeOwnedPlayerHostOwner(
       facts.privateMaterial.value = null;
       if (playerHostLaunchState === "available") playerHostLaunchState = "binding";
       if (aiClientLaunchState === "available") aiClientLaunchState = "binding";
-      quarantinePromise = durableOwner.quarantine().then(
+      const persistence = durableOwner.quarantine();
+      quarantinePromise = persistence.then(
         () => {
           let firstError: unknown;
           try { revokePlayerHostLaunch(); } catch (error) { firstError = error; }
@@ -1632,6 +1654,10 @@ function composeOwnedPlayerHostOwner(
           if (firstError !== undefined) throw firstError;
         },
         (persistenceError: unknown) => {
+          // Persistence uncertainty never reopens this exact owner. Clear
+          // only the in-flight wrapper so the same owner can retry durable
+          // quarantine after the persistence failure is repaired.
+          quarantinePromise = null;
           try { revokePlayerHostLaunch(); } catch { /* persistence remains primary */ }
           try { revokeAiClientLaunch(); } catch { /* persistence remains primary */ }
           throw persistenceError;

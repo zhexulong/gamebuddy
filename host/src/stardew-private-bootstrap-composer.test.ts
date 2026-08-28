@@ -73,7 +73,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-    "composition" | "createOwnedPlayerHostAttachmentFlow" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedPlayerHostStageC"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedPlayerHostStageC" | "quarantineOwnedPlayerHostOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -573,8 +573,10 @@ test("production internal composition exposes only the private C1 materializer w
     "createOwnedPlayerHostManifestHandoffCoordinator",
     "launchOwnedPlayerHostStageC",
     "materializeAiClientProfileAfterManifestAdmission",
+    "quarantineOwnedPlayerHostOwner",
   ].sort());
   assert.equal(typeof internal.materializeAiClientProfileAfterManifestAdmission, "function");
+  assert.equal(typeof internal.quarantineOwnedPlayerHostOwner, "function");
   assert.deepEqual(Object.keys(internal.composition).sort(), [
     "aiClientProcessOwner",
     "broker",
@@ -583,6 +585,8 @@ test("production internal composition exposes only the private C1 materializer w
     "reserveExternalPlayerHostPhaseA",
     "reserveOwnedPlayerHostPhaseA",
   ]);
+  assert.equal("quarantineOwnedPlayerHostOwner" in productionComposer, false);
+  assert.equal("quarantineOwnedPlayerHostOwner" in internal.composition, false);
   assert.equal("materializeAiClientProfileAfterManifestAdmission" in productionComposer, false);
 });
 
@@ -748,8 +752,59 @@ test("owned Phase A binds exact nominal triple and durably rereads both manager 
   }
 });
 
+test("internal owned quarantine is exact-composition, retryable after persistence uncertainty, and absent publicly", async () => {
+  const leftHarness = createHarness();
+  const rightHarness = createHarness({ bootstrapIds: ["right-quarantine-bootstrap"] });
+  const left = createStardewPrivateBootstrapCompositionForTesting(leftHarness.dependencies);
+  const right = createStardewPrivateBootstrapCompositionForTesting(rightHarness.dependencies);
+  const root = await createRoot();
+  const triple = mintOwnedTriple(left.composition);
+  const owner = await left.composition.reserveOwnedPlayerHostPhaseA(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+
+  assert.throws(
+    () => right.quarantineOwnedPlayerHostOwner(owner),
+    /stardew_owned_phase_a_owner_not_registered/,
+  );
+  assert.throws(
+    () => left.quarantineOwnedPlayerHostOwner(Object.freeze({}) as StardewOwnedPlayerHostPhaseAOwner),
+    /stardew_owned_phase_a_owner_not_registered/,
+  );
+
+  const expectedReserved = expectedOwnedRecord();
+  await writeFile(ownerPath(root), "{corrupt", "utf8");
+  const first = left.quarantineOwnedPlayerHostOwner(owner);
+  const concurrent = left.quarantineOwnedPlayerHostOwner(owner);
+  assert.equal(first, concurrent);
+  await assert.rejects(first, /Unexpected token|JSON/);
+  await assert.rejects(concurrent, /Unexpected token|JSON/);
+
+  const ownerView = left.bindOwnedPlayerHostPhaseAOwner(owner);
+  assert.equal(ownerView.hasPrivateMaterial(), false);
+  assert.throws(
+    () => ownerView.consumePlayerHostLaunch(() => undefined),
+    /stardew_player_host_launch_not_available/,
+  );
+  assert.throws(
+    () => ownerView.consumeAiClientLaunch(() => undefined),
+    /stardew_ai_client_launch_not_available/,
+  );
+
+  await writeFile(ownerPath(root), `${JSON.stringify(expectedReserved)}\n`, "utf8");
+  await left.quarantineOwnedPlayerHostOwner(owner);
+  assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")), expectedOwnedRecord({ state: "quarantined" }));
+  await left.quarantineOwnedPlayerHostOwner(owner);
+
+  assert.equal("quarantineOwnedPlayerHostOwner" in left.composition, false);
+  assert.equal("quarantineOwnedPlayerHostOwner" in productionComposer, false);
+});
+
 test("owned public owner is frozen, empty, and has no record, path, quarantine, or raw launch reachability", async () => {
-  const harness = createHarness();
+const harness = createHarness();
   const triple = mintOwnedTriple(harness.composition);
   const owner = await harness.composition.reserveOwnedPlayerHostPhaseA(
     await createRoot(), triple.claim, triple.playerHostReservation, triple.aiClientReservation,
