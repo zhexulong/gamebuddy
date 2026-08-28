@@ -23,6 +23,12 @@ function sameFile(left, right) {
 }
 
 function overlaps(left, right) {
+  const leftRoot = path.parse(left).root;
+  const rightRoot = path.parse(right).root;
+  const sameRoot = process.platform === "win32"
+    ? leftRoot.toLowerCase() === rightRoot.toLowerCase()
+    : leftRoot === rightRoot;
+  if (!sameRoot) return false;
   const relative = path.relative(left, right);
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
 }

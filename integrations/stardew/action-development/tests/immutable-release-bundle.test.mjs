@@ -47,6 +47,32 @@ async function context(callback) {
 }
 function errorCode(code) { return new RegExp(`stardew_immutable_release_bundle_${code}`); }
 
+const HAS_DISTINCT_TEST_VOLUMES = path.parse(process.cwd()).root.toLowerCase() !== path.parse(os.tmpdir()).root.toLowerCase();
+test("accepts physically separate release and runtime roots on different volumes", { skip: !HAS_DISTINCT_TEST_VOLUMES }, async () => {
+  const sourceParent = await mkdtemp(path.join(process.cwd(), ".immutable-release-cross-volume-"));
+  const runtimeParent = await mkdtemp(path.join(os.tmpdir(), "immutable-release-cross-volume-"));
+  const releaseDir = path.join(sourceParent, "release");
+  const modsPath = path.join(runtimeParent, "game", "Mods");
+  const runRoot = path.join(runtimeParent, "runs");
+  await mkdir(releaseDir);
+  await mkdir(modsPath, { recursive: true });
+  await mkdir(runRoot);
+  for (const [name, contents] of Object.entries(CONTENTS)) await writeFile(path.join(releaseDir, name), contents);
+  try {
+    const binding = await createImmutableReleaseBundleBinding({ releaseDir, modsPath, runRoot, expectedDigest: digest(), runIdentity: "cross-volume" });
+    await binding.runLifecycle(async () => ({
+      operationResult: null,
+      cleanupResult: { schema: "gamebuddy-stardew-lifecycle-cleanup-result/v1", completed: true },
+    }));
+    await binding.close();
+  } finally {
+    await removeFixtureTree(sourceParent);
+    await rmdir(sourceParent);
+    await removeFixtureTree(runtimeParent);
+    await rmdir(runtimeParent);
+  }
+});
+
 test("successful exact four-file binding is physically distinct and lifecycle-only", async () => context(async (options) => {
   const binding = await createImmutableReleaseBundleBinding(options);
   const staged = binding.inspect().releaseDir;
