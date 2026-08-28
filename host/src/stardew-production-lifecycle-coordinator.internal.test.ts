@@ -273,6 +273,8 @@ async function createFixture(input: Readonly<{
     createBootstrapIdentity: () => "bootstrap-coordinator-1",
     createLaunchGeneration: () => "ai-generation-1",
     createPlayerHostLaunchGeneration: () => "player-generation-1",
+    createBridgePipeName: () => "gamebuddy-stardew-coordinator-bridge",
+    createBridgeToken: () => "coordinator-bridge-token-0123456789",
     nowMs: input.nowMs ?? (() => Date.now()),
     staging: {
       async readPackage() {
@@ -499,7 +501,10 @@ test("same admission joins the exact activation Promise while a conflicting admi
         rawSpawn: () => Object.freeze({ pid: 1, kill: () => true }), rawProbe: () => null,
         rawPlayerHostSpawn: () => Object.freeze({ pid: 2, kill: () => true }), rawPlayerHostProbe: () => null,
         createBootstrapIdentity: () => "bootstrap-conflict-2", createLaunchGeneration: () => "ai-2",
-        createPlayerHostLaunchGeneration: () => "player-2", nowMs: () => Date.now(),
+        createPlayerHostLaunchGeneration: () => "player-2",
+        createBridgePipeName: () => "gamebuddy-stardew-conflict-bridge",
+        createBridgeToken: () => "conflict-bridge-token-0123456789",
+        nowMs: () => Date.now(),
         staging: { readPackage: async () => { throw new Error("proof-consumed"); }, createSecret: () => "secret-conflict-012345", nowMs: () => Date.now() },
       },
     );
@@ -1097,6 +1102,52 @@ test("manifest-admitted AI materialization failure is permanently uncertain and 
       "utf8",
     );
     assert.equal(JSON.parse(repeatedRequest).requestId, request.requestId);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("manifest-admitted private Bridge config replacement is permanently uncertain and quarantines without AI spawn", async () => {
+  let runtimeRoot = "";
+  let tampered = false;
+  const inspectors = [
+    installationInspector([installationChain, installationChain, installationChain]),
+    installationInspector(
+      [installationChain, installationChain, installationChain],
+      async () => {
+        if (tampered) return;
+        tampered = true;
+        await writeFile(
+          join(runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "ai-client", "Mods", "GameBuddy", "config.json"),
+          JSON.stringify({ EnableLocalBridge: false }),
+        );
+      },
+    ),
+  ];
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: { createInstallationInspector: async () => inspectors.shift()! },
+  });
+  runtimeRoot = fixture.runtimeRoot;
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "ai-bridge-config-replacement-key",
+      confirmed: true as const,
+    };
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command);
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command),
+      /stardew_cabin_publication_uncertain/,
+    );
+    assert.equal(tampered, true);
+    assert.deepEqual(fixture.spawnCalls, []);
+    assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
