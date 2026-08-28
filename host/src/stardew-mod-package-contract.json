@@ -1,0 +1,77 @@
+{
+  "schema": "gamebuddy-stardew-mod-package-contract/v1",
+  "descriptor": {
+    "kind": "verified_stardew_mod_package",
+    "destination": "native/stardew-mod/GameBuddy",
+    "project": "integrations/stardew/GameBuddy.Stardew.csproj",
+    "manifest": "manifest.json"
+  },
+  "entries": [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "Raffinert.FuzzySharp.dll",
+    "manifest.json"
+  ],
+  "manifestIdentity": {
+    "UniqueID": "zhexulong.GameBuddy",
+    "EntryDll": "GameBuddy.Stardew.dll",
+    "Version": "0.1.0",
+    "MinimumApiVersion": "4.0.0"
+  },
+  "dependencyAuthority": {
+    "rootKeys": ["runtimeTarget", "compilationOptions", "targets", "libraries"],
+    "runtimeTarget": {
+      "name": ".NETCoreApp,Version=v6.0",
+      "signature": ""
+    },
+    "compilationOptionsKeys": [],
+    "targetFramework": ".NETCoreApp,Version=v6.0",
+    "libraryKeys": [
+      "GameBuddy.Stardew/1.0.0",
+      "Pathoschild.Stardew.ModBuildConfig/4.4.0",
+      "Raffinert.FuzzySharp/5.0.3",
+      "GameBuddy.Stardew.Core/1.0.0"
+    ],
+    "targetKeys": [
+      "GameBuddy.Stardew/1.0.0",
+      "Pathoschild.Stardew.ModBuildConfig/4.4.0",
+      "Raffinert.FuzzySharp/5.0.3",
+      "GameBuddy.Stardew.Core/1.0.0"
+    ],
+    "packages": {
+      "GameBuddy.Stardew/1.0.0": {
+        "keys": ["dependencies", "runtime"],
+        "dependencies": {
+          "GameBuddy.Stardew.Core": "1.0.0",
+          "Pathoschild.Stardew.ModBuildConfig": "4.4.0",
+          "Raffinert.FuzzySharp": "5.0.3"
+        },
+        "runtime": {
+          "GameBuddy.Stardew.dll": []
+        }
+      },
+      "Pathoschild.Stardew.ModBuildConfig/4.4.0": {
+        "keys": []
+      },
+      "Raffinert.FuzzySharp/5.0.3": {
+        "keys": ["runtime"],
+        "runtime": {
+          "lib/net6.0/Raffinert.FuzzySharp.dll": {
+            "assemblyVersion": "5.0.3.0",
+            "fileVersion": "5.0.3.0"
+          }
+        }
+      },
+      "GameBuddy.Stardew.Core/1.0.0": {
+        "keys": ["runtime"],
+        "runtime": {
+          "GameBuddy.Stardew.Core.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  }
+}

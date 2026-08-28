@@ -84,7 +84,7 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.equal(prepared.modelConfig.modelId, "deepseek-v4-flash");
     assert.equal(prepared.modelProfileRevision, 0);
     // Chat mounts no speaking pseudo-tool or presentation callback. Native
-    // assistant content is observed privately by the exact P4 invocation.
+    // assistant content is observed privately by the bound provider invocation.
     assert.equal(prepared.presentation.admissionProvider, undefined);
     assert.equal(prepared.presentation.textPort, undefined);
     const stableContext = await prepared.materializeStableContextForPiSession("pi_session_genuine");

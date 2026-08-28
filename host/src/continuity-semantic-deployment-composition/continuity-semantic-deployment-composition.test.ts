@@ -12,8 +12,8 @@ import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
-import { createIntegrationActionCatalog, type GameIntegrationModule } from "../integration-module.js";
-import type { IntegrationConnection } from "../integration-types.js";
+import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
+import type { GameConnection } from "../game-connection.js";
 import {
   createUnmountedDialogueInitialChatResumeFacade,
   createUnmountedDialogueSemanticFacade,
@@ -40,7 +40,7 @@ async function fixture() {
   return { root, manifestPath };
 }
 function launcher(): ConfigurableIntegrationLauncher {
-  const module: GameIntegrationModule = {
+  const module: GameIntegrationAdapter = {
     descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
     actionCatalog: createIntegrationActionCatalog([
       {
@@ -106,7 +106,7 @@ function launcher(): ConfigurableIntegrationLauncher {
     actionIdForToolName: (name) => (name === "arcade_activate" ? "activate" : null),
     isCancellationTool: () => false,
   };
-  const connection: IntegrationConnection = {
+  const connection: GameConnection = {
     scope: { integrationId: "test-arcade" },
     module,
     state: Object.freeze({ connected: true }),

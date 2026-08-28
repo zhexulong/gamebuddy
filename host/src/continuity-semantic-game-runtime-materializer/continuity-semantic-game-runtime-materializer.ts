@@ -1,5 +1,12 @@
+import { join } from "node:path";
 import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
+import type { CompanionInterruption } from "../companion-interruption.js";
 import { CompanionLoop } from "../companion-loop.js";
+import {
+  createFarmhandCompanionPresentationPort,
+  createFarmhandPresentationEpochAdmission,
+  type FarmhandPresentationBridge,
+} from "../farmhand-companion-presentation.js";
 import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
 import type { HostGameLifecycleSnapshot } from "../game-status/game-status.js";
 import {
@@ -7,9 +14,14 @@ import {
   createGamePresentationAdmissionProvider,
   GameTurnLineageTracker,
 } from "../host-service.js";
-import type { GameIntegrationModule, IntegrationActionPolicy, IntegrationStateView } from "../integration-module.js";
-import type { IntegrationConnection } from "../integration-types.js";
+import type {
+  GameIntegrationAdapter,
+  IntegrationActionPolicy,
+  IntegrationStateView,
+} from "../game-integration-adapter.js";
+import type { GameConnection } from "../game-connection.js";
 import { createGameCompanionRuntime, type RuntimeSession } from "../runtime.js";
+import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import {
   consumeGameVoicePresentationAttachment,
   type GameVoicePresentationAttachment,
@@ -46,28 +58,31 @@ export function createHostGameRuntimeMaterializer(
   options: HostGameRuntimeMaterializerOptions = {},
 ): GameRuntimeMaterializer {
   return Object.freeze({
-    async materializeEnter(reservation, permit): Promise<MaterializedGameRuntime> {
+    async materializeEnter(
+      reservation,
+      permit,
+    ): Promise<MaterializedGameRuntime> {
       return materializeExactEnter(reservation, permit, async (execution) => {
         const constructed = await createMaterializedGameRuntime(
           execution.principal,
           execution.world,
           execution.runtimeRoot,
           execution.connection,
+          execution.launch.presentationBridge,
           permit.gameSessionId,
           options.gameOperationalGateNonceSha256,
           options.gameVoicePresentation,
         );
         const runtime = constructed.runtime;
-        const loop = new CompanionLoop(runtime.session, undefined, options.liveSourceAttester);
-        const lifecycle = new IntegrationLifecycleSnapshot(execution.connection.module, execution.connection);
-        const operationalGateEvidence =
-          options.gameOperationalGateNonceSha256 === undefined
-            ? undefined
-            : createGameOperationalGateEvidenceProjection(
-                execution.connection.module,
-                execution.connection,
-                execution.launch.events,
-              );
+        const loop = new CompanionLoop(
+          runtime.session,
+          undefined,
+          options.liveSourceAttester,
+        );
+        const lifecycle = new IntegrationLifecycleSnapshot(
+          execution.connection.module,
+          execution.connection,
+        );
         const host = new CompanionHostService(
           loop,
           execution.launch.events,
@@ -78,7 +93,9 @@ export function createHostGameRuntimeMaterializer(
             execution.launch.revoke(reasonCode);
             void (async () => {
               try {
-                await runtime.interruptIntegrationExecutions?.(`integration_${reasonCode}`);
+                await runtime.interruptIntegrationExecutions?.(
+                  `integration_${reasonCode}`,
+                );
               } catch {
                 // The revoked runtime cannot reopen. The rejected cancellation
                 // has been observed and contained rather than discarded.
@@ -92,7 +109,8 @@ export function createHostGameRuntimeMaterializer(
           },
           runtime.interruption,
           async (epoch, reasonCode) => {
-            if (runtime.cancelIntegrationEpoch === undefined) throw new Error("stop_ledger_cancellation_unavailable");
+            if (runtime.cancelIntegrationEpoch === undefined)
+              throw new Error("stop_ledger_cancellation_unavailable");
             await runtime.cancelIntegrationEpoch(epoch, reasonCode);
           },
           async (reasonCode) => {
@@ -102,10 +120,38 @@ export function createHostGameRuntimeMaterializer(
           constructed.turnTracker,
           runtime.bindIntegrationReceipt,
           options.liveSourceAttester,
+          runtime.refreshIntegrationTools,
         );
+        const operationalGateEvidence =
+          options.gameOperationalGateNonceSha256 === undefined
+            ? undefined
+            : createGameOperationalGateEvidenceProjection(
+                execution.connection.module,
+                execution.connection,
+                execution.launch.events,
+                host,
+              );
         loop.attachTurnObserver(host);
+        if (
+          runtime.presentation?.surface === "game" &&
+          runtime.presentation.textPort !== undefined &&
+          runtime.presentation.admissionProvider !== undefined
+        ) {
+          loop.attachNativeGameContentPresenter(
+            host.createNativeAssistantContentPresenter({
+              sessionId: runtime.presentation.sessionId,
+              locale: runtime.presentation.profile.locale,
+              admissionProvider: runtime.presentation.admissionProvider,
+              textPort: runtime.presentation.textPort,
+            }),
+          );
+        }
         if (options.gameVoicePresentation !== undefined)
-          host.attachVoiceStopper(consumeGameVoicePresentationAttachment(options.gameVoicePresentation).stopVoice);
+          host.attachVoiceStopper(
+            consumeGameVoicePresentationAttachment(
+              options.gameVoicePresentation,
+            ).stopVoice,
+          );
         let ingressActivated = false;
         const activateIngress = (): void => {
           if (ingressActivated) return;
@@ -118,11 +164,18 @@ export function createHostGameRuntimeMaterializer(
         return Object.freeze({
           session: runtime.session,
           piSessionId: runtime.piSessionId,
-          ...(runtime.gameplaySubagent === undefined ? {} : { gameplaySubagent: runtime.gameplaySubagent }),
+          ...(runtime.gameplaySubagent === undefined
+            ? {}
+            : { gameplaySubagent: runtime.gameplaySubagent }),
           ...(runtime.clearGameOperationalGateMarker === undefined
             ? {}
-            : { clearGameOperationalGateMarker: runtime.clearGameOperationalGateMarker }),
-          ...(operationalGateEvidence === undefined ? {} : { operationalGateEvidence }),
+            : {
+                clearGameOperationalGateMarker:
+                  runtime.clearGameOperationalGateMarker,
+              }),
+          ...(operationalGateEvidence === undefined
+            ? {}
+            : { operationalGateEvidence }),
           connected: Object.freeze({
             host,
             lifecycleSnapshot: () => lifecycle.snapshot(),
@@ -148,8 +201,8 @@ class IntegrationLifecycleSnapshot {
   #closing = false;
 
   public constructor(
-    private readonly module: GameIntegrationModule,
-    private readonly connection: IntegrationConnection,
+    private readonly module: GameIntegrationAdapter,
+    private readonly connection: GameConnection,
     private readonly policy?: IntegrationActionPolicy,
   ) {}
 
@@ -171,22 +224,34 @@ class IntegrationLifecycleSnapshot {
       return unavailable(surface, "mismatch");
     }
     if (!isStateView(state)) return unavailable(surface, "mismatch");
-    if (!state.connected || state.sessionId === null || state.snapshotRevision === null)
+    if (
+      !state.connected ||
+      state.sessionId === null ||
+      state.snapshotRevision === null
+    )
       return unavailable(surface, "absent");
     if (this.#closing) return unavailable(surface, "current");
 
     let count: number;
     try {
-      count = this.module.actionCatalog.visibleActions(state.capabilities, this.policy).length;
+      count = this.module.actionCatalog.visibleActions(
+        state.registrations ?? [],
+        state.capabilities,
+        this.policy,
+      ).length;
     } catch {
       return unavailable("active", "mismatch");
     }
-    if (!Number.isSafeInteger(count) || count < 0 || count > 512) return unavailable("active", "mismatch");
+    if (!Number.isSafeInteger(count) || count < 0 || count > 512)
+      return unavailable("active", "mismatch");
     return Object.freeze({
       availability: "available",
       surface: "active",
       freshness: "current",
-      availableCapabilities: Object.freeze({ category: count === 0 ? "none" : "available", count }),
+      availableCapabilities: Object.freeze({
+        category: count === 0 ? "none" : "available",
+        count,
+      }),
       activeExecution: state.activeExecution === null ? "none" : "active",
       latestAuthoritativeReceipt:
         state.latestReceipt === null
@@ -236,10 +301,14 @@ function isOpaque(value: unknown): value is string {
 }
 
 type MaterializedGameRuntimeInput = Readonly<{
-  principal: Readonly<{ continuityId: string; companionId: string; playerId: string }>;
+  principal: Readonly<{
+    continuityId: string;
+    companionId: string;
+    playerId: string;
+  }>;
   world: Readonly<{ saveId: string; worldId: string }>;
   runtimeRoot: string;
-  connection: IntegrationConnection;
+  connection: GameConnection;
   gameSessionId: string;
 }>;
 
@@ -253,11 +322,14 @@ async function createMaterializedGameRuntime(
   principal: MaterializedGameRuntimeInput["principal"],
   world: MaterializedGameRuntimeInput["world"],
   runtimeRoot: string,
-  connection: IntegrationConnection,
+  connection: GameConnection,
+  presentationBridge: unknown,
   gameSessionId: string,
   gameOperationalGateNonceSha256?: string,
   gameVoicePresentation?: GameVoicePresentationAttachment,
-): Promise<Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>> {
+): Promise<
+  Readonly<{ runtime: RuntimeSession; turnTracker: GameTurnLineageTracker }>
+> {
   const identity = Object.freeze({
     continuityId: principal.continuityId,
     companionId: principal.companionId,
@@ -266,6 +338,40 @@ async function createMaterializedGameRuntime(
     worldId: world.worldId,
   });
   const turnTracker = new GameTurnLineageTracker();
+  const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
+    if (!isFarmhandPresentationBridge(presentationBridge))
+      throw new Error("game_presentation_bridge_unavailable");
+    return Object.freeze({
+      surface: "game" as const,
+      profile: Object.freeze({ locale: "zh-CN", text: true, speech: null }),
+      sessionId: gameSessionId,
+      textPort: createFarmhandCompanionPresentationPort(
+        presentationBridge,
+        createFarmhandPresentationEpochAdmission(handle.interruption),
+      ),
+      admissionProvider: createGamePresentationAdmissionProvider(
+        turnTracker,
+        handle.interruption,
+      ),
+    });
+  };
+  const workerAttachment =
+    gameOperationalGateNonceSha256 === undefined
+      ? undefined
+      : await (async () => {
+          const modelConfig = resolveModelProfileConfig(
+            await new ModelProfileStore(
+              join(runtimeRoot, "settings", "model-profiles.json"),
+            ).read("game"),
+          );
+          if (modelConfig === null)
+            throw new Error("game_runtime_model_configuration_unavailable");
+          return Object.freeze({
+            modelConfig,
+            gameplaySubagentEnabled: true as const,
+            hostBindingFactory,
+          });
+        })();
   const runtime = await createGameCompanionRuntime(
     identity,
     runtimeRoot,
@@ -274,22 +380,18 @@ async function createMaterializedGameRuntime(
     gameOperationalGateNonceSha256 === undefined
       ? undefined
       : Object.freeze({ nonceSha256: gameOperationalGateNonceSha256 }),
-    (handle) => {
-      if (gameVoicePresentation === undefined) return undefined;
-      const presentation = consumeGameVoicePresentationAttachment(gameVoicePresentation);
-      return Object.freeze({
-        surface: "game" as const,
-        profile: Object.freeze({
-          locale: "zh-CN",
-          text: false,
-          speech: Object.freeze({ voiceProfile: presentation.voiceProfile }),
-        }),
-        sessionId: gameSessionId,
-        speechPort: presentation.speechPort,
-        voiceAudioAdmission: presentation.voiceAudioAdmission,
-        admissionProvider: createGamePresentationAdmissionProvider(turnTracker, handle.interruption),
-      });
-    },
+    gameOperationalGateNonceSha256 === undefined ? hostBindingFactory : undefined,
+    workerAttachment,
   );
   return Object.freeze({ runtime, turnTracker });
+}
+
+function isFarmhandPresentationBridge(value: unknown): value is FarmhandPresentationBridge {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as FarmhandPresentationBridge).presentCompanionText === "function" &&
+    typeof (value as FarmhandPresentationBridge).presentSystemNotice === "function" &&
+    typeof (value as FarmhandPresentationBridge).state?.snapshot === "object"
+  );
 }

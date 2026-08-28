@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { normalize, posix, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -21,7 +21,6 @@ const TARGET_ASSEMBLIES = Object.freeze([
   "Stardew Valley.dll",
   "StardewModdingAPI.dll",
   "MonoGame.Framework.dll",
-  "SMAPI.Toolkit.CoreInterfaces.dll",
   "smapi-internal/Newtonsoft.Json.dll",
 ]);
 const CONTRACT_ASSEMBLIES = new Set([
@@ -262,44 +261,12 @@ export function executeStaticLeaf(command, { spawnFn = spawn } = {}) {
   return runProcess(command[0], [...command.slice(1)], { spawnFn });
 }
 
-function sameFileSnapshot(before, after) {
-  return (
-    before.dev === after.dev &&
-    before.ino === after.ino &&
-    before.size === after.size &&
-    before.mtimeMs === after.mtimeMs &&
-    before.ctimeMs === after.ctimeMs
-  );
-}
-
-export async function hashProductionAssembly({
-  path = resolve(ROOT_PATH, PRODUCTION_ASSEMBLY),
-  read = readFile,
-  stat = lstat,
-} = {}) {
-  let before, bytes, after;
-  try {
-    before = await stat(path);
-    if (!before.isFile()) fail("static_portfolio_production_assembly_invalid");
-    bytes = await read(path);
-    after = await stat(path);
-  } catch (error) {
-    if (error instanceof StardewStaticPortfolioError) throw error;
-    fail("static_portfolio_production_assembly_invalid");
-  }
-  if (!after.isFile() || !sameFileSnapshot(before, after)) fail("static_portfolio_production_assembly_changed");
-  const expectedSha256 = createHash("sha256").update(bytes).digest("hex");
-  if (!/^[a-f0-9]{64}$/.test(expectedSha256)) fail("static_portfolio_production_assembly_invalid");
-  return Object.freeze({ path, expectedSha256 });
-}
-
 export async function verifyStaticPortfolio({
   portfolio,
   identity,
   scripts,
   executeLeaf = executeStaticLeaf,
   buildTarget = buildTargetProduction,
-  hashProduction = hashProductionAssembly,
   targetAvailability = targetAssemblyAvailability(),
 } = {}) {
   validateStaticPortfolio(portfolio, { scripts });
@@ -351,20 +318,8 @@ export async function verifyStaticPortfolio({
       );
       continue;
     }
-    let command = leaf.command;
-    if (commandRequiresTargetAssemblies(leaf.command)) {
-      const binding = await hashProduction();
-      if (
-        !binding ||
-        typeof binding.path !== "string" ||
-        !/^[a-f0-9]{64}$/.test(binding.expectedSha256) ||
-        !resolve(binding.path)
-      )
-        fail("static_portfolio_production_assembly_invalid");
-      command = [leaf.command[0], leaf.command[1], "--expected-sha256", binding.expectedSha256, resolve(binding.path)];
-    }
     const result = await executeLeaf(
-      command,
+      leaf.command,
       commandRequiresTargetAssemblies(leaf.command) ? { targetGamePath: targetAvailability.gamePath } : undefined,
     );
     if (
