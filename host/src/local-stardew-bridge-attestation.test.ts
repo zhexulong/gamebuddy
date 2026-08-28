@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import { createServer, type Server, type Socket } from "node:net";
 import test from "node:test";
 
+import { assertReceiptBackedLaunch } from "./integration-launcher.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import type { BridgeMessage, Scope } from "./protocol.js";
+import {
+  createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
+  STARDEW_INTEGRATION_LAUNCHER,
+} from "./stardew-integration-launcher.js";
 
 const scope: Scope = Object.freeze({
   integrationId: "stardew",
@@ -40,29 +45,56 @@ async function withHelloAck<T>(
   const server = createServer((socket) => {
     peer = socket;
     socket.once("close", resolvePeerClosed);
-    socket.once("data", (chunk) => {
-      const request = JSON.parse(chunk.subarray(4).toString("utf8")) as BridgeMessage;
-      socket.write(frame({
-        ...request,
-        messageId: "mod_hello_attestation",
-        type: "hello_ack",
-        payload: {
-          sessionId: "session_attestation",
-          capabilities: ["move_to_tile"],
-          catalogRevision: 1,
-          enabledActionIds: ["move_to_tile"],
-          presentationLocale: "en-US",
-          registrations: [{
-            actionId: "move_to_tile",
-            familyId: "movement_navigation",
-            identityVersion: 1,
-            lifecycle: "published",
-            kind: "execution",
-          }],
-          runtimeRole,
-          launchGeneration,
-        },
-      }));
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello")
+          socket.write(frame({
+            ...request,
+            messageId: "mod_hello_attestation",
+            type: "hello_ack",
+            payload: {
+              sessionId: "session_attestation",
+              capabilities: ["move_to_tile"],
+              catalogRevision: 1,
+              enabledActionIds: ["move_to_tile"],
+              presentationLocale: "en-US",
+              registrations: [{
+                actionId: "move_to_tile",
+                familyId: "movement_navigation",
+                identityVersion: 1,
+                lifecycle: "published",
+                kind: "execution",
+              }],
+              runtimeRole,
+              launchGeneration,
+            },
+          }));
+        else if (request.type === "observe_request")
+          socket.write(frame({
+            ...request,
+            messageId: "mod_snapshot_attestation",
+            type: "snapshot",
+            payload: {
+              revision: 1,
+              location: "Farm",
+              tile: { x: 5, y: 8 },
+              stamina: 250,
+              health: 100,
+              actionable: true,
+              capabilities: ["move_to_tile"],
+              catalogRevision: 1,
+              enabledActionIds: ["move_to_tile"],
+              presentationLocale: "en-US",
+              activeExecution: null,
+            },
+          }));
+      }
     });
   });
   await new Promise<void>((resolve, reject) =>
@@ -76,12 +108,41 @@ async function withHelloAck<T>(
   }
 }
 
-test("formal Farmhand bridge accepts only the exact manager launch generation", async () => {
+test("formal Farmhand bridge produces the existing receipt-backed Stardew launch handle", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
-    assert.equal(client.state.connected, true);
-    assert.equal(client.state.authenticated, true);
-    client.close();
+    const identity = Object.freeze({
+      playerId: scope.playerId,
+      companionId: scope.companionId,
+      saveId: scope.saveId,
+      worldId: scope.worldId,
+    });
+    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity);
+    assertReceiptBackedLaunch(STARDEW_INTEGRATION_LAUNCHER, launch, identity);
+    assert.equal(launch.presentationBridge, client);
+    launch.close();
+  });
+});
+
+test("authenticated Stardew launch-handle producer rejects a forged bridge before adapter use", async () => {
+  await assert.rejects(
+    () =>
+      createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        Object.freeze({ close() {} }) as unknown as LocalStardewBridgeClient,
+        scope,
+      ),
+    /authenticated_stardew_bridge_required/,
+  );
+});
+
+test("authenticated Stardew launch-handle producer closes an exact client on identity mismatch", async () => {
+  await withHelloAck("farmhand_client", generation, async (pipeName, peerClosed) => {
+    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
+    await assert.rejects(
+      () => createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, { ...scope, playerId: "foreign_farmhand" }),
+      /stardew_bridge_identity_scope_mismatch/,
+    );
+    await peerClosed;
   });
 });
 

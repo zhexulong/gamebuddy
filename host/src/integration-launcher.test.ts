@@ -98,6 +98,12 @@ function module(): GameIntegrationModule {
       connected: (connection.state as { connected: boolean }).connected,
       sessionId: "arcade_session",
       capabilities: ["activate_console"],
+      registrations: [{
+        actionId: "activate_console",
+        familyId: "interaction",
+        identityVersion: 1,
+        lifecycle: "published" as const,
+      }],
       snapshotRevision: 3,
       activeExecution: null,
       latestReceipt: null,
@@ -179,6 +185,25 @@ test("receipt-backed launcher accepts a publishable non-Stardew action without m
   assert.deepEqual(handle.connection.module.createToolSet({ connection: handle.connection }).actions, []);
 });
 
+test("receipt-backed launcher rejects capability strings without authenticated registrations", () => {
+  const { launcher, handle } = receiptBackedHandle();
+  const moduleWithoutRegistrations = {
+    ...launcher.module,
+    readState: (connection: IntegrationConnection) => ({
+      ...launcher.module.readState(connection),
+      registrations: [],
+    }),
+  };
+  const unregisteredHandle = {
+    ...handle,
+    connection: { ...handle.connection, module: moduleWithoutRegistrations },
+  };
+  assert.throws(
+    () => assertReceiptBackedLaunch({ ...launcher, module: moduleWithoutRegistrations }, unregisteredHandle, identity),
+    /authoritative_initial_state_required/,
+  );
+});
+
 test("Stardew launch validates catalog/live capability/policy without materializing executable tools", () => {
   let createToolSetCalls = 0;
   const module: GameIntegrationModule = {
@@ -208,6 +233,13 @@ test("Stardew launch validates catalog/live capability/policy without materializ
       connected: true,
       sessionId: "stardew_session",
       capabilities: ["move_to_tile"],
+      catalogRegistrations: [{
+        actionId: "move_to_tile",
+        familyId: "movement_navigation",
+        identityVersion: 1,
+        lifecycle: "published",
+        kind: "execution",
+      }],
       snapshot: { revision: 7, capabilities: ["move_to_tile"], activeExecution: null },
       latestReceipt: null,
       latestReasonCode: null,
