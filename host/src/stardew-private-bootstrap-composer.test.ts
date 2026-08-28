@@ -85,7 +85,7 @@ const CREATION = "20250102030405.000000+000";
 const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v2";
 const OWNER_FILE = "owner.json";
 
-function signedAttachmentSession(sessionToken: string) {
+function signedAttachmentSession(sessionToken: string, launchGeneration = "player-generation-1") {
   const session = {
     schemaVersion: 1,
     integrationId: "stardew",
@@ -101,7 +101,9 @@ function signedAttachmentSession(sessionToken: string) {
     expiresAtUnixMs: 5_000,
     nonce: "nonce-attachment-factory",
     state: "ready",
-    hostPlayerId: "world-attachment-factory",
+     hostPlayerId: "world-attachment-factory",
+     runtimeRole: "player_host",
+     launchGeneration,
      cabins: [{ cabinId: "cabin-attachment-factory", ownerFarmhandId: "12345", boundCompanionId: "", isBusy: false }],
     signature: "",
   };
@@ -3053,4 +3055,72 @@ test("manifest handoff uses production response and manifest verification for mi
     signatureOverride: "tampered-manifest-signature",
   })));
   await assert.rejects(tamperedPending, /stardew_manifest_handoff_failed/);
+});
+
+
+test("manifest handoff rejects a wrong player-host launch generation and quarantines before selection", async () => {
+  const fixture = await createAttachmentFactoryFixture();
+  const transactionDirectory = ownerTestView(fixture.owner).transactionDirectory;
+  const sessionDirectory = join(transactionDirectory, "session");
+  const token = "session-secret-stagec-012345";
+  await mkdir(sessionDirectory, { recursive: true });
+  await writeFile(
+    join(sessionDirectory, "stardew-session.json"),
+    JSON.stringify(signedAttachmentSession(token, "player-generation-wrong")),
+  );
+  const coordinator = fixture.testCore.createOwnedPlayerHostManifestHandoffCoordinator();
+
+  await assert.rejects(
+    () => coordinator.select(fixture.owner, "cabin-attachment-factory"),
+    /stardew_player_host_generation_mismatch/,
+  );
+  assert.equal(ownerTestView(fixture.owner).record.state, "quarantined");
+  assert.deepEqual(fixture.harness.playerHostSpawnCalls, []);
+  assert.deepEqual(fixture.harness.spawnCalls, []);
+  assert.deepEqual(fixture.testCore.composition.playerHostProcessOwner.readStatus(), { kind: "idle" });
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
+  await assert.rejects(
+    () => readFile(join(sessionDirectory, "stardew-attachment-request.json"), "utf8"),
+    { code: "ENOENT" },
+  );
+});
+
+test("manifest handoff concurrent replay and cross-composition failures preserve an unconsumed AI reservation", async () => {
+  const left = await prepareManifestHandoffFixture();
+  const right = await prepareManifestHandoffFixture();
+  const selection = await left.coordinator.select(left.owner, "cabin-attachment-factory");
+
+  await assert.rejects(
+    () => right.coordinator.confirmAndAdmit(selection, { confirmed: true }),
+    /invalid_stardew_manifest_handoff_selection/,
+  );
+  const first = left.coordinator.confirmAndAdmit(selection, { confirmed: true });
+  await assert.rejects(
+    () => left.coordinator.confirmAndAdmit(selection, { confirmed: true }),
+    /invalid_stardew_manifest_handoff_selection/,
+  );
+  const request = await waitForPublishedAttachmentRequest(left.sessionDirectory);
+  await writeFile(
+    join(left.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(signedAttachmentValue({
+      schemaVersion: 1,
+      requestId: request.requestId as string,
+      state: "rejected",
+      reasonCode: "binding_readback_mismatch",
+      updatedAtUnixMs: 2_100,
+      signature: "",
+    }, left.token)),
+  );
+  await assert.rejects(first, /stardew_manifest_handoff_failed/);
+  await assert.rejects(
+    () => left.coordinator.confirmAndAdmit(selection, { confirmed: true }),
+    /invalid_stardew_manifest_handoff_selection/,
+  );
+  assert.deepEqual(left.harness.playerHostSpawnCalls, []);
+  assert.deepEqual(left.harness.spawnCalls, []);
+  assert.deepEqual(left.testCore.composition.playerHostProcessOwner.readStatus(), { kind: "player_host_launch_pending" });
+  assert.deepEqual(left.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(right.harness.playerHostSpawnCalls, []);
+  assert.deepEqual(right.harness.spawnCalls, []);
+  assert.deepEqual(right.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });

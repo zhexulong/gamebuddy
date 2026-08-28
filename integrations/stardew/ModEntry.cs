@@ -291,6 +291,17 @@ public sealed partial class ModEntry : Mod
         }
         bool hostConfigured = this.config.HostFarmhandProvisioning?.Enable == true;
         bool clientConfigured = this.config.FarmhandProvisioner?.Enable == true;
+        if (hostConfigured)
+        {
+            string? launchGeneration = Environment.GetEnvironmentVariable(LaunchGenerationEnvironmentVariableName);
+            if (launchGeneration is null || !BridgeProtocol.IsOpaqueId(launchGeneration))
+            {
+                this.provisioningConfigurationRejected = true;
+                this.Monitor.Log("GameBuddy rejected Player Host provisioning: launcher launch generation is missing or invalid; no Host or fallback topology was started.", LogLevel.Error);
+                return;
+            }
+            this.config.HostFarmhandProvisioning!.LaunchGeneration = launchGeneration;
+        }
         this.hostRoleConfigured = hostConfigured;
         if (hostConfigured && clientConfigured)
         {

@@ -455,6 +455,8 @@ public sealed class PortfolioBootstrapConfig
 
 public sealed class HostFarmhandProvisioningConfig
 {
+    /// <summary>Launcher-only generation published by a directly spawned Player Host.</summary>
+    internal string LaunchGeneration { get; set; } = string.Empty;
     public bool Enable { get; init; }
     public string SessionDirectory { get; init; } = string.Empty;
     public string SessionToken { get; init; } = string.Empty;

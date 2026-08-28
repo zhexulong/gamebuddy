@@ -19,6 +19,8 @@ const baseSession = {
   saveId: "save_01",
   worldId: "world_01",
   hostPlayerId: "world_01",
+  runtimeRole: "player_host",
+  launchGeneration: "generation_01",
   publishedAtUnixMs: 1_000,
   expiresAtUnixMs: 20_000,
   nonce: "nonce_01",
@@ -413,5 +415,69 @@ test("Stardew attachment flow accepts the Host fixed manifest filename only afte
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+test("Stardew attachment sole verifier requires exact player-host runtime role and generation", async () => {
+  const validDirectory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    await writeFile(join(validDirectory, "stardew-session.json"), JSON.stringify(signed(baseSession)));
+    const flow = new StardewAttachmentFlow({
+      sessionDirectory: validDirectory,
+      sessionToken: token,
+      companionId: "companion_01",
+      cabinId: "cabin_01",
+      nowMs: () => 2_000,
+    });
+    const session = await flow.readLiveSession();
+    assert.equal(session.runtimeRole, "player_host");
+    assert.equal(session.launchGeneration, "generation_01");
+  } finally {
+    await rm(validDirectory, { recursive: true, force: true });
+  }
+
+  const invalidVariants: Array<Readonly<{ label: string; value: Record<string, unknown> }>> = [];
+  const wrongRole = { ...baseSession, runtimeRole: "farmhand_client", signature: "" } as Record<string, unknown>;
+  invalidVariants.push({ label: "wrong runtime role", value: wrongRole });
+  const missingRole = { ...baseSession, signature: "" } as Record<string, unknown>;
+  delete missingRole.runtimeRole;
+  invalidVariants.push({ label: "missing runtime role", value: missingRole });
+  const missingGeneration = { ...baseSession, signature: "" } as Record<string, unknown>;
+  delete missingGeneration.launchGeneration;
+  invalidVariants.push({ label: "missing launch generation", value: missingGeneration });
+  const tamperedRole = { ...signed(baseSession), runtimeRole: "farmhand_client" } as Record<string, unknown>;
+  invalidVariants.push({ label: "tampered runtime role", value: tamperedRole });
+  const tamperedGeneration = { ...signed(baseSession), launchGeneration: "generation_02" } as Record<string, unknown>;
+  invalidVariants.push({ label: "tampered launch generation", value: tamperedGeneration });
+
+  for (const variant of invalidVariants) {
+    const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+    try {
+      const unsigned = { ...variant.value };
+      const signature = unsigned.signature;
+      delete unsigned.signature;
+      const signedValue = typeof signature === "string" && signature.length > 0
+        ? variant.value
+        : {
+            ...variant.value,
+            signature: createHmac("sha256", token).update(JSON.stringify(unsigned), "utf8").digest("base64url"),
+          };
+      await writeFile(join(directory, "stardew-session.json"), JSON.stringify(signedValue));
+      const flow = new StardewAttachmentFlow({
+        sessionDirectory: directory,
+        sessionToken: token,
+        companionId: "companion_01",
+        cabinId: "cabin_01",
+        nowMs: () => 2_000,
+      });
+      await assert.rejects(
+        () => flow.readLiveSession(),
+        /invalid_stardew_session|stardew_session_authentication_failed/,
+        variant.label,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 });
