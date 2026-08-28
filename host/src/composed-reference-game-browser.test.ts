@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server } from "node:http";
 import test from "node:test";
 import {
+  consumeComposedReferenceGameBrowserLifecycleActivationAdmission,
   createComposedReferenceGameBrowserRequestHandler,
+  issueComposedReferenceGameBrowserLifecycleActivationAdmission,
+  type ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  type ComposedReferenceGameBrowserLifecycleActivationIssuer,
   type ComposedReferenceGameBrowserReadContext,
 } from "./composed-reference-game-browser.js";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
@@ -66,6 +70,29 @@ async function bootstrap(origin: string) {
     headers: { origin, "content-type": "application/json" },
     body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
   });
+}
+
+function lifecycleRequest(
+  origin: string,
+  cookie: string,
+  csrfToken: string,
+  overrides: Partial<Pick<IncomingMessage, "method" | "url">> & {
+    headers?: IncomingMessage["headers"];
+  } = {},
+): IncomingMessage {
+  const originUrl = new URL(origin);
+  return {
+    method: overrides.method ?? "POST",
+    url: overrides.url ?? "/internal/lifecycle-activation",
+    headers: {
+      host: originUrl.host,
+      origin,
+      "content-type": "application/json",
+      cookie,
+      "x-csrf-token": csrfToken,
+      ...overrides.headers,
+    },
+  } as unknown as IncomingMessage;
 }
 
 test("Chat-only broker issues one session and leaves game route unavailable", async () => {
@@ -161,6 +188,208 @@ test("broker fail-closes invalid origin, cookie, producer output, and close", as
     await handler.close();
     assert.equal((await fetch(`${server.origin}/api/composed-reference-game/v1/state`, { headers: { origin: server.origin, cookie } })).status, 503);
   } finally { await closeServer(server.server); }
+});
+
+test("lifecycle activation admission is fieldless, exact-session-bound, and one-shot", async () => {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+    bootstrapToken,
+    async readChat(context) { return stateForChat(context); },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const root = await initial.json() as {
+      chat: { csrfToken: string; browserSession: { expiresAtMs: number } };
+    };
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const issuer = handler.lifecycleActivationIssuer;
+    const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+      issuer,
+      lifecycleRequest(server.origin, cookie, root.chat.csrfToken),
+      server.origin,
+    );
+
+    assert.ok(admission);
+    assert.deepEqual(Object.keys(issuer), []);
+    assert.deepEqual(Object.keys(admission), []);
+    assert.equal(JSON.stringify(issuer), "{}");
+    assert.equal(JSON.stringify(admission), "{}");
+    assert.equal("cookie" in issuer, false);
+    assert.equal("csrfToken" in admission, false);
+    assert.equal("sessionId" in admission, false);
+    assert.equal("principal" in admission, false);
+    assert.equal("path" in admission, false);
+    assert.equal("request" in admission, false);
+
+    let callbackCalls = 0;
+    const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+      issuer,
+      admission,
+      (expiresAtMs) => {
+        callbackCalls += 1;
+        assert.equal(expiresAtMs, root.chat.browserSession.expiresAtMs);
+        assert.equal(
+          consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+            issuer,
+            admission,
+            () => "reentered",
+          ),
+          undefined,
+        );
+        return "activated";
+      },
+    );
+    assert.equal(consumed, "activated");
+    assert.equal(callbackCalls, 1);
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        admission,
+        () => "replayed",
+      ),
+      undefined,
+    );
+  } finally { await server.close(); }
+});
+
+test("lifecycle admission rejects malformed auth, foreign and forged authority", async () => {
+  const makeHandler = () => createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+    bootstrapToken,
+    async readChat(context) { return stateForChat(context); },
+  });
+  const handler = makeHandler();
+  const foreignHandler = makeHandler();
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const issuer = handler.lifecycleActivationIssuer;
+    const validRequest = lifecycleRequest(server.origin, cookie, root.chat.csrfToken);
+    const issue = (request: IncomingMessage, origin = server.origin) =>
+      issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, origin);
+
+    assert.equal(issue(lifecycleRequest(server.origin, cookie, root.chat.csrfToken, { method: "GET" })), null);
+    assert.equal(issue(lifecycleRequest(server.origin, cookie, root.chat.csrfToken, { headers: { "content-type": "text/plain" } })), null);
+    assert.equal(issue(lifecycleRequest(server.origin, "gb_composed_reference_game_session=wrong", root.chat.csrfToken)), null);
+    assert.equal(issue(lifecycleRequest(server.origin, cookie, "wrong")), null);
+    assert.equal(issue(lifecycleRequest(server.origin, cookie, root.chat.csrfToken, { headers: { origin: "http://127.0.0.1:1" } })), null);
+    assert.equal(issue(validRequest, "http://localhost:1"), null);
+    assert.equal(
+      issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+        Object.freeze({}) as ComposedReferenceGameBrowserLifecycleActivationIssuer,
+        validRequest,
+        server.origin,
+      ),
+      null,
+    );
+
+    const admission = issue(validRequest);
+    assert.ok(admission);
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        foreignHandler.lifecycleActivationIssuer,
+        admission,
+        () => "foreign",
+      ),
+      undefined,
+    );
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        Object.freeze({}) as ComposedReferenceGameBrowserLifecycleActivationAdmission,
+        () => "forged",
+      ),
+      undefined,
+    );
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        admission,
+        () => "rightful",
+      ),
+      "rightful",
+    );
+  } finally {
+    await server.close();
+    await foreignHandler.close();
+  }
+});
+
+test("lifecycle admission fails after expiry or broker close and publishes no route", async () => {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile }),
+    bootstrapToken,
+    async readChat(context) { return stateForChat(context); },
+  });
+  const server = await start(handler);
+  const realDateNow = Date.now;
+  try {
+    const initial = await bootstrap(server.origin);
+    const root = await initial.json() as {
+      apiVersion: number;
+      build: unknown;
+      chat: { csrfToken: string; browserSession: { expiresAtMs: number } };
+      game: null;
+    };
+    assert.deepEqual(Object.keys(root).sort(), ["apiVersion", "build", "chat", "game"]);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const request = lifecycleRequest(server.origin, cookie, root.chat.csrfToken);
+    const issuer = handler.lifecycleActivationIssuer;
+    const expiringAdmission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+      issuer,
+      request,
+      server.origin,
+    );
+    const closedAdmission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+      issuer,
+      request,
+      server.origin,
+    );
+    assert.ok(expiringAdmission);
+    assert.ok(closedAdmission);
+    Date.now = () => root.chat.browserSession.expiresAtMs;
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        expiringAdmission,
+        () => "expired",
+      ),
+      undefined,
+    );
+    assert.equal(
+      issueComposedReferenceGameBrowserLifecycleActivationAdmission(issuer, request, server.origin),
+      null,
+    );
+    Date.now = realDateNow;
+
+    const route = await fetch(`${server.origin}/api/composed-reference-game/v1/game.launch`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        "content-type": "application/json",
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+      },
+      body: "{}",
+    });
+    assert.equal(route.status, 404);
+    await handler.close();
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        closedAdmission,
+        () => "closed",
+      ),
+      undefined,
+    );
+  } finally {
+    Date.now = realDateNow;
+    await handler.close();
+    await closeServer(server.server);
+  }
 });
 
 test("construction rejects fake or mismounted capabilities", () => {
