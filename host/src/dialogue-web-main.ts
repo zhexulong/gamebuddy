@@ -103,7 +103,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
     mode === "known"
       ? await createKnownUnmountedChatSemanticFacade(manifest)
       : await createFreshUnmountedChatSemanticFacade(manifest);
-  const lifecycleCoordinator = createStardewProductionLifecycleCoordinator();
+  const lifecycleCoordinator = createStardewProductionLifecycleCoordinator(manifest);
   let lease: Awaited<ReturnType<typeof facade.startMountedChatRuntime>> | undefined;
   let pipelineService: ReturnType<typeof createChatPipelineService> | undefined;
   let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>> | undefined;
@@ -121,6 +121,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
       pipelineService,
       eventStream,
       readGame: gameStateProvider.readState,
+      lifecycleActivationBindingSink: lifecycleCoordinator.activationOwner,
       inspector,
       artifactRoot: resolve(artifactRoot, "browser", "tavern", "v1"),
     });

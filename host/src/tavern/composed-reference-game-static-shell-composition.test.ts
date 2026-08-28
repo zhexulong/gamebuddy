@@ -253,6 +253,57 @@ test("composed shell delegates Tavern operations with broker CSRF and fails on w
   }
 });
 
+test("composed shell binds the private lifecycle issuer without returning it or adding a route", async () => {
+  const fixture = await artifactFixture();
+  let bound: object | undefined;
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    lifecycleActivationBindingSink: Object.freeze({
+      bindBrowserAdmissionIssuer(issuer: object) { bound = issuer; },
+    }),
+  });
+  try {
+    assert.notEqual(bound, undefined);
+    assert.deepEqual(Object.keys(server).sort(), ["close", "closeAllConnections", "launchUrl", "origin"]);
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/lifecycle/activate`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(response.status, 404);
+  } finally {
+    await server.close();
+    await fixture.dispose();
+  }
+});
+
+test("composed shell does not listen when private lifecycle issuer binding fails", async () => {
+  const fixture = await artifactFixture();
+  try {
+    await assert.rejects(
+      startComposedReferenceGameStaticShellComposition({
+        profile,
+        bootstrapToken: token,
+        referenceStateFacade: fakeFacade as any,
+        eventStream,
+        artifactRoot: fixture.root,
+        inspector: inspector(),
+        lifecycleActivationBindingSink: Object.freeze({
+          bindBrowserAdmissionIssuer() { throw new Error("binding-rejected"); },
+        }),
+      }),
+      /binding-rejected/,
+    );
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 test("composed shell closes and drains both handlers including delegated Tavern routes", async () => {
   const fixture = await artifactFixture();
   const server = await startComposedReferenceGameStaticShellComposition({

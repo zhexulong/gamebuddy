@@ -11,7 +11,10 @@ import type {
   StardewPrivateBootstrapComposition as PublicStardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.js";
 
-export type { StardewOwnedPlayerHostStageCResult } from "./stardew-private-bootstrap-composer.core.js";
+export type {
+  StardewOwnedPlayerHostStageCResult,
+  StardewPrivateBootstrapCoreDependencies,
+} from "./stardew-private-bootstrap-composer.core.js";
 
 export type StardewOwnedPlayerHostPhaseATestView = StardewOwnedPlayerHostPhaseACoreTestView;
 export type StardewManifestAdmissionForTesting = Awaited<ReturnType<StardewManifestHandoffCoordinator["confirmAndAdmit"]>>;
@@ -39,6 +42,12 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedPlayerHostStageCResult>;
+  reserveOwnedPlayerHostPhaseAForActivation(
+    runtimeRoot: string,
+    claim: import("./stardew-player-host-bootstrap.js").StardewPlayerHostBootstrapClaim,
+  ): Promise<StardewOwnedPlayerHostPhaseAOwner>;
+  stageOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void>;
+  terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostPhaseAOwner): void;
   bindOwnedPlayerHostPhaseAOwner(
     owner: StardewOwnedPlayerHostPhaseAOwner,
   ): StardewOwnedPlayerHostPhaseATestView;
