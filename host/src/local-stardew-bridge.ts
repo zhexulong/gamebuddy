@@ -333,6 +333,24 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       this.#capabilities = [...message.payload.capabilities];
       this.#catalogRegistrations = [...message.payload.registrations];
       this.#latestReasonCode = null;
+    } else if (message.type === "catalog_update") {
+      const registeredIds = new Set(this.#catalogRegistrations.map((registration) => registration.actionId));
+      if (
+        message.payload.enabledActionIds.some((actionId) => !registeredIds.has(actionId)) ||
+        (this.#snapshot !== null && message.payload.catalogRevision < this.#snapshot.catalogRevision)
+      ) {
+        this.transport.close("invalid_catalog_update_authority");
+        return;
+      }
+      this.#capabilities = [...message.payload.enabledActionIds];
+      if (this.#snapshot !== null) {
+        this.#snapshot = Object.freeze({
+          ...this.#snapshot,
+          capabilities: [...message.payload.enabledActionIds],
+          catalogRevision: message.payload.catalogRevision,
+          enabledActionIds: [...message.payload.enabledActionIds],
+        });
+      }
     } else if (message.type === "snapshot") {
       // A delayed observation response must never replace newer Mod state.
       if (this.#snapshot === null || message.payload.revision > this.#snapshot.revision)

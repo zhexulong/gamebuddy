@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>NavigationTopologyCharacterization.Contract</AssemblyName>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="NavigationTopologyCharacterizationContract.cs" />
+    <Compile Include="ProductionAssemblyBinding.cs" />
+  </ItemGroup>
+
+  <!-- Structural contract dependencies: System.Reflection.Metadata is part of
+       the .NET runtime and does not require a NuGet reference. -->
+</Project>

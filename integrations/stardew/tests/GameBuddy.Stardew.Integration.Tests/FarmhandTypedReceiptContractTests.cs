@@ -12,8 +12,8 @@ public sealed class FarmhandTypedReceiptContractTests
     [Fact]
     public void RegisteredMachineInspect_ProducesExactWorldNotReadyReceipt()
     {
-        FarmhandCapabilitySurface surface = FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(StringComparer.Ordinal) { "machine_inspect" });
-        var executions = new ExecutionManager(new DummyMonitor(), surface);
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "machine_inspect" });
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
         FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations.Single(candidate => candidate.ActionId == "machine_inspect");
         var router = new FarmhandActionRouter();
         router.Register(registration, new MachineAndAnimalActionHandler(executions));

@@ -8,6 +8,12 @@
         "resolved": "4.4.0",
         "contentHash": "Yi7/8bZlLS1bqZxft1yZWxJmIBfIoRxQBFIwWrF0AjC4/j/HmWdDC7dbNzzM4ZtOTtjOAQ8AC7WjP6KHgLPpdg=="
       },
+      "Raffinert.FuzzySharp": {
+        "type": "Direct",
+        "requested": "[5.0.3, )",
+        "resolved": "5.0.3",
+        "contentHash": "wL8Q/JbR8/yoWbds68cK5Pz17ExA6ENF5zegkgJTsZB8KqJPKbtDWfxZfzUwSCtV1QcQPwB88/vnsKuOd1fGVg=="
+      },
       "gamebuddy.stardew.core": {
         "type": "Project"
       }

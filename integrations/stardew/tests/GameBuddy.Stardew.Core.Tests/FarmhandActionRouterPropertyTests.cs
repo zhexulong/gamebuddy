@@ -15,6 +15,7 @@ public sealed class FarmhandActionRouterPropertyTests
         public long CurrentRevision => 1;
         public bool IsBodyBusy => false;
         public bool TryGetExistingReceipt(string requestId, out LocalExecutionReceipt receipt) { receipt = default!; return false; }
+        public void BindAction(string requestId, string actionId) { }
         public LocalExecutionReceipt Remember(LocalExecutionReceipt receipt) => receipt;
         public LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence) => new(executionId, requestId, state, reasonCode, 1, evidence);
         public void AddTrace(LocalExecutionReceipt receipt) { }
@@ -32,7 +33,7 @@ public sealed class FarmhandActionRouterPropertyTests
         string action = randomAction.Get;
         bool isRegistered = action == "known_action";
         var router = new FarmhandActionRouter();
-        router.Register(new FarmhandActionRegistration("known_action", "test", 1, FarmhandActionLifecycle.Published, FarmhandActionHandlerGroup.Farming), new FixedHandler());
+        router.Register(new FarmhandActionRegistration("known_action", "test", 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.Execution, FarmhandActionHandlerGroup.Farming), new FixedHandler());
 
         bool routed = router.TryRoute(new BridgeExecutionRequest("req_pbt", "idemp_pbt", action, new BridgeExecutionArgs(), 1, 5000), new StubLedger(), out LocalExecutionReceipt receipt, out string reasonCode);
 

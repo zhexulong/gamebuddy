@@ -35,6 +35,7 @@
         "hello_ack",
         "observe_request",
         "snapshot",
+        "catalog_update",
         "execution_request",
         "execution_receipt_query",
         "cancel_request",
@@ -114,6 +115,22 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/snapshot"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "catalog_update"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/catalogUpdate"
           }
         }
       }
@@ -368,13 +385,14 @@
     "actionRegistration": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actionId", "familyId", "identityVersion", "lifecycle"],
-      "properties": {
-        "actionId": { "$ref": "#/$defs/opaqueId" },
-        "familyId": { "$ref": "#/$defs/opaqueId" },
-        "identityVersion": { "type": "integer", "minimum": 1 },
-        "lifecycle": { "enum": ["published", "experimental"] }
-      }
+       "required": ["actionId", "familyId", "identityVersion", "lifecycle", "kind"],
+       "properties": {
+         "actionId": { "$ref": "#/$defs/opaqueId" },
+         "familyId": { "$ref": "#/$defs/opaqueId" },
+         "identityVersion": { "type": "integer", "minimum": 1 },
+         "lifecycle": { "enum": ["published", "experimental"] },
+         "kind": { "enum": ["execution", "read_only"] }
+       }
     },
     "hello": {
       "type": "object",
@@ -394,6 +412,8 @@
       "required": [
         "sessionId",
         "capabilities",
+        "catalogRevision",
+        "enabledActionIds",
         "presentationLocale",
         "registrations"
       ],
@@ -409,8 +429,22 @@
           },
           "maxItems": 128
         },
+        "catalogRevision": { "type": "integer", "minimum": 0 },
+        "enabledActionIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/opaqueId" },
+          "maxItems": 128
+        },
         "presentationLocale": {
           "$ref": "#/$defs/bcp47Locale"
+        },
+        "catalogRevision": { "type": "integer", "minimum": 0 },
+        "enabledActionIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/opaqueId" },
+          "maxItems": 128
         },
         "registrations": {
           "type": "array",
@@ -418,6 +452,27 @@
             "$ref": "#/$defs/actionRegistration"
           },
           "minItems": 1,
+          "maxItems": 128
+        },
+        "runtimeRole": { "enum": ["farmhand_client", "native_local_fixture", "unattested"] },
+        "launchGeneration": { "anyOf": [{ "$ref": "#/$defs/opaqueId" }, { "type": "null" }] }
+      },
+      "allOf": [{
+        "if": { "properties": { "runtimeRole": { "const": "farmhand_client" } } },
+        "then": { "properties": { "launchGeneration": { "$ref": "#/$defs/opaqueId" } } },
+        "else": { "properties": { "launchGeneration": { "type": "null" } } }
+      }]
+    },
+    "catalogUpdate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["catalogRevision", "enabledActionIds"],
+      "properties": {
+        "catalogRevision": { "type": "integer", "minimum": 0 },
+        "enabledActionIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/opaqueId" },
           "maxItems": 128
         }
       }
@@ -1109,6 +1164,8 @@
         "health",
         "actionable",
         "capabilities",
+        "catalogRevision",
+        "enabledActionIds",
         "presentationLocale"
       ],
       "properties": {
@@ -1160,6 +1217,13 @@
             "type": "string",
             "maxLength": 128
           },
+          "maxItems": 128
+        },
+        "catalogRevision": { "type": "integer", "minimum": 0 },
+        "enabledActionIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/opaqueId" },
           "maxItems": 128
         },
         "presentationLocale": {

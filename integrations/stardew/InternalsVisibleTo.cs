@@ -5,3 +5,4 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("PortfolioStardewInterop.Contract")]
 [assembly: InternalsVisibleTo("PortfolioTerminalDeliveryCore.Contract")]
 [assembly: InternalsVisibleTo("PortfolioMineElevatorProjection.Contract")]
+[assembly: InternalsVisibleTo("GameBuddy.Stardew.NavigationTopologyCharacterization")]

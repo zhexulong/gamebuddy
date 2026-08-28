@@ -1,0 +1,30 @@
+{
+  "schema": "gamebuddy-action-development-contract/v1",
+  "gameId": "stardew",
+  "actionId": "equip_tool",
+  "familyId": "body_tools",
+  "identityVersion": 1,
+  "lifecycle": "published",
+  "kind": "execution",
+  "args": {
+    "requiredProperties": [
+      "slot"
+    ],
+    "slotMinimum": 0,
+    "slotMaximum": 36
+  },
+  "terminal": {
+    "acceptableStates": [
+      "succeeded",
+      "uncertain"
+    ],
+    "successReasonCode": "tool_selected",
+    "evidenceFields": [
+      "slot",
+      "before",
+      "expected",
+      "after"
+    ],
+    "evidenceRelation": "after_equals_expected"
+  }
+}

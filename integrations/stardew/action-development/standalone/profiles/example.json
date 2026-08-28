@@ -1,0 +1,5 @@
+{
+  "schema": "gamebuddy-action-target-profile/v1",
+  "profileIdentity": "stardew-local-example",
+  "targetVersion": "stardew-1.6.15-smapi"
+}

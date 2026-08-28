@@ -56,6 +56,8 @@ export type Snapshot = Readonly<{
   health: number;
   actionable: boolean;
   capabilities: readonly string[];
+  catalogRevision: number;
+  enabledActionIds: readonly string[];
   /** Older Mod snapshots may omit fields added after the initial bridge contract. */
   currentTool?: string | null;
   inventorySlots?: number;
@@ -488,6 +490,7 @@ export type ActionRegistration = Readonly<{
   familyId: string;
   identityVersion: number;
   lifecycle: "published" | "experimental";
+  kind: "execution" | "read_only";
 }>;
 
 /** Mod-declared registrations, ordered exactly as the Mod projected them. */
@@ -505,12 +508,17 @@ export type BridgeMessage =
       Readonly<{
         sessionId: string;
         capabilities: readonly string[];
+        catalogRevision: number;
+        enabledActionIds: readonly string[];
         presentationLocale: string;
         registrations: readonly ActionRegistration[];
+        runtimeRole: "farmhand_client" | "native_local_fixture" | "unattested";
+        launchGeneration: string | null;
       }>
     >
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"snapshot", Snapshot>
+  | Envelope<"catalog_update", Readonly<{ catalogRevision: number; enabledActionIds: readonly string[] }>>
   | Envelope<"execution_request", ExecutionRequest>
   | Envelope<"execution_receipt_query", ExecutionReceiptQuery>
   | Envelope<"cancel_request", CancelRequestPayload>
@@ -532,6 +540,7 @@ export const BRIDGE_MESSAGE_TYPES = [
   "hello_ack",
   "observe_request",
   "snapshot",
+  "catalog_update",
   "execution_request",
   "execution_receipt_query",
   "cancel_request",
@@ -556,6 +565,8 @@ const SNAPSHOT_KEYS = [
   "inventorySlots",
   "actionable",
   "capabilities",
+  "catalogRevision",
+  "enabledActionIds",
   "presentationLocale",
   "activeExecution",
   "warps",
@@ -708,17 +719,35 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "hello":
       return hasExactKeys(payload, ["token"]) && validToken(payload.token) ? null : "invalid_hello_token";
     case "hello_ack":
-      return hasExactKeys(payload, ["sessionId", "capabilities", "presentationLocale", "registrations"]) &&
+      return hasExactKeys(payload, [
+        "sessionId",
+        "capabilities",
+        "catalogRevision",
+        "enabledActionIds",
+        "presentationLocale",
+        "registrations",
+        "runtimeRole",
+        "launchGeneration",
+      ]) &&
         isOpaqueId(payload.sessionId) &&
         isStringArray(payload.capabilities) &&
+        isNonNegativeSafeInteger(payload.catalogRevision) &&
+        isUniqueOpaqueIdArray(payload.enabledActionIds) &&
         isBcp47Locale(payload.presentationLocale) &&
-        isValidActionRegistrations(payload.registrations)
+        isValidActionRegistrations(payload.registrations) &&
+        isValidRuntimeAttestation(payload.runtimeRole, payload.launchGeneration)
         ? null
         : "invalid_hello_ack";
     case "observe_request":
       return hasExactKeys(payload, []) ? null : "invalid_observe_request";
     case "snapshot":
       return validateSnapshot(payload);
+    case "catalog_update":
+      return hasExactKeys(payload, ["catalogRevision", "enabledActionIds"]) &&
+        isNonNegativeSafeInteger(payload.catalogRevision) &&
+        isUniqueOpaqueIdArray(payload.enabledActionIds)
+        ? null
+        : "invalid_catalog_update";
     case "execution_request":
       return validateExecutionRequestEnvelope(payload);
     case "execution_receipt_query":
@@ -1299,6 +1328,8 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   )
     return "invalid_snapshot:foodTargets";
   if (!isStringArray(value.capabilities)) return "invalid_snapshot:capabilities";
+  if (!isNonNegativeSafeInteger(value.catalogRevision)) return "invalid_snapshot:catalogRevision";
+  if (!isUniqueOpaqueIdArray(value.enabledActionIds)) return "invalid_snapshot:enabledActionIds";
   if (
     value.activeExecution !== undefined &&
     value.activeExecution !== null &&
@@ -1446,6 +1477,8 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
         value.foodTargets.length <= 36 &&
         value.foodTargets.every(isFoodTargetFact))) &&
     isStringArray(value.capabilities) &&
+    isNonNegativeSafeInteger(value.catalogRevision) &&
+    isUniqueOpaqueIdArray(value.enabledActionIds) &&
     (value.activeExecution === undefined ||
       value.activeExecution === null ||
       (isRecord(value.activeExecution) && validateActiveExecution(value.activeExecution) === null))
@@ -2257,14 +2290,26 @@ function isValidActionRegistrations(value: unknown): boolean {
   if (!Array.isArray(value) || value.length === 0 || value.length > 128) return false;
   const seen = new Set<string>();
   for (const item of value) {
-    if (!isRecord(item) || !hasExactKeys(item, ["actionId", "familyId", "identityVersion", "lifecycle"])) return false;
+    if (!isRecord(item) || !hasExactKeys(item, ["actionId", "familyId", "identityVersion", "lifecycle", "kind"])) return false;
     if (!isOpaqueId(item.actionId) || !isOpaqueId(item.familyId)) return false;
     if (typeof item.identityVersion !== "number" || !Number.isSafeInteger(item.identityVersion) || item.identityVersion < 1) return false;
     if (item.lifecycle !== "published" && item.lifecycle !== "experimental") return false;
+    if (item.kind !== "execution" && item.kind !== "read_only") return false;
     if (seen.has(item.actionId)) return false;
     seen.add(item.actionId);
   }
   return true;
+}
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+function isUniqueOpaqueIdArray(value: unknown): value is readonly string[] {
+  return isStringArray(value) && value.every(isOpaqueId) && new Set(value).size === value.length;
+}
+function isValidRuntimeAttestation(role: unknown, generation: unknown): boolean {
+  return role === "farmhand_client"
+    ? isOpaqueId(generation)
+    : (role === "native_local_fixture" || role === "unattested") && generation === null;
 }
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);

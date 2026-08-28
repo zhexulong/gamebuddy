@@ -183,10 +183,10 @@ internal sealed class LocalPipeBridge : IDisposable
                 message.Completion?.Resolve(generation == Interlocked.Read(ref this.connectedGeneration)
                     && !cancellationToken.IsCancellationRequested);
             }
-            catch
+            catch (Exception exception)
             {
                 message.Completion?.Resolve(false);
-                throw;
+                throw new IOException($"bridge_write_failed:{exception.GetType().Name}", exception);
             }
         }
     }
