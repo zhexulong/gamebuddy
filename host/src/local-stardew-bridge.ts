@@ -92,6 +92,10 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     readonly scope: Scope,
     readonly transport: NamedPipeTransport,
     readonly token: string,
+    readonly expectedRuntimeAttestation: Readonly<{
+      runtimeRole: "farmhand_client";
+      launchGeneration: string;
+    }> | undefined,
     readonly knowledge?: KnowledgeBundle,
     readonly gameVersion?: string,
     readonly module: GameIntegrationModule = STARDEW_INTEGRATION_MODULE,
@@ -131,17 +135,64 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     knowledge?: KnowledgeBundle,
     gameVersion?: string,
   ): Promise<LocalStardewBridgeClient> {
+    return LocalStardewBridgeClient.connectWithRuntimeAttestation(
+      scope,
+      pipeName,
+      token,
+      undefined,
+      knowledge,
+      gameVersion,
+    );
+  }
+
+  public static async connectFarmhand(
+    scope: Scope,
+    pipeName: string,
+    token: string,
+    launchGeneration: string,
+    knowledge?: KnowledgeBundle,
+    gameVersion?: string,
+  ): Promise<LocalStardewBridgeClient> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(launchGeneration))
+      throw new Error("invalid_bridge_launch_generation");
+    return LocalStardewBridgeClient.connectWithRuntimeAttestation(
+      scope,
+      pipeName,
+      token,
+      Object.freeze({ runtimeRole: "farmhand_client", launchGeneration }),
+      knowledge,
+      gameVersion,
+    );
+  }
+
+  private static async connectWithRuntimeAttestation(
+    scope: Scope,
+    pipeName: string,
+    token: string,
+    expectedRuntimeAttestation: Readonly<{
+      runtimeRole: "farmhand_client";
+      launchGeneration: string;
+    }> | undefined,
+    knowledge?: KnowledgeBundle,
+    gameVersion?: string,
+  ): Promise<LocalStardewBridgeClient> {
     if (!/^[A-Za-z0-9_-]{16,256}$/.test(token)) throw new Error("invalid_bridge_token");
     if (knowledge !== undefined && gameVersion === undefined) throw new Error("knowledge_version_required");
     const client = new LocalStardewBridgeClient(
       scope,
       await NamedPipeTransport.connect(pipeName),
       token,
+      expectedRuntimeAttestation,
       knowledge,
       gameVersion,
     );
-    await client.hello();
-    return client;
+    try {
+      await client.hello();
+      return client;
+    } catch (error) {
+      client.transport.close("bridge_handshake_failed");
+      throw error;
+    }
   }
 
   public get state(): LocalStardewBridgeState {
@@ -305,6 +356,13 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     const response = await this.request("hello", { token: this.token });
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "hello_ack") throw new Error("unexpected_hello_response");
+    if (
+      this.expectedRuntimeAttestation !== undefined &&
+      (response.payload.runtimeRole !== this.expectedRuntimeAttestation.runtimeRole ||
+        response.payload.launchGeneration !== this.expectedRuntimeAttestation.launchGeneration)
+    ) {
+      throw new Error("bridge_runtime_attestation_mismatch");
+    }
     this.#authenticated = true;
     this.#sessionId = response.payload.sessionId;
     this.#capabilities = Object.freeze([...response.payload.capabilities]);
