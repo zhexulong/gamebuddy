@@ -67,10 +67,14 @@ function module(): GameIntegrationModule {
     actionCatalog: catalog,
     defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
     parsePolicy: (value) => value as never,
+    actorId: (connection) => {
+      if (connection.scope.integrationId !== "test-arcade")
+        throw new Error("integration_identity_binding_mismatch");
+      return "arcade_actor_01";
+    },
     assertIdentityBinding: (connection, boundIdentity) => {
       if (
         connection.scope.integrationId !== "test-arcade" ||
-        boundIdentity.playerId !== identity.playerId ||
         boundIdentity.companionId !== identity.companionId
       )
         throw new Error("integration_identity_binding_mismatch");
@@ -183,6 +187,24 @@ test("receipt-backed launcher accepts a publishable non-Stardew action without m
   const { launcher, handle } = receiptBackedHandle();
   assert.doesNotThrow(() => assertReceiptBackedLaunch(launcher, handle, identity));
   assert.deepEqual(handle.connection.module.createToolSet({ connection: handle.connection }).actions, []);
+});
+
+test("receipt-backed launcher rejects an invalid adapter-authenticated actor", () => {
+  const { launcher, handle } = receiptBackedHandle();
+  const invalidActorModule = { ...launcher.module, actorId: () => "not valid" };
+  const invalidActorHandle = {
+    ...handle,
+    connection: { ...handle.connection, module: invalidActorModule },
+  };
+  assert.throws(
+    () =>
+      assertReceiptBackedLaunch(
+        { ...launcher, module: invalidActorModule },
+        invalidActorHandle,
+        identity,
+      ),
+    /receipt_backed_integration_actor_required/,
+  );
 });
 
 test("receipt-backed launcher rejects capability strings without authenticated registrations", () => {

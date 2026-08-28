@@ -112,13 +112,15 @@ test("formal Farmhand bridge produces the existing receipt-backed Stardew launch
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
     const identity = Object.freeze({
-      playerId: scope.playerId,
+      playerId: "browser_player_01",
       companionId: scope.companionId,
       saveId: scope.saveId,
       worldId: scope.worldId,
     });
     const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity);
     assertReceiptBackedLaunch(STARDEW_INTEGRATION_LAUNCHER, launch, identity);
+    assert.equal(launch.connection.module.actorId(launch.connection), scope.playerId);
+    assert.notEqual(launch.connection.module.actorId(launch.connection), identity.playerId);
     assert.equal(launch.presentationBridge, client);
     launch.close();
   });
@@ -139,7 +141,7 @@ test("authenticated Stardew launch-handle producer closes an exact client on ide
   await withHelloAck("farmhand_client", generation, async (pipeName, peerClosed) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
     await assert.rejects(
-      () => createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, { ...scope, playerId: "foreign_farmhand" }),
+      () => createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, { ...scope, companionId: "foreign_companion" }),
       /stardew_bridge_identity_scope_mismatch/,
     );
     await peerClosed;

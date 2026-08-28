@@ -96,10 +96,14 @@ function fakeModule(): GameIntegrationModule {
         throw new Error("invalid_test_arcade_policy");
       return value as never;
     },
+    actorId: (connection) => {
+      if (connection.scope.integrationId !== "test-arcade")
+        throw new Error("integration_identity_binding_mismatch");
+      return "arcade_actor_01";
+    },
     assertIdentityBinding: (connection, identity) => {
       if (
         connection.scope.integrationId !== "test-arcade" ||
-        identity.playerId.length === 0 ||
         identity.companionId.length === 0
       )
         throw new Error("integration_identity_binding_mismatch");
@@ -300,6 +304,14 @@ test("module descriptor must match the connection integration identity", () => {
   assert.throws(
     () =>
       assertIntegrationModule(
+        { ...module, actorId: undefined } as never,
+        "test-arcade",
+      ),
+    /integration_module_scope_mismatch/,
+  );
+  assert.throws(
+    () =>
+      assertIntegrationModule(
         { ...module, assertIdentityBinding: undefined } as never,
         "test-arcade",
       ),
@@ -365,7 +377,6 @@ test("module tools require their owning module and scope identity", () => {
   );
   assert.doesNotThrow(() =>
     module.assertIdentityBinding(connection, {
-      playerId: "player_01",
       companionId: "companion_01",
       saveId: "save_01",
       worldId: "world_01",
@@ -374,7 +385,6 @@ test("module tools require their owning module and scope identity", () => {
   assert.throws(
     () =>
       module.assertIdentityBinding(connection, {
-        playerId: "player_01",
         companionId: "companion_01",
         saveId: "other_save",
         worldId: "world_01",

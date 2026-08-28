@@ -121,8 +121,10 @@ export function assertReceiptBackedLaunch(
     throw new Error("receipt_backed_integration_launch_required");
   }
   assertIntegrationModule(launcher.module, launcher.integrationId);
+  const actorId = launcher.module.actorId(handle.connection);
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(actorId))
+    throw new Error("receipt_backed_integration_actor_required");
   launcher.module.assertIdentityBinding(handle.connection, {
-    playerId: identity.playerId,
     companionId: identity.companionId,
     ...(identity.saveId === undefined ? {} : { saveId: identity.saveId }),
     ...(identity.worldId === undefined ? {} : { worldId: identity.worldId }),

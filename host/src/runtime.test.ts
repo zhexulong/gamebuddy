@@ -266,11 +266,9 @@ test("runtime mounts a fake integration through the module port", async () => {
       deniedFamilies: [],
     }),
     parsePolicy: (value: unknown) => value as never,
+    actorId: () => "embodied_actor_01",
     assertIdentityBinding: (_connection, boundIdentity) => {
-      if (
-        boundIdentity.playerId !== identity.playerId ||
-        boundIdentity.companionId !== identity.companionId
-      )
+      if (boundIdentity.companionId !== identity.companionId)
         throw new Error("integration_identity_binding_mismatch");
     },
     worldScope: () => null,
@@ -381,6 +379,7 @@ test("runtime refresh waits for Pi idle and coalesces to the current adapter pro
     actionCatalog: createIntegrationActionCatalog([{ actionId: "activate_console" }]),
     defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
     parsePolicy: (value) => value as never,
+    actorId: () => "embodied_actor_01",
     assertIdentityBinding: () => undefined,
     worldScope: () => null,
     createToolSet: ({ connection }) => {
