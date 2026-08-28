@@ -11,8 +11,8 @@ import { parseJsonWithoutDuplicateKeys } from "./json-text.mjs";
 const CLEANUP_SCHEMA = "gamebuddy-stardew-lifecycle-cleanup-result/v1";
 const CLAIM_SCOPE = "native-local-equip-tool-v1";
 
-function fail(code, cause) {
-  throw new Error(`stardew_equip_tool_lifecycle_${code}`, cause ? { cause } : undefined);
+function fail(code) {
+  throw new Error(`stardew_equip_tool_lifecycle_${code}`);
 }
 
 function parseCleanup(text) {
@@ -23,6 +23,16 @@ function parseCleanup(text) {
     || typeof value.completed !== "boolean") fail("cleanup_result_invalid");
   if (value.completed !== true) fail("cleanup_not_completed");
   return Object.freeze({ schema: CLEANUP_SCHEMA, completed: true });
+}
+
+function isMissingResult(error) {
+  return error?.code === "ENOENT" || error?.message === "game_action_private_result_missing";
+}
+
+function childFailureCode(error) {
+  if (error?.message === "game_action_child_timeout") return "child_timeout";
+  if (error?.message === "game_action_child_spawn_failed") return "child_spawn_failed";
+  return "child_failed";
 }
 
 function scenarioIdentity({ runId, profileIdentity }) {
@@ -52,15 +62,24 @@ export async function runEquipToolLifecycle({
     || !path.isAbsolute(resultRoot ?? "")
     || typeof runId !== "string" || runId.length === 0) fail("invalid_input");
   const script = path.resolve(projectRoot, "../../../tools/run-stardew-native-local-player-move-fixture.ps1");
-  const actionClaim = await beginResult({ root: resultRoot });
+  let actionClaim;
   let lifecycleClaim;
   try {
-    lifecycleClaim = await beginResult({ root: resultRoot });
+    try {
+      actionClaim = await beginResult({ root: resultRoot });
+      lifecycleClaim = await beginResult({ root: resultRoot });
+    } catch {
+      if (actionClaim) {
+        try { await cleanupResult(actionClaim); } catch {}
+        actionClaim = undefined;
+      }
+      fail("result_claim_failed");
+    }
     const args = [
       "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
       "-GamePath", profile.gameInstallPath,
       "-ModsPath", profile.modsPath,
-      "-FixtureRoot", profile.fixtureRoot,
+      "-FixtureRoot", profile.nativeFixtureRoot,
       "-SaveName", profile.saveIdentity,
       "-TemplateName", profile.templateIdentity,
       "-ReleaseDir", releaseDir,
@@ -70,31 +89,50 @@ export async function runEquipToolLifecycle({
       "-Action", "equip_tool",
       "-TimeoutSeconds", String(Math.max(30, Math.min(300, Math.ceil(profile.timeoutMs / 1_000)))),
     ];
-    const child = await runChild({
-      command: resolvePowerShell(),
-      args,
-      cwd: projectRoot,
-      timeoutMs: profile.timeoutMs,
-      stdio: "pipe",
-      terminationPolicy: "immediate",
-    });
-    if (child?.code !== 0 || child?.signal) fail("child_failed");
-    const proof = parseScenarioResultText(await readResult(actionClaim), {
-      gameId: "stardew",
-      actionId: "equip_tool",
-      runId,
-      stage: "run-live",
-      profileIdentity: profile.profileIdentity,
-      claimScope: CLAIM_SCOPE,
-    });
-    const cleanup = parseCleanup(await readResult(lifecycleClaim));
+    let child;
+    try {
+      child = await runChild({
+        command: resolvePowerShell(),
+        args,
+        cwd: projectRoot,
+        timeoutMs: profile.timeoutMs,
+        stdio: "pipe",
+        terminationPolicy: "immediate",
+      });
+    } catch (error) {
+      fail(childFailureCode(error));
+    }
+    if (child?.signal) fail("child_signal");
+    if (child?.code !== 0) fail("child_nonzero");
+    let proof;
+    try {
+      proof = parseScenarioResultText(await readResult(actionClaim), {
+        gameId: "stardew",
+        actionId: "equip_tool",
+        runId,
+        stage: "run-live",
+        profileIdentity: profile.profileIdentity,
+        claimScope: CLAIM_SCOPE,
+      });
+    } catch (error) {
+      fail(isMissingResult(error) ? "action_result_missing" : "action_result_invalid");
+    }
+    let cleanup;
+    try { cleanup = parseCleanup(await readResult(lifecycleClaim)); }
+    catch (error) {
+      if (isMissingResult(error)) fail("cleanup_result_missing");
+      if (error?.message === "stardew_equip_tool_lifecycle_cleanup_not_completed") fail("cleanup_not_completed");
+      fail("cleanup_result_invalid");
+    }
     return Object.freeze({ operationResult: proof, cleanupResult: cleanup });
   } finally {
     const failures = [];
-    try { await cleanupResult(actionClaim); } catch (error) { failures.push(error); }
+    if (actionClaim) {
+      try { await cleanupResult(actionClaim); } catch (error) { failures.push(error); }
+    }
     if (lifecycleClaim) {
       try { await cleanupResult(lifecycleClaim); } catch (error) { failures.push(error); }
     }
-    if (failures.length) throw new AggregateError(failures, "stardew_equip_tool_lifecycle_result_cleanup_failed");
+    if (failures.length) fail("result_cleanup_failed");
   }
 }

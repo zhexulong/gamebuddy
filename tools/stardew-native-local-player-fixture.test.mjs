@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, opendir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, opendir, readdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import {
+  bootstrapNativeLocalPlayerFixture,
   prepareNativeLocalPlayerFixture,
   restoreNativeLocalPlayerFixture,
+  validateNativeLocalPlayerFixturePreparation,
 } from "./lib/stardew-native-local-player-fixture.mjs";
 
 const BUNDLE_FILES = [
   "GameBuddy.Stardew.dll",
   "GameBuddy.Stardew.Core.dll",
+  "Raffinert.FuzzySharp.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ];
@@ -49,16 +53,55 @@ async function readExecutionManagerSources() {
   ).join("\n");
 }
 
-async function removeFixtureTree(directory) {
-  const entries = [];
-  for await (const entry of await opendir(directory)) entries.push(entry);
-  for (const entry of entries) {
-    const entryPath = join(directory, entry.name);
-    const stats = await lstat(entryPath);
-    if (stats.isDirectory() && !stats.isSymbolicLink()) await removeFixtureTree(entryPath);
-    else await unlink(entryPath);
+async function removeFixtureTree(root) {
+  const pending = [{ path: root, visited: false }];
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (entry.visited) {
+      await rmdir(entry.path);
+      continue;
+    }
+
+    pending.push({ path: entry.path, visited: true });
+    for await (const child of await opendir(entry.path)) {
+      const childPath = join(entry.path, child.name);
+      const metadata = await lstat(childPath);
+      if (metadata.isDirectory() && !metadata.isSymbolicLink()) pending.push({ path: childPath, visited: false });
+      else await unlink(childPath);
+    }
   }
-  await rmdir(directory);
+}
+
+async function snapshotTree(root) {
+  const pending = [""];
+  const snapshot = [];
+  while (pending.length > 0) {
+    const relative = pending.pop();
+    const directory = join(root, relative);
+    for (const name of (await readdir(directory)).sort().reverse()) {
+      const childRelative = relative ? join(relative, name) : name;
+      const child = join(root, childRelative);
+      const metadata = await lstat(child);
+      if (metadata.isSymbolicLink()) snapshot.push([childRelative, "link"]);
+      else if (metadata.isDirectory()) {
+        snapshot.push([childRelative, "directory"]);
+        pending.push(childRelative);
+      } else snapshot.push([childRelative, "file", (await readFile(child)).toString("base64")]);
+    }
+  }
+  return snapshot.sort(([left], [right]) => left.localeCompare(right));
+}
+
+function assertRedactedPublicError(error, expectedCode, rawDetails) {
+  assert.equal(error.message, expectedCode);
+  assert.equal(String(error), `Error: ${expectedCode}`);
+  const observable = [error.message, String(error), error.stack ?? "", JSON.stringify(error)].join("\n");
+  for (const detail of rawDetails) assert.equal(observable.includes(detail), false, `must redact ${detail}`);
+  assert.equal(Object.hasOwn(error, "cause"), false);
+  assert.equal(Object.hasOwn(error, "errors"), false);
+  assert.equal(error.cause, undefined);
+  assert.equal(error.errors, undefined);
+  return true;
 }
 
 async function createFixture(t, suffix) {
@@ -102,6 +145,186 @@ async function createFixture(t, suffix) {
     backupName: `native-local-${suffix}-fixture-backup`,
   };
 }
+
+test("native-local preparation validation is read-only", async (t) => {
+  const options = { ...(await createFixture(t, "validation")), action: "equip_tool", timeoutSeconds: 90 };
+  const template = join(options.root, "templates", options.saveName);
+  const stardewSaveRoot = join(options.root, "working-saves");
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+  const completeOptions = { ...options, stardewSaveRoot };
+  const before = await snapshotTree(options.root);
+  const configBefore = await readFile(join(options.modRoot, "config.json"));
+
+  const result = await validateNativeLocalPlayerFixturePreparation(completeOptions);
+
+  assert.equal(result.state, "ready");
+  assert.deepEqual(result.actions, ["equip_tool"]);
+  assert.deepEqual(await snapshotTree(options.root), before);
+  assert.deepEqual(await readFile(join(options.modRoot, "config.json")), configBefore);
+  await assert.rejects(lstat(join(options.root, options.backupName)), /ENOENT/);
+  await assert.rejects(lstat(join(options.root, ".stardew-native-local-player-fixture.lock")), /ENOENT/);
+  await assert.rejects(lstat(join(stardewSaveRoot, options.saveName)), /ENOENT/);
+});
+
+test("public entry points redact an existing backup path with a fixed code", async (t) => {
+  const options = { ...(await createFixture(t, "existing-backup")), action: "equip_tool" };
+  const backup = join(options.root, options.backupName);
+  await mkdir(backup);
+
+  await assert.rejects(
+    validateNativeLocalPlayerFixturePreparation(options),
+    (error) => assertRedactedPublicError(error, "native_local_fixture_backup_already_exists", [options.root, backup]),
+  );
+  await assert.rejects(
+    prepareNativeLocalPlayerFixture(options),
+    (error) => assertRedactedPublicError(error, "native_local_fixture_backup_already_exists", [options.root, backup]),
+  );
+  await assert.rejects(
+    bootstrapNativeLocalPlayerFixture({ ...options, logicalSaveName: "GameBuddyFixture" }),
+    (error) => assertRedactedPublicError(error, "native_local_fixture_backup_already_exists", [options.root, backup]),
+  );
+});
+
+test("validation redacts a missing safe-context path without raw details", async (t) => {
+  const options = { ...(await createFixture(t, "validation-missing-context")), action: "equip_tool" };
+  for (const name of BUNDLE_FILES) await unlink(join(options.releaseDir, name));
+  await rmdir(options.releaseDir);
+
+  await assert.rejects(
+    validateNativeLocalPlayerFixturePreparation(options),
+    (error) => assertRedactedPublicError(error, "native_local_fixture_path_missing", [options.root, options.releaseDir]),
+  );
+});
+
+test("restore redacts an unsafe safe-context path and preserves recovery artifacts", async (t) => {
+  const options = { ...(await createFixture(t, "restore-unsafe-context")), action: "equip_tool" };
+  const prepared = await prepareNativeLocalPlayerFixture(options);
+  const lock = join(options.root, ".stardew-native-local-player-fixture.lock");
+  for (const name of BUNDLE_FILES) await unlink(join(options.releaseDir, name));
+  await rmdir(options.releaseDir);
+  await writeFile(options.releaseDir, "raw-unsafe-context-detail");
+
+  await assert.rejects(
+    restoreNativeLocalPlayerFixture(options),
+    (error) =>
+      assertRedactedPublicError(error, "native_local_fixture_unsafe_path", [
+        options.root,
+        options.releaseDir,
+        "raw-unsafe-context-detail",
+      ]),
+  );
+  assert.equal((await lstat(prepared.backup)).isDirectory(), true);
+  assert.equal((await lstat(join(prepared.backup, "manifest.json"))).isFile(), true);
+  assert.equal((await lstat(lock)).isDirectory(), true);
+});
+
+test("failed preparation redacts a deploy failure after successful rollback", async (t) => {
+  const options = { ...(await createFixture(t, "deploy-redaction")), action: "equip_tool" };
+  const backup = join(options.root, options.backupName);
+  const lock = join(options.root, ".stardew-native-local-player-fixture.lock");
+  const missingReleaseFile = join(options.releaseDir, BUNDLE_FILES.at(-1));
+  const originalManagedFiles = new Map(
+    await Promise.all(
+      ["config.json", ...BUNDLE_FILES].map(async (name) => [name, await readFile(join(options.modRoot, name))]),
+    ),
+  );
+  await unlink(missingReleaseFile);
+
+  await assert.rejects(prepareNativeLocalPlayerFixture(options), (error) => {
+    assert.equal(error.message, "native_local_fixture_preparation_failed");
+    assert.equal(String(error), "Error: native_local_fixture_preparation_failed");
+    const observableError = [error.message, String(error), error.stack ?? "", JSON.stringify(error)].join("\n");
+    assert.equal(observableError.includes(options.releaseDir), false);
+    assert.equal(observableError.includes(missingReleaseFile), false);
+    assert.doesNotMatch(observableError, /release_bundle_missing|GameBuddy\.Stardew\.deps\.json/);
+    assert.equal(Object.hasOwn(error, "cause"), false);
+    assert.equal(Object.hasOwn(error, "errors"), false);
+    assert.equal(error.cause, undefined);
+    assert.equal(error.errors, undefined);
+    return true;
+  });
+
+  for (const [name, bytes] of originalManagedFiles)
+    assert.deepEqual(await readFile(join(options.modRoot, name)), bytes, `${name} must be restored byte-for-byte`);
+  await assert.rejects(lstat(backup), { code: "ENOENT" });
+  await assert.rejects(lstat(lock), { code: "ENOENT" });
+});
+
+test("failed preparation redacts restore failure while preserving recovery state", async (t) => {
+  const options = { ...(await createFixture(t, "recovery-redaction")), action: "equip_tool" };
+  const backup = join(options.root, options.backupName);
+  const lock = join(options.root, ".stardew-native-local-player-fixture.lock");
+  const finalReleaseFile = join(options.releaseDir, BUNDLE_FILES.at(-1));
+
+  // Keep deployment active long enough for this offline test to corrupt the
+  // completed backup and force a later deployment failure deterministically.
+  await writeFile(join(options.releaseDir, BUNDLE_FILES[0]), Buffer.alloc(16 * 1024 * 1024, 0x61));
+  const induceFailures = (async () => {
+    while (true) {
+      try {
+        await lstat(join(backup, "manifest.json"));
+        break;
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        await delay(1);
+      }
+    }
+    await writeFile(join(backup, "config.json.backup"), "arbitrary-sensitive-restore-error-source");
+    await unlink(finalReleaseFile);
+  })();
+
+  await assert.rejects(prepareNativeLocalPlayerFixture(options), (error) => {
+    assert.equal(error.message, "native_local_fixture_recovery_required");
+    assert.equal(String(error), "Error: native_local_fixture_recovery_required");
+    assert.equal(Object.hasOwn(error, "cause"), false);
+    assert.equal(Object.hasOwn(error, "errors"), false);
+    assert.equal(error.cause, undefined);
+    assert.equal(error.errors, undefined);
+    return true;
+  });
+  await induceFailures;
+
+  assert.equal((await lstat(backup)).isDirectory(), true);
+  assert.equal((await lstat(join(backup, "manifest.json"))).isFile(), true);
+  assert.equal((await lstat(lock)).isDirectory(), true);
+  const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
+  assert.equal(configured.NativeLocalPlayerFixture.Enable, true);
+});
+
+test("navigation mutation fixture publishes the frozen action set without creating world facts", async (t) => {
+  const options = { ...(await createFixture(t, "navigation-mutation")), action: "navigation_mutation" };
+  const prepared = await prepareNativeLocalPlayerFixture(options);
+  assert.equal(
+    await readFile(join(options.modRoot, "Raffinert.FuzzySharp.dll"), "utf8"),
+    "release-Raffinert.FuzzySharp.dll",
+  );
+  const backupManifest = JSON.parse(await readFile(join(prepared.backup, "manifest.json"), "utf8"));
+  assert.ok(backupManifest.entries.some((entry) => entry.name === "Raffinert.FuzzySharp.dll"));
+  const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
+  assert.deepEqual(configured.EnabledActions, [
+    "inspect_world_map",
+    "find_destination",
+    "navigate_to_destination",
+  ]);
+  assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "navigation_mutation_v1");
+  const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
+  assert.equal(configured.NativeLocalPlayerFixture.NavigationMutationTargetLabel ?? "", "");
+  const start = entry.indexOf('if (fixture.FixtureScenario == "navigation_mutation_v1")');
+  const branch = entry.slice(start, entry.indexOf("if (fixture.FixtureScenario is not", start));
+  assert.ok(start >= 0);
+  assert.match(branch, /DerivedDestinationSet\.TryCreateCurrent/);
+  assert.match(branch, /NavigationRoutePlanner/);
+  assert.match(branch, /Helper\.WriteConfig/);
+  assert.doesNotMatch(branch, /warpFarmer|Game1\.warp|terrainFeatures|objects\.|player\.Items|Position\s*=/);
+  await restoreNativeLocalPlayerFixture(options);
+  assert.equal(
+    await readFile(join(options.modRoot, "Raffinert.FuzzySharp.dll"), "utf8"),
+    "original-Raffinert.FuzzySharp.dll",
+  );
+});
 
 test("native-local lifecycle owner binds staged release and separate private action/cleanup results", async () => {
   const launcher = await readFile(
@@ -1059,7 +1282,16 @@ test("native-local fixture restore fails closed when a registered backup is tamp
   const preparedConfig = await readFile(join(options.modRoot, "config.json"), "utf8");
   await writeFile(join(prepared.backup, "config.json.backup"), "tampered backup");
 
-  await assert.rejects(restoreNativeLocalPlayerFixture(options), /fixture_backup_hash_mismatch:config\.json/);
+  await assert.rejects(
+    restoreNativeLocalPlayerFixture(options),
+    (error) =>
+      assertRedactedPublicError(error, "native_local_fixture_restore_failed", [
+        options.root,
+        prepared.backup,
+        "config.json",
+        "tampered backup",
+      ]),
+  );
   assert.equal(await readFile(join(options.modRoot, "config.json"), "utf8"), preparedConfig);
   assert.equal(await readFile(join(prepared.backup, "config.json.backup"), "utf8"), "tampered backup");
   assert.ok(
