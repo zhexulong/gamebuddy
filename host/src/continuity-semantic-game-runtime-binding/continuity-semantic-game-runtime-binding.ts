@@ -40,6 +40,14 @@ export type GameRuntimeBindingInput = Readonly<{
   configDirectory: string;
 }>;
 
+/** Closed-composition input after an authenticated integration launch already exists. */
+export type ReceiptBackedGameRuntimeBindingInput = Readonly<{
+  manifest: HostDeploymentManifest;
+  launcher: ConfigurableIntegrationLauncher;
+  launch: IntegrationLaunchHandle;
+  expectedWorld: Readonly<{ saveId: string; worldId: string }>;
+}>;
+
 /** The construction-zone result. No adapter, world, manifest, or owner escapes. */
 export type GameRuntimeBinding = Readonly<{
   executeWithBinding<T>(callback: (token: OpaqueGameRuntimeBindingToken) => Promise<T> | T): Promise<T>;
@@ -74,8 +82,35 @@ export async function createGameRuntimeBinding(input: GameRuntimeBindingInput): 
     worldId: prepared.identityScope.worldId,
   });
   const identity: CompanionIdentity = bindIntegrationIdentity(manifestIdentity, preparedScope);
-  let launch: IntegrationLaunchHandle;
-  launch = await input.launcher.launch(Object.freeze({ identity, config: prepared.launchConfig }));
+  const launch = await input.launcher.launch(Object.freeze({ identity, config: prepared.launchConfig }));
+  return createGameRuntimeBindingFromReceiptBackedLaunch(
+    Object.freeze({ manifest, launcher: input.launcher, launch, expectedWorld: preparedScope }),
+  );
+}
+
+/**
+ * Consumes one already-authenticated, receipt-backed launch inside a closed
+ * production composition. The caller must retain the authoritative world scope
+ * that produced the launch; this function independently rechecks every fact.
+ */
+export async function createGameRuntimeBindingFromReceiptBackedLaunch(
+  input: ReceiptBackedGameRuntimeBindingInput,
+): Promise<GameRuntimeBinding> {
+  try {
+    assertReceiptBackedInput(input);
+    if (process.platform !== "win32") throw new Error("windows_runtime_owner_identity_required");
+    assertManifestSnapshot(input.manifest);
+  } catch (error) {
+    closeRejectedReceiptBackedLaunch(input);
+    throw error;
+  }
+  const manifestIdentity = Object.freeze({
+    continuityId: input.manifest.principal.continuityId,
+    companionId: input.manifest.principal.companionId,
+    playerId: input.manifest.principal.playerId,
+  });
+  const identity: CompanionIdentity = bindIntegrationIdentity(manifestIdentity, input.expectedWorld);
+  const launch = input.launch;
 
   let launchClosed = false;
   const revokeAndClose = (reasonCode: string): void => {
@@ -101,7 +136,7 @@ export async function createGameRuntimeBinding(input: GameRuntimeBindingInput): 
     const world = exactWorldScope(
       launch.connection.module.worldScope(launch.connection),
       input.launcher.integrationId,
-      preparedScope,
+      input.expectedWorld,
     );
     const ownerIdentity = await createWindowsRuntimeOwnerIdentityPort().createCurrentProcessOwnerIdentity();
     assertRuntimeOwnerIdentity(ownerIdentity);
@@ -110,7 +145,7 @@ export async function createGameRuntimeBinding(input: GameRuntimeBindingInput): 
     const bindingFacts = mintGameRuntimeBindingFacts({ principal: manifestIdentity, world, ownerIdentity });
     const execution = Object.freeze({
       principal: manifestIdentity,
-      runtimeRoot: manifest.runtimeRoot,
+      runtimeRoot: input.manifest.runtimeRoot,
       connection: launch.connection,
       world,
       launch,
@@ -219,6 +254,47 @@ function exactWorldScope(
     throw new Error("integration_world_scope_invalid");
   }
   return Object.freeze({ integrationId: value.integrationId, saveId: value.saveId, worldId: value.worldId });
+}
+
+function assertReceiptBackedInput(value: unknown): asserts value is ReceiptBackedGameRuntimeBindingInput {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.manifest) ||
+    !isRecord(value.launcher) ||
+    typeof value.launcher.integrationId !== "string" ||
+    typeof value.launcher.launch !== "function" ||
+    !isRecord(value.launch) ||
+    !isRecord(value.expectedWorld) ||
+    !Object.isFrozen(value.expectedWorld) ||
+    Object.getPrototypeOf(value.expectedWorld) !== Object.prototype ||
+    Object.getOwnPropertySymbols(value.expectedWorld).length !== 0 ||
+    Object.keys(value.expectedWorld).length !== 2 ||
+    !Object.hasOwn(value.expectedWorld, "saveId") ||
+    !Object.hasOwn(value.expectedWorld, "worldId") ||
+    !identifier(value.expectedWorld.saveId) ||
+    !identifier(value.expectedWorld.worldId) ||
+    Object.keys(value).length !== 4 ||
+    !Object.hasOwn(value, "manifest") ||
+    !Object.hasOwn(value, "launcher") ||
+    !Object.hasOwn(value, "launch") ||
+    !Object.hasOwn(value, "expectedWorld")
+  ) {
+    throw new Error("invalid_receipt_backed_game_runtime_binding_input");
+  }
+}
+
+function closeRejectedReceiptBackedLaunch(value: unknown): void {
+  if (!isRecord(value) || !isRecord(value.launch)) return;
+  try {
+    if (isCallable(value.launch.revoke)) value.launch.revoke("game_runtime_binding_validation_failed");
+  } catch {
+    /* preserve validation failure */
+  }
+  try {
+    if (isCallable(value.launch.close)) value.launch.close();
+  } catch {
+    /* preserve validation failure */
+  }
 }
 
 function assertInput(value: unknown): asserts value is GameRuntimeBindingInput {

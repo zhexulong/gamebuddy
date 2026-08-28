@@ -2,8 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 
 import type { IntegrationLaunchHandle } from "../integration-launcher.js";
-import type { IntegrationWorldScope } from "../game-integration-adapter.js";
-import type { GameConnection } from "../game-connection.js";
+import type { IntegrationWorldScope } from "../integration-module.js";
+import type { IntegrationConnection } from "../integration-types.js";
 
 /** Construction-zone-only process owner proof. No fields are exposed on the proof object. */
 export type OpaqueRuntimeOwnerIdentity = Readonly<{
@@ -32,7 +32,7 @@ export type GameRuntimeBindingExecution = Readonly<{
   principal: Readonly<{ continuityId: string; companionId: string; playerId: string }>;
   /** Canonical deployment runtime root read from that same manifest. */
   runtimeRoot: string;
-  connection: GameConnection;
+  connection: IntegrationConnection;
   world: IntegrationWorldScope;
   launch: IntegrationLaunchHandle;
   ownerIdentity: OpaqueRuntimeOwnerIdentity;
