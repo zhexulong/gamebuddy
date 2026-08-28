@@ -179,6 +179,8 @@ export type StardewPrivateBootstrapCoreDependencies = Readonly<{
   createBootstrapIdentity: () => string;
   createLaunchGeneration: () => string;
   createPlayerHostLaunchGeneration: () => string;
+  createBridgePipeName: () => string;
+  createBridgeToken: () => string;
   nowMs: () => number;
   staging?: PrivateModProfileStagingDependencies;
 }>;
@@ -272,6 +274,8 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
     createBootstrapIdentity: randomUUID,
     createLaunchGeneration: randomUUID,
     createPlayerHostLaunchGeneration: randomUUID,
+    createBridgePipeName: createPrivateBridgePipeName,
+    createBridgeToken: createPrivateBridgeToken,
     nowMs: Date.now,
   });
   return Object.freeze({
@@ -461,6 +465,8 @@ function createClosedComposition(
     compositionIdentity,
     dependencies.nowMs,
     () => stagingDependencies ?? productionStagingDependencies(),
+    dependencies.createBridgePipeName,
+    dependencies.createBridgeToken,
   );
   const manifestHandoffCoordinator = manifestHandoff.coordinator;
 
@@ -913,6 +919,10 @@ type StardewPrivateBootstrapMaterial = Readonly<{
   readonly companionId: string;
 }>;
 
+type StardewPrivateBridgeMaterial = Readonly<{
+  readonly configJson: string;
+}>;
+
 type OwnedPhaseAFacts = {
   readonly compositionIdentity: object;
   readonly durableOwner: DurableOwner;
@@ -926,6 +936,7 @@ type OwnedPhaseAFacts = {
   readonly phaseBState: { value: OwnedPhaseBState };
   readonly aiClientProfileState: { value: "not_materialized" | "materializing" | "materialized" | "failed" };
   readonly privateMaterial: { value: StardewPrivateBootstrapMaterial | null };
+  readonly privateBridgeMaterial: { value: StardewPrivateBridgeMaterial | null };
   stagingDependencies?: PrivateModProfileStagingDependencies;
   consumePlayerHostLaunch: <T>(callback: (launch: StardewPlayerHostLaunch) => T) => T;
   consumeAiClientLaunch: <T>(callback: (launch: StardewAiClientLaunch) => T) => T;
@@ -1099,6 +1110,8 @@ function createManifestHandoffCoordinatorCore(
   compositionIdentity: object,
   readClock: () => number,
   resolveStagingDependencies: () => PrivateModProfileStagingDependencies,
+  createBridgePipeName: () => string,
+  createBridgeToken: () => string,
 ): ManifestHandoffCoordinatorCore {
   const selections = new WeakMap<StardewManifestHandoffSelection, ManifestHandoffSelectionFacts>();
   const admissions = new WeakMap<StardewManifestAdmission, ManifestHandoffAdmissionFacts>();
@@ -1239,9 +1252,18 @@ function createManifestHandoffCoordinatorCore(
           admissionFacts.manifest.expiresAtUnixMs <= readClock()) {
         throw new Error("stardew_ai_client_profile_materialization_expired");
       }
-      await stageAiClientProfile(owner, admissionFacts, packageSource, dependencies);
+      const bridgeMaterial = await stageAiClientProfile(
+        owner,
+        admissionFacts,
+        packageSource,
+        dependencies,
+        createBridgePipeName,
+        createBridgeToken,
+      );
+      facts.privateBridgeMaterial.value = bridgeMaterial;
       facts.aiClientProfileState.value = "materialized";
     } catch (error) {
+      facts.privateBridgeMaterial.value = null;
       facts.aiClientProfileState.value = "failed";
       try { await facts.quarantineOwner(); } catch { /* preserve materialization failure */ }
       throw error;
@@ -1435,6 +1457,9 @@ async function launchOwnedAiClientStageD(
   if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
   if (facts.launchStates.aiClient !== "available") throw new Error("stardew_ai_client_launch_not_available");
 
+  const bridgeMaterial = facts.privateBridgeMaterial.value;
+  if (bridgeMaterial === null) throw new Error("stardew_ai_client_bridge_material_unavailable");
+
   const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
   const authorityRoot = dirname(dirname(transactionDirectory));
   const ownerPath = join(transactionDirectory, OWNER_FILE);
@@ -1446,6 +1471,16 @@ async function launchOwnedAiClientStageD(
     JSON.stringify(current.managedPaths) !== JSON.stringify(C1_MANAGED_PATHS)
   ) throw new Error("stardew_ai_client_profile_inventory_invalid");
   await assertMaterializedC1Inventory(transactionDirectory, authorityRoot);
+  const configPath = join(
+    transactionDirectory,
+    AI_CLIENT_PROFILE_ROOT,
+    MODS_DIRECTORY,
+    MOD_DIRECTORY,
+    MOD_CONFIG_FILE,
+  );
+  await verifySafePathBoundary(configPath, transactionDirectory);
+  if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
+    throw new Error("stardew_ai_client_bridge_config_changed");
   if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
 
   const modsPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY);
@@ -1462,10 +1497,16 @@ async function stageAiClientProfile(
   admission: ManifestHandoffAdmissionFacts,
   packageSource: Readonly<{ root: string; entries: readonly string[] }>,
   dependencies: PrivateModProfileStagingDependencies,
-): Promise<void> {
+  createBridgePipeName: () => string,
+  createBridgeToken: () => string,
+): Promise<StardewPrivateBridgeMaterial> {
   const facts = requireOwnedPhaseAFacts(owner);
   const material = facts.privateMaterial.value;
   if (material === null) throw new Error("stardew_ai_client_profile_materialization_material_missing");
+  const pipeName = createBridgePipeName();
+  const bridgeToken = createBridgeToken();
+  if (!isBridgePipeName(pipeName) || !isBridgeToken(bridgeToken))
+    throw new Error("stardew_ai_client_bridge_material_invalid");
   const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
   const ownerPath = join(transactionDirectory, OWNER_FILE);
   const managed = new Map<string, import("./path-lock.js").SafeFileIdentity>();
@@ -1512,6 +1553,14 @@ async function stageAiClientProfile(
       const manifestPath = join(material.sessionDirectory, "stardew-farmhand-manifest.json");
       await verifySafePathBoundary(manifestPath, transactionDirectory);
       const aiClientConfig = JSON.stringify({
+        EnableLocalBridge: true,
+        PipeName: pipeName,
+        BridgeToken: bridgeToken,
+        SaveId: admission.manifest.saveId,
+        WorldId: admission.manifest.worldId,
+        PlayerId: admission.manifest.farmhandId,
+        CompanionId: admission.manifest.companionId,
+        ActionPolicyVersion: 1,
         FarmhandProvisioner: {
           Enable: true,
           ManifestPath: manifestPath,
@@ -1543,6 +1592,7 @@ async function stageAiClientProfile(
           admission.manifest.expiresAtUnixMs <= readClockForMaterialization(facts, admission, dependencies)) {
         throw new Error("stardew_ai_client_profile_materialization_expired");
       }
+      return Object.freeze({ configJson: aiClientConfig });
     } catch (error) {
       if (recordExtended) {
         await rollbackStagedPlayerHostProfile(managed, createdDirectories, transactionDirectory);
@@ -1769,6 +1819,22 @@ function createPrivateProvisioningSecret(): string {
   return `${randomUUID()}${randomUUID()}`;
 }
 
+function createPrivateBridgePipeName(): string {
+  return `gamebuddy-stardew-${randomUUID()}`;
+}
+
+function createPrivateBridgeToken(): string {
+  return `${randomUUID()}${randomUUID()}`;
+}
+
+function isBridgePipeName(value: string): boolean {
+  return value.length >= 16 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function isBridgeToken(value: string): boolean {
+  return value.length >= 16 && value.length <= 256 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
 function isProvisioningSecret(value: string): boolean {
   return value.length >= 16 && value.length <= 256 && /^[\x21-\x7e]+$/.test(value);
 }
@@ -1867,6 +1933,7 @@ function composeOwnedPlayerHostOwner(
     phaseBState,
     aiClientProfileState,
     privateMaterial: { value: null },
+    privateBridgeMaterial: { value: null },
     consumePlayerHostLaunch: (callback) => consumeLaunch({
       role: "player_host",
       callback,
@@ -1887,6 +1954,7 @@ function composeOwnedPlayerHostOwner(
       if (quarantinePromise !== null) return quarantinePromise;
       quarantineStarted = true;
       facts.privateMaterial.value = null;
+      facts.privateBridgeMaterial.value = null;
       if (playerHostLaunchState === "available") playerHostLaunchState = "binding";
       if (aiClientLaunchState === "available") aiClientLaunchState = "binding";
       const persistence = durableOwner.quarantine();
@@ -2559,7 +2627,8 @@ function validateTestingDependencies(value: StardewPrivateBootstrapCoreDependenc
   const optionalKeys = value.staging === undefined ? [] : ["staging"];
   if (!exactKeys(value, [
         "rawSpawn", "rawProbe", "rawPlayerHostSpawn", "rawPlayerHostProbe",
-        "createBootstrapIdentity", "createLaunchGeneration", "createPlayerHostLaunchGeneration", "nowMs",
+        "createBootstrapIdentity", "createLaunchGeneration", "createPlayerHostLaunchGeneration",
+        "createBridgePipeName", "createBridgeToken", "nowMs",
         ...optionalKeys,
       ]) ||
       typeof value.rawSpawn !== "function" ||
@@ -2569,6 +2638,8 @@ function validateTestingDependencies(value: StardewPrivateBootstrapCoreDependenc
       typeof value.createBootstrapIdentity !== "function" ||
       typeof value.createLaunchGeneration !== "function" ||
       typeof value.createPlayerHostLaunchGeneration !== "function" ||
+      typeof value.createBridgePipeName !== "function" ||
+      typeof value.createBridgeToken !== "function" ||
       typeof value.nowMs !== "function" ||
       (value.staging !== undefined && !isPrivateModProfileStagingDependencies(value.staging))) {
     throw new TypeError("invalid_stardew_private_bootstrap_testing_dependencies");

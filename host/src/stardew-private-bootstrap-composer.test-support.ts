@@ -41,7 +41,11 @@ export function createStardewPrivateBootstrapComposerTestSupport(
   if (input === null || typeof input !== "object" || Object.prototype.hasOwnProperty.call(input, "staging")) {
     throw new TypeError("invalid_stardew_private_bootstrap_testing_dependencies");
   }
-  return createStardewPrivateBootstrapCompositionForTesting(input).composition;
+  return createStardewPrivateBootstrapCompositionForTesting({
+    ...input,
+    createBridgePipeName: () => "gamebuddy-stardew-public-test-bridge",
+    createBridgeToken: () => "public-test-bridge-token-0123456789",
+  }).composition;
 }
 
 export {

@@ -348,6 +348,8 @@ function createHarness(input: Readonly<{
       const index = playerHostGenerationIndex++;
       return input.playerHostLaunchGenerations?.[index] ?? `player-generation-${index + 1}`;
     },
+    createBridgePipeName: () => "gamebuddy-stardew-test-bridge",
+    createBridgeToken: () => "test-bridge-token-0123456789",
     nowMs: () => nowMs,
   };
   const dependencies = {
@@ -3052,6 +3054,14 @@ test("C1 materialization admits genuine manifest and writes exact AI-client prof
   const aiModDirectory = join(transaction, "ai-client", "Mods", "GameBuddy");
   const config = JSON.parse(await readFile(join(aiModDirectory, "config.json"), "utf8"));
   assert.deepEqual(config, {
+    EnableLocalBridge: true,
+    PipeName: "gamebuddy-stardew-test-bridge",
+    BridgeToken: "test-bridge-token-0123456789",
+    SaveId: "save-attachment-factory",
+    WorldId: "world-attachment-factory",
+    PlayerId: "12345",
+    CompanionId: "companion-1",
+    ActionPolicyVersion: 1,
     FarmhandProvisioner: {
       Enable: true,
       ManifestPath: join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"),
@@ -3285,6 +3295,23 @@ test("Stage D fresh installation mismatch spawns nothing and a new admission can
   assert.equal(fixture.harness.spawnCalls.length, 1);
 });
 
+test("Stage D rejects replaced private Bridge config before consuming AI launch authority", async () => {
+  const fixture = await prepareMaterializedAiClientFixture();
+  const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
+  const configPath = join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json");
+  await writeFile(configPath, JSON.stringify({ EnableLocalBridge: false }));
+  const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+
+  await assert.rejects(
+    () => fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation),
+    /stardew_ai_client_bridge_config_changed/,
+  );
+  assert.deepEqual(fixture.harness.spawnCalls, []);
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), {
+    kind: "ai_client_launch_pending",
+  });
+});
+
 test("Stage D spawn and probe failures consume the exact AI launch authority", async () => {
   for (const mode of ["spawn", "probe"] as const) {
     const attempted: SpawnCall[] = [];
@@ -3312,7 +3339,7 @@ test("Stage D spawn and probe failures consume the exact AI launch authority", a
   }
 });
 
-test("connected no-live C1 composition carries one owner generation through Stage C, signed handoff, and no-spawn AI materialization", async () => {
+test("connected no-live C1 composition privately provisions Bridge scope before exact AI launch", async () => {
   const playerHostGeneration = "connected-player-generation";
   const aiClientGeneration = "connected-ai-generation";
   const companionId = "connected-companion";
@@ -3458,11 +3485,24 @@ test("connected no-live C1 composition carries one owner generation through Stag
   );
   const aiConfigPath = join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json");
   const aiConfig = JSON.parse(await readFile(aiConfigPath, "utf8")) as Record<string, unknown>;
-  assert.equal(typeof aiConfig.FarmhandProvisioner, "object");
+  assert.deepEqual(aiConfig, {
+    EnableLocalBridge: true,
+    PipeName: "gamebuddy-stardew-test-bridge",
+    BridgeToken: "test-bridge-token-0123456789",
+    SaveId: "save-attachment-factory",
+    WorldId: "world-attachment-factory",
+    PlayerId: "12345",
+    CompanionId: companionId,
+    ActionPolicyVersion: 1,
+    FarmhandProvisioner: {
+      Enable: true,
+      ManifestPath: join(sessionDirectory, "stardew-farmhand-manifest.json"),
+      SessionToken: sessionToken,
+      IntegrationVersion: "0.1.0",
+      TimeoutSeconds: 45,
+    },
+  });
   assert.equal(hostConfig.includes("BridgeToken"), false);
   assert.equal(hostConfig.includes("PipeName"), false);
   assert.equal(hostConfig.includes("EnableLocalBridge"), false);
-  assert.equal(JSON.stringify(aiConfig).includes("BridgeToken"), false);
-  assert.equal(JSON.stringify(aiConfig).includes("PipeName"), false);
-  assert.equal(JSON.stringify(aiConfig).includes("EnableLocalBridge"), false);
 });
