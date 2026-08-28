@@ -230,6 +230,7 @@ type MaterializeAiClientProfileAfterManifestAdmission = (
 export type StardewPrivateBootstrapInternalComposition = Readonly<{
   readonly composition: StardewPrivateBootstrapComposition;
   createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow;
+  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   materializeAiClientProfileAfterManifestAdmission(
     owner: StardewOwnedPlayerHostPhaseAOwner,
@@ -265,6 +266,7 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
   return Object.freeze({
     composition: closed.composition,
     createOwnedPlayerHostAttachmentFlow: closed.createOwnedPlayerHostAttachmentFlow,
+    readAndCorrelateOwnedPlayerHostSession: closed.readAndCorrelateOwnedPlayerHostSession,
     createOwnedPlayerHostManifestHandoffCoordinator: closed.createOwnedPlayerHostManifestHandoffCoordinator,
     materializeAiClientProfileAfterManifestAdmission: closed.materializeAiClientProfileAfterManifestAdmission,
     launchOwnedPlayerHostStageC: closed.launchOwnedPlayerHostStageC,
@@ -300,6 +302,7 @@ export function createStardewPrivateBootstrapTestCore(
   composition: StardewPrivateBootstrapComposition;
   consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
   createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow;
+  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   materializeAiClientProfileAfterManifestAdmission: MaterializeAiClientProfileAfterManifestAdmission;
   launchOwnedPlayerHostStageC(
@@ -342,6 +345,9 @@ export function createStardewPrivateBootstrapTestCore(
       // composition supplies its stored identity, so forged and cross-
       // composition owners are rejected before any flow is constructed.
       return base.createOwnedPlayerHostAttachmentFlow(owner);
+    },
+    readAndCorrelateOwnedPlayerHostSession(owner) {
+      return base.readAndCorrelateOwnedPlayerHostSession(owner);
     },
     createOwnedPlayerHostManifestHandoffCoordinator() {
       return base.createOwnedPlayerHostManifestHandoffCoordinator();
@@ -398,6 +404,7 @@ type ClosedBootstrapCore = Readonly<{
   readonly composition: StardewPrivateBootstrapComposition;
   consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
   createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow;
+  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   materializeAiClientProfileAfterManifestAdmission: MaterializeAiClientProfileAfterManifestAdmission;
   launchOwnedPlayerHostStageC(
@@ -621,6 +628,8 @@ function createClosedComposition(
     },
      createOwnedPlayerHostAttachmentFlow: (owner: StardewOwnedPlayerHostPhaseAOwner): StardewAttachmentFlow =>
        createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, dependencies.nowMs),
+     readAndCorrelateOwnedPlayerHostSession: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean> =>
+       readAndCorrelateOwnedPlayerHostSessionCore(owner, compositionIdentity, dependencies.nowMs),
       createOwnedPlayerHostManifestHandoffCoordinator: (): StardewManifestHandoffCoordinator =>
         manifestHandoffCoordinator,
       materializeAiClientProfileAfterManifestAdmission: (
@@ -1229,6 +1238,24 @@ function redactManifestHandoffError(error: unknown): Error {
   if (error instanceof Error && /^stardew_manifest_handoff_|^user_confirmation_required$|^invalid_stardew_manifest_handoff_selection$/.test(error.message))
     return error;
   return new Error("stardew_manifest_handoff_failed");
+}
+
+async function readAndCorrelateOwnedPlayerHostSessionCore(
+  owner: StardewOwnedPlayerHostPhaseAOwner,
+  compositionIdentity: object,
+  readClock: () => number,
+): Promise<boolean> {
+  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  const flow = createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, readClock);
+  try {
+    const session = await flow.readLiveSession();
+    await assertPlayerHostGenerationCorrelation(facts, session.launchGeneration);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message === "stardew_player_host_generation_mismatch") throw error;
+    if (facts.expiresAtMs <= readClock()) throw new Error("stardew_player_host_attestation_deadline_expired");
+    return false;
+  }
 }
 
 function createOwnedPlayerHostAttachmentFlowCore(

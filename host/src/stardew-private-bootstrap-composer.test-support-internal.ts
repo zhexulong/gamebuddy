@@ -32,6 +32,7 @@ export type StardewPrivateModProfileStagingTestSupportInput = Readonly<{
 export type StardewPrivateBootstrapTestingComposition = Readonly<{
   composition: PublicStardewPrivateBootstrapComposition;
   createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostPhaseAOwner): import("./stardew-attachment.js").StardewAttachmentFlow;
+  readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   consumeStagedOwnedPlayerHostPhaseB(owner: StardewOwnedPlayerHostPhaseAOwner): void;
   materializeAiClientProfileAfterManifestAdmission(

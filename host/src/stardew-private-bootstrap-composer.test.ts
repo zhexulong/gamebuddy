@@ -73,7 +73,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
