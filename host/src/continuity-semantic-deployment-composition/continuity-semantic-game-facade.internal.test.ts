@@ -124,7 +124,7 @@ test("Game facade retains recovery failure while its caller can still close the 
   assert.equal(bindingCloseCalls, 1);
 });
 
-test("Game facade exposes launch ingress only after semantic enter commits", async () => {
+test("Game facade exposes committed ingress as a one-shot prompt dispatch", async () => {
   const calls: string[] = [];
   const binding = Object.freeze({
     executeWithBinding: async <T>(callback: (token: never) => Promise<T> | T): Promise<T> =>
@@ -134,11 +134,11 @@ test("Game facade exposes launch ingress only after semantic enter commits", asy
   const authority = Object.freeze({
     authority: "SEMANTIC" as const,
     prepareEnter: async () => Object.freeze({}),
-    commitEnter: async () => {
-      calls.push("commit");
-      return Object.freeze({});
-    },
+    commitEnter: async () => Object.freeze({}),
     failEnter: async () => Object.freeze({}),
+    prepareClose: async () => permit,
+    commitClose: async () => Object.freeze({}),
+    failClose: async () => Object.freeze({}),
     close: async () => undefined,
   }) as unknown as SemanticGameProductionAuthority;
   const runtime = Object.freeze({
@@ -149,6 +149,10 @@ test("Game facade exposes launch ingress only after semantic enter commits", asy
       lifecycleSnapshot: () => Object.freeze({}),
       markClosing: () => undefined,
       activateIngress: () => calls.push("ingress"),
+      dispatchPromptDefinedTask: async (task: string) => {
+        calls.push(`task:${task}`);
+      },
+      cancelPromptDefinedTask: () => calls.push("cancel"),
     }),
     teardownClose: async () => Object.freeze({}),
     close: async () => undefined,
@@ -159,12 +163,74 @@ test("Game facade exposes launch ingress only after semantic enter commits", asy
       return runtime;
     },
   }) as GameRuntimeMaterializer;
-  const lease = await constructKnownUnmountedGameSemanticFacade(binding, authority, materializer).runEnter();
-  assert.deepEqual(calls, ["commit"]);
-  assert.equal(lease.gameSessionId, "game_session_01");
+  const facade = constructKnownUnmountedGameSemanticFacade(binding, authority, materializer);
+  const lease = await facade.runEnter();
+  await assert.rejects(lease.dispatchPromptDefinedTask("before commit"), /not_activated/);
   lease.activateCommittedIngress();
+  await lease.dispatchPromptDefinedTask("open the chest");
+  await assert.rejects(lease.dispatchPromptDefinedTask("replay"), /already_consumed/);
+  assert.deepEqual(calls, ["ingress", "task:open the chest"]);
+  await facade.close();
+});
+
+test("Game facade cancels an active prompt before close drains", async () => {
+  const calls: string[] = [];
+  let settleTask!: () => void;
+  const pendingTask = new Promise<void>((resolve) => {
+    settleTask = resolve;
+  });
+  const binding = Object.freeze({
+    executeWithBinding: async <T>(callback: (token: never) => Promise<T> | T): Promise<T> =>
+      callback(mintBindingToken(execution()) as never),
+    close: async () => {
+      calls.push("binding-close");
+    },
+  }) as GameRuntimeBinding;
+  const authority = Object.freeze({
+    authority: "SEMANTIC" as const,
+    prepareEnter: async () => Object.freeze({}),
+    commitEnter: async () => Object.freeze({}),
+    failEnter: async () => Object.freeze({}),
+    prepareClose: async () => permit,
+    commitClose: async () => calls.push("commit-close"),
+    failClose: async () => Object.freeze({}),
+    close: async () => calls.push("authority-close"),
+  }) as unknown as SemanticGameProductionAuthority;
+  const runtime = Object.freeze({
+    receipt: Object.freeze({ gameSessionId: "game_session_01" }),
+    piSessionId: "pi_session_01",
+    connected: Object.freeze({
+      host: Object.freeze({}),
+      lifecycleSnapshot: () => Object.freeze({}),
+      markClosing: () => calls.push("mark-closing"),
+      activateIngress: () => undefined,
+      dispatchPromptDefinedTask: async () => pendingTask,
+      cancelPromptDefinedTask: () => {
+        calls.push("cancel");
+        settleTask();
+      },
+    }),
+    teardownClose: async () => {
+      calls.push("teardown");
+      return Object.freeze({});
+    },
+    close: async () => undefined,
+  }) as unknown as MaterializedGameRuntime;
+  const materializer = Object.freeze({
+    materializeEnter: async (reservation: unknown) => {
+      releaseReservedGameRuntimeMaterialization(reservation);
+      return runtime;
+    },
+  }) as GameRuntimeMaterializer;
+  const facade = constructKnownUnmountedGameSemanticFacade(binding, authority, materializer);
+  const lease = await facade.runEnter();
   lease.activateCommittedIngress();
-  assert.deepEqual(calls, ["commit", "ingress"]);
+  const task = lease.dispatchPromptDefinedTask("wait");
+  lease.cancelPromptDefinedTask();
+  const close = facade.close();
+  await task;
+  await close;
+  assert.deepEqual(calls, ["cancel", "teardown", "commit-close", "authority-close", "binding-close"]);
 });
 
 test("Game facade retries a failed close commit with its exact successful teardown checkpoint", async () => {

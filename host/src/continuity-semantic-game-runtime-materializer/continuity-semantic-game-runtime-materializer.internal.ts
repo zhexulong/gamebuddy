@@ -29,9 +29,14 @@ export type ConnectedGameRuntime = Readonly<{
   activateIngress(): void;
   /** Internal-only behavior seam; it exposes no worker, runtime, result, or action authority. */
   dispatchPromptDefinedTask(task: string): Promise<void>;
+  /** Cancels the exact active prompt task before facade drain and reverse teardown. */
+  cancelPromptDefinedTask(): void;
 }>;
 
-type ConnectedGameRuntimeConstruction = Omit<ConnectedGameRuntime, "dispatchPromptDefinedTask">;
+type ConnectedGameRuntimeConstruction = Omit<
+  ConnectedGameRuntime,
+  "dispatchPromptDefinedTask" | "cancelPromptDefinedTask"
+>;
 
 export type RuntimeDisposal = Readonly<{
   session: Readonly<{ dispose(): void }>;
@@ -129,6 +134,7 @@ export function finalizeMaterializedGameRuntime(
           dispatchPromptDefinedTask: createPromptDefinedTaskDispatcher(
             runtime.gameplaySubagent,
           ),
+          cancelPromptDefinedTask: () => runtime.gameplaySubagent?.dispose(),
         });
   let state: "live" | "tearing_down" | "closed" = "live";
   let closePromise: Promise<void> | undefined;
