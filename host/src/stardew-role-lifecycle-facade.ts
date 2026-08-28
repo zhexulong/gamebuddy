@@ -29,6 +29,7 @@ import type {
 // ── Public view types ───────────────────────────────────────────────────────
 
 export type StardewPlayerHostSlot =
+  | Readonly<{ state: "not_started"; ownership: "none" }>
   | Readonly<{ state: "unknown"; ownership: "player_external" }>
   | Readonly<{ state: "unavailable"; ownership: "player_external" }>
   | Readonly<{
@@ -53,9 +54,12 @@ export type StardewRoleLifecycleView = Readonly<{
   aiClient: StardewAiClientSlot;
 }>;
 
-export type StardewRoleLifecycleFacade = Readonly<{
+export type StardewRoleLifecycleReader = Readonly<{
   /** Refresh player evidence and return the composed redacted view. */
   readRoleLifecycleView(): Promise<StardewRoleLifecycleView>;
+}>;
+
+export type StardewRoleLifecycleFacade = StardewRoleLifecycleReader & Readonly<{
   /** Narrow process owner delegation: stop the owned AI-client child. */
   stopOwnedAiClient(): StopOwnedAiClientResult;
 }>;
@@ -65,11 +69,11 @@ type LastStopOutcome = "none" | "identity_unverified" | "termination_failed";
 // ── Facade implementation ──────────────────────────────────────────────────
 
 class StardewRoleLifecycleFacadeImpl implements StardewRoleLifecycleFacade {
-  readonly #attachment: StardewAttachmentFlow;
+  readonly #attachment: StardewAttachmentFlow | null;
   readonly #processOwner: StardewAiClientProcessOwner;
   #lastStopOutcome: LastStopOutcome = "none";
 
-  public constructor(attachment: StardewAttachmentFlow, processOwner: StardewAiClientProcessOwner) {
+  public constructor(attachment: StardewAttachmentFlow | null, processOwner: StardewAiClientProcessOwner) {
     this.#attachment = attachment;
     this.#processOwner = processOwner;
   }
@@ -79,13 +83,17 @@ class StardewRoleLifecycleFacadeImpl implements StardewRoleLifecycleFacade {
     // must not alter the ai slot.
     let playerHost: StardewPlayerHostSlot;
     try {
-      const outcome = await this.#attachment.readCompatibilityOutcome();
-      playerHost = Object.freeze({
-        state: "authenticated",
-        ownership: "player_external",
-        compatibility: outcome.status,
-        attachmentAllowed: outcome.attachmentAllowed,
-      });
+      const outcome = this.#attachment === null
+        ? undefined
+        : await this.#attachment.readCompatibilityOutcome();
+      playerHost = outcome === undefined
+        ? Object.freeze({ state: "not_started", ownership: "none" })
+        : Object.freeze({
+            state: "authenticated",
+            ownership: "player_external",
+            compatibility: outcome.status,
+            attachmentAllowed: outcome.attachmentAllowed,
+          });
     } catch {
       // No raw error — only categorical projection.
       playerHost = Object.freeze({ state: "unavailable", ownership: "player_external" });
@@ -136,7 +144,7 @@ class StardewRoleLifecycleFacadeImpl implements StardewRoleLifecycleFacade {
 // ── Factory ─────────────────────────────────────────────────────────────────
 
 export function createStardewRoleLifecycleFacade(
-  attachment: StardewAttachmentFlow,
+  attachment: StardewAttachmentFlow | null,
   processOwner: StardewAiClientProcessOwner,
 ): StardewRoleLifecycleFacade {
   return new StardewRoleLifecycleFacadeImpl(attachment, processOwner);

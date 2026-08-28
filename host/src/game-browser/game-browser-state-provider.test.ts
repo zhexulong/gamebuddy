@@ -8,7 +8,7 @@ import {
   createGameBrowserStateProvider,
 } from "./game-browser-state-provider.js";
 import type {
-  StardewRoleLifecycleFacade,
+  StardewRoleLifecycleReader,
   StardewRoleLifecycleView,
 } from "../stardew-role-lifecycle-facade.js";
 
@@ -26,18 +26,20 @@ function profile() {
   });
 }
 
-function lifecycle(view: StardewRoleLifecycleView, onRead = () => {}): StardewRoleLifecycleFacade {
+function lifecycle(view: StardewRoleLifecycleView, onRead = () => {}): StardewRoleLifecycleReader {
   return Object.freeze({
     async readRoleLifecycleView() {
       onRead();
       return view;
     },
-    launchAiClient() {
-      throw new Error("not_used_by_read_provider");
-    },
-    stopOwnedAiClient() {
-      return { kind: "no_owned_ai_client", killed: false } as const;
-    },
+  });
+}
+
+function notStartedView(): StardewRoleLifecycleView {
+  return Object.freeze({
+    schemaVersion: 1,
+    playerHost: Object.freeze({ state: "not_started", ownership: "none" }),
+    aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
   });
 }
 
@@ -68,6 +70,26 @@ function authenticatedView(
     aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
   });
 }
+
+test("read-only provider accepts a reader-only fresh lifecycle and projects only unchecked/none", async () => {
+  const reader = lifecycle(notStartedView());
+  assert.deepEqual(Object.keys(reader), ["readRoleLifecycleView"]);
+  const state = await createGameBrowserStateProvider(profile(), reader).readState(context);
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
+  assert.deepEqual(state.game, {
+    prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+    instance: { status: "none", gameTitle: null },
+    compatibility: { status: "unchecked", message: null },
+    attachment: { status: "none", generation: 0 },
+    connectionStatus: "none",
+    role: null,
+    companionName: null,
+    selectedWorld: null,
+    selectedSave: null,
+    capabilitySummary: { available: false, count: 0 },
+    latestOutcome: "none",
+  });
+});
 
 test("read-only provider projects unavailable lifecycle without fabricated attachment facts", async () => {
   const state = await createGameBrowserStateProvider(profile(), lifecycle(unavailableView())).readState(context);
