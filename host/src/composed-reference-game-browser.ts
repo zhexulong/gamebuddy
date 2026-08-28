@@ -218,6 +218,18 @@ export type ComposedReferenceGameBrowserDelegatedAuthCapability = Readonly<objec
  */
 export type ComposedReferenceGameBrowserAuthContext = Readonly<object>;
 
+/**
+ * Fieldless broker-owned capability for authenticating lifecycle activation
+ * requests. It reveals no browser or request authority.
+ */
+export type ComposedReferenceGameBrowserLifecycleActivationIssuer = Readonly<object>;
+
+/**
+ * Fieldless, one-shot lifecycle activation admission. Its authority exists
+ * only in this module's WeakMap and is bound to the issuing broker session.
+ */
+export type ComposedReferenceGameBrowserLifecycleActivationAdmission = Readonly<object>;
+
 type DelegatedAuthState = Readonly<{
   /** Reads the broker's live session; an expired session is retired first. */
   currentSession(): BrowserSession | undefined;
@@ -226,6 +238,22 @@ type DelegatedAuthState = Readonly<{
 const delegatedAuthCapabilities = new WeakSet<object>();
 const delegatedAuthStates = new WeakMap<object, DelegatedAuthState>();
 const delegatedAuthContextSessions = new WeakMap<object, BrowserSession>();
+
+type LifecycleActivationIssuerState = Readonly<{
+  currentSession(): BrowserSession | undefined;
+}>;
+
+type LifecycleActivationAdmissionState = {
+  readonly issuer: object;
+  readonly session: BrowserSession;
+  consumed: boolean;
+};
+
+const lifecycleActivationIssuers = new WeakMap<object, LifecycleActivationIssuerState>();
+const lifecycleActivationAdmissions = new WeakMap<
+  object,
+  LifecycleActivationAdmissionState
+>();
 
 /**
  * Controlled allow/deny: true only for the exact broker-minted capability
@@ -309,6 +337,95 @@ export function composedReferenceGameBrowserAuthProjection(
   });
 }
 
+/**
+ * Authenticates a prospective lifecycle activation without dispatching a
+ * route. Successful admissions are fieldless, session-bound, and one-shot.
+ */
+export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+  issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer,
+  request: IncomingMessage,
+  origin: string,
+): ComposedReferenceGameBrowserLifecycleActivationAdmission | null {
+  const issuerState = lifecycleActivationIssuers.get(issuer);
+  if (issuerState === undefined || request.method !== "POST") {
+    return null;
+  }
+
+  let originUrl: URL;
+  let requestUrl: URL;
+  try {
+    originUrl = new URL(origin);
+    requestUrl = new URL(request.url ?? "/", originUrl);
+  } catch {
+    return null;
+  }
+
+  if (
+    originUrl.protocol !== "http:" ||
+    !isLiteralLoopbackOrigin(originUrl) ||
+    requestUrl.origin !== originUrl.origin ||
+    !requestHasExpectedHost(request, originUrl) ||
+    !isExactOrigin(request, origin) ||
+    !isExactJsonContentType(singleHeaderValue(request.headers["content-type"]))
+  ) {
+    return null;
+  }
+
+  const activeSession = issuerState.currentSession();
+  const bearerToken = parseSingleCookie(request.headers.cookie, SESSION_COOKIE_NAME);
+  const submittedCsrf = singleHeaderValue(request.headers["x-csrf-token"]);
+  if (
+    activeSession === undefined ||
+    activeSession.expiresAtMs <= Date.now() ||
+    bearerToken === undefined ||
+    submittedCsrf === undefined ||
+    !timingSafeStringEqual(bearerToken, activeSession.bearerToken) ||
+    !timingSafeStringEqual(submittedCsrf, activeSession.csrfToken)
+  ) {
+    return null;
+  }
+
+  const admission: ComposedReferenceGameBrowserLifecycleActivationAdmission =
+    Object.freeze({});
+  lifecycleActivationAdmissions.set(admission, {
+    issuer,
+    session: activeSession,
+    consumed: false,
+  });
+  return admission;
+}
+
+/**
+ * Consumes an admission exactly once. Consumption is recorded synchronously
+ * before the callback starts; the callback receives only absolute expiry.
+ */
+export function consumeComposedReferenceGameBrowserLifecycleActivationAdmission<T>(
+  issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer,
+  admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  callback: (expiresAtMs: number) => T,
+): T | undefined {
+  const admissionState = lifecycleActivationAdmissions.get(admission);
+  if (admissionState === undefined || admissionState.consumed) {
+    return undefined;
+  }
+
+  const issuerState = lifecycleActivationIssuers.get(issuer);
+  const activeSession = issuerState?.currentSession();
+  if (
+    admissionState.issuer !== issuer ||
+    activeSession === undefined ||
+    activeSession !== admissionState.session ||
+    activeSession.expiresAtMs <= Date.now()
+  ) {
+    return undefined;
+  }
+
+  // This is the one-shot linearization point, after authority validation but
+  // synchronously before user code can run or re-enter.
+  admissionState.consumed = true;
+  return callback(activeSession.expiresAtMs);
+}
+
 export type ComposedReferenceGameBrowserRequestHandler = Readonly<{
   handle(request: IncomingMessage, response: ServerResponse, origin: string): void;
   /**
@@ -318,6 +435,8 @@ export type ComposedReferenceGameBrowserRequestHandler = Readonly<{
    * the composed shell. A forged capability fails before any Tavern operation.
    */
   readonly delegatedAuthCapability: ComposedReferenceGameBrowserDelegatedAuthCapability;
+  /** Fieldless capability for an internal lifecycle coordinator. */
+  readonly lifecycleActivationIssuer: ComposedReferenceGameBrowserLifecycleActivationIssuer;
   close(): Promise<void>;
 }>;
 
@@ -344,14 +463,20 @@ export function createComposedReferenceGameBrowserRequestHandler(
 
   const delegatedAuthCapability: ComposedReferenceGameBrowserDelegatedAuthCapability = Object.freeze({});
   delegatedAuthCapabilities.add(delegatedAuthCapability);
-  delegatedAuthStates.set(delegatedAuthCapability, {
-    currentSession: () => {
-      if (session !== undefined && session.expiresAtMs <= Date.now()) {
-        session = undefined;
-      }
-      return session;
-    },
-  });
+  const currentSession = (): BrowserSession | undefined => {
+    if (closed) {
+      return undefined;
+    }
+    if (session !== undefined && session.expiresAtMs <= Date.now()) {
+      session = undefined;
+    }
+    return session;
+  };
+  delegatedAuthStates.set(delegatedAuthCapability, { currentSession });
+
+  const lifecycleActivationIssuer: ComposedReferenceGameBrowserLifecycleActivationIssuer =
+    Object.freeze({});
+  lifecycleActivationIssuers.set(lifecycleActivationIssuer, { currentSession });
 
   const createContext = (activeSession: BrowserSession): ComposedReferenceGameBrowserReadContext =>
     Object.freeze({
@@ -608,6 +733,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
       });
     },
     delegatedAuthCapability,
+    lifecycleActivationIssuer,
     async close(): Promise<void> {
       closed = true;
       session = undefined;
