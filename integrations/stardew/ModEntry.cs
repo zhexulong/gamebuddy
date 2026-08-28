@@ -4,6 +4,7 @@ using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
 using GameBuddy.Stardew.Core.Routing;
+using GameBuddy.Stardew.Navigation;
 using GameBuddy.Stardew.Handlers;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
@@ -23,6 +24,56 @@ namespace GameBuddy.Stardew;
 /// </summary>
 public sealed partial class ModEntry : Mod
 {
+    /// <summary>
+    /// Launcher-injected per-launch generation for the formal AI Farmhand
+    /// client role. Only valid for farmhand_client topology; absent or invalid
+    /// for other roles. The value is an opaque 1-128 character string matching
+    /// BridgeProtocol.IsOpaqueId. It is never read from config.json, operator
+    /// config, or any persisted file.
+    /// </summary>
+    internal const string LaunchGenerationEnvironmentVariableName = "GAMEBUDDY_STARDEW_LAUNCH_GENERATION";
+
+    /// <summary>
+    /// Pure, stateless derivation of the bridge runtime attestation from
+    /// the caller's topology booleans and a nullable environment variable.
+    /// Returns null with a non-null reasonCode when the pair is invalid;
+    /// returns the attestation and null reasonCode on success.
+    /// The formal client role requires a valid opaque generation; native
+    /// local fixture and unattested roles ignore the env value and always
+    /// produce null generation. Contradictory booleans (both true) fail closed.
+    /// </summary>
+    internal static BridgeRuntimeAttestation? TryCreateRuntimeAttestation(
+        bool formalClientConfigured,
+        bool nativeLocalFixture,
+        string? launchGenerationEnvironmentVariable,
+        out string? reasonCode)
+    {
+        if (formalClientConfigured && nativeLocalFixture)
+        {
+            reasonCode = "contradictory_topology_booleans";
+            return null;
+        }
+
+        if (formalClientConfigured)
+        {
+            if (string.IsNullOrEmpty(launchGenerationEnvironmentVariable) || !BridgeProtocol.IsOpaqueId(launchGenerationEnvironmentVariable))
+            {
+                reasonCode = "launch_generation_unavailable";
+                return null;
+            }
+            reasonCode = null;
+            return new BridgeRuntimeAttestation("farmhand_client", launchGenerationEnvironmentVariable);
+        }
+
+        if (nativeLocalFixture)
+        {
+            reasonCode = null;
+            return new BridgeRuntimeAttestation("native_local_fixture", null);
+        }
+
+        reasonCode = null;
+        return BridgeRuntimeAttestation.Default;
+    }
     // Legacy split-screen fixture state. The formal AI client uses a single per-client state.
     private readonly PerScreen<ScreenEmbodimentState> screenStates = new(() => new ScreenEmbodimentState());
     private readonly ScreenEmbodimentState formalState = new();
@@ -103,10 +154,7 @@ public sealed partial class ModEntry : Mod
             || !NativeChatIngressPolicy.IsSupportedRuntime(
                 Game1.version,
                 Game1.versionBuildNumber,
-                Constants.ApiVersion.ToString(),
-                host.ExpectedGameVersion,
-                host.ExpectedGameBuildNumber,
-                host.ExpectedSmapiVersion))
+                Constants.ApiVersion.ToString()))
         {
             this.nativeChatObservationInstalled = false;
             this.nativeChatStopCommandRegistered = false;
@@ -734,7 +782,15 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
-        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_refill_watering_can_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+        if (fixture.FixtureScenario == "navigation_read_only_v1")
+        {
+            // The direct Navigation gate needs an ordinary target-version world
+            // with no fixture-created player or world facts. It only publishes
+            // the two read-only operations after the native load is complete.
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_use_item_v1" or "native_place_wood_fence_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -1805,8 +1861,8 @@ public sealed partial class ModEntry : Mod
             return;
         }
 
-        FarmhandCapabilitySurface capabilitySurface = this.config.CreateFarmhandCapabilitySurface();
-        state.Executions = new ExecutionManager(this.Monitor, capabilitySurface,
+        state.CapabilityPublication = FarmhandCapabilityPublication.Initial(this.config.EnabledActionSet);
+        state.Executions = new ExecutionManager(this.Monitor, () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
             receipt => this.PublishReceipt(state, receipt),
             trace => this.PublishBodyTrace(state, trace));
         string saveId = formalClientConfigured
@@ -1831,11 +1887,28 @@ public sealed partial class ModEntry : Mod
             && new BridgeScope("stardew", saveId, worldId, playerId, companionId).IsValid;
         FarmhandActionRouter router = CreateFarmhandActionRouter(state.Executions);
 
-        state.BridgeSession = bridgeConfigValid && scopeMatchesWorld
-            ? new BridgeSession(state.Executions, router, new BridgeScope("stardew", saveId, worldId, playerId, companionId), this.config.BridgeToken, capabilitySurface)
+        string? launchGeneration = Environment.GetEnvironmentVariable(LaunchGenerationEnvironmentVariableName);
+        BridgeRuntimeAttestation? runtimeAttestation = TryCreateRuntimeAttestation(
+            formalClientConfigured,
+            nativeLocalFixture,
+            launchGeneration,
+            out string? attestationReasonCode);
+        if (runtimeAttestation is null)
+            this.Monitor.Log($"GameBuddy bridge runtime attestation unavailable: {attestationReasonCode}.", LogLevel.Warn);
+
+        state.BridgeSession = bridgeConfigValid && scopeMatchesWorld && runtimeAttestation is not null
+            ? new BridgeSession(
+                state.Executions,
+                router,
+                new BridgeScope("stardew", saveId, worldId, playerId, companionId),
+                this.config.BridgeToken,
+                () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
+                navigationSetProvider: () => DerivedDestinationSet.TryCreateCurrent("stardew", out DerivedDestinationSet? set, out _) ? set : null,
+                runtimeAttestation: runtimeAttestation)
             : null;
         state.PlayerControlReplayGuard = state.BridgeSession is null ? null : new PlayerControlReplayGuard();
         state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
+        state.LastPublishedCatalogRevision = state.CapabilityPublication.CapabilityRevision;
         if (!scopeMatchesWorld && formalClientConfigured)
             this.Monitor.Log("GameBuddy formal attachment remains closed: manifest and local save/world/Farmhand scope do not match.", LogLevel.Warn);
         else if (!scopeMatchesWorld && nativeLocalFixture)
@@ -1868,6 +1941,8 @@ public sealed partial class ModEntry : Mod
 
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
         {
+            if (registration.Kind != FarmhandOperationKind.Execution)
+                continue;
             IFarmhandActionHandler handler = registration.HandlerGroup switch
             {
                 FarmhandActionHandlerGroup.Farming => farming,
@@ -1875,7 +1950,7 @@ public sealed partial class ModEntry : Mod
                 FarmhandActionHandlerGroup.Movement => movement,
                 FarmhandActionHandlerGroup.MachinesAndAnimals => machinesAndAnimals,
                 FarmhandActionHandlerGroup.ResourceTools => resourceTools,
-                _ => throw new InvalidOperationException("Unknown Farmhand action handler group."),
+                _ => throw new InvalidOperationException("Unknown Farmhand execution action handler group."),
             };
             router.Register(registration, handler);
         }
@@ -1916,6 +1991,7 @@ public sealed partial class ModEntry : Mod
                 return;
             this.LogNativeLocalPlayerReadinessIfBlocked();
             ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
+            this.RefreshFarmhandCapabilityPublication(nativeLocalState);
             this.ObserveBridgeGeneration(nativeLocalState);
             this.DrainLocalPipeBridge(nativeLocalState);
             nativeLocalState.Executions?.Update();
@@ -1954,6 +2030,7 @@ public sealed partial class ModEntry : Mod
             return;
 
         ScreenEmbodimentState state = this.GetEmbodimentState();
+        this.RefreshFarmhandCapabilityPublication(state);
         this.ObserveBridgeGeneration(state);
         this.ObserveNativeChatPipeDeliveries(state);
         this.ObserveTerminalReceiptDeliveries(state);
@@ -2482,8 +2559,11 @@ public sealed partial class ModEntry : Mod
         {
             if (this.hostFarmhandProvisioner is null)
                 throw new InvalidOperationException("fixture_readiness_provisioner_unavailable");
-            this.hostFarmhandProvisioner.PublishFixtureReadiness(automation.FixtureScenario, automation.SaveName, state, reasonCode);
-            this.hostAutomationFixtureReadinessPublished = true;
+            this.hostAutomationFixtureReadinessPublished = this.hostFarmhandProvisioner.PublishFixtureReadiness(
+                automation.FixtureScenario,
+                automation.SaveName,
+                state,
+                reasonCode);
         }
         catch (Exception exception)
         {
@@ -3118,8 +3198,13 @@ public sealed partial class ModEntry : Mod
         if (this.TryGetAiState(out ScreenEmbodimentState state) && e.Player.UniqueMultiplayerID == Game1.player.UniqueMultiplayerID)
         {
             ExecutionManager executions = state.Executions!;
-            executions.CompleteTravelAfterWarp();
-            executions.InvalidateForLifecycle("warped");
+            NavigationWarpLifecycle.Settle(
+                executions,
+                e.Player == Game1.player,
+                e.OldLocation?.NameOrUniqueName,
+                e.NewLocation?.NameOrUniqueName,
+                (int)e.Player.Tile.X,
+                (int)e.Player.Tile.Y);
             this.PublishSemantic(state, "snapshot_changed", "warped");
         }
 
@@ -3238,6 +3323,34 @@ public sealed partial class ModEntry : Mod
         this.Monitor.Log(System.Text.Json.JsonSerializer.Serialize(receipt), LogLevel.Info);
     }
 
+    /// <summary>Game-thread only policy reload. It can only re-publish the fixed catalog's enabled subset.</summary>
+    private void RefreshFarmhandCapabilityPublication(ScreenEmbodimentState state)
+    {
+        if (state.CapabilityPublication is null || state.BridgeSession is null || state.LocalPipeBridge is null)
+            return;
+        ModConfig refreshed;
+        try { refreshed = this.Helper.ReadConfig<ModConfig>(); }
+        catch (Exception exception)
+        {
+            this.Monitor.Log($"GameBuddy ignored unreadable Farmhand action policy reload: {exception.GetType().Name}.", LogLevel.Warn);
+            return;
+        }
+        if (!refreshed.HasValidActionPolicy)
+        {
+            this.Monitor.Log("GameBuddy ignored invalid Farmhand action policy reload.", LogLevel.Warn);
+            return;
+        }
+        FarmhandCapabilityPublication next = state.CapabilityPublication.WithEnabledActions(refreshed.EnabledActionSet);
+        if (ReferenceEquals(next, state.CapabilityPublication))
+            return;
+        state.CapabilityPublication = next;
+        long generation = state.LocalPipeBridge.CurrentGeneration;
+        string correlationId = Guid.NewGuid().ToString("N");
+        if (generation != 0 && state.BridgeSession.TryCreateCatalogUpdate(generation, state.LastPublishedCatalogRevision, correlationId, out string json)
+            && state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
+            state.LastPublishedCatalogRevision = next.CapabilityRevision;
+    }
+
     private void ObserveBridgeGeneration(ScreenEmbodimentState state)
     {
         if (state.LocalPipeBridge is null || state.Executions is null)
@@ -3277,7 +3390,8 @@ public sealed partial class ModEntry : Mod
                 }
                 string? correlationId = document.RootElement.TryGetProperty("correlationId", out System.Text.Json.JsonElement correlationElement)
                     && correlationElement.ValueKind == System.Text.Json.JsonValueKind.String ? correlationElement.GetString() : null;
-                string? response = typeElement.GetString() switch
+                string? requestType = typeElement.GetString();
+                string? response = requestType switch
                 {
                     "hello" => this.HandleHello(state, inbound.Generation, inbound.Json),
                     "observe_request" => this.HandleObserve(state, inbound.Generation, inbound.Json),
@@ -3456,9 +3570,20 @@ public sealed partial class ModEntry : Mod
 
     private string? SerializeError(ScreenEmbodimentState state, string? correlationId, string reasonCode) => state.BridgeSession is not null && BridgeProtocol.TrySerialize(state.BridgeSession.CreateError(correlationId, reasonCode), out string json, out _) ? json : null;
 
-    private string? HandleHello(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeHello, BridgeHelloAck>(state,
-        BridgeProtocol.TryDeserializeInbound(json, "hello", out BridgeEnvelope<BridgeHello>? request, out _, "token") ? request : null,
-        (BridgeEnvelope<BridgeHello> request, out BridgeEnvelope<BridgeHelloAck>? response, out string reason) => state.BridgeSession!.TryAuthenticate(generation, request, out response, out reason), out _);
+    private string? HandleHello(ScreenEmbodimentState state, long generation, string json)
+    {
+        string? response = this.SerializeBridgeResponse<BridgeHello, BridgeHelloAck>(state,
+            BridgeProtocol.TryDeserializeInbound(json, "hello", out BridgeEnvelope<BridgeHello>? request, out _, "token") ? request : null,
+            (BridgeEnvelope<BridgeHello> request, out BridgeEnvelope<BridgeHelloAck>? acknowledgement, out string reason) => state.BridgeSession!.TryAuthenticate(generation, request, out acknowledgement, out reason), out _);
+        // A successful hello_ack is this generation's complete catalog
+        // publication, including a policy change that occurred while the pipe
+        // was disconnected. Do not emit the same revision as catalog_update.
+        if (response is not null)
+        {
+            state.LastPublishedCatalogRevision = state.BridgeSession!.CurrentCatalogRevision;
+        }
+        return response;
+    }
 
     private string? HandleObserve(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeObserveRequest, BridgeSnapshot>(state,
         BridgeProtocol.TryDeserializeInbound(json, "observe_request", out BridgeEnvelope<BridgeObserveRequest>? request, out _) ? request : null,
@@ -3637,6 +3762,7 @@ public sealed partial class ModEntry : Mod
     private void ClearState(ScreenEmbodimentState state, string reasonCode)
     {
         state.Executions?.InvalidateForLifecycle(reasonCode);
+        state.BridgeSession?.ClearNavigationForWorldUnload();
         state.LocalPipeBridge?.Dispose();
         state.LocalPipeBridge = null;
         state.BridgeSession = null;
@@ -3683,6 +3809,8 @@ public sealed partial class ModEntry : Mod
 
     private sealed class ScreenEmbodimentState
     {
+        internal FarmhandCapabilityPublication? CapabilityPublication { get; set; }
+        internal long LastPublishedCatalogRevision { get; set; }
         internal ExecutionManager? Executions { get; set; }
         internal BridgeSession? BridgeSession { get; set; }
         internal LocalPipeBridge? LocalPipeBridge { get; set; }

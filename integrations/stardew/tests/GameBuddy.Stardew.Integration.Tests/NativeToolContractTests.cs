@@ -31,8 +31,8 @@ public sealed class NativeToolContractTests
     [Fact]
     public void ChopTreeSource_WhenWorldNotReady_ReturnsRejectedReceipt()
     {
-        var surface = FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(new[] { "chop_tree_source" }));
-        var executions = new ExecutionManager(new DummyMonitor(), surface);
+        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(new[] { "chop_tree_source" }));
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
         var handler = new ResourceToolActionHandler(executions);
 
         var request = new BridgeExecutionRequest("req_chop_1", "idemp_chop_1", "chop_tree_source", new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "target_1" }, 1, 5000);

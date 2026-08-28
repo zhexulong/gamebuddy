@@ -1,4 +1,5 @@
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Navigation;
 using Microsoft.Xna.Framework;
 
 namespace GameBuddy.Stardew;
@@ -226,6 +227,25 @@ internal sealed record LocalAnimalProductCollectionSpec(
     long DeadlineMs,
     ExecutionState? DeferredTerminalState = null,
     string? DeferredTerminalReason = null);
+
+internal enum LocalNavigatePhase { Approaching, ApproachReleased, AwaitingWarp }
+
+/// <summary>
+/// Manager-private persistent Navigation execution. One request owns exactly one
+/// direct ordinary warp leg under one receipt lineage; the coordinator re-resolves
+/// current destination/source facts and the manager remains the only receipt/ledger
+/// owner. Route/tile/phase detail is never projected to a Host-facing surface.
+/// </summary>
+internal sealed record LocalNavigateSpec(
+    string ExecutionId,
+    string RequestId,
+    NavigationDestinationSelector Selector,
+    string CanonicalDestinationIdentity,
+    string ExpectedSourceLocation,
+    NavigationTransitionLeg Leg,
+    Vector2 ApproachTargetTile,
+    long DeadlineMs,
+    LocalNavigatePhase Phase);
 
 internal sealed record LocalItemUseSpec(
     string ExecutionId,

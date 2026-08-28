@@ -52,4 +52,35 @@ public sealed class BridgeProtocolSerializationTests
         roundTrip!.Payload.RequestId.Should().Be("req_100");
         roundTrip.Payload.IdempotencyKey.Should().Be("idemp_100");
     }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"nodeRef\":\"nr1_node_01\"}")]
+    [InlineData("{\"cursor\":\"wc1_cursor_01\"}")]
+    public void TryDeserializeNavigationReadRequest_ExactInspectPayload_DeserializesCorrectly(string argsJson)
+    {
+        string json = "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"navigation_read_request\",\"payload\":{\"operation\":\"inspect_world_map\",\"args\":" + argsJson + "}}";
+
+        bool deserialized = BridgeProtocol.TryDeserializeNavigationReadRequest(json, out var envelope, out string reasonCode);
+
+        deserialized.Should().BeTrue();
+        reasonCode.Should().Be("accepted");
+        envelope!.Payload.Operation.Should().Be("inspect_world_map");
+    }
+
+    [Theory]
+    [InlineData("{\"operation\":\"inspect_world_map\",\"args\":{\"nodeRef\":\"nr1_node_01\",\"cursor\":\"wc1_cursor_01\"}}")]
+    [InlineData("{\"operation\":\"inspect_world_map\",\"args\":{\"pageSize\":20}}")]
+    [InlineData("{\"operation\":\"find_destination\",\"args\":{\"query\":\"mine\"}}")]
+    [InlineData("{\"operation\":\"unknown\",\"args\":{}}")]
+    public void TryDeserializeNavigationReadRequest_NonInspectOrNonExactPayload_FailsClosed(string payloadJson)
+    {
+        string json = "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"navigation_read_request\",\"payload\":" + payloadJson + "}";
+
+        bool deserialized = BridgeProtocol.TryDeserializeNavigationReadRequest(json, out var envelope, out string reasonCode);
+
+        deserialized.Should().BeFalse();
+        reasonCode.Should().Be("invalid_navigation_read_request");
+        envelope.Should().BeNull();
+    }
 }

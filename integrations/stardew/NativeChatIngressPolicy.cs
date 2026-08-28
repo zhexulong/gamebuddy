@@ -15,20 +15,19 @@ internal enum NativeChatIngressTextClassification
 
 internal static class NativeChatIngressPolicy
 {
-    // This native-chat observation is available only through the separately
-    // authenticated native AI Farmhand topology. It deliberately inherits the
-    // exact version triple already provisioned by that topology rather than
-    // inventing a second target-version constant set.
-    internal static bool IsSupportedRuntime(
-        string gameVersion,
-        int gameBuildNumber,
-        string smapiVersion,
-        string expectedGameVersion,
-        int expectedGameBuildNumber,
-        string expectedSmapiVersion) =>
-        gameVersion == expectedGameVersion
-        && gameBuildNumber == expectedGameBuildNumber
-        && smapiVersion == expectedSmapiVersion;
+    // Native-chat observation pins an exact supported run-time so the pinned
+    // Harmony targets and parameter names stay stable. The supported version
+    // triple is a policy-owned invariant below, independent of any ordinary
+    // Farmhand attachment versioning; a mismatch disables only native chat
+    // ingress/control and never suppresses Farmhand advertisement/attachment.
+    internal const string SupportedGameVersion = "1.6.15";
+    internal const int SupportedGameBuildNumber = 24356;
+    internal const string SupportedSmapiVersion = "4.5.2";
+
+    internal static bool IsSupportedRuntime(string gameVersion, int gameBuildNumber, string smapiVersion) =>
+        gameVersion == SupportedGameVersion
+        && gameBuildNumber == SupportedGameBuildNumber
+        && smapiVersion == SupportedSmapiVersion;
 
     /// <summary>
     /// Only a non-command text value already submitted to the target game's

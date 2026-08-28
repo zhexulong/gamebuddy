@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <RootNamespace>GameBuddy.Stardew.Core</RootNamespace>
+    <AssemblyName>GameBuddy.Stardew.Core</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="GameBuddy.Stardew" />
+    <InternalsVisibleTo Include="GameBuddy.Stardew.Core.Tests" />
+    <InternalsVisibleTo Include="GameBuddy.Stardew.Integration.Tests" />
+  </ItemGroup>
+</Project>

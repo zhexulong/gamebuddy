@@ -1,0 +1,25 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@gamebuddy/game-action-devkit':
+        specifier: file:inputs/devkit/game-action-devkit-0.1.0.tgz
+        version: file:inputs/devkit/game-action-devkit-0.1.0.tgz
+
+packages:
+
+  '@gamebuddy/game-action-devkit@file:inputs/devkit/game-action-devkit-0.1.0.tgz':
+    resolution: {integrity: sha512-riXBkY+3VVH4Qyobn3fvTTxo7FJ6o/3+BOWF+LWoaCoJj3Ovqs/Gn5eBhA6or76QrYWfJkbzOVCCaOexHvUTQw==, tarball: file:inputs/devkit/game-action-devkit-0.1.0.tgz}
+    version: 0.1.0
+    engines: {node: '>=24.13.0 <25', pnpm: '>=11.1.3 <12'}
+    hasBin: true
+
+snapshots:
+
+  '@gamebuddy/game-action-devkit@file:inputs/devkit/game-action-devkit-0.1.0.tgz': {}

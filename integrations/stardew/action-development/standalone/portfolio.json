@@ -1,0 +1,22 @@
+{
+  "schema": "gamebuddy-stardew-action-portfolio/v1",
+  "entries": [
+    {
+      "id": "equip-tool-contract-check",
+      "kind": "action-check",
+      "actionId": "equip_tool"
+    },
+    {
+      "id": "scaffold-contract",
+      "kind": "scaffold-check"
+    },
+    {
+      "id": "action-surface-check",
+      "kind": "action-surface-check"
+    },
+    {
+      "id": "package-deterministic-tests",
+      "kind": "package-tests"
+    }
+  ]
+}

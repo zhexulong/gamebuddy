@@ -14,11 +14,12 @@ internal static class CompanionPresentationPolicyTests
 
         const long generation = 7;
         BridgeScope scope = new("stardew", "save_01", "world_01", "player_01", "companion_01");
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
         BridgeSession session = new(
-            new ExecutionManager(new SilentMonitor(), FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(StringComparer.Ordinal))),
+            new ExecutionManager(new SilentMonitor(), () => publication),
             scope,
             "a".PadRight(32, 'a'),
-            FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(StringComparer.Ordinal)),
+            () => publication,
             () => "en-US");
         BridgeEnvelope<BridgeHello> hello = Hello(scope, "hello_7", "a".PadRight(32, 'a'));
         Assert(session.TryAuthenticate(generation, hello, out BridgeEnvelope<BridgeHelloAck>? acknowledgement, out string authenticationReason)
@@ -186,11 +187,12 @@ internal static class CompanionPresentationPolicyTests
         Assert(!session.TryPresentCompanionText(reauthenticatedGeneration, unavailable with { CorrelationId = "message_12", MessageId = "message_12" }, _ => { unavailableSends++; return true; }, out _, out string unavailableReauthReplayReason)
             && unavailableReauthReplayReason == "companion_presentation_target_unavailable" && unavailableSends == 1, "unavailable target replay after reauthentication must preserve failure without a second native send.");
 
+        FarmhandCapabilityPublication persistentPublication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
         BridgeSession persistent = new(
-            new ExecutionManager(new SilentMonitor(), FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(StringComparer.Ordinal))),
+            new ExecutionManager(new SilentMonitor(), () => persistentPublication),
             scope,
             "b".PadRight(32, 'b'),
-            FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(StringComparer.Ordinal)),
+            () => persistentPublication,
             () => "en-US");
         Authenticate(persistent, 1, scope, "b".PadRight(32, 'b'));
         BridgeEnvelope<BridgeCompanionPresentationRequest> persistentRequest = PresentationEnvelope(scope, "persistent_message_01", "persistent_expression_01", "persistent_source_01", "persistent", "en-US", 0, 0);
@@ -200,12 +202,16 @@ internal static class CompanionPresentationPolicyTests
             && subsequentReason == "accepted", "a later valid bridge operation must remain authorized while its authenticated generation and scope stay live.");
     }
 
-    private static BridgeSession CreateSession(BridgeScope scope, Func<string> locale) => new(
-        new ExecutionManager(new SilentMonitor(), FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(StringComparer.Ordinal))),
-        scope,
-        "a".PadRight(32, 'a'),
-        FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(StringComparer.Ordinal)),
-        locale);
+    private static BridgeSession CreateSession(BridgeScope scope, Func<string> locale)
+    {
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
+        return new(
+            new ExecutionManager(new SilentMonitor(), () => publication),
+            scope,
+            "a".PadRight(32, 'a'),
+            () => publication,
+            locale);
+    }
 
     private static void Authenticate(BridgeSession session, long generation, BridgeScope scope, string token = "")
     {

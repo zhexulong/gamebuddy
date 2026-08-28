@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>FarmhandCapabilityPublicationProjection.Contract</AssemblyName>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GamePath Condition="'$(GamePath)' == ''">$(GAMEBUDDY_STARDEW_GAME_PATH)</GamePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="FarmhandCapabilityPublicationProjectionProgram.cs" />
+    <Compile Include="FarmhandCapabilityPublicationProjectionTests.cs" />
+    <Compile Include="FarmhandCapabilityPublicationProjectionMetadata.cs" />
+  </ItemGroup>
+</Project>

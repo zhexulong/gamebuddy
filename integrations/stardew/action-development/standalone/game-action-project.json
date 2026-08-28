@@ -1,0 +1,7 @@
+{
+  "schema": "gamebuddy-action-project/v1",
+  "gameId": "stardew",
+  "projectVersion": 1,
+  "adapter": "./src/project-adapter.mjs",
+  "toolInventory": "./tool-inventory.json"
+}

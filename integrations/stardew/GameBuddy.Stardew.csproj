@@ -9,10 +9,12 @@
     <EnableHarmony>true</EnableHarmony>
     <EnableModDeploy>false</EnableModDeploy>
     <EnableModZip>false</EnableModZip>
+    <BundleExtraAssemblies>ThirdParty</BundleExtraAssemblies>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" PrivateAssets="all" />
+    <PackageReference Include="Raffinert.FuzzySharp" Version="5.0.3" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,6 +24,7 @@
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
     <Compile Remove="src\Core\**\*.cs" />
+    <Compile Remove="action-development\**\*.cs" />
   </ItemGroup>
 
 

@@ -31,6 +31,7 @@ internal sealed class HostFarmhandProvisioner
     private bool pendingSaveObserved;
     private bool pendingSaveWriteFailed;
     private bool pendingSaveTimedOut;
+    private bool quarantined;
     private Cabin? pendingCreatedCabin;
     private long pendingCreatedFarmhandId;
 
@@ -43,18 +44,27 @@ internal sealed class HostFarmhandProvisioner
         this.allowNativeAutomationWorldReady = allowNativeAutomationWorldReady;
         this.sessionNonce = Guid.NewGuid().ToString("N");
         this.nextAdvertisementAtMs = 0;
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.AdvertisementFileName);
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.ResponseFileName);
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.FixtureReadinessFileName);
+        bool initialAdvertisementCleanupSucceeded = this.DeleteIfOwned(FarmhandProvisioningProtocol.AdvertisementFileName);
+        bool initialManifestCleanupSucceeded = this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
+        bool initialRequestCleanupSucceeded = this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
+        bool initialResponseCleanupSucceeded = this.DeleteIfOwned(FarmhandProvisioningProtocol.ResponseFileName);
+        bool initialFixtureReadinessCleanupSucceeded = this.DeleteIfOwned(FarmhandProvisioningProtocol.FixtureReadinessFileName);
+        bool initialCleanupSucceeded = initialAdvertisementCleanupSucceeded
+            && initialManifestCleanupSucceeded
+            && initialRequestCleanupSucceeded
+            && initialResponseCleanupSucceeded
+            && initialFixtureReadinessCleanupSucceeded;
+        if (!initialCleanupSucceeded)
+            this.EnterQuarantine("publication_cleanup_failed");
     }
 
     internal bool IsAwaitingSave => this.pendingSaveRequest is not null && !this.pendingSaveObserved;
 
     /// <summary>Publishes only Host-owned fixture readiness diagnostics.</summary>
-    internal void PublishFixtureReadiness(string scenario, string saveName, string state, string reasonCode)
+    internal bool PublishFixtureReadiness(string scenario, string saveName, string state, string reasonCode)
     {
+        if (this.quarantined)
+            return false;
         if (scenario.Length == 0 || saveName.Length == 0 || state is not ("fixture_ready" or "fixture_blocked") || !BridgeProtocol.IsReasonCode(reasonCode))
             throw new InvalidOperationException("fixture_readiness_invalid");
         FixtureReadinessReport unsigned = new()
@@ -69,7 +79,10 @@ internal sealed class HostFarmhandProvisioner
             SessionNonce = this.sessionNonce,
         };
         FixtureReadinessReport signed = unsigned with { Signature = FarmhandProvisioningProtocol.Sign(unsigned, this.config.SessionToken) };
-        this.WriteJson(FarmhandProvisioningProtocol.FixtureReadinessFileName, signed);
+        if (this.WriteJson(FarmhandProvisioningProtocol.FixtureReadinessFileName, signed))
+            return true;
+        this.EnterQuarantine("fixture_readiness_publication_failed");
+        return false;
     }
 
     internal static HostFarmhandProvisioner? TryStart(IModHelper helper, IMonitor monitor, HostFarmhandProvisioningConfig? config, bool allowNativeAutomationWorldReady = false)
@@ -85,15 +98,11 @@ internal sealed class HostFarmhandProvisioner
 
     internal void Update()
     {
+        if (this.quarantined)
+            return;
         if (!this.IsWorldReady || !Game1.IsMasterGame)
         {
             this.RemovePublishedFiles();
-            return;
-        }
-        if (Game1.version != this.config.ExpectedGameVersion || Game1.versionBuildNumber != this.config.ExpectedGameBuildNumber || Constants.ApiVersion.ToString() != this.config.ExpectedSmapiVersion)
-        {
-            this.RemovePublishedFiles();
-            this.monitor.Log("GameBuddy HostFarmhandProvisioner failed closed: target game/SMAPI version mismatch.", LogLevel.Error);
             return;
         }
 
@@ -146,11 +155,14 @@ internal sealed class HostFarmhandProvisioner
             this.nextAdvertisementAtMs = now + 1_000;
         }
 
-        this.ProcessRequest(now);
+        if (!this.quarantined)
+            this.ProcessRequest(now);
     }
 
     internal void OnReturnedToTitle()
     {
+        if (this.quarantined)
+            return;
         this.pendingSaveRequest = null;
         this.pendingBinding = null;
         if (!this.pendingSaveObserved)
@@ -167,9 +179,16 @@ internal sealed class HostFarmhandProvisioner
 
     internal void OnSaving()
     {
-        if (!Context.IsWorldReady || !Game1.IsMasterGame || this.pendingSaveRequest is null || this.pendingSaveTimedOut)
+        if (this.quarantined || !Context.IsWorldReady || !Game1.IsMasterGame || this.pendingSaveRequest is null || this.pendingSaveTimedOut)
             return;
         this.pendingSaveObserved = true;
+        this.PersistPendingBinding();
+    }
+
+    private void PersistPendingBinding()
+    {
+        FarmhandAttachmentRequest request = this.pendingSaveRequest
+            ?? throw new InvalidOperationException("pending_save_request_unavailable");
         try
         {
             FarmhandBindingStore bindings = this.ReadBindings();
@@ -178,8 +197,8 @@ internal sealed class HostFarmhandProvisioner
                 bindings.Bindings.RemoveAll(binding => binding.CompanionId == this.pendingBinding.CompanionId && binding.SaveId == this.pendingBinding.SaveId && binding.WorldId == this.pendingBinding.WorldId);
                 bindings.Bindings.Add(this.pendingBinding);
             }
-            bindings.ConsumedRequestIds.RemoveAll(requestId => requestId == this.pendingSaveRequest.RequestId);
-            bindings.ConsumedRequestIds.Add(this.pendingSaveRequest.RequestId);
+            bindings.ConsumedRequestIds.RemoveAll(requestId => requestId == request.RequestId);
+            bindings.ConsumedRequestIds.Add(request.RequestId);
             this.helper.Data.WriteSaveData(FarmhandProvisioningProtocol.SaveDataKey, bindings);
         }
         catch (Exception exception)
@@ -190,20 +209,21 @@ internal sealed class HostFarmhandProvisioner
             // remove a newly-created Farmhand now so a failed mod-data write
             // cannot leave an unbound identity in the native save.
             this.RollbackCreatedFarmhand();
-            this.monitor.Log($"GameBuddy could not stage Farmhand binding data during the native save: {exception.GetType().Name}; manifest issuance is disabled for this request.", LogLevel.Error);
+            this.monitor.Log($"GameBuddy could not stage Farmhand binding data during the native save: {exception.GetType().Name}; provisioning is quarantined.", LogLevel.Error);
+            this.EnterQuarantine("save_persistence_failed");
         }
     }
 
     internal void OnSaved()
     {
-        if (!Context.IsWorldReady || !Game1.IsMasterGame || !this.pendingSaveObserved)
+        if (this.quarantined || !Context.IsWorldReady || !Game1.IsMasterGame || !this.pendingSaveObserved)
             return;
         this.CompletePendingSave();
     }
 
     private void CompletePendingSave()
     {
-        if (this.pendingSaveRequest is not { } request)
+        if (this.quarantined || this.pendingSaveRequest is not { } request)
             return;
 
         bool saveWriteFailed = this.pendingSaveWriteFailed;
@@ -237,14 +257,25 @@ internal sealed class HostFarmhandProvisioner
                     }
                 }
 
-                result = readbackValid
-                    ? this.IssueManifestForPersistedBinding(request, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), bindings, out manifestPath)
-                    : new("rejected", "binding_readback_mismatch");
+                if (readbackValid)
+                {
+                    result = this.IssueManifestForPersistedBinding(request, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), bindings, out manifestPath);
+                }
+                else
+                {
+                    this.RemoveAdvertisementAndManifestOrQuarantine();
+                    result = this.quarantined
+                        ? new("rejected", "publication_cleanup_failed")
+                        : new("rejected", "binding_readback_mismatch");
+                }
             }
             catch (InvalidOperationException exception)
             {
                 this.monitor.Log($"GameBuddy could not read persisted Farmhand bindings after the native save: {exception.GetType().Name}; manifest issuance is disabled.", LogLevel.Error);
-                result = new("rejected", "binding_readback_unavailable");
+                this.RemoveAdvertisementAndManifestOrQuarantine();
+                result = this.quarantined
+                    ? new("rejected", "publication_cleanup_failed")
+                    : new("rejected", "binding_readback_unavailable");
             }
             catch (Exception exception)
             {
@@ -286,23 +317,28 @@ internal sealed class HostFarmhandProvisioner
 
     private void PublishAdvertisement(long now)
     {
+        if (this.quarantined)
+            return;
         string state = this.GetHostState();
-        IReadOnlyList<FarmhandCabinFact> cabins = Array.Empty<FarmhandCabinFact>();
-        if (state == "ready")
+        if (state != "ready" || !NativeLanEndpoint.TryRead(out string endpoint))
         {
-            try
-            {
-                FarmhandBindingStore bindings = this.ReadBindings();
-                cabins = this.ReadCabins(bindings);
-            }
-            catch (Exception exception)
-            {
-                state = "host_not_ready";
-                this.monitor.Log($"GameBuddy HostFarmhandProvisioner withheld the ready advertisement because binding facts were unavailable: {exception.GetType().Name}/{exception.Message}/{exception.StackTrace?.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "no_stack"}.", LogLevel.Error);
-            }
+            this.RemoveAdvertisementAndManifestOrQuarantine();
+            return;
         }
-        if (state != "ready")
-            this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
+
+        IReadOnlyList<FarmhandCabinFact> cabins;
+        try
+        {
+            FarmhandBindingStore bindings = this.ReadBindings();
+            cabins = this.ReadCabins(bindings);
+        }
+        catch (Exception exception)
+        {
+            this.RemoveAdvertisementAndManifestOrQuarantine();
+            this.monitor.Log($"GameBuddy HostFarmhandProvisioner withheld the ready advertisement because binding facts were unavailable: {exception.GetType().Name}/{exception.Message}/{exception.StackTrace?.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "no_stack"}.", LogLevel.Error);
+            return;
+        }
+
         var advertisement = new FarmhandSessionAdvertisement
         {
             SchemaVersion = FarmhandProvisioningProtocol.Version,
@@ -312,7 +348,7 @@ internal sealed class HostFarmhandProvisioner
             GameBuildNumber = Game1.versionBuildNumber,
             SmapiVersion = Constants.ApiVersion.ToString(),
             MultiplayerProtocol = Multiplayer.protocolVersion,
-            Endpoint = this.config.Endpoint,
+            Endpoint = endpoint,
             SaveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture),
             WorldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture),
             HostPlayerId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -323,13 +359,19 @@ internal sealed class HostFarmhandProvisioner
             Cabins = cabins,
         };
         advertisement = advertisement with { Signature = FarmhandProvisioningProtocol.Sign(advertisement, this.config.SessionToken) };
-        this.WriteJson(FarmhandProvisioningProtocol.AdvertisementFileName, advertisement);
-        this.lastAdvertisement = advertisement;
+        if (this.WriteJson(FarmhandProvisioningProtocol.AdvertisementFileName, advertisement))
+        {
+            this.lastAdvertisement = advertisement;
+        }
+        else
+        {
+            this.EnterQuarantine("advertisement_publication_failed");
+        }
     }
 
     private string GetHostState()
     {
-        if (Game1.version != this.config.ExpectedGameVersion || Game1.versionBuildNumber != this.config.ExpectedGameBuildNumber || Constants.ApiVersion.ToString() != this.config.ExpectedSmapiVersion || Multiplayer.protocolVersion.Length == 0)
+        if (Multiplayer.protocolVersion.Length == 0)
             return "protocol_mismatch";
         // SaveGame.Load can reach native playingGameMode before SMAPI has
         // established Context.IsWorldReady. Do not read save data or cabin
@@ -338,9 +380,7 @@ internal sealed class HostFarmhandProvisioner
             return "host_not_ready";
         if (this.pendingSaveTimedOut || this.pendingSaveRequest is not null || Game1.game1.IsSaving)
             return "host_not_ready";
-        if (!this.config.Endpoint.Contains(':', StringComparison.Ordinal))
-            return "host_not_ready";
-        if (!Game1.options.enableServer || Game1.server is null)
+        if (!Game1.options.enableServer || !NativeLanEndpoint.TryRead(out _))
             return "host_not_ready";
         return "ready";
     }
@@ -371,6 +411,8 @@ internal sealed class HostFarmhandProvisioner
 
     private void ProcessRequest(long now)
     {
+        if (this.quarantined)
+            return;
         string path = this.PathFor(FarmhandProvisioningProtocol.RequestFileName);
         if (!File.Exists(path))
             return;
@@ -378,26 +420,36 @@ internal sealed class HostFarmhandProvisioner
         FarmhandAttachmentRequest? request;
         if (!this.TryReadAttachmentRequest(path, out request))
         {
-            this.WriteResponse(new FarmhandAttachmentResponse
+            if (!this.WriteResponse(new FarmhandAttachmentResponse
             {
                 SchemaVersion = FarmhandProvisioningProtocol.Version,
                 RequestId = string.Empty,
                 State = "rejected",
                 ReasonCode = "invalid_request_json",
                 UpdatedAtUnixMs = now,
-            });
-            this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
+            }))
+                return;
+            if (!this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName))
+                this.EnterQuarantine("publication_cleanup_failed");
             this.monitor.Log("GameBuddy rejected an unreadable Stardew attachment request after bounded read retries.", LogLevel.Warn);
             return;
         }
 
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
+        if (!this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName))
+        {
+            this.EnterQuarantine("publication_cleanup_failed");
+            return;
+        }
         if (request is not null && request.RequestId == this.lastRequestId && this.lastResponse is not null)
         {
             this.WriteResponse(this.lastResponse with { UpdatedAtUnixMs = now });
             return;
         }
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
+        if (!this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName))
+        {
+            this.EnterQuarantine("publication_cleanup_failed");
+            return;
+        }
         FarmhandProvisioningResult result;
         string? manifestPath = null;
         try
@@ -439,8 +491,14 @@ internal sealed class HostFarmhandProvisioner
             return new("rejected", "request_replayed");
         if (this.pendingSaveRequest is not null)
             return new("rejected", "save_persistence_pending");
-        if (this.GetHostState() != "ready")
-            return new("rejected", this.GetHostState());
+        string hostState = this.GetHostState();
+        if (hostState != "ready")
+        {
+            this.RemoveAdvertisementAndManifestOrQuarantine();
+            return this.quarantined
+                ? new("rejected", "publication_cleanup_failed")
+                : new("rejected", hostState);
+        }
         if (!this.config.AuthorizedCompanionIds.Contains(request.CompanionId, StringComparer.Ordinal))
             return new("rejected", "companion_profile_not_authorized");
 
@@ -574,13 +632,27 @@ internal sealed class HostFarmhandProvisioner
     private FarmhandProvisioningResult IssueManifestForPersistedBinding(FarmhandAttachmentRequest request, long now, FarmhandBindingStore bindings, out string? manifestPath)
     {
         manifestPath = null;
+        if (this.quarantined)
+            return new("uncertain", "manifest_publication_failed");
         string saveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
         string worldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
         FarmhandBinding? binding = bindings.Bindings.FirstOrDefault(candidate => candidate.CompanionId == request.CompanionId && candidate.SaveId == saveId && candidate.WorldId == worldId && candidate.CabinId == request.CabinId);
         Farmer? farmhand = binding is null ? null : Game1.GetPlayer(binding.FarmhandId, onlyOnline: false);
         Cabin? cabin = this.FindCabin(request.CabinId);
         if (binding is null || farmhand is null || cabin?.OwnerId != binding.FarmhandId || !farmhand.isCustomized.Value)
-            return new("rejected", "binding_not_persisted");
+        {
+            this.RemoveAdvertisementAndManifestOrQuarantine();
+            return this.quarantined
+                ? new("rejected", "publication_cleanup_failed")
+                : new("rejected", "binding_not_persisted");
+        }
+        if (!NativeLanEndpoint.TryRead(out string endpoint))
+        {
+            this.RemoveAdvertisementAndManifestOrQuarantine();
+            return this.quarantined
+                ? new("rejected", "publication_cleanup_failed")
+                : new("rejected", "native_lan_endpoint_unavailable");
+        }
 
         var manifest = new FarmhandJoinManifest
         {
@@ -591,7 +663,7 @@ internal sealed class HostFarmhandProvisioner
             GameBuildNumber = Game1.versionBuildNumber,
             SmapiVersion = Constants.ApiVersion.ToString(),
             MultiplayerProtocol = Multiplayer.protocolVersion,
-            Endpoint = this.config.Endpoint,
+            Endpoint = endpoint,
             RequestId = request.RequestId,
             SaveId = saveId,
             WorldId = worldId,
@@ -603,10 +675,17 @@ internal sealed class HostFarmhandProvisioner
             ExpiresAtUnixMs = now + this.config.ManifestLifetimeSeconds * 1_000L,
         };
         manifest = manifest with { Signature = FarmhandProvisioningProtocol.Sign(manifest, this.config.SessionToken) };
-        this.WriteJson(FarmhandProvisioningProtocol.ManifestFileName, manifest);
+        if (!this.WriteJson(FarmhandProvisioningProtocol.ManifestFileName, manifest))
+            return this.ManifestPublicationFailed(farmhand.UniqueMultiplayerID);
         manifestPath = FarmhandProvisioningProtocol.ManifestFileName;
         this.monitor.Log($"GameBuddy issued a signed Farmhand join manifest for companion profile '{request.CompanionId}'.", LogLevel.Info);
         return new("ready", "manifest_issued", farmhand.UniqueMultiplayerID);
+    }
+
+    private FarmhandProvisioningResult ManifestPublicationFailed(long farmhandId)
+    {
+        this.EnterQuarantine("manifest_publication_failed");
+        return new("uncertain", "manifest_publication_failed", farmhandId);
     }
 
     private bool IsValidRequest(FarmhandAttachmentRequest request, long now)
@@ -733,13 +812,18 @@ internal sealed class HostFarmhandProvisioner
         return false;
     }
 
-    private void WriteResponse(FarmhandAttachmentResponse response)
+    private bool WriteResponse(FarmhandAttachmentResponse response)
     {
+        if (this.quarantined)
+            return false;
         FarmhandAttachmentResponse signed = response with { Signature = FarmhandProvisioningProtocol.Sign(response, this.config.SessionToken) };
-        this.WriteJson(FarmhandProvisioningProtocol.ResponseFileName, signed);
+        if (this.WriteJson(FarmhandProvisioningProtocol.ResponseFileName, signed))
+            return true;
+        this.EnterQuarantine("response_publication_failed");
+        return false;
     }
 
-    private void WriteJson<T>(string fileName, T value)
+    private bool WriteJson<T>(string fileName, T value)
     {
         string path = this.PathFor(fileName);
         string temporary = $"{path}.{Guid.NewGuid():N}.tmp";
@@ -769,8 +853,19 @@ internal sealed class HostFarmhandProvisioner
             if (lastException is not null)
             {
                 this.monitor.Log($"GameBuddy could not publish provisioning file '{fileName}' after retries: {lastException.GetType().Name}.", LogLevel.Trace);
-                return;
+                return false;
             }
+            return true;
+        }
+        catch (IOException exception)
+        {
+            this.monitor.Log($"GameBuddy could not publish provisioning file '{fileName}': {exception.GetType().Name}.", LogLevel.Trace);
+            return false;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            this.monitor.Log($"GameBuddy could not publish provisioning file '{fileName}': {exception.GetType().Name}.", LogLevel.Trace);
+            return false;
         }
         finally
         {
@@ -780,26 +875,77 @@ internal sealed class HostFarmhandProvisioner
         }
     }
 
-    private void RemoveAdvertisement()
+    private bool RemoveAdvertisement()
     {
+        bool removed = true;
         if (this.lastAdvertisement is not null || File.Exists(this.PathFor(FarmhandProvisioningProtocol.AdvertisementFileName)))
-            this.DeleteIfOwned(FarmhandProvisioningProtocol.AdvertisementFileName);
+            removed = this.DeleteIfOwned(FarmhandProvisioningProtocol.AdvertisementFileName);
         this.lastAdvertisement = null;
+        return removed;
+    }
+
+    private bool RemoveAdvertisementAndManifestOrQuarantine()
+    {
+        bool advertisementRemoved = this.RemoveAdvertisement();
+        bool manifestRemoved = this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
+        bool removed = advertisementRemoved && manifestRemoved;
+        if (!removed)
+            this.EnterQuarantine("publication_cleanup_failed");
+        return removed;
     }
 
     private void RemovePublishedFiles()
     {
-        this.RemoveAdvertisement();
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.ResponseFileName);
-        this.DeleteIfOwned(FarmhandProvisioningProtocol.FixtureReadinessFileName);
+        bool advertisementRemoved = this.RemoveAdvertisement();
+        bool manifestRemoved = this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
+        bool requestRemoved = this.DeleteIfOwned(FarmhandProvisioningProtocol.RequestFileName);
+        bool responseRemoved = this.DeleteIfOwned(FarmhandProvisioningProtocol.ResponseFileName);
+        bool fixtureReadinessRemoved = this.DeleteIfOwned(FarmhandProvisioningProtocol.FixtureReadinessFileName);
+        if (!advertisementRemoved || !manifestRemoved || !requestRemoved || !responseRemoved || !fixtureReadinessRemoved)
+            this.EnterQuarantine("publication_cleanup_failed");
     }
 
-    private void DeleteIfOwned(string fileName)
+    private void EnterQuarantine(string reasonCode)
     {
-        try { File.Delete(this.PathFor(fileName)); }
-        catch (IOException exception) { this.monitor.Log($"GameBuddy could not remove stale provisioning file: {exception.GetType().Name}.", LogLevel.Trace); }
+        if (this.quarantined)
+            return;
+        this.quarantined = true;
+        this.pendingSaveRequest = null;
+        this.pendingBinding = null;
+        this.pendingSaveObserved = false;
+        this.pendingSaveWriteFailed = false;
+        this.pendingSaveTimedOut = false;
+        this.RollbackCreatedFarmhand();
+        this.lastAdvertisement = null;
+        this.lastRequestId = null;
+        this.lastResponse = new FarmhandAttachmentResponse
+        {
+            SchemaVersion = FarmhandProvisioningProtocol.Version,
+            RequestId = string.Empty,
+            State = "rejected",
+            ReasonCode = reasonCode,
+            UpdatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        };
+        this.monitor.Log($"GameBuddy HostFarmhandProvisioner entered terminal quarantine: {reasonCode}; retry requires a new provisioning session.", LogLevel.Error);
+    }
+
+    private bool DeleteIfOwned(string fileName)
+    {
+        try
+        {
+            File.Delete(this.PathFor(fileName));
+            return true;
+        }
+        catch (IOException exception)
+        {
+            this.monitor.Log($"GameBuddy could not remove stale provisioning file: {exception.GetType().Name}.", LogLevel.Trace);
+            return false;
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            this.monitor.Log($"GameBuddy could not remove stale provisioning file: {exception.GetType().Name}.", LogLevel.Trace);
+            return false;
+        }
     }
 
     private string PathFor(string fileName) => Path.Combine(this.sessionDirectory, fileName);

@@ -78,6 +78,8 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  packages/game-action-devkit: {}
+
   packages/voice-protocol:
     devDependencies:
       '@types/node':

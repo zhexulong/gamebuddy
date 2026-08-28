@@ -1,0 +1,18 @@
+{
+  "schema": "gamebuddy-action-work-brief/v1",
+  "gameId": "stardew",
+  "actionId": "equip_tool",
+  "contractVersion": 1,
+  "status": "frozen",
+  "effect": "mutation",
+  "claimScope": "Static development brief only: it validates the package-local descriptor mechanics for equip_tool and grants no runtime, catalog, fixture, bridge, or live-mutation capability.",
+  "ownedPaths": [
+    "integrations/stardew/action-development/briefs/equip_tool.static.json",
+    "integrations/stardew/action-development/descriptors/equip_tool.static.json",
+    "integrations/stardew/action-development/tests/equip_tool-static.test.mjs"
+  ],
+  "sharedHubs": [],
+  "checks": [
+    "pnpm --dir integrations/stardew/action-development test"
+  ]
+}

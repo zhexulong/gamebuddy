@@ -359,6 +359,7 @@ export function visibleActionsFromModCatalog(
         familyId: registration.familyId,
         identityVersion: registration.identityVersion,
         lifecycle: registration.lifecycle,
+        kind: registration.kind,
       }),
     );
   }

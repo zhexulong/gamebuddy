@@ -14,7 +14,9 @@ public sealed class FarmhandActionRouterTests
         private readonly Dictionary<string, LocalExecutionReceipt> receipts = new(StringComparer.Ordinal);
         public long CurrentRevision { get; set; } = 1;
         public bool IsBodyBusy { get; set; }
+        public string? BoundActionId { get; private set; }
         public bool TryGetExistingReceipt(string requestId, out LocalExecutionReceipt receipt) => this.receipts.TryGetValue(requestId, out receipt!);
+        public void BindAction(string requestId, string actionId) => this.BoundActionId = actionId;
         public LocalExecutionReceipt Remember(LocalExecutionReceipt receipt) => this.receipts[receipt.RequestId] = receipt;
         public LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence)
         {
@@ -32,6 +34,29 @@ public sealed class FarmhandActionRouterTests
     }
 
     [Fact]
+    public void TryRoute_NavigateToDestination_DispatchesToExecutionHandler_NoPrimitive()
+    {
+        var router = new FarmhandActionRouter();
+        var handler = new StubActionHandler();
+        router.Register(TestRegistration("navigate_to_destination"), handler);
+        var ledger = new StubLedger();
+        var request = new BridgeExecutionRequest(
+            "req_nav",
+            "idemp_nav",
+            "navigate_to_destination",
+            new BridgeExecutionArgs { Destination = new BridgeNavigationDestinationSelector("label", "Mine", null) },
+            1,
+            5000);
+
+        bool routed = router.TryRoute(request, ledger, out LocalExecutionReceipt receipt, out string reasonCode);
+
+        routed.Should().BeTrue();
+        reasonCode.Should().Be("accepted");
+        receipt.State.Should().Be(ExecutionState.Succeeded);
+        ledger.BoundActionId.Should().Be("navigate_to_destination");
+    }
+
+    [Fact]
     public void TryRoute_WithRegisteredAction_DispatchesSuccessfully()
     {
         var router = new FarmhandActionRouter();
@@ -44,6 +69,7 @@ public sealed class FarmhandActionRouterTests
         reasonCode.Should().Be("accepted");
         receipt.State.Should().Be(ExecutionState.Succeeded);
         receipt.ReasonCode.Should().Be("test_succeeded");
+        ledger.BoundActionId.Should().Be("till_soil");
     }
 
     [Fact]
@@ -101,6 +127,19 @@ public sealed class FarmhandActionRouterTests
         act.Should().Throw<InvalidOperationException>().WithMessage("*Duplicate farmhand action handler registration*");
     }
 
+    [Fact]
+    public void Register_ReadOnlyOperation_ThrowsBeforeExecutionDispatch()
+    {
+        var router = new FarmhandActionRouter();
+        var operation = new FarmhandActionRegistration(
+            "inspect_world_map", "world_navigation", 1, FarmhandActionLifecycle.Published,
+            FarmhandOperationKind.ReadOnly, null);
+
+        router.Invoking(candidate => candidate.Register(operation, new StubActionHandler()))
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage("Read-only Farmhand operations cannot be registered for execution.");
+    }
+
     private static FarmhandActionRegistration TestRegistration(string actionId) =>
-        new(actionId, "test", 1, FarmhandActionLifecycle.Published, FarmhandActionHandlerGroup.Farming);
+        new(actionId, "test", 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.Execution, FarmhandActionHandlerGroup.Farming);
 }

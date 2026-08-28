@@ -28,8 +28,8 @@ public sealed class NativeFarmingContractTests
     [Fact]
     public void TillSoil_WhenWorldNotReady_ReturnsBlockedReceipt()
     {
-        var surface = FarmhandCapabilitySurface.FromEnabledActions(new HashSet<string>(new[] { "till_soil" }));
-        var executions = new ExecutionManager(new DummyMonitor(), surface);
+        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(new[] { "till_soil" }));
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
         var handler = new FarmingActionHandler(executions);
 
         var request = new BridgeExecutionRequest("req_till_1", "idemp_till_1", "till_soil", new BridgeExecutionArgs { X = 10, Y = 10 }, 1, 5000);

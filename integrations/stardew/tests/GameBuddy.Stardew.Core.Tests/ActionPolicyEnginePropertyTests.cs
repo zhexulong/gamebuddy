@@ -12,6 +12,31 @@ public sealed class ActionPolicyEnginePropertyTests
         .ToArray();
 
     [Property(MaxTest = 100)]
+    public Property EnabledActions_AreAlwaysSubsetOfTheSingleFarmhandCatalog(
+        PositiveInt actionIndex,
+        PositiveInt familyIndex,
+        bool denyAction,
+        bool denyFamily,
+        bool useExperimentalPolicy)
+    {
+        if (FarmhandActionCatalog.Registrations.Count == 0) return true.ToProperty();
+
+        string action = FarmhandActionCatalog.Registrations[actionIndex.Get % FarmhandActionCatalog.Registrations.Count].ActionId;
+        string family = FarmhandActionCatalog.Registrations[familyIndex.Get % FarmhandActionCatalog.Registrations.Count].FamilyId;
+        var options = new ActionPolicyOptions(
+            useExperimentalPolicy ? 1 : 0,
+            denyAction ? new[] { action } : Array.Empty<string>(),
+            denyFamily ? new[] { family } : Array.Empty<string>()
+        );
+
+        IReadOnlySet<string> enabled = ActionPolicyEngine.ComputeEnabledActions(options);
+        IReadOnlySet<string> registered = FarmhandActionCatalog.Registrations
+            .Select(registration => registration.ActionId)
+            .ToHashSet(StringComparer.Ordinal);
+        return enabled.All(registered.Contains).ToProperty();
+    }
+
+    [Property(MaxTest = 100)]
     public Property DeniedAction_NeverAppearsInEnabledSet(PositiveInt indexGenerator)
     {
         if (PublishedActionIds.Length == 0) return true.ToProperty();

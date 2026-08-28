@@ -1,0 +1,95 @@
+{
+  "schema": "gamebuddy-stardew-standalone-extraction/v1",
+  "status": "blocked",
+  "claim": "dependency-inventory-only",
+  "projectRoot": "standalone",
+  "sourceAudit": {
+    "schema": "gamebuddy-stardew-extraction-audit/v1",
+    "status": "blocked",
+    "blockerIds": [
+      "devkit-workspace-link",
+      "stardew-contract-exporter-project",
+      "stardew-core-source-closure"
+    ]
+  },
+  "package": {
+    "name": "@gamebuddy/stardew-action-development",
+    "devkit": {
+      "name": "@gamebuddy/game-action-devkit",
+      "source": "packed-artifact",
+      "artifactEntryId": "devkit-workspace-link",
+      "specifier": "file:inputs/devkit/game-action-devkit-0.1.0.tgz",
+      "forbiddenSpecifier": "workspace:*"
+    }
+  },
+  "entries": [
+    {
+      "id": "devkit-workspace-link",
+      "kind": "packed-devkit-artifact",
+      "path": "inputs/devkit/game-action-devkit-0.1.0.tgz",
+      "owner": "standalone-package",
+      "required": true,
+      "source": "current-extraction-audit"
+    },
+    {
+      "id": "stardew-contract-exporter-project",
+      "kind": "dotnet-contract-export-project",
+      "path": "inputs/stardew-contract-export/ActionDevelopmentContractExport.csproj",
+      "owner": "standalone-package",
+      "required": true,
+      "source": "current-extraction-audit"
+    },
+    {
+      "id": "stardew-core-source-closure",
+      "kind": "dotnet-core-source-closure",
+      "projectPath": "inputs/stardew-core/GameBuddy.Stardew.Core.csproj",
+      "sourcePath": "inputs/stardew-core/src/Core",
+      "recursive": true,
+      "owner": "standalone-package",
+      "required": true,
+      "source": "current-extraction-audit"
+    },
+    {
+      "id": "package-owned-node-pnpm-pins",
+      "kind": "node-pnpm-pins",
+      "path": "inputs/package.json",
+      "nodeEngine": ">=24.13.0 <25",
+      "pnpmPackageManager": "pnpm@11.1.3",
+      "owner": "standalone-package",
+      "required": true,
+      "source": "design-95-task-11"
+    },
+    {
+      "id": "package-owned-dotnet-pin",
+      "kind": "dotnet-sdk-pin",
+      "path": "inputs/global.json",
+      "field": "sdk.version",
+      "value": "8.0.424",
+      "owner": "standalone-package",
+      "required": true,
+      "source": "design-95-task-11"
+    },
+    {
+      "id": "package-owned-frozen-lockfile",
+      "kind": "frozen-lockfile",
+      "path": "inputs/pnpm-lock.yaml",
+      "mode": "frozen",
+      "owner": "standalone-package",
+      "required": true,
+      "source": "design-95-task-11"
+    }
+  ],
+  "readPolicy": {
+    "mode": "reject-former-monorepo-root",
+    "allowedRoot": "inputs",
+    "forbiddenRootDirectories": [
+      "tools",
+      ".ci",
+      "host"
+    ],
+    "forbiddenRootFiles": [
+      "package.json"
+    ],
+    "runtimeInputs": []
+  }
+}

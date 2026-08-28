@@ -17,14 +17,19 @@ internal static class NativeChatIngressPolicyTests
 
     private static void ExactRuntimeGate()
     {
-        Assert(NativeChatIngressPolicy.IsSupportedRuntime("1.6.15", 24356, "4.5.2", "1.6.15", 24356, "4.5.2"),
-            "exact provisioned runtime must enable native chat ingress.");
-        Assert(!NativeChatIngressPolicy.IsSupportedRuntime("1.6.16", 24356, "4.5.2", "1.6.15", 24356, "4.5.2"),
+        Assert(NativeChatIngressPolicy.IsSupportedRuntime("1.6.15", 24356, "4.5.2"),
+            "exact supported runtime must enable native chat ingress.");
+        Assert(!NativeChatIngressPolicy.IsSupportedRuntime("1.6.16", 24356, "4.5.2"),
             "different game version must fail closed.");
-        Assert(!NativeChatIngressPolicy.IsSupportedRuntime("1.6.15", 24357, "4.5.2", "1.6.15", 24356, "4.5.2"),
+        Assert(!NativeChatIngressPolicy.IsSupportedRuntime("1.6.15", 24357, "4.5.2"),
             "different game build must fail closed.");
-        Assert(!NativeChatIngressPolicy.IsSupportedRuntime("1.6.15", 24356, "4.5.3", "1.6.15", 24356, "4.5.2"),
+        Assert(!NativeChatIngressPolicy.IsSupportedRuntime("1.6.15", 24356, "4.5.3"),
             "different SMAPI version must fail closed.");
+        Assert(NativeChatIngressPolicy.IsSupportedRuntime(
+                NativeChatIngressPolicy.SupportedGameVersion,
+                NativeChatIngressPolicy.SupportedGameBuildNumber,
+                NativeChatIngressPolicy.SupportedSmapiVersion),
+            "the policy-owned supported triple must satisfy its own runtime invariant.");
     }
 
     private static void HostRoleInstallGate()

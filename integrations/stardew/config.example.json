@@ -41,12 +41,8 @@
   "HostFarmhandProvisioning": {
     "Enable": false,
     "SessionDirectory": "C:/Users/you/AppData/Local/GameBuddy/stardew-session",
-    "Endpoint": "127.0.0.1:24642",
     "SessionToken": "replace-with-a-local-16-plus-character-token",
     "IntegrationVersion": "0.1.0",
-    "ExpectedGameVersion": "1.6.15",
-    "ExpectedGameBuildNumber": 24356,
-    "ExpectedSmapiVersion": "4.5.2",
     "FarmhandName": "GameBuddy",
     "ManifestLifetimeSeconds": 120,
     "AuthorizedCompanionIds": ["companion_01"]
@@ -56,9 +52,6 @@
     "ManifestPath": "C:/Users/you/AppData/Local/GameBuddy/stardew-session/stardew-farmhand-manifest.json",
     "SessionToken": "replace-with-the-same-local-token",
     "IntegrationVersion": "0.1.0",
-    "ExpectedGameVersion": "1.6.15",
-    "ExpectedGameBuildNumber": 24356,
-    "ExpectedSmapiVersion": "4.5.2",
     "TimeoutSeconds": 300
   },
   "HostAutomation": {

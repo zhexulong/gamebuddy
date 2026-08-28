@@ -16,8 +16,18 @@ public sealed class ActionPolicyEngineTests
         enabled.Should().Contain("till_soil");
         enabled.Should().Contain("water_crop");
         enabled.Should().Contain("plant_seed");
+        enabled.Should().NotContain("sop_composite_pipeline"); // Retired generic composition runtime
         enabled.Should().NotContain("clear_debris"); // Experimental
         enabled.Should().NotContain("pet_animal");   // Experimental
+    }
+
+    [Fact]
+    public void ComputeEnabledActions_DefaultPolicy_DoesNotPublishRetiredSopPipeline()
+    {
+        var enabled = ActionPolicyEngine.ComputeEnabledActions(new ActionPolicyOptions(ActionPolicyVersion: 1));
+
+        enabled.Should().NotContain("sop_composite_pipeline");
+        FarmhandActionCatalog.Registrations.Select(registration => registration.ActionId).Should().NotContain("sop_composite_pipeline");
     }
 
     [Fact]

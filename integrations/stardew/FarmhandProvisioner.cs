@@ -331,8 +331,6 @@ internal sealed class FarmhandProvisioner
             return new(false, "integration_version_mismatch");
         if (!Path.GetFileName(config.ManifestPath).Equals(FarmhandProvisioningProtocol.ManifestFileName, StringComparison.Ordinal))
             return new(false, "manifest_path_invalid");
-        if (manifest.GameVersion != config.ExpectedGameVersion || manifest.GameBuildNumber != config.ExpectedGameBuildNumber || manifest.SmapiVersion != config.ExpectedSmapiVersion)
-            return new(false, "protocol_mismatch");
         if (manifest.GameVersion != Game1.version || manifest.GameBuildNumber != Game1.versionBuildNumber || manifest.SmapiVersion != Constants.ApiVersion.ToString() || manifest.MultiplayerProtocol != Multiplayer.protocolVersion)
             return new(false, "protocol_mismatch");
 

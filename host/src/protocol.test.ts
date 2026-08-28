@@ -28,26 +28,36 @@ const snapshot: Snapshot = {
   health: 100,
   actionable: true,
   capabilities: ["move_to_tile"],
+  catalogRevision: 1,
+  enabledActionIds: ["move_to_tile"],
   presentationLocale: "en-US",
   activeExecution: null,
 };
 const now = 1_700_000_000_000;
 
-test("hello acknowledgement carries only Mod-declared player-enabled capabilities", () => {
+test("current Mod hello acknowledgement wire projection is admitted", () => {
   const valid = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
     "hello_01",
     now,
   );
   assert.equal(validateBridgeMessage(valid, scope, now), null);
   assert.equal(
     validateBridgeMessage(
+      { ...valid, payload: { ...valid.payload, launchGeneration: null } },
+      scope,
+      now,
+    ),
+    "invalid_hello_ack",
+  );
+  assert.equal(
+    validateBridgeMessage(
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "invalid session", capabilities: [], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+        { sessionId: "invalid session", capabilities: [], catalogRevision: 1, enabledActionIds: [], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
         "hello_02",
         now,
       ),
@@ -61,7 +71,7 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
       newEnvelope(
         "hello_ack",
         scope,
-        { sessionId: "session_01", capabilities: [1], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+        { sessionId: "session_01", capabilities: [1], catalogRevision: 1, enabledActionIds: [], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
         "hello_03",
         now,
       ),
@@ -72,11 +82,26 @@ test("hello acknowledgement carries only Mod-declared player-enabled capabilitie
   );
 });
 
+test("catalog updates are exact and bounded", () => {
+  const valid = newEnvelope(
+    "catalog_update",
+    scope,
+    { catalogRevision: 2, enabledActionIds: ["move_to_tile"] },
+    "catalog_01",
+    now,
+  );
+  assert.equal(validateBridgeMessage(valid, scope, now), null);
+  assert.equal(
+    validateBridgeMessage({ ...valid, payload: { ...valid.payload, extra: true } }, scope, now),
+    "invalid_catalog_update",
+  );
+});
+
 test("hello acknowledgement and snapshot reject missing or invalid presentation locales", () => {
   const validHello = newEnvelope(
     "hello_ack",
     scope,
-    { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+    { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], runtimeRole: "farmhand_client", launchGeneration: "generation_01", presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published","kind":"execution"}] },
     "hello_locale_01",
     now,
   );
