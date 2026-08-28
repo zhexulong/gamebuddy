@@ -7,6 +7,7 @@ import { createStardewPrivateBootstrapCompositionForTesting } from "./stardew-pr
 import type { StardewPrivateBootstrapCoreDependencies } from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-owner.js";
+import type { StardewPrivateFarmhandBridgeConnection } from "./stardew-private-bootstrap-composer.core.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 
 export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
@@ -14,6 +15,10 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   stopAiClient?(underlying: () => StopOwnedAiClientResult): StopOwnedAiClientResult;
   stopPlayerHost?(underlying: () => StopOwnedPlayerHostResult): StopOwnedPlayerHostResult;
   createInstallationInspector?(): Promise<WindowsReparseInspectorCapability>;
+  connectFarmhandBridge?(
+    connection: StardewPrivateFarmhandBridgeConnection,
+    deadlineMs: number,
+  ): Promise<Readonly<{ close(): void }>>;
 }>;
 
 /** Dedicated deterministic adapter; production factory accepts no dependencies. */
@@ -55,5 +60,6 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
       }),
     }),
     overrides.createInstallationInspector ?? (() => Promise.reject(new Error("test_installation_inspector_unbound"))),
+    overrides.connectFarmhandBridge ?? (async () => Object.freeze({ close: () => undefined })),
   );
 }

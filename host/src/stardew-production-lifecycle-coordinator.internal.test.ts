@@ -248,13 +248,26 @@ async function createFixture(input: Readonly<{
     }>;
   }>> = [];
   const playerKillCalls: number[] = [];
+  const lifecycleOrder: string[] = [];
   const playerKillResults = [...(input.playerKillResults ?? [true])];
+  const bridgeConnectCalls: Array<Readonly<{
+    scope: Readonly<Record<string, string>>;
+    pipeName: string;
+    token: string;
+    launchGeneration: string;
+    deadlineMs: number;
+  }>> = [];
+  const bridgeCloseCalls: string[] = [];
   let packageReadCount = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
     rawSpawn(executable, args, options) {
       spawnCalls.push(Object.freeze({ executable, args: Object.freeze([...args]), options }));
       if (input.aiSpawnFailure) throw new Error("controlled-ai-spawn-failure");
-      return Object.freeze({ pid: 4101, kill: () => { aiKillCalls.push(4101); return true; } });
+      return Object.freeze({ pid: 4101, kill: () => {
+        lifecycleOrder.push("ai");
+        aiKillCalls.push(4101);
+        return true;
+      } });
     },
     rawProbe: (pid) => input.aiProbeFailure ? null : ({ pid, creationDate: "20260101010101.000000+000" }),
     rawPlayerHostSpawn(executable, args, options) {
@@ -264,6 +277,7 @@ async function createFixture(input: Readonly<{
       return Object.freeze({
         pid: 4102,
         kill: () => {
+          lifecycleOrder.push("player");
           playerKillCalls.push(4102);
           return playerKillResults.shift() ?? true;
         },
@@ -308,6 +322,19 @@ async function createFixture(input: Readonly<{
           installationChain, installationChain, installationChain,
         ],
           input.inspectorGate === undefined ? undefined : () => input.inspectorGate!)),
+      connectFarmhandBridge: input.overrides?.connectFarmhandBridge ?? (async (connection, deadlineMs) => {
+        bridgeConnectCalls.push(Object.freeze({
+          scope: connection.scope,
+          pipeName: connection.pipeName,
+          token: connection.token,
+          launchGeneration: connection.launchGeneration,
+          deadlineMs,
+        }));
+        return Object.freeze({ close: () => {
+          lifecycleOrder.push("bridge");
+          bridgeCloseCalls.push("bridge");
+        } });
+      }),
     },
   );
   const broker = await createAdmissionBroker();
@@ -320,6 +347,9 @@ async function createFixture(input: Readonly<{
     aiKillCalls,
     playerSpawnCalls,
     playerKillCalls,
+    bridgeConnectCalls,
+    bridgeCloseCalls,
+    lifecycleOrder,
     packageReadCount: () => packageReadCount,
   };
 }
@@ -970,6 +1000,19 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     assert.equal(aiSpawn.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "ai-generation-1");
     assert.equal(fixture.playerSpawnCalls.length, 1);
     assert.equal(fixture.packageReadCount(), 4);
+    assert.equal(fixture.bridgeConnectCalls.length, 1);
+    const bridgeConnection = fixture.bridgeConnectCalls[0]!;
+    assert.deepEqual(bridgeConnection.scope, {
+      integrationId: "stardew",
+      saveId: "save-coordinator",
+      worldId: "world-coordinator",
+      playerId: "101",
+      companionId: "companion-1",
+    });
+    assert.equal(bridgeConnection.pipeName, "gamebuddy-stardew-coordinator-bridge");
+    assert.equal(bridgeConnection.token, "coordinator-bridge-token-0123456789");
+    assert.equal(bridgeConnection.launchGeneration, "ai-generation-1");
+    assert.equal(bridgeConnection.deadlineMs, choices.choices[0]!.expiresAtMs);
     assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).aiClient, {
       state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn", lastStopOutcome: "none",
     });
@@ -980,8 +1023,86 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     assert.equal(aiConfig.FarmhandProvisioner.ManifestPath, join(transaction, "session", "stardew-farmhand-manifest.json"));
     assert.equal("Pid" in aiConfig.FarmhandProvisioner, false);
     await fixture.coordinator.close();
+    assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
     assert.deepEqual(fixture.aiKillCalls, [4101]);
     assert.deepEqual(fixture.playerKillCalls, [4102]);
+    assert.deepEqual(fixture.lifecycleOrder, ["bridge", "ai", "player"]);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("manifest-admitted Farmhand Bridge retries only pipe-not-ready before authenticated connection", async () => {
+  let attempts = 0;
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      connectFarmhandBridge: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          const error = new Error("controlled_pipe_not_ready") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        }
+        return Object.freeze({ close: () => undefined });
+      },
+    },
+  });
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+      fixture.broker.issue("cabin_confirm"),
+      {
+        apiVersion: 1,
+        choiceHandle: choices.choices[0]!.choiceHandle,
+        idempotencyKey: "bridge-transient-retry-key",
+        confirmed: true,
+      },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    assert.deepEqual(await confirmation, { apiVersion: 1, status: "manifest_admitted" });
+    assert.equal(attempts, 2);
+    assert.equal(fixture.spawnCalls.length, 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("manifest-admitted Farmhand Bridge attestation mismatch is permanently uncertain and quarantined", async () => {
+  let attempts = 0;
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      connectFarmhandBridge: async () => {
+        attempts += 1;
+        throw new Error("bridge_runtime_attestation_mismatch");
+      },
+    },
+  });
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "bridge-attestation-mismatch-key",
+      confirmed: true as const,
+    };
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+      fixture.broker.issue("cabin_confirm"),
+      command,
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+    assert.equal(attempts, 1);
+    assert.equal(fixture.spawnCalls.length, 1);
+    assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command),
+      /stardew_cabin_publication_uncertain/,
+    );
+    assert.equal(attempts, 1);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
