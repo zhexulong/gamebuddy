@@ -103,9 +103,17 @@ function callerRequestIds(
   };
 }
 
+type NavigationActionId = "inspect_world_map" | "find_destination";
+type NavigationReadIntegration = CompanionIntegration & {
+  navigationRead(request: Readonly<{
+    operation: NavigationActionId;
+    args: Readonly<Record<string, unknown>>;
+  }>): Promise<unknown>;
+};
+
 /** Read-only tools always expose facts exactly as supplied by the Mod. */
 export function createStardewObservationTools(
-  integration: CompanionIntegration,
+  integration: CompanionIntegration & Partial<NavigationReadIntegration>,
   policy?: ActionPolicy,
 ) {
   const observe = defineTool({
@@ -229,7 +237,127 @@ export function createStardewObservationTools(
       };
     },
   });
-  return [observe, execution, catalog, search] as const;
+
+  const navigationCapabilityReady = (actionId: NavigationActionId): boolean => {
+    const state = integration.state as typeof integration.state & {
+      catalogRevision?: number;
+    };
+    const snapshot = state.snapshot;
+    return (
+      state.connected &&
+      snapshot !== null &&
+      typeof (integration as { navigationRead?: unknown }).navigationRead ===
+        "function" &&
+      state.catalogRevision === snapshot.catalogRevision &&
+      state.capabilities.includes(actionId) &&
+      snapshot.capabilities.includes(actionId) &&
+      (state.catalogRegistrations ?? []).some(
+        (registration) =>
+          registration.actionId === actionId &&
+          registration.lifecycle === "published" &&
+          registration.kind === "read_only" &&
+          registration.identityVersion === 1,
+      )
+    );
+  };
+  const requireStrictObject = (
+    params: unknown,
+  ): Readonly<Record<string, unknown>> => {
+    if (typeof params !== "object" || params === null || Array.isArray(params))
+      throw new Error("invalid_tool_parameters");
+    return params as Readonly<Record<string, unknown>>;
+  };
+  const navigationResult = (result: unknown) => ({
+    content: [{ type: "text" as const, text: JSON.stringify(result) }],
+    details: { result },
+  });
+
+  const tools: Array<ReturnType<typeof defineTool>> = [
+    observe,
+    execution,
+    catalog,
+    search,
+  ];
+  if (navigationCapabilityReady("inspect_world_map")) {
+    tools.push(
+      defineTool({
+        name: "stardew_inspect_world_map",
+        label: "Inspect Stardew World Map",
+        description:
+          "Read the authoritative Stardew navigation map without changing the game.",
+        parameters: Type.Object(
+          {
+            nodeRef: Type.Optional(
+              Type.String({ minLength: 1, maxLength: 128 }),
+            ),
+            cursor: Type.Optional(
+              Type.String({ minLength: 1, maxLength: 128 }),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+        execute: async (_toolCallId, params) => {
+          const args = requireStrictObject(params);
+          const keys = Object.keys(args);
+          if (
+            keys.length > 1 ||
+            keys.some((key) => key !== "nodeRef" && key !== "cursor") ||
+            (keys.length === 1 &&
+              (typeof args[keys[0]!] !== "string" ||
+                (args[keys[0]!] as string).length < 1 ||
+                (args[keys[0]!] as string).length > 128))
+          )
+            throw new Error("invalid_tool_parameters");
+          if (!navigationCapabilityReady("inspect_world_map"))
+            throw new Error("bridge_capability_not_ready");
+          return navigationResult(
+            await (integration as NavigationReadIntegration).navigationRead({
+              operation: "inspect_world_map",
+              args:
+                keys.length === 0
+                  ? {}
+                  : { [keys[0]!]: args[keys[0]!] },
+            }),
+          );
+        },
+      }),
+    );
+  }
+  if (navigationCapabilityReady("find_destination")) {
+    tools.push(
+      defineTool({
+        name: "stardew_find_destination",
+        label: "Find Stardew Destination",
+        description:
+          "Resolve a destination query from the authoritative Stardew world map without choosing or changing a destination.",
+        parameters: Type.Object(
+          { query: Type.String({ minLength: 1, maxLength: 128 }) },
+          { additionalProperties: false },
+        ),
+        execute: async (_toolCallId, params) => {
+          const args = requireStrictObject(params);
+          const keys = Object.keys(args);
+          if (
+            keys.length !== 1 ||
+            keys[0] !== "query" ||
+            typeof args.query !== "string" ||
+            args.query.length < 1 ||
+            args.query.length > 128
+          )
+            throw new Error("invalid_tool_parameters");
+          if (!navigationCapabilityReady("find_destination"))
+            throw new Error("bridge_capability_not_ready");
+          return navigationResult(
+            await (integration as NavigationReadIntegration).navigationRead({
+              operation: "find_destination",
+              args: { query: args.query },
+            }),
+          );
+        },
+      }),
+    );
+  }
+  return tools;
 }
 
 /**
