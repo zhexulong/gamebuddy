@@ -7,11 +7,13 @@ import { createStardewPrivateBootstrapCompositionForTesting } from "./stardew-pr
 import type { StardewPrivateBootstrapCoreDependencies } from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-owner.js";
+import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 
 export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   closeBroker?(underlying: () => void): void;
   stopAiClient?(underlying: () => StopOwnedAiClientResult): StopOwnedAiClientResult;
   stopPlayerHost?(underlying: () => StopOwnedPlayerHostResult): StopOwnedPlayerHostResult;
+  createInstallationInspector?(): Promise<WindowsReparseInspectorCapability>;
 }>;
 
 /** Dedicated deterministic adapter; production factory accepts no dependencies. */
@@ -52,5 +54,6 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
         playerHostProcessOwner,
       }),
     }),
+    overrides.createInstallationInspector ?? (() => Promise.reject(new Error("test_installation_inspector_unbound"))),
   );
 }

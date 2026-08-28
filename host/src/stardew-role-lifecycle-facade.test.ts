@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { StardewAiClientProcessOwner } from "./stardew-ai-client-process-owner.js";
+import type { StardewPlayerHostProcessOwner, StardewPlayerHostProcessStatus } from "./stardew-player-host-process-owner.js";
 import { StardewAttachmentFlow } from "./stardew-attachment.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type { StardewExternalPlayerHostPhaseAOwner } from "./stardew-private-bootstrap-composer.js";
@@ -136,6 +137,29 @@ function assertView(
   assert.equal(Object.isFrozen(view.playerHost), true);
   assert.equal(Object.isFrozen(view.aiClient), true);
 }
+
+test("direct-owned Player Host pending, awaiting, and stopped states remain truthful", async () => {
+  await withFixture(async ({ owner }) => {
+    let status: StardewPlayerHostProcessStatus = { kind: "player_host_launch_pending" };
+    const playerOwner: StardewPlayerHostProcessOwner = Object.freeze({
+      readStatus: () => status,
+      reservePlayerHostLaunch: () => { throw new Error("not_exposed_by_facade"); },
+      stopOwnedPlayerHost: () => ({ kind: "no_owned_player_host" as const, killed: false as const }),
+    });
+    const facade = createStardewRoleLifecycleFacade(null, owner, playerOwner);
+    assert.deepEqual((await facade.readRoleLifecycleView()).playerHost, {
+      state: "pending", ownership: "gamebuddy_direct_spawn",
+    });
+    status = { kind: "awaiting_player_host_attestation" };
+    assert.deepEqual((await facade.readRoleLifecycleView()).playerHost, {
+      state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
+    });
+    status = { kind: "player_host_stopped" };
+    assert.deepEqual((await facade.readRoleLifecycleView()).playerHost, {
+      state: "stopped", ownership: "gamebuddy_direct_spawn",
+    });
+  });
+});
 
 test("null attachment truthfully reports an unauthenticated idle lifecycle", async () => {
   await withFixture(async ({ owner }) => {
