@@ -26,8 +26,17 @@ import {
 import { createStardewProductionLifecycleCoordinator } from "./stardew-production-lifecycle-coordinator.internal.js";
 import type { StardewPrivateBootstrapCoreDependencies } from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
+import { createTestWindowsReparseInspector } from "./windows-reparse-inspector/index.test-support.js";
+import type { WindowsPathObjectIdentity } from "./windows-reparse-inspector/index.js";
 
 const bootstrapToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
+const gameDirectoryCandidate = "C:\\Games\\Stardew Valley";
+const installationChain: readonly WindowsPathObjectIdentity[] = Object.freeze([
+  Object.freeze({ objectKind: "directory", isReparsePoint: false, volumeIdentity: "0123456789abcdef", fileId: "00000000000000000000000000000001" }),
+  Object.freeze({ objectKind: "directory", isReparsePoint: false, volumeIdentity: "0123456789abcdef", fileId: "00000000000000000000000000000002" }),
+  Object.freeze({ objectKind: "directory", isReparsePoint: false, volumeIdentity: "0123456789abcdef", fileId: "00000000000000000000000000000003" }),
+  Object.freeze({ objectKind: "regular_file", isReparsePoint: false, volumeIdentity: "0123456789abcdef", fileId: "00000000000000000000000000000004" }),
+]);
 const packageEntries = [
   "GameBuddy.Stardew.Core.dll",
   "GameBuddy.Stardew.deps.json",
@@ -99,6 +108,38 @@ function stateForChat(context: ComposedReferenceGameBrowserReadContext) {
   };
 }
 
+function installationInspector(
+  chains: readonly (readonly WindowsPathObjectIdentity[])[],
+  beforeResponse?: () => Promise<void>,
+) {
+  let index = 0;
+  return createTestWindowsReparseInspector(() => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+    });
+    child.stdin.on("data", () => void (async () => {
+      if (beforeResponse !== undefined) await beforeResponse();
+      const chain = chains[index++] ?? chains.at(-1) ?? installationChain;
+      child.stdout.end(`${JSON.stringify({
+        schemaVersion: 2,
+        operation: "inspect_path_chain_v2",
+        status: "ok",
+        components: chain,
+      })}\n`);
+      child.stderr.end();
+      queueMicrotask(() => child.emit("close", 0, null));
+    })());
+    return child as unknown as ChildProcess;
+  });
+}
+
+async function withWindowsPlatform<T>(operation: () => Promise<T>): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try { return await operation(); }
+  finally { Object.defineProperty(process, "platform", descriptor); }
+}
+
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 }
@@ -159,6 +200,11 @@ async function createFixture(input: Readonly<{
   stagingGate?: Promise<void>;
   failStaging?: boolean;
   overrides?: StardewLifecycleCoordinatorTestingOverrides;
+  inspectorChains?: readonly (readonly WindowsPathObjectIdentity[])[];
+  inspectorGate?: Promise<void>;
+  playerSpawnFailure?: boolean;
+  playerProbeFailure?: boolean;
+  playerKillResults?: readonly boolean[];
 }> = {}) {
   const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-lifecycle-coordinator-"));
   const packageRoot = join(runtimeRoot, "package");
@@ -166,19 +212,38 @@ async function createFixture(input: Readonly<{
   await mkdir(packageRoot);
   for (const entry of packageEntries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const spawnCalls: string[] = [];
-  const playerSpawnCalls: string[] = [];
+  const aiKillCalls: number[] = [];
+  const playerSpawnCalls: Array<Readonly<{
+    executable: string;
+    args: readonly string[];
+    options: Readonly<{
+      cwd?: string;
+      shell: boolean;
+      windowsHide: boolean;
+      env: Readonly<NodeJS.ProcessEnv>;
+    }>;
+  }>> = [];
+  const playerKillCalls: number[] = [];
+  const playerKillResults = [...(input.playerKillResults ?? [true])];
   let packageReadCount = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
     rawSpawn(executable) {
       spawnCalls.push(executable);
-      return Object.freeze({ pid: 4101, kill: () => true });
+      return Object.freeze({ pid: 4101, kill: () => { aiKillCalls.push(4101); return true; } });
     },
     rawProbe: (pid) => ({ pid, creationDate: "20260101010101.000000+000" }),
-    rawPlayerHostSpawn(executable) {
-      playerSpawnCalls.push(executable);
-      return Object.freeze({ pid: 4102, kill: () => true });
+    rawPlayerHostSpawn(executable, args, options) {
+      playerSpawnCalls.push(Object.freeze({ executable, args: Object.freeze([...args]), options }));
+      if (input.playerSpawnFailure) throw new Error("controlled-player-spawn-failure");
+      return Object.freeze({
+        pid: 4102,
+        kill: () => {
+          playerKillCalls.push(4102);
+          return playerKillResults.shift() ?? true;
+        },
+      });
     },
-    rawPlayerHostProbe: (pid) => ({ pid, creationDate: "20260101010101.000000+000" }),
+    rawPlayerHostProbe: (pid) => input.playerProbeFailure ? null : ({ pid, creationDate: "20260101010101.000000+000" }),
     createBootstrapIdentity: () => "bootstrap-coordinator-1",
     createLaunchGeneration: () => "ai-generation-1",
     createPlayerHostLaunchGeneration: () => "player-generation-1",
@@ -205,11 +270,25 @@ async function createFixture(input: Readonly<{
   const coordinator = createStardewProductionLifecycleCoordinatorForTesting(
     manifest,
     dependencies,
-    input.overrides,
+    {
+      ...input.overrides,
+      createInstallationInspector: input.overrides?.createInstallationInspector ?? (async () =>
+        installationInspector(input.inspectorChains ?? [installationChain, installationChain, installationChain],
+          input.inspectorGate === undefined ? undefined : () => input.inspectorGate!)),
+    },
   );
   const broker = await createAdmissionBroker();
   coordinator.activationOwner.bindBrowserAdmissionIssuer(broker.handler.lifecycleActivationIssuer);
-  return { runtimeRoot, coordinator, broker, spawnCalls, playerSpawnCalls, packageReadCount: () => packageReadCount };
+  return {
+    runtimeRoot,
+    coordinator,
+    broker,
+    spawnCalls,
+    aiKillCalls,
+    playerSpawnCalls,
+    playerKillCalls,
+    packageReadCount: () => packageReadCount,
+  };
 }
 
 async function ownerRecord(runtimeRoot: string) {
@@ -294,6 +373,209 @@ test("same admission joins the exact activation Promise while a conflicting admi
     await fixture.coordinator.close();
     await fixture.broker.close();
   }
+});
+
+test("Stage-C admits internally, direct-spawns once, and projects only awaiting attestation", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture();
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const first = fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      const joined = fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      assert.equal(joined, first);
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchStagedPlayerHost("C:\\Other\\Stardew Valley"),
+        /stardew_player_host_launch_conflict/,
+      );
+      const result = await first;
+      assert.equal(result.state, "awaiting_player_host_attestation");
+      assert.equal(Object.isFrozen(result), true);
+      assert.deepEqual(Object.keys(result).sort(), ["authorityGeneration", "requestId", "revision", "schemaVersion", "state"]);
+      const serialized = JSON.stringify(result);
+      for (const forbidden of [
+        gameDirectoryCandidate,
+        "StardewModdingAPI.exe",
+        "bootstrap-coordinator-1",
+        "player-generation-1",
+        "4102",
+        "owner",
+        "installation",
+        "executable",
+        "generation",
+        "pid",
+      ]) assert.equal(serialized.includes(forbidden), false, forbidden);
+      assert.equal(fixture.playerSpawnCalls.length, 1);
+      const playerSpawn = fixture.playerSpawnCalls[0]!;
+      assert.equal(playerSpawn.executable, `${gameDirectoryCandidate}\\StardewModdingAPI.exe`);
+      assert.deepEqual(playerSpawn.args, [
+        "--mods-path",
+        join(
+          fixture.runtimeRoot,
+          "stardew-private-bootstrap",
+          "bootstrap-coordinator-1",
+          "player-host",
+          "Mods",
+        ),
+      ]);
+      assert.equal(playerSpawn.options.cwd, gameDirectoryCandidate);
+      assert.equal(playerSpawn.options.shell, false);
+      assert.equal(playerSpawn.options.windowsHide, true);
+      assert.equal(playerSpawn.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "player-generation-1");
+      assert.deepEqual(fixture.spawnCalls, []);
+      assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
+        state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
+      });
+      assert.equal(fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate), first);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("Stage-C admission failure restores staged and permits a later valid retry", async () => {
+  await withWindowsPlatform(async () => {
+    const changed = installationChain.map((entry, index) => index === 2
+      ? Object.freeze({ ...entry, fileId: "ffffffffffffffffffffffffffffffff" })
+      : entry);
+    const inspectors = [
+      installationInspector([installationChain, changed]),
+      installationInspector([installationChain, installationChain, installationChain]),
+    ];
+    const fixture = await createFixture({ overrides: { createInstallationInspector: async () => inspectors.shift()! } });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate),
+        /stardew_player_host_launch_failed/,
+      );
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
+      assert.deepEqual(fixture.playerSpawnCalls, []);
+      await fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      assert.equal(fixture.playerSpawnCalls.length, 1);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("Stage-C reparse admission failure is pre-launch, restores staged, and permits retry", async () => {
+  await withWindowsPlatform(async () => {
+    const reparse = installationChain.map((entry, index) => index === 1
+      ? Object.freeze({ ...entry, isReparsePoint: true })
+      : entry);
+    const inspectors = [
+      installationInspector([reparse, reparse]),
+      installationInspector([installationChain, installationChain, installationChain]),
+    ];
+    const fixture = await createFixture({ overrides: { createInstallationInspector: async () => inspectors.shift()! } });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await assert.rejects(
+        fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate),
+        /stardew_player_host_launch_failed/,
+      );
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
+      assert.deepEqual(fixture.playerSpawnCalls, []);
+      await fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      assert.equal(fixture.playerSpawnCalls.length, 1);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+for (const failure of ["spawn", "probe"] as const) {
+  test(`Stage-C ${failure} failure quarantines and permanently rejects retry`, async () => {
+    await withWindowsPlatform(async () => {
+      const fixture = await createFixture({
+        playerSpawnFailure: failure === "spawn",
+        playerProbeFailure: failure === "probe",
+      });
+      try {
+        await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+        await assert.rejects(
+          fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate),
+          /stardew_player_host_launch_failed/,
+        );
+        assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+        await assert.rejects(
+          fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate),
+          /stardew_player_host_launch_quarantined/,
+        );
+        assert.equal(fixture.playerSpawnCalls.length, 1);
+      } finally {
+        await fixture.coordinator.close();
+        await fixture.broker.close();
+      }
+    });
+  });
+}
+
+test("close during Stage-C admission drains and prevents a later spawn", async () => {
+  await withWindowsPlatform(async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fixture = await createFixture({ inspectorGate: gate });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      const launch = fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      const close = fixture.coordinator.close();
+      release();
+      await assert.rejects(launch, /stardew_player_host_launch_failed/);
+      await close;
+      assert.deepEqual(fixture.playerSpawnCalls, []);
+    } finally {
+      release();
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("close after successful spawn stops only the exact Player Host and projects stopped", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture();
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      await fixture.coordinator.close();
+      assert.deepEqual(fixture.playerKillCalls, [4102]);
+      assert.deepEqual(fixture.aiKillCalls, []);
+      assert.equal(fixture.playerSpawnCalls.length, 1);
+      assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
+        state: "stopped", ownership: "gamebuddy_direct_spawn",
+      });
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+test("close after spawn preserves exact-child retry and never respawns", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture({ playerKillResults: [false, true] });
+    try {
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      await fixture.coordinator.activationOwner.launchStagedPlayerHost(gameDirectoryCandidate);
+      await assert.rejects(fixture.coordinator.close(), /stardew_lifecycle_close_incomplete/);
+      assert.deepEqual(fixture.playerKillCalls, [4102]);
+      assert.equal(fixture.playerSpawnCalls.length, 1);
+      await fixture.coordinator.close();
+      assert.deepEqual(fixture.playerKillCalls, [4102, 4102]);
+      assert.deepEqual(fixture.aiKillCalls, []);
+      assert.equal(fixture.playerSpawnCalls.length, 1);
+      assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).playerHost, {
+        state: "stopped", ownership: "gamebuddy_direct_spawn",
+      });
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
 });
 
 test("Stage B failure transitions to failed, durably quarantines, and never spawns", async () => {

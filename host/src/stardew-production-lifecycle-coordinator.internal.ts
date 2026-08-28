@@ -4,10 +4,16 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationIssuer,
 } from "./composed-reference-game-browser.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { admitStardewInstallation } from "./stardew-installation-admission.js";
+import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
+import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import {
   createStardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.internal.js";
 import type { StardewOwnedPlayerHostPhaseAOwner } from "./stardew-private-bootstrap-composer.js";
+import { didStardewOwnedPlayerHostStageCEnterControlledLaunch } from "./stardew-private-bootstrap-composer.core.js";
 import type { StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import type { StopOwnedPlayerHostResult } from "./stardew-player-host-process-owner.js";
 import {
@@ -20,7 +26,7 @@ export type StardewPrivateActivationSnapshot = Readonly<{
   requestId: string;
   authorityGeneration: number;
   revision: number;
-  state: "inactive" | "reserving" | "staging" | "staged" | "failed" | "closing" | "closed";
+  state: "inactive" | "reserving" | "staging" | "staged" | "launching_player_host" | "awaiting_player_host_attestation" | "failed" | "closing" | "closed";
 }>;
 
 export type StardewLifecycleActivationIssuerBindingSink = Readonly<{
@@ -32,6 +38,7 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
   activate(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
   ): Promise<StardewPrivateActivationSnapshot>;
+  launchStagedPlayerHost(gameDirectoryCandidate: string): Promise<StardewPrivateActivationSnapshot>;
   readPrivateActivationSnapshot(): StardewPrivateActivationSnapshot;
 }>;
 
@@ -63,6 +70,7 @@ function successfulPlayerStop(result: StopOwnedPlayerHostResult): boolean {
 function createCoordinator(
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
+  createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
   const playerId = `${manifest.principal.playerId}`;
@@ -70,7 +78,11 @@ function createCoordinator(
   const requestId = `${manifest.bootstrapOperationId}`;
   const authorityGeneration = manifest.authorityGeneration;
   const composition = internal.composition;
-  const facade = createStardewRoleLifecycleFacade(null, composition.aiClientProcessOwner);
+  const facade = createStardewRoleLifecycleFacade(
+    null,
+    composition.aiClientProcessOwner,
+    composition.playerHostProcessOwner,
+  );
 
   let activationState: ActivationState = "inactive";
   let revision = 0;
@@ -79,6 +91,9 @@ function createCoordinator(
   let activationPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   let exactOwner: StardewOwnedPlayerHostPhaseAOwner | undefined;
   let ownerQuarantined = false;
+  let launchCandidate: string | undefined;
+  let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
+  let launchTerminal = false;
   let brokerClosed = false;
   let aiStopped = false;
   let playerStopped = false;
@@ -86,7 +101,6 @@ function createCoordinator(
 
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
-      if (activationState === "closed") throw new Error("stardew_lifecycle_closed");
       return facade.readRoleLifecycleView();
     },
   });
@@ -172,9 +186,65 @@ function createCoordinator(
     return activationPromise;
   };
 
+  const runPlayerHostLaunch = async (
+    candidate: string,
+  ): Promise<StardewPrivateActivationSnapshot> => {
+    const owner = exactOwner;
+    if (owner === undefined) throw new Error("stardew_player_host_launch_owner_missing");
+    transition("launching_player_host");
+    let launchCompleted = false;
+    try {
+      const inspector = await createInstallationInspector();
+      const installation = await admitStardewInstallation(inspector, candidate);
+      if (isClosing()) throw new Error("stardew_lifecycle_closing");
+      const result = await internal.launchOwnedPlayerHostStageC(owner, installation);
+      launchCompleted = true;
+      if (result.status.kind !== "awaiting_player_host_attestation")
+        throw new Error("stardew_player_host_launch_terminal_projection_invalid");
+      if (isClosing()) throw new Error("stardew_lifecycle_closing");
+      transition("awaiting_player_host_attestation");
+      return snapshot();
+    } catch (error) {
+      const launchMayHaveRun = launchCompleted || didStardewOwnedPlayerHostStageCEnterControlledLaunch(error);
+      if (launchMayHaveRun) {
+        launchTerminal = true;
+        if (!isClosing()) transition("failed");
+        try {
+          await internal.quarantineOwnedPlayerHostOwner(owner);
+          ownerQuarantined = true;
+        } catch {
+          // Close retains and retries the exact-owner quarantine.
+        }
+      } else if (!isClosing()) {
+        launchCandidate = undefined;
+        launchPromise = undefined;
+        transition("staged");
+      }
+      throw new Error("stardew_player_host_launch_failed", { cause: error });
+    }
+  };
+
+  const launchStagedPlayerHost = (
+    candidate: string,
+  ): Promise<StardewPrivateActivationSnapshot> => {
+    if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
+    if (launchTerminal) return Promise.reject(new Error("stardew_player_host_launch_quarantined"));
+    if (launchCandidate !== undefined) {
+      if (candidate !== launchCandidate)
+        return Promise.reject(new Error("stardew_player_host_launch_conflict"));
+      return launchPromise!;
+    }
+    if (activationState !== "staged")
+      return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
+    launchCandidate = candidate;
+    launchPromise = runPlayerHostLaunch(candidate);
+    return launchPromise;
+  };
+
   const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
     bindBrowserAdmissionIssuer,
     activate,
+    launchStagedPlayerHost,
     readPrivateActivationSnapshot: snapshot,
   });
 
@@ -182,6 +252,8 @@ function createCoordinator(
     if (activationState !== "closed") transition("closing");
     const activation = activationPromise;
     if (activation !== undefined) await activation.catch(() => undefined);
+    const launch = launchPromise;
+    if (launch !== undefined) await launch.catch(() => undefined);
     let incomplete = false;
     if (exactOwner !== undefined && !ownerQuarantined) {
       try {
@@ -229,13 +301,19 @@ function createCoordinator(
 export function createStardewProductionLifecycleCoordinatorFromTestingComposition(
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
+  createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
 ): StardewProductionLifecycleCoordinator {
-  return createCoordinator(manifest, internal);
+  return createCoordinator(manifest, internal, createInstallationInspector);
 }
 
 /** Constructs the coordinator exclusively from the closed first-party composition. */
 export function createStardewProductionLifecycleCoordinator(
   manifest: HostDeploymentManifest,
 ): StardewProductionLifecycleCoordinator {
-  return createCoordinator(manifest, createStardewPrivateBootstrapComposition());
+  const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+  return createCoordinator(
+    manifest,
+    createStardewPrivateBootstrapComposition(),
+    () => createPublishedWindowsReparseInspector(hostArtifactRoot),
+  );
 }

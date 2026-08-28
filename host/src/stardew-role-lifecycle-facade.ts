@@ -25,11 +25,15 @@ import type {
   StardewAiClientProcessOwner,
   StopOwnedAiClientResult,
 } from "./stardew-ai-client-process-owner.js";
+import type { StardewPlayerHostProcessOwner } from "./stardew-player-host-process-owner.js";
 
 // ── Public view types ───────────────────────────────────────────────────────
 
 export type StardewPlayerHostSlot =
   | Readonly<{ state: "not_started"; ownership: "none" }>
+  | Readonly<{ state: "pending"; ownership: "gamebuddy_direct_spawn" }>
+  | Readonly<{ state: "awaiting_attestation"; ownership: "gamebuddy_direct_spawn" }>
+  | Readonly<{ state: "stopped"; ownership: "gamebuddy_direct_spawn" }>
   | Readonly<{ state: "unknown"; ownership: "player_external" }>
   | Readonly<{ state: "unavailable"; ownership: "player_external" }>
   | Readonly<{
@@ -71,11 +75,17 @@ type LastStopOutcome = "none" | "identity_unverified" | "termination_failed";
 class StardewRoleLifecycleFacadeImpl implements StardewRoleLifecycleFacade {
   readonly #attachment: StardewAttachmentFlow | null;
   readonly #processOwner: StardewAiClientProcessOwner;
+  readonly #playerHostProcessOwner: StardewPlayerHostProcessOwner | null;
   #lastStopOutcome: LastStopOutcome = "none";
 
-  public constructor(attachment: StardewAttachmentFlow | null, processOwner: StardewAiClientProcessOwner) {
+  public constructor(
+    attachment: StardewAttachmentFlow | null,
+    processOwner: StardewAiClientProcessOwner,
+    playerHostProcessOwner: StardewPlayerHostProcessOwner | null,
+  ) {
     this.#attachment = attachment;
     this.#processOwner = processOwner;
+    this.#playerHostProcessOwner = playerHostProcessOwner;
   }
 
   async readRoleLifecycleView(): Promise<StardewRoleLifecycleView> {
@@ -87,7 +97,7 @@ class StardewRoleLifecycleFacadeImpl implements StardewRoleLifecycleFacade {
         ? undefined
         : await this.#attachment.readCompatibilityOutcome();
       playerHost = outcome === undefined
-        ? Object.freeze({ state: "not_started", ownership: "none" })
+        ? this.#composeOwnedPlayerHostSlot()
         : Object.freeze({
             state: "authenticated",
             ownership: "player_external",
@@ -122,6 +132,21 @@ class StardewRoleLifecycleFacadeImpl implements StardewRoleLifecycleFacade {
     return result;
   }
 
+  #composeOwnedPlayerHostSlot(): StardewPlayerHostSlot {
+    const status = this.#playerHostProcessOwner?.readStatus();
+    switch (status?.kind) {
+      case undefined:
+      case "idle":
+        return Object.freeze({ state: "not_started", ownership: "none" });
+      case "player_host_launch_pending":
+        return Object.freeze({ state: "pending", ownership: "gamebuddy_direct_spawn" });
+      case "awaiting_player_host_attestation":
+        return Object.freeze({ state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn" });
+      case "player_host_stopped":
+        return Object.freeze({ state: "stopped", ownership: "gamebuddy_direct_spawn" });
+    }
+  }
+
   #composeAiClientSlot(): StardewAiClientSlot {
     const status = this.#processOwner.readStatus();
     switch (status.kind) {
@@ -146,6 +171,7 @@ class StardewRoleLifecycleFacadeImpl implements StardewRoleLifecycleFacade {
 export function createStardewRoleLifecycleFacade(
   attachment: StardewAttachmentFlow | null,
   processOwner: StardewAiClientProcessOwner,
+  playerHostProcessOwner: StardewPlayerHostProcessOwner | null = null,
 ): StardewRoleLifecycleFacade {
-  return new StardewRoleLifecycleFacadeImpl(attachment, processOwner);
+  return new StardewRoleLifecycleFacadeImpl(attachment, processOwner, playerHostProcessOwner);
 }

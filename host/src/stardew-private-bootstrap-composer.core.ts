@@ -488,7 +488,7 @@ function createClosedComposition(
     playerHostProcessOwner,
     aiClientProcessOwner,
     createRoleLifecycleFacade(attachment) {
-      return createStardewRoleLifecycleFacade(attachment, aiClientProcessOwner);
+      return createStardewRoleLifecycleFacade(attachment, aiClientProcessOwner, playerHostProcessOwner);
     },
     async reserveExternalPlayerHostPhaseA(runtimeRoot, claim, aiClientReservation) {
       const claimRegistration = claims.get(claim);
@@ -1273,6 +1273,13 @@ function createOwnedPlayerHostAttachmentFlowCore(
  * Never exported from this module; only the closed composition and the
  * dedicated test composition reach it with their stored identity.
  */
+const stageCControlledLaunchErrors = new WeakSet<object>();
+
+/** Internal classification only: true means the one-shot controlled launch callback was entered. */
+export function didStardewOwnedPlayerHostStageCEnterControlledLaunch(error: unknown): boolean {
+  return typeof error === "object" && error !== null && stageCControlledLaunchErrors.has(error);
+}
+
 async function launchOwnedPlayerHostStageC(
   owner: StardewOwnedPlayerHostPhaseAOwner,
   installation: AdmittedStardewInstallation,
@@ -1316,6 +1323,9 @@ async function launchOwnedPlayerHostStageC(
     // retry. Spawn/probe/expiry/quarantine-on-entry failures keep the existing
     // one-shot owner behavior; the staged marker drains permanently.
     facts.phaseBState.value = launchEntered ? "not_staged" : "staged";
+    if (launchEntered && typeof error === "object" && error !== null) {
+      stageCControlledLaunchErrors.add(error);
+    }
     throw error;
   }
 }
