@@ -3124,3 +3124,144 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
   assert.deepEqual(right.harness.spawnCalls, []);
   assert.deepEqual(right.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });
+
+test("connected no-live C1 composition carries one owner generation through Stage C, signed handoff, and no-spawn AI materialization", async () => {
+  const playerHostGeneration = "connected-player-generation";
+  const aiClientGeneration = "connected-ai-generation";
+  const companionId = "connected-companion";
+  const packageSource = await createStageBPackage();
+  const harness = createHarness({
+    launchGenerations: [aiClientGeneration],
+    playerHostLaunchGenerations: [playerHostGeneration],
+    staging: stageCStaging(packageSource),
+  });
+  const testCore = createStardewPrivateBootstrapCompositionForTesting(harness.dependencies);
+  const root = await createRoot("gamebuddy-connected-c1-");
+  const triple = mintOwnedTriple(testCore.composition, {
+    playerId: "connected-player",
+    companionId,
+  });
+  const owner = await testCore.composition.reserveOwnedPlayerHostPhaseA(
+    root,
+    triple.claim,
+    triple.playerHostReservation,
+    triple.aiClientReservation,
+  );
+  await createStageBTestHarness({
+    recheck: async () => undefined,
+    verifyPackage: async () => undefined,
+  }).bindOwnedPhaseA(owner);
+
+  const ownerView = testCore.bindOwnedPlayerHostPhaseAOwner(owner);
+  assert.deepEqual(ownerView.record.playerHost, {
+    kind: "launch_reserved",
+    launchGeneration: playerHostGeneration,
+  });
+  assert.deepEqual(ownerView.record.aiClient, {
+    kind: "launch_reserved",
+    launchGeneration: aiClientGeneration,
+  });
+  assert.equal(ownerView.hasPrivateMaterial(), true);
+  assert.deepEqual(testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+
+  const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+  const launchResult = await testCore.launchOwnedPlayerHostStageC(owner, installation);
+  assert.deepEqual(launchResult, { status: { kind: "awaiting_player_host_attestation" } });
+  assert.equal(harness.playerHostSpawnCalls.length, 1);
+  assert.equal(harness.playerHostSpawnCalls[0]?.environmentGeneration, playerHostGeneration);
+  assert.deepEqual(testCore.composition.playerHostProcessOwner.readStatus(), {
+    kind: "awaiting_player_host_attestation",
+  });
+  assert.deepEqual(testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(harness.spawnCalls, []);
+
+  const transactionDirectory = ownerView.transactionDirectory;
+  const sessionDirectory = join(transactionDirectory, "session");
+  const sessionToken = "session-secret-stagec-012345";
+  await mkdir(sessionDirectory, { recursive: true });
+  await writeFile(
+    join(sessionDirectory, "stardew-session.json"),
+    JSON.stringify(signedAttachmentSession(sessionToken, playerHostGeneration)),
+  );
+
+  const coordinator = testCore.createOwnedPlayerHostManifestHandoffCoordinator();
+  const selection = await coordinator.select(owner, "cabin-attachment-factory");
+  assertFieldlessFrozen(selection);
+  const admissionPending = coordinator.confirmAndAdmit(selection, { confirmed: true });
+  const request = await waitForPublishedAttachmentRequest(sessionDirectory);
+  const requestId = request.requestId as string;
+  assert.equal(request.companionId, companionId);
+  assert.equal(request.cabinId, "cabin-attachment-factory");
+  assert.equal(request.endpoint, undefined);
+
+  await writeFile(
+    join(sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(signedAttachmentValue({
+      schemaVersion: 1,
+      requestId,
+      state: "ready",
+      reasonCode: "manifest_issued",
+      updatedAtUnixMs: 2_100,
+      manifestPath: "stardew-farmhand-manifest.json",
+      signature: "",
+    }, sessionToken)),
+  );
+  await writeFile(
+    join(sessionDirectory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(manifestForAttachment({
+      token: sessionToken,
+      requestId,
+      saveId: "save-attachment-factory",
+      worldId: "world-attachment-factory",
+      nonce: "nonce-attachment-factory",
+      companionId,
+    })),
+  );
+  const admission = await admissionPending;
+  assertFieldlessFrozen(admission);
+
+  const publicProjection = JSON.stringify({
+    launchResult,
+    selection,
+    admission,
+    playerHostStatus: testCore.composition.playerHostProcessOwner.readStatus(),
+    aiClientStatus: testCore.composition.aiClientProcessOwner.readStatus(),
+  });
+  for (const forbidden of [
+    "BridgeToken",
+    "PipeName",
+    "EnableLocalBridge",
+    "SessionToken",
+    "SessionDirectory",
+    "ManifestPath",
+    "publicSecret",
+    "ready",
+    "connected",
+    "generation",
+    playerHostGeneration,
+    aiClientGeneration,
+    sessionToken,
+    transactionDirectory,
+  ]) {
+    assert.equal(publicProjection.includes(forbidden), false, forbidden);
+  }
+
+  await testCore.materializeAiClientProfileAfterManifestAdmission(owner, admission);
+  assert.deepEqual(testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(harness.spawnCalls, []);
+  assert.deepEqual(harness.playerHostSpawnCalls[0]?.environmentGeneration, playerHostGeneration);
+
+  const hostConfig = await readFile(
+    join(transactionDirectory, "player-host", "Mods", "GameBuddy", "config.json"),
+    "utf8",
+  );
+  const aiConfigPath = join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json");
+  const aiConfig = JSON.parse(await readFile(aiConfigPath, "utf8")) as Record<string, unknown>;
+  assert.equal(typeof aiConfig.FarmhandProvisioner, "object");
+  assert.equal(hostConfig.includes("BridgeToken"), false);
+  assert.equal(hostConfig.includes("PipeName"), false);
+  assert.equal(hostConfig.includes("EnableLocalBridge"), false);
+  assert.equal(JSON.stringify(aiConfig).includes("BridgeToken"), false);
+  assert.equal(JSON.stringify(aiConfig).includes("PipeName"), false);
+  assert.equal(JSON.stringify(aiConfig).includes("EnableLocalBridge"), false);
+});
