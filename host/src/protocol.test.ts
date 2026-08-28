@@ -1658,3 +1658,46 @@ test("protocol serialization rejects oversized, undefined, and circular values",
   circular.self = circular;
   assert.throws(() => serializeBounded(circular), /message_not_serializable/);
 });
+
+
+test("navigation read requests admit only the strict inspect and destination-search unions", () => {
+  for (const payload of [
+    { operation: "inspect_world_map", args: {} },
+    { operation: "inspect_world_map", args: { nodeRef: "nr1_farm" } },
+    { operation: "inspect_world_map", args: { cursor: "wc1_page2" } },
+    { operation: "find_destination", args: { query: "Carpenter's Shop" } },
+  ]) assert.equal(validateBridgeMessage(newEnvelope("navigation_read_request", scope, payload, "nav_req", now), scope, now), null);
+
+  for (const payload of [
+    { operation: "inspect_world_map", args: { nodeRef: "nr1_farm", cursor: "wc1_page2" } },
+    { operation: "inspect_world_map", args: { extra: true } },
+    { operation: "find_destination", args: { query: "" } },
+    { operation: "find_destination", args: { query: "x".repeat(129) } },
+    { operation: "find_destination", args: { query: "Farm", score: 1 } },
+  ]) assert.equal(validateBridgeMessage(newEnvelope("navigation_read_request", scope, payload, "nav_bad", now), scope, now), "invalid_navigation_read_request");
+});
+
+test("navigation read results enforce the operation-independent exact wire union", () => {
+  const baseNulls = { entries: null, nextCursor: null, candidates: null, destination: null, unlockState: null };
+  const inspect = {
+    status: "succeeded", reason: "world_map_observed",
+    entries: [{ label: "Farm", contextLabel: null, nodeRef: "nr1_farm", destination: { kind: "label", label: "Farm", ref: null } }],
+    nextCursor: "wc1_page2", candidates: null, destination: null, unlockState: null,
+  };
+  const resolved = { ...baseNulls, status: "resolved", reason: "exact_alias", destination: { kind: "ref", label: null, ref: "nr1_shop" }, unlockState: "unknown" };
+  const candidates = { ...baseNulls, status: "candidates", reason: "fuzzy_match", candidates: [{ label: "Shop", contextLabel: "Town", destination: { kind: "ref", label: null, ref: null }, unlockState: "unknown" }] };
+  for (const payload of [inspect, resolved, candidates, { ...baseNulls, status: "not_found", reason: "destination_not_found" }, { ...baseNulls, status: "invalid", reason: "destination_search_invalid" }, { ...baseNulls, status: "blocked", reason: "world_unavailable" }])
+    assert.equal(validateBridgeMessage(newEnvelope("navigation_read_result", scope, payload, "nav_result", now), scope, now), null);
+
+  const invalid = [
+    { ...inspect, score: 1 },
+    { ...inspect, entries: [{ ...inspect.entries[0], nodeRef: "bad ref" }] },
+    { ...resolved, candidates: [] },
+    { ...resolved, destination: { kind: "label", label: null, ref: null } },
+    { ...candidates, candidates: Array.from({ length: 4 }, () => candidates.candidates[0]) },
+    { ...candidates, candidates: [{ ...candidates.candidates[0], score: 0.5 }] },
+    { ...baseNulls, status: "not_found", reason: "wrong_reason" },
+  ];
+  for (const payload of invalid)
+    assert.equal(validateBridgeMessage(newEnvelope("navigation_read_result", scope, payload, "nav_invalid", now), scope, now), "invalid_navigation_read_result");
+});

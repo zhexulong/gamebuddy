@@ -3406,6 +3406,7 @@ public sealed partial class ModEntry : Mod
                 {
                     "hello" => this.HandleHello(state, inbound.Generation, inbound.Json),
                     "observe_request" => this.HandleObserve(state, inbound.Generation, inbound.Json),
+                    "navigation_read_request" => this.HandleNavigationRead(state, inbound.Generation, inbound.Json, correlationId),
                     "execution_request" => this.HandleExecute(state, inbound.Generation, inbound.Json),
                     "cancel_request" => this.HandleCancel(state, inbound.Generation, inbound.Json),
                     "execution_receipt_query" => this.HandleExecutionReceiptQuery(state, inbound.Generation, inbound.Json, correlationId),
@@ -3599,6 +3600,14 @@ public sealed partial class ModEntry : Mod
     private string? HandleObserve(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeObserveRequest, BridgeSnapshot>(state,
         BridgeProtocol.TryDeserializeInbound(json, "observe_request", out BridgeEnvelope<BridgeObserveRequest>? request, out _) ? request : null,
         (BridgeEnvelope<BridgeObserveRequest> request, out BridgeEnvelope<BridgeSnapshot>? response, out string reason) => state.BridgeSession!.TryObserve(generation, request, out response, out reason), out _);
+
+    private string? HandleNavigationRead(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeNavigationReadRequest(json, out BridgeEnvelope<BridgeNavigationReadRequest>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<BridgeNavigationReadRequest, BridgeNavigationReadResult>(state, request,
+            (BridgeEnvelope<BridgeNavigationReadRequest> r, out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reason) => state.BridgeSession!.TryNavigationRead(generation, r, out response, out reason), out _);
+    }
 
     private string? HandleExecute(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(state,
         BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? request, out _) ? request : null,

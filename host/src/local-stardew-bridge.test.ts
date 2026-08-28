@@ -849,3 +849,86 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
     await close(server);
   }
 });
+
+
+async function withNavigationBridge(
+  name: string,
+  onNavigation: (socket: Socket, request: Extract<BridgeMessage, { type: "navigation_read_request" }>) => void,
+  run: (client: LocalStardewBridgeClient, peer: Socket) => Promise<void>,
+): Promise<void> {
+  const pipeName = `gamebuddy_navigation_${name}_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type === "hello") {
+          socket.write(frame({ ...request, messageId: `hello_${name}`, type: "hello_ack", payload: { sessionId: `session_${name}`, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "find_destination", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" }], runtimeRole: "native_local_fixture", launchGeneration: null } }));
+        } else if (request.type === "navigation_read_request") onNavigation(socket, request);
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolvePromise).once("error", reject));
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    assert.ok(peer !== undefined);
+    await run(client, peer);
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+}
+
+test("navigationRead dispatches an exact-correlated request without mutating bridge state or facts", async () => {
+  let received: Extract<BridgeMessage, { type: "navigation_read_request" }> | undefined;
+  await withNavigationBridge("success", (socket, request) => {
+    received = request;
+    socket.write(frame({ ...request, messageId: "nav_result_success", type: "navigation_read_result", payload: { status: "resolved", reason: "exact_current_locale", entries: null, nextCursor: null, candidates: null, destination: { kind: "label", label: "Farm", ref: null }, unlockState: "unknown" } }));
+  }, async (client) => {
+    const before = client.state;
+    let facts = 0;
+    client.onFact(() => facts++);
+    const result = await client.navigationRead({ operation: "find_destination", args: { query: "Farm" } });
+    assert.equal(received?.type, "navigation_read_request");
+    assert.deepEqual(received?.payload, { operation: "find_destination", args: { query: "Farm" } });
+    assert.equal(result.status, "resolved");
+    assert.equal(facts, 0);
+    assert.equal(client.state.snapshot, before.snapshot);
+    assert.equal(client.state.latestReceipt, before.latestReceipt);
+    assert.deepEqual(client.state.enabledActionIds, before.enabledActionIds);
+  });
+});
+
+test("navigationRead rejects a wrong correlated response type without admitting its state", async () => {
+  await withNavigationBridge("wrong_type", (socket, request) => {
+    socket.write(frame({ ...request, messageId: "nav_wrong_snapshot", type: "snapshot", payload: { revision: 99, location: "Farm", tile: { x: 1, y: 1 }, stamina: 1, health: 1, actionable: true, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", activeExecution: null } }));
+  }, async (client) => {
+    await assert.rejects(client.navigationRead({ operation: "inspect_world_map", args: {} }), /unexpected_navigation_read_response/);
+    assert.equal(client.state.snapshot, null);
+    assert.equal(client.state.latestReceipt, null);
+  });
+});
+
+test("navigationRead rejects a wrong correlated receipt without mutating receipt state", async () => {
+  await withNavigationBridge("wrong_receipt", (socket, request) => {
+    socket.write(frame({ ...request, messageId: "nav_wrong_receipt", type: "execution_receipt", payload: { executionId: "wrong_execution", requestId: "wrong_request", state: "succeeded", reasonCode: "completed", revision: 1, evidence: {} } }));
+  }, async (client) => {
+    await assert.rejects(client.navigationRead({ operation: "inspect_world_map", args: {} }), /unexpected_navigation_read_response/);
+    assert.equal(client.state.latestReceipt, null);
+  });
+});
+
+test("local bridge rejects an inbound navigation_read_request", async () => {
+  await withNavigationBridge("inbound", () => undefined, async (client, peer) => {
+    const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) => client.onConnectionFact(resolvePromise));
+    peer.write(frame({ protocolVersion: 1, messageId: "inbound_nav", correlationId: "inbound_nav", timestampMs: Date.now(), scope, type: "navigation_read_request", payload: { operation: "inspect_world_map", args: {} } }));
+    assert.equal((await disconnected).reasonCode, "unexpected_inbound_request");
+  });
+});

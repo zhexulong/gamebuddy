@@ -293,23 +293,27 @@ public sealed record BridgeExecutionRequest(
 
 public sealed record BridgeExecutionReceiptQuery(string RequestId, string IdempotencyKey);
 
-/// <summary>
-/// A read-only Navigation request. This contract deliberately exposes only the
-/// inspect-world-map selector union in P4E: destination search remains absent
-/// until its independent corpus admission is satisfied.
-/// </summary>
+/// <summary>A read-only Navigation request for map inspection or destination search.</summary>
 public sealed record BridgeNavigationReadRequest(string Operation, BridgeNavigationReadArgs Args);
 
 public sealed class BridgeNavigationReadArgs
 {
     public string? NodeRef { get; init; }
     public string? Cursor { get; init; }
+    public string? Query { get; init; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
 
 public sealed record BridgeNavigationDestinationSelector(string Kind, string? Label, string? Ref);
+
+public sealed record BridgeDestinationSearchCandidate(
+    string Label,
+    string? ContextLabel,
+    BridgeNavigationDestinationSelector Destination,
+    string UnlockState
+);
 
 public sealed record BridgeWorldMapEntry(
     string Label,
@@ -326,5 +330,8 @@ public sealed record BridgeNavigationReadResult(
     string Status,
     string Reason,
     IReadOnlyList<BridgeWorldMapEntry>? Entries,
-    string? NextCursor
+    string? NextCursor,
+    IReadOnlyList<BridgeDestinationSearchCandidate>? Candidates = null,
+    BridgeNavigationDestinationSelector? Destination = null,
+    string? UnlockState = null
 );

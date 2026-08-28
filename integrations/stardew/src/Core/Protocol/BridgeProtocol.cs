@@ -226,9 +226,8 @@ public static class BridgeProtocol
             if (!HasExactProperties(payload, "operation", "args")
                 || !payload.TryGetProperty("operation", out JsonElement operation)
                 || operation.ValueKind != JsonValueKind.String
-                || operation.GetString() != "inspect_world_map"
                 || !payload.TryGetProperty("args", out JsonElement args)
-                || !IsExactInspectWorldMapArgs(args))
+                || !IsExactNavigationReadArgs(operation.GetString(), args))
             {
                 reasonCode = "invalid_navigation_read_request";
                 return false;
@@ -252,6 +251,13 @@ public static class BridgeProtocol
         }
     }
 
+    private static bool IsExactNavigationReadArgs(string? operation, JsonElement args) => operation switch
+    {
+        "inspect_world_map" => IsExactInspectWorldMapArgs(args),
+        "find_destination" => IsExactFindDestinationArgs(args),
+        _ => false,
+    };
+
     private static bool IsExactInspectWorldMapArgs(JsonElement args)
     {
         if (args.ValueKind != JsonValueKind.Object)
@@ -266,6 +272,17 @@ public static class BridgeProtocol
                 && args.TryGetProperty("cursor", out JsonElement cursor)
                 && cursor.ValueKind == JsonValueKind.String
                 && IsOpaqueId(cursor.GetString()));
+    }
+
+    private static bool IsExactFindDestinationArgs(JsonElement args)
+    {
+        if (!HasExactProperties(args, "query")
+            || !args.TryGetProperty("query", out JsonElement query)
+            || query.ValueKind != JsonValueKind.String)
+            return false;
+
+        string? value = query.GetString();
+        return value is { Length: >= 1 and <= 128 };
     }
 
     public static bool TryDeserializeExecutionReceiptQuery(

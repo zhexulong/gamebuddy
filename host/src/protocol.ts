@@ -373,6 +373,70 @@ export type ExecutionReceiptQuery = Readonly<{
   idempotencyKey: string;
 }>;
 
+export type NavigationSelector = Readonly<{
+  kind: "label" | "ref";
+  label: string | null;
+  ref: string | null;
+}>;
+
+export type NavigationReadRequest =
+  | Readonly<{ operation: "inspect_world_map"; args: Readonly<Record<string, never>> }>
+  | Readonly<{ operation: "inspect_world_map"; args: Readonly<{ nodeRef: string }> }>
+  | Readonly<{ operation: "inspect_world_map"; args: Readonly<{ cursor: string }> }>
+  | Readonly<{ operation: "find_destination"; args: Readonly<{ query: string }> }>;
+
+export type NavigationWorldMapEntry = Readonly<{
+  label: string;
+  contextLabel: string | null;
+  nodeRef: string | null;
+  destination: NavigationSelector | null;
+}>;
+
+export type NavigationSearchCandidate = Readonly<{
+  label: string;
+  contextLabel: string | null;
+  destination: NavigationSelector;
+  unlockState: "unknown";
+}>;
+
+export type NavigationReadResult =
+  | Readonly<{
+      status: "succeeded";
+      reason: "world_map_observed";
+      entries: readonly NavigationWorldMapEntry[];
+      nextCursor: string | null;
+      candidates: null;
+      destination: null;
+      unlockState: null;
+    }>
+  | Readonly<{
+      status: "resolved";
+      reason: "exact_current_locale" | "exact_fallback_locale" | "exact_alias";
+      entries: null;
+      nextCursor: null;
+      candidates: null;
+      destination: NavigationSelector;
+      unlockState: "unknown";
+    }>
+  | Readonly<{
+      status: "candidates";
+      reason: "ambiguous_exact" | "fuzzy_match";
+      entries: null;
+      nextCursor: null;
+      candidates: readonly NavigationSearchCandidate[];
+      destination: null;
+      unlockState: null;
+    }>
+  | Readonly<{
+      status: "not_found" | "invalid" | "blocked";
+      reason: string;
+      entries: null;
+      nextCursor: null;
+      candidates: null;
+      destination: null;
+      unlockState: null;
+    }>;
+
 export type ExecutionReceipt = Readonly<{
   executionId: string;
   requestId: string;
@@ -517,6 +581,8 @@ export type BridgeMessage =
       }>
     >
   | Envelope<"observe_request", Readonly<Record<string, never>>>
+  | Envelope<"navigation_read_request", NavigationReadRequest>
+  | Envelope<"navigation_read_result", NavigationReadResult>
   | Envelope<"snapshot", Snapshot>
   | Envelope<"catalog_update", Readonly<{ catalogRevision: number; enabledActionIds: readonly string[] }>>
   | Envelope<"execution_request", ExecutionRequest>
@@ -539,6 +605,8 @@ export const BRIDGE_MESSAGE_TYPES = [
   "hello",
   "hello_ack",
   "observe_request",
+  "navigation_read_request",
+  "navigation_read_result",
   "snapshot",
   "catalog_update",
   "execution_request",
@@ -740,6 +808,10 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         : "invalid_hello_ack";
     case "observe_request":
       return hasExactKeys(payload, []) ? null : "invalid_observe_request";
+    case "navigation_read_request":
+      return validateNavigationReadRequest(payload);
+    case "navigation_read_result":
+      return validateNavigationReadResult(payload);
     case "snapshot":
       return validateSnapshot(payload);
     case "catalog_update":
@@ -846,6 +918,80 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         ? null
         : "invalid_lifecycle";
   }
+}
+
+function validateNavigationReadRequest(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["operation", "args"]) || !isRecord(value.args)) return "invalid_navigation_read_request";
+  if (value.operation === "inspect_world_map") {
+    if (hasExactKeys(value.args, [])) return null;
+    if (hasExactKeys(value.args, ["nodeRef"]) && isOpaqueId(value.args.nodeRef)) return null;
+    if (hasExactKeys(value.args, ["cursor"]) && isOpaqueId(value.args.cursor)) return null;
+  } else if (
+    value.operation === "find_destination" &&
+    hasExactKeys(value.args, ["query"]) &&
+    isBoundedNonEmptyString(value.args.query, 128)
+  ) {
+    return null;
+  }
+  return "invalid_navigation_read_request";
+}
+
+function validateNavigationReadResult(value: Record<string, unknown>): string | null {
+  const keys = ["status", "reason", "entries", "nextCursor", "candidates", "destination", "unlockState"];
+  if (!hasExactKeys(value, keys) || !isReasonCode(value.reason)) return "invalid_navigation_read_result";
+  if (value.status === "succeeded") {
+    return value.reason === "world_map_observed" &&
+      Array.isArray(value.entries) && value.entries.length <= 20 && value.entries.every(isNavigationWorldMapEntry) &&
+      (value.nextCursor === null || isOpaqueId(value.nextCursor)) &&
+      value.candidates === null && value.destination === null && value.unlockState === null
+      ? null : "invalid_navigation_read_result";
+  }
+  if (value.status === "resolved") {
+    return (value.reason === "exact_current_locale" || value.reason === "exact_fallback_locale" || value.reason === "exact_alias") &&
+      value.entries === null && value.nextCursor === null && value.candidates === null &&
+      isNavigationSelector(value.destination) && value.unlockState === "unknown"
+      ? null : "invalid_navigation_read_result";
+  }
+  if (value.status === "candidates") {
+    return (value.reason === "ambiguous_exact" || value.reason === "fuzzy_match") &&
+      value.entries === null && value.nextCursor === null && Array.isArray(value.candidates) &&
+      value.candidates.length >= 1 && value.candidates.length <= 3 && value.candidates.every(isNavigationSearchCandidate) &&
+      value.destination === null && value.unlockState === null
+      ? null : "invalid_navigation_read_result";
+  }
+  const validTerminal =
+    (value.status === "not_found" && value.reason === "destination_not_found") ||
+    (value.status === "invalid" && value.reason === "destination_search_invalid") ||
+    (value.status === "blocked" && isReasonCode(value.reason));
+  return validTerminal && value.entries === null && value.nextCursor === null && value.candidates === null &&
+    value.destination === null && value.unlockState === null
+    ? null : "invalid_navigation_read_result";
+}
+
+function isNavigationSelector(value: unknown): value is NavigationSelector {
+  if (!isRecord(value) || !hasExactKeys(value, ["kind", "label", "ref"])) return false;
+  return value.kind === "label"
+    ? isBoundedNonEmptyString(value.label, 128) && value.ref === null
+    : value.kind === "ref" && value.label === null && (value.ref === null || isOpaqueId(value.ref));
+}
+
+function isNavigationWorldMapEntry(value: unknown): value is NavigationWorldMapEntry {
+  return isRecord(value) && hasExactKeys(value, ["label", "contextLabel", "nodeRef", "destination"]) &&
+    isBoundedNonEmptyString(value.label, 128) &&
+    (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
+    (value.nodeRef === null || isOpaqueId(value.nodeRef)) &&
+    (value.destination === null || isNavigationSelector(value.destination));
+}
+
+function isNavigationSearchCandidate(value: unknown): value is NavigationSearchCandidate {
+  return isRecord(value) && hasExactKeys(value, ["label", "contextLabel", "destination", "unlockState"]) &&
+    isBoundedNonEmptyString(value.label, 128) &&
+    (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
+    isNavigationSelector(value.destination) && value.unlockState === "unknown";
+}
+
+function isBoundedNonEmptyString(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= maxLength;
 }
 
 export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
