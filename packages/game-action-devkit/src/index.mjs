@@ -7,9 +7,12 @@ export {
   beginEvidenceRun,
   finalizeEvidenceRun,
   finalizeIncompleteEvidenceRun,
+  readEvidenceStatus,
+  readLatestEvidenceStatus,
   readPassedEvidence,
 } from "./evidence.mjs";
 export {
+  mintEvidenceRunId,
   normalizeInvocation,
   readActionProjectManifest,
   runActionProject,

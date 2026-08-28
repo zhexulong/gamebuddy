@@ -50,8 +50,10 @@ test("binary stdout including its newline stays within the 64 KiB bound", async 
   const output = "x".repeat(MAX_CLI_REPORT_BYTES - Buffer.byteLength('{"gameId":"stardew","status":"ok","output":""}', "utf8"));
   try {
     await writeFile(path.join(root, "inventory.json"), "{}", "utf8");
+    await writeFile(path.join(root, "portfolio.json"), "{}", "utf8");
+    await writeFile(path.join(root, "profile.json"), "{}", "utf8");
     await writeFile(path.join(root, "adapter.mjs"), `export async function runActionProject() { return { gameId: "stardew", status: "ok", output: ${JSON.stringify(output)} }; }`, "utf8");
-    await writeFile(path.join(root, "project.json"), JSON.stringify({ schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "adapter.mjs", toolInventory: "inventory.json" }), "utf8");
+    await writeFile(path.join(root, "project.json"), JSON.stringify({ schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "adapter.mjs", portfolio: "portfolio.json", toolInventory: "inventory.json", evidenceRoot: "artifacts/action-runs", defaultProfileExample: "profile.json" }), "utf8");
     const { stdout } = await execFile(process.execPath, [binFile, "status", "--project", path.join(root, "project.json")], { encoding: "buffer", maxBuffer: MAX_CLI_STDOUT_BYTES + 1 });
     assert.equal(stdout.byteLength, MAX_CLI_STDOUT_BYTES);
   } finally {
