@@ -123,38 +123,59 @@ internal sealed class BridgeSession
         if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
 
         string operation = envelope!.Payload.Operation;
-        if (operation != "inspect_world_map" || !this.capabilityPublicationProvider().CapabilitySet.AllowsReadOperation(operation))
+        if (operation is not ("inspect_world_map" or "find_destination")
+            || !this.capabilityPublicationProvider().CapabilitySet.AllowsReadOperation(operation))
         { reasonCode = "operation_not_available"; return false; }
 
         DerivedDestinationSet? set = this.navigationSetProvider();
         if (set is null) { reasonCode = "world_map_unavailable"; return false; }
 
-        var context = new NavigationBindingContext(
-            this.navigationRuntimeInstanceId,
-            this.scope,
-            set.Generation,
-            ++this.navigationObservationSequence,
-            DateTimeOffset.UtcNow);
         BridgeNavigationReadArgs args = envelope.Payload.Args;
-        WorldMapProjection projection = new(this.navigationReferences);
-        WorldMapProjectionResult result = args.NodeRef is not null && args.Cursor is null
-            ? projection.ProjectNode(set, args.NodeRef, context)
-            : args.Cursor is not null && args.NodeRef is null
-                ? projection.ProjectCursor(set, args.Cursor, context)
-                : args.NodeRef is null && args.Cursor is null
-                    ? projection.ProjectRoot(set, context)
-                    : WorldMapProjectionResult.Blocked("world_map_unavailable");
-        BridgeNavigationReadResult payload = result.BlockedReason is null
-            ? new BridgeNavigationReadResult(
-                "succeeded",
-                "world_map_observed",
-                result.Entries!.Select(entry => new BridgeWorldMapEntry(
-                    entry.Label,
-                    entry.ContextLabel,
-                    entry.NodeRef,
-                    entry.Destination is null ? null : ToBridgeSelector(entry.Destination))).ToArray(),
-                result.NextCursor)
-            : new BridgeNavigationReadResult("blocked", result.BlockedReason, null, null);
+        BridgeNavigationReadResult payload;
+        if (operation == "find_destination")
+        {
+            DestinationSearchResult result = new DestinationSearch().Find(set, args.Query!);
+            payload = new BridgeNavigationReadResult(
+                result.Status,
+                result.Reason,
+                null,
+                null,
+                result.Candidates?.Select(candidate => new BridgeDestinationSearchCandidate(
+                    candidate.Label,
+                    candidate.ContextLabel,
+                    ToBridgeSelector(candidate.Selector),
+                    candidate.UnlockState)).ToArray(),
+                result.Destination is null ? null : ToBridgeSelector(result.Destination),
+                result.UnlockState);
+        }
+        else
+        {
+            var context = new NavigationBindingContext(
+                this.navigationRuntimeInstanceId,
+                this.scope,
+                set.Generation,
+                ++this.navigationObservationSequence,
+                DateTimeOffset.UtcNow);
+            WorldMapProjection projection = new(this.navigationReferences);
+            WorldMapProjectionResult result = args.NodeRef is not null && args.Cursor is null
+                ? projection.ProjectNode(set, args.NodeRef, context)
+                : args.Cursor is not null && args.NodeRef is null
+                    ? projection.ProjectCursor(set, args.Cursor, context)
+                    : args.NodeRef is null && args.Cursor is null
+                        ? projection.ProjectRoot(set, context)
+                        : WorldMapProjectionResult.Blocked("world_map_unavailable");
+            payload = result.BlockedReason is null
+                ? new BridgeNavigationReadResult(
+                    "succeeded",
+                    "world_map_observed",
+                    result.Entries!.Select(entry => new BridgeWorldMapEntry(
+                        entry.Label,
+                        entry.ContextLabel,
+                        entry.NodeRef,
+                        entry.Destination is null ? null : ToBridgeSelector(entry.Destination))).ToArray(),
+                    result.NextCursor)
+                : new BridgeNavigationReadResult("blocked", result.BlockedReason, null, null);
+        }
         response = Reply("navigation_read_result", envelope.CorrelationId, payload);
         reasonCode = "accepted";
         return true;

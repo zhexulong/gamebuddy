@@ -68,12 +68,45 @@ public sealed class BridgeProtocolSerializationTests
         envelope!.Payload.Operation.Should().Be("inspect_world_map");
     }
 
+    [Fact]
+    public void TryDeserializeNavigationReadRequest_ValidFindDestinationPayload_DeserializesCorrectly()
+    {
+        const string json = "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"navigation_read_request\",\"payload\":{\"operation\":\"find_destination\",\"args\":{\"query\":\"mine\"}}}";
+
+        bool deserialized = BridgeProtocol.TryDeserializeNavigationReadRequest(json, out var envelope, out string reasonCode);
+
+        deserialized.Should().BeTrue();
+        reasonCode.Should().Be("accepted");
+        envelope!.Payload.Operation.Should().Be("find_destination");
+        envelope.Payload.Args.Query.Should().Be("mine");
+    }
+
+    [Fact]
+    public void TryDeserializeNavigationReadRequest_FindDestinationAtMaximumQueryLength_DeserializesCorrectly()
+    {
+        string query = new('q', 128);
+        string json = "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"navigation_read_request\",\"payload\":{\"operation\":\"find_destination\",\"args\":{\"query\":\"" + query + "\"}}}";
+
+        bool deserialized = BridgeProtocol.TryDeserializeNavigationReadRequest(json, out var envelope, out string reasonCode);
+
+        deserialized.Should().BeTrue();
+        reasonCode.Should().Be("accepted");
+        envelope!.Payload.Args.Query.Should().Be(query);
+    }
+
     [Theory]
     [InlineData("{\"operation\":\"inspect_world_map\",\"args\":{\"nodeRef\":\"nr1_node_01\",\"cursor\":\"wc1_cursor_01\"}}")]
     [InlineData("{\"operation\":\"inspect_world_map\",\"args\":{\"pageSize\":20}}")]
-    [InlineData("{\"operation\":\"find_destination\",\"args\":{\"query\":\"mine\"}}")]
+    [InlineData("{\"operation\":\"inspect_world_map\",\"args\":{\"query\":\"mine\"}}")]
+    [InlineData("{\"operation\":\"find_destination\",\"args\":{}}")]
+    [InlineData("{\"operation\":\"find_destination\",\"args\":{\"query\":\"\"}}")]
+    [InlineData("{\"operation\":\"find_destination\",\"args\":{\"query\":null}}")]
+    [InlineData("{\"operation\":\"find_destination\",\"args\":{\"query\":20}}")]
+    [InlineData("{\"operation\":\"find_destination\",\"args\":{\"query\":{\"text\":\"mine\"}}}")]
+    [InlineData("{\"operation\":\"find_destination\",\"args\":{\"query\":\"mine\",\"nodeRef\":\"nr1_node_01\"}}")]
+    [InlineData("{\"operation\":\"find_destination\",\"args\":{\"query\":\"mine\",\"cursor\":\"wc1_cursor_01\"}}")]
     [InlineData("{\"operation\":\"unknown\",\"args\":{}}")]
-    public void TryDeserializeNavigationReadRequest_NonInspectOrNonExactPayload_FailsClosed(string payloadJson)
+    public void TryDeserializeNavigationReadRequest_NonUnionOrMalformedPayload_FailsClosed(string payloadJson)
     {
         string json = "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"navigation_read_request\",\"payload\":" + payloadJson + "}";
 

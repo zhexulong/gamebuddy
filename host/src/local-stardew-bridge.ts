@@ -12,6 +12,8 @@ import {
   type ExecutionReceipt,
   type ExecutionReceiptQuery,
   type ExecutionRequest,
+  type NavigationReadRequest,
+  type NavigationReadResult,
   newEnvelope,
   nextCancelIdentity,
   type Scope,
@@ -55,6 +57,7 @@ type PendingRequest = Readonly<{
 type OutboundRequestType =
   | "hello"
   | "observe_request"
+  | "navigation_read_request"
   | "execution_request"
   | "execution_receipt_query"
   | "cancel_request"
@@ -193,6 +196,14 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       if (snapshot.catalogRevision !== targetRevision) throw new Error("catalog_refresh_stale_snapshot");
       return snapshot;
     }
+  }
+
+  public async navigationRead(request: NavigationReadRequest): Promise<NavigationReadResult> {
+    this.requireAuthenticated();
+    const response = await this.request("navigation_read_request", request);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "navigation_read_result") throw new Error("unexpected_navigation_read_response");
+    return response.payload;
   }
 
   public async execute(request: ExecutionRequest): Promise<NonNullable<LocalStardewBridgeState["latestReceipt"]>> {
@@ -343,6 +354,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       fault !== null ||
       message.type === "hello" ||
       message.type === "observe_request" ||
+      message.type === "navigation_read_request" ||
       message.type === "execution_request" ||
       message.type === "execution_receipt_query" ||
       message.type === "cancel_request" ||
@@ -375,6 +387,20 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     // same exact frame.
     const isSolicitedReceiptQueryResponse =
       pending?.type === "execution_receipt_query" && message.type === "execution_receipt";
+    const isSolicitedNavigationResponse =
+      pending?.type === "navigation_read_request" && message.type === "navigation_read_result";
+    if (message.type === "navigation_read_result" && !isSolicitedNavigationResponse) {
+      this.transport.close("unexpected_navigation_read_result");
+      return;
+    }
+    if (pending !== undefined && !isExpectedResponse(pending.type, message.type)) {
+      this.#pending.delete(message.correlationId);
+      clearTimeout(pending.timer);
+      pending.reject(
+        new Error(pending.type === "navigation_read_request" ? "unexpected_navigation_read_response" : "unexpected_bridge_response"),
+      );
+      return;
+    }
     if (message.type === "hello_ack") {
       this.#snapshot = null;
       this.#initialSnapshotReceived = false;
@@ -461,6 +487,26 @@ function isPurportedPlayerControlSemanticEvent(message: unknown): boolean {
     return false;
   const kind = (record.payload as Record<string, unknown>).kind;
   return kind === "player_input" || kind === "stop_all";
+}
+
+function isExpectedResponse(requestType: OutboundRequestType, responseType: BridgeMessage["type"]): boolean {
+  if (responseType === "error") return true;
+  switch (requestType) {
+    case "hello":
+      return responseType === "hello_ack";
+    case "observe_request":
+      return responseType === "snapshot";
+    case "navigation_read_request":
+      return responseType === "navigation_read_result";
+    case "execution_request":
+    case "execution_receipt_query":
+    case "cancel_request":
+      return responseType === "execution_receipt";
+    case "companion_presentation_request":
+      return responseType === "companion_presentation_receipt";
+    case "system_notice_request":
+      return responseType === "system_notice_receipt";
+  }
 }
 
 function sameActionIds(left: readonly string[], right: readonly string[]): boolean {
