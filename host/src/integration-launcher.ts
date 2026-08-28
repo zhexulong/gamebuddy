@@ -132,6 +132,7 @@ export function assertReceiptBackedLaunch(
   // materializing an executable ToolDefinition. Tool materialization requires
   // the runtime-owned dispatch admission minted only after this boundary.
   const publishableActions = launcher.module.actionCatalog.visibleActions(
+    state.registrations ?? [],
     state.capabilities,
     launcher.module.defaultPolicy,
   );

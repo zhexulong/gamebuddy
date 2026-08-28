@@ -66,194 +66,218 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
       local.knowledge,
       local.gameVersion,
     );
-    const executionGate = { executable: true };
-    let closed = false;
-    const bootstrapFacts: WorldFact[] = [];
-    const bufferedFacts: Array<readonly [WorldFact, LocalStardewBridgeFact]> = [];
-    const bufferedLifecycle: IntegrationLifecycleEvent[] = [];
-    const factListeners = new Set<(fact: WorldFact) => void>();
-    const lifecycleListeners = new Set<(event: IntegrationLifecycleEvent) => void>();
-    // The preview finishes its initial `observe()` before it can mount the
-    // Host listener. A player-control fact arriving in that interval must be
-    // replayed to Host exactly once; later facts go directly to the listener.
-    let factDeliveryReady = false;
-    const executionWakeListeners = new Set<(wake: ExecutionWake) => void>();
-    const publishWake = (wake: ExecutionWake) => {
-      for (const listener of executionWakeListeners) listener(wake);
-    };
-    const disconnect = (reasonCode: string) => {
-      if (closed) return;
-      // Freeze dispatch and publish exactly one liveness transition before
-      // closing transport. bridge.close() may synchronously report its own
-      // connection fact, which is suppressed by the closed guard.
-      executionGate.executable = false;
-      // Seal before notifying listeners so a listener-triggered close or a
-      // synchronous transport callback cannot publish a second transition.
-      closed = true;
-      publishWake(Object.freeze({ kind: "disconnected", reasonCode }));
-      const event = Object.freeze({ state: "disconnected" as const, reasonCode });
-      bufferedLifecycle.push(event);
-      for (const listener of lifecycleListeners) listener(event);
-      bridge.close();
-    };
-    const revoke = (reasonCode: string) => disconnect(reasonCode);
-    const deliverFact = (converted: WorldFact, fact: LocalStardewBridgeFact) => {
-      try {
-        // Freeze the subscription set at delivery start. A listener added or
-        // removed by another listener belongs to a later fact, never this one.
-        for (const listener of [...factListeners]) listener(converted);
-      } catch {
-        // A partial synchronous delivery cannot honestly produce acceptance.
-        // Closing bounds the failure to this bridge generation.
-        disconnect("fact_listener_failed");
-        return;
-      }
-      if (
-        fact.type === "semantic_event" &&
-        (fact.payload.kind === "player_input" || fact.payload.kind === "stop_all")
-      ) {
-        console.debug("GameBuddy native chat ingress stage=native_chat_adapter_fact_forwarded");
-        try {
-          // The listener has synchronously accepted the exact typed fact. The
-          // receipt confirms delivery to Host, never model completion or output.
-          bridge.acknowledgePlayerControl(
-            fact.payload.playerControl!.controlId,
-            fact.payload.playerControl!.sourceEventId,
-          );
-        } catch {
-          // The Host has the fact but the Mod cannot prove receipt delivery.
-          // Do not retry or claim acceptance on a possibly closed generation.
-          disconnect("player_control_receipt_write_failed");
-        }
-      }
-    };
-    const removeFact = bridge.onFact((fact) => {
-      const converted = toWorldFact(fact);
-      if (fact.type === "execution_receipt") {
-        const receipt = fact.payload;
-        if (receipt.state === "invalidated") {
-          // An invalidated receipt means this adapter can no longer admit a
-          // subsequent action until a fresh launcher instance is established.
-          executionGate.executable = false;
-          publishWake(Object.freeze({ kind: "invalidated", reasonCode: receipt.reasonCode }));
-        } else if (isTerminalExecutionState(receipt.state))
-          publishWake(
-            Object.freeze({
-              kind: "terminal",
-              requestId: receipt.requestId,
-              executionId: receipt.executionId,
-              state: receipt.state,
-              reasonCode: receipt.reasonCode,
-            }),
-          );
-      }
-      if (!factDeliveryReady) {
-        if (fact.type === "snapshot") bootstrapFacts.push(converted);
-        else bufferedFacts.push([converted, fact]);
-        return;
-      }
-      deliverFact(converted, fact);
-    });
-    const removeLifecycle = bridge.onConnectionFact((fact) => revoke(fact.reasonCode));
-    const removeDiagnostic = bridge.onDiagnostic((diagnostic) => {
-      // Bounded phase/reason only; never raw bridge content or authority data.
-      console.debug(`GameBuddy native chat ingress stage=${diagnostic.stage}:${diagnostic.reasonCode}`);
-    });
+    return createStardewIntegrationLaunchHandleFromAuthenticatedBridge(bridge, identity, local);
+  },
+});
+
+/** Converts one exact authenticated Stardew client into the adapter-owned receipt-backed launch handle. */
+export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+  bridge: LocalStardewBridgeClient,
+  identity: Readonly<{ playerId: string; companionId: string; saveId?: string; worldId?: string }>,
+  options: Readonly<{ expectedPresentationLocale?: string; knowledge?: KnowledgeBundle; gameVersion?: string }> = {},
+): Promise<IntegrationLaunchHandle> {
+  if (!(bridge instanceof LocalStardewBridgeClient)) throw new Error("authenticated_stardew_bridge_required");
+  if (identity.saveId === undefined || identity.worldId === undefined)
+    throw new Error("stardew_identity_scope_required");
+  const scope: Scope = {
+    integrationId: "stardew",
+    saveId: identity.saveId,
+    worldId: identity.worldId,
+    playerId: identity.playerId,
+    companionId: identity.companionId,
+  };
+  if (!sameScope(bridge.scope, scope)) {
+    bridge.close();
+    throw new Error("stardew_bridge_identity_scope_mismatch");
+  }
+  const local = options;
+  const executionGate = { executable: true };
+  let closed = false;
+  const bootstrapFacts: WorldFact[] = [];
+  const bufferedFacts: Array<readonly [WorldFact, LocalStardewBridgeFact]> = [];
+  const bufferedLifecycle: IntegrationLifecycleEvent[] = [];
+  const factListeners = new Set<(fact: WorldFact) => void>();
+  const lifecycleListeners = new Set<(event: IntegrationLifecycleEvent) => void>();
+  // The preview finishes its initial `observe()` before it can mount the
+  // Host listener. A player-control fact arriving in that interval must be
+  // replayed to Host exactly once; later facts go directly to the listener.
+  let factDeliveryReady = false;
+  const executionWakeListeners = new Set<(wake: ExecutionWake) => void>();
+  const publishWake = (wake: ExecutionWake) => {
+    for (const listener of executionWakeListeners) listener(wake);
+  };
+  const disconnect = (reasonCode: string) => {
+    if (closed) return;
+    // Freeze dispatch and publish exactly one liveness transition before
+    // closing transport. bridge.close() may synchronously report its own
+    // connection fact, which is suppressed by the closed guard.
+    executionGate.executable = false;
+    // Seal before notifying listeners so a listener-triggered close or a
+    // synchronous transport callback cannot publish a second transition.
+    closed = true;
+    publishWake(Object.freeze({ kind: "disconnected", reasonCode }));
+    const event = Object.freeze({ state: "disconnected" as const, reasonCode });
+    bufferedLifecycle.push(event);
+    for (const listener of lifecycleListeners) listener(event);
+    bridge.close();
+  };
+  const revoke = (reasonCode: string) => disconnect(reasonCode);
+  const deliverFact = (converted: WorldFact, fact: LocalStardewBridgeFact) => {
     try {
-      const snapshot = await bridge.observe();
-      if (!executionGate.executable) throw new Error("stardew_launch_disconnected");
-      if (
-        local.expectedPresentationLocale !== undefined &&
-        snapshot.presentationLocale !== local.expectedPresentationLocale
-      )
-        throw new Error("stardew_presentation_locale_mismatch");
-      // `observe()` is received through the same validated listener as later
-      // bridge traffic. Hand that exact snapshot to bootstrap once, so the
-      // subscription buffer cannot duplicate it after runtime creation.
-      const initialFacts = Object.freeze(bootstrapFacts.splice(0));
-      if (!initialFacts.some((fact) => fact.kind === "snapshot" && fact.revision === snapshot.revision)) {
-        throw new Error("stardew_initial_snapshot_not_observed");
+      // Freeze the subscription set at delivery start. A listener added or
+      // removed by another listener belongs to a later fact, never this one.
+      for (const listener of [...factListeners]) listener(converted);
+    } catch {
+      // A partial synchronous delivery cannot honestly produce acceptance.
+      // Closing bounds the failure to this bridge generation.
+      disconnect("fact_listener_failed");
+      return;
+    }
+    if (
+      fact.type === "semantic_event" &&
+      (fact.payload.kind === "player_input" || fact.payload.kind === "stop_all")
+    ) {
+      console.debug("GameBuddy native chat ingress stage=native_chat_adapter_fact_forwarded");
+      try {
+        // The listener has synchronously accepted the exact typed fact. The
+        // receipt confirms delivery to Host, never model completion or output.
+        bridge.acknowledgePlayerControl(
+          fact.payload.playerControl!.controlId,
+          fact.payload.playerControl!.sourceEventId,
+        );
+      } catch {
+        // The Host has the fact but the Mod cannot prove receipt delivery.
+        // Do not retry or claim acceptance on a possibly closed generation.
+        disconnect("player_control_receipt_write_failed");
       }
-      const events: IntegrationEventSource = Object.freeze({
-        onFact: (listener) => {
-          // Register before draining so a synchronous bridge callback cannot
-          // land between the snapshot and the active listener. The delivery
-          // flag changes only after registration; each buffered fact is then
-          // drained once and later facts go directly to this listener.
-          factListeners.add(listener);
-          factDeliveryReady = true;
-          const initial = bufferedFacts.splice(0);
-          for (const [fact, rawFact] of initial) deliverFact(fact, rawFact);
-          return () => {
-            factListeners.delete(listener);
-            if (factListeners.size === 0) factDeliveryReady = false;
-          };
-        },
-        onLifecycle: (listener) => {
-          for (const event of bufferedLifecycle) listener(event);
-          bufferedLifecycle.length = 0;
-          lifecycleListeners.add(listener);
-          return () => lifecycleListeners.delete(listener);
-        },
-        onExecutionWake: (listener) => {
+    }
+  };
+  const removeFact = bridge.onFact((fact) => {
+    const converted = toWorldFact(fact);
+    if (fact.type === "execution_receipt") {
+      const receipt = fact.payload;
+      if (receipt.state === "invalidated") {
+        // An invalidated receipt means this adapter can no longer admit a
+        // subsequent action until a fresh launcher instance is established.
+        executionGate.executable = false;
+        publishWake(Object.freeze({ kind: "invalidated", reasonCode: receipt.reasonCode }));
+      } else if (isTerminalExecutionState(receipt.state))
+        publishWake(
+          Object.freeze({
+            kind: "terminal",
+            requestId: receipt.requestId,
+            executionId: receipt.executionId,
+            state: receipt.state,
+            reasonCode: receipt.reasonCode,
+          }),
+        );
+    }
+    if (!factDeliveryReady) {
+      if (fact.type === "snapshot") bootstrapFacts.push(converted);
+      else bufferedFacts.push([converted, fact]);
+      return;
+    }
+    deliverFact(converted, fact);
+  });
+  const removeLifecycle = bridge.onConnectionFact((fact) => revoke(fact.reasonCode));
+  const removeDiagnostic = bridge.onDiagnostic((diagnostic) => {
+    // Bounded phase/reason only; never raw bridge content or authority data.
+    console.debug(`GameBuddy native chat ingress stage=${diagnostic.stage}:${diagnostic.reasonCode}`);
+  });
+  try {
+    const snapshot = await bridge.observe();
+    if (!executionGate.executable) throw new Error("stardew_launch_disconnected");
+    if (
+      local.expectedPresentationLocale !== undefined &&
+      snapshot.presentationLocale !== local.expectedPresentationLocale
+    )
+      throw new Error("stardew_presentation_locale_mismatch");
+    // `observe()` is received through the same validated listener as later
+    // bridge traffic. Hand that exact snapshot to bootstrap once, so the
+    // subscription buffer cannot duplicate it after runtime creation.
+    const initialFacts = Object.freeze(bootstrapFacts.splice(0));
+    if (!initialFacts.some((fact) => fact.kind === "snapshot" && fact.revision === snapshot.revision)) {
+      throw new Error("stardew_initial_snapshot_not_observed");
+    }
+    const events: IntegrationEventSource = Object.freeze({
+      onFact: (listener) => {
+        // Register before draining so a synchronous bridge callback cannot
+        // land between the snapshot and the active listener. The delivery
+        // flag changes only after registration; each buffered fact is then
+        // drained once and later facts go directly to this listener.
+        factListeners.add(listener);
+        factDeliveryReady = true;
+        const initial = bufferedFacts.splice(0);
+        for (const [fact, rawFact] of initial) deliverFact(fact, rawFact);
+        return () => {
+          factListeners.delete(listener);
+          if (factListeners.size === 0) factDeliveryReady = false;
+        };
+      },
+      onLifecycle: (listener) => {
+        for (const event of bufferedLifecycle) listener(event);
+        bufferedLifecycle.length = 0;
+        lifecycleListeners.add(listener);
+        return () => lifecycleListeners.delete(listener);
+      },
+      onExecutionWake: (listener) => {
+        executionWakeListeners.add(listener);
+        return () => executionWakeListeners.delete(listener);
+      },
+    });
+    const connection = Object.freeze({
+      scope,
+      module: STARDEW_INTEGRATION_MODULE,
+      get state() {
+        return bridge.state;
+      },
+      knowledge: local.knowledge,
+      gameVersion: local.gameVersion,
+      executionWakeSource: {
+        onExecutionWake: (listener: (wake: ExecutionWake) => void) => {
           executionWakeListeners.add(listener);
           return () => executionWakeListeners.delete(listener);
         },
-      });
-      const connection = Object.freeze({
-        scope,
-        module: STARDEW_INTEGRATION_MODULE,
-        get state() {
-          return bridge.state;
-        },
-        knowledge: local.knowledge,
-        gameVersion: local.gameVersion,
-        executionWakeSource: {
-          onExecutionWake: (listener: (wake: ExecutionWake) => void) => {
-            executionWakeListeners.add(listener);
-            return () => executionWakeListeners.delete(listener);
-          },
-        },
-        executionGate,
-        execute: (request: Parameters<typeof bridge.execute>[0]) =>
-          executionGate.executable ? bridge.execute(request) : Promise.reject(new Error("integration_not_ready")),
-        cancel: (requestId: string, executionId: string, reasonCode: string) =>
-          executionGate.executable
-            ? bridge.cancel(requestId, executionId, reasonCode)
-            : Promise.reject(new Error("integration_not_ready")),
-      });
-      return Object.freeze({
-        connection,
-        // This adapter-owned client is deliberately not projected through the
-        // generic IntegrationConnection facade. Preview composition validates
-        // the narrow presentation surface before use.
-        presentationBridge: bridge,
-        // Narrow adapter-owned read-only recovery capability bound to this
-        // exact authenticated connection. It is not exposed on
-        // IntegrationConnection and fails closed once the bridge is closed.
-        receiptRecovery: (query: ExecutionReceiptQuery) => bridge.queryExecutionReceipt(query),
-        events,
-        authority: RECEIPT_BACKED_INTEGRATION_AUTHORITY,
-        lifecycle: "ready" as const,
-        initialFacts,
-        revoke,
-        close: () => {
-          disconnect("integration_closed");
-          removeFact();
-          removeLifecycle();
-          removeDiagnostic();
-        },
-      });
-    } catch (error) {
-      executionGate.executable = false;
-      removeFact();
-      removeLifecycle();
-      removeDiagnostic();
-      bridge.close();
-      throw error;
-    }
-  },
-});
+      },
+      executionGate,
+      execute: (request: Parameters<typeof bridge.execute>[0]) =>
+        executionGate.executable ? bridge.execute(request) : Promise.reject(new Error("integration_not_ready")),
+      cancel: (requestId: string, executionId: string, reasonCode: string) =>
+        executionGate.executable
+          ? bridge.cancel(requestId, executionId, reasonCode)
+          : Promise.reject(new Error("integration_not_ready")),
+    });
+    return Object.freeze({
+      connection,
+      // This adapter-owned client is deliberately not projected through the
+      // generic IntegrationConnection facade. Preview composition validates
+      // the narrow presentation surface before use.
+      presentationBridge: bridge,
+      // Narrow adapter-owned read-only recovery capability bound to this
+      // exact authenticated connection. It is not exposed on
+      // IntegrationConnection and fails closed once the bridge is closed.
+      receiptRecovery: (query: ExecutionReceiptQuery) => bridge.queryExecutionReceipt(query),
+      events,
+      authority: RECEIPT_BACKED_INTEGRATION_AUTHORITY,
+      lifecycle: "ready" as const,
+      initialFacts,
+      revoke,
+      close: () => {
+        disconnect("integration_closed");
+        removeFact();
+        removeLifecycle();
+        removeDiagnostic();
+      },
+    });
+  } catch (error) {
+    executionGate.executable = false;
+    removeFact();
+    removeLifecycle();
+    removeDiagnostic();
+    bridge.close();
+    throw error;
+  }
+}
 
 export type StardewOperatorConfig = Readonly<{
   pipeName: string;
@@ -388,6 +412,16 @@ function toWorldFact(message: LocalStardewBridgeFact): WorldFact {
         payload: message.payload,
       };
   }
+}
+
+function sameScope(left: Scope, right: Scope): boolean {
+  return (
+    left.integrationId === right.integrationId &&
+    left.saveId === right.saveId &&
+    left.worldId === right.worldId &&
+    left.playerId === right.playerId &&
+    left.companionId === right.companionId
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
