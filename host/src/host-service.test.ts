@@ -1274,3 +1274,169 @@ test("Host service receives only final transcripts from an attached Voice Gatewa
   service.close();
   assert.equal(listener, undefined);
 });
+
+
+function stopSettlementFact(input: Readonly<{
+  stopId: string;
+  sourceEventId: string;
+  epoch: number;
+  revision: number;
+}>): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "semantic_event",
+    correlationId: `body_settled_${input.stopId}_${input.revision}`,
+    revision: input.revision,
+    payload: {
+      kind: "body_settled",
+      revision: input.revision,
+      activeExecution: null,
+      reasonCode: "stop_body_settled",
+      stopObservation: {
+        kind: "body_settled",
+        stopId: input.stopId,
+        sourceEventId: input.sourceEventId,
+        epoch: input.epoch,
+      },
+    },
+  };
+}
+
+function stopSettlementObserverHarness() {
+  const adapter = eventHarness();
+  const harness = fakeLoop();
+  const service = new CompanionHostService(
+    { ...harness.loop, async abortAndClear() {} } as never,
+    adapter.events,
+    undefined,
+    createCompanionInterruption(),
+    async () => undefined,
+    async () => undefined,
+  );
+  service.attachVoiceStopper(async () => undefined);
+  return { adapter, service };
+}
+
+test("Host STOP settlement observer emits once for an exact body_settled match and consumes duplicates", async () => {
+  const { adapter, service } = stopSettlementObserverHarness();
+  const observed: unknown[] = [];
+  service.onStopSettled((payload) => observed.push(payload));
+  const stopped = service.stopAll({
+    stopId: "stop_observer_exact",
+    sourceEventId: "source_observer_exact",
+    reasonCode: "player_stop_all",
+  });
+  await stopped.settled;
+
+  const fact = stopSettlementFact({
+    stopId: stopped.admission.stopId,
+    sourceEventId: stopped.admission.sourceEventId,
+    epoch: stopped.admission.epoch,
+    revision: 7,
+  });
+  adapter.emit(fact);
+  adapter.emit(fact);
+
+  assert.deepEqual(observed, [
+    {
+      stopId: "stop_observer_exact",
+      sourceEventId: "source_observer_exact",
+      batchId: null,
+      epoch: 1,
+      observationRevision: 7,
+    },
+  ]);
+  service.close();
+});
+
+test("Host STOP settlement observer rejects mismatched stopId, sourceEventId, and epoch", async () => {
+  const mismatches = [
+    { label: "stopId", stopId: "stop_observer_other", sourceEventId: "source_observer_mismatch", epoch: 1 },
+    { label: "sourceEventId", stopId: "stop_observer_mismatch", sourceEventId: "source_observer_other", epoch: 1 },
+    { label: "epoch", stopId: "stop_observer_mismatch", sourceEventId: "source_observer_mismatch", epoch: 2 },
+  ] as const;
+
+  for (const mismatch of mismatches) {
+    const { adapter, service } = stopSettlementObserverHarness();
+    const observed: unknown[] = [];
+    service.onStopSettled((payload) => observed.push(payload));
+    const stopped = service.stopAll({
+      stopId: "stop_observer_mismatch",
+      sourceEventId: "source_observer_mismatch",
+      reasonCode: "player_stop_all",
+    });
+    await stopped.settled;
+
+    adapter.emit(
+      stopSettlementFact({
+        stopId: mismatch.stopId,
+        sourceEventId: mismatch.sourceEventId,
+        epoch: mismatch.epoch,
+        revision: 8,
+      }),
+    );
+
+    assert.deepEqual(observed, [], `${mismatch.label} mismatch must not notify observers`);
+    service.close();
+  }
+});
+
+test("Host STOP settlement observer snapshots listeners before delivery", async () => {
+  const { adapter, service } = stopSettlementObserverHarness();
+  const observed: string[] = [];
+  service.onStopSettled(() => {
+    observed.push("first");
+    service.onStopSettled(() => observed.push("late"));
+  });
+  const stopped = service.stopAll({
+    stopId: "stop_observer_snapshot",
+    sourceEventId: "source_observer_snapshot",
+    reasonCode: "player_stop_all",
+  });
+  await stopped.settled;
+  adapter.emit(stopSettlementFact({
+    stopId: stopped.admission.stopId,
+    sourceEventId: stopped.admission.sourceEventId,
+    epoch: stopped.admission.epoch,
+    revision: 9,
+  }));
+  assert.deepEqual(observed, ["first"]);
+  service.close();
+});
+
+test("Host STOP settlement observer unsubscribe and close make subscription and delivery inert", async () => {
+  const { adapter, service } = stopSettlementObserverHarness();
+  const observed: unknown[] = [];
+  const unsubscribe = service.onStopSettled((payload) => observed.push(payload));
+  unsubscribe();
+  const stopped = service.stopAll({
+    stopId: "stop_observer_unsubscribed",
+    sourceEventId: "source_observer_unsubscribed",
+    reasonCode: "player_stop_all",
+  });
+  await stopped.settled;
+  adapter.emit(
+    stopSettlementFact({
+      stopId: stopped.admission.stopId,
+      sourceEventId: stopped.admission.sourceEventId,
+      epoch: stopped.admission.epoch,
+      revision: 9,
+    }),
+  );
+  assert.deepEqual(observed, []);
+
+  const closedObserved: unknown[] = [];
+  service.onStopSettled((payload) => closedObserved.push(payload));
+  service.close();
+  const closedUnsubscribe = service.onStopSettled((payload) => closedObserved.push(payload));
+  closedUnsubscribe();
+  service.acceptInitialFacts([
+    stopSettlementFact({
+      stopId: stopped.admission.stopId,
+      sourceEventId: stopped.admission.sourceEventId,
+      epoch: stopped.admission.epoch,
+      revision: 10,
+    }),
+  ]);
+  assert.deepEqual(closedObserved, []);
+});

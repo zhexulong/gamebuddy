@@ -13,6 +13,15 @@ export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: Fi
 /** Host-owned outcome of a newly admitted STOP, derived only from Pi consumption state. */
 export type StopOutcome = "active_turn_cancelled" | "queued_turn_cancelled" | "no_active_turn";
 
+/** Source-owned settlement emitted only after exact Host/Mod STOP correlation. */
+export type StopSettledPayload = Readonly<{
+  stopId: string;
+  sourceEventId: string;
+  batchId: string | null;
+  epoch: number;
+  observationRevision: number;
+}>;
+
 /** Private production turn authority; no model/tool identity can mint lineage. */
 export class GameTurnLineageTracker {
   #lineage: Readonly<{ sourceEventId: string; generation: number; presentations: number }> | undefined;
@@ -167,6 +176,7 @@ export class CompanionHostService {
     string,
     Readonly<{ sourceEventId: string; epoch: number; revision: number }>
   >();
+  readonly #stopSettledListeners = new Set<(payload: StopSettledPayload) => void>();
 
   public constructor(
     private readonly loop: CompanionLoop,
@@ -196,6 +206,19 @@ export class CompanionHostService {
     this.#unsubscribeVoice = undefined;
     if (detachVoice !== undefined) void detachVoice();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
+    this.#stopSettledListeners.clear();
+  }
+
+  /** Observe the existing exact STOP settlement without admitting or issuing STOP. */
+  public onStopSettled(listener: (payload: StopSettledPayload) => void): () => void {
+    if (this.#closed) return () => undefined;
+    this.#stopSettledListeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      this.#stopSettledListeners.delete(listener);
+    };
   }
 
   /** Runtime-owned Voice STOP_ALL authority may be attached only after bootstrap. */
@@ -511,8 +534,22 @@ export class CompanionHostService {
         observationRevision: observation.revision,
       }),
     );
+    const payload: StopSettledPayload = Object.freeze({
+      stopId,
+      sourceEventId: settled.sourceEventId,
+      batchId: settled.batchId,
+      epoch: settled.epoch,
+      observationRevision: observation.revision,
+    });
     this.#settledStops.delete(stopId);
     this.#pendingStopObservations.delete(stopId);
+    for (const listener of [...this.#stopSettledListeners]) {
+      try {
+        listener(payload);
+      } catch {
+        // STOP settlement remains authoritative even if a read-only observer fails.
+      }
+    }
   }
 
   /**
