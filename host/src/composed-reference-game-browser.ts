@@ -35,6 +35,12 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
 type BrowserSession = Readonly<{
   bearerToken: string;
   csrfToken: string;
+  lifecycleSessionId: string;
+  expiresAtMs: number;
+}>;
+
+type LifecycleActivationFacts = Readonly<{
+  browserSessionId: string;
   expiresAtMs: number;
 }>;
 
@@ -397,12 +403,13 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
 
 /**
  * Consumes an admission exactly once. Consumption is recorded synchronously
- * before the callback starts; the callback receives only absolute expiry.
+ * before the callback starts; the callback receives only the broker-minted
+ * lifecycle browser-session identity and absolute expiry.
  */
 export function consumeComposedReferenceGameBrowserLifecycleActivationAdmission<T>(
   issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer,
   admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-  callback: (expiresAtMs: number) => T,
+  callback: (facts: LifecycleActivationFacts) => T,
 ): T | undefined {
   const admissionState = lifecycleActivationAdmissions.get(admission);
   if (admissionState === undefined || admissionState.consumed) {
@@ -423,7 +430,10 @@ export function consumeComposedReferenceGameBrowserLifecycleActivationAdmission<
   // This is the one-shot linearization point, after authority validation but
   // synchronously before user code can run or re-enter.
   admissionState.consumed = true;
-  return callback(activeSession.expiresAtMs);
+  return callback(Object.freeze({
+    browserSessionId: activeSession.lifecycleSessionId,
+    expiresAtMs: activeSession.expiresAtMs,
+  }));
 }
 
 export type ComposedReferenceGameBrowserRequestHandler = Readonly<{
@@ -632,6 +642,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
       const activeSession: BrowserSession = {
         bearerToken: randomBytes(32).toString("base64url"),
         csrfToken: randomBytes(32).toString("base64url"),
+        lifecycleSessionId: randomBytes(32).toString("base64url"),
         expiresAtMs: Date.now() + SESSION_DURATION_MS,
       };
       session = activeSession;

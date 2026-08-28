@@ -222,13 +222,30 @@ test("lifecycle activation admission is fieldless, exact-session-bound, and one-
     assert.equal("path" in admission, false);
     assert.equal("request" in admission, false);
 
+    const secondAdmission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+      issuer,
+      lifecycleRequest(server.origin, cookie, root.chat.csrfToken),
+      server.origin,
+    );
+    assert.ok(secondAdmission);
+
     let callbackCalls = 0;
+    let firstBrowserSessionId: string | undefined;
     const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
       issuer,
       admission,
-      (expiresAtMs) => {
+      (facts) => {
         callbackCalls += 1;
-        assert.equal(expiresAtMs, root.chat.browserSession.expiresAtMs);
+        assert.deepEqual(Object.keys(facts).sort(), ["browserSessionId", "expiresAtMs"]);
+        assert.equal(Object.isFrozen(facts), true);
+        assert.equal(facts.expiresAtMs, root.chat.browserSession.expiresAtMs);
+        assert.match(facts.browserSessionId, /^[A-Za-z0-9_-]{43}$/);
+        assert.notEqual(facts.browserSessionId, root.chat.csrfToken);
+        assert.notEqual(facts.browserSessionId, cookie.split("=", 2)[1]);
+        assert.equal(JSON.stringify(root).includes(facts.browserSessionId), false);
+        assert.equal("browserSessionId" in issuer, false);
+        assert.equal("browserSessionId" in admission, false);
+        firstBrowserSessionId = facts.browserSessionId;
         assert.equal(
           consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
             issuer,
@@ -242,6 +259,14 @@ test("lifecycle activation admission is fieldless, exact-session-bound, and one-
     );
     assert.equal(consumed, "activated");
     assert.equal(callbackCalls, 1);
+    assert.equal(
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer,
+        secondAdmission,
+        (facts) => facts.browserSessionId,
+      ),
+      firstBrowserSessionId,
+    );
     assert.equal(
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         issuer,
@@ -262,6 +287,7 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
   const handler = makeHandler();
   const foreignHandler = makeHandler();
   const server = await start(handler);
+  const foreignServer = await start(foreignHandler);
   try {
     const initial = await bootstrap(server.origin);
     const root = await initial.json() as { chat: { csrfToken: string } };
@@ -304,17 +330,39 @@ test("lifecycle admission rejects malformed auth, foreign and forged authority",
       ),
       undefined,
     );
+    let browserSessionId: string | undefined;
     assert.equal(
       consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
         issuer,
         admission,
-        () => "rightful",
+        (facts) => {
+          browserSessionId = facts.browserSessionId;
+          return "rightful";
+        },
       ),
       "rightful",
     );
+
+    const foreignInitial = await bootstrap(foreignServer.origin);
+    const foreignRoot = await foreignInitial.json() as { chat: { csrfToken: string } };
+    const foreignCookie = foreignInitial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const foreignAdmission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+      foreignHandler.lifecycleActivationIssuer,
+      lifecycleRequest(foreignServer.origin, foreignCookie, foreignRoot.chat.csrfToken),
+      foreignServer.origin,
+    );
+    assert.ok(foreignAdmission);
+    const foreignBrowserSessionId =
+      consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        foreignHandler.lifecycleActivationIssuer,
+        foreignAdmission,
+        (facts) => facts.browserSessionId,
+      );
+    assert.match(foreignBrowserSessionId!, /^[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(foreignBrowserSessionId, browserSessionId);
   } finally {
     await server.close();
-    await foreignHandler.close();
+    await foreignServer.close();
   }
 });
 
