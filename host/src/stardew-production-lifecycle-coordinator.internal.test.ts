@@ -215,6 +215,8 @@ async function createFixture(input: Readonly<{
   inspectorGate?: Promise<void>;
   playerSpawnFailure?: boolean;
   playerProbeFailure?: boolean;
+  aiSpawnFailure?: boolean;
+  aiProbeFailure?: boolean;
   playerKillResults?: readonly boolean[];
   nowMs?: () => number;
   afterPlayerSpawn?(): void;
@@ -224,7 +226,16 @@ async function createFixture(input: Readonly<{
   temporaryRoots.push(runtimeRoot);
   await mkdir(packageRoot);
   for (const entry of packageEntries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
-  const spawnCalls: string[] = [];
+  const spawnCalls: Array<Readonly<{
+    executable: string;
+    args: readonly string[];
+    options: Readonly<{
+      cwd?: string;
+      shell: boolean;
+      windowsHide: boolean;
+      env: Readonly<NodeJS.ProcessEnv>;
+    }>;
+  }>> = [];
   const aiKillCalls: number[] = [];
   const playerSpawnCalls: Array<Readonly<{
     executable: string;
@@ -240,11 +251,12 @@ async function createFixture(input: Readonly<{
   const playerKillResults = [...(input.playerKillResults ?? [true])];
   let packageReadCount = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
-    rawSpawn(executable) {
-      spawnCalls.push(executable);
+    rawSpawn(executable, args, options) {
+      spawnCalls.push(Object.freeze({ executable, args: Object.freeze([...args]), options }));
+      if (input.aiSpawnFailure) throw new Error("controlled-ai-spawn-failure");
       return Object.freeze({ pid: 4101, kill: () => { aiKillCalls.push(4101); return true; } });
     },
-    rawProbe: (pid) => ({ pid, creationDate: "20260101010101.000000+000" }),
+    rawProbe: (pid) => input.aiProbeFailure ? null : ({ pid, creationDate: "20260101010101.000000+000" }),
     rawPlayerHostSpawn(executable, args, options) {
       playerSpawnCalls.push(Object.freeze({ executable, args: Object.freeze([...args]), options }));
       input.afterPlayerSpawn?.();
@@ -289,7 +301,10 @@ async function createFixture(input: Readonly<{
     {
       ...input.overrides,
       createInstallationInspector: input.overrides?.createInstallationInspector ?? (async () =>
-        installationInspector(input.inspectorChains ?? [installationChain, installationChain, installationChain],
+        installationInspector(input.inspectorChains ?? [
+          installationChain, installationChain, installationChain,
+          installationChain, installationChain, installationChain,
+        ],
           input.inspectorGate === undefined ? undefined : () => input.inspectorGate!)),
     },
   );
@@ -905,7 +920,7 @@ async function prepareCabinCoordinator(
   return fixture;
 }
 
-test("dynamic cabin handoff lists redacted choices, admits one manifest, and materializes but does not launch AI", async () => {
+test("dynamic cabin handoff admits one manifest and launches the exact owned AI client", async () => {
   const startedAt = Date.now();
   const fixture = await prepareCabinCoordinator(startedAt + 5 * 60_000);
   try {
@@ -937,15 +952,31 @@ test("dynamic cabin handoff lists redacted choices, admits one manifest, and mat
     assert.deepEqual(await fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command), {
       apiVersion: 1, status: "manifest_admitted",
     });
-    assert.deepEqual(fixture.spawnCalls, []);
+    assert.equal(fixture.spawnCalls.length, 1);
+    const aiSpawn = fixture.spawnCalls[0]!;
+    assert.equal(aiSpawn.executable, `${gameDirectoryCandidate}\\StardewModdingAPI.exe`);
+    assert.deepEqual(aiSpawn.args, [
+      "--mods-path",
+      join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "ai-client", "Mods"),
+    ]);
+    assert.equal(aiSpawn.options.cwd, gameDirectoryCandidate);
+    assert.equal(aiSpawn.options.shell, false);
+    assert.equal(aiSpawn.options.windowsHide, true);
+    assert.equal(aiSpawn.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "ai-generation-1");
     assert.equal(fixture.playerSpawnCalls.length, 1);
     assert.equal(fixture.packageReadCount(), 4);
+    assert.deepEqual((await fixture.coordinator.lifecycleReader.readRoleLifecycleView()).aiClient, {
+      state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn", lastStopOutcome: "none",
+    });
     assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "awaiting_player_host_attestation");
     const transaction = join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1");
     const aiConfig = JSON.parse(await readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"));
     assert.equal(aiConfig.FarmhandProvisioner.Enable, true);
     assert.equal(aiConfig.FarmhandProvisioner.ManifestPath, join(transaction, "session", "stardew-farmhand-manifest.json"));
     assert.equal("Pid" in aiConfig.FarmhandProvisioner, false);
+    await fixture.coordinator.close();
+    assert.deepEqual(fixture.aiKillCalls, [4101]);
+    assert.deepEqual(fixture.playerKillCalls, [4102]);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
@@ -1072,6 +1103,72 @@ test("manifest-admitted AI materialization failure is permanently uncertain and 
   }
 });
 
+test("manifest-admitted AI installation replacement is permanently uncertain and quarantines without AI spawn", async () => {
+  const changed = installationChain.map((entry, index) => index === 2
+    ? Object.freeze({ ...entry, fileId: "ffffffffffffffffffffffffffffffff" })
+    : entry);
+  const inspectors = [
+    installationInspector([installationChain, installationChain, installationChain]),
+    installationInspector([installationChain, installationChain, changed]),
+  ];
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: { createInstallationInspector: async () => inspectors.shift()! },
+  });
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "ai-installation-replacement-key",
+      confirmed: true as const,
+    };
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command);
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command),
+      /stardew_cabin_publication_uncertain/,
+    );
+    assert.deepEqual(fixture.spawnCalls, []);
+    assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+for (const failure of ["spawn", "probe"] as const) {
+  test(`manifest-admitted AI ${failure} failure is permanently uncertain and consumes launch authority`, async () => {
+    const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+      aiSpawnFailure: failure === "spawn",
+      aiProbeFailure: failure === "probe",
+    });
+    try {
+      const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+      const command = {
+        apiVersion: 1 as const,
+        choiceHandle: choices.choices[0]!.choiceHandle,
+        idempotencyKey: `ai-${failure}-failure-key`,
+        confirmed: true as const,
+      };
+      const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command);
+      const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+      await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+      await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+      assert.throws(
+        () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command),
+        /stardew_cabin_publication_uncertain/,
+      );
+      assert.equal(fixture.spawnCalls.length, 1);
+      assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+}
+
 test("close drains manifest-admitted AI materialization before quarantine and process teardown", async () => {
   let releasePackageRead!: () => void;
   const packageReadGate = new Promise<void>((resolve) => { releasePackageRead = resolve; });
@@ -1098,7 +1195,7 @@ test("close drains manifest-admitted AI materialization before quarantine and pr
     assert.equal(closeSettled, false);
     assert.deepEqual(fixture.playerKillCalls, []);
     releasePackageRead();
-    assert.deepEqual(await confirmation, { apiVersion: 1, status: "manifest_admitted" });
+    await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
     await close;
     assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "closed");
     assert.deepEqual(fixture.spawnCalls, []);

@@ -49,6 +49,7 @@ import {
 import * as composerTestSupportInternal from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import {
   createStardewPrivateBootstrapCompositionForTesting,
+  launchOwnedAiClientStageDForTesting,
   materializeAiClientProfileAfterManifestAdmissionForTesting,
   type StardewPrivateModProfileStagingTestSupportInput,
 } from "./stardew-private-bootstrap-composer.test-support-internal.js";
@@ -73,7 +74,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedAiClientStageD" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -164,8 +165,11 @@ function manifestForAttachment(input: Readonly<{
   return input.signatureOverride === undefined ? signed : { ...signed, signature: input.signatureOverride };
 }
 
-async function prepareManifestHandoffFixture() {
-  const fixture = await createAttachmentFactoryFixture();
+async function prepareManifestHandoffFixture(processOverrides: Readonly<{
+  spawn?: StardewAiClientProcessSpawn;
+  probe?: StardewAiClientProcessProbe;
+}> = {}) {
+  const fixture = await createAttachmentFactoryFixture(processOverrides);
   const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
   const sessionDirectory = join(transactionDirectory, "session");
   const token = "session-secret-stagec-012345";
@@ -173,6 +177,36 @@ async function prepareManifestHandoffFixture() {
   await writeFile(join(sessionDirectory, "stardew-session.json"), JSON.stringify(signedAttachmentSession(token)));
   const coordinator = fixture.testCore.createOwnedPlayerHostManifestHandoffCoordinator();
   return { ...fixture, sessionDirectory, token, coordinator };
+}
+
+async function prepareMaterializedAiClientFixture(processOverrides: Readonly<{
+  spawn?: StardewAiClientProcessSpawn;
+  probe?: StardewAiClientProcessProbe;
+}> = {}) {
+  const fixture = await prepareManifestHandoffFixture(processOverrides);
+  const selection = await fixture.coordinator.select(fixture.owner, "cabin-attachment-factory");
+  const pending = fixture.coordinator.confirmAndAdmit(selection, { confirmed: true });
+  const request = await waitForPublishedAttachmentRequest(fixture.sessionDirectory);
+  const requestId = request.requestId as string;
+  await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(signedAttachmentValue({
+    schemaVersion: 1,
+    requestId,
+    state: "ready",
+    reasonCode: "manifest_issued",
+    updatedAtUnixMs: 2_100,
+    manifestPath: "stardew-farmhand-manifest.json",
+    signature: "",
+  }, fixture.token)));
+  await writeFile(join(fixture.sessionDirectory, "stardew-farmhand-manifest.json"), JSON.stringify(manifestForAttachment({
+    token: fixture.token,
+    requestId,
+    saveId: "save-attachment-factory",
+    worldId: "world-attachment-factory",
+    nonce: "nonce-attachment-factory",
+  })));
+  const admission = await pending;
+  await fixture.testCore.materializeAiClientProfileAfterManifestAdmission(fixture.owner, admission);
+  return fixture;
 }
 
 function assertFieldlessFrozen(value: object): void {
@@ -335,7 +369,10 @@ function createHarness(input: Readonly<{
   };
 }
 
-async function createAttachmentFactoryFixture() {
+async function createAttachmentFactoryFixture(processOverrides: Readonly<{
+  spawn?: StardewAiClientProcessSpawn;
+  probe?: StardewAiClientProcessProbe;
+}> = {}) {
   const root = await createRoot("gamebuddy-attachment-factory-");
   const packageRoot = join(root, "verified-package");
   const entries = ["GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json", "GameBuddy.Stardew.dll", "Raffinert.FuzzySharp.dll", "manifest.json"];
@@ -343,6 +380,7 @@ async function createAttachmentFactoryFixture() {
   for (const entry of entries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const sessionToken = "session-secret-stagec-012345";
   const harness = createHarness({
+    ...processOverrides,
     staging: {
       readPackage: async () => ({ root: packageRoot, entries }),
       createSecret: () => sessionToken,
@@ -3208,6 +3246,72 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
   assert.deepEqual(right.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
 });
 
+test("Stage D rejects pre-materialization and cross-composition owners without consuming AI launch", async () => {
+  const left = await prepareManifestHandoffFixture();
+  const right = await prepareMaterializedAiClientFixture();
+  const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+
+  await assert.rejects(
+    () => launchOwnedAiClientStageDForTesting(left.owner, installation),
+    /stardew_ai_client_profile_not_materialized/,
+  );
+  await assert.rejects(
+    () => launchOwnedAiClientStageDForTesting(right.owner, installation, left.harness.composition),
+    /stardew_owned_phase_a_owner_not_registered/,
+  );
+  assert.deepEqual(left.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(right.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+  assert.deepEqual(left.harness.spawnCalls, []);
+  assert.deepEqual(right.harness.spawnCalls, []);
+});
+
+test("Stage D fresh installation mismatch spawns nothing and a new admission can retry", async () => {
+  const fixture = await prepareMaterializedAiClientFixture();
+  const stale = await admitForStageC([
+    admissionChain(),
+    admissionChain(),
+    changedAdmissionAt(2),
+  ]);
+  await assert.rejects(
+    () => fixture.testCore.launchOwnedAiClientStageD(fixture.owner, stale),
+    /stardew_installation_admission_failed/,
+  );
+  assert.deepEqual(fixture.harness.spawnCalls, []);
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
+
+  const fresh = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+  const result = await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, fresh);
+  assert.deepEqual(result, { status: { kind: "awaiting_ai_client_attestation" } });
+  assert.equal(fixture.harness.spawnCalls.length, 1);
+});
+
+test("Stage D spawn and probe failures consume the exact AI launch authority", async () => {
+  for (const mode of ["spawn", "probe"] as const) {
+    const attempted: SpawnCall[] = [];
+    const fixture = await prepareMaterializedAiClientFixture({
+      spawn: (executable, args, options) => {
+        attempted.push({ executable, args: [...args], cwd: options.cwd, environmentGeneration: options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION });
+        if (mode === "spawn") throw new Error("stage_d_spawn_failed");
+        return Object.freeze({ pid: 4321, kill: () => true });
+      },
+      probe: mode === "probe" ? (() => null) : undefined,
+    });
+    const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+    let failure: unknown;
+    try { await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation); }
+    catch (error) { failure = error; }
+    assert.match(String(failure), mode === "spawn" ? /stage_d_spawn_failed/ : /probe_failed_no_process/);
+    assert.equal(attempted.length, 1);
+    assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
+    const retry = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+    await assert.rejects(
+      () => fixture.testCore.launchOwnedAiClientStageD(fixture.owner, retry),
+      /stardew_ai_client_launch_not_available/,
+    );
+    assert.equal(attempted.length, 1);
+  }
+});
+
 test("connected no-live C1 composition carries one owner generation through Stage C, signed handoff, and no-spawn AI materialization", async () => {
   const playerHostGeneration = "connected-player-generation";
   const aiClientGeneration = "connected-ai-generation";
@@ -3333,6 +3437,20 @@ test("connected no-live C1 composition carries one owner generation through Stag
   assert.deepEqual(testCore.composition.aiClientProcessOwner.readStatus(), { kind: "ai_client_launch_pending" });
   assert.deepEqual(harness.spawnCalls, []);
   assert.deepEqual(harness.playerHostSpawnCalls[0]?.environmentGeneration, playerHostGeneration);
+
+  const aiInstallation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+  const aiLaunchResult = await testCore.launchOwnedAiClientStageD(owner, aiInstallation);
+  assert.deepEqual(aiLaunchResult, { status: { kind: "awaiting_ai_client_attestation" } });
+  assert.deepEqual(testCore.composition.aiClientProcessOwner.readStatus(), {
+    kind: "awaiting_ai_client_attestation",
+  });
+  assert.equal(harness.spawnCalls.length, 1);
+  const aiSpawn = harness.spawnCalls[0] as SpawnCall | undefined;
+  assert.ok(aiSpawn);
+  assert.equal(aiSpawn.executable, admissionExecutable);
+  assert.equal(aiSpawn.cwd, admissionCandidate);
+  assert.deepEqual(aiSpawn.args, ["--mods-path", join(transactionDirectory, "ai-client", "Mods")]);
+  assert.equal(aiSpawn.environmentGeneration, aiClientGeneration);
 
   const hostConfig = await readFile(
     join(transactionDirectory, "player-host", "Mods", "GameBuddy", "config.json"),
