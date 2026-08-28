@@ -12,8 +12,6 @@ import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import {
   admitGameplayAction,
   awaitTaskOwnedTerminalReceipt,
-  DEFAULT_GAMEPLAY_TASK_BUDGET,
-  type GameplayTaskBudget,
   GameplayTaskSubagent,
   hasActionPostconditionEvidence,
   hasAuthoritativeCompletion,
@@ -66,42 +64,6 @@ const integration: CompanionIntegration = {
   module: STARDEW_INTEGRATION_MODULE,
 };
 
-function withBudget(patch: Partial<GameplayTaskBudget>): GameplayTaskBudget {
-  return { ...DEFAULT_GAMEPLAY_TASK_BUDGET, ...patch };
-}
-
-test("GameplayTaskSubagent rejects invalid Host-enforced budgets before any model runtime is created", () => {
-  assert.throws(
-    () =>
-      new GameplayTaskSubagent(
-        paths,
-        integration,
-        undefined,
-        withBudget({ maxTurns: 0 }),
-      ),
-    /invalid_gameplay_task_budget:maxTurns/,
-  );
-  assert.throws(
-    () =>
-      new GameplayTaskSubagent(
-        paths,
-        integration,
-        undefined,
-        withBudget({ maxToolCalls: 1.5 }),
-      ),
-    /invalid_gameplay_task_budget:maxToolCalls/,
-  );
-  assert.throws(
-    () =>
-      new GameplayTaskSubagent(
-        paths,
-        integration,
-        undefined,
-        withBudget({ maxActiveExecutions: 2 as 1 }),
-      ),
-    /invalid_gameplay_task_budget:maxActiveExecutions/,
-  );
-});
 
 test("GameplayTaskSubagent exposes no mutable task trace before a Host-created task runs", () => {
   const worker = new GameplayTaskSubagent(paths, integration);
@@ -277,16 +239,8 @@ test("completion evidence must contain action-specific postcondition keys", () =
   );
 });
 
-test("Gameplay action admission enforces active execution, total, and family limits before dispatch", () => {
-  const record = {
-    acceptedActions: 1,
-    acceptedActionsByFamily: { farming_crops: 1 },
-    executions: [],
-    budget: withBudget({
-      maxAcceptedActions: 2,
-      maxAcceptedActionsPerFamily: 1,
-    }),
-  };
+test("Gameplay action admission enforces only the single embodied actor mutation serialization before dispatch", () => {
+  const record = { executions: [] };
   const liveCapabilities = TEST_MOD_REGISTRATIONS.map(
     (entry) => entry.actionId,
   );
@@ -301,10 +255,7 @@ test("Gameplay action admission enforces active execution, total, and family lim
       liveCapabilities,
       policy,
     ),
-    {
-      ok: false,
-      reasonCode: "gameplay_task_action_family_budget_exhausted",
-    },
+    { ok: true },
   );
   assert.deepEqual(
     admitGameplayAction(
@@ -316,22 +267,19 @@ test("Gameplay action admission enforces active execution, total, and family lim
       liveCapabilities,
       policy,
     ),
-    {
-      ok: true,
-      familyId: "body_tools",
-    },
+     { ok: true },
   );
   assert.deepEqual(
     admitGameplayAction(
       "equip_tool",
-      { ...record, acceptedActions: 2 },
+       record,
       null,
       STARDEW_INTEGRATION_MODULE.actionCatalog,
       TEST_MOD_REGISTRATIONS,
       liveCapabilities,
       policy,
     ),
-    { ok: false, reasonCode: "gameplay_task_action_budget_exhausted" },
+     { ok: true },
   );
   assert.deepEqual(
     admitGameplayAction(
@@ -528,7 +476,6 @@ test("GameplayTaskSubagent reserves before construction, binds abort to its task
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: ({ customTools }) => {
         if (constructions++ === 0)
@@ -572,7 +519,6 @@ test("GameplayTaskSubagent releases a failed workspace reservation without a CWD
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       createWorkspace: async () => {
         if (workspaceAttempts++ === 0)
@@ -607,7 +553,6 @@ test("GameplayTaskSubagent releases a failed construction reservation", async ()
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: async ({ customTools }) => {
         if (attempts++ === 0) throw new Error("construction_failed");
@@ -637,7 +582,6 @@ test("Gameplay worker hides action tools without a runtime-owned dispatch admiss
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: async ({ customTools }) => {
         mountedNames = customTools.map((tool) => tool.name);
@@ -674,7 +618,6 @@ test("Gameplay worker fake session blocks a second action until the owned receip
     paths,
     mounted,
     undefined,
-    withBudget({ maxAcceptedActions: 2, maxAcceptedActionsPerFamily: 2 }),
     {
       create: async ({ customTools }) =>
         fakeSession(customTools, async (tools) => {
@@ -729,7 +672,7 @@ test("Gameplay worker fake session blocks a second action until the owned receip
   const result = await worker.run("test task");
   assert.equal(result.state, "completed");
   assert.deepEqual(calls.execute, ["equip_tool", "move_to_tile"]);
-  assert.equal(worker.lastTaskRecord?.acceptedActions, 2);
+  assert.equal(worker.lastTaskRecord?.executions.length, 2);
   assert.equal(worker.lastTaskRecord?.executions[0]?.state, "succeeded");
   assert.deepEqual(
     worker.lastTaskSteps.map((step) => step.name),
@@ -741,7 +684,7 @@ test("Gameplay worker fake session blocks a second action until the owned receip
   );
 });
 
-test("Gameplay worker action-family budget cancels before dispatching an over-budget sibling action", async () => {
+test("Gameplay worker permits repeated actions in one family after each receipt settles", async () => {
   await mkdir(paths.runtimeCwd, { recursive: true });
   const state: MutableIntegrationState = {
     connected: true,
@@ -758,7 +701,6 @@ test("Gameplay worker action-family budget cancels before dispatching an over-bu
     paths,
     mounted,
     undefined,
-    withBudget({ maxAcceptedActions: 3, maxAcceptedActionsPerFamily: 1 }),
     {
       create: async ({ customTools }) =>
         fakeSession(customTools, async (tools) => {
@@ -775,26 +717,20 @@ test("Gameplay worker action-family budget cancels before dispatching an over-bu
             revision: 7,
             evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
           };
-          await assert.rejects(
-            invoke(tools, "stardew_equip_tool", {
-              slot: 2,
-              requestId: "request_second",
-              idempotencyKey: "key_second",
-            }),
-            /gameplay_task_action_family_budget_exhausted/,
-          );
+             await invoke(tools, "stardew_equip_tool", {
+               slot: 2,
+               requestId: "request_second",
+               idempotencyKey: "key_second",
+             });
         }),
     },
     undefined,
     testDispatchAdmissionFactory(mounted),
   );
-  const result = await worker.run("family budget task");
-  assert.equal(result.state, "blocked");
-  assert.deepEqual(calls.execute, ["equip_tool"]);
-  assert.equal(
-    worker.lastTaskRecord?.terminalReasonCode,
-    "gameplay_task_action_family_budget_exhausted",
-  );
+   const result = await worker.run("repeated family task");
+   assert.equal(result.state, "blocked");
+   assert.deepEqual(calls.execute, ["equip_tool", "equip_tool"]);
+   assert.notEqual(worker.lastTaskRecord?.terminalReasonCode, "gameplay_task_action_family_budget_exhausted");
 });
 
 test("Gameplay worker parent abort cancels only its accepted execution and records an authoritative terminal receipt", async () => {
@@ -819,7 +755,6 @@ test("Gameplay worker parent abort cancels only its accepted execution and recor
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: async ({ customTools }) =>
         fakeSession(
@@ -1054,7 +989,6 @@ test("adapter liveness freezes the active task, cancels its owned execution once
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: async ({ customTools }) =>
         fakeSession(
@@ -1144,7 +1078,6 @@ test("worker mints a fresh runtime-owned admission for each action invocation", 
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: async ({ customTools }) =>
         fakeSession(
@@ -1208,7 +1141,6 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: async ({ customTools }) =>
         fakeSession(
@@ -1292,7 +1224,6 @@ test("pending post-write dispatch settles from an exact terminal wake before its
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: async ({ customTools }) =>
         fakeSession(
@@ -1372,7 +1303,6 @@ test("latest terminal receipt before delayed tool resolution retires ledger corr
     paths,
     mounted,
     undefined,
-    DEFAULT_GAMEPLAY_TASK_BUDGET,
     {
       create: async ({ customTools }) =>
         fakeSession(
