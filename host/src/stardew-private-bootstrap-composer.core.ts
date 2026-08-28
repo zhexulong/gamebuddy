@@ -209,7 +209,14 @@ declare const stardewManifestAdmissionBrand: unique symbol;
 type StardewManifestAdmission = Readonly<{  readonly [stardewManifestAdmissionBrand]: never;
 }>;
 
+export type StardewManifestHandoffChoice = Readonly<{
+  displayLabel: string;
+  expiresAtMs: number;
+  selection: StardewManifestHandoffSelection;
+}>;
+
 export type StardewManifestHandoffCoordinator = Readonly<{
+  list(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<readonly StardewManifestHandoffChoice[]>;
   select(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     candidateCabinId: string,
@@ -1071,6 +1078,22 @@ function createManifestHandoffCoordinatorCore(
   const selections = new WeakMap<StardewManifestHandoffSelection, ManifestHandoffSelectionFacts>();
   const admissions = new WeakMap<StardewManifestAdmission, ManifestHandoffAdmissionFacts>();
   const coordinator = {
+    async list(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<readonly StardewManifestHandoffChoice[]> {
+      const ownerFacts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+      assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
+      const flow = createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, readClock);
+      const session = await flow.readLiveSession();
+      const availableCabins = session.cabins.filter((cabin) =>
+        !cabin.isBusy && (cabin.boundCompanionId === "" || cabin.boundCompanionId === ownerFacts.privateMaterial.value?.companionId)
+      );
+      const choices = await Promise.all(availableCabins.map(async (cabin, index) => Object.freeze({
+        displayLabel: `Cabin ${index + 1}`,
+        expiresAtMs: Math.min(ownerFacts.expiresAtMs, session.expiresAtUnixMs),
+        selection: await coordinator.select(owner, cabin.cabinId),
+      })));
+      assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
+      return Object.freeze(choices);
+    },
     async select(
       owner: StardewOwnedPlayerHostPhaseAOwner,
       candidateCabinId: string,
@@ -1123,7 +1146,11 @@ function createManifestHandoffCoordinatorCore(
         try {
           requestId = await facts.flow.confirmAndRequest(facts.choice, { confirmed: true });
         } catch (error) {
-          facts.state = "uncertain";
+          if (didManifestRequestPublicationPossiblyOccur(error)) {
+            facts.state = "uncertain";
+            throw new Error("stardew_manifest_handoff_publication_uncertain", { cause: error });
+          }
+          facts.state = "terminal";
           throw redactManifestHandoffError(error);
         }
         facts.requestId = requestId;
@@ -1151,7 +1178,7 @@ function createManifestHandoffCoordinatorCore(
           return admission;
         } catch (error) {
           facts.state = "uncertain";
-          throw error;
+          throw new Error("stardew_manifest_handoff_publication_uncertain", { cause: error });
         }
       } catch (error) {
         if (facts.state === "confirming") facts.state = "terminal";
@@ -1232,6 +1259,14 @@ function assertManifestHandoffOwnerAdmissible(
     facts.expiresAtMs <= readClock() ||
     facts.privateMaterial.value === null
   ) throw new Error("stardew_manifest_handoff_not_admissible");
+}
+
+function didManifestRequestPublicationPossiblyOccur(error: unknown): boolean {
+  if (!(error instanceof Error)) return true;
+  // These validation failures all occur before confirmAndRequest constructs or
+  // writes the attachment request. Filesystem failures are deliberately not
+  // classified here because a replace/cleanup error can follow publication.
+  return !/^(?:user_confirmation_required|invalid_cabin_id|invalid_stardew_cabin_choice|invalid_expected_farmhand_id|stardew_session_|stardew_protocol_mismatch|stardew_host_not_ready|cabin_missing|target_farmhand_busy|cabin_bound_to_other_companion)$/.test(error.message);
 }
 
 function redactManifestHandoffError(error: unknown): Error {

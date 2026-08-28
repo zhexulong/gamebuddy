@@ -49,6 +49,22 @@ export class ComposedReferenceGameProblemError extends Error {
 
 // ─── Client interface ───────────────────────────────────────────────────────
 
+export type StardewCabinChoiceV1 = Readonly<{
+  displayLabel: string;
+  availability: "available";
+  choiceHandle: string;
+  expiresAtMs: number;
+}>;
+
+export type StardewCabinChoicesV1 = Readonly<{ apiVersion: 1; choices: readonly StardewCabinChoiceV1[] }>;
+export type StardewCabinConfirmationRequestV1 = Readonly<{
+  apiVersion: 1;
+  idempotencyKey: string;
+  choiceHandle: string;
+  confirmed: true;
+}>;
+export type StardewCabinConfirmationV1 = Readonly<{ apiVersion: 1; status: "manifest_admitted" }>;
+
 export type ComposedReferenceGameBrowserClient = Readonly<{
   /**
    * Bootstrap with the composed broker. Returns the validated composed root
@@ -61,6 +77,8 @@ export type ComposedReferenceGameBrowserClient = Readonly<{
    * validated composed root with the current Chat snapshot.
    */
   readState(): Promise<ComposedReferenceGameBrowserRootV1>;
+  readStardewCabins(): Promise<StardewCabinChoicesV1>;
+  confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
 }>;
 
 // ─── Client factory ─────────────────────────────────────────────────────────
@@ -74,6 +92,8 @@ export type ComposedReferenceGameBrowserClient = Readonly<{
 export function createComposedReferenceGameBrowserClient(): ComposedReferenceGameBrowserClient {
   const bootstrapPath = "/api/composed-reference-game/v1/bootstrap";
   const statePath = "/api/composed-reference-game/v1/state";
+  const stardewCabinsPath = "/api/composed-reference-game/v1/game/stardew/cabins";
+  const stardewCabinConfirmPath = `${stardewCabinsPath}/confirm`;
 
   async function fetchJson(
     url: string,
@@ -136,6 +156,48 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
     return value as ComposedReferenceGameBrowserRootV1;
   }
 
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]) =>
+    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  const isCanonicalUnpaddedBase64Url = (value: string): boolean => {
+    if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) return false;
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const finalValue = alphabet.indexOf(value[value.length - 1]!);
+    return value.length % 4 === 0 ||
+      (value.length % 4 === 2 ? finalValue % 16 === 0 : finalValue % 4 === 0);
+  };
+  const isCanonicalBase64UrlBytes = (value: unknown, byteLength: number): value is string =>
+    typeof value === "string" &&
+    value.length === Math.ceil(byteLength * 8 / 6) &&
+    isCanonicalUnpaddedBase64Url(value);
+  const isChoiceHandle = (value: unknown): value is string => isCanonicalBase64UrlBytes(value, 32);
+  const isIdempotencyKey = (value: unknown): value is string => isCanonicalBase64UrlBytes(value, 16);
+
+  function validateCabinChoices(value: unknown): StardewCabinChoicesV1 {
+    if (!isRecord(value) || !hasExactKeys(value, ["apiVersion", "choices"]) || value.apiVersion !== 1 || !Array.isArray(value.choices) || value.choices.length > 64) {
+      throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_choices");
+    }
+    for (const choice of value.choices) {
+      if (!isRecord(choice) ||
+          !hasExactKeys(choice, ["displayLabel", "availability", "choiceHandle", "expiresAtMs"]) ||
+          typeof choice.displayLabel !== "string" || choice.displayLabel.length === 0 || choice.displayLabel.length > 128 ||
+          choice.availability !== "available" || !isChoiceHandle(choice.choiceHandle) ||
+          typeof choice.expiresAtMs !== "number" || !Number.isSafeInteger(choice.expiresAtMs) || choice.expiresAtMs < 0) {
+        throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_choice");
+      }
+    }
+    return value as StardewCabinChoicesV1;
+  }
+
+  function validateCabinConfirmation(value: unknown): StardewCabinConfirmationV1 {
+    if (!isRecord(value) || !hasExactKeys(value, ["apiVersion", "status"]) || value.apiVersion !== 1 || value.status !== "manifest_admitted") {
+      throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_confirmation");
+    }
+    return value as StardewCabinConfirmationV1;
+  }
+
+  let csrfToken: string | undefined;
   return Object.freeze({
     async bootstrap(bootToken: string): Promise<ComposedReferenceGameBrowserRootV1> {
       const body = JSON.stringify({
@@ -147,12 +209,36 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
         headers: { "content-type": "application/json" },
         body,
       });
-      return validateComposedRoot(raw);
+      const root = validateComposedRoot(raw);
+      csrfToken = root.chat.csrfToken;
+      return root;
     },
 
     async readState(): Promise<ComposedReferenceGameBrowserRootV1> {
       const raw = await fetchJson(statePath, { method: "GET" });
-      return validateComposedRoot(raw);
+      const root = validateComposedRoot(raw);
+      csrfToken = root.chat.csrfToken;
+      return root;
+    },
+
+    async readStardewCabins(): Promise<StardewCabinChoicesV1> {
+      return validateCabinChoices(await fetchJson(stardewCabinsPath, { method: "GET" }));
+    },
+
+    async confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1> {
+      if (!hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "choiceHandle", "confirmed"]) ||
+          request.apiVersion !== 1 || !isIdempotencyKey(request.idempotencyKey) ||
+          !isChoiceHandle(request.choiceHandle) || request.confirmed !== true) {
+        throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_confirmation_request");
+      }
+      if (csrfToken === undefined) {
+        throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      }
+      return validateCabinConfirmation(await fetchJson(stardewCabinConfirmPath, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+        body: JSON.stringify(request),
+      }));
     },
   });
 }

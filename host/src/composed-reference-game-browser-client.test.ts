@@ -210,3 +210,23 @@ test("composed client problem response throws a typed problem error", async () =
     await server.close();
   }
 });
+
+test("composed client enforces the exact frozen Stardew cabin DTOs", async () => {
+  const client = createComposedReferenceGameBrowserClient();
+  const originalFetch = globalThis.fetch;
+  try {
+    const invalidChoices = [
+      { apiVersion: 1, choices: [{ displayLabel: "", availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1 }] },
+      { apiVersion: 1, choices: [{ displayLabel: "x".repeat(129), availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1 }] },
+      { apiVersion: 1, choices: [{ displayLabel: "Cabin", availability: "available", choiceHandle: "B".repeat(43), expiresAtMs: 1 }] },
+      { apiVersion: 1, choices: [{ displayLabel: "Cabin", availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1, cabinId: "private" }] },
+      { apiVersion: 1, choices: Array.from({ length: 65 }, () => ({ displayLabel: "Cabin", availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1 })) },
+    ];
+    for (const body of invalidChoices) {
+      globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 200 });
+      await assert.rejects(() => client.readStardewCabins(), /invalid_stardew_cabin/);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

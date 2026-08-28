@@ -170,3 +170,115 @@ test("composed client reports bounded server problems without accepting additive
       error.reason === "invalid_problem",
   );
 });
+
+
+test("Stardew cabin client uses the frozen exact read and confirmation DTOs", async () => {
+  const choiceHandle = "B".repeat(42) + "A";
+  const idempotencyKey = "C".repeat(21) + "A";
+  const recorder = transport(
+    jsonResponse(root()),
+    jsonResponse({
+      apiVersion: 1,
+      choices: [{ displayLabel: "North cabin", availability: "available", choiceHandle, expiresAtMs: 2000 }],
+    }),
+    jsonResponse({ apiVersion: 1, status: "manifest_admitted" }),
+  );
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+
+  await api.bootstrap(HANDLE);
+  const choices = await api.readStardewCabins();
+  const admitted = await api.confirmStardewCabin({ apiVersion: 1, idempotencyKey, choiceHandle, confirmed: true });
+
+  assert.equal(choices.choices[0].displayLabel, "North cabin");
+  assert.deepEqual(admitted, { apiVersion: 1, status: "manifest_admitted" });
+  assert.deepEqual(
+    recorder.calls.slice(1).map(({ input, init }) => ({ input, method: init.method, headers: init.headers, body: init.body })),
+    [
+      { input: "/api/composed-reference-game/v1/game/stardew/cabins", method: "GET", headers: undefined, body: undefined },
+      {
+        input: "/api/composed-reference-game/v1/game/stardew/cabins/confirm",
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": HANDLE },
+        body: JSON.stringify({ apiVersion: 1, idempotencyKey, choiceHandle, confirmed: true }),
+      },
+    ],
+  );
+});
+
+test("Stardew cabin client rejects additive identity fields", async () => {
+  const leaked = transport(jsonResponse({
+    apiVersion: 1,
+    choices: [{
+      displayLabel: "North cabin",
+      availability: "available",
+      choiceHandle: "B".repeat(42) + "A",
+      expiresAtMs: 2000,
+      cabinId: "raw-cabin-id",
+    }],
+  }));
+
+  await assert.rejects(
+    createComposedReferenceGameBrowserApi(leaked.fetch).readStardewCabins(),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_stardew_cabin_choice",
+  );
+});
+
+
+test("Stardew cabin validators require the exact frozen bounded contract", async () => {
+  const validChoice = {
+    displayLabel: "North cabin",
+    availability: "available",
+    choiceHandle: "B".repeat(42) + "A",
+    expiresAtMs: 2000,
+  };
+  const invalidResponses = [
+    { apiVersion: 2, choices: [validChoice] },
+    { apiVersion: 1, choices: [{ ...validChoice, displayLabel: "" }] },
+    { apiVersion: 1, choices: [{ ...validChoice, displayLabel: "x".repeat(129) }] },
+    { apiVersion: 1, choices: [{ ...validChoice, availability: "busy" }] },
+    { apiVersion: 1, choices: [{ ...validChoice, choiceHandle: "A".repeat(42) }] },
+    { apiVersion: 1, choices: [{ ...validChoice, choiceHandle: "B".repeat(43) }] },
+    { apiVersion: 1, choices: [{ ...validChoice, expiresAtMs: -1 }] },
+    { apiVersion: 1, choices: [{ ...validChoice, result: "ready" }] },
+    { apiVersion: 1, choices: Array.from({ length: 65 }, () => validChoice) },
+  ];
+
+  for (const response of invalidResponses) {
+    const recorder = transport(jsonResponse(response));
+    await assert.rejects(
+      createComposedReferenceGameBrowserApi(recorder.fetch).readStardewCabins(),
+      ComposedReferenceGameProtocolError,
+    );
+  }
+
+  const malformedResult = transport(
+    jsonResponse(root()),
+    jsonResponse({ apiVersion: 1, status: "manifest_admitted", ready: true }),
+  );
+  const api = createComposedReferenceGameBrowserApi(malformedResult.fetch);
+  await api.bootstrap(HANDLE);
+  await assert.rejects(
+    api.confirmStardewCabin({
+      apiVersion: 1,
+      idempotencyKey: "C".repeat(21) + "A",
+      choiceHandle: validChoice.choiceHandle,
+      confirmed: true,
+    }),
+    ComposedReferenceGameProtocolError,
+  );
+});
+
+test("Stardew cabin problems preserve stale, conflict, in-progress, and uncertain outcomes", async () => {
+  for (const code of [
+    "stardew_cabin_choice_stale",
+    "idempotency_conflict",
+    "game_operation_in_progress",
+    "stardew_manifest_handoff_uncertain",
+  ]) {
+    const recorder = transport(jsonResponse({ code }, 409));
+    await assert.rejects(
+      createComposedReferenceGameBrowserApi(recorder.fetch).readStardewCabins(),
+      (error) => error instanceof ComposedReferenceGameProblemError && error.code === code,
+    );
+  }
+});
