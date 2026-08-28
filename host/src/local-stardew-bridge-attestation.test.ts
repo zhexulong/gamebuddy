@@ -78,7 +78,7 @@ async function withHelloAck<T>(
 
 test("formal Farmhand bridge accepts only the exact manager launch generation", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
-    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation);
+    const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
     assert.equal(client.state.connected, true);
     assert.equal(client.state.authenticated, true);
     client.close();
@@ -92,7 +92,7 @@ for (const mismatch of ["role", "generation"] as const) {
       mismatch === "generation" ? "different-generation" : null,
       async (pipeName, peerClosed) => {
         await assert.rejects(
-          () => LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation),
+          () => LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000),
           /bridge_runtime_attestation_mismatch/,
         );
         await peerClosed;
@@ -103,7 +103,42 @@ for (const mismatch of ["role", "generation"] as const) {
 
 test("formal Farmhand bridge rejects an invalid expected generation before pipe access", async () => {
   await assert.rejects(
-    () => LocalStardewBridgeClient.connectFarmhand(scope, "unused-valid-pipe-name", token, "invalid generation"),
+    () => LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      "unused-valid-pipe-name",
+      token,
+      "invalid generation",
+      Date.now() + 5_000,
+    ),
     /invalid_bridge_launch_generation/,
   );
+});
+
+test("formal Farmhand bridge closes the exact transport when hello misses its deadline", { timeout: 5_000 }, async () => {
+  const pipeName = `gamebuddy_farmhand_deadline_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  let resolvePeerClosed!: () => void;
+  const peerClosed = new Promise<void>((resolve) => { resolvePeerClosed = resolve; });
+  const server = createServer((socket) => {
+    peer = socket;
+    socket.on("data", () => undefined);
+    socket.once("end", resolvePeerClosed);
+    socket.once("close", resolvePeerClosed);
+  });
+  await new Promise<void>((resolve, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, resolve).once("error", reject),
+  );
+  try {
+    await assert.rejects(
+      () => LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 50),
+      /bridge_connect_deadline_exceeded/,
+    );
+    await Promise.race([
+      peerClosed,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("peer_close_timeout")), 1_000)),
+    ]);
+  } finally {
+    peer?.destroy();
+    server.close();
+  }
 });

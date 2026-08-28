@@ -12,8 +12,10 @@ export class NamedPipeTransport {
 
   private constructor() {}
 
-  public static async connect(pipeName: string): Promise<NamedPipeTransport> {
+  public static async connect(pipeName: string, deadlineMs?: number): Promise<NamedPipeTransport> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(pipeName)) throw new Error("invalid_pipe_name");
+    if (deadlineMs !== undefined && (!Number.isSafeInteger(deadlineMs) || deadlineMs <= Date.now()))
+      throw new Error("bridge_connect_deadline_exceeded");
     const transport = new NamedPipeTransport();
     const path = `\\\\.\\pipe\\${pipeName}`;
     const socket = createConnection(path);
@@ -22,8 +24,26 @@ export class NamedPipeTransport {
     socket.on("close", () => transport.close("pipe_closed"));
     socket.on("error", (error: NodeJS.ErrnoException) => transport.close(`pipe_error:${error.code ?? "unknown"}`));
     await new Promise<void>((resolvePromise, reject) => {
-      socket.once("connect", resolvePromise);
-      socket.once("error", reject);
+      let settled = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+        if (error === undefined) resolvePromise();
+        else reject(error);
+      };
+      const onConnect = (): void => finish();
+      const onError = (error: Error): void => finish(error);
+      const timer = deadlineMs === undefined
+        ? undefined
+        : setTimeout(() => {
+          transport.close("bridge_connect_deadline_exceeded");
+          finish(new Error("bridge_connect_deadline_exceeded"));
+        }, deadlineMs - Date.now());
+      socket.once("connect", onConnect);
+      socket.once("error", onError);
     });
     return transport;
   }

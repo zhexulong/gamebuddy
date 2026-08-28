@@ -150,11 +150,14 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     pipeName: string,
     token: string,
     launchGeneration: string,
+    deadlineMs: number,
     knowledge?: KnowledgeBundle,
     gameVersion?: string,
   ): Promise<LocalStardewBridgeClient> {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(launchGeneration))
       throw new Error("invalid_bridge_launch_generation");
+    if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= Date.now())
+      throw new Error("bridge_connect_deadline_exceeded");
     return LocalStardewBridgeClient.connectWithRuntimeAttestation(
       scope,
       pipeName,
@@ -162,6 +165,7 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
       Object.freeze({ runtimeRole: "farmhand_client", launchGeneration }),
       knowledge,
       gameVersion,
+      deadlineMs,
     );
   }
 
@@ -175,19 +179,20 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     }> | undefined,
     knowledge?: KnowledgeBundle,
     gameVersion?: string,
+    deadlineMs?: number,
   ): Promise<LocalStardewBridgeClient> {
     if (!/^[A-Za-z0-9_-]{16,256}$/.test(token)) throw new Error("invalid_bridge_token");
     if (knowledge !== undefined && gameVersion === undefined) throw new Error("knowledge_version_required");
     const client = new LocalStardewBridgeClient(
       scope,
-      await NamedPipeTransport.connect(pipeName),
+      await NamedPipeTransport.connect(pipeName, deadlineMs),
       token,
       expectedRuntimeAttestation,
       knowledge,
       gameVersion,
     );
     try {
-      await client.hello();
+      await client.hello(deadlineMs);
       return client;
     } catch (error) {
       client.transport.close("bridge_handshake_failed");
@@ -352,8 +357,8 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     return () => this.#diagnosticListeners.delete(listener);
   }
 
-  private async hello(): Promise<void> {
-    const response = await this.request("hello", { token: this.token });
+  private async hello(deadlineMs?: number): Promise<void> {
+    const response = await this.request("hello", { token: this.token }, deadlineMs);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "hello_ack") throw new Error("unexpected_hello_response");
     if (
@@ -371,15 +376,21 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     this.#enabledActionIds = Object.freeze([...response.payload.enabledActionIds]);
   }
 
-  private request(type: OutboundRequestType, payload: Record<string, unknown>): Promise<BridgeMessage> {
+  private request(
+    type: OutboundRequestType,
+    payload: Record<string, unknown>,
+    deadlineMs?: number,
+  ): Promise<BridgeMessage> {
     if (!this.transport.connected) return Promise.reject(new Error("pipe_disconnected"));
+    const timeoutMs = deadlineMs === undefined ? 5_000 : deadlineMs - Date.now();
+    if (timeoutMs <= 0) return Promise.reject(new Error("bridge_connect_deadline_exceeded"));
     const correlationId = randomUUID();
     const message = newEnvelope(type, this.scope, payload as never, correlationId);
     return new Promise<BridgeMessage>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(correlationId);
-        reject(new Error("bridge_response_timeout"));
-      }, 5_000);
+        reject(new Error(deadlineMs === undefined ? "bridge_response_timeout" : "bridge_connect_deadline_exceeded"));
+      }, timeoutMs);
       this.#pending.set(correlationId, { type, resolve: resolvePromise, reject, timer });
       try {
         this.transport.send(message);

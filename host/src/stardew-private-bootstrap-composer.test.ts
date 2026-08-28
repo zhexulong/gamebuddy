@@ -48,6 +48,7 @@ import {
 } from "./stardew-private-bootstrap-composer.test-support.js";
 import * as composerTestSupportInternal from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import {
+  consumeOwnedFarmhandBridgeConnectionForTesting,
   createStardewPrivateBootstrapCompositionForTesting,
   launchOwnedAiClientStageDForTesting,
   materializeAiClientProfileAfterManifestAdmissionForTesting,
@@ -74,7 +75,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedAiClientStageD" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedAiClientStageD" | "consumeOwnedFarmhandBridgeConnection" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -206,6 +207,17 @@ async function prepareMaterializedAiClientFixture(processOverrides: Readonly<{
   })));
   const admission = await pending;
   await fixture.testCore.materializeAiClientProfileAfterManifestAdmission(fixture.owner, admission);
+  return fixture;
+}
+
+async function prepareLaunchedAiClientFixture(processOverrides: Readonly<{
+  spawn?: StardewAiClientProcessSpawn;
+  probe?: StardewAiClientProcessProbe;
+}> = {}) {
+  const fixture = await prepareMaterializedAiClientFixture(processOverrides);
+  const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
+  const launch = await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation);
+  assert.deepEqual(launch, { status: { kind: "awaiting_ai_client_attestation" } });
   return fixture;
 }
 
@@ -3337,6 +3349,107 @@ test("Stage D spawn and probe failures consume the exact AI launch authority", a
     );
     assert.equal(attempted.length, 1);
   }
+});
+
+test("private Farmhand Bridge connection binds exact scope and generation once", async () => {
+  const fixture = await prepareLaunchedAiClientFixture();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let observed: unknown;
+  const first = fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, async (connection) => {
+    observed = connection;
+    await gate;
+    return Object.freeze({ close: () => undefined });
+  });
+
+  await assert.rejects(
+    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(
+      fixture.owner,
+      () => Object.freeze({ close: () => undefined }),
+    ),
+    /stardew_farmhand_bridge_connection_not_available/,
+  );
+  release();
+  assert.equal(typeof (await first).close, "function");
+  assert.deepEqual(observed, {
+    scope: {
+      integrationId: "stardew",
+      saveId: "save-attachment-factory",
+      worldId: "world-attachment-factory",
+      playerId: "12345",
+      companionId: "companion-1",
+    },
+    pipeName: "gamebuddy-stardew-test-bridge",
+    token: "test-bridge-token-0123456789",
+    launchGeneration: "generation-1",
+  });
+  assert.equal(Object.isFrozen(observed), true);
+  await assert.rejects(
+    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(
+      fixture.owner,
+      () => Object.freeze({ close: () => undefined }),
+    ),
+    /stardew_farmhand_bridge_connection_not_available/,
+  );
+});
+
+test("private Farmhand Bridge connection retries only callback-local transient failure", async () => {
+  const fixture = await prepareLaunchedAiClientFixture();
+  let attempts = 0;
+  await assert.rejects(
+    () => fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () => {
+      attempts += 1;
+      throw new Error("pipe_not_ready");
+    }),
+    /pipe_not_ready/,
+  );
+  const connected = await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () => {
+    attempts += 1;
+    return Object.freeze({ close: () => undefined });
+  });
+  assert.equal(typeof connected.close, "function");
+  assert.equal(attempts, 2);
+});
+
+test("private Farmhand Bridge connection rejects wrong owner, tamper, and stopped AI before callback", async () => {
+  const left = await prepareLaunchedAiClientFixture();
+  const right = await prepareLaunchedAiClientFixture();
+  let callbacks = 0;
+  await assert.rejects(
+    () => consumeOwnedFarmhandBridgeConnectionForTesting(
+      left.owner,
+      () => {
+        callbacks += 1;
+        return Object.freeze({ close: () => undefined });
+      },
+      right.harness.composition,
+    ),
+    /stardew_owned_phase_a_owner_not_registered/,
+  );
+
+  const transactionDirectory = left.testCore.bindOwnedPlayerHostPhaseAOwner(left.owner).transactionDirectory;
+  await writeFile(
+    join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json"),
+    JSON.stringify({ EnableLocalBridge: false }),
+  );
+  await assert.rejects(
+    () => left.testCore.consumeOwnedFarmhandBridgeConnection(left.owner, () => {
+      callbacks += 1;
+      return Object.freeze({ close: () => undefined });
+    }),
+    /stardew_ai_client_bridge_config_changed/,
+  );
+  assert.equal(callbacks, 0);
+
+  right.testCore.composition.aiClientProcessOwner.stopOwnedAiClient();
+  await assert.rejects(
+    () => right.testCore.consumeOwnedFarmhandBridgeConnection(right.owner, () => {
+      callbacks += 1;
+      return Object.freeze({ close: () => undefined });
+    }),
+    /stardew_farmhand_bridge_ai_client_not_awaiting_attestation/,
+  );
+  assert.equal(callbacks, 0);
 });
 
 test("connected no-live C1 composition privately provisions Bridge scope before exact AI launch", async () => {

@@ -50,6 +50,7 @@ import {
   readPublishedStardewModPackageContract,
   verifyPublishedStardewModPackage,
 } from "./stardew-mod-package-contract.js";
+import type { Scope } from "./protocol.js";
 import { createStardewRoleLifecycleFacade } from "./stardew-role-lifecycle-facade.js";
 import {
   StardewAttachmentFlow,
@@ -249,6 +250,10 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
+  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
+  ): Promise<T>;
   launchOwnedPlayerHostStageC(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
@@ -285,6 +290,7 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
     createOwnedPlayerHostManifestHandoffCoordinator: closed.createOwnedPlayerHostManifestHandoffCoordinator,
     materializeAiClientProfileAfterManifestAdmission: closed.materializeAiClientProfileAfterManifestAdmission,
     launchOwnedAiClientStageD: closed.launchOwnedAiClientStageD,
+    consumeOwnedFarmhandBridgeConnection: closed.consumeOwnedFarmhandBridgeConnection,
     launchOwnedPlayerHostStageC: closed.launchOwnedPlayerHostStageC,
     reserveOwnedPlayerHostPhaseAForActivation: closed.reserveOwnedPlayerHostPhaseAForActivation,
     stageOwnedPlayerHostPhaseB: closed.stageOwnedPlayerHostPhaseB,
@@ -329,6 +335,10 @@ export function createStardewPrivateBootstrapTestCore(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
+  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
+  ): Promise<T>;
   launchOwnedPlayerHostStageC(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
@@ -381,6 +391,9 @@ export function createStardewPrivateBootstrapTestCore(
     },
     launchOwnedAiClientStageD(owner, installation) {
       return base.launchOwnedAiClientStageD(owner, installation);
+    },
+    consumeOwnedFarmhandBridgeConnection(owner, callback) {
+      return base.consumeOwnedFarmhandBridgeConnection(owner, callback);
     },
     launchOwnedPlayerHostStageC(owner, installation) {
       // Composition-bound test-only Stage-C launch: the base closed
@@ -438,6 +451,10 @@ type ClosedBootstrapCore = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
+  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
+  ): Promise<T>;
   launchOwnedPlayerHostStageC(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
@@ -670,11 +687,20 @@ function createClosedComposition(
         admission: StardewManifestAdmissionValue,
       ): Promise<void> => manifestHandoff.materialize(owner, admission),
        launchOwnedAiClientStageD: (
-        owner: StardewOwnedPlayerHostPhaseAOwner,
-        installation: AdmittedStardewInstallation,
-      ): Promise<StardewOwnedAiClientStageDResult> =>
-        launchOwnedAiClientStageD(owner, installation, compositionIdentity),
-       launchOwnedPlayerHostStageC: (
+         owner: StardewOwnedPlayerHostPhaseAOwner,
+         installation: AdmittedStardewInstallation,
+       ): Promise<StardewOwnedAiClientStageDResult> =>
+         launchOwnedAiClientStageD(owner, installation, compositionIdentity),
+       consumeOwnedFarmhandBridgeConnection: <T extends Readonly<{ close(): void }>>(
+         owner: StardewOwnedPlayerHostPhaseAOwner,
+         callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
+        ): Promise<T> => consumeOwnedFarmhandBridgeConnection(
+          owner,
+          callback,
+          compositionIdentity,
+          () => aiClientProcessOwner.readStatus(),
+        ),
+        launchOwnedPlayerHostStageC: (
        owner: StardewOwnedPlayerHostPhaseAOwner,
        installation: AdmittedStardewInstallation,
      ): Promise<StardewOwnedPlayerHostStageCResult> =>
@@ -919,8 +945,16 @@ type StardewPrivateBootstrapMaterial = Readonly<{
   readonly companionId: string;
 }>;
 
+export type StardewPrivateFarmhandBridgeConnection = Readonly<{
+  scope: Scope;
+  pipeName: string;
+  token: string;
+  launchGeneration: string;
+}>;
+
 type StardewPrivateBridgeMaterial = Readonly<{
   readonly configJson: string;
+  readonly connection: Omit<StardewPrivateFarmhandBridgeConnection, "launchGeneration">;
 }>;
 
 type OwnedPhaseAFacts = {
@@ -935,6 +969,7 @@ type OwnedPhaseAFacts = {
   readonly bindingState: { value: OwnedPhaseAOwnerBindingState };
   readonly phaseBState: { value: OwnedPhaseBState };
   readonly aiClientProfileState: { value: "not_materialized" | "materializing" | "materialized" | "failed" };
+  readonly bridgeConnectionState: { value: "unavailable" | "available" | "binding" | "consumed" };
   readonly privateMaterial: { value: StardewPrivateBootstrapMaterial | null };
   readonly privateBridgeMaterial: { value: StardewPrivateBridgeMaterial | null };
   stagingDependencies?: PrivateModProfileStagingDependencies;
@@ -1262,9 +1297,11 @@ function createManifestHandoffCoordinatorCore(
       );
       facts.privateBridgeMaterial.value = bridgeMaterial;
       facts.aiClientProfileState.value = "materialized";
+      facts.bridgeConnectionState.value = "available";
     } catch (error) {
       facts.privateBridgeMaterial.value = null;
       facts.aiClientProfileState.value = "failed";
+      facts.bridgeConnectionState.value = "consumed";
       try { await facts.quarantineOwner(); } catch { /* preserve materialization failure */ }
       throw error;
     }
@@ -1492,6 +1529,78 @@ async function launchOwnedAiClientStageD(
     })));
 }
 
+async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+  owner: StardewOwnedPlayerHostPhaseAOwner,
+  callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
+  compositionIdentity: object,
+  readAiClientStatus: () => StardewAiClientProcessStatus,
+): Promise<T> {
+  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  if (typeof callback !== "function") throw new TypeError("invalid_stardew_farmhand_bridge_connection_callback");
+  if (facts.bindingState.value !== "bound" || facts.aiClientProfileState.value !== "materialized")
+    throw new Error("stardew_farmhand_bridge_profile_not_materialized");
+  if (facts.quarantine.started) throw new Error("stardew_owned_phase_a_owner_quarantined");
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+  if (facts.bridgeConnectionState.value !== "available")
+    throw new Error("stardew_farmhand_bridge_connection_not_available");
+  if (readAiClientStatus().kind !== "awaiting_ai_client_attestation")
+    throw new Error("stardew_farmhand_bridge_ai_client_not_awaiting_attestation");
+  if (facts.aiClientRegistration.launchGeneration !== facts.durableOwner.record.aiClient.launchGeneration)
+    throw new Error("stardew_ai_client_generation_mismatch");
+  if (facts.aiClientProfileState.value !== "materialized" ||
+      facts.aiClientRegistration.launchGeneration.length === 0)
+    throw new Error("stardew_farmhand_bridge_connection_not_admissible");
+
+  facts.bridgeConnectionState.value = "binding";
+  let callbackEntered = false;
+  try {
+    if (facts.aiClientRegistration.launchGeneration !== facts.durableOwner.record.aiClient.launchGeneration)
+      throw new Error("stardew_ai_client_generation_mismatch");
+    const bridgeMaterial = facts.privateBridgeMaterial.value;
+    if (bridgeMaterial === null) throw new Error("stardew_ai_client_bridge_material_unavailable");
+    const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
+    const authorityRoot = dirname(dirname(transactionDirectory));
+    const ownerPath = join(transactionDirectory, OWNER_FILE);
+    const current = await readAndValidateOwner(ownerPath, authorityRoot);
+    if (JSON.stringify(current) !== JSON.stringify(facts.durableOwner.record) ||
+        current.state !== "reserved" ||
+        JSON.stringify(current.managedPaths) !== JSON.stringify(C1_MANAGED_PATHS)) {
+      throw new Error("stardew_farmhand_bridge_owner_invalid");
+    }
+    await assertMaterializedC1Inventory(transactionDirectory, authorityRoot);
+    const configPath = join(
+      transactionDirectory,
+      AI_CLIENT_PROFILE_ROOT,
+      MODS_DIRECTORY,
+      MOD_DIRECTORY,
+      MOD_CONFIG_FILE,
+    );
+    await verifySafePathBoundary(configPath, transactionDirectory);
+    if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
+      throw new Error("stardew_ai_client_bridge_config_changed");
+    if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+    if (facts.aiClientRegistration.launchGeneration !== current.aiClient.launchGeneration)
+      throw new Error("stardew_ai_client_generation_mismatch");
+    if (readAiClientStatus().kind !== "awaiting_ai_client_attestation")
+      throw new Error("stardew_farmhand_bridge_ai_client_not_awaiting_attestation");
+
+    callbackEntered = true;
+    const result = await callback(Object.freeze({
+      ...bridgeMaterial.connection,
+      launchGeneration: current.aiClient.launchGeneration,
+    }));
+    if (readAiClientStatus().kind !== "awaiting_ai_client_attestation") {
+      try { result.close(); } catch { /* the caller receives no connection authority */ }
+      throw new Error("stardew_farmhand_bridge_ai_client_not_awaiting_attestation");
+    }
+    facts.bridgeConnectionState.value = "consumed";
+    return result;
+  } catch (error) {
+    facts.bridgeConnectionState.value = callbackEntered ? "available" : "consumed";
+    throw error;
+  }
+}
+
 async function stageAiClientProfile(
   owner: StardewOwnedPlayerHostPhaseAOwner,
   admission: ManifestHandoffAdmissionFacts,
@@ -1592,7 +1701,20 @@ async function stageAiClientProfile(
           admission.manifest.expiresAtUnixMs <= readClockForMaterialization(facts, admission, dependencies)) {
         throw new Error("stardew_ai_client_profile_materialization_expired");
       }
-      return Object.freeze({ configJson: aiClientConfig });
+      return Object.freeze({
+        configJson: aiClientConfig,
+        connection: Object.freeze({
+          scope: Object.freeze({
+            integrationId: "stardew",
+            saveId: admission.manifest.saveId,
+            worldId: admission.manifest.worldId,
+            playerId: admission.manifest.farmhandId,
+            companionId: admission.manifest.companionId,
+          }),
+          pipeName,
+          token: bridgeToken,
+        }),
+      });
     } catch (error) {
       if (recordExtended) {
         await rollbackStagedPlayerHostProfile(managed, createdDirectories, transactionDirectory);
@@ -1932,6 +2054,7 @@ function composeOwnedPlayerHostOwner(
     bindingState,
     phaseBState,
     aiClientProfileState,
+    bridgeConnectionState: { value: "unavailable" },
     privateMaterial: { value: null },
     privateBridgeMaterial: { value: null },
     consumePlayerHostLaunch: (callback) => consumeLaunch({
@@ -1955,6 +2078,7 @@ function composeOwnedPlayerHostOwner(
       quarantineStarted = true;
       facts.privateMaterial.value = null;
       facts.privateBridgeMaterial.value = null;
+      facts.bridgeConnectionState.value = "consumed";
       if (playerHostLaunchState === "available") playerHostLaunchState = "binding";
       if (aiClientLaunchState === "available") aiClientLaunchState = "binding";
       const persistence = durableOwner.quarantine();
