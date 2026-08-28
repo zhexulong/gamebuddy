@@ -5,19 +5,103 @@ import { dirname, isAbsolute, join } from "node:path";
 const BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
   "GameBuddy.Stardew.Core.dll",
+  "Raffinert.FuzzySharp.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ]);
 const LOCK_DIRECTORY = ".stardew-native-local-player-fixture.lock";
+const PUBLIC_ERROR_CODES = new Set([
+  "invalid_fixture_backup_entry",
+  "invalid_fixture_backup_manifest",
+  "invalid_fixture_backup_name",
+  "invalid_fixture_logical_save_name",
+  "invalid_fixture_observed_save_slot",
+  "invalid_native_local_fixture_action",
+  "invalid_native_local_fixture_timeout",
+  "native_local_fixture_absolute_paths_required",
+  "native_local_fixture_action_policy_invalid",
+  "native_local_fixture_backup_already_exists",
+  "native_local_fixture_binding_invalid",
+  "native_local_fixture_bridge_config_invalid",
+  "native_local_fixture_config_invalid",
+  "native_local_fixture_path_missing",
+  "native_local_fixture_preparation_failed",
+  "native_local_fixture_recovery_required",
+  "native_local_fixture_restore_failed",
+  "native_local_fixture_save_root_required",
+  "native_local_fixture_template_invalid",
+  "native_local_fixture_topology_not_isolated",
+  "native_local_fixture_transaction_locked",
+  "native_local_fixture_transaction_owner_mismatch",
+  "native_local_fixture_unsafe_path",
+  "native_local_fixture_validation_failed",
+  "native_local_fixture_working_save_exists",
+]);
+
+function redactPublicFailure(error, fallbackCode) {
+  const code = error instanceof Error && PUBLIC_ERROR_CODES.has(error.message) ? error.message : fallbackCode;
+  return new Error(code);
+}
+
+export async function validateNativeLocalPlayerFixturePreparation(options) {
+  try {
+    return await validateNativeLocalPlayerFixturePreparationInternal(options);
+  } catch (error) {
+    throw redactPublicFailure(error, "native_local_fixture_validation_failed");
+  }
+}
+
+async function validateNativeLocalPlayerFixturePreparationInternal(options) {
+  const context = resolveContext(options);
+  assertBackupName(options.backupName);
+  assertObservedSaveSlot(options.saveName);
+  const actions = fixtureActions(options.action);
+  await assertSafeContext(context);
+  if (await exists(join(context.root, options.backupName))) throw new Error("native_local_fixture_backup_already_exists");
+  if (await exists(lockPath(context))) throw new Error("native_local_fixture_transaction_locked");
+  const original = await readJson(context.configPath);
+  assertBridgeConfig(original);
+  assertSourceTopologyIsolated(original);
+  assertNativeLocalBinding(options.binding, options.saveName);
+  const timeoutSeconds = options.timeoutSeconds ?? 90;
+  if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
+    throw new Error("invalid_native_local_fixture_timeout");
+  if (!options.stardewSaveRoot || !isAbsolute(options.stardewSaveRoot))
+    throw new Error("native_local_fixture_save_root_required");
+  const template = join(context.root, "templates", options.saveName);
+  await assertDirectoryNotLink(template);
+  for (const name of [options.saveName, "SaveGameInfo"]) {
+    const source = join(template, name);
+    const metadata = await lstat(source);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("native_local_fixture_template_invalid");
+  }
+  if (await exists(join(options.stardewSaveRoot, options.saveName)))
+    throw new Error("native_local_fixture_working_save_exists");
+  return Object.freeze({
+    state: "ready",
+    saveName: options.saveName,
+    actions: Object.freeze([...actions]),
+    timeoutSeconds,
+    workingSaveAbsent: true,
+  });
+}
 
 export async function prepareNativeLocalPlayerFixture(options) {
+  try {
+    return await prepareNativeLocalPlayerFixtureInternal(options);
+  } catch (error) {
+    throw redactPublicFailure(error, "native_local_fixture_preparation_failed");
+  }
+}
+
+async function prepareNativeLocalPlayerFixtureInternal(options) {
   const context = resolveContext(options);
   assertBackupName(options.backupName);
   assertObservedSaveSlot(options.saveName);
   const actions = fixtureActions(options.action);
   await assertSafeContext(context);
   if (await exists(join(context.root, options.backupName)))
-    throw new Error(`fixture_backup_already_exists:${join(context.root, options.backupName)}`);
+    throw new Error("native_local_fixture_backup_already_exists");
   await beginTransaction(context, options.backupName);
   const backup = join(context.root, options.backupName);
   let backupCreated = false;
@@ -45,18 +129,32 @@ export async function prepareNativeLocalPlayerFixture(options) {
       configPath: context.configPath,
       modsPath: context.modsPath,
     });
-  } catch (error) {
-    await rollbackFailedPreparation(context, backup, options.backupName, backupCreated, error);
+  } catch {
+    await rollbackFailedPreparation(
+      context,
+      backup,
+      options.backupName,
+      backupCreated,
+      new Error("native_local_fixture_preparation_failed"),
+    );
   }
 }
 
 export async function bootstrapNativeLocalPlayerFixture(options) {
+  try {
+    return await bootstrapNativeLocalPlayerFixtureInternal(options);
+  } catch (error) {
+    throw redactPublicFailure(error, "native_local_fixture_preparation_failed");
+  }
+}
+
+async function bootstrapNativeLocalPlayerFixtureInternal(options) {
   const context = resolveContext(options);
   await assertSafeContext(context);
   assertFixtureLogicalName(options.logicalSaveName);
   const actions = fixtureActions(options.action);
   if (await exists(join(context.root, options.backupName)))
-    throw new Error(`fixture_backup_already_exists:${join(context.root, options.backupName)}`);
+    throw new Error("native_local_fixture_backup_already_exists");
   await beginTransaction(context, options.backupName);
   const backup = join(context.root, options.backupName);
   let backupCreated = false;
@@ -79,8 +177,14 @@ export async function bootstrapNativeLocalPlayerFixture(options) {
       configPath: context.configPath,
       modsPath: context.modsPath,
     });
-  } catch (error) {
-    await rollbackFailedPreparation(context, backup, options.backupName, backupCreated, error);
+  } catch {
+    await rollbackFailedPreparation(
+      context,
+      backup,
+      options.backupName,
+      backupCreated,
+      new Error("native_local_fixture_preparation_failed"),
+    );
   }
 }
 
@@ -121,6 +225,14 @@ export async function verifyNativeLocalPlayerFixture(options) {
 }
 
 export async function restoreNativeLocalPlayerFixture(options) {
+  try {
+    return await restoreNativeLocalPlayerFixtureInternal(options);
+  } catch (error) {
+    throw redactPublicFailure(error, "native_local_fixture_restore_failed");
+  }
+}
+
+async function restoreNativeLocalPlayerFixtureInternal(options) {
   const context = resolveContext(options);
   await assertSafeContext(context);
   assertBackupName(options.backupName);
@@ -163,14 +275,14 @@ async function assertDirectoryNotLink(path) {
   try {
     metadata = await lstat(path);
   } catch (error) {
-    if (error?.code === "ENOENT") throw new Error(`native_local_fixture_path_missing:${path}`);
+    if (error?.code === "ENOENT") throw new Error("native_local_fixture_path_missing");
     throw error;
   }
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error(`native_local_fixture_unsafe_path:${path}`);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("native_local_fixture_unsafe_path");
 }
 async function assertNotLink(path) {
   const metadata = await lstat(path);
-  if (metadata.isSymbolicLink()) throw new Error(`native_local_fixture_unsafe_path:${path}`);
+  if (metadata.isSymbolicLink()) throw new Error("native_local_fixture_unsafe_path");
 }
 function fixtureObservedSlotMatch(value) {
   return typeof value === "string" ? /^(GameBuddyFixture[A-Za-z0-9]{0,64})_([0-9]{1,32})$/.exec(value) : null;
@@ -193,6 +305,8 @@ function assertBackupName(value) {
 }
 export function fixtureActions(action) {
   if (action === undefined || action === "move_to_tile") return ["move_to_tile"];
+  if (action === "navigation_mutation")
+    return ["inspect_world_map", "find_destination", "navigate_to_destination"];
   if (action === "equip_tool") return ["equip_tool"];
   if (action === "travel") return ["move_to_tile", "travel"];
   // The fixture supplies one intact target-version ResourceClump and a basic
@@ -253,6 +367,7 @@ export function fixtureActions(action) {
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions) {
+  if (actions.includes("navigate_to_destination")) return "navigation_mutation_v1";
   if (actions.includes("till_soil")) return "native_till_soil_v1";
   if (actions.includes("water_crop")) return "native_water_crop_v1";
   if (actions.includes("plant_seed")) return "native_plant_seed_v1";
@@ -373,7 +488,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
   result.EnabledActions = actions;
   return result;
 }
-async function rollbackFailedPreparation(context, backup, backupName, backupCreated, originalError) {
+async function rollbackFailedPreparation(context, backup, backupName, backupCreated, publicError) {
   const manifestPath = join(backup, "manifest.json");
   // A manifest means every managed source byte was registered before mutation.
   // If its restoration fails, preserve both the backup and owning lock for
@@ -381,19 +496,19 @@ async function rollbackFailedPreparation(context, backup, backupName, backupCrea
   if (backupCreated && (await exists(manifestPath))) {
     try {
       await restoreManagedFiles(context, backup, false);
-    } catch (restoreError) {
-      throw new Error("native_local_fixture_recovery_required", { cause: restoreError });
+    } catch {
+      throw new Error("native_local_fixture_recovery_required");
     }
     await rm(backup, { recursive: true, force: false });
     await endTransaction(context, backupName);
-    throw originalError;
+    throw publicError;
   }
 
   // Before a manifest exists no configuration or managed bundle mutation has
   // occurred. Remove only this invocation's incomplete backup and lock.
   if (backupCreated) await rm(backup, { recursive: true, force: false });
   await endTransaction(context, backupName);
-  throw originalError;
+  throw publicError;
 }
 
 async function backupManagedFiles(context, backup) {

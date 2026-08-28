@@ -23,6 +23,11 @@ test("rejects malformed, unknown, missing, action-bearing, and secret profile fi
   assert.throws(() => validateTargetProfile(missing), /invalid_shape/);
   const missingRelease = { ...example }; delete missingRelease.releaseDir;
   assert.throws(() => validateTargetProfile(missingRelease), /invalid_shape/);
+  const missingTransactionRoot = { ...example }; delete missingTransactionRoot.fixtureTransactionRoot;
+  assert.throws(() => validateTargetProfile(missingTransactionRoot), /invalid_shape/);
+  const missingNativeRoot = { ...example }; delete missingNativeRoot.nativeFixtureRoot;
+  assert.throws(() => validateTargetProfile(missingNativeRoot), /invalid_shape/);
+  assert.throws(() => validateTargetProfile({ ...example, fixtureRoot: example.fixtureTransactionRoot }), /invalid_shape/);
   assert.throws(() => validateTargetProfile({ ...example, schema: "wrong/v1" }), /invalid_schema/);
   assert.throws(() => validateTargetProfile({ ...example, profileIdentity: "../unsafe" }), /invalid_identity/);
   assert.throws(() => validateTargetProfile({ ...example, targetVersion: "" }), /invalid_target_version/);

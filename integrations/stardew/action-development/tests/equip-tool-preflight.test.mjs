@@ -9,7 +9,7 @@ import { runActionProject } from "../src/project-adapter.mjs";
 async function fixture(callback) {
   const root = await mkdtemp(path.join(os.tmpdir(), "equip-preflight-"));
   try {
-    for (const name of ["game", "game/Mods/GameBuddy", "release", "fixture", "lease"]) await mkdir(path.join(root, name), { recursive: true });
+    for (const name of ["game", "game/Mods/GameBuddy", "release", "fixture-transaction", "native-fixture", "lease"]) await mkdir(path.join(root, name), { recursive: true });
     for (const [name, contents] of [
       ["GameBuddy.Stardew.dll", "mod"],
       ["GameBuddy.Stardew.Core.dll", "core"],
@@ -19,7 +19,7 @@ async function fixture(callback) {
     const config = path.join(root, "game", "Mods", "GameBuddy", "config.json"); await writeFile(config, "{}");
     const profile = {
       schema: "gamebuddy-action-target-profile/v1", profileIdentity: "local-target", targetVersion: "stardew-1.6.15-smapi-4.1",
-      gameInstallPath: path.join(root, "game"), modsPath: path.join(root, "game", "Mods"), releaseDir: path.join(root, "release"), fixtureRoot: path.join(root, "fixture"),
+      gameInstallPath: path.join(root, "game"), modsPath: path.join(root, "game", "Mods"), releaseDir: path.join(root, "release"), fixtureTransactionRoot: path.join(root, "fixture-transaction"), nativeFixtureRoot: path.join(root, "native-fixture"),
       saveIdentity: "GameBuddyFixtureEquipTool_123456789", templateIdentity: "GameBuddyFixtureEquipTool_123456789", gameVersion: "1.6.15", smapiVersion: "4.1.10", adapterVersion: "0.1.0",
       runtimeLeaseRoot: path.join(root, "lease"), runtimeLeaseIdentity: "equip-tool-local", timeoutMs: 30000, nativeClientConfigFile: config,
     };
@@ -27,15 +27,18 @@ async function fixture(callback) {
     await callback({ root, profile, profileFile });
   } finally {
     const fs = await import("node:fs/promises");
-    const clean = async (directory) => {
-      for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-        const candidate = path.join(directory, entry.name);
-        if (entry.isDirectory() && !entry.isSymbolicLink()) { await clean(candidate); await rmdir(candidate); }
-        else await unlink(candidate);
-      }
-    };
-    await clean(root);
-    await rmdir(root);
+    const pending = [{ candidate: root, visited: false }];
+    let passes = 0;
+    while (pending.length) {
+      if (++passes > 10_000) throw new Error("equip_preflight_cleanup_limit_exceeded");
+      const item = pending.pop();
+      const metadata = await fs.lstat(item.candidate);
+      if (!metadata.isDirectory() || metadata.isSymbolicLink()) { await unlink(item.candidate); continue; }
+      if (!item.visited) {
+        pending.push({ candidate: item.candidate, visited: true });
+        for (const name of await fs.readdir(item.candidate)) pending.push({ candidate: path.join(item.candidate, name), visited: false });
+      } else await rmdir(item.candidate);
+    }
   }
 }
 const snapshot = { revision: 1, observedAt: new Date().toISOString(), actionable: true, activeExecution: null, capabilities: ["equip_tool"], toolSlots: [{ slot: 0, label: "Axe" }], currentTool: "Hoe" };
@@ -45,6 +48,7 @@ function deps(overrides = {}) {
   return { calls, value: {
     inspectTarget: async (p, bundle) => ({ gameVersion: p.gameVersion, smapiVersion: p.smapiVersion, adapterVersion: bundle.adapterVersion }),
     inspectFixture: async () => ({ transactionState: "idle", mutationPerformed: false }),
+    inspectLifecyclePreparation: async (profile) => ({ state: "ready", saveName: profile.saveIdentity, workingSaveAbsent: true }),
     connect: async () => ({ client, scope: { integrationId: "stardew", saveId: "s", worldId: "w", playerId: "p", companionId: "c" }, close() {} }),
     observeFresh: async () => { calls.observe++; return snapshot; }, readPublishedActionIds: async () => ["equip_tool"], ...overrides,
   }};
@@ -62,15 +66,21 @@ test("live child performs read-only admission after connection and before execut
   assert.match(child.slice(admission, smoke), /state !== "READY"/);
 });
 
-test("static preflight validates package and target inputs without any bridge connection", async () => fixture(async ({ profileFile }) => {
+test("static preflight validates package and target inputs without any bridge connection", async () => fixture(async ({ profile, profileFile }) => {
   let connections = 0;
-  const d = deps({ connect: async () => { connections++; throw new Error("static_preflight_must_not_connect"); } });
+  const observedRoots = [];
+  const d = deps({
+    inspectFixture: async (candidate) => { observedRoots.push(["transaction", candidate.fixtureTransactionRoot]); return { transactionState: "idle", mutationPerformed: false }; },
+    inspectLifecyclePreparation: async (candidate) => { observedRoots.push(["native", candidate.nativeFixtureRoot]); return { state: "ready", saveName: candidate.saveIdentity, workingSaveAbsent: true }; },
+    connect: async () => { connections++; throw new Error("static_preflight_must_not_connect"); },
+  });
   const report = await run(profileFile, d.value);
   assert.equal(report.state, "READY");
   assert.equal(report.freshSnapshotCount, 0);
   assert.deepEqual(report.bundle, { algorithm: "sha256", digest: report.bundle.digest, adapterVersion: "0.1.0", files: 4 });
   assert.match(report.bundle.digest, /^[a-f0-9]{64}$/);
   assert.equal(connections, 0);
+  assert.deepEqual(observedRoots, [["transaction", profile.fixtureTransactionRoot], ["native", profile.nativeFixtureRoot]]);
   assert.deepEqual(d.calls, { observe: 0, execute: 0, acquire: 0, write: 0 });
 }));
 
@@ -81,6 +91,20 @@ test("static preflight blocks held lease, non-idle fixture, and target version d
   assert.deepEqual((await run(profileFile, deps({ inspectFixture: async () => ({ transactionState: "locked", mutationPerformed: false }) }).value)).reasons, ["fixture_not_idle"]);
   assert.deepEqual((await run(profileFile, deps({ inspectTarget: async () => ({ gameVersion: "wrong" }) }).value)).reasons, ["target_version_mismatch"]);
   assert.deepEqual((await run(profileFile, deps({ inspectTarget: async (p) => ({ profileIdentity: "wrong", targetVersion: p.targetVersion, gameVersion: p.gameVersion, smapiVersion: p.smapiVersion, adapterVersion: p.adapterVersion }) }).value)).reasons, ["target_identity_mismatch"]);
+}));
+
+test("profile read and parse failures expose only bounded public reasons", async () => fixture(async ({ root }) => {
+  const missingProfile = path.join(root, "missing-private-profile.json");
+  const missingReport = await run(missingProfile, deps().value);
+  assert.deepEqual(missingReport.reasons, ["profile_unavailable"]);
+  assert.doesNotMatch(JSON.stringify(missingReport), /ENOENT|no such file|missing-private-profile|equip-preflight-/i);
+
+  const malformedProfile = path.join(root, "malformed-private-profile.json");
+  const rawMalformedText = '{"schema":"private-json-marker"';
+  await writeFile(malformedProfile, rawMalformedText);
+  const malformedReport = await run(malformedProfile, deps().value);
+  assert.deepEqual(malformedReport.reasons, ["invalid_json"]);
+  assert.doesNotMatch(JSON.stringify(malformedReport), /private-json-marker|malformed-private-profile|equip-preflight-/i);
 }));
 
 test("refuses relative/example/placeholder profiles and static brief", async () => fixture(async ({ profile, profileFile }) => {
@@ -102,6 +126,24 @@ test("rejects invalid release bundles and release/deployment overlap", async () 
     ["GameBuddy.Stardew.deps.json", "{}"],
   ]) await writeFile(path.join(root, "game", "Mods", "GameBuddy", name), contents);
   assert.deepEqual((await run(profileFile, deps().value)).reasons, ["stardew_immutable_release_bundle_path_overlap"]);
+}));
+
+test("release inspector exceptions expose only explicitly allowed bounded codes", async () => fixture(async ({ profileFile }) => {
+  for (const privateMessage of ["private release path C:/Users/player/save", "identifier_shaped_private_release_error"]) {
+    const report = await run(profileFile, deps({ inspectReleaseBundle: async () => { throw new Error(privateMessage); } }).value);
+    assert.deepEqual(report.reasons, ["release_bundle_invalid"]);
+    assert.doesNotMatch(JSON.stringify(report), /private release path|identifier_shaped_private_release_error|Users|player\/save/);
+  }
+}));
+
+test("lifecycle preparation exceptions expose only explicitly allowed bounded codes", async () => fixture(async ({ profileFile }) => {
+  for (const privateMessage of ["private lifecycle path C:/Users/player/save", "identifier_shaped_private_lifecycle_error"]) {
+    const report = await run(profileFile, deps({ inspectLifecyclePreparation: async () => { throw new Error(privateMessage); } }).value);
+    assert.deepEqual(report.reasons, ["lifecycle_preflight_invalid"]);
+    assert.doesNotMatch(JSON.stringify(report), /private lifecycle path|identifier_shaped_private_lifecycle_error|Users|player\/save/);
+  }
+  const known = await run(profileFile, deps({ inspectLifecyclePreparation: async () => { throw new Error("native_local_fixture_transaction_locked"); } }).value);
+  assert.deepEqual(known.reasons, ["native_local_fixture_transaction_locked"]);
 }));
 
 test("rejects secret/endpoint fields and untrusted or missing paths", async (t) => fixture(async ({ root, profile, profileFile }) => {

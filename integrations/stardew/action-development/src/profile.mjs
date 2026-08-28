@@ -4,7 +4,7 @@ import { parseJsonWithoutDuplicateKeys } from "./json-text.mjs";
 
 const SCHEMA = "gamebuddy-action-target-profile/v1";
 const KEYS = new Set([
-  "schema", "profileIdentity", "targetVersion", "gameInstallPath", "modsPath", "releaseDir", "fixtureRoot",
+  "schema", "profileIdentity", "targetVersion", "gameInstallPath", "modsPath", "releaseDir", "fixtureTransactionRoot", "nativeFixtureRoot",
   "saveIdentity", "templateIdentity", "gameVersion", "smapiVersion", "adapterVersion",
   "runtimeLeaseRoot", "runtimeLeaseIdentity", "timeoutMs", "nativeClientConfigFile",
 ]);
@@ -48,7 +48,8 @@ export function validateTargetProfile(input) {
     gameInstallPath: absolute(input.gameInstallPath, "invalid_game_install_path"),
     modsPath: absolute(input.modsPath, "invalid_mods_path"),
     releaseDir: absolute(input.releaseDir, "invalid_release_dir"),
-    fixtureRoot: absolute(input.fixtureRoot, "invalid_fixture_root"),
+    fixtureTransactionRoot: absolute(input.fixtureTransactionRoot, "invalid_fixture_transaction_root"),
+    nativeFixtureRoot: absolute(input.nativeFixtureRoot, "invalid_native_fixture_root"),
     saveIdentity: text(input.saveIdentity, ID, "invalid_save_identity"),
     templateIdentity: text(input.templateIdentity, ID, "invalid_template_identity"),
     gameVersion: text(input.gameVersion, VERSION, "invalid_game_version"),

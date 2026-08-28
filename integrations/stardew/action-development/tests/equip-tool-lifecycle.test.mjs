@@ -91,7 +91,7 @@ async function fixture(callback) {
 
 function profile(root) {
   return Object.freeze({
-    gameInstallPath: path.join(root, "game"), modsPath: path.join(root, "game", "Mods"), fixtureRoot: path.join(root, "fixtures"),
+    gameInstallPath: path.join(root, "game"), modsPath: path.join(root, "game", "Mods"), fixtureTransactionRoot: path.join(root, "fixture-transaction"), nativeFixtureRoot: path.join(root, "native-fixture"),
     saveIdentity: "GameBuddyFixtureEquipTool_123", templateIdentity: "GameBuddyFixtureEquipTool_123",
     profileIdentity: "target-profile", timeoutMs: 30_000,
   });
@@ -175,7 +175,7 @@ test("lifecycle adapter passes exact fixed arguments and validates separate acti
   const value = (flag) => call.args[call.args.indexOf(flag) + 1];
   assert.equal(value("-GamePath"), path.join(root, "game"));
   assert.equal(value("-ModsPath"), path.join(root, "game", "Mods"));
-  assert.equal(value("-FixtureRoot"), path.join(root, "fixtures"));
+  assert.equal(value("-FixtureRoot"), path.join(root, "native-fixture"));
   assert.equal(value("-SaveName"), "GameBuddyFixtureEquipTool_123");
   assert.equal(value("-TemplateName"), "GameBuddyFixtureEquipTool_123");
   assert.equal(value("-ReleaseDir"), releaseDir);
@@ -188,13 +188,59 @@ test("lifecycle adapter passes exact fixed arguments and validates separate acti
 
 test("lifecycle adapter fails closed for child, proof, cleanup receipt, and cleanup errors", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
   const base = { projectRoot, profile: profile(root), runId: "ar1_test", releaseDir, resultRoot: root, resolvePowerShell: () => "fake" };
-  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root), runChild: async () => ({ code: 2, signal: null }) }), /child_failed/);
+  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root), runChild: async () => ({ code: 2, signal: null }) }), /child_nonzero/);
   const wrongProof = { ...proof, runId: "other" };
-  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root, [JSON.stringify(wrongProof), JSON.stringify(cleanup)]), runChild: async () => ({ code: 0, signal: null }) }), /identity_mismatch/);
+  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root, [JSON.stringify(wrongProof), JSON.stringify(cleanup)]), runChild: async () => ({ code: 0, signal: null }) }), /action_result_invalid/);
   await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root, [JSON.stringify(proof), JSON.stringify({ ...cleanup, completed: false })]), runChild: async () => ({ code: 0, signal: null }) }), /cleanup_not_completed/);
   const c = claims(root);
-  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...c, cleanupResult: async () => { throw new Error("cleanup-failed"); }, runChild: async () => ({ code: 0, signal: null }) }), /result_cleanup_failed/);
+  await assert.rejects(
+    () => runEquipToolLifecycle({ ...base, ...c, cleanupResult: async () => { throw new Error("raw_cleanup_detail"); }, runChild: async () => ({ code: 0, signal: null }) }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_result_cleanup_failed"
+      && error.cause === undefined
+      && error.errors === undefined,
+  );
   for (const entry of c.entries.keys()) await unlink(entry.resultFile).catch(() => {});
+}));
+
+test("private-result claim creation failures are bounded and clean an earlier claim", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+  const base = {
+    projectRoot,
+    profile: profile(root),
+    runId: "ar1_test",
+    releaseDir,
+    resultRoot: root,
+    resolvePowerShell: () => "fake",
+  };
+  await assert.rejects(
+    () => runEquipToolLifecycle({
+      ...base,
+      beginResult: async () => { throw new Error("raw_first_claim_detail"); },
+    }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_result_claim_failed"
+      && error.cause === undefined
+      && error.errors === undefined,
+  );
+
+  const firstClaim = Object.freeze({ resultFile: path.join(root, "first-claim.json") });
+  await writeFile(firstClaim.resultFile, "claim");
+  let attempts = 0;
+  const cleaned = [];
+  await assert.rejects(
+    () => runEquipToolLifecycle({
+      ...base,
+      beginResult: async () => {
+        attempts += 1;
+        if (attempts === 1) return firstClaim;
+        throw new Error("raw_second_claim_detail");
+      },
+      cleanupResult: async (claim) => { cleaned.push(claim); await unlink(claim.resultFile); },
+    }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_result_claim_failed"
+      && error.cause === undefined
+      && error.errors === undefined,
+  );
+  assert.deepEqual(cleaned, [firstClaim]);
+  await assert.rejects(readFile(firstClaim.resultFile), /ENOENT/);
 }));
 
 test("production two-claim protocol rejects missing, malformed, oversized, wrong-identity, and incomplete results", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
@@ -220,20 +266,20 @@ test("production two-claim protocol rejects missing, malformed, oversized, wrong
   const writeAction = (file, value = proof) => writePrivateResultFile(file, JSON.stringify(value));
   const writeCleanup = (file, completed = true) => writeLifecycleCleanupResult(file, { completed });
 
-  await assert.rejects(run(async ({ lifecycleFile }) => writeCleanup(lifecycleFile)), /ENOENT/);
-  await assert.rejects(run(async ({ actionFile }) => writeAction(actionFile)), /ENOENT/);
+  await assert.rejects(run(async ({ lifecycleFile }) => writeCleanup(lifecycleFile)), /action_result_missing/);
+  await assert.rejects(run(async ({ actionFile }) => writeAction(actionFile)), /cleanup_result_missing/);
   await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
     await writePrivateResultFile(actionFile, "{");
     await writeCleanup(lifecycleFile);
-  }), /json|invalid/i);
+  }), /action_result_invalid/);
   await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
     await writeFile(actionFile, "x".repeat(MAX_PRIVATE_RESULT_BYTES + 1), { flag: "wx" });
     await writeCleanup(lifecycleFile);
-  }), /invalid_size/);
+  }), /action_result_invalid/);
   await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
     await writeAction(actionFile, { ...proof, runId: "ar1_wrong" });
     await writeCleanup(lifecycleFile);
-  }), /identity_mismatch/);
+  }), /action_result_invalid/);
   await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
     await writeAction(actionFile);
     await writePrivateResultFile(lifecycleFile, "{}");
@@ -246,12 +292,20 @@ test("production two-claim protocol rejects missing, malformed, oversized, wrong
     await writeAction(actionFile);
     await writeCleanup(lifecycleFile);
     await writePrivateResultFile(actionFile, JSON.stringify(proof));
-  }), /destination_exists/);
+  }), /child_failed/);
 
-  for (const message of ["test_supervisor_timeout", "test_runner_failed:spawn", "test_runner_failed:code=2"]) {
-    await assert.rejects(
-      () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error(message); } }),
-      new RegExp(message.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")),
-    );
-  }
+  await assert.rejects(
+    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("raw_child_detail"); } }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_child_failed"
+      && error.cause === undefined
+      && error.errors === undefined,
+  );
+  await assert.rejects(
+    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("game_action_child_timeout"); } }),
+    /child_timeout/,
+  );
+  await assert.rejects(
+    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("game_action_child_spawn_failed"); } }),
+    /child_spawn_failed/,
+  );
 }));
