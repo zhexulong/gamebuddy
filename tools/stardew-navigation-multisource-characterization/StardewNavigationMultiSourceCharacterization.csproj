@@ -1,0 +1,94 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>GameBuddy.Stardew.NavigationTopologyCharacterization</AssemblyName>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GamePath Condition="'$(GamePath)' == ''">$(GAMEBUDDY_STARDEW_GAME_PATH)</GamePath>
+  </PropertyGroup>
+
+  <!--
+    Required absolute MSBuild properties:
+      ProductionModBuildPath - directory containing the shipped production closure
+        (GameBuddy.Stardew.dll, GameBuddy.Stardew.Core.dll, Raffinert.FuzzySharp.dll)
+      GamePath - directory containing target Stardew assemblies
+        (Stardew Valley.dll, StardewModdingAPI.dll, MonoGame.Framework.dll)
+        Falls back to GAMEBUDDY_STARDEW_GAME_PATH environment variable.
+  -->
+  <Target Name="RequireBuildPaths" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(ProductionModBuildPath)' == ''"
+           Text="ProductionModBuildPath is required. Set the MSBuild property to the absolute path containing the production closure." />
+    <Error Condition="!$([System.IO.Path]::IsPathRooted($(ProductionModBuildPath)))"
+           Text="ProductionModBuildPath must be an absolute path." />
+    <Error Condition="'$(GamePath)' == ''"
+           Text="GamePath is required. Set the MSBuild property or GAMEBUDDY_STARDEW_GAME_PATH environment variable." />
+    <Error Condition="!$([System.IO.Path]::IsPathRooted($(GamePath)))"
+           Text="GamePath must be an absolute path." />
+    <Error Condition="!Exists('$(ProductionModBuildPath)\GameBuddy.Stardew.dll')"
+           Text="GameBuddy.Stardew.dll is missing from $(ProductionModBuildPath)." />
+    <Error Condition="!Exists('$(ProductionModBuildPath)\GameBuddy.Stardew.Core.dll')"
+           Text="GameBuddy.Stardew.Core.dll is missing from $(ProductionModBuildPath)." />
+    <Error Condition="!Exists('$(ProductionModBuildPath)\Raffinert.FuzzySharp.dll')"
+           Text="Raffinert.FuzzySharp.dll is missing from $(ProductionModBuildPath)." />
+    <Error Condition="!Exists('$(GamePath)\Stardew Valley.dll')"
+           Text="Stardew Valley.dll is missing from $(GamePath)." />
+    <Error Condition="!Exists('$(GamePath)\StardewModdingAPI.dll')"
+           Text="StardewModdingAPI.dll is missing from $(GamePath)." />
+    <Error Condition="!Exists('$(GamePath)\MonoGame.Framework.dll')"
+           Text="MonoGame.Framework.dll is missing from $(GamePath)." />
+  </Target>
+
+  <ItemGroup>
+    <Compile Include="ModEntry.cs" />
+
+    <!-- Compile against the frozen production closure without asking MSBuild to
+         recursively copy its transitive runtime graph. The exact three DLLs
+         are copied below as explicit content for the later profile stager. -->
+    <Reference Include="GameBuddy.Stardew">
+      <HintPath>$(ProductionModBuildPath)\GameBuddy.Stardew.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameBuddy.Stardew.Core">
+      <HintPath>$(ProductionModBuildPath)\GameBuddy.Stardew.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Raffinert.FuzzySharp">
+      <HintPath>$(ProductionModBuildPath)\Raffinert.FuzzySharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- Target framework references (Private=false, resolved from game install) -->
+    <Reference Include="Stardew Valley">
+      <HintPath>$(GamePath)\Stardew Valley.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="StardewModdingAPI">
+      <HintPath>$(GamePath)\StardewModdingAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MonoGame.Framework">
+      <HintPath>$(GamePath)\MonoGame.Framework.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- The probe output owns exactly this declared production closure; do
+         not glob or copy the production release directory. -->
+    <None Include="$(ProductionModBuildPath)\GameBuddy.Stardew.dll">
+      <Link>GameBuddy.Stardew.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="$(ProductionModBuildPath)\GameBuddy.Stardew.Core.dll">
+      <Link>GameBuddy.Stardew.Core.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="$(ProductionModBuildPath)\Raffinert.FuzzySharp.dll">
+      <Link>Raffinert.FuzzySharp.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="manifest.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

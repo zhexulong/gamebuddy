@@ -1,13 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
 import {
   buildTargetProduction,
   executeStaticLeaf,
-  hashProductionAssembly,
   loadStaticPortfolio,
   STATIC_PORTFOLIO_SCHEMA,
   targetAssemblyAvailability,
@@ -85,30 +82,6 @@ test("loads and completely inventories root Stardew scripts", async () => {
   assert.deepEqual(
     portfolio.leaves.map((leaf) => leaf.id).sort(),
     portfolio.leaves.map((leaf) => portfolio.scripts.find((entry) => entry.script === leaf.script)?.id).sort(),
-  );
-});
-
-test("target-gated portfolio interop contract keeps inventory complete as action-platform, not live", async () => {
-  const { portfolio, scripts: rootScripts } = await loadStaticPortfolio();
-  const entry = portfolio.scripts.find((candidate) => candidate.script === "test:stardew-portfolio-interop-contract");
-  assert.ok(entry, "root inventory must include test:stardew-portfolio-interop-contract");
-  assert.equal(
-    rootScripts["test:stardew-portfolio-interop-contract"],
-    "powershell.exe -NoProfile -File tools/run-stardew-portfolio-interop-contract.ps1",
-  );
-  assert.equal(entry.command, rootScripts["test:stardew-portfolio-interop-contract"]);
-  assert.equal(entry.class, "out_of_scope_action_platform");
-  assert.equal(entry.owner, "gamebuddy.stardew.static-verifier@v1");
-  assert.match(entry.riskId, /^GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_INTEROP_CONTRACT@v[1-9][0-9]*$/);
-  assert.ok(
-    !portfolio.leaves.some((leaf) => leaf.script === entry.script),
-    "target-gated interop contract must not become a static leaf",
-  );
-  assert.deepEqual(
-    portfolio.scripts
-      .filter((candidate) => candidate.class === "blocked_target_live")
-      .map((candidate) => candidate.script),
-    ["run:stardew-companion-live"],
   );
 });
 
@@ -276,7 +249,7 @@ test("missing target assemblies block both C# leaves without executing or enteri
   assert.ok(invoked.every((command) => command[0] !== "dotnet"));
 });
 
-test("compiled contracts receive a SHA-256 for the exact post-build production assembly and preserve nonzero failures", async () => {
+test("available target assemblies execute both C# contracts and preserve nonzero failures", async () => {
   const { portfolio, scripts: rootScripts } = await loadStaticPortfolio();
   const invoked = [],
     builds = [];
@@ -289,7 +262,6 @@ test("compiled contracts receive a SHA-256 for the exact post-build production a
       builds.push(options);
       return { exitCode: 0, durationMs: 4 };
     },
-    hashProduction: async () => ({ path: resolve(root, productionAssembly), expectedSha256: "e".repeat(64) }),
     executeLeaf: async (command, options) => {
       invoked.push({ command, options });
       return { exitCode: command[0] === "dotnet" && !command[1].includes("Farmhand") ? 7 : 0, durationMs: 2 };
@@ -300,26 +272,16 @@ test("compiled contracts receive a SHA-256 for the exact post-build production a
   assert.equal(report.state, "failed");
   assert.equal(report.summary.failed, 1);
   assert.deepEqual(
-    contracts.map(({ command, options }) => ({
-      entrypoint: command[1],
-      expectedFlag: command[2],
-      digest: command[3],
-      assembly: command[4],
-      options,
-    })),
+    contracts.map(({ command, options }) => ({ entrypoint: command[1], assembly: command[2], options })),
     [
       {
         entrypoint: "integrations/stardew/tests/bin/Release/net6.0/FarmhandActionCapabilityProjection.Contract.dll",
-        expectedFlag: "--expected-sha256",
-        digest: "e".repeat(64),
-        assembly: resolve(root, productionAssembly),
+        assembly: productionAssembly,
         options: { targetGamePath: "C:/licensed-stardew" },
       },
       {
         entrypoint: "integrations/stardew/tests/bin/Release/net6.0/PortfolioMineElevatorProjection.Contract.dll",
-        expectedFlag: "--expected-sha256",
-        digest: "e".repeat(64),
-        assembly: resolve(root, productionAssembly),
+        assembly: productionAssembly,
         options: { targetGamePath: "C:/licensed-stardew" },
       },
     ],
@@ -327,59 +289,6 @@ test("compiled contracts receive a SHA-256 for the exact post-build production a
   assert.deepEqual(
     report.leaves.filter((leaf) => leaf.command[0] === "dotnet").map((leaf) => leaf.state),
     ["passed", "failed"],
-  );
-});
-
-test("hashes a generated production assembly and passes its digest to both compiled contracts", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-static-"));
-  const assembly = join(directory, "GameBuddy.Stardew.dll");
-  const bytes = Buffer.from("generated-after-build");
-  try {
-    await writeFile(assembly, bytes);
-    const expectedSha256 = createHash("sha256").update(bytes).digest("hex");
-    assert.deepEqual(await hashProductionAssembly({ path: assembly }), { path: assembly, expectedSha256 });
-    const { portfolio, scripts: rootScripts } = await loadStaticPortfolio();
-    const invoked = [];
-    await verifyStaticPortfolio({
-      portfolio,
-      scripts: rootScripts,
-      identity: `sha256:${"f".repeat(64)}`,
-      targetAvailability: { available: true, gamePath: "C:/licensed-stardew" },
-      buildTarget: async () => ({ exitCode: 0, durationMs: 1 }),
-      hashProduction: () => hashProductionAssembly({ path: assembly }),
-      executeLeaf: async (command) => {
-        invoked.push(command);
-        return { exitCode: 0, durationMs: 1 };
-      },
-    });
-    assert.deepEqual(
-      invoked.filter((command) => command[0] === "dotnet").map((command) => command.slice(2)),
-      [
-        ["--expected-sha256", expectedSha256, assembly],
-        ["--expected-sha256", expectedSha256, assembly],
-      ],
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("rejects missing, non-file, and changed production assemblies before launching contracts", async () => {
-  await assert.rejects(
-    hashProductionAssembly({ path: resolve(root, "missing-production.dll") }),
-    /static_portfolio_production_assembly_invalid/,
-  );
-  await assert.rejects(hashProductionAssembly({ path: root }), /static_portfolio_production_assembly_invalid/);
-  const file = { isFile: () => true, dev: 1, ino: 1, size: 1, mtimeMs: 1, ctimeMs: 1 };
-  const changed = { ...file, size: 2 };
-  let statCalls = 0;
-  await assert.rejects(
-    hashProductionAssembly({
-      path: "generated.dll",
-      read: async () => Buffer.from("x"),
-      stat: async () => (statCalls++ === 0 ? file : changed),
-    }),
-    /static_portfolio_production_assembly_changed/,
   );
 });
 
@@ -452,26 +361,17 @@ test("both compiled contracts require and validate a supplied GameBuddy.Stardew 
     readFile(resolve(root, "integrations", "stardew", "tests", "Program.cs"), "utf8"),
   ]);
   for (const source of sources) {
-    // Both contracts require the exact SHA-256 + production DLL pair. The
-    // Farmhand contract also has a separately explicit four-argument
-    // manifest-writing mode; its ordinary assertion path remains exact.
-    assert.match(
-      source,
-      /arguments\.Length (?:== 3 && arguments\[0\] ==|!= 3 \|\| arguments\[0\] !=) "--expected-sha256"/,
-    );
-    assert.match(source, /expectedSha256 = arguments\[1\];/);
+    assert.match(source, /arguments\.Length > 1/);
+    assert.match(source, /Missing production assembly path/);
     assert.match(source, /File\.Exists\(fullProductionAssemblyPath\)/);
     assert.match(
       source,
-      /ProductionAssemblyBinding\.LoadCanonicalAssembly\(expectedSha256, fullProductionAssemblyPath, ValidateProductionAssembly\)/,
+      /ProductionAssemblyBinding\.LoadCanonicalAssembly\(fullProductionAssemblyPath, ValidateProductionAssembly\)/,
     );
     assert.match(source, /private static void AssertTypedReferenceBindsToLoadedAssembly\(Assembly loadedAssembly\)/);
     assert.match(source, /ProductionAssemblyBinding\.AssertTypedReferenceBindsToLoadedAssembly\(/);
     assert.match(source, /MethodImpl\(MethodImplOptions\.NoInlining\)/);
-    assert.match(
-      source,
-      /ProductionAssemblyBinding\.AssertByteAlteredAssemblyRejectedBeforeTypeLoad\(expectedSha256, fullProductionAssemblyPath\)/,
-    );
+    assert.match(source, /ProductionAssemblyBinding\.AssertMetadataOnlyValidationCannotAuthorize\(/);
     assert.match(source, /reader\.GetAssemblyDefinition\(\)/);
     assert.match(source, /assemblyName == "GameBuddy\.Stardew"/);
   }
@@ -491,20 +391,21 @@ test("both contracts compile immutable stream binding before typed assertions an
   assert.match(binding, /AssemblyLoadContext\.Default\.Assemblies\.Any/);
   assert.match(binding, /already loaded in AssemblyLoadContext\.Default before canonical binding/);
   assert.match(binding, /new\(canonicalAssemblyPath, FileMode\.Open, FileAccess\.Read, FileShare\.Read\)/);
-  assert.match(binding, /byte\[\] canonicalSnapshot = ReadSnapshot\(canonicalAssemblyPath\);/);
-  assert.match(binding, /SHA256\.HashData\(snapshot\)/);
-  assert.match(binding, /AssemblyLoadContext\.Default\.LoadFromStream\(loadStream\)/);
+  assert.match(binding, /HashStream\(canonicalStream\)/);
+  assert.match(binding, /sha256\.ComputeHash\(stream\)/);
+  assert.match(binding, /canonicalStream\.Position = 0;/);
+  assert.match(binding, /AssemblyLoadContext\.Default\.LoadFromStream\(canonicalStream\)/);
   assert.match(binding, /AssertTypedReferenceBindsToLoadedAssembly/);
   assert.match(binding, /ReferenceEquals\(typedReferenceAssembly, loadedAssembly\)/);
-  assert.match(binding, /ReadAssemblyIdentity\(identityStream\)/);
+  assert.match(binding, /ReadAssemblyIdentity\(canonicalStream\)/);
   assert.match(binding, /!Equals\(actualIdentity\.Version, expectedIdentity\.Version\)/);
   assert.match(binding, /actualIdentity\.Name != ProductionAssemblyName/);
   assert.doesNotMatch(binding, /\.Location/);
   assert.match(
     binding,
-    /File\.WriteAllBytes\(alteredAssemblyPath, canonicalSnapshot\.Concat\(new byte\[\] \{ 0 \}\)\.ToArray\(\)\)/,
+    /File\.WriteAllBytes\(alteredAssemblyPath, canonicalBytes\.Concat\(new byte\[\] \{ 0 \}\)\.ToArray\(\)\)/,
   );
-  assert.match(binding, /reader\.GetAssemblyDefinition\(\);/);
+  assert.match(binding, /reader\.GetAssemblyDefinition\(\)\.Name/);
   assert.match(binding, /CryptographicOperations\.FixedTimeEquals/);
 
   const projects = await Promise.all([
@@ -528,7 +429,6 @@ test("target availability requires precisely the union of both contract projects
     "Stardew Valley.dll",
     "StardewModdingAPI.dll",
     "MonoGame.Framework.dll",
-    "SMAPI.Toolkit.CoreInterfaces.dll",
     "smapi-internal/Newtonsoft.Json.dll",
   ];
   assert.deepEqual(targetAssemblyAvailability({ environment, exists: () => false }), {

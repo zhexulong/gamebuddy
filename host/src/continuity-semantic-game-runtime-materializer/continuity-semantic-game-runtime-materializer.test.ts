@@ -21,14 +21,14 @@ import type { ProductionGamePermit } from "../continuity-semantic-store/continui
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
-import { createIntegrationActionCatalog, type GameIntegrationModule } from "../integration-module.js";
-import type { IntegrationConnection } from "../integration-types.js";
+import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
+import type { GameConnection } from "../game-connection.js";
 import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
 function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegrationLauncher {
-  const module: GameIntegrationModule = {
+  const module: GameIntegrationAdapter = {
     descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
     actionCatalog: createIntegrationActionCatalog([
       {
@@ -72,6 +72,16 @@ function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegra
       connected: true,
       sessionId: "session_01",
       capabilities: ["activate"],
+      capabilityRevision: 1,
+      registrations: [
+        {
+          actionId: "activate",
+          familyId: "interaction",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        }
+      ],
       snapshotRevision: 1,
       activeExecution: null,
       latestReceipt: null,
@@ -80,6 +90,7 @@ function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegra
     status: () => ({
       connected: true,
       capabilities: ["activate"],
+      capabilityRevision: 1,
       snapshotRevision: 1,
       latestReceiptState: null,
       latestReasonCode: null,
@@ -89,7 +100,7 @@ function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegra
     actionIdForToolName: (name) => (name === "arcade_activate" ? "activate" : null),
     isCancellationTool: () => false,
   };
-  const connection: IntegrationConnection = {
+  const connection: GameConnection = {
     scope: { integrationId: "test-arcade" },
     module,
     state: Object.freeze({ connected: true }),
@@ -569,6 +580,26 @@ test("production materializer source rejects legacy lifecycle, facade, store com
     true,
     "S4c accepts the construction-owned operational marker option",
   );
+  assert.match(
+    sources[0],
+    /const workerAttachment =\s*gameOperationalGateNonceSha256 === undefined\s*\n\s*\? undefined\s*\n\s*: await/,
+    "unarmed production Game materialization must not construct a worker attachment",
+  );
+  assert.match(
+    sources[0],
+    /gameplaySubagentEnabled: true[\s\S]*hostBindingFactory/,
+    "armed production Game materialization constructs the worker attachment",
+  );
+  assert.match(
+    sources[0],
+    /gameOperationalGateNonceSha256 === undefined \? hostBindingFactory : undefined,\s*\n\s*workerAttachment,/,
+    "unarmed production Game materialization preserves ordinary Host binding without a worker",
+  );
+  assert.match(
+    sources.join("\n"),
+    /createGameOperationalGateEvidenceProjection\(\s*execution\.connection\.module,\s*execution\.connection,\s*execution\.launch\.events,\s*host,\s*\)/,
+    "S4c supplies the existing Host's read-only exact STOP settlement observer to the gate projection",
+  );
 });
 
 test("production Game presentation composition supplies session and opaque admission only inside materialization", async () => {
@@ -582,8 +613,9 @@ test("production Game presentation composition supplies session and opaque admis
   assert.match(source, /gameVoicePresentation\?: GameVoicePresentationAttachment/);
   assert.doesNotMatch(source, /gamePresentation\?:/);
   assert.match(source, /sessionId: gameSessionId/);
-  assert.match(source, /createGamePresentationAdmissionProvider\(turnTracker, handle\.interruption\)/);
-  assert.match(source, /host\.attachVoiceStopper\(consumeGameVoicePresentationAttachment/);
+  assert.match(source, /createGamePresentationAdmissionProvider\(\s*turnTracker,\s*handle\.interruption,\s*\)/);
+  assert.match(source, /createFarmhandCompanionPresentationPort/);
+  assert.match(source, /host\.attachVoiceStopper\(\s*consumeGameVoicePresentationAttachment/);
   assert.match(source, /const activateIngress/);
   assert.doesNotMatch(source, /trace.*sink/i);
   assert.doesNotMatch(source, /inputId.*admission/i);
@@ -609,4 +641,94 @@ test("Game materializer source mints origin-free receipts and exposes only close
   ])
     assert.equal(source.includes(forbidden), false, `forbidden Game materializer semantic: ${forbidden}`);
   assert.match(source, /teardownClose\(permit: ProductionGamePermit\)/);
+});
+
+test("connected runtime privately dispatches one exact prompt-defined task and discards the worker result", async () => {
+  const calls: string[] = [];
+  const workerResult = Object.freeze({ taskId: "task_01", report: "not exposed" });
+  const materializer = createTestGameRuntimeMaterializer(async () =>
+    Object.freeze({
+      session: Object.freeze({ dispose: () => undefined }),
+      gameplaySubagent: Object.freeze({
+        dispose: () => undefined,
+        run: async (task: string) => {
+          calls.push(task);
+          return workerResult;
+        },
+      }),
+    }),
+  );
+  const runtimeBinding = await binding();
+  try {
+    const result = await inActiveBinding(runtimeBinding, (execution, reservation) =>
+      materializer.materializeEnter(reservation, permit(execution)),
+    );
+    assert.ok(result.connected);
+    const task = "Walk to the 🌾 chest, then wait — untouched text.";
+    const dispatched = await result.connected.dispatchPromptDefinedTask(task);
+    assert.equal(dispatched, undefined);
+    assert.deepEqual(calls, [task]);
+    assert.equal(Object.hasOwn(result.connected, "gameplaySubagent"), false);
+    assert.equal(Object.hasOwn(result.connected, "runtime"), false);
+    assert.equal(Object.hasOwn(result.connected, "result"), false);
+    assert.equal(Object.hasOwn(result.connected, "taskId"), false);
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
+test("connected dispatch validates Unicode scalar text and fails closed when no worker exists", async () => {
+  let calls = 0;
+  const materializer = createTestGameRuntimeMaterializer(async () =>
+    Object.freeze({
+      session: Object.freeze({ dispose: () => undefined }),
+      gameplaySubagent: Object.freeze({
+        dispose: () => undefined,
+        run: async (_task: string) => {
+          calls += 1;
+          return Object.freeze({ state: "completed" });
+        },
+      }),
+    }),
+  );
+  const runtimeBinding = await binding();
+  try {
+    const result = await inActiveBinding(runtimeBinding, (execution, reservation) =>
+      materializer.materializeEnter(reservation, permit(execution)),
+    );
+    assert.ok(result.connected);
+    const connected = result.connected;
+    const maximumTask = "🙂".repeat(2_000);
+    await connected.dispatchPromptDefinedTask(maximumTask);
+    assert.equal(calls, 1);
+    await assert.rejects(connected.dispatchPromptDefinedTask(""), /invalid_gameplay_task/);
+    await assert.rejects(connected.dispatchPromptDefinedTask("a".repeat(2_001)), /invalid_gameplay_task/);
+    await assert.rejects(connected.dispatchPromptDefinedTask("contains\u0000nul"), /invalid_gameplay_task/);
+    await assert.rejects(connected.dispatchPromptDefinedTask("\ud800"), /invalid_gameplay_task/);
+    await assert.rejects(connected.dispatchPromptDefinedTask("\udfff"), /invalid_gameplay_task/);
+    await assert.rejects(
+      connected.dispatchPromptDefinedTask(undefined as unknown as string),
+      /invalid_gameplay_task/,
+    );
+    assert.equal(calls, 1);
+  } finally {
+    await runtimeBinding.close();
+  }
+
+  const missingWorkerMaterializer = createTestGameRuntimeMaterializer(async () =>
+    Object.freeze({ session: Object.freeze({ dispose: () => undefined }) }),
+  );
+  const missingWorkerBinding = await binding();
+  try {
+    const result = await inActiveBinding(missingWorkerBinding, (execution, reservation) =>
+      missingWorkerMaterializer.materializeEnter(reservation, permit(execution)),
+    );
+    assert.ok(result.connected);
+    await assert.rejects(
+      result.connected.dispatchPromptDefinedTask("valid task"),
+      /gameplay_task_dispatch_unavailable/,
+    );
+  } finally {
+    await missingWorkerBinding.close();
+  }
 });

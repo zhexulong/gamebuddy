@@ -45,14 +45,14 @@ import { identityKey, type RuntimeSession } from "../runtime.js";
 import type { CreateChatThreadRequest } from "../tavern/chat-thread-store.js";
 import {
   createChatThreadStore,
-  transitionP4MountedProviderStart,
-  transitionP5MountedPresentation,
+  transitionMountedProviderStart,
+  transitionMountedPresentation,
 } from "../tavern/chat-thread-store.js";
 import {
-  createP4P5MountedTransitionAuthority,
-  type P4P5MountedTransitionAuthorityLease,
-  type P4P5MountedTransitionOperationAuthorityLease,
-} from "../tavern/chat-thread-store.p4-p5-transition-authority.internal.js";
+  createMountedTurnTransitionAuthority,
+  type MountedTurnTransitionAuthorityLease,
+  type MountedTurnTransitionOperationAuthorityLease,
+} from "../tavern/chat-thread-store.mounted-turn-transition.internal.js";
 import {
   createManifestDerivedInitialChatExactContentPort,
   type InitialChatExactContentPort,
@@ -70,12 +70,12 @@ export class SemanticProductionCoordinatorError extends Error {
 }
 
 /**
- * P4c's one fixed internal start-admission deadline. It is minted exactly once
+ * One fixed internal start-admission deadline. It is minted exactly once
  * while consuming the one-shot invocation admission and creating the private
  * execution scope; it is never caller-supplied, durable, projected, or a
  * provider/cancellation timeout.
  */
-export const P4C_PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS = 120_000;
+export const PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS = 120_000;
 /** This is deliberately opaque outside this module.  Its identity, not its shape, is the capability. */
 type DialogueSagaHolder = object;
 type SagaFacts = Readonly<{
@@ -141,49 +141,49 @@ type MountedChatRuntimeLeaseRecord = {
   readonly chatThreadId: string;
   readonly chatSurfaceSessionId: string;
   readonly selectionGeneration: number;
-  readonly p4AttemptBinding?: MountedP4AttemptBinding;
-  /** Live materialized runtime session for the P4c start scope; never public. */
-  readonly p4ProviderStartRuntimeSession?: RuntimeSession;
+  readonly attemptBinding?: MountedAttemptBinding;
+  /** Live materialized runtime session for the start scope; never public. */
+  readonly providerRuntimeSession?: RuntimeSession;
 
   /**
    * Process-local one-shot reservation for a durable generation-one attempt.
    * It closes concurrent/reentrant start calls before the durable `armed` write;
    * after that write, the ledger observation is the crash-safe no-reprompt proof.
    */
-  readonly p4ProviderStartAttemptIds: Set<string>;
+  readonly startedAttemptIds: Set<string>;
   /** Revoked synchronously when this mounted lease begins closing. */
-  readonly p4P5TransitionAuthority: P4P5MountedTransitionAuthorityLease;
+  readonly transitionAuthority: MountedTurnTransitionAuthorityLease;
   /**
    * Chat-owned in-process presentation epoch (design/71 §3.4). It is created
    * once at mount, stored privately, and never durable; the ledger CAS is the
    * durable cancel authority. A stop via the coordinator's private cancel seam
    * invalidates every minted presentation admission for this lease.
    */
-  readonly p5PresentationEpoch: CompanionInterruption;
+  readonly presentationEpoch: CompanionInterruption;
 
   /** The sole Pi prompt currently executing under this mounted lease. */
   activePrompt?: Readonly<{ turnId: string; attemptId: string; aborting: boolean }>;
-  /** Retained legacy P4/P5 cancellation state; new browser Stop bypasses it. */
-  p5Cancellation?: Promise<P5CancelResult>;
+  /** Retained cancellation state; new browser Stop bypasses it. */
+  cancellation?: Promise<CancelResult>;
   readonly begin: <T>(work: () => Promise<T>) => Promise<T>;
   close(): Promise<void>;
 };
 const mountedChatRuntimeLeases = new WeakMap<object, MountedChatRuntimeLeaseRecord>();
 
 /**
- * Private P4 composition capability. It is intentionally unexported: only the
+ * Private composition capability. It is intentionally unexported: only the
  * narrowly named Tavern internal seam can receive it through this callback.
  */
-type MountedP4Admission = Readonly<{ readonly __mountedP4Admission: unique symbol }>;
-type MountedP4AdmissionRecord = Readonly<{
+type MountedAdmission = Readonly<{ readonly __mountedAdmission: unique symbol }>;
+type MountedAdmissionRecord = Readonly<{
   lease: MountedChatRuntimeLeaseRecord;
   active: { value: boolean };
   consuming: { value: boolean };
 }>;
-const mountedP4Admissions = new WeakMap<object, MountedP4AdmissionRecord>();
+const mountedAdmissions = new WeakMap<object, MountedAdmissionRecord>();
 
-type MountedP4AttemptAdmission = Readonly<{ readonly __mountedP4AttemptAdmission: unique symbol }>;
-type MountedP4AttemptBinding = Readonly<{
+type MountedAttemptAdmission = Readonly<{ readonly __mountedAttemptAdmission: unique symbol }>;
+type MountedAttemptBinding = Readonly<{
   runtimeBindingDigest: string;
   runtimeOwner: Readonly<{
     ownerToken: string;
@@ -192,21 +192,21 @@ type MountedP4AttemptBinding = Readonly<{
     ownerProcessStartIdentity: string;
   }>;
 }>;
-type MountedP4AttemptAdmissionRecord = Readonly<{
+type MountedAttemptAdmissionRecord = Readonly<{
   lease: MountedChatRuntimeLeaseRecord;
-  binding: MountedP4AttemptBinding;
+  binding: MountedAttemptBinding;
   active: { value: boolean };
   consuming: { value: boolean };
 }>;
-const mountedP4AttemptAdmissions = new WeakMap<object, MountedP4AttemptAdmissionRecord>();
+const mountedAttemptAdmissions = new WeakMap<object, MountedAttemptAdmissionRecord>();
 
 /**
- * P4c's private execution scope. It is the only way a Tavern P4c consumer can
+ * Private execution scope. It is the only way a consumer can
  * reach the live runtime session, the sole store-writer port, the immutable
  * bound facts, and the coordinator-minted start-admission deadline. None of
  * them may be retained after the admission callback returns.
  */
-export type P4ProviderStartExecutionScope = Readonly<{
+export type ProviderInvocationScope = Readonly<{
   facts: Readonly<{
     turnId: string;
     messageId: string;
@@ -239,7 +239,7 @@ export type P4ProviderStartExecutionScope = Readonly<{
    * bound to the mounted runtime root and full origin tuple.
    */
   transitionStore(
-    command: import("../tavern/chat-thread-store.js").P4ProviderStartTransition,
+    command: import("../tavern/chat-thread-store.js").ProviderStartTransition,
   ): Promise<
     | import("../tavern/chat-thread-store.js").AttemptStartingTurn
     | import("../tavern/chat-thread-store.js").RunningTurn
@@ -247,12 +247,12 @@ export type P4ProviderStartExecutionScope = Readonly<{
     | import("../tavern/chat-thread-store.js").CancelledTurn
   >;
   /**
-   * The sole P5 durable writer port for this exact running attempt. It remains
-   * inside the already-exclusive P4c prompt consumer; it cannot prompt Pi or
+   * The sole durable writer port for this exact running attempt. It remains
+   * inside the already-exclusive prompt consumer; it cannot prompt Pi or
    * be retained outside this callback scope.
    */
   transitionPresentation(
-    command: import("../tavern/chat-thread-store.js").P5PresentationTransition,
+    command: import("../tavern/chat-thread-store.js").PresentationTransition,
   ): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger>;
   /** Reads the exact durable accepted player message text for the canonical envelope. */
   readAcceptedMessageText(): Promise<string>;
@@ -269,7 +269,7 @@ export type P4ProviderStartExecutionScope = Readonly<{
    */
   beginActivePrompt(): () => void;
   /**
-   * Performs P5's synchronous cancel/commit arbitration for this exact native
+   * Performs synchronous cancel/commit arbitration for this exact native
    * content finalization. The returned release function merely closes the
    * in-process reservation; the subsequent transition still owns durability.
    */
@@ -295,12 +295,12 @@ export type P4ProviderStartExecutionScope = Readonly<{
   >;
 }>;
 
-type P5ExactLedger = Exclude<
+type PresentationLedger = Exclude<
   import("../tavern/chat-thread-store.js").ChatTurnLedger,
   import("../tavern/chat-thread-store.js").AcceptedQueuedTurn
 >;
-type P5CancelResult = Exclude<
-  P5ExactLedger,
+type CancelResult = Exclude<
+  PresentationLedger,
   | import("../tavern/chat-thread-store.js").AttemptStartingTurn
   | import("../tavern/chat-thread-store.js").RunningTurn
   | import("../tavern/chat-thread-store.js").PresentationCommittedTurn
@@ -316,8 +316,8 @@ function isTurnWithExactAttempt(
   return ledger.status !== "accepted_queued" && ledger.attempt.attemptId === attemptId;
 }
 
-async function readExactP5Ledger(record: MountedChatRuntimeLeaseRecord): Promise<P5ExactLedger> {
-  const binding = record.p4AttemptBinding;
+async function readCurrentPresentationLedger(record: MountedChatRuntimeLeaseRecord): Promise<PresentationLedger> {
+  const binding = record.attemptBinding;
   if (binding === undefined)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
   const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
@@ -338,8 +338,8 @@ async function readExactP5Ledger(record: MountedChatRuntimeLeaseRecord): Promise
   return ledger;
 }
 
-async function readP5CancellationResult(record: MountedChatRuntimeLeaseRecord): Promise<P5CancelResult> {
-  const current = await readExactP5Ledger(record);
+async function readCancellationResult(record: MountedChatRuntimeLeaseRecord): Promise<CancelResult> {
+  const current = await readCurrentPresentationLedger(record);
   if (
     current.status === "attempt_starting" ||
     current.status === "running" ||
@@ -349,26 +349,26 @@ async function readP5CancellationResult(record: MountedChatRuntimeLeaseRecord): 
   return current;
 }
 
-type MountedP4AttemptInvocationAdmission = Readonly<{
-  readonly __mountedP4AttemptInvocationAdmission: unique symbol;
+type MountedAttemptInvocationAdmission = Readonly<{
+  readonly __mountedAttemptInvocationAdmission: unique symbol;
 }>;
-type MountedP4AttemptInvocationRecord = Readonly<{
+type MountedAttemptInvocationRecord = Readonly<{
   lease: MountedChatRuntimeLeaseRecord;
   turn: import("../tavern/chat-thread-store.js").AttemptStartingTurn;
   active: { value: boolean };
   consuming: { value: boolean };
 }>;
-const mountedP4AttemptInvocationAdmissions = new WeakMap<object, MountedP4AttemptInvocationRecord>();
+const mountedAttemptInvocationAdmissions = new WeakMap<object, MountedAttemptInvocationRecord>();
 
 /**
- * P4's only coordinator-internal composition entry. It validates the exact
+ * The only coordinator-internal composition entry. It validates the exact
  * manifest/lease binding, begins close-drained work, and delegates the opaque
  * admission directly to Tavern's private internal seam.
  */
-export async function acceptMountedP4DurableTurn(
+export async function acceptMountedDurableTurn(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
-  accept: (admission: MountedP4Admission) => Promise<import("../tavern/chat-thread-store.js").AcceptedQueuedTurn>,
+  accept: (admission: MountedAdmission) => Promise<import("../tavern/chat-thread-store.js").AcceptedQueuedTurn>,
 ): Promise<import("../tavern/chat-thread-store.js").AcceptedQueuedTurn> {
   const record = mountedChatRuntimeLeases.get(lease);
   if (
@@ -384,8 +384,8 @@ export async function acceptMountedP4DurableTurn(
     if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
     const active = { value: true };
     const consuming = { value: false };
-    const admission = Object.freeze({}) as MountedP4Admission;
-    mountedP4Admissions.set(admission, Object.freeze({ lease: record, active, consuming }));
+    const admission = Object.freeze({}) as MountedAdmission;
+    mountedAdmissions.set(admission, Object.freeze({ lease: record, active, consuming }));
     try {
       return await accept(admission);
     } finally {
@@ -396,15 +396,15 @@ export async function acceptMountedP4DurableTurn(
 
 /** Tavern-private consumption seam; callers cannot observe a lease record. */
 /**
- * P4b's claim admission. Runtime binding facts are read only from the mounted
+ * Claim admission. Runtime binding facts are read only from the mounted
  * coordinator record; no facade, lease field, or store caller can provide them.
  * This runner does not invoke Pi or make a provider call.
  */
-export async function claimMountedP4Attempt(
+export async function claimMountedAttempt(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
   claim: (
-    admission: MountedP4AttemptAdmission,
+    admission: MountedAttemptAdmission,
   ) => Promise<import("../tavern/chat-thread-store.js").AttemptStartingTurn>,
 ): Promise<import("../tavern/chat-thread-store.js").AttemptStartingTurn> {
   const record = mountedChatRuntimeLeases.get(lease);
@@ -415,7 +415,7 @@ export async function claimMountedP4Attempt(
     manifest.principal.playerId !== record.principal.playerId ||
     manifest.principal.companionId !== record.principal.companionId ||
     manifest.principal.continuityId !== record.principal.continuityId ||
-    record.p4AttemptBinding === undefined
+    record.attemptBinding === undefined
   )
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
   return record.begin(async () => {
@@ -423,10 +423,10 @@ export async function claimMountedP4Attempt(
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
     const active = { value: true };
     const consuming = { value: false };
-    const admission = Object.freeze({}) as MountedP4AttemptAdmission;
-    mountedP4AttemptAdmissions.set(
+    const admission = Object.freeze({}) as MountedAttemptAdmission;
+    mountedAttemptAdmissions.set(
       admission,
-      Object.freeze({ lease: record, binding: record.p4AttemptBinding!, active, consuming }),
+      Object.freeze({ lease: record, binding: record.attemptBinding!, active, consuming }),
     );
     try {
       return await claim(admission);
@@ -436,9 +436,9 @@ export async function claimMountedP4Attempt(
   });
 }
 
-/** Tavern-private P4b consumption seam; it produces only durable claim facts. */
-export async function consumeMountedP4AttemptAdmission<T>(
-  admission: MountedP4AttemptAdmission,
+/** Tavern-private attempt claim consumption seam; it produces only durable claim facts. */
+export async function consumeMountedAttemptAdmission<T>(
+  admission: MountedAttemptAdmission,
   callback: (
     facts: Readonly<{
       runtimeRoot: string;
@@ -449,11 +449,11 @@ export async function consumeMountedP4AttemptAdmission<T>(
       chatSurfaceSessionId: string;
       selectionGeneration: number;
       runtimeBindingDigest: string;
-      runtimeOwner: MountedP4AttemptBinding["runtimeOwner"];
+      runtimeOwner: MountedAttemptBinding["runtimeOwner"];
     }>,
   ) => Promise<T>,
 ): Promise<T> {
-  const record = mountedP4AttemptAdmissions.get(admission);
+  const record = mountedAttemptAdmissions.get(admission);
   if (record === undefined || !record.active.value || !record.lease.active || record.consuming.value)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
   record.consuming.value = true;
@@ -479,28 +479,28 @@ export async function consumeMountedP4AttemptAdmission<T>(
 }
 
 /**
- * P4c's private post-claim invocation admission. Consuming it mints exactly
+ * Private post-claim invocation admission. Consuming it mints exactly
  * one coordinator-private execution scope: the live materialized session, the
  * full immutable origin facts, the sole store-writer port, and the fixed
  * coordinator-minted start-admission deadline. No AgentSession, binding,
  * store, or minting path escapes this callback.
  */
-export async function consumeMountedP4AttemptInvocationAdmission<T>(
-  admission: MountedP4AttemptInvocationAdmission,
-  callback: (scope: P4ProviderStartExecutionScope) => Promise<T>,
+export async function consumeMountedAttemptInvocationAdmission<T>(
+  admission: MountedAttemptInvocationAdmission,
+  callback: (scope: ProviderInvocationScope) => Promise<T>,
 ): Promise<T> {
-  const record = mountedP4AttemptInvocationAdmissions.get(admission);
+  const record = mountedAttemptInvocationAdmissions.get(admission);
   if (record === undefined || !record.active.value || !record.lease.active || record.consuming.value)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_invocation_rejected");
   record.consuming.value = true;
-  let operationAuthority: P4P5MountedTransitionOperationAuthorityLease | undefined;
+  let operationAuthority: MountedTurnTransitionOperationAuthorityLease | undefined;
   try {
     const mounted = record.lease;
-    const runtimeSession = mounted.p4ProviderStartRuntimeSession;
+    const runtimeSession = mounted.providerRuntimeSession;
     if (runtimeSession === undefined)
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_provider_start_session_unavailable");
     const { attempt } = record.turn;
-    const deadlineAtMs = Date.now() + P4C_PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS;
+    const deadlineAtMs = Date.now() + PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS;
     const facts = Object.freeze({
       turnId: record.turn.turnId,
       messageId: record.turn.messageId,
@@ -518,7 +518,7 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
       runtimeBindingDigest: attempt.runtimeBindingDigest,
       runtimeOwner: attempt.runtimeOwner,
     });
-    operationAuthority = mounted.p4P5TransitionAuthority.mintOperation();
+    operationAuthority = mounted.transitionAuthority.mintOperation();
     const scopedOperationAuthority = operationAuthority;
     const assertScopeActive = (): void => {
       if (!record.active.value || !mounted.active)
@@ -530,7 +530,7 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_provider_start_deadline_expired");
     };
     const transitionStore = async (
-      command: import("../tavern/chat-thread-store.js").P4ProviderStartTransition,
+      command: import("../tavern/chat-thread-store.js").ProviderStartTransition,
     ): Promise<
       | import("../tavern/chat-thread-store.js").AttemptStartingTurn
       | import("../tavern/chat-thread-store.js").RunningTurn
@@ -538,9 +538,9 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
       | import("../tavern/chat-thread-store.js").CancelledTurn
     > => {
       assertScopeActive();
-      return transitionP4MountedProviderStart(
+      return transitionMountedProviderStart(
         Object.freeze({
-          authority: mounted.p4P5TransitionAuthority.authority,
+          authority: mounted.transitionAuthority.authority,
           operationAuthority: scopedOperationAuthority.authority,
           runtimeRoot: mounted.runtimeRoot,
           playerId: mounted.principal.playerId,
@@ -557,12 +557,12 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
       );
     };
     const transitionPresentation = async (
-      command: import("../tavern/chat-thread-store.js").P5PresentationTransition,
+      command: import("../tavern/chat-thread-store.js").PresentationTransition,
     ): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger> => {
       assertScopeActive();
-      return transitionP5MountedPresentation(
+      return transitionMountedPresentation(
         Object.freeze({
-          authority: mounted.p4P5TransitionAuthority.authority,
+          authority: mounted.transitionAuthority.authority,
           operationAuthority: scopedOperationAuthority.authority,
           runtimeRoot: mounted.runtimeRoot,
           playerId: mounted.principal.playerId,
@@ -613,10 +613,10 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
     let nativeContentCommitReserved = false;
     let nativeContentPreviewEpoch: import("../companion-interruption.js").InterruptionSnapshot | undefined;
     const reserveNativeContentCommit = (): Readonly<{ cancelEpoch: number; release(): void }> | undefined => {
-      const observationEpoch = mounted.p5PresentationEpoch.capture();
+      const observationEpoch = mounted.presentationEpoch.capture();
       if (
         nativeContentCommitReserved ||
-        !mounted.p5PresentationEpoch.isCurrent(observationEpoch) ||
+        !mounted.presentationEpoch.isCurrent(observationEpoch) ||
         !record.active.value ||
         !mounted.active
       )
@@ -630,8 +630,8 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
       });
     };
     const canPreviewNativeContent = (): boolean => {
-      const previewEpoch = nativeContentPreviewEpoch ??= mounted.p5PresentationEpoch.capture();
-      return record.active.value && mounted.active && mounted.p5PresentationEpoch.isCurrent(previewEpoch);
+      const previewEpoch = nativeContentPreviewEpoch ??= mounted.presentationEpoch.capture();
+      return record.active.value && mounted.active && mounted.presentationEpoch.isCurrent(previewEpoch);
     };
     const finalizeCancellation = async (): Promise<
       | import("../tavern/chat-thread-store.js").CompletionClaimedTurn
@@ -641,7 +641,7 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
       | import("../tavern/chat-thread-store.js").FailedTurn
       | undefined
     > => {
-      const cancellation = mounted.p5Cancellation;
+      const cancellation = mounted.cancellation;
       if (cancellation === undefined) return undefined;
       const winner = await cancellation;
       switch (winner.status) {
@@ -679,16 +679,16 @@ export async function consumeMountedP4AttemptInvocationAdmission<T>(
 }
 
 /**
- * P4c's only start runner. It reads the already durable P4b claim under the
+ * The only start runner. It reads the already durable claim under the
  * mounted authority, then mints one callback-scoped invocation admission.
- * It never calls the P4b claim ingress, so a start cannot create generation 2
+ * It never calls the claim ingress, so a start cannot create generation 2
  * or replace an existing attempt.
  */
-export async function startMountedP4Attempt(
+export async function startMountedAttempt(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
   start: (
-    invocation: MountedP4AttemptInvocationAdmission,
+    invocation: MountedAttemptInvocationAdmission,
   ) => Promise<
     | import("../tavern/chat-thread-store.js").AttemptStartingTurn
     | import("../tavern/chat-thread-store.js").CompletedTurn
@@ -709,13 +709,13 @@ export async function startMountedP4Attempt(
     manifest.principal.playerId !== record.principal.playerId ||
     manifest.principal.companionId !== record.principal.companionId ||
     manifest.principal.continuityId !== record.principal.continuityId ||
-    record.p4AttemptBinding === undefined
+    record.attemptBinding === undefined
   )
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
   return record.begin(async () => {
     if (!record.active)
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
-    const binding = record.p4AttemptBinding;
+    const binding = record.attemptBinding;
     if (binding === undefined)
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
     const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
@@ -734,13 +734,13 @@ export async function startMountedP4Attempt(
       turn.attempt.runtimeOwner.ownerProcessStartIdentity !== binding.runtimeOwner.ownerProcessStartIdentity
     )
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
-    if (record.p4ProviderStartAttemptIds.has(turn.attempt.attemptId))
+    if (record.startedAttemptIds.has(turn.attempt.attemptId))
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_admission_rejected");
-    record.p4ProviderStartAttemptIds.add(turn.attempt.attemptId);
+    record.startedAttemptIds.add(turn.attempt.attemptId);
     const invocationActive = { value: true };
     const invocationConsuming = { value: false };
-    const invocation = Object.freeze({}) as MountedP4AttemptInvocationAdmission;
-    mountedP4AttemptInvocationAdmissions.set(
+    const invocation = Object.freeze({}) as MountedAttemptInvocationAdmission;
+    mountedAttemptInvocationAdmissions.set(
       invocation,
       Object.freeze({ lease: record, turn, active: invocationActive, consuming: invocationConsuming }),
     );
@@ -766,7 +766,7 @@ export async function startMountedP4Attempt(
           readBackTurn.attempt.runtimeOwner.ownerProcessStartIdentity ===
             turn.attempt.runtimeOwner.ownerProcessStartIdentity
         )
-          record.p4ProviderStartAttemptIds.delete(turn.attempt.attemptId);
+          record.startedAttemptIds.delete(turn.attempt.attemptId);
       } catch {
         // Unknown read-back state must retain the reservation: releasing it
         // could permit a second Host prompt after an unobserved arm boundary.
@@ -778,8 +778,8 @@ export async function startMountedP4Attempt(
   });
 }
 
-export async function consumeMountedP4Admission<T>(
-  admission: MountedP4Admission,
+export async function consumeMountedDurableAdmission<T>(
+  admission: MountedAdmission,
   callback: (
     facts: Readonly<{
       runtimeRoot: string;
@@ -792,7 +792,7 @@ export async function consumeMountedP4Admission<T>(
     }>,
   ) => Promise<T>,
 ): Promise<T> {
-  const record = mountedP4Admissions.get(admission);
+  const record = mountedAdmissions.get(admission);
   if (record === undefined || !record.active.value || record.consuming.value)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
   record.consuming.value = true;
@@ -816,16 +816,16 @@ export async function consumeMountedP4Admission<T>(
 }
 
 /**
- * Coordinator-private P5 cancel seam. It synchronously revokes the current
+ * Coordinator-private cancel seam. It synchronously revokes the current
  * presentation epoch, then records the exact durable cancel claim while the
- * running P4c prompt is drained. P6 may later supply an authenticated ingress,
+ * running prompt is drained. P6 may later supply an authenticated ingress,
  * but this seam deliberately exposes no HTTP/browser surface.
  */
 export async function stopMountedChatPresentationEpoch(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
   input: Readonly<{ stopId: string; sourceEventId: string; reasonCode: string }>,
-): Promise<P5CancelResult> {
+): Promise<CancelResult> {
   const record = mountedChatRuntimeLeases.get(lease);
   if (
     record === undefined ||
@@ -840,27 +840,27 @@ export async function stopMountedChatPresentationEpoch(
   // A mounted attempt has exactly one cancel claimant. `CompanionInterruption`
   // may receive distinct control IDs, but later STOPs must not replace or race
   // the first durable claim for this exact attempt.
-  if (record.p5Cancellation !== undefined) {
-    await record.p5Cancellation;
-    return readP5CancellationResult(record);
+  if (record.cancellation !== undefined) {
+    await record.cancellation;
+    return readCancellationResult(record);
   }
 
   // Preflight is durable and side-effect free. A queued turn cannot be
   // cancelled, but an armed prompt may be aborted and terminalized directly
   // without waiting for a provider-response observation.
-  const preflight = await readExactP5Ledger(record).catch(async (error) => {
+  const preflight = await readCurrentPresentationLedger(record).catch(async (error) => {
     const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
     const ledger = (await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId)).turnLedger;
     if (
       ledger?.status === "attempt_starting" &&
       ledger.observation?.phase === "armed" &&
-      record.p4AttemptBinding !== undefined &&
+      record.attemptBinding !== undefined &&
       ledger.attempt.selectionGeneration === record.selectionGeneration &&
-      ledger.attempt.runtimeBindingDigest === record.p4AttemptBinding.runtimeBindingDigest &&
-      ledger.attempt.runtimeOwner.ownerToken === record.p4AttemptBinding.runtimeOwner.ownerToken &&
-      ledger.attempt.runtimeOwner.runtimeInstanceId === record.p4AttemptBinding.runtimeOwner.runtimeInstanceId &&
-      ledger.attempt.runtimeOwner.ownerPid === record.p4AttemptBinding.runtimeOwner.ownerPid &&
-      ledger.attempt.runtimeOwner.ownerProcessStartIdentity === record.p4AttemptBinding.runtimeOwner.ownerProcessStartIdentity
+      ledger.attempt.runtimeBindingDigest === record.attemptBinding.runtimeBindingDigest &&
+      ledger.attempt.runtimeOwner.ownerToken === record.attemptBinding.runtimeOwner.ownerToken &&
+      ledger.attempt.runtimeOwner.runtimeInstanceId === record.attemptBinding.runtimeOwner.runtimeInstanceId &&
+      ledger.attempt.runtimeOwner.ownerPid === record.attemptBinding.runtimeOwner.ownerPid &&
+      ledger.attempt.runtimeOwner.ownerProcessStartIdentity === record.attemptBinding.runtimeOwner.ownerProcessStartIdentity
     )
       return ledger;
     throw error;
@@ -886,16 +886,16 @@ export async function stopMountedChatPresentationEpoch(
   // Two distinct STOPs can overlap at the asynchronous durable preflight.
   // Recheck immediately before the synchronous epoch linearization so only the
   // first claimant may revoke and create the cancel-claim promise.
-  if (record.p5Cancellation !== undefined) {
-    await record.p5Cancellation;
-    return readP5CancellationResult(record);
+  if (record.cancellation !== undefined) {
+    await record.cancellation;
+    return readCancellationResult(record);
   }
 
-  const stop = record.p5PresentationEpoch.stop(input.stopId, input.sourceEventId, input.reasonCode);
+  const stop = record.presentationEpoch.stop(input.stopId, input.sourceEventId, input.reasonCode);
   if (!stop.accepted)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
 
-  // The P4c runner occupies record.begin() for the lifetime of session.prompt().
+  // The provider invocation runner occupies record.begin() for the lifetime of session.prompt().
   // STOP must not queue its durable claim behind that runner because settlement
   // waits for this exact claim to classify its winner. Revoke synchronously,
   // then claim before any callback or prompt drain: this is the first durable
@@ -905,9 +905,9 @@ export async function stopMountedChatPresentationEpoch(
   // Claim the durable winner before awaiting Pi abort. `abort()` may settle the
   // prompt synchronously, so awaiting it first would let rejection terminalize
   // the turn as failed even though STOP already won its linearization point.
-  const abort = record.p4ProviderStartRuntimeSession?.session?.abort;
-  const cancellation: Promise<P5CancelResult> = (async (): Promise<P5CancelResult> => {
-    const binding = record.p4AttemptBinding;
+  const abort = record.providerRuntimeSession?.session?.abort;
+  const cancellation: Promise<CancelResult> = (async (): Promise<CancelResult> => {
+    const binding = record.attemptBinding;
     if (binding === undefined)
       throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
     const store = createChatThreadStore(record.runtimeRoot, identityKey(Object.freeze({ ...record.principal })));
@@ -936,14 +936,14 @@ export async function stopMountedChatPresentationEpoch(
       default:
         break;
     }
-    const operationAuthority = record.p4P5TransitionAuthority.mintOperation();
+    const operationAuthority = record.transitionAuthority.mintOperation();
     try {
       if (ledger.status === "attempt_starting") {
         if (ledger.observation?.phase !== "armed")
           throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
-        const cancelled = await transitionP4MountedProviderStart(
+        const cancelled = await transitionMountedProviderStart(
           Object.freeze({
-            authority: record.p4P5TransitionAuthority.authority,
+            authority: record.transitionAuthority.authority,
             operationAuthority: operationAuthority.authority,
             runtimeRoot: record.runtimeRoot,
             playerId: record.principal.playerId,
@@ -964,9 +964,9 @@ export async function stopMountedChatPresentationEpoch(
       }
       if (ledger.status !== "running" && ledger.status !== "presentation_committed")
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
-      const cancelled = await transitionP5MountedPresentation(
+      const cancelled = await transitionMountedPresentation(
         Object.freeze({
-          authority: record.p4P5TransitionAuthority.authority,
+          authority: record.transitionAuthority.authority,
           operationAuthority: operationAuthority.authority,
           runtimeRoot: record.runtimeRoot,
           playerId: record.principal.playerId,
@@ -988,7 +988,7 @@ export async function stopMountedChatPresentationEpoch(
       // Completion can win after the durable running preflight but before this
       // cancel CAS. That is a normal winner race: preserve the first durable
       // representation rather than converting it into a cancellation failure.
-      const winner = await readP5CancellationResult(record);
+      const winner = await readCancellationResult(record);
       if (
         winner.status === "completion_claimed" ||
         winner.status === "completed" ||
@@ -1003,9 +1003,9 @@ export async function stopMountedChatPresentationEpoch(
     }
   })();
   // Publish the durable winner promise before aborting. A synchronous abort
-  // rejection then observes this promise in P4c and cannot replace STOP with
+  // rejection then observes this promise in provider invocation and cannot replace STOP with
   // a failed terminal state.
-  record.p5Cancellation = cancellation;
+  record.cancellation = cancellation;
   // Stop's browser-visible winner is the durable cancellation, not the
   // provider transport's eventual abort settlement. Invoke the exact mounted
   // session once but do not let a stuck/slow provider abort hold the HTTP
@@ -1013,7 +1013,7 @@ export async function stopMountedChatPresentationEpoch(
   // ignored: SQLite already selected the terminal winner before this call.
   if (typeof abort === "function") {
     try {
-      void Promise.resolve(abort.call(record.p4ProviderStartRuntimeSession!.session)).catch(() => undefined);
+      void Promise.resolve(abort.call(record.providerRuntimeSession!.session)).catch(() => undefined);
     } catch {
       // Synchronous transport failure also cannot replace the durable winner.
     }
@@ -1561,7 +1561,7 @@ async function createFreshChatRuntimeAuthority(
         );
         let lease!: MountedChatRuntimeLease;
         lease = Object.freeze({
-          // The lease exposes only profile metadata. P4c gets the exact live
+          // The lease exposes only profile metadata. The start runner gets the exact live
           // runtime solely from this module's private WeakMap record below.
           runtimeSession: Object.freeze({ profile: runtimeSession.profile }),
           chatThreadId: readback.chatThreadId,
@@ -1604,7 +1604,7 @@ async function createFreshChatRuntimeAuthority(
               return Promise.reject(new SemanticProductionCoordinatorError("semantic_chat_runtime_lease_rejected"));
             const leaseRecord = mountedChatRuntimeLeases.get(lease)!;
             leaseRecord.active = false;
-            leaseRecord.p4P5TransitionAuthority.revoke();
+            leaseRecord.transitionAuthority.revoke();
             return leaseRecord.close();
           },
         });
@@ -1615,14 +1615,14 @@ async function createFreshChatRuntimeAuthority(
           chatThreadId: readback.chatThreadId,
           chatSurfaceSessionId: readback.chatSurfaceSessionId,
           selectionGeneration: record.vector.selectionRevision,
-          p4AttemptBinding: Object.freeze({
+          attemptBinding: Object.freeze({
             runtimeBindingDigest: record.bootstrapPermit.runtimeBindingDigest,
             runtimeOwner: Object.freeze({ ...record.bootstrapPermit.owner }),
           }),
-          ...(runtimeSession === undefined ? {} : { p4ProviderStartRuntimeSession: runtimeSession }),
-          p4ProviderStartAttemptIds: new Set<string>(),
-          p4P5TransitionAuthority: createP4P5MountedTransitionAuthority(),
-          p5PresentationEpoch: createCompanionInterruption(),
+          ...(runtimeSession === undefined ? {} : { providerRuntimeSession: runtimeSession }),
+          startedAttemptIds: new Set<string>(),
+          transitionAuthority: createMountedTurnTransitionAuthority(),
+          presentationEpoch: createCompanionInterruption(),
           begin,
           close: () => authority.close(),
         });
@@ -1637,7 +1637,7 @@ async function createFreshChatRuntimeAuthority(
       const activeLease = mountedLease === undefined ? undefined : mountedChatRuntimeLeases.get(mountedLease);
       if (activeLease) {
         activeLease.active = false;
-        activeLease.p4P5TransitionAuthority.revoke();
+        activeLease.transitionAuthority.revoke();
       }
       const attempt = (async () => {
         await waitForDrain();

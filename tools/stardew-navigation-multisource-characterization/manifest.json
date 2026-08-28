@@ -1,0 +1,10 @@
+{
+  "Name": "GameBuddy Navigation MultiSource Characterization",
+  "Author": "GameBuddy contributors",
+  "Version": "0.0.1",
+  "Description": "Probe-only, zero-mutation, production-extractor characterization for multisource navigation topology.",
+  "UniqueID": "zhexulong.GameBuddy.NavigationTopologyCharacterization",
+  "EntryDll": "GameBuddy.Stardew.NavigationTopologyCharacterization.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}

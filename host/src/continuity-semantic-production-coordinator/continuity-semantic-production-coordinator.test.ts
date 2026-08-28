@@ -252,13 +252,13 @@ test("production coordinator exports only the known Game constructor and its saf
   const authorityType: SemanticGameProductionAuthority | undefined = undefined;
   assert.equal(authorityType, undefined);
   assert.deepEqual(Object.keys(internalCoordinator).sort(), [
-    "P4C_PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS",
+    "PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS",
     "SemanticProductionCoordinatorError",
-    "acceptMountedP4DurableTurn",
-    "claimMountedP4Attempt",
-    "consumeMountedP4Admission",
-    "consumeMountedP4AttemptAdmission",
-    "consumeMountedP4AttemptInvocationAdmission",
+    "acceptMountedDurableTurn",
+    "claimMountedAttempt",
+    "consumeMountedAttemptAdmission",
+    "consumeMountedAttemptInvocationAdmission",
+    "consumeMountedDurableAdmission",
     "createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest",
     "createFreshSemanticProductionAuthorityFromDeploymentManifest",
     "createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest",
@@ -266,7 +266,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "createKnownSemanticGameProductionAuthorityFromDeploymentManifest",
     "isCurrentMountedChatRuntimeLease",
     "orchestrateExplicitGameRecovery",
-    "startMountedP4Attempt",
+    "startMountedAttempt",
     "stopMountedChatPresentationEpoch",
   ]);
   assert.equal(typeof createTestSemanticChatRuntimeCoordinator, "function");

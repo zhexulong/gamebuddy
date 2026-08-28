@@ -275,14 +275,6 @@
       "riskId": "GB-STARDEW-STATIC-SCRIPT_CHECK_STARDEW_PORTFOLIO_M8_LADDER_SOURCE_REALIZATION@v1"
     },
     {
-      "id": "script_test_stardew_portfolio_m8_ladder_runner",
-      "script": "test:stardew-portfolio-m8-ladder-runner",
-      "command": "node --test tools/run-stardew-portfolio-m8-ladder-action.test.mjs",
-      "class": "out_of_scope_action_platform",
-      "owner": "gamebuddy.stardew.static-verifier@v1",
-      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_M8_LADDER_RUNNER@v1"
-    },
-    {
       "id": "script_test_stardew_portfolio_m9_source_audit",
       "script": "test:stardew-portfolio-m9-source-audit",
       "command": "node --test tools/stardew-portfolio-m9-special-order-source-audit.test.mjs tools/check-stardew-portfolio-m9-special-order-source-audit.test.mjs",
@@ -345,14 +337,6 @@
       "class": "out_of_scope_action_platform",
       "owner": "gamebuddy.stardew.static-verifier@v1",
       "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_INSTALLATION_ATTESTATION@v1"
-    },
-    {
-      "id": "script_test_stardew_portfolio_interop_contract",
-      "script": "test:stardew-portfolio-interop-contract",
-      "command": "powershell.exe -NoProfile -File tools/run-stardew-portfolio-interop-contract.ps1",
-      "class": "out_of_scope_action_platform",
-      "owner": "gamebuddy.stardew.static-verifier@v1",
-      "riskId": "GB-STARDEW-STATIC-SCRIPT_TEST_STARDEW_PORTFOLIO_INTEROP_CONTRACT@v1"
     },
     {
       "id": "script_test_stardew_portfolio_p1",

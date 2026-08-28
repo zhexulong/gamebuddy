@@ -27,17 +27,25 @@ export type ConnectedGameRuntime = Readonly<{
   markClosing(): void;
   /** Internal-only commit gate for launch-owned ingress after durable enter. */
   activateIngress(): void;
+  /** Internal-only behavior seam; it exposes no worker, runtime, result, or action authority. */
+  dispatchPromptDefinedTask(task: string): Promise<void>;
 }>;
+
+type ConnectedGameRuntimeConstruction = Omit<ConnectedGameRuntime, "dispatchPromptDefinedTask">;
 
 export type RuntimeDisposal = Readonly<{
   session: Readonly<{ dispose(): void }>;
   /** Host-observed Pi identity; production connected ingress requires it. */
   piSessionId?: string;
-  gameplaySubagent?: Readonly<{ dispose(): void }>;
+  gameplaySubagent?: Readonly<{
+    dispose(): void;
+    /** Test workers may omit this; the connected dispatch seam fails closed. */
+    run?: (task: string) => Promise<unknown>;
+  }>;
   clearGameOperationalGateMarker?: () => void;
   operationalGateEvidence?: GameOperationalGateEvidenceProjection;
   /** Test-only factories may omit this; production admission rejects it. */
-  connected?: ConnectedGameRuntime;
+  connected?: ConnectedGameRuntimeConstruction;
 }>;
 
 export type MaterializedGameRuntime = Readonly<{
@@ -104,6 +112,24 @@ export function finalizeMaterializedGameRuntime(
 ): MaterializedGameRuntime {
   assertRuntimeDisposal(runtime);
   const receipt = mintGameRuntimeReceipt(enterPermit, "runtime_bootstrapped");
+  const connected =
+    runtime.connected === undefined
+      ? undefined
+      : Object.freeze({
+          host: runtime.connected.host,
+          lifecycleSnapshot: runtime.connected.lifecycleSnapshot,
+          ...(runtime.connected.nextOperationalGateEvidence === undefined
+            ? {}
+            : {
+                nextOperationalGateEvidence:
+                  runtime.connected.nextOperationalGateEvidence,
+              }),
+          markClosing: runtime.connected.markClosing,
+          activateIngress: runtime.connected.activateIngress,
+          dispatchPromptDefinedTask: createPromptDefinedTaskDispatcher(
+            runtime.gameplaySubagent,
+          ),
+        });
   let state: "live" | "tearing_down" | "closed" = "live";
   let closePromise: Promise<void> | undefined;
   const dispose = (): Promise<void> => {
@@ -117,7 +143,7 @@ export function finalizeMaterializedGameRuntime(
   return Object.freeze({
     receipt,
     ...(runtime.piSessionId === undefined ? {} : { piSessionId: runtime.piSessionId }),
-    ...(runtime.connected === undefined ? {} : { connected: runtime.connected }),
+    ...(connected === undefined ? {} : { connected }),
     async teardownClose(closePermit) {
       if (state !== "live") throw new Error("game_runtime_materialization_unavailable");
       assertExactClosePermit(enterPermit, closePermit);
@@ -145,6 +171,37 @@ export function finalizeMaterializedGameRuntime(
 /** Mints closed-record Host lifecycle evidence only after exact permit admission. */
 export function mintRuntimeBootstrappedReceipt(permit: ProductionGamePermit): ProductionGameTerminalReceipt {
   return mintGameRuntimeReceipt(permit, "runtime_bootstrapped");
+}
+
+function createPromptDefinedTaskDispatcher(
+  worker: RuntimeDisposal["gameplaySubagent"],
+): (task: string) => Promise<void> {
+  return async (task: string): Promise<void> => {
+    if (!isCanonicalPromptDefinedTask(task))
+      throw new Error("invalid_gameplay_task");
+    if (worker === undefined || typeof worker.run !== "function")
+      throw new Error("gameplay_task_dispatch_unavailable");
+    await worker.run(task);
+  };
+}
+
+function isCanonicalPromptDefinedTask(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  let scalarValues = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit === 0) return false;
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return false;
+    }
+    scalarValues += 1;
+    if (scalarValues > 2_000) return false;
+  }
+  return scalarValues >= 1;
 }
 
 function mintGameRuntimeReceipt(
@@ -207,7 +264,9 @@ export function assertRuntimeDisposal(value: unknown): asserts value is RuntimeD
         typeof (value as RuntimeDisposal).connected!.markClosing !== "function")) ||
     ((value as RuntimeDisposal).gameplaySubagent !== undefined &&
       (!isObject((value as RuntimeDisposal).gameplaySubagent) ||
-        typeof (value as RuntimeDisposal).gameplaySubagent!.dispose !== "function")) ||
+        typeof (value as RuntimeDisposal).gameplaySubagent!.dispose !== "function" ||
+        ((value as RuntimeDisposal).gameplaySubagent!.run !== undefined &&
+          typeof (value as RuntimeDisposal).gameplaySubagent!.run !== "function"))) ||
     ((value as RuntimeDisposal).clearGameOperationalGateMarker !== undefined &&
       typeof (value as RuntimeDisposal).clearGameOperationalGateMarker !== "function") ||
     ((value as RuntimeDisposal).operationalGateEvidence !== undefined &&

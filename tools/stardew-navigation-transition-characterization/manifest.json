@@ -1,0 +1,10 @@
+{
+  "Name": "GameBuddy Navigation Transition Characterization",
+  "Author": "GameBuddy contributors",
+  "Version": "0.0.1",
+  "Description": "Probe-only, one-shot, non-mutating current-source transition characterization.",
+  "UniqueID": "zhexulong.GameBuddy.NavigationTransitionCharacterization",
+  "EntryDll": "StardewNavigationTransitionCharacterization.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}
