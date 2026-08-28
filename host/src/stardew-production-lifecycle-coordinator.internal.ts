@@ -358,10 +358,15 @@ function createCoordinator(
     handle.consumed.value = true;
     cabinConfirmationKey = command.idempotencyKey;
     const uncertain = { value: false };
+    let manifestAdmitted = false;
     const promise = handoffCoordinator.confirmAndAdmit(handle.choice.selection, { confirmed: true })
-      .then(() => Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const }))
+      .then(async (admission) => {
+        manifestAdmitted = true;
+        await internal.materializeAiClientProfileAfterManifestAdmission(handle.owner, admission);
+        return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
+      })
       .catch((error: unknown) => {
-        if (error instanceof Error && error.message === "stardew_manifest_handoff_publication_uncertain") {
+        if (manifestAdmitted || (error instanceof Error && error.message === "stardew_manifest_handoff_publication_uncertain")) {
           uncertain.value = true;
           throw new Error("stardew_cabin_publication_uncertain", { cause: error });
         }
@@ -389,6 +394,10 @@ function createCoordinator(
     if (activation !== undefined) await activation.catch(() => undefined);
     const launch = launchPromise;
     if (launch !== undefined) await launch.catch(() => undefined);
+    const confirmationKey = cabinConfirmationKey;
+    if (confirmationKey !== undefined) {
+      await cabinConfirmations.get(confirmationKey)?.promise.catch(() => undefined);
+    }
     let incomplete = false;
     if (exactOwner !== undefined && !ownerQuarantined) {
       try {
