@@ -21,7 +21,7 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
     private const string CatalogType = "GameBuddy.Stardew.Core.Policy.FarmhandActionCatalog";
     private const string ProviderType = "System.Func<GameBuddy.Stardew.Core.Policy.FarmhandCapabilityPublication>";
     private const string ScreenStateType = "GameBuddy.Stardew.ModEntry+ScreenEmbodimentState";
-    private const string ExecutionControllerType = "GameBuddy.Stardew.FarmhandExecutionController";
+    private const string ExecutionControllerType = "GameBuddy.Stardew.ExecutionManager";
     private const string BridgeSessionType = "GameBuddy.Stardew.BridgeSession";
 
     internal static void AssertComposition(byte[] modBytes, byte[] coreBytes)
@@ -69,7 +69,7 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
             mod,
             initializeInstructions,
             executionConstruction,
-            "FarmhandExecutionController");
+            "ExecutionManager");
         ProviderDelegateBinding bridgeProvider = RequireProviderDelegate(
             mod,
             initializeInstructions,
@@ -516,7 +516,7 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
         if (!string.Equals(executionProvider.CaptureKey, bridgeProvider.CaptureKey, StringComparison.Ordinal))
         {
             Fail(
-                "FarmhandExecutionController and BridgeSession use split capability authorities: "
+                "ExecutionManager and BridgeSession use split capability authorities: "
                 + $"execution={executionProvider.CaptureKey}; bridge={bridgeProvider.CaptureKey}.");
         }
     }
@@ -763,7 +763,7 @@ internal static class FarmhandCapabilityPublicationProjectionMetadata
 
     private static void AssertProviderProjection(ArtifactMetadata mod)
     {
-        AssertProviderConsumer(mod, "GameBuddy.Stardew.FarmhandExecutionController");
+        AssertProviderConsumer(mod, "GameBuddy.Stardew.ExecutionManager");
         AssertProviderConsumer(mod, "GameBuddy.Stardew.BridgeSession");
     }
 

@@ -16,7 +16,7 @@ test("only exposes the current package-owned inventory command", async () => {
   });
   assert.equal(report.gameId, "stardew");
   assert.equal(report.status, "inventory");
-  assert.equal(report.fileCount, 151);
+  assert.equal(report.fileCount, 166);
   await assert.rejects(runActionProject({ manifest: { gameId: "stardew" }, invocation: { command: "check" } }), /action_not_available/);
   const foreignDirectory = await mkdtemp(path.join(os.tmpdir(), "foreign-inventory-"));
   const foreignInventory = path.join(foreignDirectory, "tool-inventory.json");

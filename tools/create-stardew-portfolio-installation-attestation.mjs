@@ -125,6 +125,17 @@ export async function createPortfolioInstallationAttestation(options) {
   return Object.freeze({ state: "written", artifactKind: attestation.artifactKind, outputPath: publishedPath });
 }
 
+export async function inspectPortfolioTargetInstallation(gamePath) {
+  await assertRealDirectory(gamePath, "portfolio_game_root_invalid");
+  const first = await observeTarget(gamePath, readWindowsFileVersion);
+  const second = await observeTarget(gamePath, readWindowsFileVersion);
+  assertSameObservation(first, second, "portfolio_target_changed_during_inspection");
+  return Object.freeze({
+    gameVersion: first.game.fileVersion,
+    smapiVersion: first.smapi.fileVersion,
+  });
+}
+
 export async function observeTarget(gamePath, readVersion) {
   const observed = {};
   for (const [fileName, key] of GAME_FILES) {

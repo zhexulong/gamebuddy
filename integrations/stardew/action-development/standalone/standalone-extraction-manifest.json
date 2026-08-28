@@ -1,16 +1,12 @@
 {
   "schema": "gamebuddy-stardew-standalone-extraction/v1",
-  "status": "blocked",
-  "claim": "dependency-inventory-only",
+  "status": "standalone-ready",
+  "claim": "package-owned-deterministic-closure",
   "projectRoot": "standalone",
   "sourceAudit": {
     "schema": "gamebuddy-stardew-extraction-audit/v1",
-    "status": "blocked",
-    "blockerIds": [
-      "devkit-workspace-link",
-      "stardew-contract-exporter-project",
-      "stardew-core-source-closure"
-    ]
+    "status": "standalone-ready",
+    "blockerIds": []
   },
   "package": {
     "name": "@gamebuddy/stardew-action-development",
@@ -48,6 +44,25 @@
       "owner": "standalone-package",
       "required": true,
       "source": "current-extraction-audit"
+    },
+    {
+      "id": "stardew-scaffold-source-closure",
+      "kind": "stardew-scaffold-source-closure",
+      "projectPath": "inputs/stardew-scaffold/integrations/stardew/GameBuddy.Stardew.csproj",
+      "sourcePath": "inputs/stardew-scaffold/integrations/stardew",
+      "recursive": true,
+      "owner": "standalone-package",
+      "required": true,
+      "source": "design-95-task-11"
+    },
+    {
+      "id": "action-projection-source-closure",
+      "kind": "action-projection-source-closure",
+      "sourcePath": "inputs/action-projection-source",
+      "recursive": true,
+      "owner": "standalone-package",
+      "required": true,
+      "source": "design-95-task-7"
     },
     {
       "id": "package-owned-node-pnpm-pins",

@@ -236,8 +236,8 @@ export async function connectNativeLocalClient(
     config.BridgeToken.length === 0
   )
     throw new NativeSmokeHarnessError("invalid_native_config");
-  const { LocalStardewBridgeClient } = await loadModule(entry);
   const scope = createNativeScope(config);
+  const { LocalStardewBridgeClient } = await loadModule(entry);
   const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
   const receipts = [];
   const unsubscribe = client.onFact((fact) => {
@@ -247,9 +247,9 @@ export async function connectNativeLocalClient(
     client,
     scope,
     receipts,
-    close() {
+    async close() {
       unsubscribe();
-      client.close();
+      await client.close();
     },
   };
 }

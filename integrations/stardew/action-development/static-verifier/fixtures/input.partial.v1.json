@@ -1,0 +1,17 @@
+{
+  "schema": "gamebuddy-stardew-static-verifier-input/v1",
+  "verifierId": "gamebuddy.stardew.action-development.static-verifier@v1",
+  "inputId": "static-verifier-partial",
+  "scope": "package-owned-fixture",
+  "artifactRoot": "fixtures/closure/partial",
+  "targetAssemblies": [
+    { "id": "gamebuddy-stardew-mod", "role": "mod", "relativePath": "GameBuddy.Stardew.dll", "required": true, "siblingOf": "gamebuddy-stardew-core" },
+    { "id": "gamebuddy-stardew-core", "role": "core", "relativePath": "GameBuddy.Stardew.Core.dll", "required": true, "siblingOf": "gamebuddy-stardew-mod" }
+  ],
+  "contractOutputs": [
+    { "id": "capability-publication-contract", "relativePath": "FarmhandCapabilityPublicationProjection.Contract.dll", "required": true }
+  ],
+  "staticChecks": [
+    { "id": "target-assembly-availability", "kind": "target_assembly_availability", "required": true }
+  ]
+}

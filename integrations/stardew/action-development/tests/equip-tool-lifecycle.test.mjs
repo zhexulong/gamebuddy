@@ -1,0 +1,248 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import {
+  MAX_PRIVATE_RESULT_BYTES,
+  beginPrivateResultFile,
+  cleanupPrivateResultFile,
+  readPrivateResultFile,
+  writePrivateResultFile,
+} from "@gamebuddy/game-action-devkit";
+import { runEquipToolLifecycle } from "../src/equip-tool-lifecycle.mjs";
+import { createImmutableReleaseBundleBinding, IMMUTABLE_RELEASE_BUNDLE_FILES } from "../src/immutable-release-bundle.mjs";
+import { writeLifecycleCleanupResult } from "../src/write-lifecycle-result.mjs";
+
+const proof = Object.freeze({
+  schema: "gamebuddy-action-scenario-result/v1",
+  runId: "ar1_test",
+  gameId: "stardew",
+  actionId: "equip_tool",
+  stage: "run-live",
+  profileIdentity: "target-profile",
+  claimScope: "native-local-equip-tool-v1",
+  receipt: Object.freeze({
+    state: "succeeded",
+    reasonCode: "tool_selected",
+    hasEvidence: true,
+    request: Object.freeze({ requestId: "req", idempotencyKey: "idem", action: "equip_tool", args: Object.freeze({ slot: 1 }), expectedRevision: 4 }),
+    accepted: Object.freeze({ requestId: "req", executionId: "exec" }),
+    terminal: Object.freeze({ requestId: "req", executionId: "exec", state: "succeeded", reasonCode: "tool_selected", revision: 5 }),
+    evidence: Object.freeze({ slot: 1, before: "Hoe", expected: "Axe", after: "Axe" }),
+  }),
+  postcondition: Object.freeze({ revision: 5, currentTool: "Axe", expectedTool: "Axe", selected: Object.freeze({ slot: 1, label: "Axe" }) }),
+  verdict: "passed",
+  reasonCode: "tool_selected",
+});
+const cleanup = Object.freeze({ schema: "gamebuddy-stardew-lifecycle-cleanup-result/v1", completed: true });
+const BUNDLE_CONTENTS = Object.freeze({
+  "GameBuddy.Stardew.dll": "mod",
+  "GameBuddy.Stardew.Core.dll": "core",
+  "manifest.json": JSON.stringify({ Name: "GameBuddy" }),
+  "GameBuddy.Stardew.deps.json": "{}",
+});
+function bundleDigest() {
+  const hash = createHash("sha256");
+  for (const name of IMMUTABLE_RELEASE_BUNDLE_FILES) {
+    hash.update(Buffer.from(name)); hash.update(Buffer.from([0])); hash.update(Buffer.from(BUNDLE_CONTENTS[name]));
+  }
+  return hash.digest("hex");
+}
+
+async function removeFixtureTree(directory) {
+  const entries = await import("node:fs/promises").then(({ readdir }) => readdir(directory, { withFileTypes: true })).catch((error) => {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  });
+  for (const entry of entries) {
+    const candidate = path.join(directory, entry.name);
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      await removeFixtureTree(candidate);
+      await rmdir(candidate);
+    } else await unlink(candidate);
+  }
+}
+
+async function fixture(callback) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "equip-lifecycle-"));
+  const projectRoot = path.join(root, "project");
+  const releaseDir = path.join(root, "release");
+  const modsPath = path.join(root, "game", "Mods");
+  const runRoot = path.join(root, "runs");
+  await mkdir(projectRoot); await mkdir(releaseDir); await mkdir(modsPath, { recursive: true }); await mkdir(runRoot);
+  for (const [name, contents] of Object.entries(BUNDLE_CONTENTS)) await writeFile(path.join(releaseDir, name), contents);
+  try { await callback({ root, projectRoot, releaseDir, modsPath, runRoot }); }
+  finally {
+    await removeFixtureTree(root);
+    await rmdir(root);
+  }
+}
+
+function profile(root) {
+  return Object.freeze({
+    gameInstallPath: path.join(root, "game"), modsPath: path.join(root, "game", "Mods"), fixtureRoot: path.join(root, "fixtures"),
+    saveIdentity: "GameBuddyFixtureEquipTool_123", templateIdentity: "GameBuddyFixtureEquipTool_123",
+    profileIdentity: "target-profile", timeoutMs: 30_000,
+  });
+}
+
+function claims(root, texts = [JSON.stringify(proof), JSON.stringify(cleanup)]) {
+  let index = 0;
+  const entries = new Map();
+  return {
+    entries,
+    beginResult: async () => {
+      const current = index++;
+      const resultFile = path.join(root, `result-${current}.json`);
+      await writeFile(resultFile, texts[current] ?? "");
+      const claim = Object.freeze({ resultFile, current });
+      entries.set(claim, { text: texts[current], cleaned: false });
+      return claim;
+    },
+    readResult: async (claim) => entries.get(claim).text,
+    cleanupResult: async (claim) => { entries.get(claim).cleaned = true; await unlink(claim.resultFile); },
+  };
+}
+
+function productionClaims(root) {
+  const claims = [];
+  return {
+    claims,
+    beginResult: async () => {
+      const claim = await beginPrivateResultFile({ root });
+      claims.push(claim);
+      return claim;
+    },
+    readResult: readPrivateResultFile,
+    cleanupResult: cleanupPrivateResultFile,
+  };
+}
+
+test("real writer and Devkit claims flow through lifecycle parser and immutable binding", async () => fixture(async ({ root, projectRoot, releaseDir, modsPath, runRoot }) => {
+  const c = productionClaims(root);
+  const binding = await createImmutableReleaseBundleBinding({
+    releaseDir, modsPath, runRoot, runIdentity: "ar1_test", expectedDigest: bundleDigest(),
+  });
+  const result = await binding.runLifecycle(async ({ releaseDir: stagedReleaseDir }) => runEquipToolLifecycle({
+    projectRoot,
+    profile: profile(root),
+    runId: "ar1_test",
+    releaseDir: stagedReleaseDir,
+    resultRoot: root,
+    ...c,
+    resolvePowerShell: () => "fake-powershell",
+    runChild: async ({ args }) => {
+      const value = (flag) => args[args.indexOf(flag) + 1];
+      await writePrivateResultFile(value("-ResultFile"), JSON.stringify(proof));
+      await writeLifecycleCleanupResult(value("-LifecycleResultFile"), { completed: true });
+      return { code: 0, signal: null };
+    },
+  }));
+  assert.equal(result.receipt.evidence.expected, "Axe");
+  assert.equal(result.postcondition.currentTool, "Axe");
+  assert.equal(binding.inspect().restored, true);
+  assert.equal(c.claims.length, 2);
+  for (const claim of c.claims) await assert.rejects(readFile(claim.resultFile), /ENOENT/);
+  await binding.close();
+}));
+
+test("lifecycle adapter passes exact fixed arguments and validates separate action and cleanup results", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+  const c = claims(root);
+  let call;
+  const result = await runEquipToolLifecycle({
+    projectRoot, profile: profile(root), runId: "ar1_test", releaseDir, resultRoot: root,
+    ...c,
+    resolvePowerShell: () => "fake-powershell",
+    runChild: async (input) => { call = input; return { code: 0, signal: null }; },
+  });
+  assert.equal(result.cleanupResult.completed, true);
+  assert.equal(result.operationResult.receipt.evidence.expected, "Axe");
+  assert.equal(call.command, "fake-powershell");
+  assert.equal(call.cwd, projectRoot);
+  assert.equal(call.stdio, "pipe");
+  assert.equal(call.terminationPolicy, "immediate");
+  const value = (flag) => call.args[call.args.indexOf(flag) + 1];
+  assert.equal(value("-GamePath"), path.join(root, "game"));
+  assert.equal(value("-ModsPath"), path.join(root, "game", "Mods"));
+  assert.equal(value("-FixtureRoot"), path.join(root, "fixtures"));
+  assert.equal(value("-SaveName"), "GameBuddyFixtureEquipTool_123");
+  assert.equal(value("-TemplateName"), "GameBuddyFixtureEquipTool_123");
+  assert.equal(value("-ReleaseDir"), releaseDir);
+  assert.equal(value("-Action"), "equip_tool");
+  assert.equal(value("-TimeoutSeconds"), "30");
+  assert.notEqual(value("-ResultFile"), value("-LifecycleResultFile"));
+  assert.match(value("-ScenarioIdentity"), /"runId":"ar1_test"/);
+  assert.ok([...c.entries.values()].every((entry) => entry.cleaned));
+}));
+
+test("lifecycle adapter fails closed for child, proof, cleanup receipt, and cleanup errors", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+  const base = { projectRoot, profile: profile(root), runId: "ar1_test", releaseDir, resultRoot: root, resolvePowerShell: () => "fake" };
+  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root), runChild: async () => ({ code: 2, signal: null }) }), /child_failed/);
+  const wrongProof = { ...proof, runId: "other" };
+  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root, [JSON.stringify(wrongProof), JSON.stringify(cleanup)]), runChild: async () => ({ code: 0, signal: null }) }), /identity_mismatch/);
+  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root, [JSON.stringify(proof), JSON.stringify({ ...cleanup, completed: false })]), runChild: async () => ({ code: 0, signal: null }) }), /cleanup_not_completed/);
+  const c = claims(root);
+  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...c, cleanupResult: async () => { throw new Error("cleanup-failed"); }, runChild: async () => ({ code: 0, signal: null }) }), /result_cleanup_failed/);
+  for (const entry of c.entries.keys()) await unlink(entry.resultFile).catch(() => {});
+}));
+
+test("production two-claim protocol rejects missing, malformed, oversized, wrong-identity, and incomplete results", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+  const base = {
+    projectRoot,
+    profile: profile(root),
+    runId: "ar1_test",
+    releaseDir,
+    resultRoot: root,
+    resolvePowerShell: () => "fake",
+  };
+  const run = (writeClaims) => runEquipToolLifecycle({
+    ...base,
+    runChild: async ({ args }) => {
+      const value = (flag) => args[args.indexOf(flag) + 1];
+      await writeClaims({
+        actionFile: value("-ResultFile"),
+        lifecycleFile: value("-LifecycleResultFile"),
+      });
+      return { code: 0, signal: null };
+    },
+  });
+  const writeAction = (file, value = proof) => writePrivateResultFile(file, JSON.stringify(value));
+  const writeCleanup = (file, completed = true) => writeLifecycleCleanupResult(file, { completed });
+
+  await assert.rejects(run(async ({ lifecycleFile }) => writeCleanup(lifecycleFile)), /ENOENT/);
+  await assert.rejects(run(async ({ actionFile }) => writeAction(actionFile)), /ENOENT/);
+  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
+    await writePrivateResultFile(actionFile, "{");
+    await writeCleanup(lifecycleFile);
+  }), /json|invalid/i);
+  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
+    await writeFile(actionFile, "x".repeat(MAX_PRIVATE_RESULT_BYTES + 1), { flag: "wx" });
+    await writeCleanup(lifecycleFile);
+  }), /invalid_size/);
+  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
+    await writeAction(actionFile, { ...proof, runId: "ar1_wrong" });
+    await writeCleanup(lifecycleFile);
+  }), /identity_mismatch/);
+  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
+    await writeAction(actionFile);
+    await writePrivateResultFile(lifecycleFile, "{}");
+  }), /cleanup_result_invalid/);
+  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
+    await writeAction(actionFile);
+    await writeCleanup(lifecycleFile, false);
+  }), /cleanup_not_completed/);
+  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
+    await writeAction(actionFile);
+    await writeCleanup(lifecycleFile);
+    await writePrivateResultFile(actionFile, JSON.stringify(proof));
+  }), /destination_exists/);
+
+  for (const message of ["test_supervisor_timeout", "test_runner_failed:spawn", "test_runner_failed:code=2"]) {
+    await assert.rejects(
+      () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error(message); } }),
+      new RegExp(message.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
+  }
+}));

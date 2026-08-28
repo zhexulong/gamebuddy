@@ -227,6 +227,25 @@ test("readNativeClientConfig parses the bounded runner config and fails closed",
   }
 });
 
+test("connectNativeLocalClient awaits async teardown and propagates close failure", async () => {
+  const config = { SaveId: "save", WorldId: "world", PlayerId: "player", CompanionId: "companion", PipeName: "pipe", BridgeToken: "token" };
+  const order = [];
+  const closeFailure = new Error("async close failed");
+  const fakeClient = {
+    connect: async () => fakeClient,
+    onFact: () => () => order.push("unsubscribe"),
+    close: async () => {
+      order.push("close-start");
+      await Promise.resolve();
+      order.push("close-end");
+      throw closeFailure;
+    },
+  };
+  const session = await connectNativeLocalClient(config, { loadModule: async () => ({ LocalStardewBridgeClient: fakeClient }) });
+  await assert.rejects(session.close(), closeFailure);
+  assert.deepEqual(order, ["unsubscribe", "close-start", "close-end"]);
+});
+
 test("connectNativeLocalClient builds a bounded session and tears down exactly once", async () => {
   const config = {
     SaveId: "save",
@@ -271,7 +290,7 @@ test("connectNativeLocalClient builds a bounded session and tears down exactly o
     listener({ type: "execution_receipt", payload: { executionId: "e2" } });
   }
   assert.deepEqual(session.receipts, [{ executionId: "e1" }, { executionId: "e2" }]);
-  session.close();
+  await session.close();
   assert.equal(listeners.size, 0);
   assert.equal(fakeClient.closed, 1);
   assert.doesNotMatch(JSON.stringify({ scope: session.scope, receipts: session.receipts }), /secret-token|secret/);

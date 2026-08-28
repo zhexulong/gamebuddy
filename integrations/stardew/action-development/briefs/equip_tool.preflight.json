@@ -1,0 +1,8 @@
+{
+  "schema": "gamebuddy-stardew-action-preflight-brief/v1",
+  "gameId": "stardew",
+  "actionId": "equip_tool",
+  "stage": "preflight",
+  "effect": "read-only",
+  "scenario": "native-local-equip-tool-preflight-v1"
+}

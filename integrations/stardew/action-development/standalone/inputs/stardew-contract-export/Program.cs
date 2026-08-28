@@ -10,7 +10,6 @@ try
 {
     ActionDevelopmentContract contract = FarmhandActionDevelopmentContract.DeriveContract(args[0]);
     Console.Out.Write(FarmhandActionDevelopmentContract.SerializeToJson(contract));
-    Console.Out.Write('\n');
     return 0;
 }
 catch (ArgumentException)

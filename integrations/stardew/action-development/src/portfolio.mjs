@@ -11,11 +11,15 @@ const PORTFOLIO_MAX_JSON_BYTES = 64 * 1024;
 const REPOSITORY_ROOT = path.resolve(PACKAGE_DIRECTORY, "../../..");
 const SCAFFOLD_CHECKER = "src/scaffold-contract.mjs";
 const ACTION_SURFACE_CHECKER = "src/action-surface-check.mjs";
+const ACTION_SOURCE_PROJECTION_CHECKER = "src/action-source-projection-check.mjs";
+const STATIC_PRODUCTION_ADMISSION = "static-verifier/verify-production-admission.mjs";
 const ENTRY_KEYS = new Set(["id", "kind", "actionId"]);
 const CANONICAL_ENTRY_IDS = Object.freeze([
   "equip-tool-contract-check",
   "scaffold-contract",
   "action-surface-check",
+  "action-source-projection-check",
+  "static-production-admission",
   "package-deterministic-tests",
 ]);
 const IDS = new Set(CANONICAL_ENTRY_IDS);
@@ -30,7 +34,7 @@ function exactKeys(value, keys) {
 
 export function validateDeterministicPortfolio(input) {
   exactKeys(input, new Set(["schema", "entries"]));
-  if (input.schema !== SCHEMA || !Array.isArray(input.entries) || input.entries.length !== 4) fail("invalid_schema");
+  if (input.schema !== SCHEMA || !Array.isArray(input.entries) || input.entries.length !== 6) fail("invalid_schema");
   const seen = new Set();
   const entries = input.entries.map((entry) => {
     if (entry?.kind === "action-check") {
@@ -42,6 +46,12 @@ export function validateDeterministicPortfolio(input) {
     } else if (entry?.kind === "action-surface-check") {
       exactKeys(entry, new Set(["id", "kind"]));
       if (entry.id !== "action-surface-check") fail("invalid_action_surface_check");
+    } else if (entry?.kind === "action-source-projection-check") {
+      exactKeys(entry, new Set(["id", "kind"]));
+      if (entry.id !== "action-source-projection-check") fail("invalid_action_source_projection_check");
+    } else if (entry?.kind === "static-production-admission") {
+      exactKeys(entry, new Set(["id", "kind"]));
+      if (entry.id !== "static-production-admission") fail("invalid_static_production_admission");
     } else if (entry?.kind === "package-tests") {
       exactKeys(entry, new Set(["id", "kind"]));
       if (entry.id !== "package-deterministic-tests") fail("invalid_package_tests");
@@ -91,6 +101,10 @@ export async function runDeterministicPortfolio({ runCommand = run, runProject =
       await runCommand(process.execPath, [SCAFFOLD_CHECKER, REPOSITORY_ROOT]);
     } else if (entry.kind === "action-surface-check") {
       await runCommand(process.execPath, [ACTION_SURFACE_CHECKER]);
+    } else if (entry.kind === "action-source-projection-check") {
+      await runCommand(process.execPath, [ACTION_SOURCE_PROJECTION_CHECKER]);
+    } else if (entry.kind === "static-production-admission") {
+      await runCommand(process.execPath, [STATIC_PRODUCTION_ADMISSION]);
     } else if (entry.kind === "package-tests") {
       await runCommand(process.execPath, ["src/run-tests.mjs"]);
     } else fail("invalid_entry");

@@ -1,0 +1,142 @@
+import {
+  beginEvidenceRun,
+  finalizeEvidenceRun,
+  finalizeIncompleteEvidenceRun,
+  readLatestEvidenceStatus,
+} from "@gamebuddy/game-action-devkit";
+import { createImmutableReleaseBundleBinding } from "./immutable-release-bundle.mjs";
+import { runEquipToolLifecycle } from "./equip-tool-lifecycle.mjs";
+import { consumeReadyEquipToolProfile, preflightEquipTool } from "./equip-tool-preflight.mjs";
+import { acquireTargetRuntimeLease } from "./target-runtime-lease.mjs";
+
+const CLAIM_SCOPE = "native-local-equip-tool-v1";
+
+function fail(code, cause) {
+  throw new Error(`stardew_equip_tool_live_${code}`, cause ? { cause } : undefined);
+}
+
+function exactInvocation(invocation, { requireProfile, requireRunId }) {
+  if (!invocation || invocation.actionId !== "equip_tool") fail("invalid_invocation");
+  if (requireProfile && typeof invocation.profileFile !== "string") fail("profile_missing");
+  if (requireRunId && (typeof invocation.runId !== "string" || invocation.runId.length === 0)) fail("run_id_missing");
+}
+
+function proofMetadata({ runId, profile, proof, bundleDigest, cleanupComplete, leaseReleased, stagingReleased }) {
+  return Object.freeze({
+    schema: "gamebuddy-stardew-equip-tool-live-proof/v1",
+    runId,
+    profileIdentity: profile.profileIdentity,
+    targetVersion: profile.targetVersion,
+    claimScope: CLAIM_SCOPE,
+    request: proof.receipt.request,
+    accepted: proof.receipt.accepted,
+    terminal: proof.receipt.terminal,
+    evidence: proof.receipt.evidence,
+    postcondition: proof.postcondition,
+    bundle: Object.freeze({ algorithm: "sha256", digest: bundleDigest }),
+    cleanup: Object.freeze({ lifecycle: cleanupComplete, immutableStaging: stagingReleased, runtimeLease: leaseReleased }),
+  });
+}
+
+export async function runEquipToolLive({ manifest, invocation, dependencies } = {}) {
+  exactInvocation(invocation, { requireProfile: true, requireRunId: true });
+  if (!manifest || manifest.gameId !== "stardew" || typeof manifest.evidenceRoot !== "string" || typeof manifest.baseDirectory !== "string") fail("manifest_invalid");
+  const deps = {
+    preflight: preflightEquipTool,
+    consumeReadyProfile: consumeReadyEquipToolProfile,
+    acquireLease: acquireTargetRuntimeLease,
+    beginEvidence: beginEvidenceRun,
+    finalizeComplete: finalizeEvidenceRun,
+    finalizeIncomplete: finalizeIncompleteEvidenceRun,
+    createBundle: createImmutableReleaseBundleBinding,
+    runLifecycle: runEquipToolLifecycle,
+    ...dependencies,
+  };
+
+  const preflight = await deps.preflight({ invocation, dependencies: dependencies?.preflightDependencies });
+  if (preflight?.state !== "READY" || preflight.ready !== true || !preflight.bundle?.digest) {
+    return Object.freeze({ gameId: "stardew", actionId: "equip_tool", status: "live", state: "BLOCKED", runId: invocation.runId, reasons: preflight?.reasons ?? ["preflight_not_ready"] });
+  }
+  const profile = deps.consumeReadyProfile(preflight);
+  const identity = Object.freeze({ gameId: "stardew", actionId: "equip_tool", runId: invocation.runId });
+  let lease;
+  let evidence;
+  let bundle;
+  let proof;
+  let lifecycleComplete = false;
+  let stagingReleased = false;
+  let leaseReleased = false;
+  let failure;
+
+  try {
+    lease = await deps.acquireLease({ root: profile.runtimeLeaseRoot, identity: profile.runtimeLeaseIdentity });
+    evidence = await deps.beginEvidence({ root: manifest.evidenceRoot, identity });
+    bundle = await deps.createBundle({
+      releaseDir: profile.releaseDir,
+      modsPath: profile.modsPath,
+      runRoot: profile.runtimeLeaseRoot,
+      runIdentity: invocation.runId,
+      expectedDigest: preflight.bundle.digest,
+    });
+    proof = await bundle.runLifecycle(
+      ({ releaseDir }) => deps.runLifecycle({
+        projectRoot: manifest.baseDirectory,
+        profile,
+        runId: invocation.runId,
+        releaseDir,
+        resultRoot: profile.runtimeLeaseRoot,
+      }),
+    );
+    lifecycleComplete = true;
+    await bundle.close();
+    stagingReleased = true;
+    await lease.release();
+    leaseReleased = true;
+  } catch (error) {
+    failure = error;
+  }
+
+  if (!leaseReleased && lease) {
+    try { await lease.release(); leaseReleased = true; }
+    catch (error) { failure = failure ? new AggregateError([failure, error]) : error; }
+  }
+
+  const passed = !failure && proof?.verdict === "passed" && lifecycleComplete && stagingReleased && leaseReleased;
+  const metadata = passed
+    ? proofMetadata({ runId: invocation.runId, profile, proof, bundleDigest: preflight.bundle.digest, cleanupComplete: true, leaseReleased, stagingReleased })
+    : Object.freeze({
+      schema: "gamebuddy-stardew-equip-tool-live-incomplete/v1",
+      runId: invocation.runId,
+      profileIdentity: profile.profileIdentity,
+      targetVersion: profile.targetVersion,
+      claimScope: CLAIM_SCOPE,
+      reason: failure ? "orchestration_failed" : "proof_not_passed",
+      bundle: Object.freeze({ algorithm: "sha256", digest: preflight.bundle.digest }),
+      cleanup: Object.freeze({ lifecycle: lifecycleComplete, immutableStaging: stagingReleased, runtimeLease: leaseReleased }),
+    });
+
+  if (!evidence) {
+    if (failure) throw failure;
+    fail("evidence_unavailable");
+  }
+  const finalized = passed
+    ? await deps.finalizeComplete(evidence, { status: "complete", verdict: "passed", metadata })
+    : await deps.finalizeIncomplete(evidence, { verdict: "uncertain", metadata });
+  return Object.freeze({
+    gameId: "stardew",
+    actionId: "equip_tool",
+    status: "live",
+    state: passed ? "PASSED" : "INCOMPLETE",
+    runId: invocation.runId,
+    evidenceStatus: finalized.status,
+    verdict: finalized.verdict,
+  });
+}
+
+export async function readEquipToolLiveStatus({ manifest, invocation, dependencies } = {}) {
+  exactInvocation(invocation, { requireProfile: false, requireRunId: false });
+  if (!manifest || manifest.gameId !== "stardew" || typeof manifest.evidenceRoot !== "string") fail("manifest_invalid");
+  const readLatest = dependencies?.readLatestEvidence ?? readLatestEvidenceStatus;
+  const observation = await readLatest({ root: manifest.evidenceRoot, gameId: "stardew", actionId: "equip_tool" });
+  return Object.freeze({ gameId: "stardew", actionId: "equip_tool", status: "evidence", observation });
+}

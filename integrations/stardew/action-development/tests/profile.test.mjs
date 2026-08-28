@@ -8,7 +8,7 @@ import { parseTargetProfileText, validateTargetProfile } from "../src/profile.mj
 const projectDirectory = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const example = JSON.parse(await readFile(path.join(projectDirectory, "profiles", "example.json"), "utf8"));
 
-test("validates the non-secret example target profile", () => {
+test("validates the credential-free example profile shape while keeping it non-READY", () => {
   const profile = validateTargetProfile(example);
   assert.deepEqual(profile, example);
   assert.ok(Object.isFrozen(profile));
@@ -16,13 +16,17 @@ test("validates the non-secret example target profile", () => {
   assert.throws(() => parseTargetProfileText('{"schema":"gamebuddy-action-target-profile/v1","schema":"wrong"}'), /duplicate_key/);
 });
 
-test("rejects malformed, unknown, missing, and action-bearing profile fields", () => {
+test("rejects malformed, unknown, missing, action-bearing, and secret profile fields", () => {
   assert.throws(() => validateTargetProfile(null), /invalid_shape/);
   assert.throws(() => validateTargetProfile({ ...example, endpoint: "pipe" }), /invalid_shape/);
-  assert.throws(() => validateTargetProfile({ schema: example.schema, profileIdentity: example.profileIdentity }), /invalid_shape/);
+  const missing = { ...example }; delete missing.gameVersion;
+  assert.throws(() => validateTargetProfile(missing), /invalid_shape/);
+  const missingRelease = { ...example }; delete missingRelease.releaseDir;
+  assert.throws(() => validateTargetProfile(missingRelease), /invalid_shape/);
   assert.throws(() => validateTargetProfile({ ...example, schema: "wrong/v1" }), /invalid_schema/);
   assert.throws(() => validateTargetProfile({ ...example, profileIdentity: "../unsafe" }), /invalid_identity/);
   assert.throws(() => validateTargetProfile({ ...example, targetVersion: "" }), /invalid_target_version/);
+  assert.throws(() => validateTargetProfile({ ...example, timeoutMs: 999 }), /invalid_timeout/);
 });
 
 test("rejects accessors and hidden fields", () => {

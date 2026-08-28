@@ -16,7 +16,7 @@ internal static class FarmhandCapabilityPublicationProjectionProgram
             string fullCorePath = ValidateAbsoluteFile(corePath, "Core");
             ValidateCoreSibling(fullModPath, fullCorePath);
             FarmhandCapabilityPublicationProjectionTests.Run(expectedModSha256, expectedCoreSha256, fullModPath, fullCorePath);
-            Console.WriteLine("Farmhand capability publication identity/path/digest contract passed.");
+            Console.Write("Farmhand capability publication identity/path/digest contract passed.");
             return 0;
         }
         catch (Exception exception)

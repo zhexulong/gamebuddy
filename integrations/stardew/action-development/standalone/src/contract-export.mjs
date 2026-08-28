@@ -4,9 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PACKAGE_DIRECTORY = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const REPOSITORY_DIRECTORY = path.resolve(PACKAGE_DIRECTORY, "../../..");
-const EXPORT_PROJECT = path.join(REPOSITORY_DIRECTORY, "integrations", "stardew", "tests", "ActionDevelopmentContractExport", "ActionDevelopmentContractExport.csproj");
-const EXPORT_DLL = path.join(REPOSITORY_DIRECTORY, "integrations", "stardew", "tests", "ActionDevelopmentContractExport", "bin", "Debug", "net6.0", "GameBuddy.Stardew.ActionDevelopmentContractExport.dll");
+const EXPORT_DIRECTORY = path.join(PACKAGE_DIRECTORY, "inputs", "stardew-contract-export");
+const EXPORT_PROJECT = path.join(EXPORT_DIRECTORY, "ActionDevelopmentContractExport.csproj");
+const EXPORT_DLL = path.join(EXPORT_DIRECTORY, "bin", "Debug", "net6.0", "GameBuddy.Stardew.ActionDevelopmentContractExport.dll");
 const EQUIP_TOOL_ARTIFACT = path.join(PACKAGE_DIRECTORY, "contracts", "equip_tool.json");
 const MAX_OUTPUT_BYTES = 64 * 1024;
 
@@ -16,7 +16,7 @@ function fail(code) {
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: REPOSITORY_DIRECTORY, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd: PACKAGE_DIRECTORY, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     const chunks = { stdout: [], stderr: [], bytes: 0 };
     const append = (field) => (chunk) => {
       chunks.bytes += chunk.length;
@@ -36,7 +36,7 @@ function run(command, args) {
 
 export async function readGeneratedEquipToolContract({ runExport, readArtifact } = {}) {
   const exportContract = runExport ?? (async () => {
-    await run("dotnet", ["build", EXPORT_PROJECT, "--no-restore", "--nologo"]);
+    await run("dotnet", ["build", EXPORT_PROJECT, "--nologo"]);
     return (await run("dotnet", [EXPORT_DLL, "equip_tool"])).stdout;
   });
   const readCheckedArtifact = readArtifact ?? (() => readFile(EQUIP_TOOL_ARTIFACT));

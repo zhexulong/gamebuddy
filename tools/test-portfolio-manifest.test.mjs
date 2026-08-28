@@ -13,6 +13,9 @@ const sourceManifest = JSON.parse(
   await readFile(new URL("../.ci/test-portfolio-manifest.v1.json", import.meta.url), "utf8"),
 );
 const clone = () => structuredClone(sourceManifest);
+const entryIndex = (id) => sourceManifest.entries.findIndex((entry) => entry.id === id);
+const STATIC_ENTRY_INDEX = entryIndex("p1.8-portfolio-isolation-static");
+const MANUAL_ENTRY_INDEX = entryIndex("p1.8-live-environment-diagnostic");
 
 function assertInvalid(manifest, expected) {
   const result = validateTestPortfolioManifest(manifest);
@@ -25,7 +28,7 @@ function assertInvalid(manifest, expected) {
 
 test("versioned seed manifest is strict and truthful", async () => {
   assert.equal(sourceManifest.schema, MANIFEST_SCHEMA);
-  assert.equal(sourceManifest.entries.length, 4);
+  assert.equal(sourceManifest.entries.length, 3);
   const result = await readAndValidateTestPortfolioManifest();
   assert.deepEqual(result, { valid: true, errors: [] });
   for (const entry of sourceManifest.entries) {
@@ -103,17 +106,17 @@ test("rejects unsafe commands and path traversal", () => {
 
 test("rejects invalid evidence combinations and manual diagnostics pretending to automate", () => {
   const staticLive = clone();
-  staticLive.entries[2].liveGate = "required";
+  staticLive.entries[STATIC_ENTRY_INDEX].liveGate = "required";
   assertInvalid(staticLive, "static_or_fixture_cannot_be_live");
   const fixtureLive = clone();
-  fixtureLive.entries[2].evidenceKind = "fixture";
-  fixtureLive.entries[2].liveGate = "required";
+  fixtureLive.entries[STATIC_ENTRY_INDEX].evidenceKind = "fixture";
+  fixtureLive.entries[STATIC_ENTRY_INDEX].liveGate = "required";
   assertInvalid(fixtureLive, "static_or_fixture_cannot_be_live");
   const liveNotGated = clone();
   liveNotGated.entries[0].evidenceKind = "live";
   assertInvalid(liveNotGated, "live_evidence_requires_live_gate");
   const manualRequired = clone();
-  manualRequired.entries[3].requiredOn = ["main"];
+  manualRequired.entries[MANUAL_ENTRY_INDEX].requiredOn = ["main"];
   assertInvalid(manualRequired, "manual_diagnostic_requires_manual_trigger");
 });
 
@@ -132,15 +135,15 @@ test("rejects zero, fractional, and unbounded required automated timeouts and re
 });
 
 test("rejects non-automated entries that claim automated or PR/main gating", () => {
-  for (const [entryIndex, evidenceKind] of [
-    [2, "static"],
-    [2, "fixture"],
-    [3, "manual-diagnostic"],
+  for (const [candidateEntryIndex, evidenceKind] of [
+    [STATIC_ENTRY_INDEX, "static"],
+    [STATIC_ENTRY_INDEX, "fixture"],
+    [MANUAL_ENTRY_INDEX, "manual-diagnostic"],
   ]) {
     for (const requiredOn of [["pull_request"], ["main"], ["pull_request", "manual"], ["main", "manual"]]) {
       const manifest = clone();
-      manifest.entries[entryIndex].evidenceKind = evidenceKind;
-      manifest.entries[entryIndex].requiredOn = requiredOn;
+      manifest.entries[candidateEntryIndex].evidenceKind = evidenceKind;
+      manifest.entries[candidateEntryIndex].requiredOn = requiredOn;
       assertInvalid(manifest, "non_automated_requires_manual_only");
     }
   }

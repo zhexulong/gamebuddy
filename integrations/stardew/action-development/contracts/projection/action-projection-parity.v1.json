@@ -1,0 +1,325 @@
+{
+  "schema": "gamebuddy-stardew-action-projection-parity/v1",
+  "developmentOnly": true,
+  "gameId": "stardew",
+  "surface": {
+    "schema": "gamebuddy-stardew-action-surface/v1",
+    "registrations": [
+      {
+        "actionId": "move_to_tile",
+        "familyId": "movement_navigation",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "equip_tool",
+        "familyId": "body_tools",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "travel",
+        "familyId": "transport_warps",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "enter_exit",
+        "familyId": "movement_navigation",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "till_soil",
+        "familyId": "farming_crops",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "pickup_forage",
+        "familyId": "resource_gathering",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "pickup_item",
+        "familyId": "inventory_items",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "water_crop",
+        "familyId": "farming_crops",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "plant_seed",
+        "familyId": "farming_crops",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "fertilize_tile",
+        "familyId": "farming_crops",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "machine_inspect",
+        "familyId": "machines_processing",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "machine_load",
+        "familyId": "machines_processing",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "machine_collect_output",
+        "familyId": "machines_processing",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "collect_animal_product",
+        "familyId": "animals_pets",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "feed_animal",
+        "familyId": "animals_pets",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "use_item",
+        "familyId": "inventory_items",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "harvest_crop",
+        "familyId": "farming_crops",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "place_wood_fence",
+        "familyId": "buildings_farm_management",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "place_crab_pot",
+        "familyId": "buildings_farm_management",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "bait_crab_pot",
+        "familyId": "buildings_farm_management",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "chop_tree_source",
+        "familyId": "resource_gathering",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "break_rock_source",
+        "familyId": "resource_gathering",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "clear_hoedirt",
+        "familyId": "farming_crops",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "dig_artifact_spot",
+        "familyId": "resource_gathering",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "refill_watering_can",
+        "familyId": "farming_crops",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution"
+      },
+      {
+        "actionId": "inspect_world_map",
+        "familyId": "world_navigation",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "read_only"
+      },
+      {
+        "actionId": "clear_debris",
+        "familyId": "resource_gathering",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution"
+      },
+      {
+        "actionId": "npc_relationship",
+        "familyId": "npc_social",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution"
+      },
+      {
+        "actionId": "pet_animal",
+        "familyId": "animals_pets",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution"
+      }
+    ]
+  },
+  "lifecycle": {
+    "admittedLifecycles": [
+      "published",
+      "experimental"
+    ],
+    "executableActionIds": [
+      "move_to_tile",
+      "equip_tool",
+      "travel",
+      "enter_exit",
+      "till_soil",
+      "pickup_forage",
+      "pickup_item",
+      "water_crop",
+      "plant_seed",
+      "fertilize_tile",
+      "machine_inspect",
+      "machine_load",
+      "machine_collect_output",
+      "collect_animal_product",
+      "feed_animal",
+      "use_item",
+      "harvest_crop",
+      "place_wood_fence",
+      "place_crab_pot",
+      "bait_crab_pot",
+      "chop_tree_source",
+      "break_rock_source",
+      "clear_hoedirt",
+      "dig_artifact_spot",
+      "refill_watering_can"
+    ],
+    "readOnlyActionIds": [
+      "inspect_world_map"
+    ],
+    "experimentalActionIds": [
+      "clear_debris",
+      "npc_relationship",
+      "pet_animal"
+    ]
+  },
+  "protocol": {
+    "schemas": [
+      "gamebuddy-action-work-brief/v1",
+      "gamebuddy-stardew-action-preflight-brief/v1",
+      "gamebuddy-stardew-action-surface/v1",
+      "gamebuddy-stardew-static-action-descriptor/v1",
+      "gamebuddy-stardew-static-action-projection/v1",
+      "gamebuddy-stardew-tool-inventory/v1"
+    ],
+    "fixedControls": [
+      "inspect_self",
+      "cancel_active_execution"
+    ]
+  },
+  "ownership": {
+    "localFixtureOwnedActionIds": [
+      "equip_tool"
+    ],
+    "nativeActionIds": [
+      "move_to_tile",
+      "travel",
+      "enter_exit",
+      "till_soil",
+      "pickup_forage",
+      "pickup_item",
+      "water_crop",
+      "plant_seed",
+      "fertilize_tile",
+      "machine_inspect",
+      "machine_load",
+      "machine_collect_output",
+      "collect_animal_product",
+      "feed_animal",
+      "use_item",
+      "harvest_crop",
+      "place_wood_fence",
+      "place_crab_pot",
+      "bait_crab_pot",
+      "chop_tree_source",
+      "break_rock_source",
+      "clear_hoedirt",
+      "dig_artifact_spot",
+      "refill_watering_can"
+    ]
+  },
+  "fixtureOwnedFiles": [
+    "tests/fixtures/action-surface.v1.fixture.json"
+  ],
+  "guardOrder": [
+    "schema",
+    "development_scope",
+    "game_id",
+    "envelope_shape",
+    "surface_registrations",
+    "lifecycle_partition",
+    "surface_subsets",
+    "protocol_union",
+    "protocol_controls",
+    "ownership_partition",
+    "guard_order_pinned",
+    "obsolete_route_absence"
+  ],
+  "absentRoutes": [
+    "adoption",
+    "dual_read",
+    "fallback",
+    "legacy",
+    "migration",
+    "read_repair",
+    "withdrawn"
+  ]
+}

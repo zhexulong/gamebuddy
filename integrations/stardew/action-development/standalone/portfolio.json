@@ -15,6 +15,14 @@
       "kind": "action-surface-check"
     },
     {
+      "id": "action-source-projection-check",
+      "kind": "action-source-projection-check"
+    },
+    {
+      "id": "static-production-admission",
+      "kind": "static-production-admission"
+    },
+    {
       "id": "package-deterministic-tests",
       "kind": "package-tests"
     }

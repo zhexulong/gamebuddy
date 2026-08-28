@@ -6,64 +6,87 @@ const PACKAGE_DIRECTORY = path.dirname(path.dirname(fileURLToPath(import.meta.ur
 const REPOSITORY_ROOT = path.resolve(PACKAGE_DIRECTORY, "../../..");
 const ROOT_WORKFLOW = path.join(REPOSITORY_ROOT, ".github", "workflows", "ci.yml");
 const ROOT_PORTFOLIO = path.join(REPOSITORY_ROOT, ".ci", "test-portfolio-manifest.v1.json");
+const PACKAGE_PORTFOLIO = path.join(PACKAGE_DIRECTORY, "portfolio.json");
+const ROOT_PACKAGE = path.join(REPOSITORY_ROOT, "package.json");
 
-// Full target verification remains a retained root portfolio edge, but is deliberately
-// absent from GitHub's no-target workflow: missing licensed assemblies are blocked
-// evidence rather than a passing CI result.
-const DIRECT_WORKFLOW_COMMANDS = Object.freeze([
+const PACKAGE_WORKFLOW_COMMAND = "pnpm --dir integrations/stardew/action-development action:ci";
+const RETIRED_WORKFLOW_COMMANDS = Object.freeze([
   "pnpm test:stardew-action-projection",
   "pnpm check:stardew-action-surface",
   "pnpm test:stardew:static",
+  "pnpm verify:stardew:static",
+  "./tools/verify-stardew-scaffold.ps1",
 ]);
-const ROOT_PORTFOLIO_ENTRY = "p7-p9-stardew-static-portfolio";
-const PACKAGE_WORKFLOW_COMMAND = "pnpm --dir integrations/stardew/action-development action:ci";
+const RETIRED_ROOT_SCRIPTS = Object.freeze([
+  "check:stardew-action-surface",
+  "test:stardew-action-projection",
+  "test:stardew:static",
+  "verify:stardew:static",
+]);
+const RETIRED_ROOT_PORTFOLIO_ENTRY = "p7-p9-stardew-static-portfolio";
+const CANONICAL_PACKAGE_ENTRIES = Object.freeze([
+  "equip-tool-contract-check",
+  "scaffold-contract",
+  "action-surface-check",
+  "action-source-projection-check",
+  "static-production-admission",
+  "package-deterministic-tests",
+]);
+const FORBIDDEN_PACKAGE_COMMAND_TEXT = /(?:run-live|stardew-companion-live|target-publication|GAMEBUDDY_STARDEW_GAME_PATH|fixture.*mutation)/i;
 
 function fail(code) {
   throw new Error(`stardew_action_root_ci_disposition_${code}`);
 }
 
-function exactKeys(value, expected) {
-  return value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).sort().join(",") === expected.join(",");
+function occurrenceCount(text, value) {
+  return text.split(value).length - 1;
 }
 
 export async function auditRootStardewCiDisposition() {
   let workflowText;
   let rootPortfolio;
+  let packagePortfolio;
+  let rootPackage;
   try {
-    [workflowText, rootPortfolio] = await Promise.all([
+    [workflowText, rootPortfolio, packagePortfolio, rootPackage] = await Promise.all([
       readFile(ROOT_WORKFLOW, "utf8"),
       readFile(ROOT_PORTFOLIO, "utf8").then(JSON.parse),
+      readFile(PACKAGE_PORTFOLIO, "utf8").then(JSON.parse),
+      readFile(ROOT_PACKAGE, "utf8").then(JSON.parse),
     ]);
   } catch {
-    fail("root_inputs_unreadable");
+    fail("inputs_unreadable");
   }
 
-  const missingCommands = DIRECT_WORKFLOW_COMMANDS.filter((command) => !workflowText.includes(command));
-  if (missingCommands.length > 0) fail(`workflow_command_missing:${missingCommands.join(",")}`);
-  if (!workflowText.includes(PACKAGE_WORKFLOW_COMMAND)) fail("workflow_package_action_ci_missing");
-  const portfolioEntry = rootPortfolio.entries?.find((entry) => entry?.id === ROOT_PORTFOLIO_ENTRY);
-  if (!exactKeys(portfolioEntry, ["command", "evidenceKind", "id", "liveGate", "owner", "requiredOn", "requires", "retryPolicy", "riskId", "timeoutSeconds", "triggerPaths"]))
-    fail("root_portfolio_entry_invalid");
+  if (occurrenceCount(workflowText, PACKAGE_WORKFLOW_COMMAND) !== 1) fail("package_workflow_command_not_unique");
+  for (const command of RETIRED_WORKFLOW_COMMANDS) {
+    if (workflowText.includes(command)) fail(`retired_workflow_command_present:${command}`);
+  }
+  for (const script of RETIRED_ROOT_SCRIPTS) {
+    if (Object.hasOwn(rootPackage.scripts ?? {}, script)) fail(`retired_root_script_present:${script}`);
+  }
+  if (rootPortfolio.entries?.some((entry) => entry?.id === RETIRED_ROOT_PORTFOLIO_ENTRY)) {
+    fail("retired_root_portfolio_entry_present");
+  }
 
-  const blocked = Object.freeze([
-    ...DIRECT_WORKFLOW_COMMANDS.map((command) => Object.freeze({
-      location: ".github/workflows/ci.yml",
-      command,
-      disposition: "retain_until_package_parity",
-      reason: "current package action:ci intentionally excludes root tools, Host/protocol projection, and target-assembly/static-verifier checks",
-    })),
-    Object.freeze({
-      location: ".ci/test-portfolio-manifest.v1.json",
-      command: portfolioEntry.command,
-      disposition: "retain_until_package_parity",
-      reason: "root portfolio static verifier still owns package-unmigrated deterministic leaves and target-assembly blocked-state reporting",
-    }),
-  ]);
+  const entryIds = packagePortfolio.entries?.map((entry) => entry?.id);
+  if (JSON.stringify(entryIds) !== JSON.stringify(CANONICAL_PACKAGE_ENTRIES)) fail("package_portfolio_entries_invalid");
+  if (FORBIDDEN_PACKAGE_COMMAND_TEXT.test(JSON.stringify(packagePortfolio))) fail("package_portfolio_live_or_target_mutation_present");
 
   return Object.freeze({
     schema: "gamebuddy-stardew-root-ci-disposition-audit/v1",
-    status: "blocked",
-    blocked,
+    status: "package-owned",
+    workflowCommand: PACKAGE_WORKFLOW_COMMAND,
+    packageEntries: CANONICAL_PACKAGE_ENTRIES,
+    retiredRootEdges: Object.freeze([
+      ...RETIRED_ROOT_SCRIPTS,
+      RETIRED_ROOT_PORTFOLIO_ENTRY,
+    ]),
+    targetEvidencePolicy: Object.freeze({
+      ordinaryCiMissingPublication: "blocked",
+      blockedIsTargetPass: false,
+      liveOrTargetMutationSelectable: false,
+    }),
   });
 }
 

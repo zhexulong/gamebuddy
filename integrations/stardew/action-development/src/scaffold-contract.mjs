@@ -384,9 +384,9 @@ export async function verifyStardewScaffold(projectRoot) {
   const resolvedProjectRoot = path.resolve(projectRoot);
   const modRoot = path.join(resolvedProjectRoot, MOD_DIRECTORY_NAME);
   const coreRoot = path.join(modRoot, "src", "Core");
-  const executionControllerPath = path.join(modRoot, "FarmhandExecutionController.cs");
+  const executionControllerPath = path.join(modRoot, "farmhandexecutioncontroller.cs");
   const bridgeProtocolPath = path.join(coreRoot, "Protocol", "BridgeProtocol.cs");
-  const executionController = await readRequiredFile(executionControllerPath, "FarmhandExecutionController.cs");
+  const executionController = await readRequiredFile(executionControllerPath, "farmhandexecutioncontroller.cs");
   await readRequiredFile(bridgeProtocolPath, "src/Core/Protocol/BridgeProtocol.cs");
   const modProjectPath = path.join(modRoot, "GameBuddy.Stardew.csproj");
   const coreProjectPath = path.join(coreRoot, "GameBuddy.Stardew.Core.csproj");
@@ -394,8 +394,8 @@ export async function verifyStardewScaffold(projectRoot) {
   const coreProject = await readRequiredFile(coreProjectPath, "src/Core/GameBuddy.Stardew.Core.csproj");
   validateDefaultCompileProjectModel(modProject, "Mod", "Mod");
   validateDefaultCompileProjectModel(coreProject, "Core", "Core");
-  if (!/\bclass\s+FarmhandExecutionController\b[^{};]*:\s*[^{};]*\bIExecutionLedger\b/.test(executionController)) {
-    fail("FarmhandExecutionController.cs must implement IExecutionLedger");
+  if (!/\bclass\s+ExecutionManager\b[^{};]*:\s*[^{};]*\bIExecutionLedger\b/.test(executionController)) {
+    fail("farmhandexecutioncontroller.cs must declare ExecutionManager implementing IExecutionLedger");
   }
 
   const modCompilePaths = await collectCSharpFiles(modRoot, MOD_COMPILE_EXCLUDED_PATHS);

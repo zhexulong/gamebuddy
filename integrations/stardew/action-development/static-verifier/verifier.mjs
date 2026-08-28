@@ -1,21 +1,29 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import {
   BLOCKED_MISSING_TARGET_ASSEMBLIES,
+  FAILED_CONTRACT_OUTPUT_MISSING,
   FAILED_TARGET_ASSEMBLY,
+  FAILED_TARGET_CLOSURE_PARTIAL,
+  INTEGRATION_REQUIREMENTS,
   REPORT_SCHEMA,
   TARGET_ASSEMBLIES,
+  TARGET_ASSEMBLIES_AVAILABLE,
   validateInput,
   validateReport,
 } from "./schema.mjs";
 
-const INTEGRATION_REQUIREMENTS = Object.freeze([
-  "wire the package verifier into the package portfolio without changing the existing manifest in this migration slice",
-  "supply the independently published target assembly artifact root and preserve its provenance at integration time",
-  "add the later package workflow/CI invocation only after package parity review",
-]);
-
 function freeze(value) {
+  return Object.freeze(value);
+}
+
+function freezeEntries(entries) {
+  return freeze(entries.map((entry) => freeze({ ...entry })));
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const nested of Object.values(value)) deepFreeze(nested);
   return Object.freeze(value);
 }
 
@@ -28,18 +36,28 @@ function normalizeExists(exists) {
   return exists;
 }
 
+function normalizeStat(stat) {
+  if (typeof stat !== "function") throw new TypeError("stardew_static_verifier_invalid_stat");
+  return stat;
+}
+
 /**
  * Check only the artifact paths named by the validated package input.
  *
  * No repository root, source tree, project file, package manifest, game
- * process, or target build is consulted by this function.
+ * process, or target build is consulted by this function. Each required
+ * artifact must be an existing, regular, non-empty file; a directory, empty
+ * file, or unreadable path is reported as unusable (a malformed target), not
+ * as present.
  */
-export function checkTargetAssemblyAvailability(input, { exists = existsSync } = {}) {
+export function checkTargetAssemblyAvailability(input, { exists = existsSync, stat = statSync } = {}) {
   const validated = validateInput(input);
   const checkExists = normalizeExists(exists);
+  const checkStat = normalizeStat(stat);
   const required = validated.targetAssemblies.filter((assembly) => assembly.required);
   const present = [];
   const missing = [];
+  const unusable = [];
   for (const assembly of required) {
     const absolutePath = targetAssemblyPath(validated.artifactRoot, assembly.relativePath);
     let available;
@@ -48,70 +66,136 @@ export function checkTargetAssemblyAvailability(input, { exists = existsSync } =
     } catch {
       available = false;
     }
-    const entry = freeze({ id: assembly.id, relativePath: assembly.relativePath });
-    (available ? present : missing).push(entry);
+    if (!available) {
+      missing.push(freeze({ id: assembly.id, relativePath: assembly.relativePath }));
+      continue;
+    }
+    let usable = false;
+    try {
+      const info = checkStat(absolutePath);
+      usable = info.isFile() && info.size > 0;
+    } catch {
+      usable = false;
+    }
+    (usable ? present : unusable).push(
+      usable
+        ? freeze({ id: assembly.id, relativePath: assembly.relativePath })
+        : freeze({ id: assembly.id, relativePath: assembly.relativePath, reason: "not_a_readable_nonempty_file" }),
+    );
   }
   return freeze({
-    available: missing.length === 0,
-    required: freeze(required.map(({ id, relativePath }) => freeze({ id, relativePath }))),
+    available: present.length === required.length,
+    required: freeze(required.map(({ id, role, relativePath, required, siblingOf }) => freeze({ id, role, relativePath, required, siblingOf }))),
+    present: freeze(present),
+    missing: freeze(missing),
+    unusable: freeze(unusable),
+  });
+}
+
+/**
+ * Check only the frozen contract outputs of the production closure. A missing
+ * output means the build/contract step did not publish its exact artifact.
+ */
+export function checkContractOutputAvailability(input, { exists = existsSync } = {}) {
+  const validated = validateInput(input);
+  const checkExists = normalizeExists(exists);
+  const required = validated.contractOutputs.filter((output) => output.required);
+  const present = [];
+  const missing = [];
+  for (const output of required) {
+    const absolutePath = targetAssemblyPath(validated.artifactRoot, output.relativePath);
+    let available;
+    try {
+      available = checkExists(absolutePath);
+    } catch {
+      available = false;
+    }
+    (available ? present : missing).push(freeze({ id: output.id, relativePath: output.relativePath }));
+  }
+  return freeze({
+    required: freeze(required.map(({ id, relativePath, required }) => freeze({ id, relativePath, required }))),
     present: freeze(present),
     missing: freeze(missing),
   });
 }
 
-function reportFor(input, availability) {
-  const blocked = !availability.available;
-  const checkState = blocked ? "blocked" : "passed";
-  const reasonCode = blocked ? BLOCKED_MISSING_TARGET_ASSEMBLIES : "target_assemblies_available";
+function reportFor(input, availability, contract) {
+  let state;
+  let reasonCode;
+  if (availability.missing.length === availability.required.length) {
+    state = "blocked";
+    reasonCode = BLOCKED_MISSING_TARGET_ASSEMBLIES;
+  } else if (availability.unusable.length > 0) {
+    state = "failed";
+    reasonCode = FAILED_TARGET_ASSEMBLY;
+  } else if (availability.missing.length > 0) {
+    state = "failed";
+    reasonCode = FAILED_TARGET_CLOSURE_PARTIAL;
+  } else if (contract.missing.length > 0) {
+    state = "failed";
+    reasonCode = FAILED_CONTRACT_OUTPUT_MISSING;
+  } else {
+    state = "passed";
+    reasonCode = TARGET_ASSEMBLIES_AVAILABLE;
+  }
   const report = {
     schema: REPORT_SCHEMA,
     verifierId: input.verifierId,
     inputId: input.inputId,
     scope: input.scope,
-    state: blocked ? "blocked" : "passed",
+    state,
     reasonCode,
     summary: {
-      passed: blocked ? 0 : 1,
-      failed: 0,
-      blocked: blocked ? 1 : 0,
-      passDenominator: blocked ? 0 : 1,
+      passed: state === "passed" ? 1 : 0,
+      failed: state === "failed" ? 1 : 0,
+      blocked: state === "blocked" ? 1 : 0,
+      passDenominator: state === "blocked" ? 0 : 1,
     },
     targetAssemblies: {
       required: availability.required,
       present: availability.present,
       missing: availability.missing,
+      unusable: availability.unusable,
+    },
+    contractOutputs: {
+      required: contract.required,
+      present: contract.present,
+      missing: contract.missing,
     },
     checks: [
       {
         id: "target-assembly-availability",
         kind: "target_assembly_availability",
-        state: checkState,
+        state,
         reasonCode,
       },
     ],
     integration: {
       status: "not-integrated",
-      required: INTEGRATION_REQUIREMENTS,
+      required: freeze([...INTEGRATION_REQUIREMENTS]),
     },
   };
-  return validateReport(report);
+  return deepFreeze(validateReport(report));
 }
 
 /**
- * Run the deterministic package-owned self-test. Missing artifacts are a
- * named blocked result, not a successful no-op and not a target-build request.
+ * Run the deterministic package-owned self-test over one exact Mod/Core
+ * sibling production closure. No target artifacts at all is a named blocked
+ * result; a partial, malformed, or contract-incomplete closure is a named
+ * failed result. Neither is a successful no-op and neither requests a target
+ * build.
  */
 export function verifyStaticInput(input, options = {}) {
   const validated = validateInput(input);
   const availability = checkTargetAssemblyAvailability(validated, options);
-  return reportFor(validated, availability);
+  const contract = checkContractOutputAvailability(validated, options);
+  return reportFor(validated, availability, contract);
 }
 
 export function createMissingTargetFixture(input) {
   const validated = validateInput(input);
   return freeze({
     ...validated,
-    artifactRoot: validated.artifactRoot,
     targetAssemblies: freeze(validated.targetAssemblies.map((assembly) => freeze({ ...assembly }))),
   });
 }

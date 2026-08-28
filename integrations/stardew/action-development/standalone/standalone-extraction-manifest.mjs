@@ -8,16 +8,14 @@ const SOURCE_AUDIT_SCHEMA = "gamebuddy-stardew-extraction-audit/v1";
 const ALLOWED_ROOT = "inputs";
 const FORBIDDEN_ROOT_DIRECTORIES = Object.freeze(["tools", ".ci", "host"]);
 const FORBIDDEN_ROOT_FILES = Object.freeze(["package.json"]);
-const EXPECTED_SOURCE_AUDIT_BLOCKERS = Object.freeze([
-  "devkit-workspace-link",
-  "stardew-contract-exporter-project",
-  "stardew-core-source-closure",
-]);
+const EXPECTED_SOURCE_AUDIT_BLOCKERS = Object.freeze([]);
 const EXPECTED_ENTRY_IDS = Object.freeze([
   "devkit-workspace-link",
   "stardew-contract-exporter-project",
   "stardew-core-source-closure",
-  "package-owned-node-pnpm-pins",
+"stardew-scaffold-source-closure",
+"action-projection-source-closure",
+"package-owned-node-pnpm-pins",
   "package-owned-dotnet-pin",
   "package-owned-frozen-lockfile",
 ]);
@@ -87,7 +85,7 @@ function packageOwnedPath(value, code) {
 function validateSourceAudit(input) {
   exactKeys(input, new Set(["schema", "status", "blockerIds"]), "source_audit");
   if (input.schema !== SOURCE_AUDIT_SCHEMA) fail("source_audit_schema_invalid");
-  if (input.status !== "blocked") fail("source_audit_status_invalid");
+  if (input.status !== "standalone-ready") fail("source_audit_status_invalid");
   exactStringArray(input.blockerIds, EXPECTED_SOURCE_AUDIT_BLOCKERS, "source_audit_blockers_missing_or_changed");
   uniqueCaseFolded(input.blockerIds, "source_audit_blocker_duplicate");
 }
@@ -151,7 +149,22 @@ function validateEntries(entries) {
       if (entry.projectPath !== "inputs/stardew-core/GameBuddy.Stardew.Core.csproj") fail("core_project_path_invalid");
       if (entry.sourcePath !== "inputs/stardew-core/src/Core") fail("core_source_path_invalid");
       if (entry.recursive !== true) fail("core_source_closure_not_recursive");
-    } else if (entry.id === "package-owned-node-pnpm-pins") {
+    } else if (entry.id === "stardew-scaffold-source-closure") {
+      commonEntry(entry, ["id", "kind", "projectPath", "sourcePath", "recursive", "owner", "required", "source"], "stardew-scaffold-source-closure", "design-95-task-11");
+      packageOwnedPath(entry.projectPath, "scaffold_project_path");
+      addUniquePath(entry.projectPath);
+      packageOwnedPath(entry.sourcePath, "scaffold_source_path");
+      addUniquePath(entry.sourcePath);
+      if (entry.projectPath !== "inputs/stardew-scaffold/integrations/stardew/GameBuddy.Stardew.csproj") fail("scaffold_project_path_invalid");
+      if (entry.sourcePath !== "inputs/stardew-scaffold/integrations/stardew") fail("scaffold_source_path_invalid");
+if (entry.recursive !== true) fail("scaffold_source_closure_not_recursive");
+} else if (entry.id === "action-projection-source-closure") {
+commonEntry(entry, ["id", "kind", "sourcePath", "recursive", "owner", "required", "source"], "action-projection-source-closure", "design-95-task-7");
+packageOwnedPath(entry.sourcePath, "projection_source_path");
+addUniquePath(entry.sourcePath);
+if (entry.sourcePath !== "inputs/action-projection-source") fail("projection_source_path_invalid");
+if (entry.recursive !== true) fail("projection_source_closure_not_recursive");
+} else if (entry.id === "package-owned-node-pnpm-pins") {
       commonEntry(entry, ["id", "kind", "path", "nodeEngine", "pnpmPackageManager", "owner", "required", "source"], "node-pnpm-pins", "design-95-task-11");
       packageOwnedPath(entry.path, "toolchain_path");
       addUniquePath(entry.path);
@@ -198,8 +211,8 @@ function validatePackage(input, devkitEntry) {
 export function validateStandaloneExtractionManifest(input) {
   exactKeys(input, new Set(["schema", "status", "claim", "projectRoot", "sourceAudit", "package", "entries", "readPolicy"]), "manifest");
   if (input.schema !== STANDALONE_MANIFEST_SCHEMA) fail("schema_invalid");
-  if (input.status !== "blocked") fail("status_invalid");
-  if (input.claim !== "dependency-inventory-only") fail("claim_invalid");
+  if (input.status !== "standalone-ready") fail("status_invalid");
+  if (input.claim !== "package-owned-deterministic-closure") fail("claim_invalid");
   if (input.projectRoot !== "standalone") fail("project_root_invalid");
 
   validateSourceAudit(input.sourceAudit);
@@ -209,8 +222,8 @@ export function validateStandaloneExtractionManifest(input) {
 
   return Object.freeze({
     schema: STANDALONE_MANIFEST_SCHEMA,
-    status: "blocked",
-    claim: "dependency-inventory-only",
+    status: "standalone-ready",
+    claim: "package-owned-deterministic-closure",
     sourceAuditBlockerIds: Object.freeze([...EXPECTED_SOURCE_AUDIT_BLOCKERS]),
     entryIds: Object.freeze([...EXPECTED_ENTRY_IDS]),
     packageOwnedPathCount: entryResult.paths.length,
