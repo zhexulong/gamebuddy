@@ -45,7 +45,15 @@ function integration(overrides: Partial<StardewBridgeConnection["state"]> = {}):
     },
     navigationRead: async (request) => {
       assert.deepEqual(request, { operation: "inspect_world_map", args: {} });
-      return { status: "succeeded", reason: "world_map_observed", entries: [] };
+      return {
+        status: "succeeded",
+        reason: "world_map_observed",
+        entries: [],
+        nextCursor: null,
+        candidates: null,
+        destination: null,
+        unlockState: null,
+      };
     },
   };
 }
@@ -57,7 +65,15 @@ test("world-map tool mounts only from a fresh Mod read-only capability and retur
   const result = await tool.execute("call_01", {}, new AbortController().signal, () => {}, {} as never);
   assert.equal(
     result.content[0]?.type === "text" ? result.content[0].text : "",
-    JSON.stringify({ status: "succeeded", reason: "world_map_observed", entries: [] }),
+    JSON.stringify({
+      status: "succeeded",
+      reason: "world_map_observed",
+      entries: [],
+      nextCursor: null,
+      candidates: null,
+      destination: null,
+      unlockState: null,
+    }),
   );
 });
 
@@ -79,13 +95,29 @@ test("find-destination tool mounts from its own Mod read-only publication and fo
     ...fixture,
     navigationRead: async (value) => {
       request = value;
-      return { status: "resolved", reason: "exact_current_locale", destination: { kind: "label", label: "Mine" } };
+      return {
+        status: "resolved",
+        reason: "exact_current_locale",
+        entries: null,
+        nextCursor: null,
+        candidates: null,
+        destination: { kind: "label", label: "Mine", ref: null },
+        unlockState: null,
+      };
     },
   }).find((candidate) => candidate.name === "stardew_find_destination");
   assert.ok(tool);
   const result = await tool.execute("find_01", { query: "mine" }, new AbortController().signal, () => {}, {} as never);
   assert.deepEqual(request, { operation: "find_destination", args: { query: "mine" } });
-  assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", JSON.stringify({ status: "resolved", reason: "exact_current_locale", destination: { kind: "label", label: "Mine" } }));
+  assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", JSON.stringify({
+    status: "resolved",
+    reason: "exact_current_locale",
+    entries: null,
+    nextCursor: null,
+    candidates: null,
+    destination: { kind: "label", label: "Mine", ref: null },
+    unlockState: null,
+  }));
 });
 
 test("find-destination tool rechecks its own live publication before bridge write", async () => {
@@ -106,7 +138,15 @@ test("find-destination tool rechecks its own live publication before bridge writ
     },
     navigationRead: async () => {
       writes++;
-      return { status: "not_found" as const, reason: "destination_not_found" as const };
+      return {
+        status: "not_found" as const,
+        reason: "destination_not_found" as const,
+        entries: null,
+        nextCursor: null,
+        candidates: [],
+        destination: null,
+        unlockState: null,
+      };
     },
   };
   const tool = createStardewObservationTools(live).find((candidate) => candidate.name === "stardew_find_destination");
@@ -133,7 +173,15 @@ test("mounted world-map tool rechecks the live publication before bridge write",
     },
     navigationRead: async () => {
       writes++;
-      return { status: "succeeded" as const, reason: "world_map_observed" as const, entries: [] };
+      return {
+        status: "succeeded" as const,
+        reason: "world_map_observed" as const,
+        entries: [],
+        nextCursor: null,
+        candidates: null,
+        destination: null,
+        unlockState: null,
+      };
     },
   };
   const tool = createStardewObservationTools(live).find((candidate) => candidate.name === "stardew_inspect_world_map");
@@ -144,4 +192,106 @@ test("mounted world-map tool rechecks the live publication before bridge write",
     /bridge_capability_not_ready/,
   );
   assert.equal(writes, 0);
+});
+
+
+test("navigation tools reject missing bridge, revision drift, and every exact registration mismatch", () => {
+  const mismatches = [
+    { lifecycle: "experimental" },
+    { kind: "execution" },
+    { actionId: "other" },
+    { identityVersion: 2 },
+  ] as const;
+  for (const mismatch of mismatches) {
+    const registrations = integration().state.catalogRegistrations!.map((registration) =>
+      registration.actionId === "find_destination"
+        ? { ...registration, ...mismatch }
+        : registration,
+    );
+    const tools = createStardewObservationTools(
+      integration({ catalogRegistrations: registrations as never }),
+    );
+    assert.equal(tools.some((tool) => tool.name === "stardew_find_destination"), false);
+  }
+
+  const missingRead = integration();
+  delete (missingRead as { navigationRead?: unknown }).navigationRead;
+  assert.equal(
+    createStardewObservationTools(missingRead).some((tool) =>
+      tool.name.startsWith("stardew_inspect_world_map") ||
+      tool.name.startsWith("stardew_find_destination"),
+    ),
+    false,
+  );
+  assert.equal(
+    createStardewObservationTools(
+      integration({ catalogRevision: 2 }),
+    ).some((tool) => tool.name === "stardew_find_destination"),
+    false,
+  );
+});
+
+test("world-map inspection forwards only empty, nodeRef, or cursor arguments", async () => {
+  const requests: unknown[] = [];
+  const fixture = integration();
+  const tool = createStardewObservationTools({
+    ...fixture,
+    navigationRead: async (request) => {
+      requests.push(request);
+      return {
+        status: "succeeded",
+        reason: "world_map_observed",
+        entries: [],
+        nextCursor: null,
+        candidates: null,
+        destination: null,
+        unlockState: null,
+      };
+    },
+  }).find((candidate) => candidate.name === "stardew_inspect_world_map");
+  assert.ok(tool);
+  for (const params of [{}, { nodeRef: "node:Farm" }, { cursor: "page:2" }])
+    await tool.execute("inspect", params, new AbortController().signal, () => {}, {} as never);
+  assert.deepEqual(requests, [
+    { operation: "inspect_world_map", args: {} },
+    { operation: "inspect_world_map", args: { nodeRef: "node:Farm" } },
+    { operation: "inspect_world_map", args: { cursor: "page:2" } },
+  ]);
+  for (const invalid of [
+    { nodeRef: "node:Farm", cursor: "page:2" },
+    { extra: "value" },
+    { nodeRef: "" },
+    { cursor: "x".repeat(129) },
+  ])
+    await assert.rejects(
+      tool.execute("invalid", invalid as never, new AbortController().signal, () => {}, {} as never),
+      /invalid_tool_parameters/,
+    );
+  assert.equal(requests.length, 3);
+});
+
+test("find destination returns seven-key candidates verbatim without mutating integration state", async () => {
+  const fixture = integration();
+  const before = JSON.stringify(fixture.state);
+  const exactResult = {
+    status: "ambiguous",
+    reason: "multiple_matches",
+    entries: null,
+    nextCursor: null,
+    candidates: [
+      { label: "Mines", contextLabel: "Mountain", ref: null },
+      { label: "Quarry Mine", contextLabel: "Quarry", ref: "node:QuarryMine" },
+    ],
+    destination: null,
+    unlockState: null,
+  };
+  const tool = createStardewObservationTools({
+    ...fixture,
+    navigationRead: async () => exactResult as never,
+  }).find((candidate) => candidate.name === "stardew_find_destination");
+  assert.ok(tool);
+  const result = await tool.execute("find", { query: "mine" }, new AbortController().signal, () => {}, {} as never);
+  assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", JSON.stringify(exactResult));
+  assert.deepEqual(result.details, { result: exactResult });
+  assert.equal(JSON.stringify(fixture.state), before);
 });
