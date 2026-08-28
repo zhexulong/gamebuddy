@@ -64,7 +64,6 @@ const integration: CompanionIntegration = {
   module: STARDEW_INTEGRATION_MODULE,
 };
 
-
 test("GameplayTaskSubagent exposes no mutable task trace before a Host-created task runs", () => {
   const worker = new GameplayTaskSubagent(paths, integration);
   assert.equal(worker.activeTaskId, null);
@@ -1038,6 +1037,73 @@ test("adapter liveness freezes the active task, cancels its owned execution once
   );
   assert.deepEqual(calls.execute, ["equip_tool"]);
   assert.equal(worker.lastTaskRecord?.terminalReceipt?.state, "cancelled");
+});
+
+test("worker blocks the next action until a terminal receipt has a fresh snapshot", async () => {
+  await mkdir(paths.runtimeCwd, { recursive: true });
+  const state: MutableIntegrationState = {
+    connected: true,
+    sessionId: "session_01",
+    capabilities: ["equip_tool", "move_to_tile"],
+    snapshot: { ...liveSnapshot(["equip_tool", "move_to_tile"]), revision: 8 },
+    latestReceipt: null,
+    latestReasonCode: null,
+    catalogRegistrations: TEST_MOD_REGISTRATIONS,
+  };
+  const calls = { execute: [] as string[], cancel: [] as string[] };
+  const mounted = scriptedIntegration(state, calls);
+  mounted.execute = async (request) => {
+    calls.execute.push(request.action);
+    const receipt = {
+      requestId: request.requestId,
+      executionId: `execution_${calls.execute.length}`,
+      state: "succeeded",
+      reasonCode: "completed",
+      revision: 8,
+      evidence: { detail: "native" },
+    };
+    state.latestReceipt = receipt;
+    return receipt;
+  };
+  const worker = new GameplayTaskSubagent(
+    paths,
+    mounted,
+    undefined,
+    {
+      create: async ({ customTools }) =>
+        fakeSession(customTools, async (tools) => {
+          await invoke(tools, "stardew_equip_tool", {
+            slot: 1,
+            requestId: "request_01",
+            idempotencyKey: "key_01",
+          });
+          state.snapshot = { ...state.snapshot, revision: 7, activeExecution: null };
+          await assert.rejects(
+            invoke(tools, "stardew_move_to_tile", {
+              x: 2,
+              y: 2,
+              requestId: "request_stale",
+              idempotencyKey: "key_stale",
+            }),
+            /gameplay_task_snapshot_stale/,
+          );
+          assert.deepEqual(calls.execute, ["equip_tool"]);
+          state.snapshot = { ...state.snapshot, revision: 8, activeExecution: null };
+          await invoke(tools, "stardew_move_to_tile", {
+            x: 2,
+            y: 2,
+            requestId: "request_02",
+            idempotencyKey: "key_02",
+          });
+        }),
+    },
+    undefined,
+    testDispatchAdmissionFactory(mounted),
+  );
+  const result = await worker.run("receipt freshness");
+  assert.equal(result.state, "blocked");
+  assert.deepEqual(calls.execute, ["equip_tool", "move_to_tile"]);
+  assert.equal(worker.lastTaskRecord?.minimumSnapshotRevision, 8);
 });
 
 test("worker mints a fresh runtime-owned admission for each action invocation", async () => {
