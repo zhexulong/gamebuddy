@@ -40,8 +40,8 @@ const cleanup = Object.freeze({ schema: "gamebuddy-stardew-lifecycle-cleanup-res
 const BUNDLE_CONTENTS = Object.freeze({
   "GameBuddy.Stardew.dll": "mod",
   "GameBuddy.Stardew.Core.dll": "core",
-  "manifest.json": JSON.stringify({ Name: "GameBuddy" }),
   "GameBuddy.Stardew.deps.json": "{}",
+  "manifest.json": JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" }),
 });
 function bundleDigest() {
   const hash = createHash("sha256");
@@ -52,16 +52,28 @@ function bundleDigest() {
 }
 
 async function removeFixtureTree(directory) {
-  const entries = await import("node:fs/promises").then(({ readdir }) => readdir(directory, { withFileTypes: true })).catch((error) => {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  });
-  for (const entry of entries) {
-    const candidate = path.join(directory, entry.name);
-    if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      await removeFixtureTree(candidate);
-      await rmdir(candidate);
-    } else await unlink(candidate);
+  const { lstat, readdir } = await import("node:fs/promises");
+  const pending = [{ path: directory, visited: false }];
+  let steps = 0;
+  while (pending.length > 0) {
+    if (++steps > 10_000) throw new Error("equip_lifecycle_fixture_cleanup_unbounded");
+    const current = pending.pop();
+    const stats = await lstat(current.path).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!stats) continue;
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      await unlink(current.path);
+      continue;
+    }
+    if (!current.visited) {
+      pending.push({ path: current.path, visited: true });
+      const entries = await readdir(current.path);
+      for (const entry of entries) pending.push({ path: path.join(current.path, entry), visited: false });
+      continue;
+    }
+    await rmdir(current.path);
   }
 }
 
@@ -74,10 +86,7 @@ async function fixture(callback) {
   await mkdir(projectRoot); await mkdir(releaseDir); await mkdir(modsPath, { recursive: true }); await mkdir(runRoot);
   for (const [name, contents] of Object.entries(BUNDLE_CONTENTS)) await writeFile(path.join(releaseDir, name), contents);
   try { await callback({ root, projectRoot, releaseDir, modsPath, runRoot }); }
-  finally {
-    await removeFixtureTree(root);
-    await rmdir(root);
-  }
+  finally { await removeFixtureTree(root); }
 }
 
 function profile(root) {

@@ -21,6 +21,20 @@ function exactInvocation(invocation, { requireProfile, requireRunId }) {
   if (requireRunId && (typeof invocation.runId !== "string" || invocation.runId.length === 0)) fail("run_id_missing");
 }
 
+const FAILURE_PREFIXES = Object.freeze([
+  "stardew_immutable_release_bundle_",
+  "stardew_equip_tool_lifecycle_",
+  "stardew_target_runtime_lease_",
+  "game_action_evidence_",
+]);
+function boundedFailureCode(error) {
+  const message = typeof error?.message === "string" ? error.message : "";
+  for (const prefix of FAILURE_PREFIXES) {
+    if (message.startsWith(prefix)) return message.slice(prefix.length);
+  }
+  return "unknown_failure";
+}
+
 function proofMetadata({ runId, profile, proof, bundleDigest, cleanupComplete, leaseReleased, stagingReleased }) {
   return Object.freeze({
     schema: "gamebuddy-stardew-equip-tool-live-proof/v1",
@@ -67,10 +81,13 @@ export async function runEquipToolLive({ manifest, invocation, dependencies } = 
   let stagingReleased = false;
   let leaseReleased = false;
   let failure;
+  let failureStage = "lease_acquisition";
 
   try {
     lease = await deps.acquireLease({ root: profile.runtimeLeaseRoot, identity: profile.runtimeLeaseIdentity });
+    failureStage = "evidence_begin";
     evidence = await deps.beginEvidence({ root: manifest.evidenceRoot, identity });
+    failureStage = "immutable_bundle";
     bundle = await deps.createBundle({
       releaseDir: profile.releaseDir,
       modsPath: profile.modsPath,
@@ -78,6 +95,7 @@ export async function runEquipToolLive({ manifest, invocation, dependencies } = 
       runIdentity: invocation.runId,
       expectedDigest: preflight.bundle.digest,
     });
+    failureStage = "lifecycle";
     proof = await bundle.runLifecycle(
       ({ releaseDir }) => deps.runLifecycle({
         projectRoot: manifest.baseDirectory,
@@ -88,8 +106,10 @@ export async function runEquipToolLive({ manifest, invocation, dependencies } = 
       }),
     );
     lifecycleComplete = true;
+    failureStage = "immutable_cleanup";
     await bundle.close();
     stagingReleased = true;
+    failureStage = "lease_release";
     await lease.release();
     leaseReleased = true;
   } catch (error) {
@@ -98,7 +118,7 @@ export async function runEquipToolLive({ manifest, invocation, dependencies } = 
 
   if (!leaseReleased && lease) {
     try { await lease.release(); leaseReleased = true; }
-    catch (error) { failure = failure ? new AggregateError([failure, error]) : error; }
+    catch (error) { failureStage = "lease_release"; failure = failure ? new AggregateError([failure, error]) : error; }
   }
 
   const passed = !failure && proof?.verdict === "passed" && lifecycleComplete && stagingReleased && leaseReleased;
@@ -111,6 +131,8 @@ export async function runEquipToolLive({ manifest, invocation, dependencies } = 
       targetVersion: profile.targetVersion,
       claimScope: CLAIM_SCOPE,
       reason: failure ? "orchestration_failed" : "proof_not_passed",
+      failureStage: failure ? failureStage : "proof_validation",
+      failureCode: failure ? boundedFailureCode(failure) : "proof_not_passed",
       bundle: Object.freeze({ algorithm: "sha256", digest: preflight.bundle.digest }),
       cleanup: Object.freeze({ lifecycle: lifecycleComplete, immutableStaging: stagingReleased, runtimeLease: leaseReleased }),
     });
