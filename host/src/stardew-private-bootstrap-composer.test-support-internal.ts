@@ -1,6 +1,7 @@
 import {
   createStardewPrivateBootstrapTestCore,
   type StardewOwnedPlayerHostPhaseACoreTestView,
+  type StardewOwnedAiClientStageDResult,
   type StardewOwnedPlayerHostStageCResult,
   type StardewPrivateBootstrapCoreDependencies,
 } from "./stardew-private-bootstrap-composer.core.js";
@@ -12,6 +13,7 @@ import type {
 } from "./stardew-private-bootstrap-composer.js";
 
 export type {
+  StardewOwnedAiClientStageDResult,
   StardewOwnedPlayerHostStageCResult,
   StardewPrivateBootstrapCoreDependencies,
 } from "./stardew-private-bootstrap-composer.core.js";
@@ -39,6 +41,10 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     admission: StardewManifestAdmissionForTesting,
   ): Promise<void>;
+  launchOwnedAiClientStageD(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedAiClientStageDResult>;
   launchOwnedPlayerHostStageC(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
@@ -79,6 +85,13 @@ const testAiClientMaterializers = new WeakMap<
     admission: StardewManifestAdmissionForTesting,
   ) => Promise<void>
 >();
+const testStageDLaunchers = new WeakMap<
+  PublicStardewPrivateBootstrapComposition,
+  (
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    installation: AdmittedStardewInstallation,
+  ) => Promise<StardewOwnedAiClientStageDResult>
+>();
 const testStageCLaunchers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
   (
@@ -106,6 +119,7 @@ function registerTestingComposition(
   testOwnerBinders.set(composition, testingComposition.bindOwnedPlayerHostPhaseAOwner);
   testOwnedPhaseBConsumers.set(composition, testingComposition.consumeStagedOwnedPlayerHostPhaseB);
   testAiClientMaterializers.set(composition, testingComposition.materializeAiClientProfileAfterManifestAdmission);
+  testStageDLaunchers.set(composition, testingComposition.launchOwnedAiClientStageD);
   testStageCLaunchers.set(composition, testingComposition.launchOwnedPlayerHostStageC);
   return Object.freeze({ ...testingComposition, composition });
 }
@@ -181,6 +195,22 @@ export const materializeAiClientProfileAfterManifestAdmissionForTesting = async 
   if (materialize === undefined) throw new Error("stardew_owned_phase_a_owner_not_registered");
   await materialize(owner, admission);
 };
+
+export async function launchOwnedAiClientStageDForTesting(
+  owner: StardewOwnedPlayerHostPhaseAOwner,
+  installation: AdmittedStardewInstallation,
+  composition?: PublicStardewPrivateBootstrapComposition,
+): Promise<StardewOwnedAiClientStageDResult> {
+  const registration = testOwnerViews.get(owner);
+  if (registration === undefined ||
+      (composition !== undefined && registration.composition !== composition) ||
+      (composition !== undefined && testOwnerBinders.get(composition) !== registration.bind)) {
+    throw new Error("stardew_owned_phase_a_owner_not_registered");
+  }
+  const launch = testStageDLaunchers.get(registration.composition);
+  if (launch === undefined) throw new Error("stardew_owned_phase_a_owner_not_registered");
+  return launch(owner, installation);
+}
 
 export async function launchOwnedPlayerHostStageCForTesting(
   owner: StardewOwnedPlayerHostPhaseAOwner,

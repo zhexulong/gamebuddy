@@ -243,6 +243,10 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     admission: StardewManifestAdmission,
   ): Promise<void>;
+  launchOwnedAiClientStageD(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedAiClientStageDResult>;
   launchOwnedPlayerHostStageC(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
@@ -276,6 +280,7 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
     readAndCorrelateOwnedPlayerHostSession: closed.readAndCorrelateOwnedPlayerHostSession,
     createOwnedPlayerHostManifestHandoffCoordinator: closed.createOwnedPlayerHostManifestHandoffCoordinator,
     materializeAiClientProfileAfterManifestAdmission: closed.materializeAiClientProfileAfterManifestAdmission,
+    launchOwnedAiClientStageD: closed.launchOwnedAiClientStageD,
     launchOwnedPlayerHostStageC: closed.launchOwnedPlayerHostStageC,
     reserveOwnedPlayerHostPhaseAForActivation: closed.reserveOwnedPlayerHostPhaseAForActivation,
     stageOwnedPlayerHostPhaseB: closed.stageOwnedPlayerHostPhaseB,
@@ -303,6 +308,10 @@ export type StardewOwnedPlayerHostStageCResult = Readonly<{
   status: StardewPlayerHostProcessStatus;
 }>;
 
+export type StardewOwnedAiClientStageDResult = Readonly<{
+  status: StardewAiClientProcessStatus;
+}>;
+
 export function createStardewPrivateBootstrapTestCore(
   dependencies: StardewPrivateBootstrapCoreDependencies,
 ): Readonly<{
@@ -312,6 +321,10 @@ export function createStardewPrivateBootstrapTestCore(
   readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   materializeAiClientProfileAfterManifestAdmission: MaterializeAiClientProfileAfterManifestAdmission;
+  launchOwnedAiClientStageD(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedAiClientStageDResult>;
   launchOwnedPlayerHostStageC(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
@@ -361,6 +374,9 @@ export function createStardewPrivateBootstrapTestCore(
     },
     materializeAiClientProfileAfterManifestAdmission(owner, admission) {
       return base.materializeAiClientProfileAfterManifestAdmission(owner, admission);
+    },
+    launchOwnedAiClientStageD(owner, installation) {
+      return base.launchOwnedAiClientStageD(owner, installation);
     },
     launchOwnedPlayerHostStageC(owner, installation) {
       // Composition-bound test-only Stage-C launch: the base closed
@@ -414,6 +430,10 @@ type ClosedBootstrapCore = Readonly<{
   readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostPhaseAOwner): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
   materializeAiClientProfileAfterManifestAdmission: MaterializeAiClientProfileAfterManifestAdmission;
+  launchOwnedAiClientStageD(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    installation: AdmittedStardewInstallation,
+  ): Promise<StardewOwnedAiClientStageDResult>;
   launchOwnedPlayerHostStageC(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
@@ -643,6 +663,11 @@ function createClosedComposition(
         owner: StardewOwnedPlayerHostPhaseAOwner,
         admission: StardewManifestAdmissionValue,
       ): Promise<void> => manifestHandoff.materialize(owner, admission),
+       launchOwnedAiClientStageD: (
+        owner: StardewOwnedPlayerHostPhaseAOwner,
+        installation: AdmittedStardewInstallation,
+      ): Promise<StardewOwnedAiClientStageDResult> =>
+        launchOwnedAiClientStageD(owner, installation, compositionIdentity),
        launchOwnedPlayerHostStageC: (
        owner: StardewOwnedPlayerHostPhaseAOwner,
        installation: AdmittedStardewInstallation,
@@ -1392,6 +1417,46 @@ async function launchOwnedPlayerHostStageC(
   }
 }
 
+/**
+ * Core-private composition-bound AI-client launch. The exact owner must have a
+ * completely materialized C1 profile. Durable managed inventory is reread
+ * before the admitted installation performs its final identity-chain reread;
+ * only then may the exact reserved AI launch be consumed.
+ */
+async function launchOwnedAiClientStageD(
+  owner: StardewOwnedPlayerHostPhaseAOwner,
+  installation: AdmittedStardewInstallation,
+  compositionIdentity: object,
+): Promise<StardewOwnedAiClientStageDResult> {
+  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  if (facts.bindingState.value !== "bound" || facts.aiClientProfileState.value !== "materialized")
+    throw new Error("stardew_ai_client_profile_not_materialized");
+  if (facts.quarantine.started) throw new Error("stardew_owned_phase_a_owner_quarantined");
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+  if (facts.launchStates.aiClient !== "available") throw new Error("stardew_ai_client_launch_not_available");
+
+  const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
+  const authorityRoot = dirname(dirname(transactionDirectory));
+  const ownerPath = join(transactionDirectory, OWNER_FILE);
+  const current = await readAndValidateOwner(ownerPath, authorityRoot);
+  if (
+    current.bootstrapId !== facts.durableOwner.record.bootstrapId ||
+    JSON.stringify(current) !== JSON.stringify(facts.durableOwner.record) ||
+    current.state !== "reserved" ||
+    JSON.stringify(current.managedPaths) !== JSON.stringify(C1_MANAGED_PATHS)
+  ) throw new Error("stardew_ai_client_profile_inventory_invalid");
+  await assertMaterializedC1Inventory(transactionDirectory, authorityRoot);
+  if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+
+  const modsPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY);
+  return consumeAdmittedStardewInstallation(installation, (root, executable) =>
+    facts.consumeAiClientLaunch((launch) => launch({
+      executable,
+      args: ["--mods-path", modsPath],
+      cwd: root,
+    })));
+}
+
 async function stageAiClientProfile(
   owner: StardewOwnedPlayerHostPhaseAOwner,
   admission: ManifestHandoffAdmissionFacts,
@@ -1516,6 +1581,28 @@ async function assertC1ExistingInventory(transactionDirectory: string, root: str
   if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles))
     throw new Error("stardew_ai_client_profile_materialization_inventory_invalid");
   if (entries.includes("session")) await readSafeDirectory(join(transactionDirectory, "session"), root);
+}
+
+async function assertMaterializedC1Inventory(transactionDirectory: string, root: string): Promise<void> {
+  const entries = [...await readSafeDirectory(transactionDirectory, root)].sort();
+  const expectedEntries = [AI_CLIENT_PROFILE_ROOT, HOST_PROFILE_ROOT, OWNER_FILE, "session"].sort();
+  if (JSON.stringify(entries) !== JSON.stringify(expectedEntries))
+    throw new Error("stardew_ai_client_profile_inventory_invalid");
+
+  for (const profileRoot of [HOST_PROFILE_ROOT, AI_CLIENT_PROFILE_ROOT]) {
+    const profile = join(transactionDirectory, profileRoot);
+    const mods = join(profile, MODS_DIRECTORY);
+    const mod = join(mods, MOD_DIRECTORY);
+    if (JSON.stringify(await readSafeDirectory(profile, root)) !== JSON.stringify([MODS_DIRECTORY]) ||
+        JSON.stringify(await readSafeDirectory(mods, root)) !== JSON.stringify([MOD_DIRECTORY])) {
+      throw new Error("stardew_ai_client_profile_inventory_invalid");
+    }
+    const expectedFiles = [MOD_CONFIG_FILE, ...PHASE_B_PACKAGE_ENTRIES].sort();
+    const actualFiles = [...await readSafeDirectory(mod, root)].sort();
+    if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles))
+      throw new Error("stardew_ai_client_profile_inventory_invalid");
+  }
+  await readSafeDirectory(join(transactionDirectory, "session"), root);
 }
 
 async function assertManifestCorrelationStillHeld(

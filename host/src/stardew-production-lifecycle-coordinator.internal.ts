@@ -363,11 +363,28 @@ function createCoordinator(
       .then(async (admission) => {
         manifestAdmitted = true;
         await internal.materializeAiClientProfileAfterManifestAdmission(handle.owner, admission);
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        const candidate = launchCandidate;
+        if (candidate === undefined) throw new Error("stardew_ai_client_launch_candidate_missing");
+        const inspector = await createInstallationInspector();
+        const installation = await admitStardewInstallation(inspector, candidate);
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        const result = await internal.launchOwnedAiClientStageD(handle.owner, installation);
+        if (result.status.kind !== "awaiting_ai_client_attestation")
+          throw new Error("stardew_ai_client_launch_terminal_projection_invalid");
         return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         if (manifestAdmitted || (error instanceof Error && error.message === "stardew_manifest_handoff_publication_uncertain")) {
           uncertain.value = true;
+          if (manifestAdmitted && !ownerQuarantined) {
+            try {
+              await internal.quarantineOwnedPlayerHostOwner(handle.owner);
+              ownerQuarantined = true;
+            } catch {
+              // close() retains the exact owner and retries durable quarantine.
+            }
+          }
           throw new Error("stardew_cabin_publication_uncertain", { cause: error });
         }
         cabinConfirmations.delete(command.idempotencyKey);
