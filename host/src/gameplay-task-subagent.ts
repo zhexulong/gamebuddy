@@ -44,39 +44,10 @@ export type GameplayTaskResult = Readonly<{
   report: Readonly<Record<string, unknown>> | null;
 }>;
 
-/** Host-enforced limits; prompts never grant a worker additional work. */
-export type GameplayTaskBudget = Readonly<{
-  maxTurns: number;
-  maxToolCalls: number;
-  maxWallClockMs: number;
-  maxModelRetries: number;
-  maxAcceptedActions: number;
-  maxActiveExecutions: 1;
-  maxAcceptedActionsPerFamily: number;
-}>;
-
-export const DEFAULT_GAMEPLAY_TASK_BUDGET: GameplayTaskBudget = Object.freeze({
-  maxTurns: 12,
-  maxToolCalls: 24,
-  maxWallClockMs: 120_000,
-  maxModelRetries: 1,
-  maxAcceptedActions: 8,
-  maxActiveExecutions: 1,
-  maxAcceptedActionsPerFamily: 4,
-});
-
 export type GameplayTaskRecord = Readonly<{
   taskId: string;
   scope: IntegrationConnection["scope"];
-  createdAtMs: number;
-  deadlineMs: number;
   cancellationEpoch: number;
-  budget: GameplayTaskBudget;
-  turns: number;
-  toolCalls: number;
-  modelRetries: number;
-  acceptedActions: number;
-  acceptedActionsByFamily: Readonly<Record<string, number>>;
   executions: readonly Readonly<{
     actionId: string;
     requestId: string;
@@ -144,15 +115,7 @@ export type GameplayTaskDispatchAdmissionFactory =
 type MutableTaskRecord = {
   taskId: string;
   scope: IntegrationConnection["scope"];
-  createdAtMs: number;
-  deadlineMs: number;
   cancellationEpoch: number;
-  budget: GameplayTaskBudget;
-  turns: number;
-  toolCalls: number;
-  modelRetries: number;
-  acceptedActions: number;
-  acceptedActionsByFamily: Record<string, number>;
   executions: Array<{
     actionId: string;
     requestId: string;
@@ -206,12 +169,10 @@ export class GameplayTaskSubagent {
     private readonly paths: RuntimePaths,
     private readonly integration: IntegrationConnection,
     private readonly actionPolicy?: IntegrationActionPolicy,
-    private readonly budget: GameplayTaskBudget = DEFAULT_GAMEPLAY_TASK_BUDGET,
     private readonly sessionFactory?: GameplayTaskSessionFactory,
     private readonly executionWakeSource?: ExecutionWakeSource,
     private readonly dispatchAdmissionFactory?: GameplayTaskDispatchAdmissionFactory,
   ) {
-    assertBudget(budget);
     this.#executionWakeSource =
       executionWakeSource ?? executionWakeSourceFor(integration);
   }
@@ -242,7 +203,7 @@ export class GameplayTaskSubagent {
       name: "delegate_game_task",
       label: "Delegate Gameplay Task",
       description:
-        "Run one bounded gameplay task in a private child Agent. The child cannot speak to the player or change its own permissions.",
+        "Run one gameplay task in a private child Agent. The child cannot speak to the player or change its own permissions.",
       parameters: Type.Object({
         task: Type.String({ minLength: 1, maxLength: 2_000 }),
       }),
@@ -294,19 +255,10 @@ export class GameplayTaskSubagent {
     const steps: GameplayTaskStep[] = [];
     this.#lastTaskSteps = Object.freeze([]);
     const taskId = `gameplay_${crypto.randomUUID()}`;
-    const createdAtMs = Date.now();
     const record: MutableTaskRecord = {
       taskId,
       scope: this.integration.scope,
-      createdAtMs,
-      deadlineMs: createdAtMs + this.budget.maxWallClockMs,
       cancellationEpoch: this.#cancellationEpoch,
-      budget: this.budget,
-      turns: 0,
-      toolCalls: 0,
-      modelRetries: 0,
-      acceptedActions: 0,
-      acceptedActionsByFamily: {},
       executions: [],
       pendingDispatch: null,
       terminalReceipt: null,
@@ -462,38 +414,35 @@ export class GameplayTaskSubagent {
           )
           .catch(() => undefined);
       };
-      const budgetedIntegrationTools = integrationTools.map((tool) =>
-        budgetTool(
+      const scopedIntegrationTools = integrationTools.map((tool) =>
+        taskScopedTool(
           tool,
           record,
           controller,
           this.integration,
           integrationModule,
           this.actionPolicy ?? integrationModule.defaultPolicy,
-          cancelThisTask,
           cancelSettledPendingDispatch,
         ),
       );
       const customTools = [
-        budgetTool(
+        taskScopedTool(
           status,
           record,
           controller,
           this.integration,
           integrationModule,
           this.actionPolicy ?? integrationModule.defaultPolicy,
-          cancelThisTask,
           cancelSettledPendingDispatch,
         ),
-        ...budgetedIntegrationTools,
-        budgetTool(
+        ...scopedIntegrationTools,
+        taskScopedTool(
           reportTool,
           record,
           controller,
           this.integration,
           integrationModule,
           this.actionPolicy ?? integrationModule.defaultPolicy,
-          cancelThisTask,
           cancelSettledPendingDispatch,
         ),
       ];
@@ -537,20 +486,6 @@ export class GameplayTaskSubagent {
             cancelThisTask(`integration_${wake.kind}:${wake.reasonCode}`);
         },
       );
-      const timeout = setTimeout(
-        () => cancelThisTask("gameplay_task_wall_clock_budget_exhausted"),
-        record.budget.maxWallClockMs,
-      );
-      const unsubscribe = session.subscribe((event) => {
-        if (event.type === "agent_end") {
-          record.turns++;
-          if (event.willRetry) record.modelRetries++;
-          if (record.turns >= record.budget.maxTurns)
-            cancelThisTask("gameplay_task_turn_budget_exhausted");
-          else if (record.modelRetries > record.budget.maxModelRetries)
-            cancelThisTask("gameplay_task_retry_budget_exhausted");
-        }
-      });
       try {
         if (controller.signal.aborted)
           return await abortedTaskResult(
@@ -572,8 +507,6 @@ export class GameplayTaskSubagent {
             this.#executionWakeSource,
           );
       } finally {
-        clearTimeout(timeout);
-        unsubscribe();
         unsubscribeLiveness?.();
       }
       const summary = finalAssistantText(session.messages);
@@ -849,20 +782,18 @@ export function selectTaskOwnedCancellation(
 }
 
 export type GameplayActionAdmission =
-  | Readonly<{ ok: true; familyId: string }>
+  | Readonly<{ ok: true }>
   | Readonly<{
       ok: false;
       reasonCode:
         | "unknown_gameplay_action"
-        | "gameplay_task_active_execution_exists"
-        | "gameplay_task_action_budget_exhausted"
-        | "gameplay_task_action_family_budget_exhausted";
+        | "gameplay_task_active_execution_exists";
     }>;
 
 type GameplayActionAdmissionRecord = Readonly<
   Pick<
     MutableTaskRecord,
-    "acceptedActions" | "acceptedActionsByFamily" | "executions" | "budget"
+    "executions"
   >
 > &
   Readonly<Partial<Pick<MutableTaskRecord, "pendingDispatch">>>;
@@ -884,8 +815,7 @@ export function admitGameplayAction(
   const entry = catalog
     .visibleActions(registrations, capabilities, policy)
     .find((candidate) => candidate.actionId === actionId);
-  const familyId = entry?.familyId;
-  if (familyId === undefined)
+  if (entry === undefined)
     return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
   if (
     (activeExecution !== null && activeExecution !== undefined) ||
@@ -897,22 +827,7 @@ export function admitGameplayAction(
       reasonCode: "gameplay_task_active_execution_exists",
     });
   }
-  if (record.acceptedActions >= record.budget.maxAcceptedActions) {
-    return Object.freeze({
-      ok: false,
-      reasonCode: "gameplay_task_action_budget_exhausted",
-    });
-  }
-  if (
-    (record.acceptedActionsByFamily[familyId] ?? 0) >=
-    record.budget.maxAcceptedActionsPerFamily
-  ) {
-    return Object.freeze({
-      ok: false,
-      reasonCode: "gameplay_task_action_family_budget_exhausted",
-    });
-  }
-  return Object.freeze({ ok: true, familyId });
+  return Object.freeze({ ok: true });
 }
 
 export function hasAuthoritativeCompletion(
@@ -967,22 +882,9 @@ export function hasActionPostconditionEvidence(
   });
 }
 
-function assertBudget(budget: GameplayTaskBudget): void {
-  for (const [key, value] of Object.entries(budget)) {
-    if (!Number.isSafeInteger(value) || value < 1)
-      throw new Error(`invalid_gameplay_task_budget:${key}`);
-  }
-  if (budget.maxActiveExecutions !== 1)
-    throw new Error("invalid_gameplay_task_budget:maxActiveExecutions");
-}
-
 function freezeRecord(record: MutableTaskRecord): GameplayTaskRecord {
   return Object.freeze({
     ...record,
-    budget: Object.freeze({ ...record.budget }),
-    acceptedActionsByFamily: Object.freeze({
-      ...record.acceptedActionsByFamily,
-    }),
     executions: Object.freeze(
       record.executions.map((execution) => Object.freeze({ ...execution })),
     ),
@@ -997,14 +899,13 @@ function freezeRecord(record: MutableTaskRecord): GameplayTaskRecord {
   });
 }
 
-function budgetTool(
+function taskScopedTool(
   tool: ToolDefinition,
   record: MutableTaskRecord,
   controller: AbortController,
   integration: IntegrationConnection,
   integrationModule: ReturnType<typeof requireIntegrationModule>,
   mountedPolicy: import("./integration-module.js").IntegrationActionPolicy,
-  cancelTask: (reasonCode: string) => void,
   cancelSettledPendingDispatch: (
     requestId: string,
     executionId: string,
@@ -1018,11 +919,6 @@ function budgetTool(
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       if (controller.signal.aborted)
         throw new Error(record.terminalReasonCode ?? "gameplay_task_cancelled");
-      if (++record.toolCalls > record.budget.maxToolCalls) {
-        record.terminalReasonCode ??= "gameplay_task_tool_budget_exhausted";
-        cancelTask(record.terminalReasonCode);
-        throw new Error(record.terminalReasonCode);
-      }
       if (isCancel) {
         const requestId = isRecord(params) ? params.requestId : undefined;
         const executionId = isRecord(params) ? params.executionId : undefined;
@@ -1051,10 +947,6 @@ function budgetTool(
           mountedPolicy,
         );
         if (!admission.ok) {
-          if (admission.reasonCode.includes("budget_exhausted")) {
-            record.terminalReasonCode ??= admission.reasonCode;
-            cancelTask(record.terminalReasonCode);
-          }
           throw new Error(admission.reasonCode);
         }
         const requestId = isRecord(params) ? params.requestId : undefined;
@@ -1080,7 +972,6 @@ function budgetTool(
             record,
             integration,
             integrationModule,
-            admission.familyId,
             result.details,
             cancelSettledPendingDispatch,
           );
@@ -1106,9 +997,7 @@ async function abortedTaskResult(
   _signal: AbortSignal | undefined,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<GameplayTaskResult> {
-  const _integrationModule = requireIntegrationModule(integration);
   const reasonCode = record.terminalReasonCode ?? "gameplay_task_cancelled";
-  const budgetExhausted = reasonCode.includes("budget_exhausted");
   // Cancellation has already triggered the signal; continue to await the Mod's
   // authoritative terminal receipt inside the bounded watchdog window.
   const cancellation =
@@ -1134,7 +1023,7 @@ async function abortedTaskResult(
   }
   return {
     taskId,
-    state: budgetExhausted ? "blocked" : "cancelled",
+    state: "cancelled",
     summary: null,
     report: report ?? Object.freeze({ reasonCode }),
   };
@@ -1146,7 +1035,7 @@ async function awaitOwnedTerminalReceipt(
   signal: AbortSignal | undefined,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<MutableTaskRecord["terminalReceipt"]> {
-  const deadline = Math.min(record.deadlineMs, Date.now() + 5_000);
+  const deadline = Date.now() + 5_000;
   return await awaitTaskOwnedTerminalReceipt({
     executions: record.executions,
     deadlineMs: deadline,
@@ -1280,7 +1169,6 @@ function settlePendingDispatch(
   record: MutableTaskRecord,
   integration: IntegrationConnection,
   integrationModule: ReturnType<typeof requireIntegrationModule>,
-  familyId: string,
   details: unknown,
   cancelSettledPendingDispatch: (
     requestId: string,
@@ -1303,7 +1191,6 @@ function settlePendingDispatch(
     receipt.requestId,
     receipt.executionId,
     receipt.state,
-    familyId,
   );
   const execution = record.executions.find(
     (known) =>
@@ -1325,7 +1212,6 @@ function settlePendingCorrelation(
   requestId: string,
   executionId: string,
   state: string,
-  familyId?: string,
 ): void {
   const pending = record.pendingDispatch;
   if (pending == null || pending.requestId !== requestId) return;
@@ -1352,16 +1238,6 @@ function settlePendingCorrelation(
       executionId,
       state: resolvedState,
     });
-    if (
-      familyId !== undefined &&
-      (resolvedState === "accepted" ||
-        resolvedState === "running" ||
-        resolvedState === "succeeded")
-    ) {
-      record.acceptedActions++;
-      record.acceptedActionsByFamily[familyId] =
-        (record.acceptedActionsByFamily[familyId] ?? 0) + 1;
-    }
   } else existing.state = resolvedState;
 }
 
@@ -1412,7 +1288,7 @@ async function awaitPendingDispatchAndOwnedTerminalReceipt(
   integration: IntegrationConnection,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<MutableTaskRecord["terminalReceipt"]> {
-  const deadline = Math.min(record.deadlineMs, Date.now() + 5_000);
+  const deadline = Date.now() + 5_000;
   await awaitPendingDispatchSettlement(
     record,
     integration,

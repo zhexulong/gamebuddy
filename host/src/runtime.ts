@@ -909,7 +909,6 @@ async function createRuntime(
       ? new GameplayTaskSubagent(
           paths,
           integration,
-          modelConfig,
           mountedPolicy,
           undefined,
           undefined,
