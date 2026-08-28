@@ -1,44 +1,50 @@
 import type { WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource } from "./integration-launcher.js";
-import type { GameIntegrationModule, IntegrationExecutionReceipt, IntegrationStateView } from "./integration-module.js";
-import type { IntegrationConnection } from "./integration-types.js";
+import type {
+  GameIntegrationAdapter,
+  IntegrationExecutionReceipt,
+  IntegrationStateView,
+} from "./game-integration-adapter.js";
+import type { GameConnection } from "./game-connection.js";
 
 /** Strict, content-free source-owned IPC contract for the operational Game gate. */
-export const GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA = "gamebuddy-game-operational-gate-evidence/v1";
+export const GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA = "gamebuddy-game-operational-gate-evidence/v2";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const OPAQUE_ID = /^[A-Za-z0-9_-]{1,128}$/;
-const TERMINAL_RECEIPT_STATES = new Set([
-  "blocked",
-  "invalidated",
-  "succeeded",
-  "partially_succeeded",
-  "failed",
-  "cancelled",
-  "expired",
-  "rejected",
-  "uncertain",
-]);
-
 export type GameOperationalGateEvidence = Readonly<{
   schema: typeof GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA;
   nonceSha256: string;
   piSessionId: string;
   surface: "game";
-  snapshotRevision: number;
   capabilityRevision: number;
   capabilityCount: number;
-  terminalReceipt: Readonly<{
-    state: string;
-    revision: number;
-    postconditionObserved: true;
+  transitions: Readonly<{
+    count: 2;
+    distinctActionCount: number;
+    freshObservationCount: 2;
+    allPostconditionsObserved: true;
   }>;
+  terminalState: "completed";
+  stopSettled: true;
+}>;
+
+/** A read-only observer of the existing Host STOP settlement authority. */
+export type GameStopSettlementSource = Readonly<{
+  onStopSettled(listener: (payload: unknown) => void): () => void;
 }>;
 
 export type GameOperationalGateEvidenceProjection = Readonly<{
-  /** Resolves only after a Mod-originated terminal receipt correlates to live connection state. */
+  /** Resolves once two exact Mod transitions and an existing STOP settlement are observed. */
   next(): Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">>;
   close(): void;
+}>;
+
+type AcceptedTransition = Readonly<{
+  lineage: string;
+  actionId: string;
+  receiptRevision: number;
+  capabilityRevision: number;
 }>;
 
 /**
@@ -53,10 +59,11 @@ export function validateGameOperationalGateEvidence(value: unknown): GameOperati
       "nonceSha256",
       "piSessionId",
       "surface",
-      "snapshotRevision",
       "capabilityRevision",
       "capabilityCount",
-      "terminalReceipt",
+      "transitions",
+      "terminalState",
+      "stopSettled",
     ])
   )
     return null;
@@ -65,14 +72,20 @@ export function validateGameOperationalGateEvidence(value: unknown): GameOperati
     !sha256(value.nonceSha256) ||
     !identifier(value.piSessionId) ||
     value.surface !== "game" ||
-    !revision(value.snapshotRevision) ||
     !revision(value.capabilityRevision) ||
     !count(value.capabilityCount) ||
-    !exactRecord(value.terminalReceipt, ["state", "revision", "postconditionObserved"]) ||
-    typeof value.terminalReceipt.state !== "string" ||
-    !TERMINAL_RECEIPT_STATES.has(value.terminalReceipt.state) ||
-    !revision(value.terminalReceipt.revision) ||
-    value.terminalReceipt.postconditionObserved !== true
+    !exactRecord(value.transitions, [
+      "count",
+      "distinctActionCount",
+      "freshObservationCount",
+      "allPostconditionsObserved",
+    ]) ||
+    value.transitions.count !== 2 ||
+    !distinctActionCount(value.transitions.distinctActionCount) ||
+    value.transitions.freshObservationCount !== 2 ||
+    value.transitions.allPostconditionsObserved !== true ||
+    value.terminalState !== "completed" ||
+    value.stopSettled !== true
   )
     return null;
   return Object.freeze({
@@ -80,56 +93,88 @@ export function validateGameOperationalGateEvidence(value: unknown): GameOperati
     nonceSha256: value.nonceSha256,
     piSessionId: value.piSessionId,
     surface: "game",
-    snapshotRevision: value.snapshotRevision,
     capabilityRevision: value.capabilityRevision,
     capabilityCount: value.capabilityCount,
-    terminalReceipt: Object.freeze({
-      state: value.terminalReceipt.state,
-      revision: value.terminalReceipt.revision,
-      postconditionObserved: true as const,
+    transitions: Object.freeze({
+      count: 2 as const,
+      distinctActionCount: value.transitions.distinctActionCount,
+      freshObservationCount: 2 as const,
+      allPostconditionsObserved: true as const,
     }),
+    terminalState: "completed" as const,
+    stopSettled: true as const,
   });
 }
 
 /**
- * Construction-owned reduction of the real IntegrationConnection and launch
- * event stream. It observes no model output and never exposes raw receipt or
- * evidence payloads. A terminal event is accepted only when its exact receipt
- * identity and revision are also current in the adapter's live state.
+ * Construction-owned reduction of the real GameConnection, launch facts,
+ * and existing Host STOP settlement. It observes no model output and never
+ * exposes receipt evidence or private correlation identity. It can only emit
+ * after two distinct, exact Mod-success transitions have fresh postconditions
+ * and a subsequently observed existing STOP settlement.
  */
 export function createGameOperationalGateEvidenceProjection(
-  module: GameIntegrationModule,
-  connection: IntegrationConnection,
+  module: GameIntegrationAdapter,
+  connection: GameConnection,
   events: IntegrationEventSource,
+  stopSource?: GameStopSettlementSource,
 ): GameOperationalGateEvidenceProjection {
   let closed = false;
   let resolveNext: ((value: Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">) => void) | undefined;
   let rejectNext: ((reason: Error) => void) | undefined;
-  let unsubscribe: (() => void) | undefined;
+  let unsubscribeFacts: (() => void) | undefined;
+  let unsubscribeStop: (() => void) | undefined;
+  let stopSettled = false;
+  let transitions = new Map<string, AcceptedTransition>();
 
-  const settle = (fact: WorldFact): void => {
-    if (closed || resolveNext === undefined || fact.kind !== "execution_receipt") return;
-    const evidence = evidenceFromCorrelatedTerminal(module, connection, fact);
+  const clearWaiter = (): void => {
+    unsubscribeFacts?.();
+    unsubscribeFacts = undefined;
+    resolveNext = undefined;
+    rejectNext = undefined;
+    unsubscribeStop?.();
+    unsubscribeStop = undefined;
+    transitions = new Map();
+    stopSettled = false;
+  };
+
+  const tryResolveAfterStop = (): void => {
+    if (closed || resolveNext === undefined || !stopSettled || transitions.size !== 2) return;
+    const evidence = evidenceFromFinalState(module, connection, [...transitions.values()]);
     if (evidence === null) return;
     const resolve = resolveNext;
     clearWaiter();
     resolve(evidence);
   };
-  const clearWaiter = (): void => {
-    unsubscribe?.();
-    unsubscribe = undefined;
-    resolveNext = undefined;
-    rejectNext = undefined;
+
+  const acceptFact = (fact: WorldFact): void => {
+    if (closed || resolveNext === undefined || transitions.size >= 2 || fact.kind !== "execution_receipt") return;
+    const transition = transitionFromCorrelatedTerminal(module, connection, fact);
+    if (transition === null || transitions.has(transition.lineage)) return;
+    transitions.set(transition.lineage, transition);
+    tryResolveAfterStop();
   };
+
+  const acceptStopSettlement = (): void => {
+    // The existing Host settlement is a one-shot barrier. Remembering it only
+    // for this waiter lets a late second transition complete the same proof,
+    // while clearWaiter prevents reuse or replay.
+    if (closed || resolveNext === undefined || stopSettled) return;
+    stopSettled = true;
+    tryResolveAfterStop();
+  };
+
   const next = (): Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">> => {
     if (closed || resolveNext !== undefined)
       return Promise.reject(new Error("game_operational_gate_evidence_unavailable"));
     return new Promise((resolve, reject) => {
       resolveNext = resolve;
       rejectNext = reject;
-      unsubscribe = events.onFact(settle);
+      unsubscribeFacts = events.onFact(acceptFact);
+      unsubscribeStop = stopSource?.onStopSettled(acceptStopSettlement);
     });
   };
+
   return Object.freeze({
     next,
     close: () => {
@@ -142,11 +187,11 @@ export function createGameOperationalGateEvidenceProjection(
   });
 }
 
-function evidenceFromCorrelatedTerminal(
-  module: GameIntegrationModule,
-  connection: IntegrationConnection,
+function transitionFromCorrelatedTerminal(
+  module: GameIntegrationAdapter,
+  connection: GameConnection,
   fact: WorldFact,
-): Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId"> | null {
+): AcceptedTransition | null {
   let state: IntegrationStateView;
   try {
     state = module.readState(connection);
@@ -155,9 +200,12 @@ function evidenceFromCorrelatedTerminal(
   }
   const receipt = state.latestReceipt;
   if (
+    fact.source !== "stardew_mod" ||
     !validState(state) ||
     receipt === null ||
-    !terminalReceipt(receipt) ||
+    !succeededReceipt(receipt) ||
+    !identifier(receipt.actionId) ||
+    !revision(state.capabilityRevision) ||
     receipt.executionId !== fact.executionId ||
     receipt.requestId !== fact.requestId ||
     receipt.revision !== fact.revision ||
@@ -165,27 +213,69 @@ function evidenceFromCorrelatedTerminal(
   )
     return null;
 
-  /*
-   * IntegrationStateView exposes only a snapshot revision, not a distinct
-   * Mod-originated capability revision. IntegrationExecutionReceipt likewise
-   * has no action identity and there is no receipt-to-action ledger available
-   * at this composition boundary. Neither fact may be inferred from the
-   * snapshot, visible actions, or catalog completion checks. Consequently an
-   * exact action-specific postcondition and the required independent revision
-   * cannot currently be proved, so this projection deliberately emits no
-   * evidence until those source-owned fields are added.
-   */
-  return null;
+  try {
+    if (
+      !module.actionCatalog.hasCompletionEvidence(receipt.actionId, {
+        state: receipt.state,
+        reasonCode: receipt.reasonCode,
+        evidence: receipt.evidence,
+      })
+    )
+      return null;
+  } catch {
+    return null;
+  }
+
+  // A request/execution pair is one source lineage even if a later publication
+  // changes receipt revision or action metadata; it cannot count twice.
+  return Object.freeze({
+    lineage: `${receipt.executionId}\u0000${receipt.requestId}`,
+    actionId: receipt.actionId,
+    receiptRevision: receipt.revision,
+    capabilityRevision: state.capabilityRevision,
+  });
 }
 
-function terminalReceipt(value: IntegrationExecutionReceipt): boolean {
+function evidenceFromFinalState(
+  module: GameIntegrationAdapter,
+  connection: GameConnection,
+  transitions: readonly AcceptedTransition[],
+): Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId"> | null {
+  let state: IntegrationStateView;
+  try {
+    state = module.readState(connection);
+  } catch {
+    return null;
+  }
+  if (!validState(state) || !revision(state.capabilityRevision)) return null;
+  const maxReceiptRevision = Math.max(...transitions.map((transition) => transition.receiptRevision));
+  const maxCapabilityRevision = Math.max(...transitions.map((transition) => transition.capabilityRevision));
+  if (state.snapshotRevision < maxReceiptRevision || state.capabilityRevision < maxCapabilityRevision) return null;
+  const actionIds = new Set(transitions.map((transition) => transition.actionId));
+  if (actionIds.size !== 2) return null;
+  return Object.freeze({
+    schema: GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA,
+    surface: "game",
+    capabilityRevision: maxCapabilityRevision,
+    capabilityCount: state.capabilities.length,
+    transitions: Object.freeze({
+      count: 2 as const,
+      distinctActionCount: actionIds.size,
+      freshObservationCount: 2 as const,
+      allPostconditionsObserved: true as const,
+    }),
+    terminalState: "completed" as const,
+    stopSettled: true as const,
+  });
+}
+
+function succeededReceipt(value: IntegrationExecutionReceipt): value is IntegrationExecutionReceipt & { revision: number } {
   return (
     typeof value.requestId === "string" &&
     identifier(value.requestId) &&
     typeof value.executionId === "string" &&
     identifier(value.executionId) &&
-    typeof value.state === "string" &&
-    TERMINAL_RECEIPT_STATES.has(value.state) &&
+    value.state === "succeeded" &&
     typeof value.reasonCode === "string" &&
     value.reasonCode.length > 0 &&
     revision(value.revision) &&
@@ -193,6 +283,7 @@ function terminalReceipt(value: IntegrationExecutionReceipt): boolean {
     exactNonEmptyRecord(value.evidence)
   );
 }
+
 function validState(value: IntegrationStateView): value is IntegrationStateView & { snapshotRevision: number } {
   return (
     value.connected &&
@@ -227,4 +318,7 @@ function revision(value: unknown): value is number {
 }
 function count(value: unknown): value is number {
   return revision(value) && value <= 512;
+}
+function distinctActionCount(value: unknown): value is 2 {
+  return value === 2;
 }
