@@ -8,13 +8,15 @@
  * file, stdout line, or fixture projection can satisfy this gate.
  */
 import { randomBytes } from "node:crypto";
-import { lstat, open, readFile, realpath } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateGameOperationalGatePreflight } from "./lib/game-operational-gate-preflight.mjs";
 
-const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
+const PROJECT_ROOT = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const HOST_ROOT = join(PROJECT_ROOT, "host");
+const RELEASE_EVIDENCE_ROOT = join(PROJECT_ROOT, "artifacts", "game-operational-gate");
 // Every live attempt must cross the reviewed immutable-artifact launcher.
 const PRODUCTION_LAUNCHER = join(HOST_ROOT, "scripts", "start-production-artifact.mjs");
 const RUNNER_SCHEMA = "gamebuddy-game-operational-gate/v1";
@@ -43,24 +45,15 @@ const FIXTURE_KEYS = Object.freeze(["schema", "task", "targetVersion", "profile"
 const FORBIDDEN_FIXTURE_FIELD = /^(?:actions?|routes?|tools?|capability(?:Subset|Set|Allowlist)?|(?:turn|tool|action|wallClock|model|runtime|execution|gameplay)?Budget|quotas?|limits?)$/i;
 
 export function parseArguments(argv) {
-  if (argv.length !== 2 && argv.length !== 4)
-    throw new Error("usage: node tools/run-game-operational-gate.mjs --config <path> [--report <path>]");
-  const values = new Map();
-  for (let index = 0; index < argv.length; index += 2) {
-    const [flag, value] = [argv[index], argv[index + 1]];
-    if (
-      (flag !== "--config" && flag !== "--report") ||
-      typeof value !== "string" ||
-      value.length === 0 ||
-      value.includes("\0") ||
-      values.has(flag)
-    )
-      throw new Error("usage: node tools/run-game-operational-gate.mjs --config <path> [--report <path>]");
-    values.set(flag, resolve(value));
-  }
-  if (!values.has("--config"))
-    throw new Error("usage: node tools/run-game-operational-gate.mjs --config <path> [--report <path>]");
-  return Object.freeze({ configPath: values.get("--config"), reportPath: values.get("--report") });
+  if (
+    argv.length !== 2 ||
+    argv[0] !== "--config" ||
+    typeof argv[1] !== "string" ||
+    argv[1].length === 0 ||
+    argv[1].includes("\0")
+  )
+    throw new Error("usage: node tools/run-game-operational-gate.mjs --config <path>");
+  return Object.freeze({ configPath: resolve(argv[1]) });
 }
 
 function blocked(reasonCode) {
@@ -558,8 +551,17 @@ function isAbsoluteString(value) {
   return typeof value === "string" && value.length > 0 && value.length <= PATH_LIMIT && !value.includes("\0") && isAbsolute(value);
 }
 
+export async function prepareReleaseReportTarget(runId) {
+  if (!OPAQUE_ID.test(runId)) throw new Error("invalid_report_run_id");
+  await mkdir(RELEASE_EVIDENCE_ROOT, { recursive: true });
+  const root = await realpath(RELEASE_EVIDENCE_ROOT);
+  if (root !== RELEASE_EVIDENCE_ROOT) throw new Error("release_evidence_root_identity_mismatch");
+  const rootState = await lstat(root);
+  if (!rootState.isDirectory() || rootState.isSymbolicLink()) throw new Error("release_evidence_root_not_real_directory");
+  return prepareReportTarget(join(root, `${runId}.json`));
+}
+
 export async function prepareReportTarget(path) {
-  if (path === undefined) return undefined;
   if (!isAbsolute(path) || relative(path, dirname(path)) === "") throw new Error("invalid_report_path");
   try {
     await lstat(path);
@@ -579,7 +581,6 @@ export async function prepareReportTarget(path) {
 }
 
 export async function writeOperationalGateReport(path, report) {
-  if (path === undefined) return;
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
   if (/(?:content|prompt|provider|cookie|csrf|token|jsonl|sqlite|route|tool|budget)/i.test(serialized))
     throw new Error("evidence_report_content_guard_rejected");
@@ -618,8 +619,8 @@ function reportBase(runId, nonceSha256, artifact) {
 
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArguments(argv);
-  const reportPath = await prepareReportTarget(args.reportPath);
   const runId = randomBytes(12).toString("hex");
+  const reportPath = await prepareReleaseReportTarget(runId);
   const nonceSha256 = randomBytes(32).toString("hex");
   let report;
   try {
