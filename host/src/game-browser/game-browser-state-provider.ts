@@ -6,7 +6,7 @@ import {
 } from "../game-browser-contract/index.js";
 import type { StardewCompatibilityStatus } from "../stardew-compatibility.js";
 import type {
-  StardewRoleLifecycleFacade,
+  StardewRoleLifecycleReader,
   StardewRoleLifecycleView,
 } from "../stardew-role-lifecycle-facade.js";
 
@@ -32,7 +32,7 @@ export type GameBrowserStateProvider = Readonly<{
 
 export function createGameBrowserStateProvider(
   profile: ComposedGameProfile,
-  lifecycle: StardewRoleLifecycleFacade,
+  lifecycle: StardewRoleLifecycleReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read"))

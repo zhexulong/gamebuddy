@@ -37,6 +37,8 @@ const baseSession = {
   saveId: "save_01",
   worldId: "world_01",
   hostPlayerId: "world_01",
+  runtimeRole: "player_host",
+  launchGeneration: "player-host-generation-01",
   publishedAtUnixMs: 1_000,
   expiresAtUnixMs: 20_000,
   nonce: "nonce_01",
@@ -134,6 +136,17 @@ function assertView(
   assert.equal(Object.isFrozen(view.playerHost), true);
   assert.equal(Object.isFrozen(view.aiClient), true);
 }
+
+test("null attachment truthfully reports an unauthenticated idle lifecycle", async () => {
+  await withFixture(async ({ owner }) => {
+    const idle = createStardewRoleLifecycleFacade(null, owner);
+    assertView(
+      await idle.readRoleLifecycleView(),
+      { state: "not_started", ownership: "none" },
+      { state: "not_started", ownership: "none" },
+    );
+  });
+});
 
 test("facade delegates lifecycle projection and exposes no direct launch route", async () => {
   await withFixture(async ({ facade, owner }) => {
