@@ -77,6 +77,8 @@ internal sealed record FarmhandSessionAdvertisement
     public string SaveId { get; init; } = string.Empty;
     public string WorldId { get; init; } = string.Empty;
     public string HostPlayerId { get; init; } = string.Empty;
+    public string RuntimeRole { get; init; } = string.Empty;
+    public string LaunchGeneration { get; init; } = string.Empty;
     public long PublishedAtUnixMs { get; init; }
     public long ExpiresAtUnixMs { get; init; }
     public string Nonce { get; init; } = string.Empty;

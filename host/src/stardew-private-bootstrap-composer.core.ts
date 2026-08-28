@@ -725,6 +725,8 @@ type ManifestHandoffSelectionFacts = {
   readonly owner: StardewOwnedPlayerHostPhaseAOwner;
   readonly flow: StardewAttachmentFlow;
   readonly choice: StardewVerifiedCabinChoice;
+  readonly verifiedAdvertisementRuntimeRole: string;
+  readonly verifiedAdvertisementGeneration: string;
   readonly expiresAtMs: number;
   state: ManifestHandoffSelectionState;
   requestId: string | null;
@@ -961,7 +963,15 @@ function createManifestHandoffCoordinatorCore(
       const ownerFacts = requireOwnedPhaseAFacts(owner, compositionIdentity);
       assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
       const flow = createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, readClock);
-      const choice = await flow.verifyCabinChoice(candidateCabinId);
+      const expectedGeneration = requirePlayerHostLaunchGeneration(ownerFacts);
+      let choice: StardewVerifiedCabinChoice;
+      try {
+        choice = await flow.verifyCabinChoice(candidateCabinId, expectedGeneration);
+      } catch (error) {
+        if (error instanceof Error && error.message === "stardew_player_host_generation_mismatch")
+          await quarantinePlayerHostGenerationMismatch(ownerFacts);
+        throw error;
+      }
       assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
       const selection = Object.freeze(Object.create(null)) as StardewManifestHandoffSelection;
       const facts: ManifestHandoffSelectionFacts = {
@@ -969,6 +979,8 @@ function createManifestHandoffCoordinatorCore(
         owner,
         flow,
         choice,
+        verifiedAdvertisementRuntimeRole: "player_host",
+        verifiedAdvertisementGeneration: expectedGeneration,
         expiresAtMs: ownerFacts.expiresAtMs,
         state: "available",
         requestId: null,
@@ -991,6 +1003,7 @@ function createManifestHandoffCoordinatorCore(
       const ownerFacts = requireOwnedPhaseAFacts(facts.owner, compositionIdentity);
       try {
         assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
+        await assertPlayerHostGenerationCorrelation(ownerFacts, facts.verifiedAdvertisementGeneration);
         let requestId: string;
         try {
           requestId = await facts.flow.confirmAndRequest(facts.choice, { confirmed: true });
@@ -1002,9 +1015,10 @@ function createManifestHandoffCoordinatorCore(
         facts.state = "request_published";
         try {
           const remainingMs = Math.min(60_000, Math.max(1, facts.expiresAtMs - readClock()));
-          const manifest = await facts.flow.waitForManifest(requestId, remainingMs);
-          assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
-          facts.manifest = Object.freeze({ ...manifest });
+           const manifest = await facts.flow.waitForManifest(requestId, remainingMs);
+           assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
+           await assertPlayerHostGenerationCorrelation(ownerFacts, facts.verifiedAdvertisementGeneration);
+           facts.manifest = Object.freeze({ ...manifest });
           facts.state = "admitted";
           const admission = Object.freeze(Object.create(null)) as StardewManifestAdmission;
           const admissionFacts: ManifestHandoffAdmissionFacts = {
@@ -1067,6 +1081,30 @@ function createManifestHandoffCoordinatorCore(
     }
   };
   return Object.freeze({ coordinator: Object.freeze(coordinator), materialize });
+}
+
+function requirePlayerHostLaunchGeneration(facts: OwnedPhaseAFacts): string {
+  const playerHost = facts.durableOwner.record.playerHost;
+  if (playerHost.kind !== "launch_reserved") throw new Error("stardew_player_host_generation_unavailable");
+  return playerHost.launchGeneration;
+}
+
+async function quarantinePlayerHostGenerationMismatch(facts: OwnedPhaseAFacts): Promise<never> {
+  try {
+    await facts.quarantineOwner();
+  } catch {
+    // Preserve the terminal correlation failure; quarantine is itself one-shot
+    // and the owner remains closed when persistence cannot complete.
+  }
+  throw new Error("stardew_player_host_generation_mismatch");
+}
+
+async function assertPlayerHostGenerationCorrelation(
+  facts: OwnedPhaseAFacts,
+  advertisementGeneration: string,
+): Promise<void> {
+  if (advertisementGeneration !== requirePlayerHostLaunchGeneration(facts))
+    await quarantinePlayerHostGenerationMismatch(facts);
 }
 
 function assertManifestHandoffOwnerAdmissible(

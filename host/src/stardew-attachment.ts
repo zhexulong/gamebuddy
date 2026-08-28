@@ -5,6 +5,12 @@ import { basename, isAbsolute, resolve } from "node:path";
 export const STARDew_PROVISIONING_VERSION = 1;
 export const STARDew_INTEGRATION_ID = "stardew";
 
+declare const stardewVerifiedCabinChoiceBrand: unique symbol;
+
+export type StardewVerifiedCabinChoice = Readonly<{
+  readonly [stardewVerifiedCabinChoiceBrand]: never;
+}>;
+
 export type StardewSessionAdvertisement = Readonly<{
   schemaVersion: number;
   integrationId: string;
@@ -21,6 +27,8 @@ export type StardewSessionAdvertisement = Readonly<{
   nonce: string;
   state: string;
   hostPlayerId: string;
+  runtimeRole: string;
+  launchGeneration: string;
   cabins: readonly Readonly<{
     cabinId: string;
     ownerFarmhandId: string;
@@ -79,7 +87,7 @@ export type StardewAttachmentOptions = Readonly<{
   sessionDirectory: string;
   sessionToken: string;
   companionId: string;
-  cabinId: string;
+  cabinId?: string;
   expectedFarmhandId?: string;
   nowMs?: () => number;
 }>;
@@ -91,13 +99,17 @@ export type StardewAttachmentOptions = Readonly<{
  */
 export class StardewAttachmentFlow {
   readonly #options: StardewAttachmentOptions;
+  readonly #verifiedCabinChoices = new WeakMap<object, Readonly<{
+    session: StardewSessionAdvertisement;
+    cabinId: string;
+  }>>();
 
   public constructor(options: StardewAttachmentOptions) {
     if (
       !isAbsoluteSafePath(options.sessionDirectory) ||
       !isToken(options.sessionToken) ||
       !isOpaque(options.companionId) ||
-      !isOpaque(options.cabinId)
+      (options.cabinId !== undefined && !isOpaque(options.cabinId))
     ) {
       throw new Error("invalid_stardew_attachment_options");
     }
@@ -121,11 +133,42 @@ export class StardewAttachmentFlow {
     return session;
   }
 
+  public async verifyCabinChoice(
+    candidateCabinId: string,
+    expectedPlayerHostLaunchGeneration?: string,
+  ): Promise<StardewVerifiedCabinChoice> {
+    if (!isOpaque(candidateCabinId)) throw new Error("invalid_cabin_id");
+    if (expectedPlayerHostLaunchGeneration !== undefined && !isOpaque(expectedPlayerHostLaunchGeneration))
+      throw new Error("invalid_player_host_launch_generation");
+    const session = await this.readLiveSession();
+    if (
+      expectedPlayerHostLaunchGeneration !== undefined &&
+      session.launchGeneration !== expectedPlayerHostLaunchGeneration
+    )
+      throw new Error("stardew_player_host_generation_mismatch");
+    const cabin = session.cabins.find((candidate) => candidate.cabinId === candidateCabinId);
+    if (cabin === undefined) throw new Error("cabin_missing");
+    if (cabin.isBusy) throw new Error("target_farmhand_busy");
+    if (cabin.boundCompanionId !== "" && cabin.boundCompanionId !== this.#options.companionId)
+      throw new Error("cabin_bound_to_other_companion");
+    const choice = Object.freeze(Object.create(null)) as StardewVerifiedCabinChoice;
+    this.#verifiedCabinChoices.set(choice, Object.freeze({ session, cabinId: candidateCabinId }));
+    return choice;
+  }
+
   public async confirmAndRequest(
-    session: StardewSessionAdvertisement,
+    sessionOrChoice: StardewSessionAdvertisement | StardewVerifiedCabinChoice,
     confirmation: Readonly<{ confirmed: boolean; expectedFarmhandId?: string }> = { confirmed: false },
   ): Promise<string> {
     if (!confirmation.confirmed) throw new Error("user_confirmation_required");
+    const choiceFacts = typeof sessionOrChoice === "object" && sessionOrChoice !== null
+      ? this.#verifiedCabinChoices.get(sessionOrChoice)
+      : undefined;
+    const session = choiceFacts?.session ?? sessionOrChoice as StardewSessionAdvertisement;
+    const cabinId = choiceFacts?.cabinId ?? this.#options.cabinId;
+    if (!isOpaque(cabinId)) throw new Error("invalid_cabin_id");
+    if (choiceFacts === undefined && !isRecord(sessionOrChoice))
+      throw new Error("invalid_stardew_cabin_choice");
     const current = await this.readLiveSession();
     if (
       !verifySignature(session, this.#options.sessionToken) ||
@@ -140,10 +183,12 @@ export class StardewAttachmentFlow {
       session.saveId !== current.saveId ||
       session.worldId !== current.worldId ||
       session.hostPlayerId !== current.hostPlayerId ||
+      session.runtimeRole !== current.runtimeRole ||
+      session.launchGeneration !== current.launchGeneration ||
       session.nonce !== current.nonce
     )
       throw new Error("stardew_session_changed");
-    const cabin = current.cabins.find((candidate) => candidate.cabinId === this.#options.cabinId);
+    const cabin = current.cabins.find((candidate) => candidate.cabinId === cabinId);
     if (cabin === undefined) throw new Error("cabin_missing");
     if (cabin.isBusy) throw new Error("target_farmhand_busy");
     if (cabin.boundCompanionId !== "" && cabin.boundCompanionId !== this.#options.companionId)
@@ -158,7 +203,7 @@ export class StardewAttachmentFlow {
       saveId: current.saveId,
       worldId: current.worldId,
       companionId: this.#options.companionId,
-      cabinId: this.#options.cabinId,
+      cabinId,
       expectedFarmhandId,
       confirmedAtUnixMs: this.now(),
       requestId: randomUUID().replaceAll("-", ""),
@@ -170,6 +215,14 @@ export class StardewAttachmentFlow {
       JSON.stringify(signed),
     );
     return request.requestId;
+  }
+
+  public async readCompatibilityOutcome(): Promise<Readonly<{
+    status: "compatible_unverified";
+    attachmentAllowed: true;
+  }>> {
+    await this.readLiveSession();
+    return Object.freeze({ status: "compatible_unverified" as const, attachmentAllowed: true as const });
   }
 
   public async waitForResponse(requestId: string, timeoutMs = 60_000): Promise<StardewAttachmentResponse> {
@@ -230,7 +283,8 @@ export class StardewAttachmentFlow {
     if (manifest.requestId !== requestId) throw new Error("stardew_manifest_request_mismatch");
     if (manifest.expiresAtUnixMs <= now || manifest.issuedAtUnixMs > now + 30_000)
       throw new Error("stardew_manifest_expired");
-    if (manifest.companionId !== this.#options.companionId || manifest.cabinId !== this.#options.cabinId)
+    if (manifest.companionId !== this.#options.companionId ||
+      (this.#options.cabinId !== undefined && manifest.cabinId !== this.#options.cabinId))
       throw new Error("stardew_manifest_identity_mismatch");
     const cabinMatches = current.cabins.filter((cabin) => cabin.cabinId === manifest.cabinId);
     if (
@@ -340,8 +394,10 @@ function validateSession(value: unknown): StardewSessionAdvertisement {
     !isEndpoint(value.endpoint) ||
     !isOpaque(value.saveId) ||
     !isOpaque(value.worldId) ||
-    !isOpaque(value.hostPlayerId) ||
-    !isTimestamp(value.publishedAtUnixMs) ||
+     !isOpaque(value.hostPlayerId) ||
+     value.runtimeRole !== "player_host" ||
+     !isOpaque(value.launchGeneration) ||
+     !isTimestamp(value.publishedAtUnixMs) ||
     !isTimestamp(value.expiresAtUnixMs) ||
     value.expiresAtUnixMs <= value.publishedAtUnixMs ||
     !isOpaque(value.nonce) ||

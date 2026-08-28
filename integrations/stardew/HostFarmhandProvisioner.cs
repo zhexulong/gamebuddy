@@ -87,7 +87,7 @@ internal sealed class HostFarmhandProvisioner
 
     internal static HostFarmhandProvisioner? TryStart(IModHelper helper, IMonitor monitor, HostFarmhandProvisioningConfig? config, bool allowNativeAutomationWorldReady = false)
     {
-        if (config is not { IsValid: true })
+        if (config is not { IsValid: true } || !BridgeProtocol.IsOpaqueId(config.LaunchGeneration))
             return null;
 
         string directory = Path.GetFullPath(config.SessionDirectory);
@@ -352,6 +352,8 @@ internal sealed class HostFarmhandProvisioner
             SaveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture),
             WorldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture),
             HostPlayerId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            RuntimeRole = "player_host",
+            LaunchGeneration = this.config.LaunchGeneration,
             PublishedAtUnixMs = now,
             ExpiresAtUnixMs = now + 3_000,
             Nonce = this.sessionNonce,
