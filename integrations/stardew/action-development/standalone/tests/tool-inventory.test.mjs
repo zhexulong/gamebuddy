@@ -18,7 +18,7 @@ function assertRejected(mutator, expected) {
 
 test("validates the checked-in inventory against supplied governed paths", () => {
   const report = validateToolInventory(inventory, { trackedPaths });
-  assert.equal(report.fileCount, 151);
+  assert.equal(report.fileCount, 166);
   assert.equal(report.pilotLegacyClosureCount, 13);
   assert.equal(Object.values(report.countsByClassification).reduce((sum, count) => sum + count, 0), report.fileCount);
 });

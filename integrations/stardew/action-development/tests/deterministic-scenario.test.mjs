@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rmdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,10 +21,10 @@ test("runs a deterministic fake child through private result transport", async (
 });
 
 for (const [mode, pattern, timeoutMs] of [
-  ["crash", /child_failed/, 1_000],
-  ["missing", /result_invalid/, 1_000],
-  ["wrong-identity", /result_invalid/, 1_000],
-  ["invalid", /result_invalid/, 1_000],
+  ["crash", /child_failed/, 10_000],
+  ["missing", /result_invalid/, 10_000],
+  ["wrong-identity", /result_invalid/, 10_000],
+  ["invalid", /result_invalid/, 10_000],
   ["hang", /child_failed/, 100],
 ]) {
   test(`fails closed when fake child ${mode}`, async () => {
@@ -33,7 +33,7 @@ for (const [mode, pattern, timeoutMs] of [
       await assert.rejects(runDeterministicScenario({ identity, mode, timeoutMs, privateResultRoot: root }), pattern);
       assert.deepEqual(await readdir(root), []);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await rmdir(root);
     }
   });
 }

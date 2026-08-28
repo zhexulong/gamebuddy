@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readGeneratedEquipToolContract } from "./contract-export.mjs";
 import { validateActionContractEquipTool } from "./action-contract.mjs";
+import { preflightEquipTool } from "./equip-tool-preflight.mjs";
+import { readEquipToolLiveStatus, runEquipToolLive } from "./equip-tool-live.mjs";
 
 function fail(code) {
   throw new Error(`stardew_action_project_${code}`);
@@ -11,8 +13,11 @@ function fail(code) {
 const PACKAGE_DIRECTORY = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PACKAGE_INVENTORY = path.join(PACKAGE_DIRECTORY, "tool-inventory.json");
 
-export async function runActionProject({ manifest, invocation }) {
+export async function runActionProject({ manifest, invocation, dependencies }) {
   if (!manifest || manifest.gameId !== "stardew" || !invocation) fail("invalid_invocation");
+  if (invocation.command === "preflight") return preflightEquipTool({ invocation, dependencies });
+  if (invocation.command === "run-live") return runEquipToolLive({ manifest, invocation, dependencies });
+  if (invocation.command === "status") return readEquipToolLiveStatus({ manifest, invocation, dependencies });
   if (invocation.command === "check") {
     if (invocation.actionId !== "equip_tool") fail("action_not_available");
     let generated;

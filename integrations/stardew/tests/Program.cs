@@ -25,7 +25,7 @@ internal static class Program
             ProductionAssemblyBinding.AssertByteAlteredAssemblyRejectedBeforeTypeLoad(expectedSha256, fullProductionAssemblyPath);
             SelectableCheckpointTruthTable(); UnlockedSelectionTruthTable(); LadderProjectionTruthTable(); BootstrapHandoffTruthTable(); MineEntryTerminalVocabularyTruthTable();
             PortfolioMineLadderIntegrationStructuralContract.Run(loadedAssembly);
-            Console.WriteLine("Portfolio mine projection and direct ladder structural contract passed."); return 0;
+            Console.Write("Portfolio mine projection and direct ladder structural contract passed."); return 0;
         }
         catch (Exception exception) { Console.Error.WriteLine(exception.Message); return 1; }
     }

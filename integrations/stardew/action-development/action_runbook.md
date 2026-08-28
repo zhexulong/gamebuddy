@@ -1,5 +1,16 @@
 # Stardew Action Development Runbook
 
+## Read-only `equip_tool` target preflight
+
+Supply a local, absolute profile path based on `profiles/example.json` (the committed example is intentionally placeholder-only and cannot become READY):
+
+```bash
+pnpm --dir integrations/stardew/action-development action:preflight --action equip_tool --profile <absolute-profile-json>
+```
+
+The profile contains no token, credential, pipe name, or endpoint. `nativeClientConfigFile` is only the fixed locator for the existing harness-owned ephemeral client configuration. `releaseDir` is the operator-supplied absolute source directory for the exact four-file GameBuddy Mod bundle; it must be physically separate from `modsPath/GameBuddy`. Preflight validates every bundle file as a regular non-link, validates the GameBuddy manifest identity and adapter version, and derives a SHA-256 bundle binding from the real bytes. It also validates trusted target/fixture/lease paths, exact versions, an idle fixture transaction, and an unheld runtime lease before connecting for exactly one fresh observation. It does not acquire the lease, prepare or restore a fixture, launch Stardew, begin evidence, submit an action, or write runtime state.
+
+
 This directory is the Stardew-owned action-development boundary. It depends on the game-agnostic devkit but owns Stardew action scenarios, profiles, fixtures, target-runtime gates, and publication evidence.
 
 ## Current commands
@@ -13,7 +24,7 @@ pnpm action:extraction-audit
 pnpm action:root-ci-disposition-audit
 ```
 
-`inventory` validates the migration map; it is not an executable registry. `action:check:equip-tool` is a deterministic generated-contract check, and `action:ci` runs only that check plus package-local deterministic tests. `action:extraction-audit` reports current standalone blockers without copying root files or using a fallback. `action:root-ci-disposition-audit` lists the root CI/portfolio edges that must remain until package-owned parity exists; it does not authorize a CI cutover. `preflight`, `run-live`, and `status` remain fail-closed: no package command starts Stardew, uses a fixture, connects a pipe, or performs a mutation.
+`inventory` validates the migration map; it is not an executable registry. `action:check:equip-tool` is a deterministic generated-contract check, and `action:ci` runs only package-owned deterministic checks. `action:extraction-audit` validates the standalone package closure, while `action:extraction-rehearsal` performs the fresh-root frozen-install rehearsal. `action:root-ci-disposition-audit` verifies the package-owned root CI cutover. `preflight` is the read-only target admission described above. `run-live` composes the admitted `equip_tool` gate in strict order: READY preflight, exact release-bundle revalidation, target lease, staged evidence, fixture preparation, package-owned scenario child, exact private result validation, fixture restoration, lease release, and only then passing evidence finalization. It does not retry uncertain mutations. `status` reads only the Devkit evidence manifest and never observes the game.
 
 ## Development flow
 

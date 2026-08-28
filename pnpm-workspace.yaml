@@ -3,6 +3,7 @@ packages:
   - host
   - voice-gateway
   - dialogue-web
+  - integrations/stardew/action-development
   # Project-maintained Magic Context fork. Kept out of the main workspace so
   # its Bun build/runtime remains isolated from the GameBuddy Node workspace.
   - '!vendor/magic-context/**'

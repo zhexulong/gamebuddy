@@ -8,11 +8,7 @@ import {
 } from "../standalone/standalone-extraction-manifest.mjs";
 
 const MANIFEST_URL = new URL("../standalone/standalone-extraction-manifest.json", import.meta.url);
-const EXPECTED_BLOCKERS = [
-  "devkit-workspace-link",
-  "stardew-contract-exporter-project",
-  "stardew-core-source-closure",
-];
+const EXPECTED_BLOCKERS = [];
 
 async function readManifest() {
   return JSON.parse(await readFile(MANIFEST_URL, "utf8"));
@@ -25,14 +21,22 @@ function assertRejected(candidate, code) {
   );
 }
 
-test("reads the preparation-only blocked manifest and preserves the current audit blockers", async () => {
+function entry(manifest, id) {
+  return manifest.entries.find((candidate) => candidate.id === id);
+}
+
+test("reads the attested standalone manifest with no source-audit blockers", async () => {
   const report = await readStandaloneExtractionManifest();
   assert.equal(report.schema, STANDALONE_MANIFEST_SCHEMA);
-  assert.equal(report.status, "blocked");
-  assert.equal(report.claim, "dependency-inventory-only");
+  assert.equal(report.status, "standalone-ready");
+  assert.equal(report.claim, "package-owned-deterministic-closure");
   assert.deepEqual(report.sourceAuditBlockerIds, EXPECTED_BLOCKERS);
   assert.deepEqual(report.entryIds, [
-    ...EXPECTED_BLOCKERS,
+    "devkit-workspace-link",
+    "stardew-contract-exporter-project",
+    "stardew-core-source-closure",
+    "stardew-scaffold-source-closure",
+    "action-projection-source-closure",
     "package-owned-node-pnpm-pins",
     "package-owned-dotnet-pin",
     "package-owned-frozen-lockfile",
@@ -44,7 +48,7 @@ test("reads the preparation-only blocked manifest and preserves the current audi
 test("accepts the exact package-owned dependency inventory without reading or writing dependencies", async () => {
   const manifest = await readManifest();
   const report = validateStandaloneExtractionManifest(manifest);
-  assert.equal(report.packageOwnedPathCount, 7);
+  assert.equal(report.packageOwnedPathCount, 10);
   assert.equal(manifest.package.devkit.source, "packed-artifact");
   assert.equal(manifest.package.devkit.specifier, "file:inputs/devkit/game-action-devkit-0.1.0.tgz");
   assert.equal(manifest.readPolicy.runtimeInputs.length, 0);
@@ -89,19 +93,19 @@ test("rejects root tools, .ci, package.json, and Host paths", async () => {
   const manifest = await readManifest();
 
   const rootTools = structuredClone(manifest);
-  rootTools.entries[0].path = "tools/run-stardew-action.mjs";
+  entry(rootTools, "devkit-workspace-link").path = "tools/run-stardew-action.mjs";
   assertRejected(rootTools, "root_tools_path_forbidden");
 
   const rootCi = structuredClone(manifest);
-  rootCi.entries[1].path = ".ci/test-portfolio.json";
+  entry(rootCi, "stardew-contract-exporter-project").path = ".ci/test-portfolio.json";
   assertRejected(rootCi, "root_ci_path_forbidden");
 
   const rootPackage = structuredClone(manifest);
-  rootPackage.entries[3].path = "package.json";
+  entry(rootPackage, "package-owned-node-pnpm-pins").path = "package.json";
   assertRejected(rootPackage, "root_package_json_forbidden");
 
   const rootHost = structuredClone(manifest);
-  rootHost.entries[2].projectPath = "Host/src/stardew-adapter.csproj";
+  entry(rootHost, "stardew-core-source-closure").projectPath = "Host/src/stardew-adapter.csproj";
   assertRejected(rootHost, "root_host_path_forbidden");
 });
 
@@ -121,7 +125,7 @@ test("rejects workspace devkit declarations and non-packed artifact forms", asyn
   assertRejected(registry, "devkit_specifier_not_file");
 
   const unpacked = structuredClone(manifest);
-  unpacked.entries[0].path = "inputs/devkit/package.json";
+  entry(unpacked, "devkit-workspace-link").path = "inputs/devkit/package.json";
   assertRejected(unpacked, "devkit_artifact_path_invalid");
 });
 
@@ -129,19 +133,19 @@ test("rejects escaping, absolute, and duplicate dependency paths", async () => {
   const manifest = await readManifest();
 
   const parentEscape = structuredClone(manifest);
-  parentEscape.entries[1].path = "inputs/../ActionDevelopmentContractExport.csproj";
+  entry(parentEscape, "stardew-contract-exporter-project").path = "inputs/../ActionDevelopmentContractExport.csproj";
   assertRejected(parentEscape, "entry_path_escape");
 
   const absolute = structuredClone(manifest);
-  absolute.entries[1].path = "/tmp/ActionDevelopmentContractExport.csproj";
+  entry(absolute, "stardew-contract-exporter-project").path = "/tmp/ActionDevelopmentContractExport.csproj";
   assertRejected(absolute, "entry_path_escape");
 
   const windowsAbsolute = structuredClone(manifest);
-  windowsAbsolute.entries[1].path = "C:/ActionDevelopmentContractExport.csproj";
+  entry(windowsAbsolute, "stardew-contract-exporter-project").path = "C:/ActionDevelopmentContractExport.csproj";
   assertRejected(windowsAbsolute, "entry_path_escape");
 
   const caseFoldedDuplicate = structuredClone(manifest);
-  caseFoldedDuplicate.entries[2].projectPath = "inputs/stardew-contract-export/ActionDevelopmentContractExport.csproj";
+  entry(caseFoldedDuplicate, "stardew-core-source-closure").projectPath = "inputs/stardew-contract-export/ActionDevelopmentContractExport.csproj";
   assertRejected(caseFoldedDuplicate, "entry_path_duplicate");
 });
 
@@ -161,22 +165,22 @@ test("rejects live/runtime inputs and any attempt to widen the root read policy"
   assertRejected(widenedRoot, "read_policy_allowed_root_invalid");
 
   const sourceRoot = structuredClone(manifest);
-  sourceRoot.entries[1].path = "inputs/../../integrations/stardew/tests/ActionDevelopmentContractExport.csproj";
+  entry(sourceRoot, "stardew-contract-exporter-project").path = "inputs/../../integrations/stardew/tests/ActionDevelopmentContractExport.csproj";
   assertRejected(sourceRoot, "entry_path_escape");
 });
 
-test("rejects altered audit status or blocker set instead of projecting readiness", async () => {
+test("rejects altered ready status or fabricated blocker set", async () => {
   const manifest = await readManifest();
 
-  const ready = structuredClone(manifest);
-  ready.status = "standalone-ready";
-  assertRejected(ready, "status_invalid");
+  const blocked = structuredClone(manifest);
+  blocked.status = "blocked";
+  assertRejected(blocked, "status_invalid");
 
-  const auditReady = structuredClone(manifest);
-  auditReady.sourceAudit.status = "standalone-ready";
-  assertRejected(auditReady, "source_audit_status_invalid");
+  const auditBlocked = structuredClone(manifest);
+  auditBlocked.sourceAudit.status = "blocked";
+  assertRejected(auditBlocked, "source_audit_status_invalid");
 
-  const missingBlocker = structuredClone(manifest);
-  missingBlocker.sourceAudit.blockerIds.pop();
-  assertRejected(missingBlocker, "source_audit_blockers_missing_or_changed");
+  const fabricatedBlocker = structuredClone(manifest);
+  fabricatedBlocker.sourceAudit.blockerIds.push("stale-blocker");
+  assertRejected(fabricatedBlocker, "source_audit_blockers_missing_or_changed");
 });

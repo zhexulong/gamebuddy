@@ -8,6 +8,6 @@
     <AssemblyName>GameBuddy.Stardew.ActionDevelopmentContractExport</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Core\GameBuddy.Stardew.Core.csproj" />
+    <ProjectReference Include="..\stardew-core\GameBuddy.Stardew.Core.csproj" />
   </ItemGroup>
 </Project>

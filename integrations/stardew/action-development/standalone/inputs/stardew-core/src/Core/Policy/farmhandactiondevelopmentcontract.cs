@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GameBuddy.Stardew.Core.Protocol;
@@ -31,9 +32,9 @@ public sealed record ActionDevelopmentContractArgs(
 );
 
 public sealed record ActionDevelopmentContractTerminal(
-    string[] AcceptableStates,
+    IReadOnlyList<string> AcceptableStates,
     string SuccessReasonCode,
-    string[] EvidenceFields,
+    IReadOnlyList<string> EvidenceFields,
     string EvidenceRelation
 );
 
@@ -46,6 +47,11 @@ public static class FarmhandActionDevelopmentContract
 {
     public const string Schema = "gamebuddy-action-development-contract/v1";
     public const string GameId = "stardew";
+
+    private static readonly ReadOnlyCollection<string> EquipToolAcceptableStates =
+        Array.AsReadOnly(new[] { "succeeded", "uncertain" });
+    private static readonly ReadOnlyCollection<string> EquipToolEvidenceFields =
+        Array.AsReadOnly(new[] { "slot", "before", "expected", "after" });
 
     public static ActionDevelopmentContract DeriveContract(string actionId)
     {
@@ -94,9 +100,9 @@ public static class FarmhandActionDevelopmentContract
         // definition. It describes the deterministic check boundary; it does
         // not assert that a native handler has produced live evidence.
         "equip_tool" => new ActionDevelopmentContractTerminal(
-            new[] { "succeeded", "uncertain" },
+            EquipToolAcceptableStates,
             "tool_selected",
-            new[] { "slot", "before", "expected", "after" },
+            EquipToolEvidenceFields,
             "after_equals_expected"),
         _ => throw new KeyNotFoundException($"Action {actionId} has no terminal evidence contract."),
     };
@@ -113,6 +119,6 @@ public static class FarmhandActionDevelopmentContract
     /// </summary>
     public static string SerializeToJson(ActionDevelopmentContract contract)
     {
-        return JsonSerializer.Serialize(contract, ExportOptions);
+        return JsonSerializer.Serialize(contract, ExportOptions).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 }

@@ -1,5 +1,18 @@
 {
   "schema": "gamebuddy-action-target-profile/v1",
-  "profileIdentity": "stardew-local-example",
-  "targetVersion": "stardew-1.6.15-smapi"
+  "profileIdentity": "stardew-local-example-placeholder",
+  "targetVersion": "replace-me-target-version",
+  "gameInstallPath": "C:\\replace-me\\Stardew Valley",
+  "modsPath": "C:\\replace-me\\Stardew Valley\\Mods",
+  "releaseDir": "C:\\replace-me\\GameBuddy\\Release",
+  "fixtureRoot": "C:\\replace-me\\fixture",
+  "saveIdentity": "GameBuddyFixtureExample_000000000",
+  "templateIdentity": "GameBuddyFixtureExample_000000000",
+  "gameVersion": "replace-me-game-version",
+  "smapiVersion": "replace-me-smapi-version",
+  "adapterVersion": "replace-me-adapter-version",
+  "runtimeLeaseRoot": "C:\\replace-me\\runtime-lease",
+  "runtimeLeaseIdentity": "replace-me-runtime-lease",
+  "timeoutMs": 30000,
+  "nativeClientConfigFile": "C:\\replace-me\\native-client-config.json"
 }

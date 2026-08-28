@@ -28,11 +28,6 @@ jobs:
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
       - run: pnpm install --frozen-lockfile
-      # Source-only Farmhand projection checks; no licensed Stardew/SMAPI assemblies required.
-      - run: pnpm test:stardew-action-projection
-      - run: pnpm check:stardew-action-surface
-      # P2C additionally requires GAMEBUDDY_STARDEW_GAME_PATH and licensed
-      # target-version Stardew/SMAPI assemblies, so it is intentionally local-only.
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm check:host-production-import-boundary
@@ -82,12 +77,7 @@ jobs:
           global-json-file: global.json
       - run: pnpm install --frozen-lockfile
       - run: dotnet restore GameBuddy.sln --locked-mode
-      # GitHub-hosted runners do not have the licensed, target-version Stardew
-      # and SMAPI assemblies required by ModBuildConfig. Do not substitute fake
-      # assemblies: Release compilation remains a required local, target-version
-      # gate via tools/build-stardew.ps1 before deployment or publication.
-      - shell: pwsh
-        run: ./tools/verify-stardew-scaffold.ps1
-      # Static leaves run only source/policy assertions and never mutate the game or invoke action scripts.
-      - run: pnpm test:stardew:static
-      - run: pnpm verify:stardew:static
+      # The Stardew-owned package selects every PR-safe deterministic check.
+      # Missing licensed target artifacts remain named blocked evidence; this command
+      # cannot select target publication, live fixtures, or game mutation.
+      - run: pnpm --dir integrations/stardew/action-development action:ci

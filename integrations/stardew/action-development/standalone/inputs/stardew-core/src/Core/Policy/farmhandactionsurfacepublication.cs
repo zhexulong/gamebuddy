@@ -1,4 +1,6 @@
+using System.Collections.ObjectModel;
 using System.Text.Json;
+
 namespace GameBuddy.Stardew.Core.Policy;
 
 /// <summary>
@@ -36,7 +38,7 @@ public static class FarmhandActionSurfacePublication
 
     public static IReadOnlyList<FarmhandActionSurfaceRegistration> Registrations { get; } = CreateRegistrations();
 
-    private static IReadOnlyList<FarmhandActionSurfaceRegistration> CreateRegistrations()
+    private static ReadOnlyCollection<FarmhandActionSurfaceRegistration> CreateRegistrations()
     {
         if (FarmhandActionCatalog.Registrations.Count > MaximumRegistrations)
             throw new InvalidOperationException("Farmhand action surface registration count exceeds the bounded export limit.");

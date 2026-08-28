@@ -43,8 +43,8 @@ async function withScaffoldFixture(mutate = async () => {}) {
   try {
     await writeFixtureFile(
       modRoot,
-      "FarmhandExecutionController.cs",
-      "internal sealed class FarmhandExecutionController : IExecutionLedger { }\n",
+"farmhandexecutioncontroller.cs",
+"internal sealed class ExecutionManager : IExecutionLedger { }\n",
     );
     await writeFixtureFile(
       modRoot,
@@ -79,12 +79,12 @@ test("accepts a tiny valid scaffold with separate Mod and Core closures", async 
   });
 });
 
-test("rejects a missing FarmhandExecutionController", async () => {
+test("rejects a missing ExecutionManager source", async () => {
   await assert.rejects(
     withScaffoldFixture(async ({ modRoot }) => {
-      await rm(path.join(modRoot, "FarmhandExecutionController.cs"));
+      await rm(path.join(modRoot, "farmhandexecutioncontroller.cs"));
     }),
-    /Required Stardew scaffold file is missing: FarmhandExecutionController\.cs/,
+    /Required Stardew scaffold file is missing: farmhandexecutioncontroller\.cs/,
   );
 });
 
@@ -92,10 +92,10 @@ test("rejects a controller that does not implement IExecutionLedger", async () =
   await assert.rejects(
     withScaffoldFixture(({ modRoot }) => writeFixtureFile(
       modRoot,
-      "FarmhandExecutionController.cs",
-      "internal sealed class FarmhandExecutionController { }\n",
+"farmhandexecutioncontroller.cs",
+"internal sealed class ExecutionManager { }\n",
     )),
-    /FarmhandExecutionController\.cs must implement IExecutionLedger/,
+    /farmhandexecutioncontroller\.cs must declare ExecutionManager implementing IExecutionLedger/,
   );
 });
 

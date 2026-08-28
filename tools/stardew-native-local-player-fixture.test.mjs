@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, opendir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,12 +31,12 @@ const binding = Object.freeze({
 // complete production surface rather than treating the ledger file as a second
 // handler authority.
 const EXECUTION_MANAGER_SOURCE_FILES = Object.freeze([
-  "ExecutionManager.cs",
-  "ExecutionManager.MovementHandlers.cs",
-  "ExecutionManager.FarmingConstructionHandlers.cs",
-  "ExecutionManager.MachinesAnimalsItemsHandlers.cs",
-  "ExecutionManager.ResourceToolHandlers.cs",
-  "ExecutionManager.GatheringHandlers.cs",
+  "farmhandexecutioncontroller.cs",
+  "farmhandexecutioncontroller.movementactions.cs",
+  "farmhandexecutioncontroller.farmingconstructionactions.cs",
+  "farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
+  "farmhandexecutioncontroller.resourcetoolactions.cs",
+  "farmhandexecutioncontroller.gatheringactions.cs",
 ]);
 
 async function readExecutionManagerSources() {
@@ -49,9 +49,21 @@ async function readExecutionManagerSources() {
   ).join("\n");
 }
 
+async function removeFixtureTree(directory) {
+  const entries = [];
+  for await (const entry of await opendir(directory)) entries.push(entry);
+  for (const entry of entries) {
+    const entryPath = join(directory, entry.name);
+    const stats = await lstat(entryPath);
+    if (stats.isDirectory() && !stats.isSymbolicLink()) await removeFixtureTree(entryPath);
+    else await unlink(entryPath);
+  }
+  await rmdir(directory);
+}
+
 async function createFixture(t, suffix) {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-native-local-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixtureTree(root));
   const modsPath = join(root, "mods");
   const releaseDir = join(root, "release");
   const modRoot = join(modsPath, "GameBuddy");
@@ -90,6 +102,38 @@ async function createFixture(t, suffix) {
     backupName: `native-local-${suffix}-fixture-backup`,
   };
 }
+
+test("native-local lifecycle owner binds staged release and separate private action/cleanup results", async () => {
+  const launcher = await readFile(
+    new URL("./run-stardew-native-local-player-move-fixture.ps1", import.meta.url),
+    "utf8",
+  );
+  assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$ReleaseDir/);
+  assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$ResultFile/);
+  assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$LifecycleResultFile/);
+  assert.doesNotMatch(launcher, /integrations\/stardew\/bin\/Release|\$projectRoot/);
+  assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$ReleaseDir\)/);
+  assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$ResultFile\)/);
+  assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$LifecycleResultFile\)/);
+  assert.match(launcher, /\$actionResultPath -eq \$lifecycleResultPath/);
+  assert.match(launcher, /equip-tool-live-child\.mjs/);
+  assert.match(launcher, /write-lifecycle-result\.mjs/);
+
+  const prepare = launcher.indexOf("prepare-stardew-native-local-player-fixture.mjs");
+  const launch = launcher.indexOf("$process = Start-Process");
+  const ready = launcher.indexOf("Test-GameBuddyNamedPipeListening", launch);
+  const identity = launcher.indexOf("Assert-LaunchedSmapiIdentity", ready);
+  const child = launcher.indexOf("node $equipToolChild", identity);
+  const stop = launcher.indexOf("Stop-Process", child);
+  const restore = launcher.indexOf("restore-stardew-native-local-player-fixture.mjs", stop);
+  const cleanup = launcher.indexOf("-Cleanup", restore);
+  const lifecycleResult = launcher.indexOf("node $lifecycleResultWriter", cleanup);
+  assert.ok(prepare >= 0 && prepare < launch, "fixture prepare must precede process launch");
+  assert.ok(launch < ready && ready < identity && identity < child, "child must follow readiness and exact identity");
+  assert.ok(child < stop && stop < restore && restore < cleanup, "stop must precede fixture restore and save cleanup");
+  assert.ok(cleanup < lifecycleResult, "cleanup result must be written only after all cleanup");
+  assert.doesNotMatch(launcher, /Remove-Item[^\n]*-Recurse/);
+});
 
 test("native-local bootstrap launcher does not restore an external action template", async () => {
   const launcher = await readFile(
@@ -214,7 +258,7 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     /DoFunction|digUpArtifactSpot|checkAction|RequestLocalDigArtifactSpot|PublishReceipt|\b(?:request|receipt|reward|debris|pickup|outcome)\b|Items\[/i,
   );
   assert.doesNotMatch(setup, /objects\.Remove/);
-  assert.match(entry, /farm\.objects\.Pairs\.Count\(pair => pair\.Value\.QualifiedItemId == "\(O\)590"\) >= 1/);
+  assert.match(setup, /artifactSourceCount < 1/);
   assert.match(
     entry,
     /!farm\.IsTileOccupiedBy\(artifactPending\.StandingTile, ~CollisionMask\.Farmers, CollisionMask\.None, useFarmerTile: false\)/,
@@ -291,13 +335,18 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     runner,
     /same\(value\.EnabledActions, \["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"\]\)/,
   );
-  assert.match(
-    runner,
-    /\["cancel_active_execution", "dig_artifact_spot", "equip_tool", "inspect_self", "move_to_tile", "travel"\]/,
-  );
+  for (const capability of [
+    "cancel_active_execution",
+    "dig_artifact_spot",
+    "equip_tool",
+    "inspect_self",
+    "move_to_tile",
+    "travel",
+  ])
+    assert.match(runner, new RegExp(`"${capability}"`));
   assert.match(runner, /equip_tool/);
   assert.match(runner, /target_changed_after_equip/);
-  assert.match(runner, /Object\.prototype\.hasOwnProperty\.call\(result, key\)/);
+  assert.match(runner, /Object\.hasOwn\(result, key\)/);
   assert.match(runner, /artifactSpotResultTargets/);
   assert.match(runner, /initialSourceCount/);
   assert.match(runner, /const preCount = fresh\.artifactSpotFarmSourceCount/);
@@ -314,10 +363,10 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
   assert.match(runner, /DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON = 0\.011/);
   assert.match(
     runner,
-    /Math\.abs\(\(-parseFiniteDecimal\(evidence\.stamina_delta\)\) - parseFiniteDecimal\(evidence\.expected_stamina_cost\)\) <= DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON/,
+    /Math\.abs\(-parseFiniteDecimal\(evidence\.stamina_delta\) - parseFiniteDecimal\(evidence\.expected_stamina_cost\)\) <=\s+DIG_ARTIFACT_STAMINA_EVIDENCE_EPSILON/,
   );
   assert.match(runner, /stamina_delta\) <= 0/);
-  const protocol = await readFile(new URL("../integrations/stardew/BridgeProtocol.cs", import.meta.url), "utf8");
+  const protocol = await readFile(new URL("../integrations/stardew/src/Core/Models/BridgeProtocolModels.cs", import.meta.url), "utf8");
   assert.match(protocol, /ArtifactSpotFarmSourceCount/);
   const executionManager = await readExecutionManagerSources();
   assert.match(executionManager, /CountArtifactSpotFarmSources/);
@@ -459,7 +508,15 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
     new URL("./run-stardew-native-local-player-move-fixture.ps1", import.meta.url),
     "utf8",
   );
-  assert.match(launcher, /"place_crab_pot"/);
+  assert.match(launcher, /resolve-stardew-action-gate-runner\.mjs/);
+  const descriptors = await readFile(
+    new URL("./stardew-action-gate-descriptors.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    descriptors,
+    /gate\(\s*"place_crab_pot",\s*1,\s*"run-stardew-native-local-player-place-crab-pot-smoke\.mjs"/s,
+  );
   const config = await readFile(new URL("../integrations/stardew/ModConfig.cs", import.meta.url), "utf8");
   const bootstrapStart = config.indexOf("internal bool IsBootstrapValid");
   const bootstrap = config.slice(
@@ -468,14 +525,14 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
   );
   assert.match(bootstrap, /native_place_crab_pot_v1/);
   assert.doesNotMatch(bootstrap, /place_crab_pot.*PublishedActions|PublishedActions.*place_crab_pot/s);
-  const definitionsStart = config.indexOf(
-    "internal static readonly IReadOnlyList<FarmhandActionDefinition> FarmhandActionDefinitions",
+  const definitions = await readFile(
+    new URL("../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs", import.meta.url),
+    "utf8",
   );
-  const definitions = config.slice(
-    definitionsStart,
-    config.indexOf("private static FarmhandActionDefinition Definition", definitionsStart),
+  assert.match(
+    definitions,
+    /Registration\("place_crab_pot",\s*"buildings_farm_management",\s*1,\s*FarmhandActionHandlerGroup\.ResourceTools\)/,
   );
-  assert.match(definitions, /Definition\("place_crab_pot"/);
   const productionRunner = await readFile(
     new URL("./run-stardew-native-local-player-place-crab-pot-smoke.mjs", import.meta.url),
     "utf8",
@@ -487,7 +544,7 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
   assert.match(execution, /RequestLocalPlaceCrabPot/);
   assert.match(execution, /BuildCrabPotOverlayFacts/);
   assert.match(execution, /OverlayTiles/);
-  const protocol = await readFile(new URL("../integrations/stardew/BridgeProtocol.cs", import.meta.url), "utf8");
+  const protocol = await readFile(new URL("../integrations/stardew/src/Core/Models/BridgeProtocolModels.cs", import.meta.url), "utf8");
   assert.match(protocol, /BridgeCrabPotOverlayTile/);
   assert.match(protocol, /BridgeCrabPotResultTarget/);
   await restoreNativeLocalPlayerFixture(options);
@@ -543,7 +600,7 @@ test("native-local clear-hoedirt fixture establishes only the intact empty groun
   assert.doesNotMatch(setup, /^\s*pickaxe\.DoFunction\(/m);
   assert.doesNotMatch(setup, /RequestLocalClearHoeDirt|PublishReceipt|terrainFeatures\.Remove/);
 
-  const protocol = await readFile(new URL("../integrations/stardew/BridgeProtocol.cs", import.meta.url), "utf8");
+  const protocol = await readFile(new URL("../integrations/stardew/src/Core/Models/BridgeProtocolModels.cs", import.meta.url), "utf8");
   assert.match(
     protocol,
     /BridgeClearHoeDirtTarget\(string TargetId, string Location, int X, int Y, bool Crop, bool Ground\)/,
@@ -569,7 +626,7 @@ test("native-local clear-hoedirt fixture establishes only the intact empty groun
   assert.match(runner, /if \(snapshot\.location === "FarmHouse"\) snapshot = await travelToFarm\(snapshot\);/);
   assert.match(
     runner,
-    /else if \(snapshot\.location !== "Farm"\) throw new Error\("clear_hoedirt_route_must_start_at_farmhouse_or_fixture_farm"\);/,
+    /else if \(snapshot\.location !== "Farm"\)\s+throw new Error\("clear_hoedirt_route_must_start_at_farmhouse_or_fixture_farm"\);/,
   );
   assert.match(runner, /const target = chooseHoeDirt\(snapshot\);/);
   assert.doesNotMatch(runner, /moveToReachableHoeDirt/);
@@ -623,7 +680,7 @@ test("native-local clear-debris fixture establishes one intact native resource c
   );
 
   const executionManager = await readExecutionManagerSources();
-  const protocol = await readFile(new URL("../integrations/stardew/BridgeProtocol.cs", import.meta.url), "utf8");
+  const protocol = await readFile(new URL("../integrations/stardew/src/Core/Models/BridgeProtocolModels.cs", import.meta.url), "utf8");
   assert.match(
     protocol,
     /BridgeDebrisTarget\(string TargetId, int Slot, int X, int Y, int ParentSheetIndex, string ToolKind, int RequiredUpgradeLevel, int Health\)/,

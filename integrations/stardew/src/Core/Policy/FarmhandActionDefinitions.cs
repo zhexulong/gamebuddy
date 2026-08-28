@@ -87,6 +87,7 @@ public static class FarmhandActionCatalog
         Registration("dig_artifact_spot", "resource_gathering", 1, FarmhandActionHandlerGroup.ResourceTools),
         Registration("refill_watering_can", "farming_crops", 1, FarmhandActionHandlerGroup.ResourceTools),
         ReadOnlyRegistration("inspect_world_map", "world_navigation", 1),
+        ReadOnlyRegistration("find_destination", "world_navigation", 1),
         Registration("clear_debris", "resource_gathering", 1, FarmhandActionHandlerGroup.ResourceTools, FarmhandActionLifecycle.Experimental),
         Registration("npc_relationship", "npc_social", 1, FarmhandActionHandlerGroup.MachinesAndAnimals, FarmhandActionLifecycle.Experimental),
         Registration("pet_animal", "animals_pets", 1, FarmhandActionHandlerGroup.MachinesAndAnimals, FarmhandActionLifecycle.Experimental),
