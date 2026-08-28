@@ -29,27 +29,6 @@ import { ReceiptReplayLedger } from "./receipt-replay.js";
  * Per-action argument validation stays in protocol.ts and per-action
  * completion evidence stays in the module action catalog.
  */
-export type ActionBatchItem<T = unknown> = Readonly<{
-  actionId: string;
-  requestId: string;
-  payload?: T;
-  execute: () => Promise<ExecutionReceipt>;
-}>;
-
-export type ActionBatch<T = unknown> = Readonly<{
-  batchId: string;
-  epoch?: number;
-  actions: readonly ActionBatchItem<T>[];
-}>;
-
-export type ActionBatchExecutionResult = Readonly<{
-  batchId: string;
-  epoch: number;
-  receipts: readonly ExecutionReceipt[];
-  completedCount: number;
-  failedFast: boolean;
-  interrupted: boolean;
-}>;
 
 export type ActionExecutionAdmission = IntegrationDispatchAdmission &
   Readonly<{
@@ -71,8 +50,6 @@ export type ActionExecutionCoordinator = Readonly<{
   uncertainDispatches(): readonly RecoverableExecutionDispatch[];
   cancelEpoch(epoch: number, reasonCode: string): Promise<void>;
   interrupt(reasonCode: string): Promise<void>;
-  /** Executes a batch of actions sequentially with Fail-Fast semantics and Epoch interruption interception */
-  executeBatch(batch: ActionBatch, admission?: ActionExecutionAdmission): Promise<ActionBatchExecutionResult>;
 }>;
 
 /**
@@ -145,118 +122,6 @@ export function createActionExecutionCoordinator(connection: IntegrationConnecti
       const snapshot = interruption.capture();
       interruption.close(reasonCode);
       await Promise.all(ledger.requestCancelEpoch(snapshot.epoch, reasonCode));
-    },
-    executeBatch: async (
-      batch: ActionBatch,
-      admission?: ActionExecutionAdmission,
-    ): Promise<ActionBatchExecutionResult> => {
-      const targetAdmission = admission ?? createAdmission();
-      const targetEpoch = batch.epoch ?? targetAdmission.owner.epoch;
-      const receipts: ExecutionReceipt[] = [];
-      let failedFast = false;
-      let interrupted = false;
-
-      for (let i = 0; i < batch.actions.length; i++) {
-        const item = batch.actions[i]!;
-
-        // Interception: Check if epoch was closed or interrupted
-        const currentSnapshot = interruption.capture();
-        if (!interruption.isCurrent(currentSnapshot) || currentSnapshot.epoch !== targetEpoch) {
-          interrupted = true;
-          for (let j = i; j < batch.actions.length; j++) {
-            const unexecuted = batch.actions[j]!;
-            receipts.push(
-              Object.freeze({
-                requestId: unexecuted.requestId,
-                executionId: `epoch_interrupted_${unexecuted.requestId}`,
-                state: "cancelled" as const,
-                reasonCode: "epoch_interrupted",
-                revision: 0,
-                evidence: null,
-              }),
-            );
-          }
-          break;
-        }
-
-        try {
-          const receipt = await item.execute();
-          receiveReceipt(receipt);
-          receipts.push(receipt);
-
-          // Fail-Fast: check if terminal state is non-success
-          if (
-            receipt.state === "failed" ||
-            receipt.state === "rejected" ||
-            receipt.state === "invalidated" ||
-            receipt.state === "expired" ||
-            receipt.state === "uncertain" ||
-            receipt.state === "cancelled"
-          ) {
-            failedFast = true;
-            for (let j = i + 1; j < batch.actions.length; j++) {
-              const aborted = batch.actions[j]!;
-              receipts.push(
-                Object.freeze({
-                  requestId: aborted.requestId,
-                  executionId: `fail_fast_${aborted.requestId}`,
-                  state: "cancelled" as const,
-                  reasonCode: "batch_fail_fast_aborted",
-                  revision: receipt.revision,
-                  evidence: {
-                    causeActionId: item.actionId,
-                    causeRequestId: item.requestId,
-                    causeReason: receipt.reasonCode,
-                    causeState: receipt.state,
-                  },
-                }),
-              );
-            }
-            break;
-          }
-        } catch (error) {
-          failedFast = true;
-          const causeReason = error instanceof Error ? error.message : "batch_action_failed";
-          receipts.push(
-            Object.freeze({
-              requestId: item.requestId,
-              executionId: `error_${item.requestId}`,
-              state: "failed" as const,
-              reasonCode: causeReason,
-              revision: 0,
-              evidence: null,
-            }),
-          );
-          for (let j = i + 1; j < batch.actions.length; j++) {
-            const aborted = batch.actions[j]!;
-            receipts.push(
-              Object.freeze({
-                requestId: aborted.requestId,
-                executionId: `fail_fast_${aborted.requestId}`,
-                state: "cancelled" as const,
-                reasonCode: "batch_fail_fast_aborted",
-                revision: 0,
-                evidence: {
-                  causeActionId: item.actionId,
-                  causeRequestId: item.requestId,
-                  causeReason,
-                  causeState: "failed",
-                },
-              }),
-            );
-          }
-          break;
-        }
-      }
-
-      return Object.freeze({
-        batchId: batch.batchId,
-        epoch: targetEpoch,
-        receipts: Object.freeze(receipts),
-        completedCount: receipts.filter((r) => r.state === "succeeded" || r.state === "accepted").length,
-        failedFast,
-        interrupted,
-      });
     },
   });
 }

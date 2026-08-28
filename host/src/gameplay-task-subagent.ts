@@ -48,6 +48,8 @@ export type GameplayTaskRecord = Readonly<{
   taskId: string;
   scope: IntegrationConnection["scope"];
   cancellationEpoch: number;
+  /** Highest Mod-owned terminal receipt revision observed by this task. */
+  minimumSnapshotRevision: number | null;
   executions: readonly Readonly<{
     actionId: string;
     requestId: string;
@@ -116,6 +118,8 @@ type MutableTaskRecord = {
   taskId: string;
   scope: IntegrationConnection["scope"];
   cancellationEpoch: number;
+  /** Restrictive local fence; this value is copied from Mod receipt facts only. */
+  minimumSnapshotRevision: number | null;
   executions: Array<{
     actionId: string;
     requestId: string;
@@ -259,6 +263,7 @@ export class GameplayTaskSubagent {
       taskId,
       scope: this.integration.scope,
       cancellationEpoch: this.#cancellationEpoch,
+      minimumSnapshotRevision: null,
       executions: [],
       pendingDispatch: null,
       terminalReceipt: null,
@@ -787,16 +792,18 @@ export type GameplayActionAdmission =
       ok: false;
       reasonCode:
         | "unknown_gameplay_action"
-        | "gameplay_task_active_execution_exists";
+        | "gameplay_task_active_execution_exists"
+        | "gameplay_task_snapshot_stale";
     }>;
 
 type GameplayActionAdmissionRecord = Readonly<
-  Pick<
-    MutableTaskRecord,
-    "executions"
-  >
+  Pick<MutableTaskRecord, "executions">
 > &
-  Readonly<Partial<Pick<MutableTaskRecord, "pendingDispatch">>>;
+  Readonly<
+    Partial<
+      Pick<MutableTaskRecord, "pendingDispatch" | "minimumSnapshotRevision">
+    >
+  >;
 
 /**
  * Pure Host admission decision used immediately before a Game Action tool call.
@@ -811,12 +818,24 @@ export function admitGameplayAction(
   registrations: readonly import("./integration-module.js").IntegrationActionRegistration[],
   capabilities: readonly string[],
   policy: import("./integration-module.js").IntegrationActionPolicy,
+  snapshotRevision?: number | null,
 ): GameplayActionAdmission {
   const entry = catalog
     .visibleActions(registrations, capabilities, policy)
     .find((candidate) => candidate.actionId === actionId);
   if (entry === undefined)
     return Object.freeze({ ok: false, reasonCode: "unknown_gameplay_action" });
+  if (
+    record.minimumSnapshotRevision != null &&
+    (snapshotRevision === null ||
+      snapshotRevision === undefined ||
+      snapshotRevision < record.minimumSnapshotRevision)
+  ) {
+    return Object.freeze({
+      ok: false,
+      reasonCode: "gameplay_task_snapshot_stale",
+    });
+  }
   if (
     (activeExecution !== null && activeExecution !== undefined) ||
     record.executions.some((known) => !isTerminalReceiptState(known.state)) ||
@@ -945,6 +964,7 @@ function taskScopedTool(
           state.registrations ?? [],
           state.capabilities,
           mountedPolicy,
+          state.snapshotRevision,
         );
         if (!admission.ok) {
           throw new Error(admission.reasonCode);
@@ -1162,7 +1182,26 @@ function reconcileKnownExecution(
       execution.requestId === receipt.requestId &&
       execution.executionId === receipt.executionId,
   );
-  if (known !== undefined) known.state = receipt.state;
+  if (known !== undefined) {
+    known.state = receipt.state;
+    recordTerminalReceiptRevision(record, receipt);
+  }
+}
+
+function recordTerminalReceiptRevision(
+  record: MutableTaskRecord,
+  receipt: IntegrationExecutionReceipt,
+): void {
+  if (
+    !isTerminalReceiptState(receipt.state) ||
+    receipt.revision === null ||
+    !Number.isSafeInteger(receipt.revision)
+  )
+    return;
+  record.minimumSnapshotRevision = Math.max(
+    record.minimumSnapshotRevision ?? 0,
+    receipt.revision,
+  );
 }
 
 function settlePendingDispatch(
@@ -1192,6 +1231,7 @@ function settlePendingDispatch(
     receipt.executionId,
     receipt.state,
   );
+  recordTerminalReceiptRevision(record, receipt);
   const execution = record.executions.find(
     (known) =>
       known.requestId === receipt.requestId &&
@@ -1239,6 +1279,12 @@ function settlePendingCorrelation(
       state: resolvedState,
     });
   } else existing.state = resolvedState;
+  if (
+    latest !== null &&
+    latest.requestId === requestId &&
+    latest.executionId === executionId
+  )
+    recordTerminalReceiptRevision(record, latest);
 }
 
 function issueTaskOwnedCancellation(
@@ -1280,6 +1326,7 @@ function settlePendingTerminalWake(
       receipt.executionId,
       receipt.state,
     );
+    recordTerminalReceiptRevision(record, receipt);
   }
 }
 
