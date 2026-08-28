@@ -208,6 +208,8 @@ async function createAdmissionBroker() {
 async function createFixture(input: Readonly<{
   stagingGate?: Promise<void>;
   failStaging?: boolean;
+  packageReadGateAt?: Readonly<{ count: number; promise: Promise<void> }>;
+  failPackageReadAt?: number;
   overrides?: StardewLifecycleCoordinatorTestingOverrides;
   inspectorChains?: readonly (readonly WindowsPathObjectIdentity[])[];
   inspectorGate?: Promise<void>;
@@ -263,6 +265,8 @@ async function createFixture(input: Readonly<{
     staging: {
       async readPackage() {
         packageReadCount += 1;
+        if (input.packageReadGateAt?.count === packageReadCount) await input.packageReadGateAt.promise;
+        if (input.failPackageReadAt === packageReadCount) throw new Error("controlled-package-read-failure");
         if (input.stagingGate !== undefined) await input.stagingGate;
         if (input.failStaging) throw new Error("controlled-stage-b-failure");
         return { root: packageRoot, entries: packageEntries };
@@ -888,8 +892,11 @@ const availableCabins: readonly PublishedCabin[] = Object.freeze([
   Object.freeze({ cabinId: "cabin-foreign", ownerFarmhandId: "404", boundCompanionId: "other-companion", isBusy: false }),
 ]);
 
-async function prepareCabinCoordinator(expiresAtUnixMs = Date.now() + 5 * 60_000) {
-  const fixture = await createFixture();
+async function prepareCabinCoordinator(
+  expiresAtUnixMs = Date.now() + 5 * 60_000,
+  input: Parameters<typeof createFixture>[0] = {},
+) {
+  const fixture = await createFixture(input);
   await withWindowsPlatform(async () => {
     await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
     await publishSignedPlayerHostSession(fixture.runtimeRoot, "player-generation-1", availableCabins, expiresAtUnixMs);
@@ -898,7 +905,7 @@ async function prepareCabinCoordinator(expiresAtUnixMs = Date.now() + 5 * 60_000
   return fixture;
 }
 
-test("dynamic cabin handoff lists only redacted available choices and admits exactly one manifest without launching AI", async () => {
+test("dynamic cabin handoff lists redacted choices, admits one manifest, and materializes but does not launch AI", async () => {
   const startedAt = Date.now();
   const fixture = await prepareCabinCoordinator(startedAt + 5 * 60_000);
   try {
@@ -932,9 +939,13 @@ test("dynamic cabin handoff lists only redacted available choices and admits exa
     });
     assert.deepEqual(fixture.spawnCalls, []);
     assert.equal(fixture.playerSpawnCalls.length, 1);
+    assert.equal(fixture.packageReadCount(), 4);
     assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "awaiting_player_host_attestation");
     const transaction = join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1");
-    await assert.rejects(readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"), { code: "ENOENT" });
+    const aiConfig = JSON.parse(await readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"));
+    assert.equal(aiConfig.FarmhandProvisioner.Enable, true);
+    assert.equal(aiConfig.FarmhandProvisioner.ManifestPath, join(transaction, "session", "stardew-farmhand-manifest.json"));
+    assert.equal("Pid" in aiConfig.FarmhandProvisioner, false);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
@@ -1024,5 +1035,77 @@ test("dynamic cabin handles distinguish expired and revision-stale failures", as
   } finally {
     await stale.coordinator.close();
     await stale.broker.close();
+  }
+});
+
+test("manifest-admitted AI materialization failure is permanently uncertain and never republishes attachment", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, { failPackageReadAt: 3 });
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "materialization-failure-key",
+      confirmed: true as const,
+    };
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+      fixture.broker.issue("cabin_confirm"),
+      command,
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command),
+      /stardew_cabin_publication_uncertain/,
+    );
+    assert.equal(fixture.packageReadCount(), 3);
+    assert.deepEqual(fixture.spawnCalls, []);
+    const repeatedRequest = await readFile(
+      join(fixture.runtimeRoot, "stardew-private-bootstrap", "bootstrap-coordinator-1", "session", "stardew-attachment-request.json"),
+      "utf8",
+    );
+    assert.equal(JSON.parse(repeatedRequest).requestId, request.requestId);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("close drains manifest-admitted AI materialization before quarantine and process teardown", async () => {
+  let releasePackageRead!: () => void;
+  const packageReadGate = new Promise<void>((resolve) => { releasePackageRead = resolve; });
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    packageReadGateAt: { count: 3, promise: packageReadGate },
+  });
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+      fixture.broker.issue("cabin_confirm"),
+      {
+        apiVersion: 1,
+        choiceHandle: choices.choices[0]!.choiceHandle,
+        idempotencyKey: "close-during-materialization-key",
+        confirmed: true,
+      },
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    while (fixture.packageReadCount() < 3) await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    let closeSettled = false;
+    const close = fixture.coordinator.close().finally(() => { closeSettled = true; });
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    assert.equal(closeSettled, false);
+    assert.deepEqual(fixture.playerKillCalls, []);
+    releasePackageRead();
+    assert.deepEqual(await confirmation, { apiVersion: 1, status: "manifest_admitted" });
+    await close;
+    assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "closed");
+    assert.deepEqual(fixture.spawnCalls, []);
+    assert.deepEqual(fixture.playerKillCalls, [4102]);
+  } finally {
+    releasePackageRead();
+    await fixture.coordinator.close();
+    await fixture.broker.close();
   }
 });
