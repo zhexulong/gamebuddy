@@ -4,15 +4,14 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationIssuer,
 } from "./composed-reference-game-browser.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
+import type { ConstructedUnmountedGameSemanticFacade, ConnectedSemanticGameLease } from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
+import { createKnownSemanticGameFacadeFromReceiptBackedBinding } from "./continuity-semantic-game-operator-selection/continuity-semantic-game-operator-selection.internal.js";
 import { randomBytes } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { admitStardewInstallation } from "./stardew-installation-admission.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
-import {
-  createGameRuntimeBindingFromReceiptBackedLaunch,
-  type GameRuntimeBinding,
-} from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import { createGameRuntimeBindingFromReceiptBackedLaunch } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import {
   createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
   STARDEW_INTEGRATION_LAUNCHER,
@@ -77,10 +76,10 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
 
 type BootstrapComposition = ReturnType<typeof createStardewPrivateBootstrapComposition>;
 type ActivationState = StardewPrivateActivationSnapshot["state"];
-type ConnectFarmhandGameRuntimeBinding = (
+type ConnectFarmhandGameRuntimeFacade = (
   connection: StardewPrivateFarmhandBridgeConnection,
   deadlineMs: number,
-) => Promise<GameRuntimeBinding>;
+) => Promise<ConstructedUnmountedGameSemanticFacade>;
 
 class StardewProductionLifecycleCloseError extends Error {
   public constructor() {
@@ -113,7 +112,7 @@ function createCoordinator(
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
-  connectFarmhandGameRuntimeBinding: ConnectFarmhandGameRuntimeBinding,
+  connectFarmhandGameRuntimeFacade: ConnectFarmhandGameRuntimeFacade,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
   const playerId = `${manifest.principal.playerId}`;
@@ -139,8 +138,9 @@ function createCoordinator(
   let launchTerminal = false;
   let playerHostAttestationCorrelated = false;
   let brokerClosed = false;
-  let farmhandGameRuntimeBinding: GameRuntimeBinding | undefined;
-  let farmhandGameRuntimeBindingClosed = false;
+  let farmhandGameRuntimeFacade: ConstructedUnmountedGameSemanticFacade | undefined;
+  let farmhandGameRuntimeLease: ConnectedSemanticGameLease | undefined;
+  let farmhandGameRuntimeFacadeClosed = false;
   let aiStopped = false;
   let playerStopped = false;
   let closePromise: Promise<void> | undefined;
@@ -401,22 +401,24 @@ function createCoordinator(
         const result = await internal.launchOwnedAiClientStageD(handle.owner, installation);
         if (result.status.kind !== "awaiting_ai_client_attestation")
           throw new Error("stardew_ai_client_launch_terminal_projection_invalid");
-        while (farmhandGameRuntimeBinding === undefined) {
+        while (farmhandGameRuntimeFacade === undefined) {
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
           try {
-            farmhandGameRuntimeBinding = await internal.consumeOwnedFarmhandBridgeConnection(
+            farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
               handle.owner,
-              (connection) => connectFarmhandGameRuntimeBinding(connection, handle.expiresAtMs),
+              (connection) => connectFarmhandGameRuntimeFacade(connection, handle.expiresAtMs),
             );
           } catch (error) {
             if (!isTransientFarmhandBridgeConnectError(error)) throw error;
             await waitForFarmhandBridgeRetry(handle.expiresAtMs);
           }
         }
+        farmhandGameRuntimeLease = await farmhandGameRuntimeFacade.runEnter();
         if (isClosing()) {
-          await farmhandGameRuntimeBinding.close();
-          farmhandGameRuntimeBinding = undefined;
-          farmhandGameRuntimeBindingClosed = true;
+          await farmhandGameRuntimeFacade.close();
+          farmhandGameRuntimeFacade = undefined;
+          farmhandGameRuntimeLease = undefined;
+          farmhandGameRuntimeFacadeClosed = true;
           throw new Error("stardew_lifecycle_closing");
         }
         return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
@@ -463,15 +465,15 @@ function createCoordinator(
       await cabinConfirmations.get(confirmationKey)?.promise.catch(() => undefined);
     }
     let incomplete = false;
-    if (!farmhandGameRuntimeBindingClosed) {
+    if (!farmhandGameRuntimeFacadeClosed) {
       try {
-        await farmhandGameRuntimeBinding?.close();
-        farmhandGameRuntimeBindingClosed = true;
+        await farmhandGameRuntimeFacade?.close();
+        farmhandGameRuntimeFacadeClosed = true;
       } catch {
         incomplete = true;
       }
     }
-    const mayStopOwnedProcesses = farmhandGameRuntimeBindingClosed;
+    const mayStopOwnedProcesses = farmhandGameRuntimeFacadeClosed;
     if (exactOwner !== undefined && !ownerQuarantined) {
       try {
         await internal.quarantineOwnedPlayerHostOwner(exactOwner);
@@ -521,9 +523,9 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
-  connectFarmhandGameRuntimeBinding: ConnectFarmhandGameRuntimeBinding,
+  connectFarmhandGameRuntimeFacade: ConnectFarmhandGameRuntimeFacade,
 ): StardewProductionLifecycleCoordinator {
-  return createCoordinator(manifest, internal, createInstallationInspector, connectFarmhandGameRuntimeBinding);
+  return createCoordinator(manifest, internal, createInstallationInspector, connectFarmhandGameRuntimeFacade);
 }
 
 /** Constructs the coordinator exclusively from the closed first-party composition. */
@@ -552,7 +554,7 @@ export function createStardewProductionLifecycleCoordinator(
           worldId: connection.scope.worldId,
         }),
       );
-      return createGameRuntimeBindingFromReceiptBackedLaunch(
+      const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(
         Object.freeze({
           manifest,
           launcher: STARDEW_INTEGRATION_LAUNCHER,
@@ -563,6 +565,7 @@ export function createStardewProductionLifecycleCoordinator(
           }),
         }),
       );
+      return createKnownSemanticGameFacadeFromReceiptBackedBinding(manifest, binding);
     },
   );
 }
