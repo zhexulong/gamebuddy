@@ -78,6 +78,17 @@ function authenticatedView(
   });
 }
 
+test("spawned Player Host projects only met prerequisite and truthful launching instance", async () => {
+  const state = await createGameBrowserStateProvider(profile(), lifecycle(Object.freeze({
+    schemaVersion: 1,
+    playerHost: Object.freeze({ state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn" }),
+    aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+  })), attachment()).readState(context);
+  assert.deepEqual(state.game.prerequisites, { status: "met", detectedGame: "Stardew Valley", missingItems: [] });
+  assert.deepEqual(state.game.instance, { status: "launching", gameTitle: "Stardew Valley" });
+  assert.equal(JSON.stringify(state).includes("C:\\\\"), false);
+});
+
 test("read-only provider accepts a reader-only fresh lifecycle and projects only unchecked/none", async () => {
   const reader = lifecycle(notStartedView());
   assert.deepEqual(Object.keys(reader), ["readRoleLifecycleView"]);

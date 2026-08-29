@@ -268,6 +268,118 @@ test("stale Stardew handoff alone refetches choices and preserves one confirmati
 });
 
 
+test("cancelled Game setup rereads unknown and a later player retry uses a fresh key", async ({ page }) => {
+  const keys: string[] = [];
+  let stateReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/prerequisites/setup", async (route) => {
+    const command = route.request().postDataJSON() as { idempotencyKey: string };
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    keys.push(command.idempotencyKey);
+    await route.fulfill({ status: 204, body: "" });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
+  await setup.click();
+  await expect.poll(() => keys.length).toBe(1);
+  await expect.poll(() => stateReads).toBe(1);
+  await setup.click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[1]).not.toBe(keys[0]);
+  await expect.poll(() => stateReads).toBe(2);
+  await expect(panel).not.toContainText("C:\\Games\\Stardew Valley");
+});
+
+test("terminal Game setup failure permits only an authoritative fresh-key player retry", async ({ page }) => {
+  const keys: string[] = [];
+  let stateReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/prerequisites/setup", async (route) => {
+    const command = route.request().postDataJSON() as { idempotencyKey: string };
+    keys.push(command.idempotencyKey);
+    if (keys.length === 1) {
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "game_unavailable" }) });
+      return;
+    }
+    await route.fulfill({ status: 204, body: "" });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
+  await setup.click();
+  await expect.poll(() => keys.length).toBe(1);
+  await expect.poll(() => stateReads).toBe(1);
+  await expect(panel).toContainText("Game setup could not be verified");
+  await setup.click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[1]).not.toBe(keys[0]);
+  await expect.poll(() => stateReads).toBe(2);
+  await expect(panel).not.toContainText("C:\\Games\\Stardew Valley");
+});
+
+test("uncertain Game setup reread preserves the exact key for manual replay", async ({ page }) => {
+  const keys: string[] = [];
+  let stateReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/prerequisites/setup", async (route) => {
+    const command = route.request().postDataJSON() as { idempotencyKey: string };
+    keys.push(command.idempotencyKey);
+    await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "state_unavailable" }) });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
+  await setup.click();
+  await expect.poll(() => keys.length).toBe(1);
+  await expect.poll(() => stateReads).toBe(1);
+  await setup.click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[1]).toBe(keys[0]);
+  await expect.poll(() => stateReads).toBe(2);
+  await expect(panel).toContainText("Game setup could not be verified");
+  await expect(panel).not.toContainText("C:\\Games\\Stardew Valley");
+});
+
 test("Game STOP is generation-bound, single-flight, rereads stopped, and remains independent from Chat Stop", async ({ page }) => {
   let stopRequests = 0;
   let stateRequests = 0;

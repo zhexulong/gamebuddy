@@ -85,6 +85,10 @@ export function ComposedReferenceGameApp() {
   const eventSourceRef = useRef<{ close(): void } | null>(null);
   const [cabinView, setCabinView] = useState<CabinViewState>({ kind: "loading" });
   const cabinConfirmationActiveRef = useRef(false);
+  const gameSetupActiveRef = useRef(false);
+  const gameSetupKeyRef = useRef<string | undefined>(undefined);
+  const [gameSetupActive, setGameSetupActive] = useState(false);
+  const [gameSetupFailed, setGameSetupFailed] = useState(false);
   const gameStopActiveRef = useRef(false);
   const gameStopKeysRef = useRef(new Map<number, string>());
   const [gameStopActive, setGameStopActive] = useState(false);
@@ -423,6 +427,44 @@ export function ComposedReferenceGameApp() {
     }
   };
 
+  const handleGameSetup = async (): Promise<void> => {
+    const current = viewRef.current;
+    if (gameSetupActiveRef.current || current.kind !== "ready" || current.root.game === null ||
+        current.root.game.game.prerequisites.status !== "unknown" || current.root.game.game.instance.status !== "none") return;
+    const idempotencyKey = gameSetupKeyRef.current ?? newIdempotencyKey();
+    gameSetupKeyRef.current = idempotencyKey;
+    gameSetupActiveRef.current = true;
+    setGameSetupActive(true);
+    setGameSetupFailed(false);
+    try {
+      await composedApiRef.current.setupGame({ apiVersion: 1, idempotencyKey });
+      await reread();
+      if (viewRef.current.kind === "ready" && viewRef.current.root.game?.game.prerequisites.status === "unknown")
+        gameSetupKeyRef.current = undefined;
+    } catch (error) {
+      let rereadSucceeded = false;
+      try {
+        await reread();
+        rereadSucceeded = true;
+      } catch {
+        // Preserve the original key while the command outcome is uncertain.
+      }
+      setGameSetupFailed(true);
+      const latest = viewRef.current;
+      if (
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "game_unavailable" &&
+        rereadSucceeded &&
+        latest.kind === "ready" &&
+        latest.root.game?.game.prerequisites.status === "unknown" &&
+        latest.root.game.game.instance.status === "none"
+      ) gameSetupKeyRef.current = undefined;
+    } finally {
+      gameSetupActiveRef.current = false;
+      setGameSetupActive(false);
+    }
+  };
+
   const handleGameStop = async (): Promise<void> => {
     const current = viewRef.current;
     const game = current.kind === "ready" ? current.root.game : null;
@@ -539,6 +581,8 @@ export function ComposedReferenceGameApp() {
 
   const submitAvailable = view.kind === "ready" && view.session.pending === null && view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
   const stopAvailable = view.kind === "ready" && view.session.snapshot.chat?.turn?.canCancel === true && view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
+  const gameSetupAvailable = view.kind === "ready" && view.root.game !== null &&
+    view.root.game.game.prerequisites.status === "unknown" && view.root.game.game.instance.status === "none";
   const gameStopAvailable = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
@@ -579,7 +623,13 @@ export function ComposedReferenceGameApp() {
                )}
              </section>
               <section className="composed-game-drawer" aria-label={labels().gameState}>
-                 <GameProjection game={view.root.game} />
+                  <GameProjection game={view.root.game} />
+                  {gameSetupAvailable && (
+                    <button type="button" disabled={gameSetupActive} onClick={() => void handleGameSetup()}>
+                      {labels().gameSetup}
+                    </button>
+                  )}
+                  {gameSetupFailed && <p role="status">{labels().gameSetupFailed}</p>}
                  {gameStopAvailable && (
                    <button type="button" disabled={gameStopActive} onClick={() => void handleGameStop()}>
                      {labels().gameStop}

@@ -27,6 +27,12 @@ const gameProfile = composeGameProfile({
   operationIds: ["game.state.read"],
   navigationItemIds: ["game"],
 });
+const gameProfileWithSetup = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: ["game.state.read", "game.prerequisites.setup"],
+  navigationItemIds: ["game"],
+});
 const gameProfileWithDisconnect = composeGameProfile({
   profileId: "gamebuddy.game.preview",
   releaseTier: "game_preview",
@@ -112,6 +118,76 @@ function lifecycleRequest(
     },
   } as unknown as IncomingMessage;
 }
+
+test("game.prerequisites.setup mount is exact and cannot drift from its production callback", () => {
+  assert.throws(
+    () => createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithSetup }),
+      bootstrapToken,
+      readChat: async (context) => stateForChat(context),
+      readGame: async (context) => stateForGame(context),
+    }),
+    /setup operation is mismounted/,
+  );
+  assert.throws(
+    () => createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+      bootstrapToken,
+      readChat: async (context) => stateForChat(context),
+      readGame: async (context) => stateForGame(context),
+      gameSetup: async () => undefined,
+    }),
+    /setup operation is mismounted/,
+  );
+});
+
+test("authenticated game.prerequisites.setup is one-shot, schema-bound, and returns an empty completion", async () => {
+  const calls: unknown[] = [];
+  let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
+  handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithSetup }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameSetup: async (admission, command) => {
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_setup",
+        (facts) => { calls.push({ command, facts }); return true; },
+      );
+      if (consumed !== true) throw new Error("setup_admission_invalid");
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const path = `${server.origin}/api/composed-reference-game/v1/game/prerequisites/setup`;
+    const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" };
+    const completed = await fetch(path, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      body: JSON.stringify(command),
+    });
+    assert.equal(completed.status, 204);
+    assert.equal(await completed.text(), "");
+    assert.equal(calls.length, 1);
+    assert.deepEqual((calls[0] as { command: unknown }).command, command);
+
+    for (const request of [
+      { headers: { origin: server.origin, cookie: "gb_composed_reference_game_session=wrong", "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: command },
+      { headers: { origin: "http://127.0.0.1:1", cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: command },
+      { headers: { origin: server.origin, cookie, "x-csrf-token": "wrong", "content-type": "application/json" }, body: command },
+      { headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" }, body: { ...command, path: "C:\\Games\\Stardew Valley" } },
+    ]) {
+      const response = await fetch(path, { method: "POST", headers: request.headers, body: JSON.stringify(request.body) });
+      assert.equal(response.status, request.body === command ? 401 : 409);
+    }
+    assert.equal(calls.length, 1);
+  } finally { await server.close(); }
+});
 
 test("game.stop mount is exact and cannot drift from its production callback", () => {
   assert.throws(
@@ -698,6 +774,41 @@ test("Stardew cabin routes reject wrong auth, origin, CSRF, and DTO before lifec
     })).status, 409);
     assert.equal(lifecycleCalls, 0);
   } finally { await server.close(); }
+});
+
+test("game.prerequisites.setup maps only frozen typed outcomes without leaking internal errors", async () => {
+  const cases = [
+    ["stardew_game_setup_idempotency_conflict", "idempotency_conflict"],
+    ["stardew_game_setup_in_progress", "game_operation_in_progress"],
+    ["stardew_game_setup_failed", "game_unavailable"],
+    ["stardew_player_host_launch_not_staged", "game_prerequisites_missing"],
+    ["private-setup-sensitive-C:\\Games\\Stardew Valley", "state_unavailable"],
+  ] as const;
+  for (const [internalMessage, expectedCode] of cases) {
+    const handler = createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithSetup }),
+      bootstrapToken,
+      readChat: async (context) => stateForChat(context),
+      readGame: async (context) => stateForGame(context),
+      gameSetup: async () => { throw new Error(internalMessage); },
+    });
+    const server = await start(handler);
+    try {
+      const initial = await bootstrap(server.origin);
+      const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const root = await initial.json() as { chat: { csrfToken: string } };
+      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/prerequisites/setup`, {
+        method: "POST",
+        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }),
+      });
+      assert.equal(response.status, 409);
+      const text = await response.text();
+      assert.deepEqual(JSON.parse(text), { code: expectedCode });
+      assert.equal(text.includes(internalMessage), false);
+      assert.equal(text.includes("Stardew Valley"), false);
+    } finally { await server.close(); }
+  }
 });
 
 test("game.stop maps only frozen typed outcomes without leaking internal errors", async () => {

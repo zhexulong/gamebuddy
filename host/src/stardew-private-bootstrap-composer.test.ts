@@ -2525,9 +2525,11 @@ function admissionResponse(components: readonly WindowsPathObjectIdentity[]): st
 
 function admissionInspector(
   chains: readonly (readonly WindowsPathObjectIdentity[])[],
+  beforeResponse?: (readIndex: number) => Promise<void>,
 ): ReturnType<typeof createTestWindowsReparseInspector> {
   let index = 0;
   return createTestWindowsReparseInspector(() => {
+    const readIndex = index + 1;
     const chain = chains[index++];
     if (chain === undefined) throw new Error("unexpected_inspection");
     const child = Object.assign(new EventEmitter(), {
@@ -2536,13 +2538,14 @@ function admissionInspector(
       stderr: new PassThrough(),
       kill: () => true,
     });
-    child.stdin.on("data", (chunk: Buffer) => {
+    child.stdin.on("data", (chunk: Buffer) => void (async () => {
       const request: unknown = JSON.parse(chunk.toString("utf8"));
       assert.deepEqual(request, admissionRequest(admissionExecutable));
+      if (beforeResponse !== undefined) await beforeResponse(readIndex);
       child.stdout.end(admissionResponse(chain));
       child.stderr.end();
       queueMicrotask(() => child.emit("close", 0, null));
-    });
+    })());
     return child as unknown as ChildProcess;
   });
 }
@@ -3303,6 +3306,35 @@ test("Stage D fresh installation mismatch spawns nothing and a new admission can
 
   const fresh = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
   const result = await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, fresh);
+  assert.deepEqual(result, { status: { kind: "awaiting_ai_client_attestation" } });
+  assert.equal(fixture.harness.spawnCalls.length, 1);
+});
+
+test("Stage D rejects Bridge config replaced during installation reread before consuming AI launch", async () => {
+  const fixture = await prepareMaterializedAiClientFixture();
+  const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
+  const configPath = join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json");
+  const canonicalConfig = await readFile(configPath, "utf8");
+  const inspector = admissionInspector(
+    [admissionChain(), admissionChain(), admissionChain(), admissionChain()],
+    async (readIndex) => {
+      if (readIndex === 3)
+        await writeFile(configPath, JSON.stringify({ EnableLocalBridge: false }));
+    },
+  );
+  const installation = await admitStardewInstallation(inspector, admissionCandidate);
+
+  await assert.rejects(
+    () => fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation),
+    /stardew_ai_client_bridge_config_changed/,
+  );
+  assert.deepEqual(fixture.harness.spawnCalls, []);
+  assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), {
+    kind: "ai_client_launch_pending",
+  });
+
+  await writeFile(configPath, canonicalConfig);
+  const result = await fixture.testCore.launchOwnedAiClientStageD(fixture.owner, installation);
   assert.deepEqual(result, { status: { kind: "awaiting_ai_client_attestation" } });
   assert.equal(fixture.harness.spawnCalls.length, 1);
 });

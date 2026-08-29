@@ -284,6 +284,40 @@ test("Stardew cabin problems preserve stale, conflict, in-progress, and uncertai
 });
 
 
+test("Game setup preserves terminal unavailable and prerequisites outcomes as typed problems", async () => {
+  for (const code of ["game_unavailable", "game_prerequisites_missing"]) {
+    const key = "U".repeat(21) + "A";
+    const recorder = transport(jsonResponse(root()), jsonResponse({ code }, 409));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.setupGame({ apiVersion: 1, idempotencyKey: key }),
+      (error) => error instanceof ComposedReferenceGameProblemError && error.code === code,
+    );
+  }
+});
+
+test("Game setup client sends only the exact idempotency command and accepts 204 empty", async () => {
+  const key = "U".repeat(21) + "A";
+  const recorder = transport(jsonResponse(root()), new Response(null, { status: 204 }));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await api.bootstrap(HANDLE);
+  await api.setupGame({ apiVersion: 1, idempotencyKey: key });
+  assert.deepEqual(recorder.calls[1], {
+    input: "/api/composed-reference-game/v1/game/prerequisites/setup",
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": HANDLE },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey: key }),
+      credentials: "same-origin",
+    },
+  });
+  await assert.rejects(
+    api.setupGame({ apiVersion: 1, idempotencyKey: key, path: "C:\\Games\\Stardew Valley" }),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_setup_request",
+  );
+});
+
 test("Game STOP client sends the exact generation-bound command and accepts only 204 empty", async () => {
   const key = "S".repeat(21) + "A";
   const recorder = transport(jsonResponse(root()), new Response(null, { status: 204 }));

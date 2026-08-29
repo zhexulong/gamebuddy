@@ -57,14 +57,22 @@ function projectGameBrowserState(
   attachment: StardewGameSurfaceAttachmentView,
 ): GameBrowserStateV1 {
   const compatibility = projectCompatibility(lifecycle);
+  const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
+  const instanceStatus = lifecycle.playerHost.state === "pending" || lifecycle.playerHost.state === "awaiting_attestation"
+    ? "launching" as const
+    : lifecycle.playerHost.state === "authenticated" ? "running" as const : "none" as const;
   return Object.freeze({
     apiVersion: 1,
     build: Object.freeze({ browserContract: GAME_BROWSER_API_V1, profileId: profile.profileId }),
     csrfToken: context.csrfToken,
     browserSession: Object.freeze({ expiresAtMs: context.browserSessionExpiresAtMs }),
     game: Object.freeze({
-      prerequisites: Object.freeze({ status: "unknown", detectedGame: null, missingItems: [] }),
-      instance: Object.freeze({ status: "none", gameTitle: null }),
+      prerequisites: playerHostStarted
+        ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })
+        : Object.freeze({ status: "unknown" as const, detectedGame: null, missingItems: [] }),
+      instance: instanceStatus === "none"
+        ? Object.freeze({ status: "none" as const, gameTitle: null })
+        : Object.freeze({ status: instanceStatus, gameTitle: "Stardew Valley" }),
       compatibility: Object.freeze(compatibility),
       attachment: Object.freeze({ status: attachment.status, generation: attachment.generation }),
       connectionStatus: attachment.connectionStatus,

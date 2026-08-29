@@ -50,6 +50,7 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
     bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
     readCabinChoices?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["stardewCabins"]>["read"];
     confirmCabinChoice?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["stardewCabins"]>["confirm"];
+    setupPlayerHost?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameSetup"]>;
     stopGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameStop"]>;
     disconnectGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameDisconnect"]>;
   }>;
@@ -89,6 +90,7 @@ export async function startComposedReferenceGameStaticShellComposition(
     bootstrapToken: options.bootstrapToken,
     readChat,
     readGame: options.readGame,
+    gameSetup: options.lifecycleActivationBindingSink?.setupPlayerHost?.bind(options.lifecycleActivationBindingSink),
     gameStop: options.lifecycleActivationBindingSink?.stopGame?.bind(options.lifecycleActivationBindingSink),
     gameDisconnect: options.lifecycleActivationBindingSink?.disconnectGame?.bind(options.lifecycleActivationBindingSink),
     stardewCabins:

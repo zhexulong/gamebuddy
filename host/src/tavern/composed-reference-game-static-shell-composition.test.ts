@@ -40,7 +40,7 @@ const cabinProfile = composeReferenceGameBrowserProfile({
   gameProfile: composeGameProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
-    operationIds: ["game.state.read", "game.stop", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+    operationIds: ["game.state.read", "game.prerequisites.setup", "game.stop", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
     navigationItemIds: ["game"],
   }),
 });
@@ -280,6 +280,7 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
   let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
   let readCalls = 0;
   let confirmCalls = 0;
+  let setupCalls = 0;
   let stopCalls = 0;
   const lifecycleSink = Object.freeze({
     bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; },
@@ -299,6 +300,20 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
           }],
         }),
       )!;
+    },
+    async setupPlayerHost(
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      command: Readonly<{ apiVersion: 1; idempotencyKey: string }>,
+    ) {
+      setupCalls += 1;
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "game_setup",
+        () => {
+          assert.deepEqual(command, { apiVersion: 1, idempotencyKey });
+        },
+      );
     },
     async stopGame(
       admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -384,6 +399,20 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
     for (const forbidden of ["cabinId", "companionId", "ownerFarmhandId", "AI", "Bridge", "ready"])
       assert.equal(confirmationWire.includes(forbidden), false);
 
+    const setup = await fetch(`${server.origin}/api/composed-reference-game/v1/game/prerequisites/setup`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey }),
+    });
+    assert.equal(setup.status, 204);
+    assert.equal(await setup.text(), "");
+    assert.equal(setupCalls, 1);
+
     const stopped = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
       method: "POST",
       headers: {
@@ -402,6 +431,7 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
     await assert.rejects(() => fetch(cabinPath, { headers: { Origin: server.origin, Cookie: cookie } }));
     assert.equal(readCalls, 1);
     assert.equal(confirmCalls, 1);
+    assert.equal(setupCalls, 1);
     assert.equal(stopCalls, 1);
   } finally {
     await server.close().catch(() => {});

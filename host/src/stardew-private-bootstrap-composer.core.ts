@@ -1478,9 +1478,10 @@ async function launchOwnedPlayerHostStageC(
 
 /**
  * Core-private composition-bound AI-client launch. The exact owner must have a
- * completely materialized C1 profile. Durable managed inventory is reread
- * before the admitted installation performs its final identity-chain reread;
- * only then may the exact reserved AI launch be consumed.
+ * completely materialized C1 profile. Durable managed inventory is reread before
+ * the admitted installation performs its final identity-chain reread. The exact
+ * Bridge config is checked again after that asynchronous reread; only then may
+ * the exact reserved AI launch be consumed.
  */
 async function launchOwnedAiClientStageD(
   owner: StardewOwnedPlayerHostPhaseAOwner,
@@ -1521,12 +1522,17 @@ async function launchOwnedAiClientStageD(
   if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
 
   const modsPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY);
-  return consumeAdmittedStardewInstallation(installation, (root, executable) =>
-    facts.consumeAiClientLaunch((launch) => launch({
+  return consumeAdmittedStardewInstallation(installation, async (root, executable) => {
+    await verifySafePathBoundary(configPath, transactionDirectory);
+    if (await readFile(configPath, "utf8") !== bridgeMaterial.configJson)
+      throw new Error("stardew_ai_client_bridge_config_changed");
+    if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_phase_a_owner_expired");
+    return facts.consumeAiClientLaunch((launch) => launch({
       executable,
       args: ["--mods-path", modsPath],
       cwd: root,
-    })));
+    }));
+  });
 }
 
 async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(

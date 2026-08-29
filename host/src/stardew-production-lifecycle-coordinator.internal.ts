@@ -9,7 +9,10 @@ import { createKnownSemanticGameFacadeFromReceiptBackedBinding } from "./continu
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { admitStardewInstallation } from "./stardew-installation-admission.js";
+import {
+  admitStardewInstallation,
+  type AdmittedStardewInstallation,
+} from "./stardew-installation-admission.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import { createGameRuntimeBindingFromReceiptBackedLaunch } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import {
@@ -18,6 +21,7 @@ import {
 } from "./stardew-integration-launcher.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
+import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
 import {
   createStardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.internal.js";
@@ -29,6 +33,7 @@ import {
 } from "./stardew-private-bootstrap-composer.core.js";
 import type {
   GameDisconnectCommandV1,
+  GamePrerequisitesSetupCommandV1,
   GameStopCommandV1,
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
@@ -68,7 +73,10 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
   activate(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
   ): Promise<StardewPrivateActivationSnapshot>;
-  launchStagedPlayerHost(gameDirectoryCandidate: string): Promise<StardewPrivateActivationSnapshot>;
+  setupPlayerHost(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GamePrerequisitesSetupCommandV1,
+  ): Promise<void>;
   readPrivateActivationSnapshot(): StardewPrivateActivationSnapshot;
   readCabinChoices(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -134,6 +142,7 @@ function createCoordinator(
   internal: BootstrapComposition,
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
   connectFarmhandGameRuntimeFacade: ConnectFarmhandGameRuntimeFacade,
+  folderPicker: WindowsStardewFolderPickerCapability,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
   const playerId = `${manifest.principal.playerId}`;
@@ -154,7 +163,7 @@ function createCoordinator(
   let activationPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   let exactOwner: StardewOwnedPlayerHostPhaseAOwner | undefined;
   let ownerQuarantined = false;
-  let launchCandidate: string | undefined;
+  let admittedInstallation: AdmittedStardewInstallation | undefined;
   let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   let launchTerminal = false;
   let playerHostAttestationCorrelated = false;
@@ -175,6 +184,8 @@ function createCoordinator(
     promise: Promise<void>;
   }>>();
   let attachmentTeardownPromise: Promise<void> | undefined;
+  const gameSetups = new Map<string, Readonly<{ browserSessionId: string; promise: Promise<void> }>>();
+  let setupPromise: Promise<void> | undefined;
   let aiStopped = false;
   let playerStopped = false;
   let closePromise: Promise<void> | undefined;
@@ -312,15 +323,13 @@ function createCoordinator(
   };
 
   const runPlayerHostLaunch = async (
-    candidate: string,
+    installation: AdmittedStardewInstallation,
   ): Promise<StardewPrivateActivationSnapshot> => {
     const owner = exactOwner;
     if (owner === undefined) throw new Error("stardew_player_host_launch_owner_missing");
     transition("launching_player_host");
     let launchCompleted = false;
     try {
-      const inspector = await createInstallationInspector();
-      const installation = await admitStardewInstallation(inspector, candidate);
       if (isClosing()) throw new Error("stardew_lifecycle_closing");
       const result = await internal.launchOwnedPlayerHostStageC(owner, installation);
       launchCompleted = true;
@@ -342,7 +351,7 @@ function createCoordinator(
           // Close retains and retries the exact-owner quarantine.
         }
       } else if (!isClosing()) {
-        launchCandidate = undefined;
+        admittedInstallation = undefined;
         launchPromise = undefined;
         transition("staged");
       }
@@ -350,26 +359,22 @@ function createCoordinator(
     }
   };
 
-  const launchStagedPlayerHost = (
-    candidate: string,
+  const launchSelectedPlayerHost = (
+    installation: AdmittedStardewInstallation,
   ): Promise<StardewPrivateActivationSnapshot> => {
     if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
     if (launchTerminal) return Promise.reject(new Error("stardew_player_host_launch_quarantined"));
-    if (launchCandidate !== undefined) {
-      if (candidate !== launchCandidate)
-        return Promise.reject(new Error("stardew_player_host_launch_conflict"));
-      return launchPromise!;
-    }
+    if (launchPromise !== undefined) return launchPromise;
     if (activationState !== "staged")
       return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
-    launchCandidate = candidate;
-    launchPromise = runPlayerHostLaunch(candidate);
+    admittedInstallation = installation;
+    launchPromise = runPlayerHostLaunch(installation);
     return launchPromise;
   };
 
   const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm" | "game_stop" | "game_disconnect",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_stop" | "game_disconnect",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -383,6 +388,43 @@ function createCoordinator(
     if (result === undefined) throw new Error("stardew_cabin_browser_admission_invalid");
     return result;
   };
+
+  const selectAndAdmitPlayerHostInstallation = async (): Promise<AdmittedStardewInstallation | undefined> => {
+    const result = await selectStardewFolder(folderPicker);
+    if (result.status === "cancelled") return undefined;
+    const inspector = await createInstallationInspector();
+    return admitStardewInstallation(inspector, result.path);
+  };
+
+  const setupPlayerHost = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GamePrerequisitesSetupCommandV1,
+  ): Promise<void> => consumeBrowserAdmission(admission, "game_setup", (browserSessionId) => {
+    const prior = gameSetups.get(command.idempotencyKey);
+    if (prior !== undefined) {
+      if (prior.browserSessionId !== browserSessionId) return Promise.reject(new Error("stardew_game_setup_idempotency_conflict"));
+      return prior.promise;
+    }
+    if (setupPromise !== undefined) return Promise.reject(new Error("stardew_game_setup_in_progress"));
+    if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
+    if (activationState !== "staged") return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
+    let promise!: Promise<void>;
+    promise = (async () => {
+      try {
+        const installation = await selectAndAdmitPlayerHostInstallation();
+        if (installation === undefined) return;
+        await launchSelectedPlayerHost(installation);
+      } catch (error) {
+        if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
+        throw new Error("stardew_game_setup_failed", { cause: error });
+      } finally {
+        if (setupPromise === promise) setupPromise = undefined;
+      }
+    })();
+    setupPromise = promise;
+    gameSetups.set(command.idempotencyKey, Object.freeze({ browserSessionId, promise }));
+    return promise;
+  });
 
   const readCabinChoices = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -436,10 +478,8 @@ function createCoordinator(
         manifestAdmitted = true;
         await internal.materializeAiClientProfileAfterManifestAdmission(handle.owner, admission);
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
-        const candidate = launchCandidate;
-        if (candidate === undefined) throw new Error("stardew_ai_client_launch_candidate_missing");
-        const inspector = await createInstallationInspector();
-        const installation = await admitStardewInstallation(inspector, candidate);
+        const installation = admittedInstallation;
+        if (installation === undefined) throw new Error("stardew_ai_client_launch_installation_missing");
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         const result = await internal.launchOwnedAiClientStageD(handle.owner, installation);
         if (result.status.kind !== "awaiting_ai_client_attestation")
@@ -632,7 +672,7 @@ function createCoordinator(
   const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
     bindBrowserAdmissionIssuer,
     activate,
-    launchStagedPlayerHost,
+    setupPlayerHost,
     readPrivateActivationSnapshot: snapshot,
     readCabinChoices,
     confirmCabinChoice,
@@ -645,6 +685,8 @@ function createCoordinator(
     if (attachmentGeneration !== 0) attachmentConnectionStatus = "stopping";
     const activation = activationPromise;
     if (activation !== undefined) await activation.catch(() => undefined);
+    const setup = setupPromise;
+    if (setup !== undefined) await setup.catch(() => undefined);
     const launch = launchPromise;
     if (launch !== undefined) await launch.catch(() => undefined);
     const confirmationKey = cabinConfirmationKey;
@@ -691,6 +733,7 @@ function createCoordinator(
     if (incomplete) throw new StardewProductionLifecycleCloseError();
     attachmentGeneration = 0;
     attachmentConnectionStatus = "none";
+    gameSetups.clear();
     gameStops.clear();
     gameDisconnects.clear();
     transition("closed");
@@ -721,13 +764,15 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   internal: BootstrapComposition,
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
   connectFarmhandGameRuntimeFacade: ConnectFarmhandGameRuntimeFacade,
+  folderPicker: WindowsStardewFolderPickerCapability,
 ): StardewProductionLifecycleCoordinator {
-  return createCoordinator(manifest, internal, createInstallationInspector, connectFarmhandGameRuntimeFacade);
+  return createCoordinator(manifest, internal, createInstallationInspector, connectFarmhandGameRuntimeFacade, folderPicker);
 }
 
 /** Constructs the coordinator exclusively from the closed first-party composition. */
 export function createStardewProductionLifecycleCoordinator(
   manifest: HostDeploymentManifest,
+  folderPicker: WindowsStardewFolderPickerCapability,
 ): StardewProductionLifecycleCoordinator {
   const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
   return createCoordinator(
@@ -764,5 +809,6 @@ export function createStardewProductionLifecycleCoordinator(
       );
       return createKnownSemanticGameFacadeFromReceiptBackedBinding(manifest, binding);
     },
+    folderPicker,
   );
 }
