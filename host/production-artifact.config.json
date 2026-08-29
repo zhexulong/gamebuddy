@@ -32,6 +32,12 @@
     "helper": "GameBuddy.WindowsStaleLockReclaimer.exe",
     "manifest": "windows-stale-lock-reclaimer.manifest.json"
   },
+  "windowsStardewFolderPicker": {
+    "kind": "verified_windows_stardew_folder_picker",
+    "destination": "native/windows-stardew-folder-picker/win-x64",
+    "helper": "GameBuddy.WindowsStardewFolderPicker.exe",
+    "manifest": "windows-stardew-folder-picker.manifest.json"
+  },
   "externalRuntimeClosure": {
     "kind": "declared_external_runtime_closure",
     "packages": [
