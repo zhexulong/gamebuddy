@@ -118,6 +118,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
       gameProfile,
       lifecycleCoordinator.lifecycleReader,
       lifecycleCoordinator.attachmentReader,
+      lifecycleCoordinator.launchReadinessReader,
     );
     const artifactRoot = hostArtifactRoot;
     const inspector = await createPublishedWindowsReparseInspector(artifactRoot);

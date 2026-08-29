@@ -50,7 +50,7 @@ function gameSnapshot(overrides = {}) {
     browserSession: { expiresAtMs: 1000 },
     game: {
       prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
-      instance: { status: "none", gameTitle: null },
+      instance: { status: "none", gameTitle: null, generation: 0 },
       compatibility: { status: "unchecked", message: null },
       attachment: { status: "none", generation: 0 },
       connectionStatus: "none",
@@ -316,6 +316,44 @@ test("Game setup client sends only the exact idempotency command and accepts 204
     api.setupGame({ apiVersion: 1, idempotencyKey: key, path: "C:\\Games\\Stardew Valley" }),
     (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_setup_request",
   );
+});
+
+test("Game launch client sends the exact projected generation and accepts only 204 empty", async () => {
+  const key = "L".repeat(21) + "A";
+  const recorder = transport(jsonResponse(root()), new Response(null, { status: 204 }));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await api.bootstrap(HANDLE);
+  await api.launchGame({ apiVersion: 1, idempotencyKey: key, expectedInstanceGeneration: 1 });
+  assert.deepEqual(
+    { input: recorder.calls[1].input, method: recorder.calls[1].init.method, headers: recorder.calls[1].init.headers, body: recorder.calls[1].init.body },
+    {
+      input: "/api/composed-reference-game/v1/game/launch",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": HANDLE },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey: key, expectedInstanceGeneration: 1 }),
+    },
+  );
+  for (const invalid of [
+    { apiVersion: 1, idempotencyKey: key, expectedInstanceGeneration: 0 },
+    { apiVersion: 1, idempotencyKey: key, expectedInstanceGeneration: 1, path: "C:\\Games\\Stardew Valley" },
+  ]) {
+    await assert.rejects(
+      api.launchGame(invalid),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_launch_request",
+    );
+  }
+});
+
+test("Game launch preserves frozen typed problem outcomes", async () => {
+  for (const code of ["game_instance_not_found", "game_prerequisites_missing", "game_unavailable", "game_operation_in_progress", "idempotency_conflict"]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ code }, 409));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.launchGame({ apiVersion: 1, idempotencyKey: "L".repeat(21) + "A", expectedInstanceGeneration: 1 }),
+      (error) => error instanceof ComposedReferenceGameProblemError && error.code === code,
+    );
+  }
 });
 
 test("Game STOP client sends the exact generation-bound command and accepts only 204 empty", async () => {

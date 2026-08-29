@@ -5,7 +5,7 @@ import {
   isComposedGameProfile,
 } from "../game-browser-contract/index.js";
 import type { StardewCompatibilityStatus } from "../stardew-compatibility.js";
-import type { StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView } from "../stardew-production-lifecycle-coordinator.internal.js";
+import type { StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
 import type {
   StardewRoleLifecycleReader,
   StardewRoleLifecycleView,
@@ -35,6 +35,7 @@ export function createGameBrowserStateProvider(
   profile: ComposedGameProfile,
   lifecycle: StardewRoleLifecycleReader,
   attachment: StardewGameSurfaceAttachmentReader,
+  launchReadiness: StardewGameSurfaceLaunchReadinessReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read"))
@@ -45,7 +46,8 @@ export function createGameBrowserStateProvider(
       validateContext(context);
       const lifecycleView = await lifecycle.readRoleLifecycleView();
       const attachmentView = attachment.readAttachmentView();
-      return projectGameBrowserState(profile, context, lifecycleView, attachmentView);
+      const launchReadinessView = launchReadiness.readLaunchReadinessView();
+      return projectGameBrowserState(profile, context, lifecycleView, attachmentView, launchReadinessView);
     },
   });
 }
@@ -55,24 +57,29 @@ function projectGameBrowserState(
   context: GameBrowserReadStateContext,
   lifecycle: StardewRoleLifecycleView,
   attachment: StardewGameSurfaceAttachmentView,
+  launchReadiness: StardewGameSurfaceLaunchReadinessView,
 ): GameBrowserStateV1 {
   const compatibility = projectCompatibility(lifecycle);
   const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
-  const instanceStatus = lifecycle.playerHost.state === "pending" || lifecycle.playerHost.state === "awaiting_attestation"
-    ? "launching" as const
-    : lifecycle.playerHost.state === "authenticated" ? "running" as const : "none" as const;
+  const launchFailed = launchReadiness.status === "failed";
+  const prerequisitesMet = playerHostStarted || launchReadiness.status === "ready" || launchFailed;
+  const instanceStatus = launchFailed
+      ? "crashed" as const
+      : lifecycle.playerHost.state === "pending" || lifecycle.playerHost.state === "awaiting_attestation"
+        ? "launching" as const
+        : lifecycle.playerHost.state === "authenticated" ? "running" as const : "none" as const;
   return Object.freeze({
     apiVersion: 1,
     build: Object.freeze({ browserContract: GAME_BROWSER_API_V1, profileId: profile.profileId }),
     csrfToken: context.csrfToken,
     browserSession: Object.freeze({ expiresAtMs: context.browserSessionExpiresAtMs }),
     game: Object.freeze({
-      prerequisites: playerHostStarted
+      prerequisites: prerequisitesMet
         ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })
         : Object.freeze({ status: "unknown" as const, detectedGame: null, missingItems: [] }),
       instance: instanceStatus === "none"
-        ? Object.freeze({ status: "none" as const, gameTitle: null })
-        : Object.freeze({ status: instanceStatus, gameTitle: "Stardew Valley" }),
+        ? Object.freeze({ status: "none" as const, gameTitle: null, generation: launchReadiness.generation })
+        : Object.freeze({ status: instanceStatus, gameTitle: "Stardew Valley", generation: launchReadiness.generation }),
       compatibility: Object.freeze(compatibility),
       attachment: Object.freeze({ status: attachment.status, generation: attachment.generation }),
       connectionStatus: attachment.connectionStatus,
