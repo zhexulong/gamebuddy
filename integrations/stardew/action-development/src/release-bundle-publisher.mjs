@@ -11,12 +11,13 @@ import {
 export const RELEASE_BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
   "GameBuddy.Stardew.Core.dll",
+  "Raffinert.FuzzySharp.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ]);
 
-function fail(code, cause) {
-  throw new Error(`stardew_release_bundle_publish_${code}`, cause ? { cause } : undefined);
+function fail(code) {
+  throw new Error(`stardew_release_bundle_publish_${code}`);
 }
 function sameFile(left, right) { return left.dev === right.dev && left.ino === right.ino; }
 async function trustedDirectory(candidate) {
@@ -33,7 +34,7 @@ async function trustedDirectory(candidate) {
     return { absolute, state };
   } catch (error) {
     if (error?.message?.startsWith("stardew_release_bundle_publish_")) throw error;
-    fail("untrusted_directory", error);
+    fail("untrusted_directory");
   }
 }
 async function openSource(directory, directoryState, name) {
@@ -51,7 +52,7 @@ async function openSource(directory, directoryState, name) {
   } catch (error) {
     await handle?.close().catch(() => {});
     if (error?.message?.startsWith("stardew_release_bundle_publish_")) throw error;
-    fail("source_untrusted", error);
+    fail("source_untrusted");
   }
 }
 async function copyPinned(source, destination, hash, name) {
@@ -158,7 +159,7 @@ export async function publishEquipToolReleaseBundle({ sourceDir, destinationDir 
       files: RELEASE_BUNDLE_FILES.length,
     });
   } catch (error) {
-    await cleanupKnown(transaction).catch((cleanupError) => fail("cleanup_uncertain", new AggregateError([error, cleanupError])));
+    await cleanupKnown(transaction).catch(() => fail("cleanup_uncertain"));
     throw error;
   }
 }

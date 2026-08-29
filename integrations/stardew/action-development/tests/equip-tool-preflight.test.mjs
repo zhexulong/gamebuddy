@@ -13,6 +13,7 @@ async function fixture(callback) {
     for (const [name, contents] of [
       ["GameBuddy.Stardew.dll", "mod"],
       ["GameBuddy.Stardew.Core.dll", "core"],
+      ["Raffinert.FuzzySharp.dll", "fuzzy"],
       ["manifest.json", JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" })],
       ["GameBuddy.Stardew.deps.json", "{}"],
     ]) await writeFile(path.join(root, "release", name), contents);
@@ -77,7 +78,7 @@ test("static preflight validates package and target inputs without any bridge co
   const report = await run(profileFile, d.value);
   assert.equal(report.state, "READY");
   assert.equal(report.freshSnapshotCount, 0);
-  assert.deepEqual(report.bundle, { algorithm: "sha256", digest: report.bundle.digest, adapterVersion: "0.1.0", files: 4 });
+  assert.deepEqual(report.bundle, { algorithm: "sha256", digest: report.bundle.digest, adapterVersion: "0.1.0", files: 5 });
   assert.match(report.bundle.digest, /^[a-f0-9]{64}$/);
   assert.equal(connections, 0);
   assert.deepEqual(observedRoots, [["transaction", profile.fixtureTransactionRoot], ["native", profile.nativeFixtureRoot]]);
@@ -121,8 +122,8 @@ test("rejects invalid release bundles and release/deployment overlap", async () 
   assert.deepEqual((await run(profileFile, deps().value)).reasons, ["stardew_immutable_release_bundle_manifest_identity_mismatch"]);
   await writeFile(profileFile, JSON.stringify({ ...profile, releaseDir: path.join(root, "game", "Mods", "GameBuddy") }));
   for (const [name, contents] of [
-    ["GameBuddy.Stardew.dll", "mod"], ["GameBuddy.Stardew.Core.dll", "core"],
-    ["manifest.json", JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" })],
+     ["GameBuddy.Stardew.dll", "mod"], ["GameBuddy.Stardew.Core.dll", "core"], ["Raffinert.FuzzySharp.dll", "fuzzy"],
+     ["manifest.json", JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" })],
     ["GameBuddy.Stardew.deps.json", "{}"],
   ]) await writeFile(path.join(root, "game", "Mods", "GameBuddy", name), contents);
   assert.deepEqual((await run(profileFile, deps().value)).reasons, ["stardew_immutable_release_bundle_path_overlap"]);
