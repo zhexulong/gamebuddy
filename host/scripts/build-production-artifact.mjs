@@ -3,8 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { publishProductionArtifact, reachableProductionModules, readArtifactConfig, verifyWindowsReparseInspectorPair } from "./production-artifact.mjs";
+import { publishProductionArtifact, reachableProductionModules, readArtifactConfig, verifyWindowsReparseInspectorPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { buildWindowsReparseInspector, outputRoot as windowsReparseInspectorBuildRoot } from "./build-windows-reparse-inspector.mjs";
+import { buildWindowsStardewFolderPicker, outputRoot as windowsStardewFolderPickerBuildRoot } from "./build-windows-stardew-folder-picker.mjs";
 import { runBoundedChild } from "./test-supervisor.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -361,6 +362,9 @@ export async function buildProductionArtifact({
       const config = await readArtifactConfig(hostRoot);
       if (config.windowsReparseInspector === undefined) throw new Error("windows_reparse_inspector_descriptor_missing");
       await verifyBuiltWindowsReparseInspector(config.windowsReparseInspector);
+      await buildWindowsStardewFolderPicker();
+      if (config.windowsStardewFolderPicker === undefined) throw new Error("windows_stardew_folder_picker_descriptor_missing");
+      await verifyWindowsStardewFolderPickerPair({ root: resolve(windowsStardewFolderPickerBuildRoot, ".."), descriptor: { ...config.windowsStardewFolderPicker, destination: "win-x64" } });
     }
     const invocation = await resolveTypeScriptInvocation({ project: "tsconfig.production.json" });
     await runChild({ ...invocation, args: [...invocation.args, "--outDir", stagingRoot] });

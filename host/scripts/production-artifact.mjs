@@ -67,6 +67,12 @@ const WINDOWS_STALE_LOCK_RECLAIMER = Object.freeze({
   helper: "GameBuddy.WindowsStaleLockReclaimer.exe",
   manifest: "windows-stale-lock-reclaimer.manifest.json",
 });
+const WINDOWS_STARDEW_FOLDER_PICKER = Object.freeze({
+  kind: "verified_windows_stardew_folder_picker",
+  destination: "native/windows-stardew-folder-picker/win-x64",
+  helper: "GameBuddy.WindowsStardewFolderPicker.exe",
+  manifest: "windows-stardew-folder-picker.manifest.json",
+});
 const exactKeys = (value, keys) => value !== null && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const artifactRelativeModule = (artifactRoot, importer, specifier, artifactFileSet) => {
@@ -281,11 +287,20 @@ function validateWindowsStaleLockReclaimer(value) {
     throw new Error("invalid_windows_stale_lock_reclaimer_descriptor");
   return Object.freeze({ ...WINDOWS_STALE_LOCK_RECLAIMER });
 }
+function validateWindowsStardewFolderPicker(value) {
+  if (!exactKeys(value, ["kind", "destination", "helper", "manifest"])
+    || Object.keys(WINDOWS_STARDEW_FOLDER_PICKER).some((key) => value[key] !== WINDOWS_STARDEW_FOLDER_PICKER[key]))
+    throw new Error("invalid_windows_stardew_folder_picker_descriptor");
+  return Object.freeze({ ...WINDOWS_STARDEW_FOLDER_PICKER });
+}
 function canonicalWindowsReparseManifest(sha256) {
   return `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsReparseInspector.exe","sha256":"${sha256}"}\n`;
 }
 function canonicalWindowsStaleLockReclaimerManifest(sha256) {
   return `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsStaleLockReclaimer.exe","sha256":"${sha256}"}\n`;
+}
+function canonicalWindowsStardewFolderPickerManifest(sha256) {
+  return `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsStardewFolderPicker.exe","sha256":"${sha256}"}\n`;
 }
 /** Verifies construction provenance only. Current live probe evidence is owned
  * exclusively by the release gate process and cannot be supplied to this API. */
@@ -321,6 +336,18 @@ export async function verifyWindowsStaleLockReclaimerPair({ root, descriptor = W
     return Object.freeze({ helperSha256, pairRoot, helper, manifest });
   } catch { throw new Error("windows_stale_lock_reclaimer_pair_invalid"); }
 }
+export async function verifyWindowsStardewFolderPickerPair({ root, descriptor = WINDOWS_STARDEW_FOLDER_PICKER }) {
+  const pairRoot = resolve(root, descriptor.destination.replaceAll("/", sep));
+  const helper = resolve(pairRoot, descriptor.helper);
+  const manifest = resolve(pairRoot, descriptor.manifest);
+  try {
+    await safeAncestors(root, pairRoot, "windows_stardew_folder_picker"); await directory(pairRoot, "windows_stardew_folder_picker");
+    for (const path of [helper, manifest]) { await safeAncestors(pairRoot, path, "windows_stardew_folder_picker"); await regular(path, "windows_stardew_folder_picker"); }
+    const helperSha256 = digest(await readFile(helper));
+    if (await readFile(manifest, "utf8") !== canonicalWindowsStardewFolderPickerManifest(helperSha256)) throw new Error("manifest");
+    return Object.freeze({ helperSha256, pairRoot, helper, manifest });
+  } catch { throw new Error("windows_stardew_folder_picker_pair_invalid"); }
+}
 function validateExternalClosure(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)
     || value.kind !== "declared_external_runtime_closure"
@@ -349,7 +376,7 @@ function validateExternalClosure(value) {
 }
 export async function readArtifactConfig(hostRoot) {
   const config = JSON.parse(await readFile(resolve(hostRoot, "production-artifact.config.json"), "utf8"));
-  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "externalRuntimeClosure"];
+  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "externalRuntimeClosure"];
   if (config === null || typeof config !== "object" || Array.isArray(config)
     || config.schema !== "gamebuddy-host-production-artifact-config/v2"
     || Object.keys(config).some((key) => !allowedKeys.includes(key))
@@ -368,6 +395,7 @@ export async function readArtifactConfig(hostRoot) {
   if (config.browserArtifact !== undefined) config.browserArtifact = validateBrowserArtifactDescriptor(config.browserArtifact);
   if (config.windowsReparseInspector !== undefined) config.windowsReparseInspector = validateWindowsReparseInspector(config.windowsReparseInspector);
   if (config.windowsStaleLockReclaimer !== undefined) config.windowsStaleLockReclaimer = validateWindowsStaleLockReclaimer(config.windowsStaleLockReclaimer);
+  if (config.windowsStardewFolderPicker !== undefined) config.windowsStardewFolderPicker = validateWindowsStardewFolderPicker(config.windowsStardewFolderPicker);
   config.externalRuntimeClosure = validateExternalClosure(config.externalRuntimeClosure);
   return config;
 }
@@ -540,6 +568,24 @@ async function ensureWindowsStaleLockReclaimerPair({ hostRoot, stagingRoot, desc
 async function verifiedWindowsStaleLockReclaimerOrigins({ stagingRoot, descriptor }) {
   const verified = await verifyWindowsStaleLockReclaimerPair({ root: stagingRoot, descriptor });
   const origin = windowsStaleLockReclaimerOrigin(descriptor, verified.helperSha256);
+  return new Map([...[descriptor.helper, descriptor.manifest].map((name) => [`${descriptor.destination}/${name}`, origin])]);
+}
+function windowsStardewFolderPickerOrigin(descriptor, helperSha256) {
+  return Object.freeze({ kind: descriptor.kind, destination: descriptor.destination, helper: descriptor.helper, manifest: descriptor.manifest, helperSha256 });
+}
+async function ensureWindowsStardewFolderPickerPair({ hostRoot, stagingRoot, descriptor }) {
+  const buildPairRoot = resolve(hostRoot, "native", "windows-stardew-folder-picker", ".dist", "win-x64");
+  const source = await verifyWindowsStardewFolderPickerPair({ root: resolve(buildPairRoot, ".."), descriptor: { ...descriptor, destination: "win-x64" } });
+  const destinationRoot = resolve(stagingRoot, descriptor.destination.replaceAll("/", sep));
+  for (const name of [descriptor.helper, descriptor.manifest]) {
+    const destination = resolve(destinationRoot, name); await mkdir(dirname(destination), { recursive: true }); await copyFile(resolve(source.pairRoot, name), destination);
+    await safeAncestors(stagingRoot, destination, "windows_stardew_folder_picker_destination"); await regular(destination, "windows_stardew_folder_picker_destination");
+  }
+  return verifyWindowsStardewFolderPickerPair({ root: stagingRoot, descriptor });
+}
+async function verifiedWindowsStardewFolderPickerOrigins({ stagingRoot, descriptor }) {
+  const verified = await verifyWindowsStardewFolderPickerPair({ root: stagingRoot, descriptor });
+  const origin = windowsStardewFolderPickerOrigin(descriptor, verified.helperSha256);
   return new Map([...[descriptor.helper, descriptor.manifest].map((name) => [`${descriptor.destination}/${name}`, origin])]);
 }
 function rejectUnverifiedBrowserArtifactFiles(artifactFiles, origins) {
@@ -853,6 +899,10 @@ export async function publishProductionArtifact({ hostRoot, emittedRoot, outputR
       await ensureWindowsStaleLockReclaimerPair({ hostRoot, stagingRoot, descriptor: config.windowsStaleLockReclaimer });
       for (const [path, origin] of await verifiedWindowsStaleLockReclaimerOrigins({ stagingRoot, descriptor: config.windowsStaleLockReclaimer })) origins.set(path, origin);
     }
+    if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
+      await ensureWindowsStardewFolderPickerPair({ hostRoot, stagingRoot, descriptor: config.windowsStardewFolderPicker });
+      for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
+    }
     // Freeze the browser descriptor's checked bytes before inventory creation;
     // a final exact-snapshot verification below closes the remaining
     // pre-publish mutation window as far as this pathname-based architecture permits.
@@ -878,6 +928,9 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   }
   if (process.platform === "win32" && config.windowsStaleLockReclaimer !== undefined) {
     for (const [path, origin] of await verifiedWindowsStaleLockReclaimerOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsStaleLockReclaimer })) origins.set(path, origin);
+  }
+  if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
+    for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
   }
   const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins });
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
@@ -919,6 +972,9 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   }
   if (process.platform === "win32" && config.windowsStaleLockReclaimer !== undefined) {
     for (const [path, origin] of await verifiedWindowsStaleLockReclaimerOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsStaleLockReclaimer })) origins.set(path, origin);
+  }
+  if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
+    for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
   }
   const manifest = JSON.parse(await readFile(resolve(selected.artifactRoot, "production-inventory.json"), "utf8"));
   const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins });
