@@ -28,6 +28,7 @@ import {
   type StardewPrivateFarmhandBridgeConnection,
 } from "./stardew-private-bootstrap-composer.core.js";
 import type {
+  GameDisconnectCommandV1,
   GameStopCommandV1,
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
@@ -79,6 +80,10 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
   stopGame(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameStopCommandV1,
+  ): Promise<void>;
+  disconnectGame(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameDisconnectCommandV1,
   ): Promise<void>;
 }>;
 
@@ -164,6 +169,12 @@ function createCoordinator(
     expectedAttachmentGeneration: number;
     promise: Promise<void>;
   }>>();
+  const gameDisconnects = new Map<string, Readonly<{
+    browserSessionId: string;
+    expectedAttachmentGeneration: number;
+    promise: Promise<void>;
+  }>>();
+  let attachmentTeardownPromise: Promise<void> | undefined;
   let aiStopped = false;
   let playerStopped = false;
   let closePromise: Promise<void> | undefined;
@@ -358,7 +369,7 @@ function createCoordinator(
 
   const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm" | "game_stop",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "game_stop" | "game_disconnect",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -503,6 +514,7 @@ function createCoordinator(
       lease === undefined ||
       attachmentGeneration === 0 ||
       attachmentConnectionStatus === "failed" ||
+      attachmentTeardownPromise !== undefined ||
       isClosing()
     )
       throw new Error("stardew_game_runtime_unavailable");
@@ -520,14 +532,96 @@ function createCoordinator(
       attachmentConnectionStatus = "failed";
       settled = Promise.reject(error);
     }
+    const stopGeneration = attachmentGeneration;
     const promise = settled.then(
-      () => { attachmentConnectionStatus = "stopped"; },
+      () => {
+        if (attachmentGeneration === stopGeneration) attachmentConnectionStatus = "stopped";
+      },
       (error: unknown) => {
-        attachmentConnectionStatus = "failed";
+        if (attachmentGeneration === stopGeneration) attachmentConnectionStatus = "failed";
         throw error;
       },
     );
     gameStops.set(command.idempotencyKey, Object.freeze({
+      browserSessionId,
+      expectedAttachmentGeneration: command.expectedAttachmentGeneration,
+      promise,
+    }));
+    return promise;
+  });
+
+  const teardownAttachment = (): Promise<void> => {
+    if (attachmentTeardownPromise !== undefined) return attachmentTeardownPromise;
+    const facadeToClose = farmhandGameRuntimeFacade;
+    const leaseToCancel = farmhandGameRuntimeLease;
+    const generationToClose = attachmentGeneration;
+    if (facadeToClose === undefined || leaseToCancel === undefined || generationToClose === 0)
+      return Promise.resolve();
+
+    let resolveAttempt!: () => void;
+    let rejectAttempt!: (error: unknown) => void;
+    const attempt = new Promise<void>((resolve, reject) => {
+      resolveAttempt = resolve;
+      rejectAttempt = reject;
+    });
+    // Publish the shared teardown linearization point before cancellation can
+    // synchronously throw or re-enter STOP/disconnect admission.
+    attachmentTeardownPromise = attempt;
+    attachmentConnectionStatus = "stopping";
+
+    try {
+      leaseToCancel.cancelPromptDefinedTask();
+      const stopsToJoin = [...gameStops.values()]
+        .filter((stop) => stop.expectedAttachmentGeneration === generationToClose)
+        // A terminal STOP failure still permits the stronger containment action
+        // of closing the exact semantic facade, but teardown must wait for it.
+        .map((stop) => stop.promise.catch(() => undefined));
+      void (async () => {
+        await Promise.all(stopsToJoin);
+        await facadeToClose.close();
+        if (
+          farmhandGameRuntimeFacade === facadeToClose &&
+          farmhandGameRuntimeLease === leaseToCancel &&
+          attachmentGeneration === generationToClose
+        ) {
+          farmhandGameRuntimeFacadeClosed = true;
+          farmhandGameRuntimeFacade = undefined;
+          farmhandGameRuntimeLease = undefined;
+          attachmentGeneration = 0;
+          attachmentConnectionStatus = "none";
+        }
+      })().then(resolveAttempt, rejectAttempt);
+    } catch (error) {
+      rejectAttempt(error);
+    }
+
+    void attempt.catch(() => {
+      if (attachmentTeardownPromise === attempt) attachmentTeardownPromise = undefined;
+      if (attachmentGeneration === generationToClose) attachmentConnectionStatus = "failed";
+    });
+    return attempt;
+  };
+
+  const disconnectGame = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameDisconnectCommandV1,
+  ): Promise<void> => consumeBrowserAdmission(admission, "game_disconnect", (browserSessionId) => {
+    const existing = gameDisconnects.get(command.idempotencyKey);
+    if (existing !== undefined) {
+      if (
+        existing.browserSessionId !== browserSessionId ||
+        existing.expectedAttachmentGeneration !== command.expectedAttachmentGeneration
+      ) throw new Error("stardew_game_disconnect_idempotency_conflict");
+      return existing.promise;
+    }
+    if (attachmentTeardownPromise !== undefined)
+      throw new Error("stardew_game_disconnect_in_progress");
+    if (command.expectedAttachmentGeneration !== attachmentGeneration)
+      throw new Error("stardew_game_attachment_generation_conflict");
+    if (farmhandGameRuntimeFacade === undefined || farmhandGameRuntimeLease === undefined || isClosing())
+      throw new Error("stardew_game_runtime_unavailable");
+    const promise = teardownAttachment();
+    gameDisconnects.set(command.idempotencyKey, Object.freeze({
       browserSessionId,
       expectedAttachmentGeneration: command.expectedAttachmentGeneration,
       promise,
@@ -543,6 +637,7 @@ function createCoordinator(
     readCabinChoices,
     confirmCabinChoice,
     stopGame,
+    disconnectGame,
   });
 
   const closeAttempt = async (): Promise<void> => {
@@ -559,13 +654,14 @@ function createCoordinator(
     let incomplete = false;
     if (!farmhandGameRuntimeFacadeClosed) {
       try {
-        await farmhandGameRuntimeFacade?.close();
-        farmhandGameRuntimeFacadeClosed = true;
-        farmhandGameRuntimeFacade = undefined;
-        farmhandGameRuntimeLease = undefined;
-        attachmentGeneration = 0;
-        attachmentConnectionStatus = "none";
-        gameStops.clear();
+        if (farmhandGameRuntimeFacade !== undefined && farmhandGameRuntimeLease !== undefined && attachmentGeneration !== 0)
+          await teardownAttachment();
+        else {
+          await farmhandGameRuntimeFacade?.close();
+          farmhandGameRuntimeFacadeClosed = true;
+          farmhandGameRuntimeFacade = undefined;
+          farmhandGameRuntimeLease = undefined;
+        }
       } catch {
         incomplete = true;
       }
@@ -595,6 +691,8 @@ function createCoordinator(
     if (incomplete) throw new StardewProductionLifecycleCloseError();
     attachmentGeneration = 0;
     attachmentConnectionStatus = "none";
+    gameStops.clear();
+    gameDisconnects.clear();
     transition("closed");
   };
 

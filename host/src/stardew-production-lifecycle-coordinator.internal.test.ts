@@ -64,6 +64,7 @@ function connectedSemanticGameLeaseFixture(input: Readonly<{
   onAttachVoiceStopper?(): void;
   onActivate?(): void;
   onStop?(stop: RecordedGameStop): void;
+  onCancelTask?(): void;
   stopSettled?: Promise<void>;
 }> = {}) {
   let voiceStopperBound = false;
@@ -90,7 +91,7 @@ function connectedSemanticGameLeaseFixture(input: Readonly<{
     lifecycleSnapshot: () => Object.freeze({}) as never,
     activateCommittedIngress: () => input.onActivate?.(),
     dispatchPromptDefinedTask: async () => undefined,
-    cancelPromptDefinedTask: () => undefined,
+    cancelPromptDefinedTask: () => input.onCancelTask?.(),
   }) as never;
 }
 type LockHelperRequest = Readonly<{
@@ -206,7 +207,7 @@ async function createAdmissionBroker() {
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
   const root = await bootstrap.json() as { chat: { csrfToken: string } };
-  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_stop"): IncomingMessage => {
+  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_stop" | "game_disconnect"): IncomingMessage => {
     const originUrl = new URL(origin);
     const method = operation === "cabin_read" ? "GET" : "POST";
     const url = operation === "lifecycle_activation"
@@ -215,7 +216,9 @@ async function createAdmissionBroker() {
         ? "/api/composed-reference-game/v1/game/stardew/cabins"
         : operation === "cabin_confirm"
           ? "/api/composed-reference-game/v1/game/stardew/cabins/confirm"
-          : "/api/composed-reference-game/v1/game/stop";
+          : operation === "game_stop"
+            ? "/api/composed-reference-game/v1/game/stop"
+            : "/api/composed-reference-game/v1/game/disconnect";
     return {
       method,
       url,
@@ -229,7 +232,7 @@ async function createAdmissionBroker() {
     } as unknown as IncomingMessage;
   };
   const issue = (
-    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_stop" = "lifecycle_activation",
+    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_stop" | "game_disconnect" = "lifecycle_activation",
   ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
@@ -261,6 +264,7 @@ async function createFixture(input: Readonly<{
   playerKillResults?: readonly boolean[];
   gameRuntimeBindingCloseResults?: readonly boolean[];
   gameStopSettled?: Promise<void>;
+  gameRuntimeTaskCancelError?: Error;
   afterIngressActivation?(): void;
   nowMs?: () => number;
   afterPlayerSpawn?(): void;
@@ -306,6 +310,7 @@ async function createFixture(input: Readonly<{
   let gameRuntimeFacadeEnterCalls = 0;
   let gameRuntimeVoiceStopperAttachCalls = 0;
   let gameRuntimeIngressActivationCalls = 0;
+  let gameRuntimeTaskCancelCalls = 0;
   const gameStopCalls: RecordedGameStop[] = [];
   let packageReadCount = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
@@ -390,6 +395,10 @@ async function createFixture(input: Readonly<{
                 input.afterIngressActivation?.();
               },
               onStop: (stop) => { gameStopCalls.push(stop); },
+              onCancelTask: () => {
+                gameRuntimeTaskCancelCalls += 1;
+                if (input.gameRuntimeTaskCancelError !== undefined) throw input.gameRuntimeTaskCancelError;
+              },
               stopSettled: input.gameStopSettled,
             });
           },
@@ -420,6 +429,7 @@ async function createFixture(input: Readonly<{
     gameRuntimeFacadeEnterCalls: () => gameRuntimeFacadeEnterCalls,
     gameRuntimeVoiceStopperAttachCalls: () => gameRuntimeVoiceStopperAttachCalls,
     gameRuntimeIngressActivationCalls: () => gameRuntimeIngressActivationCalls,
+    gameRuntimeTaskCancelCalls: () => gameRuntimeTaskCancelCalls,
     gameStopCalls,
     packageReadCount: () => packageReadCount,
   };
@@ -1103,8 +1113,9 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     });
     await assert.rejects(fixture.coordinator.close(), /stardew_lifecycle_close_incomplete/);
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
-      status: "attached", generation: 1, connectionStatus: "stopping",
+      status: "attached", generation: 1, connectionStatus: "failed",
     });
+    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 1);
     assert.deepEqual(fixture.bridgeCloseCalls, []);
     assert.deepEqual(fixture.aiKillCalls, []);
     assert.deepEqual(fixture.playerKillCalls, []);
@@ -1667,6 +1678,187 @@ test("close drains manifest-admitted AI materialization before quarantine and pr
     assert.deepEqual(fixture.playerKillCalls, [4102]);
   } finally {
     releasePackageRead();
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+
+test("Game disconnect joins same-generation STOP, closes only the semantic facade, and rereads none", async () => {
+  const stopGate = deferredVoid();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, { gameStopSettled: stopGate.promise });
+  try {
+    await confirmFirstCabin(fixture);
+    const stop = fixture.coordinator.activationOwner.stopGame(
+      fixture.broker.issue("game_stop"),
+      { apiVersion: 1, idempotencyKey: "disconnect-joined-stop", expectedAttachmentGeneration: 1 },
+    );
+    const command = { apiVersion: 1 as const, idempotencyKey: "disconnect-key-00000001", expectedAttachmentGeneration: 1 };
+    const disconnect = fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), command);
+    const replay = fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), command);
+    assert.equal(replay, disconnect);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.disconnectGame(
+        fixture.broker.issue("game_disconnect"),
+        { apiVersion: 1, idempotencyKey: "disconnect-second-key-01", expectedAttachmentGeneration: 1 },
+      ),
+      /stardew_game_disconnect_in_progress/,
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "stopping",
+    });
+    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 1);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.stopGame(
+        fixture.broker.issue("game_stop"),
+        { apiVersion: 1, idempotencyKey: "stop-after-disconnect", expectedAttachmentGeneration: 1 },
+      ),
+      /stardew_game_runtime_unavailable/,
+    );
+    assert.equal(fixture.gameStopCalls.length, 1);
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+    assert.deepEqual(fixture.aiKillCalls, []);
+    assert.deepEqual(fixture.playerKillCalls, []);
+    stopGate.resolve();
+    await Promise.all([stop, disconnect]);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
+    assert.deepEqual(fixture.aiKillCalls, []);
+    assert.deepEqual(fixture.playerKillCalls, []);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.disconnectGame(
+        fixture.broker.issue("game_disconnect"),
+        { ...command, expectedAttachmentGeneration: 2 },
+      ),
+      /stardew_game_disconnect_idempotency_conflict/,
+    );
+  } finally {
+    stopGate.resolve();
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("Game disconnect and outer close share one pending attachment teardown", async () => {
+  const stopGate = deferredVoid();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, { gameStopSettled: stopGate.promise });
+  try {
+    await confirmFirstCabin(fixture);
+    const stop = fixture.coordinator.activationOwner.stopGame(
+      fixture.broker.issue("game_stop"),
+      { apiVersion: 1, idempotencyKey: "disconnect-close-stop", expectedAttachmentGeneration: 1 },
+    );
+    const disconnect = fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "disconnect-close-shared", expectedAttachmentGeneration: 1 },
+    );
+    const close = fixture.coordinator.close();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+    assert.deepEqual(fixture.aiKillCalls, []);
+    assert.deepEqual(fixture.playerKillCalls, []);
+    stopGate.resolve();
+    await Promise.all([stop, disconnect, close]);
+    assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
+    assert.deepEqual(fixture.aiKillCalls, [4101]);
+    assert.deepEqual(fixture.playerKillCalls, [4102]);
+  } finally {
+    stopGate.resolve();
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("Game disconnect waits for a rejected STOP settlement before containing the attachment", async () => {
+  let rejectStop!: (error: Error) => void;
+  const stopSettled = new Promise<void>((_resolve, reject) => { rejectStop = reject; });
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, { gameStopSettled: stopSettled });
+  try {
+    await confirmFirstCabin(fixture);
+    const stop = fixture.coordinator.activationOwner.stopGame(
+      fixture.broker.issue("game_stop"),
+      { apiVersion: 1, idempotencyKey: "disconnect-stop-rejected", expectedAttachmentGeneration: 1 },
+    );
+    const disconnect = fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "disconnect-after-stop-failure", expectedAttachmentGeneration: 1 },
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+    rejectStop(new Error("controlled-stop-settlement-failure"));
+    await assert.rejects(stop, /controlled-stop-settlement-failure/);
+    await disconnect;
+    assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+  } finally {
+    rejectStop(new Error("cleanup-stop-settlement"));
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("synchronous Game task cancellation failure is shared, replayable, and retryable", async () => {
+  const cancelError = new Error("controlled-game-task-cancel-failure");
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    gameRuntimeTaskCancelError: cancelError,
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    const command = { apiVersion: 1 as const, idempotencyKey: "disconnect-cancel-failed", expectedAttachmentGeneration: 1 };
+    const failed = fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), command);
+    await assert.rejects(failed, /controlled-game-task-cancel-failure/);
+    assert.equal(
+      fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), command),
+      failed,
+    );
+    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 1);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "failed",
+    });
+    await assert.rejects(
+      fixture.coordinator.activationOwner.disconnectGame(
+        fixture.broker.issue("game_disconnect"),
+        { apiVersion: 1, idempotencyKey: "disconnect-cancel-retry", expectedAttachmentGeneration: 1 },
+      ),
+      /controlled-game-task-cancel-failure/,
+    );
+    assert.equal(fixture.gameRuntimeTaskCancelCalls(), 2);
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+  } finally {
+    await fixture.coordinator.close().catch(() => undefined);
+    await fixture.broker.close();
+  }
+});
+
+test("failed Game disconnect retains generation and permits only a fresh-key retry", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    gameRuntimeBindingCloseResults: [false, true],
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    const failedCommand = { apiVersion: 1 as const, idempotencyKey: "disconnect-failed-key-01", expectedAttachmentGeneration: 1 };
+    const failed = fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), failedCommand);
+    await assert.rejects(failed, /controlled_game_runtime_binding_close_failure/);
+    assert.equal(
+      fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), failedCommand),
+      failed,
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "failed",
+    });
+    await fixture.coordinator.activationOwner.disconnectGame(
+      fixture.broker.issue("game_disconnect"),
+      { apiVersion: 1, idempotencyKey: "disconnect-retry-key-002", expectedAttachmentGeneration: 1 },
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
+  } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
   }

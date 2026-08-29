@@ -266,3 +266,107 @@ test("stale Stardew handoff alone refetches choices and preserves one confirmati
   expect(cabinReadRequests).toBe(2);
   expect(cabinConfirmRequests).toBe(1);
 });
+
+
+test("failed Game disconnect reread permits a fresh-key user retry", async ({ page }) => {
+  const attachedGame = {
+    ...game,
+    game: {
+      ...game.game,
+      attachment: { status: "attached", generation: 1 },
+      connectionStatus: "connected_idle",
+    },
+  };
+  const failedGame = {
+    ...attachedGame,
+    game: { ...attachedGame.game, connectionStatus: "failed" },
+  };
+  const keys: string[] = [];
+  let stateReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/disconnect", async (route) => {
+    const command = route.request().postDataJSON() as { idempotencyKey: string };
+    keys.push(command.idempotencyKey);
+    if (keys.length === 1) {
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "state_unavailable" }) });
+      return;
+    }
+    await route.fulfill({ status: 204, body: "" });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(stateReads === 1 ? { ...root, game: failedGame } : root),
+    });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const disconnect = panel.getByRole("button", { name: "Disconnect game" });
+  await disconnect.click();
+  await expect.poll(() => keys.length).toBe(1);
+  await expect(panel).toContainText("Connectionfailed");
+  await disconnect.click();
+  await expect.poll(() => keys.length).toBe(2);
+  expect(keys[1]).not.toBe(keys[0]);
+  await expect.poll(() => stateReads).toBe(2);
+  await expect(disconnect).toHaveCount(0);
+});
+
+test("attached Game drawer disconnect is distinct, double-activation is one command, and rereads none", async ({ page }) => {
+  let disconnectRequests = 0;
+  let stateRequests = 0;
+  const attachedGame = {
+    ...game,
+    game: {
+      ...game.game,
+      attachment: { status: "attached", generation: 1 },
+      connectionStatus: "connected_idle",
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: attachedGame }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/disconnect", async (route) => {
+    disconnectRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().postDataJSON()).toEqual({
+      apiVersion: 1,
+      idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      expectedAttachmentGeneration: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await route.fulfill({ status: 204, body: "" });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateRequests += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const disconnect = panel.getByRole("button", { name: "Disconnect game" });
+  await expect(disconnect).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
+  await disconnect.dblclick();
+  await expect.poll(() => disconnectRequests).toBe(1);
+  await expect.poll(() => stateRequests).toBe(1);
+  await expect(panel).toContainText("Connectionnone");
+  await expect(disconnect).toHaveCount(0);
+});
