@@ -284,6 +284,31 @@ test("Stardew cabin problems preserve stale, conflict, in-progress, and uncertai
 });
 
 
+test("Game STOP client sends the exact generation-bound command and accepts only 204 empty", async () => {
+  const key = "S".repeat(21) + "A";
+  const recorder = transport(jsonResponse(root()), new Response(null, { status: 204 }));
+  const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+  await api.bootstrap(HANDLE);
+  await api.stopGame({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1 });
+  assert.deepEqual(
+    { input: recorder.calls[1].input, method: recorder.calls[1].init.method, headers: recorder.calls[1].init.headers, body: recorder.calls[1].init.body },
+    {
+      input: "/api/composed-reference-game/v1/game/stop",
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": HANDLE },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 1 }),
+    },
+  );
+  await assert.rejects(
+    api.stopGame({ apiVersion: 1, idempotencyKey: key, expectedAttachmentGeneration: 0 }),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_stop_request",
+  );
+  await assert.rejects(
+    api.stopGame({ apiVersion: 1, idempotencyKey: `${key}x`, expectedAttachmentGeneration: 1 }),
+    (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_game_stop_request",
+  );
+});
+
 test("Game disconnect client sends the exact generation-bound command and accepts only 204 empty", async () => {
   const key = "D".repeat(21) + "A";
   const recorder = transport(jsonResponse(root()), new Response(null, { status: 204 }));
