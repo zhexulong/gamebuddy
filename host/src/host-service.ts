@@ -188,6 +188,7 @@ export class CompanionHostService {
     private readonly turnTracker = new GameTurnLineageTracker(),
     private readonly bindIntegrationReceipt?: (receipt: ExecutionReceipt) => void,
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
+    private readonly refreshIntegrationTools?: () => Promise<void>,
   ) {
     this.#unsubscribe = events.onFact((fact) => this.acceptIntegrationFact(fact));
     this.#unsubscribeConnection = events.onLifecycle((event) => this.acceptLifecycleEvent(event));
@@ -498,6 +499,18 @@ export class CompanionHostService {
       if (!isEventPumpOverflow(error)) throw error;
       this.#containIntegrationOverflow();
       return;
+    }
+    // The adapter has already authenticated and installed the current snapshot.
+    // Refresh only after Host admission succeeds; a failure seals integration
+    // ingress instead of retaining a stale executable surface.
+    if (fact.kind === "snapshot") {
+      void this.refreshIntegrationTools?.().catch(() => {
+        try {
+          this.#containIntegrationOverflow();
+        } catch {
+          // The external event callback remains contained after authority revoke.
+        }
+      });
     }
     void this.flushSoon().catch(() => undefined);
   }

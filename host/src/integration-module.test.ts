@@ -156,6 +156,7 @@ function fakeModule(): GameIntegrationModule {
         sessionId: null,
         capabilities: state.capabilities ?? [],
         registrations: state.registrations ?? fakeRegistrations,
+        capabilityRevision: null,
         snapshotRevision: null,
         activeExecution: null,
         latestReceipt: null,

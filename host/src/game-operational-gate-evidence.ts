@@ -1,11 +1,11 @@
 import type { WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource } from "./integration-launcher.js";
 import type {
-  GameIntegrationAdapter,
+  GameIntegrationModule,
   IntegrationExecutionReceipt,
   IntegrationStateView,
-} from "./game-integration-adapter.js";
-import type { GameConnection } from "./game-connection.js";
+} from "./integration-module.js";
+import type { IntegrationConnection } from "./integration-types.js";
 
 /** Strict, content-free source-owned IPC contract for the operational Game gate. */
 export const GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA = "gamebuddy-game-operational-gate-evidence/v2";
@@ -107,15 +107,15 @@ export function validateGameOperationalGateEvidence(value: unknown): GameOperati
 }
 
 /**
- * Construction-owned reduction of the real GameConnection, launch facts,
+ * Construction-owned reduction of the real IntegrationConnection, launch facts,
  * and existing Host STOP settlement. It observes no model output and never
  * exposes receipt evidence or private correlation identity. It can only emit
  * after two distinct, exact Mod-success transitions have fresh postconditions
  * and a subsequently observed existing STOP settlement.
  */
 export function createGameOperationalGateEvidenceProjection(
-  module: GameIntegrationAdapter,
-  connection: GameConnection,
+  module: GameIntegrationModule,
+  connection: IntegrationConnection,
   events: IntegrationEventSource,
   stopSource?: GameStopSettlementSource,
 ): GameOperationalGateEvidenceProjection {
@@ -188,8 +188,8 @@ export function createGameOperationalGateEvidenceProjection(
 }
 
 function transitionFromCorrelatedTerminal(
-  module: GameIntegrationAdapter,
-  connection: GameConnection,
+  module: GameIntegrationModule,
+  connection: IntegrationConnection,
   fact: WorldFact,
 ): AcceptedTransition | null {
   let state: IntegrationStateView;
@@ -237,8 +237,8 @@ function transitionFromCorrelatedTerminal(
 }
 
 function evidenceFromFinalState(
-  module: GameIntegrationAdapter,
-  connection: GameConnection,
+  module: GameIntegrationModule,
+  connection: IntegrationConnection,
   transitions: readonly AcceptedTransition[],
 ): Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId"> | null {
   let state: IntegrationStateView;

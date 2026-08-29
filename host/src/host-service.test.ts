@@ -458,6 +458,55 @@ test("Host service preserves an ordinary event overflow revoke error after clear
   service.close();
 });
 
+test("Host service seals integration ingress when snapshot tool refresh fails", async () => {
+  const adapter = eventHarness();
+  const admitted: string[] = [];
+  const disconnects: string[] = [];
+  let clears = 0;
+  let refreshes = 0;
+  const loop = {
+    pump: {
+      pendingCount: 0,
+      enqueueFact(fact: WorldFact) {
+        admitted.push(fact.correlationId);
+      },
+      enqueuePlayerInput() {},
+      clear() {
+        clears += 1;
+      },
+    },
+    async flush() {},
+  };
+  const service = new CompanionHostService(
+    loop as never,
+    adapter.events,
+    (reasonCode) => disconnects.push(reasonCode),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      refreshes += 1;
+      throw new Error("tool_refresh_failed");
+    },
+  );
+
+  adapter.emit(snapshot(1));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(refreshes, 1);
+  assert.deepEqual(disconnects, ["event_overflow"]);
+  assert.equal(clears, 1);
+  assert.deepEqual(admitted, ["snapshot_1"]);
+
+  adapter.emit(snapshot(2));
+  assert.equal(refreshes, 1);
+  assert.deepEqual(admitted, ["snapshot_1"]);
+  service.close();
+});
+
 test("Host service overflow during an in-flight rejected delivery cannot retry or resurrect the pump", async () => {
   const adapter = eventHarness();
   let pending = 0;

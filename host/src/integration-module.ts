@@ -41,6 +41,8 @@ export const DEFAULT_INTEGRATION_ACTION_POLICY: IntegrationActionPolicy =
 export type IntegrationExecutionReceipt = Readonly<{
   requestId: string;
   executionId: string;
+  /** Exact integration-authored action lineage when the receipt protocol publishes it. */
+  actionId?: string;
   state: string;
   reasonCode: string;
   revision: number | null;
@@ -52,10 +54,13 @@ export type IntegrationStateView = Readonly<{
   connected: boolean;
   sessionId: string | null;
   capabilities: readonly string[];
+  /** Monotone integration-owned catalog publication revision. */
+  capabilityRevision: number | null;
   /** Authenticated adapter-owned registration facts for the current connection generation. Absence is an empty catalog. */
   registrations?: readonly IntegrationActionRegistration[];
   snapshotRevision: number | null;
   activeExecution: Readonly<{
+    actionId: string;
     requestId: string;
     executionId: string;
     state: string;
@@ -77,6 +82,8 @@ export type IntegrationActionRegistration = Readonly<{
   familyId: string;
   identityVersion: number;
   lifecycle: IntegrationActionLifecycle;
+  /** Read-only entries are published state, not executable action candidates. */
+  kind?: "execution" | "read_only";
 }>;
 
 export type IntegrationVisibleAction = IntegrationActionAdapter &

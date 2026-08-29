@@ -148,12 +148,14 @@ export function createStardewIntegrationModule(): GameIntegrationModule {
         sessionId: state.sessionId,
         capabilities: [...state.capabilities],
         registrations: [...(state.catalogRegistrations ?? [])],
+        capabilityRevision: state.catalogRevision ?? null,
         snapshotRevision: state.snapshot?.revision ?? null,
         activeExecution:
           state.snapshot?.activeExecution === null ||
           state.snapshot?.activeExecution === undefined
             ? null
             : {
+                actionId: state.snapshot.activeExecution.action,
                 requestId: state.snapshot.activeExecution.requestId,
                 executionId: state.snapshot.activeExecution.executionId,
                 state: state.snapshot.activeExecution.state,
