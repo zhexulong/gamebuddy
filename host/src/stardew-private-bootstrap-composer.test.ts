@@ -3411,6 +3411,42 @@ test("private Farmhand Bridge connection retries only callback-local transient f
   assert.equal(attempts, 2);
 });
 
+test("private Farmhand Bridge connection awaits async cleanup when AI stops after callback", async () => {
+  const fixture = await prepareLaunchedAiClientFixture();
+  let releaseClose!: () => void;
+  const closeGate = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+  let signalCloseEntered!: () => void;
+  const closeEntered = new Promise<void>((resolve) => {
+    signalCloseEntered = resolve;
+  });
+  let settled = false;
+  const consuming = fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () => {
+    fixture.testCore.composition.aiClientProcessOwner.stopOwnedAiClient();
+    return Object.freeze({
+      close: async () => {
+        signalCloseEntered();
+        await closeGate;
+      },
+    });
+  });
+  void consuming.finally(() => {
+    settled = true;
+  }).catch(() => undefined);
+  await Promise.race([
+    closeEntered,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("async_close_not_entered")), 5_000)),
+  ]);
+  try {
+    assert.equal(settled, false);
+  } finally {
+    releaseClose();
+  }
+  await assert.rejects(consuming, /stardew_farmhand_bridge_ai_client_not_awaiting_attestation/);
+  assert.equal(settled, true);
+});
+
 test("private Farmhand Bridge connection rejects wrong owner, tamper, and stopped AI before callback", async () => {
   const left = await prepareLaunchedAiClientFixture();
   const right = await prepareLaunchedAiClientFixture();

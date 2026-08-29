@@ -250,7 +250,7 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
-  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
@@ -335,7 +335,7 @@ export function createStardewPrivateBootstrapTestCore(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
-  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
@@ -451,7 +451,7 @@ type ClosedBootstrapCore = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
-  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
@@ -691,7 +691,7 @@ function createClosedComposition(
          installation: AdmittedStardewInstallation,
        ): Promise<StardewOwnedAiClientStageDResult> =>
          launchOwnedAiClientStageD(owner, installation, compositionIdentity),
-       consumeOwnedFarmhandBridgeConnection: <T extends Readonly<{ close(): void }>>(
+       consumeOwnedFarmhandBridgeConnection: <T extends Readonly<{ close(): void | Promise<void> }>>(
          owner: StardewOwnedPlayerHostPhaseAOwner,
          callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
         ): Promise<T> => consumeOwnedFarmhandBridgeConnection(
@@ -1529,7 +1529,7 @@ async function launchOwnedAiClientStageD(
     })));
 }
 
-async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
   owner: StardewOwnedPlayerHostPhaseAOwner,
   callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   compositionIdentity: object,
@@ -1590,7 +1590,7 @@ async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close()
       launchGeneration: current.aiClient.launchGeneration,
     }));
     if (readAiClientStatus().kind !== "awaiting_ai_client_attestation") {
-      try { result.close(); } catch { /* the caller receives no connection authority */ }
+      try { await result.close(); } catch { /* the caller receives no connection authority */ }
       throw new Error("stardew_farmhand_bridge_ai_client_not_awaiting_attestation");
     }
     facts.bridgeConnectionState.value = "consumed";
