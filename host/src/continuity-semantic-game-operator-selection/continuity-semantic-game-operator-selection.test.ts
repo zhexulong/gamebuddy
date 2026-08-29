@@ -4,9 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import { createFreshSemanticProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import {
   createKnownSemanticGameDeadOwnerRecoveryFacadeFromOperatorConfig,
   createKnownSemanticGameFacadeFromOperatorConfig,
+  createKnownSemanticGameFacadeFromReceiptBackedBinding,
 } from "./continuity-semantic-game-operator-selection.internal.js";
 
 const principal = { continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" };
@@ -112,6 +116,35 @@ test("operator selection maps malformed UTF-8 and oversized config files to its 
     await assert.rejects(createKnownSemanticGameFacadeFromOperatorConfig(f.configPath), {
       message: "invalid_semantic_game_operator_config",
     });
+  } finally {
+    await rm(f.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("receipt-backed binding composition constructs an unmounted production facade without consuming the binding", async () => {
+  const f = await fixture();
+  let executionCalls = 0;
+  let closeCalls = 0;
+  const binding: GameRuntimeBinding = Object.freeze({
+    executeWithBinding: async () => {
+      executionCalls += 1;
+      throw new Error("unexpected_binding_execution");
+    },
+    close: async () => {
+      closeCalls += 1;
+    },
+  });
+  try {
+    const manifest = await loadHostDeploymentManifest(f.manifestPath);
+    const fresh = await createFreshSemanticProductionAuthorityFromDeploymentManifest(manifest);
+    await fresh.close();
+    const facade = await createKnownSemanticGameFacadeFromReceiptBackedBinding(manifest, binding);
+    assert.equal(facade.authority, "SEMANTIC");
+    assert.equal(executionCalls, 0);
+    assert.equal(closeCalls, 0);
+    await facade.close();
+    assert.equal(executionCalls, 0);
+    assert.equal(closeCalls, 1);
   } finally {
     await rm(f.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }

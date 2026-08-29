@@ -4,13 +4,19 @@ import {
   type ConstructedUnmountedGameSemanticFacade,
   constructKnownUnmountedGameSemanticFacade,
 } from "../continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
-import { createGameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import {
+  createGameRuntimeBinding,
+  type GameRuntimeBinding,
+} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import {
   createHostGameRuntimeMaterializer,
   type HostGameRuntimeMaterializerOptions,
 } from "../continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { createKnownSemanticGameProductionAuthorityFromDeploymentManifest } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
-import { loadHostDeploymentManifest } from "../deployment-manifest.js";
+import {
+  loadHostDeploymentManifest,
+  type HostDeploymentManifest,
+} from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { PRODUCT_INTEGRATION_CATALOG } from "../integration-catalog-product.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
@@ -77,6 +83,20 @@ export async function createKnownSemanticGameFacadeFromOperatorConfig(
       configDirectory: selected.configDirectory,
     }),
   );
+  return createKnownSemanticGameFacadeFromReceiptBackedBinding(manifest, binding, options);
+}
+
+/**
+ * Construction-zone continuation for a binding whose integration launch has
+ * already been authenticated and admitted by a closed first-party lifecycle.
+ * The durable Game authority and embedded runtime materializer remain fixed
+ * Host production dependencies; callers cannot inject either authority.
+ */
+export async function createKnownSemanticGameFacadeFromReceiptBackedBinding(
+  manifest: HostDeploymentManifest,
+  binding: GameRuntimeBinding,
+  options: HostGameRuntimeConstructionOptions = {},
+): Promise<ConstructedUnmountedGameSemanticFacade> {
   try {
     const game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
     return constructKnownUnmountedGameSemanticFacade(binding, game, createHostGameRuntimeMaterializer(options));
