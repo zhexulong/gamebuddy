@@ -31,6 +31,11 @@ test("launcher rejects caller bridge credentials and requires an existing Host-o
   assert.match(launcher, /--require-fixture-live-locale", \$PresentationLocale/);
   assert.match(launcher, /Initialize-PrivateRunRoot/);
   assert.match(launcher, /preview_run_root_private_acl_failed/);
+  assert.match(launcher, /\$hostLaunchGeneration = \[guid\]::NewGuid\(\)\.ToString\("N"\)/);
+  assert.match(launcher, /\$env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = \$hostLaunchGeneration/);
+  assert.match(launcher, /\$aiLaunchGeneration = \[guid\]::NewGuid\(\)\.ToString\("N"\)/);
+  assert.match(launcher, /\$env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = \$aiLaunchGeneration/);
+  assert.match(launcher, /Remove-Item Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION/);
 });
 
 test("launcher preserves the configured formal fixture and clears only known generated session exchange", () => {
