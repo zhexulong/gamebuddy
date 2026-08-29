@@ -16,6 +16,8 @@ export type CompanionIntegrationState = Readonly<{
    * an empty catalog so a partial or stale adapter never materializes an action.
    */
   catalogRegistrations?: readonly ActionRegistration[];
+  /** Authenticated catalog publication revision for this connection generation. */
+  catalogRevision?: number;
   snapshot: Snapshot | null;
   latestReceipt: ExecutionReceipt | null;
   latestReasonCode: string | null;

@@ -1,6 +1,6 @@
 import {
-  claimMountedP4Attempt,
-  consumeMountedP4AttemptAdmission,
+  claimMountedAttempt,
+  consumeMountedAttemptAdmission,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
@@ -11,7 +11,7 @@ export async function claimMountedP4ProviderAttemptFromFacade(
   manifest: HostDeploymentManifest,
   lease: MountedChatRuntimeLease,
 ): Promise<AttemptStartingTurn> {
-  return claimMountedP4Attempt(manifest, lease, (admission) =>
-    consumeMountedP4AttemptAdmission(admission, (binding) => claimP4MountedAttempt(binding)),
+  return claimMountedAttempt(manifest, lease, (admission) =>
+    consumeMountedAttemptAdmission(admission, (binding) => claimP4MountedAttempt(binding)),
   );
 }

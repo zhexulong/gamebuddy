@@ -9,12 +9,12 @@ import {
 } from "./game-operational-gate-evidence.js";
 import type { IntegrationEventSource } from "./integration-launcher.js";
 import type {
-  GameIntegrationAdapter,
+  GameIntegrationModule,
   IntegrationExecutionReceipt,
   IntegrationReceiptEvidence,
   IntegrationStateView,
-} from "./game-integration-adapter.js";
-import type { GameConnection } from "./game-connection.js";
+} from "./integration-module.js";
+import type { IntegrationConnection } from "./integration-types.js";
 
 const nonce = "a".repeat(64);
 
@@ -94,10 +94,10 @@ function setup(
       visibleActions: () => Object.freeze([]),
       hasCompletionEvidence,
     }),
-  }) as unknown as GameIntegrationAdapter;
+  }) as unknown as GameIntegrationModule;
   const projection = createGameOperationalGateEvidenceProjection(
     module,
-    Object.freeze({}) as GameConnection,
+    Object.freeze({}) as IntegrationConnection,
     events,
     stopSource,
   );
@@ -184,6 +184,8 @@ test("v2 projection rejects mismatched, stale, unsuccessful, evidence-free, and 
   harness.emit(fact(1, { source: "host_local_transport" }));
   harness.emit(fact(1, { executionId: "execution_other", correlationId: "execution_other" }));
   harness.setState(state(receipt(1), { snapshotRevision: 6 }));
+  harness.emit(fact(1));
+  harness.setState(state(receipt(1, { actionId: undefined })));
   harness.emit(fact(1));
   harness.setState(state(receipt(1, { state: "failed" })));
   harness.emit(fact(1));

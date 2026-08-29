@@ -15,11 +15,11 @@ import {
   GameTurnLineageTracker,
 } from "../host-service.js";
 import type {
-  GameIntegrationAdapter,
+  GameIntegrationModule,
   IntegrationActionPolicy,
   IntegrationStateView,
-} from "../game-integration-adapter.js";
-import type { GameConnection } from "../game-connection.js";
+} from "../integration-module.js";
+import type { IntegrationConnection } from "../integration-types.js";
 import { createGameCompanionRuntime, type RuntimeSession } from "../runtime.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import {
@@ -31,6 +31,7 @@ import {
   type MaterializedGameRuntime,
   materializeExactEnter,
 } from "./continuity-semantic-game-runtime-materializer.internal.js";
+import { createLineageBoundNativeGamePresenter } from "./continuity-semantic-game-runtime-presentation.internal.js";
 
 export type {
   GameRuntimeMaterializer,
@@ -137,14 +138,7 @@ export function createHostGameRuntimeMaterializer(
           runtime.presentation.textPort !== undefined &&
           runtime.presentation.admissionProvider !== undefined
         ) {
-          loop.attachNativeGameContentPresenter(
-            host.createNativeAssistantContentPresenter({
-              sessionId: runtime.presentation.sessionId,
-              locale: runtime.presentation.profile.locale,
-              admissionProvider: runtime.presentation.admissionProvider,
-              textPort: runtime.presentation.textPort,
-            }),
-          );
+          loop.attachNativeGameContentPresenter(createLineageBoundNativeGamePresenter(runtime.presentation));
         }
         if (options.gameVoicePresentation !== undefined)
           host.attachVoiceStopper(
@@ -196,13 +190,14 @@ export function createHostGameRuntimeMaterializer(
  * game-status projection. It owns no lifecycle authority and reads no Chat or
  * origin data.
  */
+
 class IntegrationLifecycleSnapshot {
   #connectionAvailable = true;
   #closing = false;
 
   public constructor(
-    private readonly module: GameIntegrationAdapter,
-    private readonly connection: GameConnection,
+    private readonly module: GameIntegrationModule,
+    private readonly connection: IntegrationConnection,
     private readonly policy?: IntegrationActionPolicy,
   ) {}
 
@@ -308,7 +303,7 @@ type MaterializedGameRuntimeInput = Readonly<{
   }>;
   world: Readonly<{ saveId: string; worldId: string }>;
   runtimeRoot: string;
-  connection: GameConnection;
+  connection: IntegrationConnection;
   gameSessionId: string;
 }>;
 
@@ -322,7 +317,7 @@ async function createMaterializedGameRuntime(
   principal: MaterializedGameRuntimeInput["principal"],
   world: MaterializedGameRuntimeInput["world"],
   runtimeRoot: string,
-  connection: GameConnection,
+  connection: IntegrationConnection,
   presentationBridge: unknown,
   gameSessionId: string,
   gameOperationalGateNonceSha256?: string,

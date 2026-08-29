@@ -1,6 +1,6 @@
 import {
-  acceptMountedP4DurableTurn,
-  consumeMountedP4Admission,
+  acceptMountedDurableTurn,
+  consumeMountedDurableAdmission,
 } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
@@ -22,7 +22,7 @@ export async function acceptMountedP4DurableTurnFromFacade(
   lease: MountedChatRuntimeLease,
   command: P4MountedAcceptanceCommand,
 ): Promise<AcceptedQueuedTurn> {
-  return acceptMountedP4DurableTurn(manifest, lease, (admission) =>
-    consumeMountedP4Admission(admission, (binding) => acceptP4MountedPlayerMessage(binding, command)),
+  return acceptMountedDurableTurn(manifest, lease, (admission) =>
+    consumeMountedDurableAdmission(admission, (binding) => acceptP4MountedPlayerMessage(binding, command)),
   );
 }
