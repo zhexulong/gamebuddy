@@ -54,6 +54,17 @@ const tavernProfile = composeTavernProfile({
 });
 
 const temporaryRoots: string[] = [];
+function connectedSemanticGameLeaseFixture(onActivate: () => void = () => undefined) {
+  return Object.freeze({
+    piSessionId: "pi-session-stardew-test",
+    gameSessionId: "game-session-stardew-test",
+    host: Object.freeze({}) as never,
+    lifecycleSnapshot: () => Object.freeze({}) as never,
+    activateCommittedIngress: onActivate,
+    dispatchPromptDefinedTask: async () => undefined,
+    cancelPromptDefinedTask: () => undefined,
+  }) as never;
+}
 type LockHelperRequest = Readonly<{
   operation: "reclaim_stale_lock" | "release_owned_lock";
   token?: string;
@@ -260,7 +271,8 @@ async function createFixture(input: Readonly<{
     deadlineMs: number;
   }>> = [];
   const bridgeCloseCalls: string[] = [];
-  let gameRuntimeBindingExecutionCalls = 0;
+  let gameRuntimeFacadeEnterCalls = 0;
+  let gameRuntimeIngressActivationCalls = 0;
   let packageReadCount = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
     rawSpawn(executable, args, options) {
@@ -325,7 +337,7 @@ async function createFixture(input: Readonly<{
           installationChain, installationChain, installationChain,
         ],
           input.inspectorGate === undefined ? undefined : () => input.inspectorGate!)),
-      connectFarmhandGameRuntimeBinding: input.overrides?.connectFarmhandGameRuntimeBinding ?? (async (connection, deadlineMs) => {
+      connectFarmhandGameRuntimeFacade: input.overrides?.connectFarmhandGameRuntimeFacade ?? (async (connection, deadlineMs) => {
         bridgeConnectCalls.push(Object.freeze({
           scope: connection.scope,
           pipeName: connection.pipeName,
@@ -334,10 +346,12 @@ async function createFixture(input: Readonly<{
           deadlineMs,
         }));
         return Object.freeze({
-          executeWithBinding: async () => {
-            gameRuntimeBindingExecutionCalls += 1;
-            throw new Error("unexpected_game_runtime_binding_execution");
+          authority: "SEMANTIC" as const,
+          runEnter: async () => {
+            gameRuntimeFacadeEnterCalls += 1;
+            return connectedSemanticGameLeaseFixture(() => { gameRuntimeIngressActivationCalls += 1; });
           },
+          recoverDeadOwner: async () => undefined,
           close: async () => {
             if (!(gameRuntimeBindingCloseResults.shift() ?? true))
               throw new Error("controlled_game_runtime_binding_close_failure");
@@ -361,7 +375,8 @@ async function createFixture(input: Readonly<{
     bridgeConnectCalls,
     bridgeCloseCalls,
     lifecycleOrder,
-    gameRuntimeBindingExecutionCalls: () => gameRuntimeBindingExecutionCalls,
+    gameRuntimeFacadeEnterCalls: () => gameRuntimeFacadeEnterCalls,
+    gameRuntimeIngressActivationCalls: () => gameRuntimeIngressActivationCalls,
     packageReadCount: () => packageReadCount,
   };
 }
@@ -1036,7 +1051,8 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     assert.equal(aiConfig.FarmhandProvisioner.Enable, true);
     assert.equal(aiConfig.FarmhandProvisioner.ManifestPath, join(transaction, "session", "stardew-farmhand-manifest.json"));
     assert.equal("Pid" in aiConfig.FarmhandProvisioner, false);
-    assert.equal(fixture.gameRuntimeBindingExecutionCalls(), 0);
+    assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 0);
     await assert.rejects(fixture.coordinator.close(), /stardew_lifecycle_close_incomplete/);
     assert.deepEqual(fixture.bridgeCloseCalls, []);
     assert.deepEqual(fixture.aiKillCalls, []);
@@ -1056,7 +1072,7 @@ test("manifest-admitted Farmhand Bridge retries only pipe-not-ready before authe
   let attempts = 0;
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
-      connectFarmhandGameRuntimeBinding: async () => {
+      connectFarmhandGameRuntimeFacade: async () => {
         attempts += 1;
         if (attempts === 1) {
           const error = new Error("controlled_pipe_not_ready") as NodeJS.ErrnoException;
@@ -1064,9 +1080,11 @@ test("manifest-admitted Farmhand Bridge retries only pipe-not-ready before authe
           throw error;
         }
         return Object.freeze({
-        executeWithBinding: async () => { throw new Error("unexpected_game_runtime_binding_execution"); },
-        close: async () => undefined,
-      });
+          authority: "SEMANTIC" as const,
+          runEnter: async () => connectedSemanticGameLeaseFixture(),
+          recoverDeadOwner: async () => undefined,
+          close: async () => undefined,
+        });
       },
     },
   });
@@ -1096,7 +1114,7 @@ test("manifest-admitted Farmhand Bridge attestation mismatch is permanently unce
   let attempts = 0;
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
-      connectFarmhandGameRuntimeBinding: async () => {
+      connectFarmhandGameRuntimeFacade: async () => {
         attempts += 1;
         throw new Error("bridge_runtime_attestation_mismatch");
       },
@@ -1129,6 +1147,59 @@ test("manifest-admitted Farmhand Bridge attestation mismatch is permanently unce
     await fixture.coordinator.close();
     await fixture.broker.close();
   }
+});
+
+test("manifest-admitted semantic Game enter failure is one-shot uncertain and closes its facade", async () => {
+  let connectorCalls = 0;
+  let enterCalls = 0;
+  let closeCalls = 0;
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      connectFarmhandGameRuntimeFacade: async () => {
+        connectorCalls += 1;
+        return Object.freeze({
+          authority: "SEMANTIC" as const,
+          runEnter: async () => {
+            enterCalls += 1;
+            const error = new Error("controlled_semantic_game_enter_failure") as NodeJS.ErrnoException;
+            error.code = "ENOENT";
+            throw error;
+          },
+          recoverDeadOwner: async () => undefined,
+          close: async () => { closeCalls += 1; },
+        });
+      },
+    },
+  });
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "semantic-enter-failure-key",
+      confirmed: true as const,
+    };
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+      fixture.broker.issue("cabin_confirm"),
+      command,
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+    assert.equal(connectorCalls, 1);
+    assert.equal(enterCalls, 1);
+    assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+    assert.throws(
+      () => fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), command),
+      /stardew_cabin_publication_uncertain/,
+    );
+    assert.equal(connectorCalls, 1);
+    assert.equal(enterCalls, 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+  assert.equal(closeCalls, 1);
 });
 
 test("dynamic cabin confirmation rejects cross-session, expiry, stale revision, conflicts, and closes fail-closed", async () => {
