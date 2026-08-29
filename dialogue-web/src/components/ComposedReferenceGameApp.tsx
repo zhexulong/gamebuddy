@@ -85,6 +85,9 @@ export function ComposedReferenceGameApp() {
   const eventSourceRef = useRef<{ close(): void } | null>(null);
   const [cabinView, setCabinView] = useState<CabinViewState>({ kind: "loading" });
   const cabinConfirmationActiveRef = useRef(false);
+  const disconnectActiveRef = useRef(false);
+  const disconnectKeysRef = useRef(new Map<number, string>());
+  const [disconnectFailed, setDisconnectFailed] = useState(false);
   const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
 
   const commit = useCallback((next: ViewState): void => {
@@ -416,6 +419,50 @@ export function ComposedReferenceGameApp() {
     }
   };
 
+  const handleDisconnect = async (): Promise<void> => {
+    const current = viewRef.current;
+    const game = current.kind === "ready" ? current.root.game : null;
+    if (
+      disconnectActiveRef.current ||
+      current.kind !== "ready" ||
+      game === null ||
+      game.game.attachment.status !== "attached" ||
+      !current.root.game?.game ||
+      game.game.attachment.generation < 1
+    ) return;
+    const generation = game.game.attachment.generation;
+    const existingKey = disconnectKeysRef.current.get(generation);
+    const idempotencyKey = existingKey ?? newIdempotencyKey();
+    disconnectKeysRef.current.set(generation, idempotencyKey);
+    disconnectActiveRef.current = true;
+    setDisconnectFailed(false);
+    try {
+      await composedApiRef.current.disconnectGame({
+        apiVersion: 1,
+        idempotencyKey,
+        expectedAttachmentGeneration: generation,
+      });
+      await reread();
+    } catch {
+      let rereadSucceeded = false;
+      try {
+        await reread();
+        rereadSucceeded = true;
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = viewRef.current;
+      if (
+        rereadSucceeded &&
+        fresh.kind === "ready" &&
+        fresh.root.game?.game.attachment.status === "attached" &&
+        fresh.root.game.game.attachment.generation === generation &&
+        fresh.root.game.game.connectionStatus === "failed"
+      ) disconnectKeysRef.current.delete(generation);
+      setDisconnectFailed(true);
+    } finally {
+      disconnectActiveRef.current = false;
+    }
+  };
+
   const handleStop = async (): Promise<void> => {
     const current = viewRef.current;
     const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
@@ -443,6 +490,10 @@ export function ComposedReferenceGameApp() {
 
   const submitAvailable = view.kind === "ready" && view.session.pending === null && view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
   const stopAvailable = view.kind === "ready" && view.session.snapshot.chat?.turn?.canCancel === true && view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
+  const disconnectAvailable = view.kind === "ready" &&
+    view.root.game !== null &&
+    view.root.game.game.attachment.status === "attached" &&
+    view.root.game.game.attachment.generation > 0;
   const terminalTurnNotice = view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
     ? labels().chatStopped
     : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed" ? labels().chatFailed : null;
@@ -474,7 +525,13 @@ export function ComposedReferenceGameApp() {
                )}
              </section>
               <section className="composed-game-drawer" aria-label={labels().gameState}>
-               <GameProjection game={view.root.game} />
+                <GameProjection game={view.root.game} />
+                {disconnectAvailable && (
+                  <button type="button" disabled={disconnectActiveRef.current} onClick={() => void handleDisconnect()}>
+                    {labels().gameDisconnect}
+                  </button>
+                )}
+                {disconnectFailed && <p role="status">{labels().gameDisconnectFailed}</p>}
                <StardewCabinHandoff
                  state={cabinView}
                  labels={labels()}

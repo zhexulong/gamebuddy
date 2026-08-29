@@ -61,6 +61,8 @@ const PROBLEM_CODES = [
   "malformed_request",
   "state_unavailable",
   "not_found",
+  "game_attachment_conflict",
+  "game_runtime_unavailable",
   STALE_CABIN_HANDOFF_CODE,
   ...CABIN_CONFLICT_CODES,
   UNCERTAIN_CABIN_HANDOFF_CODE,
@@ -183,6 +185,12 @@ export type StardewCabinConfirmationRequestV1 = Readonly<{
   confirmed: true;
 }>;
 
+export type GameDisconnectRequestV1 = Readonly<{
+  apiVersion: 1;
+  idempotencyKey: string;
+  expectedAttachmentGeneration: number;
+}>;
+
 export type StardewCabinConfirmationV1 = Readonly<{
   apiVersion: 1;
   status: "manifest_admitted";
@@ -191,6 +199,7 @@ export type StardewCabinConfirmationV1 = Readonly<{
 export type ComposedReferenceGameBrowserApi = Readonly<{
   bootstrap(bootstrapToken: string): Promise<ComposedReferenceGameBrowserRootV1>;
   readState(): Promise<ComposedReferenceGameBrowserRootV1>;
+  disconnectGame(request: GameDisconnectRequestV1): Promise<void>;
   readStardewCabins(): Promise<StardewCabinChoicesV1>;
   confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
 }>;
@@ -414,6 +423,22 @@ function problemFromResponse(response: Response, value: unknown): ComposedRefere
   return new ComposedReferenceGameProblemError(value.code, response.status);
 }
 
+async function exchangeEmpty(
+  fetchLike: typeof fetch,
+  path: string,
+  init: RequestInit,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetchLike(path, { ...init, credentials: "same-origin" });
+  } catch {
+    throw new ComposedReferenceGameProtocolError("network_error");
+  }
+  if (!response.ok) throw problemFromResponse(response, await readJson(response));
+  if (response.status !== 204 || (await response.text()) !== "")
+    throw new ComposedReferenceGameProtocolError("unexpected_status");
+}
+
 async function exchange<T>(
   fetchLike: typeof fetch,
   path: string,
@@ -469,6 +494,20 @@ export function createComposedReferenceGameBrowserApi(
       );
       csrfToken = root.chat.csrfToken;
       return root;
+    },
+    async disconnectGame(request: GameDisconnectRequestV1): Promise<void> {
+      if (
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !isSafeInteger(request.expectedAttachmentGeneration, 1) ||
+        !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedAttachmentGeneration"])
+      ) throw new ComposedReferenceGameProtocolError("invalid_game_disconnect_request");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      await exchangeEmpty(fetchLike, "/api/composed-reference-game/v1/game/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify(request),
+      });
     },
     async readStardewCabins(): Promise<StardewCabinChoicesV1> {
       return exchange(
