@@ -218,6 +218,7 @@ async function createFixture(input: Readonly<{
   aiSpawnFailure?: boolean;
   aiProbeFailure?: boolean;
   playerKillResults?: readonly boolean[];
+  gameRuntimeBindingCloseResults?: readonly boolean[];
   nowMs?: () => number;
   afterPlayerSpawn?(): void;
 }> = {}) {
@@ -250,6 +251,7 @@ async function createFixture(input: Readonly<{
   const playerKillCalls: number[] = [];
   const lifecycleOrder: string[] = [];
   const playerKillResults = [...(input.playerKillResults ?? [true])];
+  const gameRuntimeBindingCloseResults = [...(input.gameRuntimeBindingCloseResults ?? [true])];
   const bridgeConnectCalls: Array<Readonly<{
     scope: Readonly<Record<string, string>>;
     pipeName: string;
@@ -258,6 +260,7 @@ async function createFixture(input: Readonly<{
     deadlineMs: number;
   }>> = [];
   const bridgeCloseCalls: string[] = [];
+  let gameRuntimeBindingExecutionCalls = 0;
   let packageReadCount = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
     rawSpawn(executable, args, options) {
@@ -322,7 +325,7 @@ async function createFixture(input: Readonly<{
           installationChain, installationChain, installationChain,
         ],
           input.inspectorGate === undefined ? undefined : () => input.inspectorGate!)),
-      connectFarmhandBridge: input.overrides?.connectFarmhandBridge ?? (async (connection, deadlineMs) => {
+      connectFarmhandGameRuntimeBinding: input.overrides?.connectFarmhandGameRuntimeBinding ?? (async (connection, deadlineMs) => {
         bridgeConnectCalls.push(Object.freeze({
           scope: connection.scope,
           pipeName: connection.pipeName,
@@ -330,10 +333,18 @@ async function createFixture(input: Readonly<{
           launchGeneration: connection.launchGeneration,
           deadlineMs,
         }));
-        return Object.freeze({ close: () => {
-          lifecycleOrder.push("bridge");
-          bridgeCloseCalls.push("bridge");
-        } });
+        return Object.freeze({
+          executeWithBinding: async () => {
+            gameRuntimeBindingExecutionCalls += 1;
+            throw new Error("unexpected_game_runtime_binding_execution");
+          },
+          close: async () => {
+            if (!(gameRuntimeBindingCloseResults.shift() ?? true))
+              throw new Error("controlled_game_runtime_binding_close_failure");
+            lifecycleOrder.push("bridge");
+            bridgeCloseCalls.push("bridge");
+          },
+        });
       }),
     },
   );
@@ -350,6 +361,7 @@ async function createFixture(input: Readonly<{
     bridgeConnectCalls,
     bridgeCloseCalls,
     lifecycleOrder,
+    gameRuntimeBindingExecutionCalls: () => gameRuntimeBindingExecutionCalls,
     packageReadCount: () => packageReadCount,
   };
 }
@@ -957,7 +969,9 @@ async function prepareCabinCoordinator(
 
 test("dynamic cabin handoff admits one manifest and launches the exact owned AI client", async () => {
   const startedAt = Date.now();
-  const fixture = await prepareCabinCoordinator(startedAt + 5 * 60_000);
+  const fixture = await prepareCabinCoordinator(startedAt + 5 * 60_000, {
+    gameRuntimeBindingCloseResults: [false, true],
+  });
   try {
     const readStartedAt = Date.now();
     const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
@@ -1022,6 +1036,11 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     assert.equal(aiConfig.FarmhandProvisioner.Enable, true);
     assert.equal(aiConfig.FarmhandProvisioner.ManifestPath, join(transaction, "session", "stardew-farmhand-manifest.json"));
     assert.equal("Pid" in aiConfig.FarmhandProvisioner, false);
+    assert.equal(fixture.gameRuntimeBindingExecutionCalls(), 0);
+    await assert.rejects(fixture.coordinator.close(), /stardew_lifecycle_close_incomplete/);
+    assert.deepEqual(fixture.bridgeCloseCalls, []);
+    assert.deepEqual(fixture.aiKillCalls, []);
+    assert.deepEqual(fixture.playerKillCalls, []);
     await fixture.coordinator.close();
     assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
     assert.deepEqual(fixture.aiKillCalls, [4101]);
@@ -1037,14 +1056,17 @@ test("manifest-admitted Farmhand Bridge retries only pipe-not-ready before authe
   let attempts = 0;
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
-      connectFarmhandBridge: async () => {
+      connectFarmhandGameRuntimeBinding: async () => {
         attempts += 1;
         if (attempts === 1) {
           const error = new Error("controlled_pipe_not_ready") as NodeJS.ErrnoException;
           error.code = "ENOENT";
           throw error;
         }
-        return Object.freeze({ close: () => undefined });
+        return Object.freeze({
+        executeWithBinding: async () => { throw new Error("unexpected_game_runtime_binding_execution"); },
+        close: async () => undefined,
+      });
       },
     },
   });
@@ -1074,7 +1096,7 @@ test("manifest-admitted Farmhand Bridge attestation mismatch is permanently unce
   let attempts = 0;
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
-      connectFarmhandBridge: async () => {
+      connectFarmhandGameRuntimeBinding: async () => {
         attempts += 1;
         throw new Error("bridge_runtime_attestation_mismatch");
       },

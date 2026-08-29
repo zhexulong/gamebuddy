@@ -1,3 +1,4 @@
+import type { GameRuntimeBinding } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import {
   createStardewProductionLifecycleCoordinatorFromTestingComposition,
@@ -15,10 +16,10 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
   stopAiClient?(underlying: () => StopOwnedAiClientResult): StopOwnedAiClientResult;
   stopPlayerHost?(underlying: () => StopOwnedPlayerHostResult): StopOwnedPlayerHostResult;
   createInstallationInspector?(): Promise<WindowsReparseInspectorCapability>;
-  connectFarmhandBridge?(
+  connectFarmhandGameRuntimeBinding?(
     connection: StardewPrivateFarmhandBridgeConnection,
     deadlineMs: number,
-  ): Promise<Readonly<{ close(): void }>>;
+  ): Promise<GameRuntimeBinding>;
 }>;
 
 /** Dedicated deterministic adapter; production factory accepts no dependencies. */
@@ -60,6 +61,9 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
       }),
     }),
     overrides.createInstallationInspector ?? (() => Promise.reject(new Error("test_installation_inspector_unbound"))),
-    overrides.connectFarmhandBridge ?? (async () => Object.freeze({ close: () => undefined })),
+    overrides.connectFarmhandGameRuntimeBinding ?? (async () => Object.freeze({
+      executeWithBinding: async () => { throw new Error("test_game_runtime_binding_execution_unbound"); },
+      close: async () => undefined,
+    })),
   );
 }

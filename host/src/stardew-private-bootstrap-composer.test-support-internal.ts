@@ -46,7 +46,7 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
     owner: StardewOwnedPlayerHostPhaseAOwner,
     installation: AdmittedStardewInstallation,
   ): Promise<StardewOwnedAiClientStageDResult>;
-  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void }>>(
+  consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ): Promise<T>;
@@ -99,7 +99,7 @@ const testStageDLaunchers = new WeakMap<
 >();
 const testBridgeConnectionConsumers = new WeakMap<
   PublicStardewPrivateBootstrapComposition,
-  <T extends Readonly<{ close(): void }>>(
+  <T extends Readonly<{ close(): void | Promise<void> }>>(
     owner: StardewOwnedPlayerHostPhaseAOwner,
     callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   ) => Promise<T>
@@ -225,7 +225,7 @@ export async function launchOwnedAiClientStageDForTesting(
   return launch(owner, installation);
 }
 
-export async function consumeOwnedFarmhandBridgeConnectionForTesting<T extends Readonly<{ close(): void }>>(
+export async function consumeOwnedFarmhandBridgeConnectionForTesting<T extends Readonly<{ close(): void | Promise<void> }>>(
   owner: StardewOwnedPlayerHostPhaseAOwner,
   callback: (connection: StardewPrivateFarmhandBridgeConnection) => Promise<T> | T,
   composition?: PublicStardewPrivateBootstrapComposition,
