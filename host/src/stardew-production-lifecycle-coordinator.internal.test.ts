@@ -54,13 +54,41 @@ const tavernProfile = composeTavernProfile({
 });
 
 const temporaryRoots: string[] = [];
-function connectedSemanticGameLeaseFixture(onActivate: () => void = () => undefined) {
+function deferredVoid(): Readonly<{ promise: Promise<void>; resolve(): void }> {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
+  return Object.freeze({ promise, resolve });
+}
+type RecordedGameStop = Readonly<{ stopId: string; sourceEventId: string; reasonCode: string; locale?: string }>;
+function connectedSemanticGameLeaseFixture(input: Readonly<{
+  onAttachVoiceStopper?(): void;
+  onActivate?(): void;
+  onStop?(stop: RecordedGameStop): void;
+  stopSettled?: Promise<void>;
+}> = {}) {
+  let voiceStopperBound = false;
   return Object.freeze({
     piSessionId: "pi-session-stardew-test",
     gameSessionId: "game-session-stardew-test",
-    host: Object.freeze({}) as never,
+    host: Object.freeze({
+      attachVoiceStopper(stopper: () => Promise<void>) {
+        assert.equal(typeof stopper, "function");
+        assert.equal(voiceStopperBound, false);
+        voiceStopperBound = true;
+        input.onAttachVoiceStopper?.();
+      },
+      stopAll(stop: RecordedGameStop) {
+        assert.equal(voiceStopperBound, true);
+        input.onStop?.(stop);
+        return Object.freeze({
+          admission: Object.freeze({}) as never,
+          outcome: "no_active_turn" as const,
+          settled: input.stopSettled ?? Promise.resolve(),
+        });
+      },
+    }) as never,
     lifecycleSnapshot: () => Object.freeze({}) as never,
-    activateCommittedIngress: onActivate,
+    activateCommittedIngress: () => input.onActivate?.(),
     dispatchPromptDefinedTask: async () => undefined,
     cancelPromptDefinedTask: () => undefined,
   }) as never;
@@ -178,14 +206,16 @@ async function createAdmissionBroker() {
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
   const root = await bootstrap.json() as { chat: { csrfToken: string } };
-  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm"): IncomingMessage => {
+  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_stop"): IncomingMessage => {
     const originUrl = new URL(origin);
     const method = operation === "cabin_read" ? "GET" : "POST";
     const url = operation === "lifecycle_activation"
       ? "/api/composed-reference-game/v1/lifecycle/activate"
       : operation === "cabin_read"
         ? "/api/composed-reference-game/v1/game/stardew/cabins"
-        : "/api/composed-reference-game/v1/game/stardew/cabins/confirm";
+        : operation === "cabin_confirm"
+          ? "/api/composed-reference-game/v1/game/stardew/cabins/confirm"
+          : "/api/composed-reference-game/v1/game/stop";
     return {
       method,
       url,
@@ -199,7 +229,7 @@ async function createAdmissionBroker() {
     } as unknown as IncomingMessage;
   };
   const issue = (
-    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" = "lifecycle_activation",
+    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_stop" = "lifecycle_activation",
   ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
@@ -230,6 +260,8 @@ async function createFixture(input: Readonly<{
   aiProbeFailure?: boolean;
   playerKillResults?: readonly boolean[];
   gameRuntimeBindingCloseResults?: readonly boolean[];
+  gameStopSettled?: Promise<void>;
+  afterIngressActivation?(): void;
   nowMs?: () => number;
   afterPlayerSpawn?(): void;
 }> = {}) {
@@ -272,7 +304,9 @@ async function createFixture(input: Readonly<{
   }>> = [];
   const bridgeCloseCalls: string[] = [];
   let gameRuntimeFacadeEnterCalls = 0;
+  let gameRuntimeVoiceStopperAttachCalls = 0;
   let gameRuntimeIngressActivationCalls = 0;
+  const gameStopCalls: RecordedGameStop[] = [];
   let packageReadCount = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
     rawSpawn(executable, args, options) {
@@ -349,7 +383,15 @@ async function createFixture(input: Readonly<{
           authority: "SEMANTIC" as const,
           runEnter: async () => {
             gameRuntimeFacadeEnterCalls += 1;
-            return connectedSemanticGameLeaseFixture(() => { gameRuntimeIngressActivationCalls += 1; });
+            return connectedSemanticGameLeaseFixture({
+              onAttachVoiceStopper: () => { gameRuntimeVoiceStopperAttachCalls += 1; },
+              onActivate: () => {
+                gameRuntimeIngressActivationCalls += 1;
+                input.afterIngressActivation?.();
+              },
+              onStop: (stop) => { gameStopCalls.push(stop); },
+              stopSettled: input.gameStopSettled,
+            });
           },
           recoverDeadOwner: async () => undefined,
           close: async () => {
@@ -376,7 +418,9 @@ async function createFixture(input: Readonly<{
     bridgeCloseCalls,
     lifecycleOrder,
     gameRuntimeFacadeEnterCalls: () => gameRuntimeFacadeEnterCalls,
+    gameRuntimeVoiceStopperAttachCalls: () => gameRuntimeVoiceStopperAttachCalls,
     gameRuntimeIngressActivationCalls: () => gameRuntimeIngressActivationCalls,
+    gameStopCalls,
     packageReadCount: () => packageReadCount,
   };
 }
@@ -1052,8 +1096,15 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     assert.equal(aiConfig.FarmhandProvisioner.ManifestPath, join(transaction, "session", "stardew-farmhand-manifest.json"));
     assert.equal("Pid" in aiConfig.FarmhandProvisioner, false);
     assert.equal(fixture.gameRuntimeFacadeEnterCalls(), 1);
-    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 0);
+    assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), 1);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
+    });
     await assert.rejects(fixture.coordinator.close(), /stardew_lifecycle_close_incomplete/);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "stopping",
+    });
     assert.deepEqual(fixture.bridgeCloseCalls, []);
     assert.deepEqual(fixture.aiKillCalls, []);
     assert.deepEqual(fixture.playerKillCalls, []);
@@ -1062,6 +1113,155 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
     assert.deepEqual(fixture.aiKillCalls, [4101]);
     assert.deepEqual(fixture.playerKillCalls, [4102]);
     assert.deepEqual(fixture.lifecycleOrder, ["bridge", "ai", "player"]);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+async function confirmFirstCabin(fixture: Awaited<ReturnType<typeof prepareCabinCoordinator>>) {
+  const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+  const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+    fixture.broker.issue("cabin_confirm"),
+    {
+      apiVersion: 1,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "confirm-first-cabin-key",
+      confirmed: true,
+    },
+  );
+  const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+  await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+  return confirmation;
+}
+
+test("attached semantic Game STOP is generation-bound, idempotent, settled, and does not detach", async () => {
+  const stopGate = deferredVoid();
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, { gameStopSettled: stopGate.promise });
+  let gateReleased = false;
+  try {
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    await confirmFirstCabin(fixture);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "connected_idle",
+    });
+
+    assert.throws(
+      () => fixture.coordinator.activationOwner.stopGame(
+        fixture.broker.issue("game_stop"),
+        { apiVersion: 1, idempotencyKey: "wrong-generation-stop", expectedAttachmentGeneration: 2 },
+      ),
+      /stardew_game_attachment_generation_conflict/,
+    );
+    assert.equal(fixture.gameStopCalls.length, 0);
+
+    const command = { apiVersion: 1 as const, idempotencyKey: "game-stop-key", expectedAttachmentGeneration: 1 };
+    const first = fixture.coordinator.activationOwner.stopGame(fixture.broker.issue("game_stop"), command);
+    const replay = fixture.coordinator.activationOwner.stopGame(fixture.broker.issue("game_stop"), command);
+    assert.equal(replay, first);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "stopping",
+    });
+    assert.equal(fixture.gameStopCalls.length, 1);
+    assert.equal(fixture.gameStopCalls[0]!.stopId, command.idempotencyKey);
+    assert.equal(fixture.gameStopCalls[0]!.reasonCode, "player_stop_all");
+    assert.notEqual(fixture.gameStopCalls[0]!.sourceEventId, command.idempotencyKey);
+    assert.match(fixture.gameStopCalls[0]!.sourceEventId, /^[0-9a-f-]{36}$/);
+    assert.throws(
+      () => fixture.coordinator.activationOwner.stopGame(
+        fixture.broker.issue("game_stop"),
+        { ...command, expectedAttachmentGeneration: 2 },
+      ),
+      /stardew_game_stop_idempotency_conflict/,
+    );
+    stopGate.resolve();
+    gateReleased = true;
+    await first;
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "stopped",
+    });
+    await fixture.coordinator.activationOwner.stopGame(
+      fixture.broker.issue("game_stop"),
+      { apiVersion: 1, idempotencyKey: "game-stop-key-2", expectedAttachmentGeneration: 1 },
+    );
+    assert.equal(fixture.gameStopCalls.length, 2);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "stopped",
+    });
+  } finally {
+    if (!gateReleased) stopGate.resolve();
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("failed semantic Game STOP is terminal for its attachment and replay remains exact", async () => {
+  const failure = Promise.reject(new Error("controlled-stop-settlement-failure"));
+  void failure.catch(() => undefined);
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, { gameStopSettled: failure });
+  try {
+    await confirmFirstCabin(fixture);
+    const command = { apiVersion: 1 as const, idempotencyKey: "failed-game-stop-key", expectedAttachmentGeneration: 1 };
+    const first = fixture.coordinator.activationOwner.stopGame(fixture.broker.issue("game_stop"), command);
+    const replay = fixture.coordinator.activationOwner.stopGame(fixture.broker.issue("game_stop"), command);
+    assert.equal(replay, first);
+    await assert.rejects(first, /controlled-stop-settlement-failure/);
+    assert.equal(fixture.gameStopCalls.length, 1);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached", generation: 1, connectionStatus: "failed",
+    });
+    assert.throws(
+      () => fixture.coordinator.activationOwner.stopGame(
+        fixture.broker.issue("game_stop"),
+        { apiVersion: 1, idempotencyKey: "fresh-after-failed-stop", expectedAttachmentGeneration: 1 },
+      ),
+      /stardew_game_runtime_unavailable/,
+    );
+    assert.equal(fixture.gameStopCalls.length, 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("reentrant close during initial ingress activation never publishes an attachment", async () => {
+  let closePromise: Promise<void> | undefined;
+  let fixtureForClose: Awaited<ReturnType<typeof prepareCabinCoordinator>> | undefined;
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    afterIngressActivation() {
+      assert.ok(fixtureForClose);
+      closePromise = fixtureForClose.coordinator.close();
+    },
+  });
+  fixtureForClose = fixture;
+  try {
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(
+      fixture.broker.issue("cabin_read"),
+    );
+    const command = {
+      apiVersion: 1 as const,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "reentrant-ingress-close-key",
+      confirmed: true as const,
+    };
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+      fixture.broker.issue("cabin_confirm"),
+      command,
+    );
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+    await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+    assert.equal(fixture.gameRuntimeIngressActivationCalls(), 1);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none", generation: 0, connectionStatus: "none",
+    });
+    assert.ok(closePromise);
+    await closePromise;
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();

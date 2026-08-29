@@ -7,6 +7,7 @@ import {
 import {
   createGameBrowserStateProvider,
 } from "./game-browser-state-provider.js";
+import type { StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView } from "../stardew-production-lifecycle-coordinator.internal.js";
 import type {
   StardewRoleLifecycleReader,
   StardewRoleLifecycleView,
@@ -24,6 +25,12 @@ function profile() {
     operationIds: ["game.state.read"],
     navigationItemIds: ["game"],
   });
+}
+
+function attachment(
+  view: StardewGameSurfaceAttachmentView = Object.freeze({ status: "none", generation: 0, connectionStatus: "none" }),
+): StardewGameSurfaceAttachmentReader {
+  return Object.freeze({ readAttachmentView: () => view });
 }
 
 function lifecycle(view: StardewRoleLifecycleView, onRead = () => {}): StardewRoleLifecycleReader {
@@ -74,7 +81,7 @@ function authenticatedView(
 test("read-only provider accepts a reader-only fresh lifecycle and projects only unchecked/none", async () => {
   const reader = lifecycle(notStartedView());
   assert.deepEqual(Object.keys(reader), ["readRoleLifecycleView"]);
-  const state = await createGameBrowserStateProvider(profile(), reader).readState(context);
+  const state = await createGameBrowserStateProvider(profile(), reader, attachment()).readState(context);
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
   assert.deepEqual(state.game, {
     prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
@@ -92,7 +99,7 @@ test("read-only provider accepts a reader-only fresh lifecycle and projects only
 });
 
 test("read-only provider projects unavailable lifecycle without fabricated attachment facts", async () => {
-  const state = await createGameBrowserStateProvider(profile(), lifecycle(unavailableView())).readState(context);
+  const state = await createGameBrowserStateProvider(profile(), lifecycle(unavailableView()), attachment()).readState(context);
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
   assert.deepEqual(state.game, {
     prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
@@ -120,6 +127,7 @@ test("compatibility mapping is explicit and does not attest attachment readiness
     const state = await createGameBrowserStateProvider(
       profile(),
       lifecycle(authenticatedView(source, allowed)),
+      attachment(),
     ).readState(context);
     assert.equal(state.game.compatibility.status, expected, source);
     assert.equal(state.game.connectionStatus, "none", source);
@@ -127,9 +135,25 @@ test("compatibility mapping is explicit and does not attest attachment readiness
   }
 });
 
+test("provider projects only Host-owned attachment generation and connection state", async () => {
+  for (const connectionStatus of ["connected_idle", "stopping", "stopped", "failed"] as const) {
+    const state = await createGameBrowserStateProvider(
+      profile(),
+      lifecycle(authenticatedView("verified")),
+      attachment(Object.freeze({ status: "attached", generation: 1, connectionStatus })),
+    ).readState(context);
+    assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
+    assert.deepEqual(state.game.attachment, { status: "attached", generation: 1 });
+    assert.equal(state.game.connectionStatus, connectionStatus);
+    assert.equal(state.game.capabilitySummary.available, false);
+    assert.equal(state.game.selectedSave, null);
+    assert.equal(state.game.selectedWorld, null);
+  }
+});
+
 test("provider requires an exact composed profile with game.state.read mounted", () => {
   assert.throws(
-    () => createGameBrowserStateProvider({ ...profile() }, lifecycle(unavailableView())),
+    () => createGameBrowserStateProvider({ ...profile() }, lifecycle(unavailableView()), attachment()),
     /game_browser_profile_not_composed/,
   );
   const profileWithoutState = composeGameProfile({
@@ -139,14 +163,14 @@ test("provider requires an exact composed profile with game.state.read mounted",
     navigationItemIds: ["game"],
   });
   assert.throws(
-    () => createGameBrowserStateProvider(profileWithoutState, lifecycle(unavailableView())),
+    () => createGameBrowserStateProvider(profileWithoutState, lifecycle(unavailableView()), attachment()),
     /game_browser_state_read_not_mounted/,
   );
 });
 
 test("provider rejects short or non-canonical CSRF context without reading lifecycle", async () => {
   let lifecycleReads = 0;
-  const provider = createGameBrowserStateProvider(profile(), lifecycle(unavailableView(), () => lifecycleReads++));
+  const provider = createGameBrowserStateProvider(profile(), lifecycle(unavailableView(), () => lifecycleReads++), attachment());
   for (const csrfToken of ["short", "A".repeat(21) + "!", "B".repeat(22)])
     await assert.rejects(
       () => provider.readState({ csrfToken, browserSessionExpiresAtMs: context.browserSessionExpiresAtMs }),
@@ -157,7 +181,7 @@ test("provider rejects short or non-canonical CSRF context without reading lifec
 
 test("provider rejects invalid or non-finite expiry context without reading lifecycle", async () => {
   let lifecycleReads = 0;
-  const provider = createGameBrowserStateProvider(profile(), lifecycle(unavailableView(), () => lifecycleReads++));
+  const provider = createGameBrowserStateProvider(profile(), lifecycle(unavailableView(), () => lifecycleReads++), attachment());
   for (const browserSessionExpiresAtMs of [-1, 100_000.5, Number.NaN, Number.POSITIVE_INFINITY])
     await assert.rejects(
       () => provider.readState({ csrfToken: context.csrfToken, browserSessionExpiresAtMs }),
@@ -170,6 +194,7 @@ test("provider response redacts lifecycle internals and has no ready claim", asy
   const state = await createGameBrowserStateProvider(
     profile(),
     lifecycle(authenticatedView("verified")),
+    attachment(),
   ).readState(context);
   const serialized = JSON.stringify(state);
   for (const forbidden of [

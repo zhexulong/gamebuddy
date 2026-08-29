@@ -6,7 +6,7 @@ import {
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import type { ConstructedUnmountedGameSemanticFacade, ConnectedSemanticGameLease } from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
 import { createKnownSemanticGameFacadeFromReceiptBackedBinding } from "./continuity-semantic-game-operator-selection/continuity-semantic-game-operator-selection.internal.js";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { admitStardewInstallation } from "./stardew-installation-admission.js";
@@ -28,6 +28,7 @@ import {
   type StardewPrivateFarmhandBridgeConnection,
 } from "./stardew-private-bootstrap-composer.core.js";
 import type {
+  GameStopCommandV1,
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
   StardewCabinConfirmResultV1,
@@ -51,6 +52,16 @@ export type StardewLifecycleActivationIssuerBindingSink = Readonly<{
   bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
 }>;
 
+export type StardewGameSurfaceAttachmentView = Readonly<{
+  status: "none" | "attached";
+  generation: number;
+  connectionStatus: "none" | "connected_idle" | "stopping" | "stopped" | "failed";
+}>;
+
+export type StardewGameSurfaceAttachmentReader = Readonly<{
+  readAttachmentView(): StardewGameSurfaceAttachmentView;
+}>;
+
 export type StardewProductionLifecycleActivationOwner = Readonly<{
   bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
   activate(
@@ -65,11 +76,16 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: StardewCabinConfirmCommandV1,
   ): Promise<StardewCabinConfirmResultV1>;
+  stopGame(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameStopCommandV1,
+  ): Promise<void>;
 }>;
 
 /** Internal production lifecycle authority; no launch or browser admission is returned. */
 export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly lifecycleReader: StardewRoleLifecycleReader;
+  readonly attachmentReader: StardewGameSurfaceAttachmentReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
   close(): Promise<void>;
 }>;
@@ -141,6 +157,13 @@ function createCoordinator(
   let farmhandGameRuntimeFacade: ConstructedUnmountedGameSemanticFacade | undefined;
   let farmhandGameRuntimeLease: ConnectedSemanticGameLease | undefined;
   let farmhandGameRuntimeFacadeClosed = false;
+  let attachmentGeneration = 0;
+  let attachmentConnectionStatus: StardewGameSurfaceAttachmentView["connectionStatus"] = "none";
+  const gameStops = new Map<string, Readonly<{
+    browserSessionId: string;
+    expectedAttachmentGeneration: number;
+    promise: Promise<void>;
+  }>>();
   let aiStopped = false;
   let playerStopped = false;
   let closePromise: Promise<void> | undefined;
@@ -160,6 +183,15 @@ function createCoordinator(
   }>>();
   let cabinConfirmationKey: string | undefined;
 
+  const attachmentReader: StardewGameSurfaceAttachmentReader = Object.freeze({
+    readAttachmentView(): StardewGameSurfaceAttachmentView {
+      return Object.freeze({
+        status: attachmentGeneration === 0 ? "none" : "attached",
+        generation: attachmentGeneration,
+        connectionStatus: attachmentConnectionStatus,
+      });
+    },
+  });
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
       if (activationState === "awaiting_player_host_attestation" && !playerHostAttestationCorrelated)
@@ -324,9 +356,9 @@ function createCoordinator(
     return launchPromise;
   };
 
-  const consumeCabinAdmission = <T>(
+  const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "game_stop",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -343,7 +375,7 @@ function createCoordinator(
 
   const readCabinChoices = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-  ): Promise<StardewCabinChoicesV1> => consumeCabinAdmission(admission, "cabin_read", async (browserSessionId, sessionExpiry) => {
+  ): Promise<StardewCabinChoicesV1> => consumeBrowserAdmission(admission, "cabin_read", async (browserSessionId, sessionExpiry) => {
     const owner = exactOwner;
     if (owner === undefined || activationState !== "awaiting_player_host_attestation")
       throw new Error("stardew_cabin_handoff_unavailable");
@@ -366,7 +398,7 @@ function createCoordinator(
   const confirmCabinChoice = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: StardewCabinConfirmCommandV1,
-  ): Promise<StardewCabinConfirmResultV1> => consumeCabinAdmission(admission, "cabin_confirm", (browserSessionId) => {
+  ): Promise<StardewCabinConfirmResultV1> => consumeBrowserAdmission(admission, "cabin_confirm", (browserSessionId) => {
     const payload = JSON.stringify(command);
     const existing = cabinConfirmations.get(command.idempotencyKey);
     if (existing !== undefined) {
@@ -421,6 +453,14 @@ function createCoordinator(
           farmhandGameRuntimeFacadeClosed = true;
           throw new Error("stardew_lifecycle_closing");
         }
+        // The browser Game surface has no Voice attachment. Bind the tracked
+        // production absent-Voice STOP adapter before releasing the committed,
+        // receipt-owned initial facts. Only then publish this surface incarnation.
+        farmhandGameRuntimeLease.host.attachVoiceStopper(async () => undefined);
+        farmhandGameRuntimeLease.activateCommittedIngress();
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        attachmentGeneration = 1;
+        attachmentConnectionStatus = "connected_idle";
         return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
       })
       .catch(async (error: unknown) => {
@@ -445,6 +485,56 @@ function createCoordinator(
     return promise;
   });
 
+  const stopGame = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameStopCommandV1,
+  ): Promise<void> => consumeBrowserAdmission(admission, "game_stop", (browserSessionId) => {
+    const existing = gameStops.get(command.idempotencyKey);
+    if (existing !== undefined) {
+      if (
+        existing.browserSessionId !== browserSessionId ||
+        existing.expectedAttachmentGeneration !== command.expectedAttachmentGeneration
+      )
+        throw new Error("stardew_game_stop_idempotency_conflict");
+      return existing.promise;
+    }
+    const lease = farmhandGameRuntimeLease;
+    if (
+      lease === undefined ||
+      attachmentGeneration === 0 ||
+      attachmentConnectionStatus === "failed" ||
+      isClosing()
+    )
+      throw new Error("stardew_game_runtime_unavailable");
+    if (command.expectedAttachmentGeneration !== attachmentGeneration)
+      throw new Error("stardew_game_attachment_generation_conflict");
+    attachmentConnectionStatus = "stopping";
+    let settled: Promise<void>;
+    try {
+      settled = lease.host.stopAll({
+        stopId: command.idempotencyKey,
+        sourceEventId: randomUUID(),
+        reasonCode: "player_stop_all",
+      }).settled;
+    } catch (error) {
+      attachmentConnectionStatus = "failed";
+      settled = Promise.reject(error);
+    }
+    const promise = settled.then(
+      () => { attachmentConnectionStatus = "stopped"; },
+      (error: unknown) => {
+        attachmentConnectionStatus = "failed";
+        throw error;
+      },
+    );
+    gameStops.set(command.idempotencyKey, Object.freeze({
+      browserSessionId,
+      expectedAttachmentGeneration: command.expectedAttachmentGeneration,
+      promise,
+    }));
+    return promise;
+  });
+
   const activationOwner: StardewProductionLifecycleActivationOwner = Object.freeze({
     bindBrowserAdmissionIssuer,
     activate,
@@ -452,10 +542,12 @@ function createCoordinator(
     readPrivateActivationSnapshot: snapshot,
     readCabinChoices,
     confirmCabinChoice,
+    stopGame,
   });
 
   const closeAttempt = async (): Promise<void> => {
     if (activationState !== "closed") transition("closing");
+    if (attachmentGeneration !== 0) attachmentConnectionStatus = "stopping";
     const activation = activationPromise;
     if (activation !== undefined) await activation.catch(() => undefined);
     const launch = launchPromise;
@@ -469,6 +561,11 @@ function createCoordinator(
       try {
         await farmhandGameRuntimeFacade?.close();
         farmhandGameRuntimeFacadeClosed = true;
+        farmhandGameRuntimeFacade = undefined;
+        farmhandGameRuntimeLease = undefined;
+        attachmentGeneration = 0;
+        attachmentConnectionStatus = "none";
+        gameStops.clear();
       } catch {
         incomplete = true;
       }
@@ -496,6 +593,8 @@ function createCoordinator(
       }
     }
     if (incomplete) throw new StardewProductionLifecycleCloseError();
+    attachmentGeneration = 0;
+    attachmentConnectionStatus = "none";
     transition("closed");
   };
 
@@ -510,7 +609,7 @@ function createCoordinator(
     return attempt;
   };
 
-  return Object.freeze({ lifecycleReader, activationOwner, close });
+  return Object.freeze({ lifecycleReader, attachmentReader, activationOwner, close });
 }
 
 /**
