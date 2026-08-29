@@ -85,6 +85,10 @@ export function ComposedReferenceGameApp() {
   const eventSourceRef = useRef<{ close(): void } | null>(null);
   const [cabinView, setCabinView] = useState<CabinViewState>({ kind: "loading" });
   const cabinConfirmationActiveRef = useRef(false);
+  const gameStopActiveRef = useRef(false);
+  const gameStopKeysRef = useRef(new Map<number, string>());
+  const [gameStopActive, setGameStopActive] = useState(false);
+  const [gameStopFailed, setGameStopFailed] = useState(false);
   const disconnectActiveRef = useRef(false);
   const disconnectKeysRef = useRef(new Map<number, string>());
   const [disconnectFailed, setDisconnectFailed] = useState(false);
@@ -419,6 +423,51 @@ export function ComposedReferenceGameApp() {
     }
   };
 
+  const handleGameStop = async (): Promise<void> => {
+    const current = viewRef.current;
+    const game = current.kind === "ready" ? current.root.game : null;
+    if (
+      gameStopActiveRef.current ||
+      current.kind !== "ready" ||
+      game === null ||
+      game.game.attachment.status !== "attached" ||
+      game.game.attachment.generation < 1 ||
+      game.game.connectionStatus !== "connected_idle"
+    ) return;
+    const generation = game.game.attachment.generation;
+    const existingKey = gameStopKeysRef.current.get(generation);
+    const idempotencyKey = existingKey ?? newIdempotencyKey();
+    gameStopKeysRef.current.set(generation, idempotencyKey);
+    gameStopActiveRef.current = true;
+    setGameStopActive(true);
+    setGameStopFailed(false);
+    try {
+      await composedApiRef.current.stopGame({
+        apiVersion: 1,
+        idempotencyKey,
+        expectedAttachmentGeneration: generation,
+      });
+      await reread();
+    } catch (error) {
+      let rereadSucceeded = false;
+      try {
+        await reread();
+        rereadSucceeded = true;
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = viewRef.current;
+      const staleGenerationReconciled =
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "game_attachment_conflict" &&
+        rereadSucceeded &&
+        fresh.kind === "ready" &&
+        fresh.root.game?.game.attachment.generation !== generation;
+      setGameStopFailed(!staleGenerationReconciled);
+    } finally {
+      gameStopActiveRef.current = false;
+      setGameStopActive(false);
+    }
+  };
+
   const handleDisconnect = async (): Promise<void> => {
     const current = viewRef.current;
     const game = current.kind === "ready" ? current.root.game : null;
@@ -490,6 +539,11 @@ export function ComposedReferenceGameApp() {
 
   const submitAvailable = view.kind === "ready" && view.session.pending === null && view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
   const stopAvailable = view.kind === "ready" && view.session.snapshot.chat?.turn?.canCancel === true && view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
+  const gameStopAvailable = view.kind === "ready" &&
+    view.root.game !== null &&
+    view.root.game.game.attachment.status === "attached" &&
+    view.root.game.game.attachment.generation > 0 &&
+    view.root.game.game.connectionStatus === "connected_idle";
   const disconnectAvailable = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
@@ -525,8 +579,14 @@ export function ComposedReferenceGameApp() {
                )}
              </section>
               <section className="composed-game-drawer" aria-label={labels().gameState}>
-                <GameProjection game={view.root.game} />
-                {disconnectAvailable && (
+                 <GameProjection game={view.root.game} />
+                 {gameStopAvailable && (
+                   <button type="button" disabled={gameStopActive} onClick={() => void handleGameStop()}>
+                     {labels().gameStop}
+                   </button>
+                 )}
+                 {gameStopFailed && <p role="status">{labels().gameStopFailed}</p>}
+                 {disconnectAvailable && (
                   <button type="button" disabled={disconnectActiveRef.current} onClick={() => void handleDisconnect()}>
                     {labels().gameDisconnect}
                   </button>
