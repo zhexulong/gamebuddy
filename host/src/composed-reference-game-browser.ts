@@ -15,6 +15,7 @@ import {
   GameBrowserValidatorsV1,
   type GameBrowserStateV1,
   type GameDisconnectCommandV1,
+  type GamePrerequisitesSetupCommandV1,
   type GameStopCommandV1,
   type StardewCabinChoicesV1,
   type StardewCabinConfirmCommandV1,
@@ -35,6 +36,10 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
   readGame?: (
     context: ComposedReferenceGameBrowserReadContext,
   ) => Promise<GameBrowserStateV1>;
+  gameSetup?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GamePrerequisitesSetupCommandV1,
+  ) => Promise<void>;
   gameStop?: (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameStopCommandV1,
@@ -69,6 +74,7 @@ type JsonObject = Record<string, unknown>;
 const BOOTSTRAP_PATH = "/api/composed-reference-game/v1/bootstrap";
 const STATE_PATH = "/api/composed-reference-game/v1/state";
 const GAME_PATH = "/api/composed-reference-game/v1/game";
+const GAME_SETUP_PATH = `${GAME_PATH}/prerequisites/setup`;
 const GAME_STOP_PATH = `${GAME_PATH}/stop`;
 const GAME_DISCONNECT_PATH = `${GAME_PATH}/disconnect`;
 const LIFECYCLE_ACTIVATE_PATH = "/api/composed-reference-game/v1/lifecycle/activate";
@@ -160,6 +166,17 @@ function sendJson(
 
 function sendProblem(response: ServerResponse, statusCode: number, code: string): void {
   sendJson(response, statusCode, { code });
+}
+
+function gameSetupProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_game_setup_idempotency_conflict": return "idempotency_conflict";
+    case "stardew_game_setup_in_progress": return "game_operation_in_progress";
+    case "stardew_game_setup_failed": return "game_unavailable";
+    case "stardew_player_host_launch_not_staged": return "game_prerequisites_missing";
+    default: return "state_unavailable";
+  }
 }
 
 function gameStopProblemCode(error: unknown): string {
@@ -328,6 +345,7 @@ type LifecycleAdmissionOperation =
   | "lifecycle_activation"
   | "cabin_read"
   | "cabin_confirm"
+  | "game_setup"
   | "game_stop"
   | "game_disconnect";
 
@@ -460,6 +478,8 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     operation = "cabin_read";
   } else if (request.method === "POST" && requestUrl.pathname === STARDEW_CABINS_CONFIRM_PATH) {
     operation = "cabin_confirm";
+  } else if (request.method === "POST" && requestUrl.pathname === GAME_SETUP_PATH) {
+    operation = "game_setup";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_STOP_PATH) {
     operation = "game_stop";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_DISCONNECT_PATH) {
@@ -576,6 +596,10 @@ export function createComposedReferenceGameBrowserRequestHandler(
     options.profile.gameProfile.operationIds.includes("game.stardew.cabins.confirm");
   if (cabinOperationsMounted !== (options.stardewCabins !== undefined)) {
     throw new Error("Composed reference-game cabin operations are mismounted");
+  }
+  const gameSetupMounted = options.profile.gameProfile?.operationIds.includes("game.prerequisites.setup") === true;
+  if (gameSetupMounted !== (options.gameSetup !== undefined)) {
+    throw new Error("Composed reference-game setup operation is mismounted");
   }
   const gameStopMounted = options.profile.gameProfile?.operationIds.includes("game.stop") === true;
   if (gameStopMounted !== (options.gameStop !== undefined)) {
@@ -779,6 +803,27 @@ export function createComposedReferenceGameBrowserRequestHandler(
         if (session === activeSession) session = undefined;
         sendProblem(response, 409, "state_unavailable");
       }
+      return;
+    }
+
+    if (requestUrl.pathname === GAME_SETUP_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.gameSetup === undefined) {
+        sendProblem(response, options.gameSetup === undefined ? 404 : 409, options.gameSetup === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      let body: Buffer;
+      try { body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      let command: unknown;
+      try { command = JSON.parse(body.toString("utf8")); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      if (!GameBrowserValidatorsV1.GamePrerequisitesSetupCommandV1Schema.Check(command)) {
+        sendProblem(response, 409, "malformed_request"); return;
+      }
+      try {
+        await options.gameSetup(admission, command as GamePrerequisitesSetupCommandV1);
+        response.writeHead(204, { "cache-control": "no-store", "content-length": "0" }); response.end();
+      } catch (error) { sendProblem(response, 409, gameSetupProblemCode(error)); }
       return;
     }
 

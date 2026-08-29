@@ -25,6 +25,7 @@ import { startTavernManagementStaticShellComposition } from "./tavern/tavern-man
 import { createWorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
 import { createWorldInfoManagementRepository } from "./tavern/world-info-management/world-info-management.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
+import { createPublishedWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.js";
 
 const launch = parseDialogueLaunchMode(process.argv.slice(2));
 const manifestPath = launch.manifestPath ?? process.env.GAMEBUDDY_DIALOGUE_CONFIG;
@@ -93,7 +94,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
   const gameProfile = composeGameProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
-    operationIds: ["game.state.read", "game.stop", "game.disconnect", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+    operationIds: ["game.state.read", "game.prerequisites.setup", "game.stop", "game.disconnect", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
     navigationItemIds: ["game"],
   });
   const profile = composeReferenceGameBrowserProfile({ tavernProfile, gameProfile });
@@ -103,7 +104,9 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
     mode === "known"
       ? await createKnownUnmountedChatSemanticFacade(manifest)
       : await createFreshUnmountedChatSemanticFacade(manifest);
-  const lifecycleCoordinator = createStardewProductionLifecycleCoordinator(manifest);
+  const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+  const folderPicker = await createPublishedWindowsStardewFolderPicker(hostArtifactRoot);
+  const lifecycleCoordinator = createStardewProductionLifecycleCoordinator(manifest, folderPicker);
   let lease: Awaited<ReturnType<typeof facade.startMountedChatRuntime>> | undefined;
   let pipelineService: ReturnType<typeof createChatPipelineService> | undefined;
   let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>> | undefined;
@@ -116,7 +119,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
       lifecycleCoordinator.lifecycleReader,
       lifecycleCoordinator.attachmentReader,
     );
-    const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+    const artifactRoot = hostArtifactRoot;
     const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
     server = await startComposedReferenceGameStaticShellComposition({
       profile,
