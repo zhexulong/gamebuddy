@@ -266,6 +266,10 @@ $bridgeToken = [Convert]::ToBase64String($tokenBytes).TrimEnd('=').Replace('+', 
 $hostProcess = $null
 $aiProcess = $null
 $previewProcess = $null
+$hostLaunchGeneration = $null
+$aiLaunchGeneration = $null
+$previousLaunchGenerationPresent = Test-Path Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION
+$previousLaunchGeneration = if ($previousLaunchGenerationPresent) { $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION } else { $null }
 # The finally block may run before the first Preview attempt; StrictMode needs
 # both redirected-log paths to exist as explicit null values in that case.
 $previewStdoutPath = $null
@@ -291,6 +295,12 @@ try {
     # request. It starts alone; the AI client remains offline for manifest mint.
     # Start-Process joins ArgumentList tokens itself; quote absolute paths so a
     # normal Windows user profile containing spaces reaches SMAPI intact.
+    # The Mod accepts Host provisioning only with a fresh launcher-owned
+    # generation. Keep it in this process environment solely long enough for the
+    # directly supervised child to inherit it; never write it to config, argv,
+    # session exchange, or Preview state.
+    $hostLaunchGeneration = [guid]::NewGuid().ToString("N")
+    $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $hostLaunchGeneration
     $hostProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $hostModsPath)) -WorkingDirectory $GamePath -PassThru
     $notBefore = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     Invoke-NodeQuiet @("tools/await-stardew-fixture-readiness.mjs", "--session-directory", $sessionDirectory, "--host-config", $hostConfig, "--timeout-ms", ($StartupTimeoutSeconds * 1000), "--not-before-unix-ms", $notBefore) "host_fixture_readiness_failed"
@@ -320,6 +330,10 @@ try {
     $previewConfig = @{ schemaVersion = 1; runtimeRoot = $HostRuntimeRoot; runtimeInstanceId = ("preview_" + [guid]::NewGuid().ToString("N")); requiredPresentationLocale = $PresentationLocale; identity = @{ playerId = [string]$manifest.farmhandId; companionId = [string]$manifest.companionId; saveId = [string]$manifest.saveId; worldId = [string]$manifest.worldId }; bridge = @{ pipeName = $pipeName; bridgeToken = $bridgeToken }; evidence = @{ path = $evidencePath; manifestSha256 = $manifestSha256 } }
     Write-PrivateJson $previewConfigPath $previewConfig
 
+    # The AI-client role also requires its own fresh generation. The Host
+    # generation is no longer present in the AI child environment.
+    $aiLaunchGeneration = [guid]::NewGuid().ToString("N")
+    $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $aiLaunchGeneration
     $aiProcess = Start-Process -FilePath $smapi -ArgumentList @("--mods-path", ('"{0}"' -f $aiModsPath)) -WorkingDirectory $GamePath -PassThru
     # The Mod creates its named-pipe listener during its normal SMAPI startup.
     # The first Preview process is the sole safe readiness probe: only a typed
@@ -460,6 +474,11 @@ try {
     Stop-OwnedProcess $previewProcess
     Stop-OwnedProcess $aiProcess
     Stop-OwnedProcess $hostProcess
+    if ($previousLaunchGenerationPresent) {
+        $env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION = $previousLaunchGeneration
+    } else {
+        Remove-Item Env:GAMEBUDDY_STARDEW_LAUNCH_GENERATION -ErrorAction SilentlyContinue
+    }
     # Preview evidence is non-secret, content-free and hash-only. Preserve it
     # through teardown so the launcher can report the observed phase set;
     # remove it only with the private run root after that summary is captured.
