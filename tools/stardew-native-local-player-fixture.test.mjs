@@ -334,11 +334,13 @@ test("native-local lifecycle owner binds staged release and separate private act
   assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$ReleaseDir/);
   assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$ResultFile/);
   assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$LifecycleResultFile/);
+  assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$LifecyclePhaseResultFile/);
   assert.doesNotMatch(launcher, /integrations\/stardew\/bin\/Release|\$projectRoot/);
   assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$ReleaseDir\)/);
   assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$ResultFile\)/);
   assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$LifecycleResultFile\)/);
-  assert.match(launcher, /\$actionResultPath -eq \$lifecycleResultPath/);
+  assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$LifecyclePhaseResultFile\)/);
+  assert.match(launcher, /\$actionResultPath -eq \$lifecycleResultPath -or \$actionResultPath -eq \$phaseResultPath -or \$lifecycleResultPath -eq \$phaseResultPath/);
   assert.match(launcher, /equip-tool-live-child\.mjs/);
   assert.match(launcher, /write-lifecycle-result\.mjs/);
 
@@ -351,10 +353,21 @@ test("native-local lifecycle owner binds staged release and separate private act
   const restore = launcher.indexOf("restore-stardew-native-local-player-fixture.mjs", stop);
   const cleanup = launcher.indexOf("-Cleanup", restore);
   const lifecycleResult = launcher.indexOf("node $lifecycleResultWriter", cleanup);
+  const phaseReceipt = launcher.indexOf("Publish-FailurePhaseReceipt", child);
+  const inputValidation = launcher.indexOf('$phase = "input_validation"');
+  const resultPathValidation = launcher.indexOf("Action, lifecycle, and phase result files must be separate.");
+  const runnerResolution = launcher.indexOf('$phase = "runner_resolution"', resultPathValidation);
   assert.ok(prepare >= 0 && prepare < launch, "fixture prepare must precede process launch");
   assert.ok(launch < ready && ready < identity && identity < child, "child must follow readiness and exact identity");
   assert.ok(child < stop && stop < restore && restore < cleanup, "stop must precede fixture restore and save cleanup");
   assert.ok(cleanup < lifecycleResult, "cleanup result must be written only after all cleanup");
+  assert.ok(phaseReceipt >= 0, "failed lifecycle must publish a bounded phase receipt");
+  assert.ok(inputValidation >= 0 && inputValidation < resultPathValidation, "private result input failures must be classified as input validation");
+  assert.ok(resultPathValidation < runnerResolution, "result file validation must precede runner resolution");
+  assert.match(launcher, /--state failed --phase \$Phase --code failed/);
+  assert.doesNotMatch(launcher, /--phase \$_\.Exception|--code \$_\.Exception|Write-.*\$_\.Exception/);
+  assert.match(launcher, /\$cleanupFailurePhase = \$phase/);
+  assert.match(launcher, /\$failurePhase = \$cleanupFailurePhase/);
   assert.doesNotMatch(launcher, /Remove-Item[^\n]*-Recurse/);
 });
 

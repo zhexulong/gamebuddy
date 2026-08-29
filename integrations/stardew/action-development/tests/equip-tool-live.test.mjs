@@ -13,7 +13,12 @@ const profile = Object.freeze({
   profileIdentity: "local-target",
   targetVersion: "stardew-1.6.15-smapi-4.1",
   releaseDir: "C:\\release",
+  gameInstallPath: "C:\\game",
   modsPath: "C:\\game\\Mods",
+  nativeFixtureRoot: "C:\\fixture",
+  saveIdentity: "GameBuddyFixtureEquipTool_123",
+  templateIdentity: "GameBuddyFixtureEquipTool_123",
+  timeoutMs: 30_000,
   runtimeLeaseRoot: "C:\\lease",
   runtimeLeaseIdentity: "target-machine-lease",
 });
@@ -44,7 +49,7 @@ function exactProof(runId) {
   });
 }
 
-function harness({ lifecycleFails = false, bundleFailureCode, proofVerdict = "passed" } = {}) {
+function harness({ lifecycleFails = false, lifecycleFailureCode = "lifecycle failed", bundleFailureCode, proofVerdict = "passed" } = {}) {
   const order = [];
   const finalizations = [];
   const value = {
@@ -61,7 +66,7 @@ function harness({ lifecycleFails = false, bundleFailureCode, proofVerdict = "pa
       return {
         async runLifecycle(operation) {
           order.push("lifecycle");
-          if (lifecycleFails) throw new Error("lifecycle failed");
+          if (lifecycleFails) throw new Error(lifecycleFailureCode);
           const proof = await operation({ releaseDir: "C:\\lease\\immutable" });
           return proofVerdict === "passed" ? proof : Object.freeze({ ...proof, verdict: proofVerdict });
         },
@@ -82,6 +87,17 @@ function invoke(runId, dependencies) {
     dependencies,
   });
 }
+
+test("failure before evidence creation is bounded without raw dependency details", async () => {
+  const fake = harness();
+  fake.value.acquireLease = async () => { throw new Error("raw_lease_path_C:\\\\private"); };
+  await assert.rejects(
+    () => invoke("ar1_no_evidence", fake.value),
+    (error) => error.message === "stardew_equip_tool_live_unknown_failure"
+      && error.cause === undefined && error.errors === undefined,
+  );
+  assert.equal(fake.finalizations.length, 0);
+});
 
 test("run-live binds unique run identity and finalizes only after lifecycle, staging, and lease cleanup", async () => {
   const fake = harness();
@@ -108,6 +124,16 @@ test("two attempts with one profile use distinct evidence destinations while sha
   assert.match(second.order.find((entry) => entry.startsWith("evidence:")), /ar1_second$/);
   assert.ok(first.order.includes("lease:target-machine-lease"));
   assert.ok(second.order.includes("lease:target-machine-lease"));
+});
+
+test("lifecycle phase failure is retained as a bounded incomplete evidence code", async () => {
+  const fake = harness({ lifecycleFails: true, lifecycleFailureCode: "stardew_equip_tool_lifecycle_child_fixture_prepare_failed" });
+  const report = await invoke("ar1_phase_failed", fake.value);
+  assert.equal(report.state, "INCOMPLETE");
+  assert.equal(report.verdict, "uncertain");
+  assert.equal(fake.finalizations[0].metadata.failureStage, "lifecycle");
+  assert.equal(fake.finalizations[0].metadata.failureCode, "child_fixture_prepare_failed");
+  assert.deepEqual(fake.finalizations[0].metadata.cleanup, { lifecycle: false, immutableStaging: false, runtimeLease: true });
 });
 
 test("immutable admission failure records exact stage and code without starting lifecycle", async () => {
@@ -155,7 +181,8 @@ test("real immutable binding and Devkit claims turn missing cleanup receipt into
   await mkdir(releaseDir);
   await mkdir(modsPath, { recursive: true });
   await mkdir(runtimeLeaseRoot);
-  const files = ["GameBuddy.Stardew.dll", "GameBuddy.Stardew.Core.dll", "manifest.json", "GameBuddy.Stardew.deps.json"];
+  await mkdir(path.join(root, "native-fixture"));
+  const files = ["GameBuddy.Stardew.dll", "GameBuddy.Stardew.Core.dll", "Raffinert.FuzzySharp.dll", "manifest.json", "GameBuddy.Stardew.deps.json"];
   const hash = createHash("sha256");
   for (const name of files) {
     const bytes = Buffer.from(name === "manifest.json"
@@ -167,7 +194,7 @@ test("real immutable binding and Devkit claims turn missing cleanup receipt into
     hash.update(bytes);
   }
   const digest = hash.digest("hex");
-  const realProfile = Object.freeze({ ...profile, releaseDir, modsPath, runtimeLeaseRoot });
+  const realProfile = Object.freeze({ ...profile, releaseDir, modsPath, runtimeLeaseRoot, nativeFixtureRoot: path.join(root, "native-fixture") });
   const finalizations = [];
   let childCalls = 0;
   let leaseReleases = 0;
@@ -217,6 +244,7 @@ test("real immutable binding and Devkit claims turn missing cleanup receipt into
     for (const name of await readdir(releaseDir).catch(() => [])) await unlink(path.join(releaseDir, name));
     await rmdir(releaseDir).catch(() => {});
     await rmdir(runtimeLeaseRoot).catch(() => {});
+    await rmdir(path.join(root, "native-fixture")).catch(() => {});
     await rmdir(modsPath).catch(() => {});
     await rmdir(path.dirname(modsPath)).catch(() => {});
     await rmdir(root).catch(() => {});

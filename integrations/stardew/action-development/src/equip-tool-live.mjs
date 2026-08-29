@@ -11,8 +11,8 @@ import { acquireTargetRuntimeLease } from "./target-runtime-lease.mjs";
 
 const CLAIM_SCOPE = "native-local-equip-tool-v1";
 
-function fail(code, cause) {
-  throw new Error(`stardew_equip_tool_live_${code}`, cause ? { cause } : undefined);
+function fail(code) {
+  throw new Error(`stardew_equip_tool_live_${code}`);
 }
 
 function exactInvocation(invocation, { requireProfile, requireRunId }) {
@@ -138,8 +138,7 @@ export async function runEquipToolLive({ manifest, invocation, dependencies } = 
     });
 
   if (!evidence) {
-    if (failure) throw failure;
-    fail("evidence_unavailable");
+    fail(failure ? boundedFailureCode(failure) : "evidence_unavailable");
   }
   const finalized = passed
     ? await deps.finalizeComplete(evidence, { status: "complete", verdict: "passed", metadata })

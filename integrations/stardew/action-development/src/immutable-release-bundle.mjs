@@ -6,6 +6,7 @@ import path from "node:path";
 const BUNDLE_FILES = Object.freeze([
   "GameBuddy.Stardew.dll",
   "GameBuddy.Stardew.Core.dll",
+  "Raffinert.FuzzySharp.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ]);
@@ -14,8 +15,8 @@ const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const IDENTITY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const bindings = new WeakSet();
 
-function fail(code, cause) {
-  throw new Error(`stardew_immutable_release_bundle_${code}`, cause ? { cause } : undefined);
+function fail(code) {
+  throw new Error(`stardew_immutable_release_bundle_${code}`);
 }
 
 function sameFile(left, right) {
@@ -47,13 +48,13 @@ async function trustedDirectory(candidate, code = "untrusted_directory") {
     return Object.freeze({ absolute, details });
   } catch (error) {
     if (error?.message?.startsWith("stardew_immutable_release_bundle_")) throw error;
-    fail(code, error);
+    fail(code);
   }
 }
 
 async function exactEntries(directory, code) {
   let entries;
-  try { entries = await readdir(directory); } catch (error) { fail(code, error); }
+  try { entries = await readdir(directory); } catch (error) { fail(code); }
   if (entries.length !== BUNDLE_FILES.length || entries.some((entry) => !BUNDLE_FILE_SET.has(entry))) fail(code);
 }
 
@@ -73,7 +74,7 @@ async function openTrustedSource(directory, directoryDetails, name) {
   } catch (error) {
     await handle?.close().catch(() => {});
     if (error?.message?.startsWith("stardew_immutable_release_bundle_")) throw error;
-    fail("source_untrusted", error);
+    fail("source_untrusted");
   }
 }
 
@@ -105,7 +106,7 @@ async function copyPinnedFile(source, destination, hash, name) {
       || source.opened.ctimeMs !== afterHandle.ctimeMs) fail("source_drift");
   } catch (error) {
     if (error?.message?.startsWith("stardew_immutable_release_bundle_")) throw error;
-    fail("copy_uncertain", error);
+    fail("copy_uncertain");
   } finally {
     await output?.close().catch(() => {});
     await source.handle.close().catch(() => {});
@@ -126,7 +127,7 @@ async function digestTrustedBundle(directory, directoryDetails, code) {
       hash.update(bytes);
       if (name === "manifest.json") {
         try { manifest = JSON.parse(bytes.toString("utf8")); }
-        catch (error) { fail(code, error); }
+        catch (error) { fail(code); }
       }
       const afterHandle = await source.handle.stat();
       const afterPath = await lstat(source.candidate);
@@ -158,21 +159,21 @@ export async function inspectExactReleaseBundle({ releaseDir, modsPath, expected
 }
 
 async function strictCleanup(directory, directoryDetails) {
-  const current = await lstat(directory).catch((error) => fail("cleanup_uncertain", error));
+  const current = await lstat(directory).catch(() => fail("cleanup_uncertain"));
   if (!sameFile(current, directoryDetails) || !current.isDirectory() || current.isSymbolicLink()) fail("cleanup_uncertain");
   let entries;
-  try { entries = await readdir(directory); } catch (error) { fail("cleanup_uncertain", error); }
+  try { entries = await readdir(directory); } catch (error) { fail("cleanup_uncertain"); }
   if (entries.some((entry) => !BUNDLE_FILE_SET.has(entry))) fail("cleanup_uncertain");
   for (const name of entries) {
     const candidate = path.join(directory, name);
-    const details = await lstat(candidate).catch((error) => fail("cleanup_uncertain", error));
+    const details = await lstat(candidate).catch(() => fail("cleanup_uncertain"));
     if (!details.isFile() || details.isSymbolicLink()) fail("cleanup_uncertain");
   }
   for (const name of entries) {
     try { await import("node:fs/promises").then(({ unlink }) => unlink(path.join(directory, name))); }
-    catch (error) { fail("cleanup_uncertain", error); }
+    catch (error) { fail("cleanup_uncertain"); }
   }
-  try { await rmdir(directory); } catch (error) { fail("cleanup_uncertain", error); }
+  try { await rmdir(directory); } catch (error) { fail("cleanup_uncertain"); }
 }
 
 function validateOptions(options) {
@@ -193,12 +194,12 @@ export async function createImmutableReleaseBundleBinding(options) {
   if (release.digest !== input.expectedDigest) fail("digest_mismatch");
 
   const stagingDirectory = path.join(root.absolute, `.gamebuddy-release-${input.runIdentity}`);
-  const currentRoot = await lstat(root.absolute).catch((error) => fail("run_root_ownership_lost", error));
+  const currentRoot = await lstat(root.absolute).catch(() => fail("run_root_ownership_lost"));
   if (!sameFile(currentRoot, root.details)) fail("run_root_ownership_lost");
   try { await mkdir(stagingDirectory, { mode: 0o700 }); }
-  catch (error) { fail(error?.code === "EEXIST" ? "staging_owned" : "staging_create_failed", error); }
+  catch (error) { fail(error?.code === "EEXIST" ? "staging_owned" : "staging_create_failed"); }
   const staging = await trustedDirectory(stagingDirectory, "staging_ownership_lost");
-  const rootAfterCreate = await lstat(root.absolute).catch((error) => fail("run_root_ownership_lost", error));
+  const rootAfterCreate = await lstat(root.absolute).catch(() => fail("run_root_ownership_lost"));
   if (!sameFile(rootAfterCreate, root.details)) fail("run_root_ownership_lost");
 
   try {
@@ -213,7 +214,7 @@ export async function createImmutableReleaseBundleBinding(options) {
     if ((await digestTrustedBundle(source.absolute, source.details, "source_drift")).digest !== input.expectedDigest) fail("source_drift");
     if ((await digestTrustedBundle(staging.absolute, staging.details, "staged_tamper")).digest !== input.expectedDigest) fail("staged_tamper");
   } catch (error) {
-    try { await strictCleanup(staging.absolute, staging.details); } catch (cleanupError) { fail("cleanup_uncertain", new AggregateError([error, cleanupError])); }
+    try { await strictCleanup(staging.absolute, staging.details); } catch (cleanupError) { fail("cleanup_uncertain"); }
     throw error;
   }
 
@@ -225,7 +226,7 @@ export async function createImmutableReleaseBundleBinding(options) {
     if (closed) fail("closed");
   };
   const assertStaged = async () => {
-    const current = await lstat(staging.absolute).catch((error) => fail("staged_tamper", error));
+    const current = await lstat(staging.absolute).catch(() => fail("staged_tamper"));
     if (!sameFile(current, staging.details) || (await digestTrustedBundle(staging.absolute, staging.details, "staged_tamper")).digest !== input.expectedDigest) fail("staged_tamper");
   };
   const binding = Object.freeze({

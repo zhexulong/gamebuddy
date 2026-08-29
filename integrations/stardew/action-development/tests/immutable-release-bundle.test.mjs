@@ -4,11 +4,12 @@ import { lstat, mkdir, mkdtemp, readFile, readdir, rmdir, symlink, unlink, write
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createImmutableReleaseBundleBinding, IMMUTABLE_RELEASE_BUNDLE_FILES } from "../src/immutable-release-bundle.mjs";
+import { createImmutableReleaseBundleBinding, IMMUTABLE_RELEASE_BUNDLE_FILES, inspectExactReleaseBundle } from "../src/immutable-release-bundle.mjs";
 
 const CONTENTS = Object.freeze({
   "GameBuddy.Stardew.dll": "mod",
   "GameBuddy.Stardew.Core.dll": "core",
+  "Raffinert.FuzzySharp.dll": "fuzzy",
   "manifest.json": JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0" }),
   "GameBuddy.Stardew.deps.json": "{}",
 });
@@ -73,7 +74,14 @@ test("accepts physically separate release and runtime roots on different volumes
   }
 });
 
-test("successful exact four-file binding is physically distinct and lifecycle-only", async () => context(async (options) => {
+test("successful exact five-file binding stages every canonical entry and lifecycle-only", async () => context(async (options) => {
+  assert.deepEqual(IMMUTABLE_RELEASE_BUNDLE_FILES, [
+    "GameBuddy.Stardew.dll",
+    "GameBuddy.Stardew.Core.dll",
+    "Raffinert.FuzzySharp.dll",
+    "manifest.json",
+    "GameBuddy.Stardew.deps.json",
+  ]);
   const binding = await createImmutableReleaseBundleBinding(options);
   const staged = binding.inspect().releaseDir;
   assert.notEqual(staged, options.releaseDir); assert.notEqual(staged, path.join(options.modsPath, "GameBuddy"));
@@ -117,6 +125,21 @@ test("incomplete lifecycle preserves staging and prevents close", async () => co
   })), errorCode("lifecycle_incomplete"));
   assert.equal((await lstat(staged)).isDirectory(), true);
   await assert.rejects(binding.close(), errorCode("close_before_restore"));
+}));
+
+test("includes Raffinert.FuzzySharp.dll in the exact-bundle digest", async () => context(async (options) => {
+  const original = await inspectExactReleaseBundle(options);
+  await writeFile(path.join(options.releaseDir, "Raffinert.FuzzySharp.dll"), "changed-fuzzy");
+  const changed = await inspectExactReleaseBundle(options);
+  assert.equal(original.files, 5);
+  assert.equal(changed.files, 5);
+  assert.notEqual(changed.digest, original.digest);
+}));
+
+test("rejects a four-file source missing Raffinert.FuzzySharp.dll", async () => context(async (options) => {
+  await unlink(path.join(options.releaseDir, "Raffinert.FuzzySharp.dll"));
+  await assert.rejects(createImmutableReleaseBundleBinding(options), errorCode("source_untrusted"));
+  assert.deepEqual(await readdir(options.runRoot), []);
 }));
 
 test("rejects wrong preflight digest and leaves no staging directory", async () => context(async (options) => {
@@ -164,4 +187,32 @@ test("cleanup rejects unexpected contents and reports uncertainty", async () => 
 test("exclusive package/run ownership rejects staging replay", async () => context(async (options) => {
   await mkdir(path.join(options.runRoot, ".gamebuddy-release-run-1"));
   await assert.rejects(createImmutableReleaseBundleBinding(options), errorCode("staging_owned"));
+}));
+
+test("untrusted source yields a bounded error with no cause/errors leak", async () => context(async (options) => {
+  await unlink(path.join(options.releaseDir, "Raffinert.FuzzySharp.dll"));
+  await assert.rejects(createImmutableReleaseBundleBinding(options), (error) => {
+    assert.strictEqual(error.message, "stardew_immutable_release_bundle_source_untrusted");
+    assert.strictEqual(Object.hasOwn(error, "cause"), false);
+    assert.strictEqual(Object.hasOwn(error, "errors"), false);
+    return true;
+  });
+  assert.deepEqual(await readdir(options.runRoot), []);
+}));
+
+test("cleanup uncertainty yields a bounded error with no cause/errors leak and preserves staging", async () => context(async (options) => {
+  const binding = await createImmutableReleaseBundleBinding(options);
+  await binding.runLifecycle(async () => ({
+    operationResult: null,
+    cleanupResult: { schema: "gamebuddy-stardew-lifecycle-cleanup-result/v1", completed: true },
+  }));
+  const staged = binding.inspect().releaseDir;
+  await writeFile(path.join(staged, "unexpected"), "x");
+  await assert.rejects(binding.close(), (error) => {
+    assert.strictEqual(error.message, "stardew_immutable_release_bundle_cleanup_uncertain");
+    assert.strictEqual(Object.hasOwn(error, "cause"), false);
+    assert.strictEqual(Object.hasOwn(error, "errors"), false);
+    return true;
+  });
+  assert.ok((await readdir(staged)).includes("unexpected"));
 }));

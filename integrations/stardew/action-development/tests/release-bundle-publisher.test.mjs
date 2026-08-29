@@ -29,6 +29,7 @@ async function source(root, manifest = {}) {
   for (const [name, contents] of [
     ["GameBuddy.Stardew.dll", "mod"],
     ["GameBuddy.Stardew.Core.dll", "core"],
+    ["Raffinert.FuzzySharp.dll", "fuzzy"],
     ["manifest.json", JSON.stringify({ Name: "GameBuddy", UniqueID: "zhexulong.GameBuddy", EntryDll: "GameBuddy.Stardew.dll", Version: "0.1.0", ...manifest })],
     ["GameBuddy.Stardew.deps.json", "{}"],
     ["GameBuddy.Stardew.Core.pdb", "sidecar"],
@@ -39,18 +40,27 @@ function profile(root, releaseDir) {
   return { releaseDir, modsPath: path.join(root, "mods"), adapterVersion: "0.1.0" };
 }
 
-test("publishes an exact four-file bundle from a build directory with sidecars", async () => withRoot(async (root) => {
+test("publishes and stages an exact five-file bundle from a build directory with sidecars", async () => withRoot(async (root) => {
   const build = await source(root);
   await mkdir(path.join(root, "mods"));
   await mkdir(path.join(root, "mods", "GameBuddy"));
   const destination = path.join(root, "published", "equip-tool-v1");
   const receipt = await publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: destination });
   assert.deepEqual((await readdir(destination)).sort(), [...RELEASE_BUNDLE_FILES].sort());
-  assert.deepEqual(receipt, { schema: "gamebuddy-stardew-release-bundle-publication/v1", status: "published", destinationDir: destination, adapterVersion: "0.1.0", algorithm: "sha256", digest: receipt.digest, files: 4 });
+  assert.deepEqual(receipt, { schema: "gamebuddy-stardew-release-bundle-publication/v1", status: "published", destinationDir: destination, adapterVersion: "0.1.0", algorithm: "sha256", digest: receipt.digest, files: 5 });
   assert.match(receipt.digest, /^[a-f0-9]{64}$/);
-  assert.deepEqual(await inspectEquipToolReleaseBundle(profile(root, destination)), { algorithm: "sha256", digest: receipt.digest, adapterVersion: "0.1.0", files: 4 });
+  assert.deepEqual(await inspectEquipToolReleaseBundle(profile(root, destination)), { algorithm: "sha256", digest: receipt.digest, adapterVersion: "0.1.0", files: 5 });
   await assert.rejects(inspectEquipToolReleaseBundle(profile(root, build)), /stardew_immutable_release_bundle_source_untrusted/);
   await assert.rejects(publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: destination }), /atomic_directory_output_exists/);
+}));
+
+test("rejects a four-file source missing Raffinert.FuzzySharp.dll", async () => withRoot(async (root) => {
+  const build = await source(root);
+  await unlink(path.join(build, "Raffinert.FuzzySharp.dll"));
+  await assert.rejects(
+    publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: path.join(root, "published", "missing-fuzzy") }),
+    /stardew_release_bundle_publish_source_untrusted/,
+  );
 }));
 
 test("unexpected staging entry prevents final publication", async () => withRoot(async (root) => {
@@ -79,4 +89,43 @@ test("manifest mismatch publishes no final directory", async () => withRoot(asyn
   const destination = path.join(root, "published", "invalid");
   await assert.rejects(publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: destination }), /stardew_release_bundle_publish_manifest_identity_mismatch/);
   await assert.rejects(lstat(destination), { code: "ENOENT" });
+}));
+
+test("untrusted source yields a bounded error with no cause/errors leak", async () => withRoot(async (root) => {
+  const build = await source(root);
+  await unlink(path.join(build, "manifest.json"));
+  await assert.rejects(
+    publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: path.join(root, "published", "untrusted") }),
+    (error) => {
+      assert.strictEqual(error.message, "stardew_release_bundle_publish_source_untrusted");
+      assert.strictEqual(Object.hasOwn(error, "cause"), false);
+      assert.strictEqual(Object.hasOwn(error, "errors"), false);
+      return true;
+    },
+  );
+}));
+
+test("cleanup uncertainty yields a bounded error with no cause/errors leak and no staged residue", async () => withRoot(async (root) => {
+  const build = await source(root);
+  const destination = path.join(root, "published", "cleanup-uncertain");
+  const publication = publishEquipToolReleaseBundle({ sourceDir: build, destinationDir: destination });
+  const parent = path.dirname(destination);
+  let staging;
+  for (let attempt = 0; attempt < 1_000 && !staging; attempt += 1) {
+    const entries = await readdir(parent).catch((error) => error?.code === "ENOENT" ? [] : Promise.reject(error));
+    const name = entries.find((entry) => entry.startsWith(`.${path.basename(destination)}.staging-`));
+    if (name) staging = path.join(parent, name);
+    else await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(staging, "publisher staging was not observed");
+  await writeFile(path.join(staging, "unexpected"), "x");
+  await assert.rejects(publication, (error) => {
+    assert.match(error.message, /stardew_release_bundle_publish_(staging_entries_invalid|cleanup_uncertain)/);
+    assert.strictEqual(Object.hasOwn(error, "cause"), false);
+    assert.strictEqual(Object.hasOwn(error, "errors"), false);
+    return true;
+  });
+  await assert.rejects(lstat(destination), { code: "ENOENT" });
+  await unlink(path.join(staging, "unexpected"));
+  await rmdir(staging).catch((error) => { if (error?.code !== "ENOENT") throw error; });
 }));
