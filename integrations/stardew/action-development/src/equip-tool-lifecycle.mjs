@@ -12,6 +12,14 @@ import { LIFECYCLE_FAILURE_PHASES, LIFECYCLE_PHASE_RESULT_SCHEMA } from "./write
 const CLEANUP_SCHEMA = "gamebuddy-stardew-lifecycle-cleanup-result/v1";
 const FAILURE_PHASE_SET = new Set(LIFECYCLE_FAILURE_PHASES);
 const CLAIM_SCOPE = "native-local-equip-tool-v1";
+// The PowerShell launcher runs the game against its own internal lifecycle
+// deadline derived from profile.timeoutMs (see -TimeoutSeconds). The outer
+// bounded-child deadline must not expire in the same instant: reserve an
+// explicit bounded grace budget so the launcher can finish process teardown,
+// fixture restore, save cleanup, and phase/action receipt publication before
+// the supervisor terminates it. A hung teardown still fails closed because the
+// supervisor keeps a hard outer deadline.
+export const TEARDOWN_RECEIPT_GRACE_MS = 30_000;
 
 function fail(code) {
   throw new Error(`stardew_equip_tool_lifecycle_${code}`);
@@ -44,9 +52,15 @@ function parsePhaseResult(text) {
 }
 
 function childFailureCode(error) {
-  if (error?.message === "game_action_child_timeout") return "child_timeout";
-  if (error?.message === "game_action_child_spawn_failed") return "child_spawn_failed";
+  // Real Devkit runBoundedChild failure prefixes; never forward raw detail/cause.
+  const message = typeof error?.message === "string" ? error.message : "";
+  if (message.startsWith("test_supervisor_timeout")) return "child_timeout";
+  if (message.startsWith("test_runner_failed:spawn")) return "child_spawn_failed";
   return "child_failed";
+}
+
+function lifecycleTimeoutMs(timeoutMs) {
+  return Math.ceil(timeoutMs / 1_000) * 1_000;
 }
 
 function scenarioIdentity({ runId, profileIdentity }) {
@@ -79,7 +93,10 @@ export async function runEquipToolLifecycle({
     || !["gameInstallPath", "modsPath", "nativeFixtureRoot", "saveIdentity", "templateIdentity", "profileIdentity"].every(
       (field) => typeof profile[field] === "string" && profile[field].length > 0,
     )
-    || !Number.isSafeInteger(profile.timeoutMs)) fail("invalid_input");
+    || !Number.isSafeInteger(profile.timeoutMs)
+    || profile.timeoutMs < 30_000) fail("invalid_input");
+  const timeoutMs = lifecycleTimeoutMs(profile.timeoutMs);
+  if (!Number.isSafeInteger(timeoutMs + TEARDOWN_RECEIPT_GRACE_MS)) fail("invalid_input");
   const script = path.resolve(projectRoot, "../../../tools/run-stardew-native-local-player-move-fixture.ps1");
   let actionClaim;
   let lifecycleClaim;
@@ -114,7 +131,7 @@ export async function runEquipToolLifecycle({
        "-LifecyclePhaseResultFile", phaseClaim.resultFile,
        "-ScenarioIdentity", scenarioIdentity({ runId, profileIdentity: profile.profileIdentity }),
       "-Action", "equip_tool",
-      "-TimeoutSeconds", String(Math.max(30, Math.min(300, Math.ceil(profile.timeoutMs / 1_000)))),
+       "-TimeoutSeconds", String(timeoutMs / 1_000),
     ];
     let child;
     try {
@@ -122,7 +139,7 @@ export async function runEquipToolLifecycle({
         command: resolvePowerShell(),
         args,
         cwd: projectRoot,
-        timeoutMs: profile.timeoutMs,
+        timeoutMs: timeoutMs + TEARDOWN_RECEIPT_GRACE_MS,
         stdio: "pipe",
         terminationPolicy: "immediate",
       });

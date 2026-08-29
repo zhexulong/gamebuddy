@@ -11,7 +11,7 @@ import {
   readPrivateResultFile,
   writePrivateResultFile,
 } from "@gamebuddy/game-action-devkit";
-import { runEquipToolLifecycle } from "../src/equip-tool-lifecycle.mjs";
+import { runEquipToolLifecycle, TEARDOWN_RECEIPT_GRACE_MS } from "../src/equip-tool-lifecycle.mjs";
 import { createImmutableReleaseBundleBinding, IMMUTABLE_RELEASE_BUNDLE_FILES } from "../src/immutable-release-bundle.mjs";
 import { writeLifecycleCleanupResult, writeLifecyclePhaseResult } from "../src/write-lifecycle-result.mjs";
 
@@ -371,11 +371,64 @@ test("production two-claim protocol rejects missing, malformed, oversized, wrong
       && error.errors === undefined,
   );
   await assert.rejects(
-    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("game_action_child_timeout"); } }),
-    /child_timeout/,
+    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("test_supervisor_timeout:pid=4242:timeout_ms=30000\nraw child output detail"); } }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_child_timeout"
+      && error.cause === undefined && error.errors === undefined
+      && !error.message.includes("4242") && !error.message.includes("raw"),
   );
   await assert.rejects(
-    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("game_action_child_spawn_failed"); } }),
-    /child_spawn_failed/,
+    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("test_runner_failed:spawn:ENOENT raw spawn detail"); } }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_child_spawn_failed"
+      && error.cause === undefined && error.errors === undefined
+      && !error.message.includes("ENOENT") && !error.message.includes("raw"),
   );
+  await assert.rejects(
+    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("test_runner_failed:code=7:signal=none\nraw runner output detail"); } }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_child_failed"
+      && error.cause === undefined && error.errors === undefined
+      && !error.message.includes("code=7") && !error.message.includes("raw"),
+  );
+}));
+
+test("lifecycle adapter forwards an explicit teardown-receipt grace on the outer child timeout", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+  const calls = [];
+  const run = async (timeoutMs) => runEquipToolLifecycle({
+    projectRoot,
+    profile: { ...profile(root), timeoutMs },
+    runId: "ar1_test",
+    releaseDir,
+    resultRoot: root,
+    ...claims(root),
+    resolvePowerShell: () => "fake-powershell",
+    runChild: async (input) => { calls.push(input); return { code: 0, signal: null }; },
+  });
+  await run(30_000);
+  await run(120_000);
+  await run(30_001);
+  const value = (call, flag) => call.args[call.args.indexOf(flag) + 1];
+  assert.equal(calls[0].timeoutMs, 30_000 + TEARDOWN_RECEIPT_GRACE_MS);
+  assert.equal(calls[1].timeoutMs, 120_000 + TEARDOWN_RECEIPT_GRACE_MS);
+  assert.equal(calls[2].timeoutMs, 31_000 + TEARDOWN_RECEIPT_GRACE_MS);
+  assert.equal(value(calls[0], "-TimeoutSeconds"), "30");
+  assert.equal(value(calls[1], "-TimeoutSeconds"), "120");
+  assert.equal(value(calls[2], "-TimeoutSeconds"), "31");
+}));
+
+test("lifecycle adapter rejects invalid outer timeouts before opening private result claims", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+  for (const timeoutMs of [0, -1, Number.MAX_SAFE_INTEGER]) {
+    let claimsOpened = 0;
+    await assert.rejects(
+      () => runEquipToolLifecycle({
+        projectRoot,
+        profile: { ...profile(root), timeoutMs },
+        runId: "ar1_test",
+        releaseDir,
+        resultRoot: root,
+        beginResult: async () => { claimsOpened += 1; return Object.freeze({ resultFile: path.join(root, "unexpected.json") }); },
+      }),
+      (error) => error.message === "stardew_equip_tool_lifecycle_invalid_input"
+        && error.cause === undefined && error.errors === undefined,
+    );
+    assert.equal(claimsOpened, 0);
+  }
 }));
