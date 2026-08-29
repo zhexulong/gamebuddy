@@ -14,6 +14,7 @@ import {
 import {
   GameBrowserValidatorsV1,
   type GameBrowserStateV1,
+  type GameStopCommandV1,
   type StardewCabinChoicesV1,
   type StardewCabinConfirmCommandV1,
   type StardewCabinConfirmResultV1,
@@ -33,6 +34,10 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
   readGame?: (
     context: ComposedReferenceGameBrowserReadContext,
   ) => Promise<GameBrowserStateV1>;
+  gameStop?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameStopCommandV1,
+  ) => Promise<void>;
   stardewCabins?: Readonly<{
     read(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewCabinChoicesV1>;
     confirm(
@@ -59,6 +64,7 @@ type JsonObject = Record<string, unknown>;
 const BOOTSTRAP_PATH = "/api/composed-reference-game/v1/bootstrap";
 const STATE_PATH = "/api/composed-reference-game/v1/state";
 const GAME_PATH = "/api/composed-reference-game/v1/game";
+const GAME_STOP_PATH = `${GAME_PATH}/stop`;
 const LIFECYCLE_ACTIVATE_PATH = "/api/composed-reference-game/v1/lifecycle/activate";
 const STARDEW_CABINS_PATH = "/api/composed-reference-game/v1/game/stardew/cabins";
 const STARDEW_CABINS_CONFIRM_PATH = `${STARDEW_CABINS_PATH}/confirm`;
@@ -148,6 +154,20 @@ function sendJson(
 
 function sendProblem(response: ServerResponse, statusCode: number, code: string): void {
   sendJson(response, statusCode, { code });
+}
+
+function gameStopProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_game_attachment_generation_conflict":
+      return "game_attachment_conflict";
+    case "stardew_game_runtime_unavailable":
+      return "game_runtime_unavailable";
+    case "stardew_game_stop_idempotency_conflict":
+      return "idempotency_conflict";
+    default:
+      return "state_unavailable";
+  }
 }
 
 function stardewCabinProblemCode(error: unknown): string {
@@ -285,7 +305,8 @@ type LifecycleActivationIssuerState = Readonly<{
 type LifecycleAdmissionOperation =
   | "lifecycle_activation"
   | "cabin_read"
-  | "cabin_confirm";
+  | "cabin_confirm"
+  | "game_stop";
 
 type LifecycleActivationAdmissionState = {
   readonly issuer: object;
@@ -416,6 +437,8 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     operation = "cabin_read";
   } else if (request.method === "POST" && requestUrl.pathname === STARDEW_CABINS_CONFIRM_PATH) {
     operation = "cabin_confirm";
+  } else if (request.method === "POST" && requestUrl.pathname === GAME_STOP_PATH) {
+    operation = "game_stop";
   } else {
     return null;
   }
@@ -528,6 +551,10 @@ export function createComposedReferenceGameBrowserRequestHandler(
     options.profile.gameProfile.operationIds.includes("game.stardew.cabins.confirm");
   if (cabinOperationsMounted !== (options.stardewCabins !== undefined)) {
     throw new Error("Composed reference-game cabin operations are mismounted");
+  }
+  const gameStopMounted = options.profile.gameProfile?.operationIds.includes("game.stop") === true;
+  if (gameStopMounted !== (options.gameStop !== undefined)) {
+    throw new Error("Composed reference-game stop operation is mismounted");
   }
 
   let closed = false;
@@ -723,6 +750,28 @@ export function createComposedReferenceGameBrowserRequestHandler(
         if (session === activeSession) session = undefined;
         sendProblem(response, 409, "state_unavailable");
       }
+      return;
+    }
+
+    if (requestUrl.pathname === GAME_STOP_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.gameStop === undefined) {
+        sendProblem(response, options.gameStop === undefined ? 404 : 409, options.gameStop === undefined ? "not_found" : "malformed_request");
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(lifecycleActivationIssuer, request, origin);
+      if (admission === null) { sendProblem(response, 401, "unauthorized"); return; }
+      let body: Buffer;
+      try { body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      let command: unknown;
+      try { command = JSON.parse(body.toString("utf8")); } catch { sendProblem(response, 409, "malformed_request"); return; }
+      if (!GameBrowserValidatorsV1.GameStopCommandV1Schema.Check(command)) {
+        sendProblem(response, 409, "malformed_request"); return;
+      }
+      try {
+        await options.gameStop(admission, command as GameStopCommandV1);
+        response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
+        response.end();
+      } catch (error) { sendProblem(response, 409, gameStopProblemCode(error)); }
       return;
     }
 

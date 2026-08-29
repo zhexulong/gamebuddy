@@ -5,6 +5,7 @@ import {
   isComposedGameProfile,
 } from "../game-browser-contract/index.js";
 import type { StardewCompatibilityStatus } from "../stardew-compatibility.js";
+import type { StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView } from "../stardew-production-lifecycle-coordinator.internal.js";
 import type {
   StardewRoleLifecycleReader,
   StardewRoleLifecycleView,
@@ -21,10 +22,10 @@ export type GameBrowserReadStateContext = Readonly<{
 /**
  * The read-only, Host-owned source for `game.state.read`.
  *
- * This deliberately projects only lifecycle facts that already exist. In
- * particular, lifecycle evidence does not attest a bridge role/generation or
- * action catalog, so this provider cannot claim attachment, connection,
- * capabilities, a companion, a world/save, or an action outcome.
+ * This deliberately projects only facts that already exist. Role lifecycle
+ * evidence governs installation compatibility; the independent Host-owned
+ * attachment reader governs the exact surface generation and connection state.
+ * Neither source attests catalog, companion, world/save, or action outcomes.
  */
 export type GameBrowserStateProvider = Readonly<{
   readState(context: GameBrowserReadStateContext): Promise<GameBrowserStateV1>;
@@ -33,6 +34,7 @@ export type GameBrowserStateProvider = Readonly<{
 export function createGameBrowserStateProvider(
   profile: ComposedGameProfile,
   lifecycle: StardewRoleLifecycleReader,
+  attachment: StardewGameSurfaceAttachmentReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read"))
@@ -42,7 +44,8 @@ export function createGameBrowserStateProvider(
     async readState(context: GameBrowserReadStateContext): Promise<GameBrowserStateV1> {
       validateContext(context);
       const lifecycleView = await lifecycle.readRoleLifecycleView();
-      return projectGameBrowserState(profile, context, lifecycleView);
+      const attachmentView = attachment.readAttachmentView();
+      return projectGameBrowserState(profile, context, lifecycleView, attachmentView);
     },
   });
 }
@@ -51,6 +54,7 @@ function projectGameBrowserState(
   profile: ComposedGameProfile,
   context: GameBrowserReadStateContext,
   lifecycle: StardewRoleLifecycleView,
+  attachment: StardewGameSurfaceAttachmentView,
 ): GameBrowserStateV1 {
   const compatibility = projectCompatibility(lifecycle);
   return Object.freeze({
@@ -62,8 +66,8 @@ function projectGameBrowserState(
       prerequisites: Object.freeze({ status: "unknown", detectedGame: null, missingItems: [] }),
       instance: Object.freeze({ status: "none", gameTitle: null }),
       compatibility: Object.freeze(compatibility),
-      attachment: Object.freeze({ status: "none", generation: 0 }),
-      connectionStatus: "none",
+      attachment: Object.freeze({ status: attachment.status, generation: attachment.generation }),
+      connectionStatus: attachment.connectionStatus,
       role: null,
       companionName: null,
       selectedWorld: null,

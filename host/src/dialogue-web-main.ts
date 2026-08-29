@@ -93,7 +93,7 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
   const gameProfile = composeGameProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
-    operationIds: ["game.state.read", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+    operationIds: ["game.state.read", "game.stop", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
     navigationItemIds: ["game"],
   });
   const profile = composeReferenceGameBrowserProfile({ tavernProfile, gameProfile });
@@ -111,7 +111,11 @@ async function runReferenceGameProfile(manifest: HostDeploymentManifest, mode: "
     lease = await facade.startMountedChatRuntime();
     const referenceStateFacade = await createReferencePipelineStateFacade(manifest, lease, tavernProfile, eventStream);
     pipelineService = createChatPipelineService({ manifest, lease, profile: tavernProfile, eventStream });
-    const gameStateProvider = createGameBrowserStateProvider(gameProfile, lifecycleCoordinator.lifecycleReader);
+    const gameStateProvider = createGameBrowserStateProvider(
+      gameProfile,
+      lifecycleCoordinator.lifecycleReader,
+      lifecycleCoordinator.attachmentReader,
+    );
     const artifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
     const inspector = await createPublishedWindowsReparseInspector(artifactRoot);
     server = await startComposedReferenceGameStaticShellComposition({

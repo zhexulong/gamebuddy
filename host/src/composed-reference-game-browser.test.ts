@@ -27,6 +27,12 @@ const gameProfile = composeGameProfile({
   operationIds: ["game.state.read"],
   navigationItemIds: ["game"],
 });
+const gameProfileWithStop = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: ["game.state.read", "game.stop"],
+  navigationItemIds: ["game"],
+});
 const gameProfileWithCabins = composeGameProfile({
   profileId: "gamebuddy.game.preview",
   releaseTier: "game_preview",
@@ -100,6 +106,79 @@ function lifecycleRequest(
     },
   } as unknown as IncomingMessage;
 }
+
+test("game.stop mount is exact and cannot drift from its production callback", () => {
+  assert.throws(
+    () => createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithStop }),
+      bootstrapToken,
+      readChat: async (context) => stateForChat(context),
+      readGame: async (context) => stateForGame(context),
+    }),
+    /stop operation is mismounted/,
+  );
+  assert.throws(
+    () => createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+      bootstrapToken,
+      readChat: async (context) => stateForChat(context),
+      readGame: async (context) => stateForGame(context),
+      gameStop: async () => undefined,
+    }),
+    /stop operation is mismounted/,
+  );
+});
+
+test("authenticated game.stop is one-shot, schema-bound, and returns an empty completion", async () => {
+  const calls: unknown[] = [];
+  let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
+  handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithStop }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameStop: async (admission, command) => {
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_stop",
+        (facts) => { calls.push({ command, facts }); return true; },
+      );
+      if (consumed !== true) throw new Error("stop_admission_invalid");
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = await initial.json() as { chat: { csrfToken: string } };
+    const command = { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 1 };
+    const stopped = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      body: JSON.stringify(command),
+    });
+    assert.equal(stopped.status, 204);
+    assert.equal(await stopped.text(), "");
+    assert.equal(calls.length, 1);
+    assert.deepEqual((calls[0] as { command: unknown }).command, command);
+    const malformed = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+      body: JSON.stringify({ ...command, expectedAttachmentGeneration: 0 }),
+    });
+    assert.equal(malformed.status, 409);
+    assert.deepEqual(await malformed.json(), { code: "malformed_request" });
+    assert.equal(calls.length, 1);
+    const unauthorized = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "x-csrf-token": "invalid", "content-type": "application/json" },
+      body: JSON.stringify(command),
+    });
+    assert.equal(unauthorized.status, 401);
+    assert.equal(calls.length, 1);
+  } finally { await server.close(); }
+});
 
 test("Chat-only broker issues one session and leaves game route unavailable", async () => {
   let received: ComposedReferenceGameBrowserReadContext | undefined;
@@ -613,6 +692,39 @@ test("Stardew cabin routes reject wrong auth, origin, CSRF, and DTO before lifec
     })).status, 409);
     assert.equal(lifecycleCalls, 0);
   } finally { await server.close(); }
+});
+
+test("game.stop maps only frozen typed outcomes without leaking internal errors", async () => {
+  const cases = [
+    ["stardew_game_attachment_generation_conflict", "game_attachment_conflict"],
+    ["stardew_game_runtime_unavailable", "game_runtime_unavailable"],
+    ["stardew_game_stop_idempotency_conflict", "idempotency_conflict"],
+    ["private-stop-sensitive-detail", "state_unavailable"],
+  ] as const;
+  for (const [internalMessage, expectedCode] of cases) {
+    const handler = createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithStop }),
+      bootstrapToken,
+      readChat: async (context) => stateForChat(context),
+      readGame: async (context) => stateForGame(context),
+      gameStop: async () => { throw new Error(internalMessage); },
+    });
+    const server = await start(handler);
+    try {
+      const initial = await bootstrap(server.origin);
+      const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const root = await initial.json() as { chat: { csrfToken: string } };
+      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
+        method: "POST",
+        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken, "content-type": "application/json" },
+        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedAttachmentGeneration: 1 }),
+      });
+      assert.equal(response.status, 409);
+      const text = await response.text();
+      assert.deepEqual(JSON.parse(text), { code: expectedCode });
+      assert.equal(text.includes(internalMessage), false);
+    } finally { await server.close(); }
+  }
 });
 
 test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {

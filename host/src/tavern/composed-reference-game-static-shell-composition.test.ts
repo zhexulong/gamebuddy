@@ -17,6 +17,7 @@ import {
 import {
   composeGameProfile,
   GameBrowserFixtureV1,
+  type GameStopCommandV1,
   type StardewCabinConfirmCommandV1,
 } from "../game-browser-contract/index.js";
 import { composeTavernProfile, TavernBrowserFixtureV1 } from "./browser-contract/index.js";
@@ -39,7 +40,7 @@ const cabinProfile = composeReferenceGameBrowserProfile({
   gameProfile: composeGameProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
-    operationIds: ["game.state.read", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+    operationIds: ["game.state.read", "game.stop", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
     navigationItemIds: ["game"],
   }),
 });
@@ -279,6 +280,7 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
   let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
   let readCalls = 0;
   let confirmCalls = 0;
+  let stopCalls = 0;
   const lifecycleSink = Object.freeze({
     bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; },
     async readCabinChoices(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) {
@@ -297,6 +299,20 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
           }],
         }),
       )!;
+    },
+    async stopGame(
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      command: GameStopCommandV1,
+    ) {
+      stopCalls += 1;
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "game_stop",
+        () => {
+          assert.deepEqual(command, { apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1 });
+        },
+      );
     },
     async confirmCabinChoice(
       admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -368,10 +384,25 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
     for (const forbidden of ["cabinId", "companionId", "ownerFarmhandId", "AI", "Bridge", "ready"])
       assert.equal(confirmationWire.includes(forbidden), false);
 
+    const stopped = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stop`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1 }),
+    });
+    assert.equal(stopped.status, 204);
+    assert.equal(await stopped.text(), "");
+    assert.equal(stopCalls, 1);
+
     await server.close();
     await assert.rejects(() => fetch(cabinPath, { headers: { Origin: server.origin, Cookie: cookie } }));
     assert.equal(readCalls, 1);
     assert.equal(confirmCalls, 1);
+    assert.equal(stopCalls, 1);
   } finally {
     await server.close().catch(() => {});
     await fixture.dispose();
