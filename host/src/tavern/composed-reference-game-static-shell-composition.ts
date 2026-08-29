@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 
 import {
   createComposedReferenceGameBrowserRequestHandler,
+  type ComposedReferenceGameBrowserLifecycleActivationAdmission,
   type ComposedReferenceGameBrowserLifecycleActivationIssuer,
   type ComposedReferenceGameBrowserReadContext,
 } from "../composed-reference-game-browser.js";
@@ -14,7 +15,7 @@ import type { ChatPipelineService } from "./chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
 import type { ComposedReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
-import type { GameBrowserStateV1 } from "../game-browser-contract/index.js";
+import type { GameBrowserStateV1, GameLaunchCommandV1 } from "../game-browser-contract/index.js";
 import type { TavernStateSnapshotV1 } from "./browser-contract/index.js";
 import {
   createTavernStaticArtifactRequestHandler,
@@ -51,6 +52,11 @@ export type ComposedReferenceGameStaticShellCompositionOptions = Readonly<{
     readCabinChoices?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["stardewCabins"]>["read"];
     confirmCabinChoice?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["stardewCabins"]>["confirm"];
     setupPlayerHost?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameSetup"]>;
+    /** The lifecycle owner may return a private snapshot; the browser callback discards it. */
+    launchPlayerHost?: (
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      command: GameLaunchCommandV1,
+    ) => Promise<unknown>;
     stopGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameStop"]>;
     disconnectGame?: NonNullable<Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameDisconnect"]>;
   }>;
@@ -91,6 +97,14 @@ export async function startComposedReferenceGameStaticShellComposition(
     readChat,
     readGame: options.readGame,
     gameSetup: options.lifecycleActivationBindingSink?.setupPlayerHost?.bind(options.lifecycleActivationBindingSink),
+    gameLaunch: options.lifecycleActivationBindingSink?.launchPlayerHost === undefined
+      ? undefined
+      : async (
+          admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+          command: GameLaunchCommandV1,
+        ): Promise<void> => {
+          await options.lifecycleActivationBindingSink!.launchPlayerHost!(admission, command);
+        },
     gameStop: options.lifecycleActivationBindingSink?.stopGame?.bind(options.lifecycleActivationBindingSink),
     gameDisconnect: options.lifecycleActivationBindingSink?.disconnectGame?.bind(options.lifecycleActivationBindingSink),
     stardewCabins:

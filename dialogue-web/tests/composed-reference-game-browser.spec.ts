@@ -45,7 +45,7 @@ const game = {
   browserSession: { expiresAtMs },
   game: {
     prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
-    instance: { status: "none", gameTitle: null },
+    instance: { status: "none", gameTitle: null, generation: 0 },
     compatibility: { status: "unchecked", message: null },
     attachment: { status: "none", generation: 0 },
     connectionStatus: "none",
@@ -378,6 +378,78 @@ test("uncertain Game setup reread preserves the exact key for manual replay", as
   await expect.poll(() => stateReads).toBe(2);
   await expect(panel).toContainText("Game setup could not be verified");
   await expect(panel).not.toContainText("C:\\Games\\Stardew Valley");
+});
+
+test("Game setup projects Host-owned launch generation and launch rereads actual lifecycle state", async ({ page }) => {
+  let setupRequests = 0;
+  let launchRequests = 0;
+  let stateReads = 0;
+  const stagedGame = {
+    ...game,
+    game: {
+      ...game.game,
+      prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+      instance: { status: "none", gameTitle: null, generation: 1 },
+    },
+  };
+  const launchingGame = {
+    ...stagedGame,
+    game: {
+      ...stagedGame.game,
+      instance: { status: "launching", gameTitle: "Stardew Valley", generation: 0 },
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/prerequisites/setup", async (route) => {
+    setupRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().postDataJSON()).toEqual({
+      apiVersion: 1,
+      idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+    });
+    await route.fulfill({ status: 204, body: "" });
+  });
+  await page.route("**/api/composed-reference-game/v1/game/launch", async (route) => {
+    launchRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
+    expect(route.request().postDataJSON()).toEqual({
+      apiVersion: 1,
+      idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      expectedInstanceGeneration: 1,
+    });
+    await route.fulfill({ status: 204, body: "" });
+  });
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    stateReads += 1;
+    const state = stateReads === 1 ? stagedGame : launchingGame;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...root, game: state }) });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  const panel = page.getByRole("region", { name: "Game state" });
+  await panel.getByRole("button", { name: "Set up Stardew Valley" }).click();
+  await expect.poll(() => setupRequests).toBe(1);
+  await expect.poll(() => stateReads).toBe(1);
+  const launch = panel.getByRole("button", { name: "Play with companion" });
+  await expect(launch).toBeVisible();
+  await expect(panel).not.toContainText("generation: 1");
+  await expect(panel).not.toContainText("C:\\Games\\Stardew Valley");
+  await launch.dblclick();
+  await expect.poll(() => launchRequests).toBe(1);
+  await expect.poll(() => stateReads).toBe(2);
+  await expect(panel).toContainText("InstanceStardew Valley");
+  await expect(launch).toHaveCount(0);
+  await expect(page.getByText("A durable delegated draft.")).toBeVisible();
 });
 
 test("Game STOP is generation-bound, single-flight, rereads stopped, and remains independent from Chat Stop", async ({ page }) => {

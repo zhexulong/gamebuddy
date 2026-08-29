@@ -93,6 +93,10 @@ export function ComposedReferenceGameApp() {
   const gameStopKeysRef = useRef(new Map<number, string>());
   const [gameStopActive, setGameStopActive] = useState(false);
   const [gameStopFailed, setGameStopFailed] = useState(false);
+  const gameLaunchActiveRef = useRef(false);
+  const gameLaunchKeysRef = useRef(new Map<number, string>());
+  const [gameLaunchActive, setGameLaunchActive] = useState(false);
+  const [gameLaunchFailed, setGameLaunchFailed] = useState(false);
   const disconnectActiveRef = useRef(false);
   const disconnectKeysRef = useRef(new Map<number, string>());
   const [disconnectFailed, setDisconnectFailed] = useState(false);
@@ -510,6 +514,56 @@ export function ComposedReferenceGameApp() {
     }
   };
 
+  const handleGameLaunch = async (): Promise<void> => {
+    const current = viewRef.current;
+    if (
+      gameLaunchActiveRef.current ||
+      current.kind !== "ready" ||
+      current.root.game === null ||
+      current.root.game.game.prerequisites.status !== "met" ||
+      current.root.game.game.instance.status !== "none" ||
+      current.root.game.game.instance.generation < 1
+    ) return;
+    const generation = current.root.game.game.instance.generation;
+    const existingKey = gameLaunchKeysRef.current.get(generation);
+    const idempotencyKey = existingKey ?? newIdempotencyKey();
+    gameLaunchKeysRef.current.set(generation, idempotencyKey);
+    gameLaunchActiveRef.current = true;
+    setGameLaunchActive(true);
+    setGameLaunchFailed(false);
+    try {
+      await composedApiRef.current.launchGame({
+        apiVersion: 1,
+        idempotencyKey,
+        expectedInstanceGeneration: generation,
+      });
+      await reread();
+    } catch (error) {
+      let rereadSucceeded = false;
+      try {
+        await reread();
+        rereadSucceeded = true;
+      } catch { /* retain the current authoritative projection */ }
+      const fresh = viewRef.current;
+      if (
+        error instanceof ComposedReferenceGameProblemError &&
+        error.code === "game_unavailable" &&
+        rereadSucceeded &&
+        fresh.kind === "ready" &&
+        fresh.root.game !== null &&
+        (fresh.root.game.game.prerequisites.status !== "met" ||
+          fresh.root.game.game.instance.generation < 1)
+      ) {
+        gameLaunchKeysRef.current.delete(generation);
+        gameSetupKeyRef.current = undefined;
+      }
+      setGameLaunchFailed(true);
+    } finally {
+      gameLaunchActiveRef.current = false;
+      setGameLaunchActive(false);
+    }
+  };
+
   const handleDisconnect = async (): Promise<void> => {
     const current = viewRef.current;
     const game = current.kind === "ready" ? current.root.game : null;
@@ -583,6 +637,9 @@ export function ComposedReferenceGameApp() {
   const stopAvailable = view.kind === "ready" && view.session.snapshot.chat?.turn?.canCancel === true && view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
   const gameSetupAvailable = view.kind === "ready" && view.root.game !== null &&
     view.root.game.game.prerequisites.status === "unknown" && view.root.game.game.instance.status === "none";
+  const gameLaunchAvailable = view.kind === "ready" && view.root.game !== null &&
+    view.root.game.game.prerequisites.status === "met" && view.root.game.game.instance.status === "none" &&
+    view.root.game.game.instance.generation >= 1;
   const gameStopAvailable = view.kind === "ready" &&
     view.root.game !== null &&
     view.root.game.game.attachment.status === "attached" &&
@@ -630,6 +687,12 @@ export function ComposedReferenceGameApp() {
                     </button>
                   )}
                   {gameSetupFailed && <p role="status">{labels().gameSetupFailed}</p>}
+                  {gameLaunchAvailable && (
+                    <button type="button" disabled={gameLaunchActive} aria-label={labels().gameLaunch} onClick={() => void handleGameLaunch()}>
+                      {labels().gameLaunch}
+                    </button>
+                  )}
+                  {gameLaunchFailed && <p role="status">{labels().gameLaunchFailed}</p>}
                  {gameStopAvailable && (
                    <button type="button" disabled={gameStopActive} onClick={() => void handleGameStop()}>
                      {labels().gameStop}

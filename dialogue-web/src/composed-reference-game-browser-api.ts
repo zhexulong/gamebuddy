@@ -64,6 +64,7 @@ const PROBLEM_CODES = [
   "game_attachment_conflict",
   "game_runtime_unavailable",
   "game_unavailable",
+  "game_instance_not_found",
   "game_prerequisites_missing",
   STALE_CABIN_HANDOFF_CODE,
   ...CABIN_CONFLICT_CODES,
@@ -91,7 +92,7 @@ const GAME_KEYS = [
 const GAME_STATE_KEYS = ["apiVersion", "build", "csrfToken", "browserSession", "game"] as const;
 const GAME_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const GAME_PREREQUISITES_KEYS = ["status", "detectedGame", "missingItems"] as const;
-const GAME_INSTANCE_KEYS = ["status", "gameTitle"] as const;
+const GAME_INSTANCE_KEYS = ["status", "gameTitle", "generation"] as const;
 const GAME_COMPATIBILITY_KEYS = ["status", "message"] as const;
 const GAME_ATTACHMENT_KEYS = ["status", "generation"] as const;
 const GAME_CAPABILITY_SUMMARY_KEYS = ["available", "count"] as const;
@@ -113,6 +114,7 @@ export type GameBrowserStateV1 = Readonly<{
     instance: Readonly<{
       status: (typeof INSTANCE_STATUSES)[number];
       gameTitle: string | null;
+      generation: number;
     }>;
     compatibility: Readonly<{
       status: (typeof COMPATIBILITY_STATUSES)[number];
@@ -192,6 +194,12 @@ export type GameSetupRequestV1 = Readonly<{
   idempotencyKey: string;
 }>;
 
+export type GameLaunchRequestV1 = Readonly<{
+  apiVersion: 1;
+  idempotencyKey: string;
+  expectedInstanceGeneration: number;
+}>;
+
 export type GameStopRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
@@ -213,6 +221,7 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   bootstrap(bootstrapToken: string): Promise<ComposedReferenceGameBrowserRootV1>;
   readState(): Promise<ComposedReferenceGameBrowserRootV1>;
   setupGame(request: GameSetupRequestV1): Promise<void>;
+  launchGame(request: GameLaunchRequestV1): Promise<void>;
   stopGame(request: GameStopRequestV1): Promise<void>;
   disconnectGame(request: GameDisconnectRequestV1): Promise<void>;
   readStardewCabins(): Promise<StardewCabinChoicesV1>;
@@ -343,7 +352,8 @@ function isGameProjection(value: unknown): value is GameBrowserStateV1 {
   if (!isRecord(game.instance) ||
       !hasExactKeys(game.instance, GAME_INSTANCE_KEYS) ||
       !isOneOf(game.instance.status, INSTANCE_STATUSES) ||
-      !isNullableLabel(game.instance.gameTitle, MAX_GAME_LABEL_LENGTH)) {
+      !isNullableLabel(game.instance.gameTitle, MAX_GAME_LABEL_LENGTH) ||
+      !isSafeInteger(game.instance.generation, 0)) {
     return false;
   }
   if (!isRecord(game.compatibility) ||
@@ -516,6 +526,18 @@ export function createComposedReferenceGameBrowserApi(
         throw new ComposedReferenceGameProtocolError("invalid_game_setup_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
       await exchangeEmpty(fetchLike, "/api/composed-reference-game/v1/game/prerequisites/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify(request),
+      });
+    },
+    async launchGame(request: GameLaunchRequestV1): Promise<void> {
+      if (request.apiVersion !== 1 || !isIdempotencyKey(request.idempotencyKey) ||
+          !isSafeInteger(request.expectedInstanceGeneration, 1) ||
+          !hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "expectedInstanceGeneration"]))
+        throw new ComposedReferenceGameProtocolError("invalid_game_launch_request");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      await exchangeEmpty(fetchLike, "/api/composed-reference-game/v1/game/launch", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
         body: JSON.stringify(request),

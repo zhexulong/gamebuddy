@@ -69,6 +69,21 @@ export type StardewGameSurfaceAttachmentReader = Readonly<{
   readAttachmentView(): StardewGameSurfaceAttachmentView;
 }>;
 
+/**
+ * Narrowest coordinator-owned launch-readiness fact: the exact expected Player
+ * Host instance generation this lifecycle can launch. It is 0 until the
+ * coordinator owns and stages the instance, and is never sourced from the UI,
+ * a manifest default, or the attachment reader.
+ */
+export type StardewGameSurfaceLaunchReadinessView = Readonly<{
+  generation: number;
+  status: "none" | "ready" | "failed";
+}>;
+
+export type StardewGameSurfaceLaunchReadinessReader = Readonly<{
+  readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView;
+}>;
+
 export type StardewProductionLifecycleActivationOwner = Readonly<{
   bindBrowserAdmissionIssuer(issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer): void;
   activate(
@@ -104,6 +119,7 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
 export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly lifecycleReader: StardewRoleLifecycleReader;
   readonly attachmentReader: StardewGameSurfaceAttachmentReader;
+  readonly launchReadinessReader: StardewGameSurfaceLaunchReadinessReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
   close(): Promise<void>;
 }>;
@@ -227,6 +243,15 @@ function createCoordinator(
       });
     },
   });
+  const launchReadinessReader: StardewGameSurfaceLaunchReadinessReader = Object.freeze({
+      readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView {
+        if (launchTerminal) return Object.freeze({ generation: 0, status: "failed" });
+        if (exactOwner !== undefined && admittedInstallation !== undefined && activationState === "staged") {
+          return Object.freeze({ generation: expectedPlayerHostInstanceGeneration, status: "ready" });
+        }
+        return Object.freeze({ generation: 0, status: "none" });
+      },
+    });
   const lifecycleReader: StardewRoleLifecycleReader = Object.freeze({
     async readRoleLifecycleView() {
       if (activationState === "awaiting_player_host_attestation" && !playerHostAttestationCorrelated)
@@ -387,7 +412,7 @@ function createCoordinator(
 
   const consumeBrowserAdmission = <T>(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_stop" | "game_disconnect",
+    expectedOperation: "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_disconnect",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
   ): T => {
     const boundIssuer = issuer;
@@ -444,7 +469,7 @@ function createCoordinator(
   const launchPlayerHost = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GameLaunchCommandV1,
-  ): Promise<StardewPrivateActivationSnapshot> => consumeBrowserAdmission(admission, "game_setup", (browserSessionId) => {
+  ): Promise<StardewPrivateActivationSnapshot> => consumeBrowserAdmission(admission, "game_launch", (browserSessionId) => {
     const prior = gameLaunches.get(command.idempotencyKey);
     if (prior !== undefined) {
       if (prior.browserSessionId !== browserSessionId || prior.expectedInstanceGeneration !== command.expectedInstanceGeneration)
@@ -793,7 +818,7 @@ function createCoordinator(
     return attempt;
   };
 
-  return Object.freeze({ lifecycleReader, attachmentReader, activationOwner, close });
+  return Object.freeze({ lifecycleReader, attachmentReader, launchReadinessReader, activationOwner, close });
 }
 
 /**
