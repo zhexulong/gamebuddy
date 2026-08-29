@@ -34,6 +34,7 @@ import {
 import type {
   GameDisconnectCommandV1,
   GamePrerequisitesSetupCommandV1,
+  GameLaunchCommandV1,
   GameStopCommandV1,
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
@@ -77,6 +78,10 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: GamePrerequisitesSetupCommandV1,
   ): Promise<void>;
+  launchPlayerHost(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameLaunchCommandV1,
+  ): Promise<StardewPrivateActivationSnapshot>;
   readPrivateActivationSnapshot(): StardewPrivateActivationSnapshot;
   readCabinChoices(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -164,6 +169,9 @@ function createCoordinator(
   let exactOwner: StardewOwnedPlayerHostPhaseAOwner | undefined;
   let ownerQuarantined = false;
   let admittedInstallation: AdmittedStardewInstallation | undefined;
+  // This lifecycle owns one not-yet-launched Player Host instance. Reconnect
+  // generations are a separate authority and are not implemented in this slice.
+  const expectedPlayerHostInstanceGeneration = 1;
   let launchPromise: Promise<StardewPrivateActivationSnapshot> | undefined;
   let launchTerminal = false;
   let playerHostAttestationCorrelated = false;
@@ -186,6 +194,11 @@ function createCoordinator(
   let attachmentTeardownPromise: Promise<void> | undefined;
   const gameSetups = new Map<string, Readonly<{ browserSessionId: string; promise: Promise<void> }>>();
   let setupPromise: Promise<void> | undefined;
+  const gameLaunches = new Map<string, Readonly<{
+    browserSessionId: string;
+    expectedInstanceGeneration: number;
+    promise: Promise<StardewPrivateActivationSnapshot>;
+  }>>();
   let aiStopped = false;
   let playerStopped = false;
   let closePromise: Promise<void> | undefined;
@@ -411,9 +424,11 @@ function createCoordinator(
     let promise!: Promise<void>;
     promise = (async () => {
       try {
+        admittedInstallation = undefined;
         const installation = await selectAndAdmitPlayerHostInstallation();
         if (installation === undefined) return;
-        await launchSelectedPlayerHost(installation);
+        if (isClosing()) throw new Error("stardew_lifecycle_closing");
+        admittedInstallation = installation;
       } catch (error) {
         if (isClosing()) throw new Error("stardew_lifecycle_closing", { cause: error });
         throw new Error("stardew_game_setup_failed", { cause: error });
@@ -423,6 +438,33 @@ function createCoordinator(
     })();
     setupPromise = promise;
     gameSetups.set(command.idempotencyKey, Object.freeze({ browserSessionId, promise }));
+    return promise;
+  });
+
+  const launchPlayerHost = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: GameLaunchCommandV1,
+  ): Promise<StardewPrivateActivationSnapshot> => consumeBrowserAdmission(admission, "game_setup", (browserSessionId) => {
+    const prior = gameLaunches.get(command.idempotencyKey);
+    if (prior !== undefined) {
+      if (prior.browserSessionId !== browserSessionId || prior.expectedInstanceGeneration !== command.expectedInstanceGeneration)
+        return Promise.reject(new Error("stardew_game_launch_idempotency_conflict"));
+      return prior.promise;
+    }
+    if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
+    if (setupPromise !== undefined) return Promise.reject(new Error("stardew_game_setup_in_progress"));
+    if (launchPromise !== undefined) return Promise.reject(new Error("stardew_game_launch_in_progress"));
+    if (command.expectedInstanceGeneration !== expectedPlayerHostInstanceGeneration)
+      return Promise.reject(new Error("stardew_game_instance_generation_conflict"));
+    const installation = admittedInstallation;
+    if (installation === undefined || activationState !== "staged")
+      return Promise.reject(new Error("stardew_player_host_launch_not_staged"));
+    const promise = launchSelectedPlayerHost(installation);
+    gameLaunches.set(command.idempotencyKey, Object.freeze({
+      browserSessionId,
+      expectedInstanceGeneration: command.expectedInstanceGeneration,
+      promise,
+    }));
     return promise;
   });
 
@@ -673,6 +715,7 @@ function createCoordinator(
     bindBrowserAdmissionIssuer,
     activate,
     setupPlayerHost,
+    launchPlayerHost,
     readPrivateActivationSnapshot: snapshot,
     readCabinChoices,
     confirmCabinChoice,
