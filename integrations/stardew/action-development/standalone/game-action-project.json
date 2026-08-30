@@ -3,5 +3,8 @@
   "gameId": "stardew",
   "projectVersion": 1,
   "adapter": "./src/project-adapter.mjs",
-  "toolInventory": "./tool-inventory.json"
+  "portfolio": "./portfolio.json",
+  "toolInventory": "./tool-inventory.json",
+  "evidenceRoot": "./evidence/runs",
+  "defaultProfileExample": "./profiles/example.json"
 }
