@@ -18,6 +18,47 @@ const result = Object.freeze({
   verdict: "passed",
   reasonCode: "tool_selected",
 });
+const liveIdentity = Object.freeze({
+  gameId: "stardew",
+  actionId: "equip_tool",
+  runId: "live-run-1",
+  stage: "run-live",
+  profileIdentity: "target-profile",
+  claimScope: "native-local-equip-tool-v1",
+});
+const liveResult = Object.freeze({
+  schema: "gamebuddy-action-scenario-result/v1",
+  ...liveIdentity,
+  receipt: {
+    state: "succeeded",
+    reasonCode: "tool_selected",
+    hasEvidence: true,
+    request: {
+      requestId: "request-1",
+      idempotencyKey: "idempotency-1",
+      action: "equip_tool",
+      args: { slot: 1 },
+      expectedRevision: 2,
+    },
+    accepted: { requestId: "request-1", executionId: "execution-1" },
+    terminal: {
+      requestId: "request-1",
+      executionId: "execution-1",
+      state: "succeeded",
+      reasonCode: "tool_selected",
+      revision: 3,
+    },
+    evidence: { slot: 1, before: "Axe", expected: "Hoe", after: "Hoe" },
+  },
+  postcondition: {
+    revision: 3,
+    currentTool: "Hoe",
+    expectedTool: "Hoe",
+    selected: { slot: 1, label: "Hoe" },
+  },
+  verdict: "passed",
+  reasonCode: "tool_selected",
+});
 
 test("parses an exact private scenario result bound to its invocation", () => {
   const parsed = parseScenarioResultText(JSON.stringify(result), identity);
@@ -25,6 +66,14 @@ test("parses an exact private scenario result bound to its invocation", () => {
   assert.ok(Object.isFrozen(parsed));
   assert.ok(Object.isFrozen(parsed.receipt));
   assert.ok(Object.isFrozen(parsed.postcondition));
+});
+
+test("accepts a complete action-owned equip_tool live proof", () => {
+  const parsed = parseScenarioResultText(JSON.stringify(liveResult), liveIdentity);
+  assert.deepEqual(parsed, liveResult);
+  assert.ok(Object.isFrozen(parsed.receipt.request));
+  assert.ok(Object.isFrozen(parsed.receipt.evidence));
+  assert.ok(Object.isFrozen(parsed.postcondition.selected));
 });
 
 test("rejects mismatched, malformed, unknown, and secret-bearing results", () => {
@@ -36,6 +85,19 @@ test("rejects mismatched, malformed, unknown, and secret-bearing results", () =>
   assert.throws(() => parseScenarioResultText('{"schema":"gamebuddy-action-scenario-result/v1","runId":"run-1","gameId":"stardew","actionId":"equip_tool","stage":"deterministic-check","profileIdentity":"stardew-local-example","claimScope":"equip-tool-static-contract","receipt":{"state":"succeeded","state":"failed"},"postcondition":{},"verdict":"passed","reasonCode":"tool_selected"}', identity), /duplicate_key/);
   assert.throws(() => parseScenarioResultText("", identity), /invalid_size/);
   assert.throws(() => parseScenarioResultText("x".repeat(MAX_RESULT_BYTES + 1), identity), /invalid_size/);
+});
+
+test("fails closed for incomplete equip_tool live passed proofs", () => {
+  const { evidence: _evidence, ...receiptWithoutEvidence } = liveResult.receipt;
+  const { selected: _selected, ...postconditionWithoutSelected } = liveResult.postcondition;
+  const incompleteResults = [
+    { ...liveResult, receipt: { state: "succeeded" } },
+    { ...liveResult, receipt: receiptWithoutEvidence },
+    { ...liveResult, postcondition: postconditionWithoutSelected },
+  ];
+  for (const incomplete of incompleteResults) {
+    assert.throws(() => parseScenarioResultText(JSON.stringify(incomplete), liveIdentity), /invalid_(receipt|postcondition|evidence)/);
+  }
 });
 
 test("preserves failed result facts without promoting them", () => {
