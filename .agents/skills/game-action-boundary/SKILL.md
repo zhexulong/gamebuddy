@@ -52,6 +52,9 @@ Required deterministic checks / preflight / live gate:
 Explicit non-goals:
 ```
 
+Before running deterministic checks, preflight, or publication commands, read the
+owning game project's `ACTION_RUNBOOK.md`; it is the canonical command authority.
+
 A staged fixture may establish only the declared Given. It never proves the
 action result. Every card field must cite its game-owned source or name a
 concrete blocker; do not replace a missing source fact with a sibling-action
