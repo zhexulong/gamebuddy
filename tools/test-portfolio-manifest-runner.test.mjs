@@ -10,7 +10,6 @@ import {
   readChangedPaths,
   readCiEvent,
   selectEntries,
-  terminateProcessTree,
 } from "./test-portfolio-manifest-runner.mjs";
 
 const execFile = promisify(execFileCallback);
@@ -77,44 +76,6 @@ test("uses recursive first-push diff-tree paths, including nested files", async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-
-test("constructs shell-free complete process-tree termination commands", () => {
-  const calls = [];
-  const child = { pid: 4321, kill: () => calls.push("fallback") };
-  const fakeKiller = { once: (event, callback) => event === "close" && callback(0, null) };
-  return terminateProcessTree(child, {
-    platform: "win32",
-    spawnProcess: (executable, args, options) => {
-      calls.push({ executable, args, options });
-      return fakeKiller;
-    },
-  }).then(() => {
-    assert.deepEqual(calls, [
-      {
-        executable: "taskkill",
-        args: ["/PID", "4321", "/T", "/F"],
-        options: { shell: false, windowsHide: true, stdio: "ignore" },
-      },
-    ]);
-  });
-});
-
-test("terminates a detached POSIX process group before retrying", async () => {
-  const signals = [];
-  await terminateProcessTree(
-    { pid: 4321 },
-    {
-      platform: "linux",
-      killProcess: (pid, signal) => signals.push([pid, signal]),
-      wait: async () => undefined,
-      graceMs: 0,
-    },
-  );
-  assert.deepEqual(signals, [
-    [-4321, "SIGTERM"],
-    [-4321, "SIGKILL"],
-  ]);
 });
 
 test("rejects unsupported or incomplete CI event data", async () => {

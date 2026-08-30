@@ -161,6 +161,11 @@ function childCompletion(child, state) {
   });
 }
 
+function childAlreadyExited(child) {
+  return (child.exitCode !== null && child.exitCode !== undefined) ||
+    (child.signalCode !== null && child.signalCode !== undefined);
+}
+
 export async function runBoundedChild({
   command,
   args = [],
@@ -227,7 +232,7 @@ export async function runBoundedChild({
     const deadline = new Promise((resolve) => {
       deadlineTimer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
     });
-    result = await Promise.race([completion, deadline]);
+    result = childAlreadyExited(child) ? await completion : await Promise.race([completion, deadline]);
     if (result.kind === "timeout") {
       timedOut = true;
       validatePid(child.pid);
