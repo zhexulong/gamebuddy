@@ -7,19 +7,36 @@ import {
   type PreparedIntegrationLaunch,
 } from "../integration-catalog.js";
 import { assertReceiptBackedLaunch, type IntegrationLaunchHandle } from "../integration-launcher.js";
-import type { IntegrationWorldScope } from "../integration-module.js";
+import type { IntegrationWorldScope } from "../game-integration-adapter.js";
 import type { CompanionIdentity } from "../runtime.js";
 import {
   assertRuntimeOwnerIdentity,
   drainBindingMaterializations,
   mintBindingToken,
   mintGameRuntimeBindingFacts,
+  type GameRuntimeBindingExecution,
   type OpaqueGameRuntimeBindingToken,
   readRuntimeOwnerIdentityRecord,
   revokeBindingToken,
   stopAcceptingBindingMaterialization,
 } from "./continuity-semantic-game-runtime-binding.internal.js";
 import { createWindowsRuntimeOwnerIdentityPort } from "./continuity-semantic-game-runtime-binding.windows-owner-identity.js";
+
+/**
+ * Stable identity for a Stardew recovery record. Runtime lifecycle facts are
+ * deliberately absent: they belong to a dispatch attempt, not its recovery
+ * record directory or continuity scope.
+ */
+export type StableGameRuntimeBindingIdentity = Readonly<{
+  product: "stardew";
+  continuityId: string;
+  integrationId: "stardew";
+  saveId: string;
+  worldId: string;
+}>;
+
+// Kept in this module so no internal importer can mint receipt-backed provenance.
+const receiptBackedExecutionBrand = new WeakSet<object>();
 
 export type {
   OpaqueGameRuntimeBindingToken,
@@ -152,6 +169,7 @@ export async function createGameRuntimeBindingFromReceiptBackedLaunch(
       ownerIdentity,
       bindingFacts,
     });
+    receiptBackedExecutionBrand.add(execution);
     let closed = false;
     let active = false;
     let executed = false;
@@ -208,6 +226,47 @@ export async function createGameRuntimeBindingFromReceiptBackedLaunch(
       /* preserve validation failure */
     }
     throw error;
+  }
+}
+
+/**
+ * Projects one validated receipt-backed execution into its cross-Host recovery
+ * identity. Membership is private to this construction module and cannot be
+ * established by token minting or by constructing a lookalike execution.
+ */
+export function createStableGameRuntimeBindingIdentity(
+  execution: GameRuntimeBindingExecution,
+): StableGameRuntimeBindingIdentity {
+  if (
+    !isRecord(execution) ||
+    !Object.isFrozen(execution) ||
+    !receiptBackedExecutionBrand.has(execution) ||
+    execution.world.integrationId !== "stardew"
+  ) {
+    throw new Error("invalid_stardew_game_runtime_binding_execution");
+  }
+  return Object.freeze({
+    product: "stardew",
+    continuityId: execution.principal.continuityId,
+    integrationId: "stardew",
+    saveId: execution.world.saveId,
+    worldId: execution.world.worldId,
+  });
+}
+
+/** Validates the exact durable identity shape without admitting runtime facts. */
+export function assertStableGameRuntimeBindingIdentity(
+  value: unknown,
+): asserts value is StableGameRuntimeBindingIdentity {
+  if (
+    !isFrozenPlainDataObject(value, ["product", "continuityId", "integrationId", "saveId", "worldId"]) ||
+    value.product !== "stardew" ||
+    value.integrationId !== "stardew" ||
+    !identifier(value.continuityId) ||
+    !identifier(value.saveId) ||
+    !identifier(value.worldId)
+  ) {
+    throw new Error("invalid_stardew_game_runtime_binding_identity");
   }
 }
 
@@ -344,6 +403,27 @@ function assertPreparedLaunch(value: unknown): asserts value is PreparedIntegrat
   ) {
     throw new Error("invalid_integration_selection");
   }
+}
+function isFrozenPlainDataObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (
+    !isRecord(value) ||
+    !Object.isFrozen(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype ||
+    Object.getOwnPropertySymbols(value).length !== 0
+  )
+    return false;
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== keys.length || !keys.every((key) => names.includes(key))) return false;
+  return keys.every((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return (
+      descriptor !== undefined &&
+      "value" in descriptor &&
+      descriptor.enumerable === true &&
+      descriptor.configurable === false &&
+      descriptor.writable === false
+    );
+  });
 }
 function identifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER.test(value);

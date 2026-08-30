@@ -9,16 +9,21 @@ import { Type } from "typebox";
 import { type HostDeploymentManifest, loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
-import { createIntegrationActionCatalog, type GameIntegrationModule } from "../integration-module.js";
-import type { IntegrationConnection } from "../integration-types.js";
+import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
+import type { GameConnection } from "../game-connection.js";
 import {
+  brandRuntimeOwnerIdentity,
   consumeBindingToken,
+  mintBindingToken,
+  mintGameRuntimeBindingFacts,
   reserveGameRuntimeMaterialization,
   withConsumedBindingExecution,
 } from "./continuity-semantic-game-runtime-binding.internal.js";
 import {
+  assertStableGameRuntimeBindingIdentity,
   createGameRuntimeBinding,
   createGameRuntimeBindingFromReceiptBackedLaunch,
+  createStableGameRuntimeBindingIdentity,
   createWindowsRuntimeOwnerIdentityPort,
 } from "./continuity-semantic-game-runtime-binding.js";
 
@@ -27,9 +32,10 @@ const principal = { continuityId: "continuity_01", companionId: "companion_01", 
 function fixture(
   onClose: () => void,
   onRevoke: () => void,
+  integrationId = "test-arcade",
 ): { launcher: ConfigurableIntegrationLauncher; handle: IntegrationLaunchHandle } {
-  const module: GameIntegrationModule = {
-    descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
+  const module: GameIntegrationAdapter = {
+    descriptor: { integrationId, version: "fixture-v1", toolNamePrefix: "arcade_" },
     actionCatalog: createIntegrationActionCatalog([
       {
         actionId: "activate",
@@ -44,7 +50,7 @@ function fixture(
     ]),
     defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
     parsePolicy: (value) => value as never,
-    actorId: () => "arcade_actor",
+    actorId: () => principal.playerId,
     assertIdentityBinding: (_connection, identity) => {
       if (
         identity.companionId !== principal.companionId ||
@@ -53,7 +59,7 @@ function fixture(
       )
         throw new Error("identity_drift");
     },
-    worldScope: () => Object.freeze({ integrationId: "test-arcade", saveId: "save_01", worldId: "world_01" }),
+    worldScope: () => Object.freeze({ integrationId, saveId: "save_01", worldId: "world_01" }),
     createToolSet: () => ({
       observation: [],
       actions: [
@@ -72,15 +78,10 @@ function fixture(
       connected: true,
       sessionId: "session_01",
       capabilities: ["activate"],
-      registrations: [
-        {
-          actionId: "activate",
-          familyId: "interaction",
-          identityVersion: 1,
-          lifecycle: "published",
-          kind: "execution",
-        },
-      ],
+      capabilityRevision: 1,
+      registrations: [{ actionId: "activate", familyId: "interaction", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+      catalogRevision: 1,
+      enabledActionIds: ["activate"],
       snapshotRevision: 1,
       activeExecution: null,
       latestReceipt: null,
@@ -89,6 +90,7 @@ function fixture(
     status: () => ({
       connected: true,
       capabilities: ["activate"],
+      capabilityRevision: 1,
       snapshotRevision: 1,
       latestReceiptState: null,
       latestReasonCode: null,
@@ -98,8 +100,8 @@ function fixture(
     actionIdForToolName: (name) => (name === "arcade_activate" ? "activate" : null),
     isCancellationTool: () => false,
   };
-  const connection: IntegrationConnection = {
-    scope: { integrationId: "test-arcade" },
+  const connection: GameConnection = {
+    scope: { integrationId },
     module,
     state: Object.freeze({ connected: true }),
     executionGate: { executable: true },
@@ -115,7 +117,7 @@ function fixture(
   };
   return {
     launcher: {
-      integrationId: "test-arcade",
+      integrationId,
       module,
       prepare: async () =>
         Object.freeze({
@@ -198,7 +200,11 @@ test("mints an opaque one-shot token and exposes only executeWithBinding/close",
   assert.equal(closed, 1);
 });
 
-test("mints the same one-shot binding from an existing receipt-backed launch", async () => {
+test("mints the same one-shot binding from an existing receipt-backed launch", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("receipt-backed runtime binding requires Windows owner identity");
+    return;
+  }
   let revoked = 0;
   let closed = 0;
   const current = fixture(
@@ -230,7 +236,11 @@ test("mints the same one-shot binding from an existing receipt-backed launch", a
   assert.equal(closed, 1);
 });
 
-test("receipt-backed binding rejects world drift and closes the exact launch", async () => {
+test("receipt-backed binding rejects world drift and closes the exact launch", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("receipt-backed runtime binding requires Windows owner identity");
+    return;
+  }
   let revoked = 0;
   let closed = 0;
   const current = fixture(
@@ -256,7 +266,11 @@ test("receipt-backed binding rejects world drift and closes the exact launch", a
   assert.equal(closed, 1);
 });
 
-test("receipt-backed binding rejects a non-exact world input and closes the exact launch", async () => {
+test("receipt-backed binding rejects a non-exact world input and closes the exact launch", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("receipt-backed runtime binding requires Windows owner identity");
+    return;
+  }
   let revoked = 0;
   let closed = 0;
   const current = fixture(
@@ -455,10 +469,11 @@ test("rejects a mutable adapter world scope and reverse-closes the launch", asyn
       revoked += 1;
     },
   );
-  const mutableModule = {
+  const mutableModule: GameIntegrationAdapter = {
     ...base.launcher.module,
+    readState: (connection) => base.launcher.module.readState(connection),
     worldScope: () => ({ integrationId: "test-arcade", saveId: "save_01", worldId: "world_01" }),
-  } as GameIntegrationModule;
+  };
   const mutableHandle = { ...base.handle, connection: { ...base.handle.connection, module: mutableModule } };
   const mutableLauncher = {
     ...base.launcher,
@@ -611,6 +626,112 @@ test("production binding source does not import forbidden legacy, store, facade,
   assert.equal(sources[0]!.includes("manifestPath"), false);
 });
 
+test("creates one exact stable Stardew recovery identity from actual receipt-backed bindings", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("receipt-backed runtime binding requires Windows owner identity");
+    return;
+  }
+  const firstFixture = fixture(() => undefined, () => undefined, "stardew");
+  const secondFixture = fixture(() => undefined, () => undefined, "stardew");
+  const firstBinding = await createGameRuntimeBindingFromReceiptBackedLaunch(
+    Object.freeze({
+      manifest: await manifest(),
+      launcher: firstFixture.launcher,
+      launch: firstFixture.handle,
+      expectedWorld: Object.freeze({ saveId: "save_01", worldId: "world_01" }),
+    }),
+  );
+  const secondBinding = await createGameRuntimeBindingFromReceiptBackedLaunch(
+    Object.freeze({
+      manifest: await manifest(),
+      launcher: secondFixture.launcher,
+      launch: secondFixture.handle,
+      expectedWorld: Object.freeze({ saveId: "save_01", worldId: "world_01" }),
+    }),
+  );
+  let first: ReturnType<typeof createStableGameRuntimeBindingIdentity> | undefined;
+  let second: ReturnType<typeof createStableGameRuntimeBindingIdentity> | undefined;
+  await firstBinding.executeWithBinding((token) => {
+    first = createStableGameRuntimeBindingIdentity(consumeBindingToken(token));
+  });
+  await secondBinding.executeWithBinding((token) => {
+    second = createStableGameRuntimeBindingIdentity(consumeBindingToken(token));
+  });
+  assert.deepEqual(first, second);
+  assert.ok(Object.isFrozen(first));
+  assert.deepEqual(Object.keys(first!).sort(), ["continuityId", "integrationId", "product", "saveId", "worldId"]);
+  assert.equal("companionId" in first!, false);
+  assert.equal("playerId" in first!, false);
+  assert.equal("runtimeInstanceId" in first!, false);
+  assert.equal("bindingDigest" in first!, false);
+  assert.equal("ownerToken" in first!, false);
+  assert.equal("epoch" in first!, false);
+  assertStableGameRuntimeBindingIdentity(first);
+  await firstBinding.close();
+  await secondBinding.close();
+});
+
+test("rejects arbitrary frozen matching tuples and forged execution lookalikes", () => {
+  const source = Object.freeze({
+    principal: Object.freeze({ continuityId: "continuity_01" }),
+    world: Object.freeze({ integrationId: "stardew", saveId: "save_01", worldId: "world_01" }),
+  });
+  assert.throws(() => createStableGameRuntimeBindingIdentity(source as never), /execution/);
+
+  const executionPrincipal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
+  const executionWorld = Object.freeze({ integrationId: "stardew", saveId: "save_01", worldId: "world_01" });
+  const ownerIdentity = brandRuntimeOwnerIdentity({ processId: 1, creationTime100ns: "1" });
+  const execution = Object.freeze({
+    principal: executionPrincipal,
+    runtimeRoot: "runtime",
+    connection: Object.freeze({}),
+    world: executionWorld,
+    launch: Object.freeze({}),
+    ownerIdentity,
+    bindingFacts: mintGameRuntimeBindingFacts({ principal: executionPrincipal, world: executionWorld, ownerIdentity }),
+  });
+  mintBindingToken(execution as never);
+  assert.throws(() => createStableGameRuntimeBindingIdentity(execution as never), /execution/);
+});
+
+test("rejects a receipt-backed non-Stardew execution", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("receipt-backed runtime binding requires Windows owner identity");
+    return;
+  }
+  const arcadeFixture = fixture(() => undefined, () => undefined);
+  const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(
+    Object.freeze({
+      manifest: await manifest(),
+      launcher: arcadeFixture.launcher,
+      launch: arcadeFixture.handle,
+      expectedWorld: Object.freeze({ saveId: "save_01", worldId: "world_01" }),
+    }),
+  );
+  await binding.executeWithBinding((token) => {
+    assert.throws(
+      () => createStableGameRuntimeBindingIdentity(consumeBindingToken(token)),
+      /invalid_stardew_game_runtime_binding_execution/,
+    );
+  });
+  await binding.close();
+});
+
+test("keeps the stable identity validator exact and excludes lifecycle fields", () => {
+  const identity = Object.freeze({
+    product: "stardew" as const,
+    continuityId: "continuity_01",
+    integrationId: "stardew" as const,
+    saveId: "save_01",
+    worldId: "world_01",
+  });
+  assertStableGameRuntimeBindingIdentity(identity);
+  assert.throws(
+    () => assertStableGameRuntimeBindingIdentity({ ...identity, runtimeInstanceId: "forbidden" }),
+    /identity$/,
+  );
+});
+
 test("revokes and closes once when world validation fails", async () => {
   let revoked = 0;
   let closed = 0;
@@ -622,7 +743,11 @@ test("revokes and closes once when world validation fails", async () => {
       revoked += 1;
     },
   );
-  const badModule = { ...base.launcher.module, worldScope: () => null } as GameIntegrationModule;
+  const badModule: GameIntegrationAdapter = {
+    ...base.launcher.module,
+    readState: (connection) => base.launcher.module.readState(connection),
+    worldScope: () => null,
+  };
   const badHandle = { ...base.handle, connection: { ...base.handle.connection, module: badModule } };
   const badLauncher = {
     ...base.launcher,
