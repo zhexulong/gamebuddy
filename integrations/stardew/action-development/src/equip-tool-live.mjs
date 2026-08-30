@@ -8,6 +8,7 @@ import { createImmutableReleaseBundleBinding } from "./immutable-release-bundle.
 import { runEquipToolLifecycle } from "./equip-tool-lifecycle.mjs";
 import { consumeReadyEquipToolProfile, preflightEquipTool } from "./equip-tool-preflight.mjs";
 import { acquireTargetRuntimeLease } from "./target-runtime-lease.mjs";
+import { validateEquipToolScenarioProof } from "./equip-tool-scenario-result.mjs";
 
 const CLAIM_SCOPE = "native-local-equip-tool-v1";
 
@@ -151,7 +152,47 @@ export async function runEquipToolLive({ manifest, invocation, dependencies } = 
     runId: invocation.runId,
     evidenceStatus: finalized.status,
     verdict: finalized.verdict,
+    // The adapter never projects this action-owned payload. The registration
+    // verifier consumes it before the result is reduced to the neutral report.
+    ...(passed ? {
+      verification: Object.freeze({
+        receipt: proof.receipt,
+        postcondition: proof.postcondition,
+        cleanup: Object.freeze({ lifecycle: lifecycleComplete, immutableStaging: stagingReleased, runtimeLease: leaseReleased }),
+        reasonCode: proof.reasonCode,
+      }),
+    } : {}),
   });
+}
+
+export function verifyEquipToolReceiptEvidencePostcondition({ actionId, invocation, result } = {}) {
+  if (actionId !== "equip_tool" || !invocation || typeof invocation.runId !== "string") fail("verification_input_invalid");
+  if (!result || result.gameId !== "stardew" || result.actionId !== actionId || result.runId !== invocation.runId) fail("verification_identity_mismatch");
+  if (result.state !== "PASSED" || result.evidenceStatus !== "complete" || result.verdict !== "passed") fail("receipt_evidence_postcondition_invalid");
+  const verification = result.verification;
+  if (!verification || typeof verification !== "object" || verification.reasonCode !== "tool_selected") fail("receipt_evidence_postcondition_invalid");
+  try {
+    validateEquipToolScenarioProof({
+      verdict: result.verdict,
+      reasonCode: verification.reasonCode,
+      receipt: verification.receipt,
+      postcondition: verification.postcondition,
+    });
+  } catch {
+    fail("receipt_evidence_postcondition_invalid");
+  }
+  return Object.freeze({ gameId: "stardew", actionId, runId: invocation.runId, verified: true });
+}
+
+export function verifyEquipToolCleanup({ actionId, invocation, result } = {}) {
+  if (actionId !== "equip_tool" || !invocation || typeof invocation.runId !== "string") fail("cleanup_verification_input_invalid");
+  if (!result || result.gameId !== "stardew" || result.actionId !== actionId || result.runId !== invocation.runId) fail("cleanup_verification_identity_mismatch");
+  const cleanup = result.verification?.cleanup;
+  if (result.state !== "PASSED" || result.evidenceStatus !== "complete" || result.verdict !== "passed"
+    || cleanup?.lifecycle !== true || cleanup?.immutableStaging !== true || cleanup?.runtimeLease !== true) {
+    fail("cleanup_incomplete");
+  }
+  return Object.freeze({ gameId: "stardew", actionId, runId: invocation.runId, complete: true });
 }
 
 export async function readEquipToolLiveStatus({ manifest, invocation, dependencies } = {}) {
