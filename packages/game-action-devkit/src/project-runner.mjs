@@ -68,7 +68,39 @@ export function normalizeInvocation(invocation) {
   return Object.freeze(normalized);
 }
 
-export async function readActionProjectManifest(projectFile) {
+async function assertCanonicalOwnedMissingFile(baseDirectory, declaredFile) {
+  const relative = path.relative(baseDirectory, declaredFile);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) fail("manifest_path_escape");
+  let current = baseDirectory;
+  for (const part of relative.split(path.sep)) {
+    current = path.join(current, part);
+    let details;
+    try {
+      details = await lstat(current);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (current === declaredFile) fail("manifest_dependency_missing");
+    let canonical;
+    try {
+      canonical = await realpath(current);
+    } catch {
+      fail("manifest_dependency_missing");
+    }
+    if (canonical !== baseDirectory && !canonical.startsWith(`${baseDirectory}${path.sep}`)) fail("manifest_dependency_escape");
+    let canonicalDetails;
+    try {
+      canonicalDetails = await lstat(canonical);
+    } catch {
+      fail("manifest_dependency_missing");
+    }
+    if (!canonicalDetails.isDirectory()) fail("manifest_dependency_missing");
+    if (!details.isDirectory() && !details.isSymbolicLink()) fail("manifest_dependency_missing");
+  }
+}
+
+async function loadActionProjectManifest(projectFile, { allowMissingPortfolio = false } = {}) {
   if (typeof projectFile !== "string" || projectFile.length === 0) fail("invalid_manifest_path");
   const resolved = path.resolve(projectFile);
   let raw;
@@ -86,13 +118,24 @@ export async function readActionProjectManifest(projectFile) {
   let baseDirectory;
   try { baseDirectory = await realpath(declaredBaseDirectory); } catch { fail("manifest_dependency_missing"); }
   const files = {};
+  let portfolioMissing = false;
   try {
     await Promise.all(fileReferences.map(async ([name, value, code]) => {
       const declared = path.resolve(baseDirectory, assertRelativeFile(value, code));
       if (!declared.startsWith(`${baseDirectory}${path.sep}`)) fail("manifest_path_escape");
-      const canonical = await realpath(declared);
-      if (!canonical.startsWith(`${baseDirectory}${path.sep}`)) fail("manifest_dependency_escape");
-      files[name] = canonical;
+      try {
+        const canonical = await realpath(declared);
+        if (!canonical.startsWith(`${baseDirectory}${path.sep}`)) fail("manifest_dependency_escape");
+        files[name] = canonical;
+      } catch (error) {
+        if (allowMissingPortfolio && name === "portfolioFile" && error?.code === "ENOENT") {
+          await assertCanonicalOwnedMissingFile(baseDirectory, declared);
+          files[name] = declared;
+          portfolioMissing = true;
+          return;
+        }
+        throw error;
+      }
     }));
   } catch (error) {
     if (String(error?.message).startsWith("game_action_project_")) throw error;
@@ -107,7 +150,12 @@ export async function readActionProjectManifest(projectFile) {
     projectVersion: raw.projectVersion,
     ...files,
     evidenceRoot,
+    ...(portfolioMissing ? { portfolioMissing: true } : {}),
   });
+}
+
+export async function readActionProjectManifest(projectFile) {
+  return loadActionProjectManifest(projectFile);
 }
 
 function assertReportString(value, field, { nullable = false, opaque = false } = {}) {
@@ -138,8 +186,10 @@ function validateAdapterReport(report, manifest) {
 }
 
 export async function runActionProject({ projectFile, invocation }) {
-  const manifest = await readActionProjectManifest(projectFile);
   const normalizedInvocation = normalizeInvocation(invocation);
+  const manifest = normalizedInvocation.command === "status" && normalizedInvocation.actionId === undefined
+    ? await loadActionProjectManifest(projectFile, { allowMissingPortfolio: true })
+    : await readActionProjectManifest(projectFile);
   if (["preflight", "run-live"].includes(normalizedInvocation.command) && normalizedInvocation.profileFile === undefined) fail("profile_required");
   let canonicalBriefFile;
   if (normalizedInvocation.briefFile !== undefined) {

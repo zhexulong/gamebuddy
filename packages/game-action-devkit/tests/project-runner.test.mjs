@@ -53,6 +53,7 @@ const adapter = `export async function runActionProject({ manifest, invocation }
 const manifestValue = { schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "./adapter.mjs", portfolio: "./portfolio.json", toolInventory: "./inventory.json", evidenceRoot: "./artifacts/action-runs", defaultProfileExample: "./profile.json" };
 const manifest = JSON.stringify(manifestValue);
 const dependencies = { "adapter.mjs": adapter, "portfolio.json": "{}", "inventory.json": "{}", "profile.json": "{}" };
+const portfolioMissingAdapter = `export async function runActionProject({ manifest, invocation }) { if (invocation.command !== "status" || invocation.actionId !== undefined || manifest.portfolioMissing !== true || !Object.isFrozen(manifest)) throw new Error("portfolio_missing_observation_invalid"); return { schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: "blocked", reasonCode: "portfolio_missing" }; }`;
 
 test("normalizes only explicit immutable invocation fields", () => {
   const profileFile = path.join(os.tmpdir(), "profiles", "default.json");
@@ -72,6 +73,29 @@ test("loads a strict project manifest and delegates without a game registry", as
     assert.equal(loaded.gameId, "stardew");
     const result = await runActionProject({ projectFile: loaded.manifestFile, invocation: { command: "status", actionId: "equip_tool" } });
     assert.deepEqual(result, { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "status", actionId: "equip_tool", evidenceRoot: path.join(root, "artifacts", "action-runs"), briefFile: null });
+  });
+});
+
+test("allows selectorless status to report a missing portfolio while strict reads reject it", async () => {
+  await withProject({
+    "project.json": JSON.stringify({ ...manifestValue, adapter: "./portfolio-missing-adapter.mjs" }),
+    "portfolio-missing-adapter.mjs": portfolioMissingAdapter,
+    "inventory.json": "{}",
+    "profile.json": "{}",
+  }, async (root) => {
+    const projectFile = path.join(root, "project.json");
+    const status = await runActionProject({ projectFile, invocation: { command: "status" } });
+    assert.deepEqual(status, {
+      schema: "gamebuddy-action-scenario-result/v1",
+      gameId: "stardew",
+      status: "blocked",
+      reasonCode: "portfolio_missing",
+    });
+    await assert.rejects(
+      runActionProject({ projectFile, invocation: { command: "check" } }),
+      /manifest_dependency_missing/,
+    );
+    await assert.rejects(readActionProjectManifest(projectFile), /manifest_dependency_missing/);
   });
 });
 
