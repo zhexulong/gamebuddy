@@ -22,7 +22,20 @@ export {
   readActionProjectManifest,
   runActionProject,
 } from "./project-runner.mjs";
-export { checkWorkBriefOwnership, validateFrozenWorkBrief } from "./work-brief.mjs";
+export {
+  WORK_BRIEF_HANDOFF_SCHEMA,
+  WORK_BRIEF_SCHEMA,
+  assertWorkBriefStageAuthorized,
+  checkWorkBrief,
+  checkWorkBriefDiff,
+  checkWorkBriefOwnership,
+  compareWorkBriefDiff,
+  createIncompleteWorkBriefHandoff,
+  emitIncompleteWorkBriefHandoff,
+  parseGitDiffPaths,
+  runWorkBriefCheck,
+  validateFrozenWorkBrief,
+} from "./work-brief.mjs";
 export {
   beginPrivateResultFile,
   cleanupPrivateResultFile,
