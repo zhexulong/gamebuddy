@@ -7,7 +7,11 @@ import { runActionProject } from "../src/project-adapter.mjs";
 
 const projectDirectory = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const packageFile = path.join(projectDirectory, "package.json");
-const manifest = Object.freeze({ gameId: "stardew", evidenceRoot: path.join(projectDirectory, "artifacts", "action-runs") });
+const manifest = Object.freeze({
+  gameId: "stardew",
+  portfolioFile: path.join(projectDirectory, "portfolio.json"),
+  evidenceRoot: path.join(projectDirectory, "artifacts", "action-runs"),
+});
 const action = Object.freeze({ actionId: "equip_tool" });
 const schema = "gamebuddy-action-scenario-result/v1";
 
@@ -16,7 +20,7 @@ function expected(command, status, fields = {}) {
     schema,
     gameId: "stardew",
     status,
-    actionId: "equip_tool",
+    ...(command.actionId === undefined ? {} : { actionId: command.actionId }),
     ...fields,
     ...(command.briefFile === undefined ? {} : { briefFile: command.briefFile }),
     ...(command.runId === undefined ? {} : { runId: command.runId }),
@@ -33,7 +37,36 @@ test("returns neutral bounded reports for check and blocked preflight", async ()
   assert.ok(Object.isFrozen(preflight));
 });
 
-test("converts evidence status to a neutral bounded report", async () => {
+test("reports package-level portfolio status without inferring an action", async () => {
+  const report = await runActionProject({
+    manifest,
+    invocation: { command: "status" },
+    dependencies: { readLatestEvidence: async () => { throw new Error("project status must not read action evidence"); } },
+  });
+  assert.deepEqual(report, expected({ command: "status" }, "observed", {
+    outcome: "portfolio_observed",
+    reasonCode: "none",
+    claimScope: "project",
+    evidenceRoot: manifest.evidenceRoot,
+  }));
+  assert.equal(Object.hasOwn(report, "actionId"), false);
+  assert.ok(Object.isFrozen(report));
+});
+
+test("reports portfolio_missing for a fixture without its portfolio", async () => {
+  const report = await runActionProject({
+    manifest: { ...manifest, portfolioFile: path.join(projectDirectory, "fixtures", "missing-portfolio.json") },
+    invocation: { command: "status" },
+    dependencies: { readLatestEvidence: async () => { throw new Error("project status must not infer action evidence"); } },
+  });
+  assert.deepEqual(report, expected({ command: "status" }, "blocked", {
+    outcome: "portfolio_missing",
+    reasonCode: "portfolio_missing",
+  }));
+  assert.equal(Object.hasOwn(report, "actionId"), false);
+});
+
+test("converts action evidence status to a neutral bounded report", async () => {
   const observation = Object.freeze({ availability: "available", status: "complete", verdict: "passed" });
   const report = await runActionProject({
     manifest,
@@ -55,7 +88,6 @@ test("rejects missing, unknown, and legacy inventory actions before dispatch", a
   for (const invocation of [
     { command: "check" },
     { command: "preflight", profileFile: "C:\\profile.json" },
-    { command: "status" },
     { command: "run-live", profileFile: "C:\\profile.json" },
     { command: "check", actionId: "enter_mine" },
     { command: "status", actionId: "enter_mine" },
@@ -80,7 +112,7 @@ test("exposes canonical non-live package scripts and a profile-required prefligh
   assert.match(scripts["action:check"], /game-action\.mjs check/);
   assert.match(scripts["action:check"], /--action equip_tool/);
   assert.match(scripts["action:status"], /game-action\.mjs status/);
-  assert.match(scripts["action:status"], /--action equip_tool/);
+  assert.doesNotMatch(scripts["action:status"], /--action/);
   assert.equal(scripts["action:ci"], "node src/portfolio.mjs --ci");
   assert.equal(scripts["action:run-live"], undefined);
   assert.doesNotMatch(scripts["action:preflight"], /run-live/);
