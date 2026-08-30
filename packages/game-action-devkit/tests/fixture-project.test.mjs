@@ -33,6 +33,7 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     invocation: { command: "status", actionId: "toggle_lamp", briefFile },
   });
   assert.deepEqual(status, {
+    schema: "gamebuddy-action-scenario-result/v1",
     gameId: "clockwork_fixture",
     status: "status_ready",
     claimScope: "fixture_only",
@@ -45,6 +46,7 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     invocation: { command: "preflight", actionId: "toggle_lamp", profileFile },
   });
   assert.deepEqual(preflight, {
+    schema: "gamebuddy-action-scenario-result/v1",
     gameId: "clockwork_fixture",
     status: "preflight_ready",
     claimScope: "fixture_only",
@@ -57,6 +59,7 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     invocation: { command: "run-live", actionId: "toggle_lamp", profileFile },
   });
   assert.deepEqual(live, {
+    schema: "gamebuddy-action-scenario-result/v1",
     gameId: "clockwork_fixture",
     status: "blocked",
     reasonCode: "non_production_fixture",
@@ -90,6 +93,7 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     briefFile,
   });
   assert.deepEqual(checked, {
+    schema: "gamebuddy-action-scenario-result/v1",
     gameId: "clockwork_fixture",
     status: "check_passed",
     claimScope: "fixture_only",
