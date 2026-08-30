@@ -56,6 +56,8 @@ coverage/
 
 # .NET / SMAPI
 [Bb]in/
+!packages/game-action-devkit/bin/
+!packages/game-action-devkit/bin/game-action.mjs
 [Oo]bj/
 TestResults/
 # NuGet restores and native helper publish outputs are always local/rebuildable.
