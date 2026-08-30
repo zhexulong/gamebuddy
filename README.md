@@ -2,7 +2,7 @@
 
 AI Game Companion 的首个实现：以 **Stardew Valley + SMAPI Mod** 作为第一个具身游戏集成，以 Node.js Companion Host 承载受限、事件驱动的 Agent runtime。
 
-> 本仓库从空仓库初始化。`design/` 和 `ref/` 是本地设计/调研材料，刻意不纳入 Git；可提交代码与实施契约从本仓库根目录开始维护。
+> 产品架构、领域规范、ADR、活动任务、研究和历史设计保存在私有 [`zhexulong/gamebuddy-docs`](https://github.com/zhexulong/gamebuddy-docs) 仓库；本地挂载在 `design/`，但代码构建和 CI 不依赖它。进入后从 `design/README.md` 开始阅读。`ref/` 仍是本地调研材料。
 
 ## 当前阶段
 
@@ -41,7 +41,7 @@ docs/                 ADR、依赖清单、兼容性矩阵、trace 与场景说�
 - 跨 Context 产品 Memory、第二游戏抽象和多个 Companion 不在当前范围；语音已具备 provider-neutral PTT/取消/文字降级 skeleton、真实 MiMo TTS contract capture 与 TTS-to-ASR adapter diagnostic，但真实 CPU ASR 与设备场景仍须按 Phase 3–4 审计和验证。任何资源、世界或进度影响均须先有逐项验证的 Game Action、玩家定义政策及权威 evidence。
 - Stardew 正式产品不依赖 local split-screen；现有 split-screen/PerScreen 代码只属于历史 fixture。正式 AI Farmhand 由独立 client 的 Integration Mod 控制，Host/Voice Gateway 提供玩家可听的 Companion 输出。
 
-本地 `design/` 保存完整计划，且不会纳入 Git；本 README 保留其关键实施边界，供干净 clone 与 CI 遵循。
+私有 docs 仓库保存完整产品与实施语义；本 README、`AGENTS.md`、协议和模块附近说明继续保留干净 clone、构建、测试和安全修改代码所需的最小边界。
 
 ## Git
 
@@ -50,4 +50,4 @@ origin: https://github.com/zhexulong/gamebuddy.git
 branch: main
 ```
 
-`design/`、`ref/`、`docs/` 和本地 Pi/subagent 产物均被 `.gitignore` 排除。
+`design/` 是独立私有 Git 仓库且被本代码仓库忽略；`ref/`、`docs/` 和本地 Pi/subagent 产物也不进入本仓库。
