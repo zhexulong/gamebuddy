@@ -191,6 +191,7 @@ test(
     const f = await fixture();
     let binding: Awaited<ReturnType<typeof createGameRuntimeBinding>> | undefined;
     let game: Awaited<ReturnType<typeof createKnownSemanticGameProductionAuthorityFromDeploymentManifest>> | undefined;
+    let facade: ReturnType<typeof constructTestKnownUnmountedGameSemanticFacade> | undefined;
     try {
       const d = await createUnmountedDialogueSemanticFacade(Object.freeze({ manifestPath: f.manifestPath }));
       await d.initializeInitialChat();
@@ -207,7 +208,7 @@ test(
       );
       game = await createKnownSemanticGameProductionAuthorityFromDeploymentManifest(manifest);
       let disposed = 0;
-      const g = constructTestKnownUnmountedGameSemanticFacade(
+      const g = (facade = constructTestKnownUnmountedGameSemanticFacade(
         binding,
         game,
         createTestGameRuntimeMaterializer(async () =>
@@ -219,11 +220,13 @@ test(
             }),
           }),
         ),
-      );
+      ));
       assert.deepEqual(Object.keys(g).sort(), ["authority", "close", "recoverDeadOwner", "runEnter"]);
       const lease = await g.runEnter();
       assert.deepEqual(Object.keys(lease).sort(), [
         "activateCommittedIngress",
+        "cancelPromptDefinedTask",
+        "dispatchPromptDefinedTask",
         "gameSessionId",
         "host",
         "lifecycleSnapshot",
@@ -235,6 +238,7 @@ test(
       await g.close();
       assert.equal(disposed, 1);
     } finally {
+      if (facade) await facade.close().catch(() => undefined);
       if (game) await game.close().catch(() => undefined);
       if (binding) await binding.close().catch(() => undefined);
       await rm(f.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
