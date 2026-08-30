@@ -492,10 +492,20 @@ export class WindowsNamedMutexBroker {
   }
   private async waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
     if (child.exitCode !== null || child.signalCode !== null) return true;
-    return Promise.race([
-      new Promise<boolean>((resolve) => child.once("exit", () => resolve(true))),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-    ]);
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+      const settle = (exited: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        child.removeListener("exit", onExit);
+        resolve(exited);
+      };
+      const onExit = () => settle(true);
+      child.once("exit", onExit);
+      timer = setTimeout(() => settle(false), timeoutMs);
+    });
   }
   private rejectPendingSafetySeal(): void {
     // A safety seal is intentionally terminal containment, not a recoverable
