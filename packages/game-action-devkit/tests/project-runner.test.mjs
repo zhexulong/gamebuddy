@@ -96,7 +96,36 @@ test("allows selectorless status to report a missing portfolio while strict read
       /manifest_dependency_missing/,
     );
     await assert.rejects(readActionProjectManifest(projectFile), /manifest_dependency_missing/);
+
+    await writeFile(path.join(root, "portfolio.json"), "{}");
+    await unlink(path.join(root, "portfolio.json"));
+    await assert.rejects(
+      runActionProject({ projectFile, invocation: { command: "status", actionId: "equip_tool" } }),
+      /manifest_dependency_missing/,
+    );
   });
+});
+
+test("rejects an absent portfolio through a symlink even for selectorless status", async (t) => {
+  const outside = await mkdtemp(path.join(os.tmpdir(), "action-project-portfolio-outside-"));
+  try {
+    await writeFile(path.join(outside, "portfolio.json"), "{}");
+    await withProject({
+      "project.json": manifest,
+      "adapter.mjs": adapter,
+      "inventory.json": "{}",
+      "profile.json": "{}",
+    }, async (root) => {
+      try { await symlink(path.join(outside, "portfolio.json"), path.join(root, "portfolio.json"), "file"); } catch (error) {
+        if (error?.code === "EPERM") return t.skip("file symlinks unavailable");
+        throw error;
+      }
+      await assert.rejects(
+        runActionProject({ projectFile: path.join(root, "project.json"), invocation: { command: "status" } }),
+        /manifest_dependency_escape/,
+      );
+    });
+  } finally { await removeTree(outside); }
 });
 
 test("mints a fresh bounded opaque run id and passes canonical manifest roots for every run-live attempt", async () => {
