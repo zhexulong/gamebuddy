@@ -68,36 +68,24 @@ export function normalizeInvocation(invocation) {
   return Object.freeze(normalized);
 }
 
-async function assertCanonicalOwnedMissingFile(baseDirectory, declaredFile) {
+async function inspectOwnedPortfolioPath(baseDirectory, declaredFile) {
   const relative = path.relative(baseDirectory, declaredFile);
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) fail("manifest_path_escape");
   let current = baseDirectory;
-  for (const part of relative.split(path.sep)) {
+  const parts = relative.split(path.sep);
+  for (const [index, part] of parts.entries()) {
     current = path.join(current, part);
     let details;
     try {
       details = await lstat(current);
     } catch (error) {
-      if (error?.code === "ENOENT") return;
+      if (error?.code === "ENOENT") return false;
       throw error;
     }
-    if (current === declaredFile) fail("manifest_dependency_missing");
-    let canonical;
-    try {
-      canonical = await realpath(current);
-    } catch {
-      fail("manifest_dependency_missing");
-    }
-    if (canonical !== baseDirectory && !canonical.startsWith(`${baseDirectory}${path.sep}`)) fail("manifest_dependency_escape");
-    let canonicalDetails;
-    try {
-      canonicalDetails = await lstat(canonical);
-    } catch {
-      fail("manifest_dependency_missing");
-    }
-    if (!canonicalDetails.isDirectory()) fail("manifest_dependency_missing");
-    if (!details.isDirectory() && !details.isSymbolicLink()) fail("manifest_dependency_missing");
+    if (details.isSymbolicLink()) fail("manifest_dependency_escape");
+    if (index < parts.length - 1 && !details.isDirectory()) fail("manifest_dependency_missing");
   }
+  return true;
 }
 
 async function loadActionProjectManifest(projectFile, { allowMissingPortfolio = false } = {}) {
@@ -123,19 +111,14 @@ async function loadActionProjectManifest(projectFile, { allowMissingPortfolio = 
     await Promise.all(fileReferences.map(async ([name, value, code]) => {
       const declared = path.resolve(baseDirectory, assertRelativeFile(value, code));
       if (!declared.startsWith(`${baseDirectory}${path.sep}`)) fail("manifest_path_escape");
-      try {
-        const canonical = await realpath(declared);
-        if (!canonical.startsWith(`${baseDirectory}${path.sep}`)) fail("manifest_dependency_escape");
-        files[name] = canonical;
-      } catch (error) {
-        if (allowMissingPortfolio && name === "portfolioFile" && error?.code === "ENOENT") {
-          await assertCanonicalOwnedMissingFile(baseDirectory, declared);
-          files[name] = declared;
-          portfolioMissing = true;
-          return;
-        }
-        throw error;
+      if (allowMissingPortfolio && name === "portfolioFile" && !await inspectOwnedPortfolioPath(baseDirectory, declared)) {
+        files[name] = declared;
+        portfolioMissing = true;
+        return;
       }
+      const canonical = await realpath(declared);
+      if (!canonical.startsWith(`${baseDirectory}${path.sep}`)) fail("manifest_dependency_escape");
+      files[name] = canonical;
     }));
   } catch (error) {
     if (String(error?.message).startsWith("game_action_project_")) throw error;
