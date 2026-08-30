@@ -15,7 +15,7 @@
     "action:inventory": "node src/tool-inventory.mjs",
     "action:extraction-rehearsal": "node src/standalone-extraction-rehearsal.mjs",
     "action:check": "node ../../../packages/game-action-devkit/bin/game-action.mjs check --project game-action-project.json --action equip_tool",
-    "action:status": "node ../../../packages/game-action-devkit/bin/game-action.mjs status --project game-action-project.json --action equip_tool",
+    "action:status": "node ../../../packages/game-action-devkit/bin/game-action.mjs status --project game-action-project.json",
     "action:preflight": "node -e \"process.stderr.write('action:preflight requires --profile <absolute-profile-json>\\n'); process.exitCode = 2\"",
     "action:publish-release-bundle": "node src/publish-release-bundle.mjs",
     "action:portfolio": "node src/portfolio.mjs",
