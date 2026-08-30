@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { runActionProject } from "../src/project-adapter.mjs";
+import { preflightEquipTool } from "../src/equip-tool-preflight.mjs";
 
 async function fixture(callback) {
   const root = await mkdtemp(path.join(os.tmpdir(), "equip-preflight-"));
@@ -55,7 +55,7 @@ function deps(overrides = {}) {
   }};
 }
 async function run(profileFile, dependencies, extra = {}) {
-  return runActionProject({ manifest: { gameId: "stardew" }, invocation: { command: "preflight", actionId: "equip_tool", profileFile, ...extra }, dependencies });
+  return preflightEquipTool({ invocation: { command: "preflight", actionId: "equip_tool", profileFile, ...extra }, dependencies });
 }
 
 test("live child performs read-only admission after connection and before execute scenario", async () => {

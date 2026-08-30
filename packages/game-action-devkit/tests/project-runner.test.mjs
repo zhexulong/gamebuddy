@@ -129,7 +129,8 @@ test("rejects an absent portfolio through a symlink even for selectorless status
 });
 
 test("mints a fresh bounded opaque run id and passes canonical manifest roots for every run-live attempt", async () => {
-  await withProject({ "project.json": manifest, ...dependencies }, async (root) => {
+  const blockedAdapter = `export async function runActionProject({ manifest, invocation }) { return { schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: "blocked", outcome: "blocked", actionId: invocation.actionId, runId: invocation.runId, evidenceRoot: manifest.evidenceRoot }; }`;
+  await withProject({ "project.json": manifest, ...dependencies, "adapter.mjs": blockedAdapter }, async (root) => {
     const projectFile = path.join(root, "project.json");
     const [first, second] = await Promise.all([
       runActionProject({ projectFile, invocation: { command: "run-live", actionId: "equip_tool", profileFile: path.join(root, "profile.json") } }),
@@ -222,6 +223,44 @@ test("validates the neutral scenario-result schema and field bounds", async () =
     await writeFile(validProjectFile, JSON.stringify({ ...manifestValue, adapter: `./adapter-${validIndex}.mjs` }));
     const result = await runActionProject({ projectFile: validProjectFile, invocation: { command: "status" } });
     assert.equal(result.status, "ok");
+  });
+});
+
+test("requires exact action-owner verification before returning run-live passed", async () => {
+  const passedAdapter = `export async function runActionProject({ manifest, invocation }) { return { schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: "live", outcome: "passed", actionId: invocation.actionId, runId: invocation.runId }; }`;
+  await withProject({ "project.json": manifest, ...dependencies, "adapter.mjs": passedAdapter }, async (root) => {
+    await assert.rejects(
+      runActionProject({ projectFile: path.join(root, "project.json"), invocation: { command: "run-live", actionId: "equip_tool", profileFile: path.join(root, "profile.json") } }),
+      /adapter_report_verifier_missing/,
+    );
+  });
+
+  const invalidVerifiers = [
+    `export async function verifyActionProjectReport() { return { verified: true }; }`,
+    `export async function verifyActionProjectReport() { throw new Error("raw verifier failure"); }`,
+    `export async function verifyActionProjectReport({ manifest, invocation }) { return { schema: "gamebuddy-action-project-report-verification/v1", gameId: manifest.gameId, actionId: "wrong_action", runId: invocation.runId, verified: true }; }`,
+  ];
+  for (const [index, verifier] of invalidVerifiers.entries()) {
+    await withProject({
+      "project.json": manifest,
+      ...dependencies,
+      "adapter.mjs": `${passedAdapter}\n${verifier}`,
+    }, async (root) => {
+    await assert.rejects(
+      runActionProject({ projectFile: path.join(root, "project.json"), invocation: { command: "run-live", actionId: "equip_tool", profileFile: path.join(root, "profile.json") } }),
+      index === 1 ? /adapter_report_verification_failed/ : /adapter_report_verification_invalid/,
+      `invalid verifier ${index}`,
+    );
+    });
+  }
+
+  const verifiedAdapter = `const reports = new WeakSet();
+export async function runActionProject({ manifest, invocation }) { const report = Object.freeze({ schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: "live", outcome: "passed", actionId: invocation.actionId, runId: invocation.runId }); reports.add(report); return report; }
+export async function verifyActionProjectReport({ manifest, invocation, report }) { if (!reports.delete(report)) throw new Error("unattested_or_replayed"); return { schema: "gamebuddy-action-project-report-verification/v1", gameId: manifest.gameId, actionId: invocation.actionId, runId: invocation.runId, verified: true }; }`;
+  await withProject({ "project.json": manifest, ...dependencies, "adapter.mjs": verifiedAdapter }, async (root) => {
+    const result = await runActionProject({ projectFile: path.join(root, "project.json"), invocation: { command: "run-live", actionId: "equip_tool", profileFile: path.join(root, "profile.json") } });
+    assert.equal(result.outcome, "passed");
+    assert.equal(result.status, "live");
   });
 });
 

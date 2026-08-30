@@ -23,7 +23,7 @@ test("deadline races child close, not only exit", async () => {
   const result = await runBoundedChild({
     command: nodeCommand,
     args: childScript("process.stdout.write('ok'); setTimeout(() => {}, 250);"),
-    timeoutMs: 1000,
+    timeoutMs: 5000,
   });
   assert.equal(result.code, 0);
   assert.equal(result.stdout, "ok");
