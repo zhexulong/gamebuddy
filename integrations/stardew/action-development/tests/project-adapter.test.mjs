@@ -15,6 +15,21 @@ const manifest = Object.freeze({
 const action = Object.freeze({ actionId: "equip_tool" });
 const schema = "gamebuddy-action-scenario-result/v1";
 
+function syntheticRegistration(overrides = {}) {
+  const actionId = overrides.actionId ?? "inspect_weather";
+  return Object.freeze({
+    actionId,
+    check: async ({ dependencies }) => { dependencies.calls.push("check"); return { gameId: "stardew", actionId, verified: true }; },
+    preflight: async ({ dependencies }) => { dependencies.calls.push("preflight"); return { gameId: "stardew", actionId, status: "preflight", state: "BLOCKED", ready: false, reasons: ["synthetic_blocked"] }; },
+    status: async ({ dependencies }) => { dependencies.calls.push("status"); return { gameId: "stardew", actionId, status: "evidence", observation: { availability: "unavailable", reason: "synthetic_unavailable" } }; },
+    runLive: async ({ invocation, dependencies }) => { dependencies.calls.push("run-live"); return { gameId: "stardew", actionId, status: "live", state: "PASSED", runId: invocation.runId, verification: { receipt: true, postcondition: true, cleanup: true } }; },
+    verifyContract: async ({ actionId: id }) => ({ gameId: "stardew", actionId: id, verified: true }),
+    verifyReceiptEvidencePostcondition: async ({ actionId: id, invocation }) => ({ gameId: "stardew", actionId: id, runId: invocation.runId, verified: true }),
+    verifyCleanup: async ({ actionId: id, invocation }) => ({ gameId: "stardew", actionId: id, runId: invocation.runId, complete: true }),
+    ...overrides,
+  });
+}
+
 function expected(command, status, fields = {}) {
   return {
     schema,
@@ -82,14 +97,16 @@ test("converts action evidence status to a neutral bounded report", async () => 
 test("rejects missing, unknown, and legacy inventory actions before dispatch", async () => {
   const calls = [];
   const dependencies = {
+    __testOnlyActionRegistrations: [syntheticRegistration()],
     readLatestEvidence: async () => { calls.push("status"); return { availability: "available" }; },
     inspectReleaseBundle: async () => { calls.push("preflight"); return {}; },
+    runLive: async () => { calls.push("run-live"); },
   };
   for (const invocation of [
     { command: "check" },
     { command: "preflight", profileFile: "C:\\profile.json" },
     { command: "run-live", profileFile: "C:\\profile.json" },
-    { command: "check", actionId: "enter_mine" },
+     { command: "check", actionId: "enter_mine" },
     { command: "status", actionId: "enter_mine" },
     { command: "inventory" },
   ]) {
@@ -98,23 +115,132 @@ test("rejects missing, unknown, and legacy inventory actions before dispatch", a
   assert.deepEqual(calls, []);
 });
 
-test("does not invoke live execution and returns a neutral blocked report", async () => {
-  const report = await runActionProject({
+test("dispatches run-live once and projects bounded success and blocked facts", async () => {
+  const calls = [];
+  const success = await runActionProject({
     manifest,
-    invocation: { command: "run-live", ...action, profileFile: "C:\\profile.json", runId: "ar1_test" },
-    dependencies: { runLive: () => { throw new Error("live execution must not be called"); } },
+    invocation: { command: "run-live", ...action, profileFile: "C:\\profile.json", runId: "ar1_success" },
+      dependencies: { __testOnlyActionRegistrations: [syntheticRegistration({ actionId: "equip_tool", runLive: async (input) => {
+        calls.push(input);
+        return { gameId: "stardew", actionId: "equip_tool", status: "live", state: "PASSED", runId: input.invocation.runId };
+      } })] },
   });
-  assert.deepEqual(report, expected({ ...action, runId: "ar1_test" }, "blocked", { reasonCode: "live_not_exposed" }));
+  assert.deepEqual(success, expected({ ...action, runId: "ar1_success" }, "live", { outcome: "passed" }));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].invocation.profileFile, "C:\\profile.json");
+
+  await assert.rejects(
+    runActionProject({ manifest, invocation: { command: "run-live", ...action, profileFile: "C:\\profile.json" }, dependencies: { runLive: async () => { throw new Error("must not run"); } } }),
+    /run_id_missing/,
+  );
+
+  const blocked = await runActionProject({
+    manifest,
+    invocation: { command: "run-live", ...action, profileFile: "C:\\profile.json", runId: "ar1_blocked" },
+    dependencies: { __testOnlyActionRegistrations: [syntheticRegistration({ actionId: "equip_tool", runLive: async () => ({ gameId: "stardew", actionId: "equip_tool", status: "live", state: "BLOCKED", runId: "ar1_blocked", reasons: ["preflight_not_ready"] }) })] },
+  });
+  assert.deepEqual(blocked, expected({ ...action, runId: "ar1_blocked" }, "live", { outcome: "blocked", reasonCode: "preflight_not_ready" }));
 });
 
-test("exposes canonical non-live package scripts and a profile-required preflight blocker", async () => {
+test("rejects missing profile and mismatched live identity", async () => {
+  let calls = 0;
+  await assert.rejects(
+    runActionProject({ manifest, invocation: { command: "run-live", ...action }, dependencies: { __testOnlyActionRegistrations: [syntheticRegistration({ actionId: "equip_tool", runLive: async () => { calls += 1; } })] } }),
+    /profile_missing/,
+  );
+  assert.equal(calls, 0);
+  for (const result of [
+    { gameId: "other", actionId: "equip_tool", runId: "ar1_expected", state: "PASSED" },
+    { gameId: "stardew", actionId: "other", runId: "ar1_expected", state: "PASSED" },
+    { gameId: "stardew", actionId: "equip_tool", runId: "ar1_wrong", state: "PASSED" },
+  ]) {
+    await assert.rejects(
+      runActionProject({
+        manifest,
+        invocation: { command: "run-live", ...action, profileFile: "C:\\profile.json", runId: "ar1_expected" },
+        dependencies: { __testOnlyActionRegistrations: [syntheticRegistration({ actionId: "equip_tool", runLive: async () => result })] },
+      }),
+      /live_identity_mismatch/,
+    );
+  }
+});
+
+test("dispatches a second synthetic action through registration without adapter changes", async () => {
+  const calls = [];
+  const registration = syntheticRegistration();
+  const checked = await runActionProject({
+    manifest: { gameId: "stardew" },
+    invocation: { command: "check", actionId: registration.actionId },
+    dependencies: { __testOnlyActionRegistrations: [registration], calls },
+  });
+  assert.deepEqual(checked, expected({ actionId: registration.actionId }, "checked"));
+  assert.deepEqual(calls, ["check"]);
+
+  const preflight = await runActionProject({
+    manifest: { gameId: "stardew" },
+    invocation: { command: "preflight", actionId: registration.actionId, profileFile: "C:\\profile.json" },
+    dependencies: { __testOnlyActionRegistrations: [registration], calls },
+  });
+  assert.deepEqual(preflight, expected({ actionId: registration.actionId }, "preflight", { outcome: "blocked", reasonCode: "synthetic_blocked" }));
+  assert.deepEqual(calls, ["check", "preflight"]);
+});
+
+test("rejects a registration that omits any required verifier", async () => {
+  const registration = syntheticRegistration({ verifyCleanup: undefined });
+  await assert.rejects(
+    runActionProject({
+      manifest: { gameId: "stardew" },
+      invocation: { command: "check", actionId: registration.actionId },
+      dependencies: { __testOnlyActionRegistrations: [registration], calls: [] },
+    }),
+    /registration_.*verifier.*missing/,
+  );
+});
+
+test("does not turn a generic passed live result into success", async () => {
+  await assert.rejects(
+    runActionProject({
+      manifest,
+      invocation: { command: "run-live", ...action, profileFile: "C:\\profile.json", runId: "ar1_generic_pass" },
+      dependencies: { __testOnlyActionRegistrations: [syntheticRegistration({
+        actionId: "equip_tool",
+        runLive: async ({ invocation }) => ({ gameId: "stardew", actionId: "equip_tool", status: "live", state: "PASSED", runId: invocation.runId }),
+        verifyReceiptEvidencePostcondition: async () => { throw new Error("receipt evidence required"); },
+      })], calls: [] },
+    }),
+    /verification|receipt|postcondition/,
+  );
+});
+
+test("fails closed for wrong identity, malformed verification, and incomplete cleanup", async () => {
+  const cases = [
+    { name: "wrong identity", overrides: { verifyReceiptEvidencePostcondition: async ({ invocation }) => ({ gameId: "stardew", actionId: "other_action", runId: invocation.runId, verified: true }) }, pattern: /identity|verification/ },
+    { name: "malformed verification", overrides: { verifyReceiptEvidencePostcondition: async () => ({ status: "passed" }) }, pattern: /verification/ },
+    { name: "incomplete cleanup", overrides: { verifyCleanup: async ({ actionId, invocation }) => ({ gameId: "stardew", actionId, runId: invocation.runId, complete: false }) }, pattern: /cleanup|verification/ },
+  ];
+  for (const candidate of cases) {
+    const registration = syntheticRegistration(candidate.overrides);
+    await assert.rejects(
+      runActionProject({
+        manifest,
+        invocation: { command: "run-live", actionId: registration.actionId, profileFile: "C:\\profile.json", runId: `ar1_${candidate.name.replaceAll(" ", "_")}` },
+        dependencies: { __testOnlyActionRegistrations: [registration], calls: [] },
+      }),
+      candidate.pattern,
+      candidate.name,
+    );
+  }
+});
+
+test("exposes canonical action scripts with a required profile passthrough", async () => {
   const scripts = JSON.parse(await readFile(packageFile, "utf8")).scripts;
-  assert.match(scripts["action:check"], /game-action\.mjs check/);
-  assert.match(scripts["action:check"], /--action equip_tool/);
-  assert.match(scripts["action:status"], /game-action\.mjs status/);
+  assert.equal(scripts["action:check"], "node ../../../packages/game-action-devkit/bin/game-action.mjs check --project game-action-project.json");
+  assert.equal(scripts["action:status"], "node ../../../packages/game-action-devkit/bin/game-action.mjs status --project game-action-project.json");
+  assert.equal(scripts["action:preflight"], "node ../../../packages/game-action-devkit/bin/game-action.mjs preflight --project game-action-project.json");
+  assert.equal(scripts["action:run-live"], "node ../../../packages/game-action-devkit/bin/game-action.mjs run-live --project game-action-project.json");
+  for (const name of ["action:check", "action:preflight", "action:run-live"]) {
+    assert.doesNotMatch(scripts[name], /--action|--profile/);
+  }
   assert.doesNotMatch(scripts["action:status"], /--action/);
   assert.equal(scripts["action:ci"], "node src/portfolio.mjs --ci");
-  assert.equal(scripts["action:run-live"], undefined);
-  assert.doesNotMatch(scripts["action:preflight"], /run-live/);
-  assert.doesNotMatch(scripts["action:preflight"], /game-action\.mjs\s+preflight/);
 });
