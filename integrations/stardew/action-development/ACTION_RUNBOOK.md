@@ -15,14 +15,14 @@ explicitly selected:
 ```bash
 pnpm --dir integrations/stardew/action-development test
 pnpm --dir integrations/stardew/action-development action:inventory
-pnpm --dir integrations/stardew/action-development action:check:equip-tool
+pnpm --dir integrations/stardew/action-development action:check
 pnpm --dir integrations/stardew/action-development action:ci
 pnpm --dir integrations/stardew/action-development action:extraction-rehearsal
 pnpm --dir integrations/stardew/action-development action:publish-release-bundle -- --source <absolute-source-dir> --destination <absolute-destination-dir>
 ```
 
 `test` runs the package's deterministic test suite. `action:inventory` validates
-the migration map; it is not an executable registry. `action:check:equip-tool`
+the migration map; it is not an executable registry. `action:check`
 is the deterministic generated-contract check. `action:ci` runs the package's
 owned deterministic portfolio. `action:extraction-rehearsal` performs the
 fresh-root frozen-install rehearsal. The release-bundle command publishes only
