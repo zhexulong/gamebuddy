@@ -4,8 +4,10 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationIssuer,
 } from "./composed-reference-game-browser.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
-import type { ConstructedUnmountedGameSemanticFacade, ConnectedSemanticGameLease } from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
-import { createKnownSemanticGameFacadeFromReceiptBackedBinding } from "./continuity-semantic-game-operator-selection/continuity-semantic-game-operator-selection.internal.js";
+import type {
+  ConnectedSemanticGameLease,
+  ConstructedUnmountedGameSemanticFacade,
+} from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,12 +15,6 @@ import {
   admitStardewInstallation,
   type AdmittedStardewInstallation,
 } from "./stardew-installation-admission.js";
-import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
-import { createGameRuntimeBindingFromReceiptBackedLaunch } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import {
-  createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
-  STARDEW_INTEGRATION_LAUNCHER,
-} from "./stardew-integration-launcher.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import { selectStardewFolder, type WindowsStardewFolderPickerCapability } from "./windows-stardew-folder-picker/index.js";
@@ -27,9 +23,12 @@ import {
 } from "./stardew-private-bootstrap-composer.internal.js";
 import type { StardewOwnedPlayerHostPhaseAOwner } from "./stardew-private-bootstrap-composer.js";
 import {
+  createStardewOwnedFarmhandGameSessionMaterializer,
+  type StardewOwnedFarmhandGameSessionMaterializer,
+} from "./stardew-owned-farmhand-game-session-materializer.internal.js";
+import {
   didStardewOwnedPlayerHostStageCEnterControlledLaunch,
   type StardewManifestHandoffChoice,
-  type StardewPrivateFarmhandBridgeConnection,
 } from "./stardew-private-bootstrap-composer.core.js";
 import type {
   GameDisconnectCommandV1,
@@ -126,10 +125,7 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
 
 type BootstrapComposition = ReturnType<typeof createStardewPrivateBootstrapComposition>;
 type ActivationState = StardewPrivateActivationSnapshot["state"];
-type ConnectFarmhandGameRuntimeFacade = (
-  connection: StardewPrivateFarmhandBridgeConnection,
-  deadlineMs: number,
-) => Promise<ConstructedUnmountedGameSemanticFacade>;
+type MaterializeFarmhandGameSession = StardewOwnedFarmhandGameSessionMaterializer["materialize"];
 
 class StardewProductionLifecycleCloseError extends Error {
   public constructor() {
@@ -162,7 +158,7 @@ function createCoordinator(
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
-  connectFarmhandGameRuntimeFacade: ConnectFarmhandGameRuntimeFacade,
+  materializeFarmhandGameSession: MaterializeFarmhandGameSession,
   folderPicker: WindowsStardewFolderPickerCapability,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
@@ -556,14 +552,15 @@ function createCoordinator(
           try {
             farmhandGameRuntimeFacade = await internal.consumeOwnedFarmhandBridgeConnection(
               handle.owner,
-              (connection) => connectFarmhandGameRuntimeFacade(connection, handle.expiresAtMs),
+              (connection) => materializeFarmhandGameSession(connection, handle.expiresAtMs),
             );
           } catch (error) {
             if (!isTransientFarmhandBridgeConnectError(error)) throw error;
             await waitForFarmhandBridgeRetry(handle.expiresAtMs);
           }
         }
-        farmhandGameRuntimeLease = await farmhandGameRuntimeFacade.runEnter();
+        const enteredLease = await farmhandGameRuntimeFacade.runEnter();
+        farmhandGameRuntimeLease = enteredLease;
         if (isClosing()) {
           await farmhandGameRuntimeFacade.close();
           farmhandGameRuntimeFacade = undefined;
@@ -574,8 +571,8 @@ function createCoordinator(
         // The browser Game surface has no Voice attachment. Bind the tracked
         // production absent-Voice STOP adapter before releasing the committed,
         // receipt-owned initial facts. Only then publish this surface incarnation.
-        farmhandGameRuntimeLease.host.attachVoiceStopper(async () => undefined);
-        farmhandGameRuntimeLease.activateCommittedIngress();
+        enteredLease.host.attachVoiceStopper(async () => undefined);
+        enteredLease.activateCommittedIngress();
         if (isClosing()) throw new Error("stardew_lifecycle_closing");
         attachmentGeneration = 1;
         attachmentConnectionStatus = "connected_idle";
@@ -831,10 +828,10 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
   createInstallationInspector: () => Promise<WindowsReparseInspectorCapability>,
-  connectFarmhandGameRuntimeFacade: ConnectFarmhandGameRuntimeFacade,
+  materializeFarmhandGameSession: MaterializeFarmhandGameSession,
   folderPicker: WindowsStardewFolderPickerCapability,
 ): StardewProductionLifecycleCoordinator {
-  return createCoordinator(manifest, internal, createInstallationInspector, connectFarmhandGameRuntimeFacade, folderPicker);
+  return createCoordinator(manifest, internal, createInstallationInspector, materializeFarmhandGameSession, folderPicker);
 }
 
 /** Constructs the coordinator exclusively from the closed first-party composition. */
@@ -843,40 +840,12 @@ export function createStardewProductionLifecycleCoordinator(
   folderPicker: WindowsStardewFolderPickerCapability,
 ): StardewProductionLifecycleCoordinator {
   const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+  const materializer = createStardewOwnedFarmhandGameSessionMaterializer(manifest);
   return createCoordinator(
     manifest,
     createStardewPrivateBootstrapComposition(),
     () => createPublishedWindowsReparseInspector(hostArtifactRoot),
-    async (connection, deadlineMs) => {
-      const bridge = await LocalStardewBridgeClient.connectFarmhand(
-        connection.scope,
-        connection.pipeName,
-        connection.token,
-        connection.launchGeneration,
-        deadlineMs,
-      );
-      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
-        bridge,
-        Object.freeze({
-          playerId: manifest.principal.playerId,
-          companionId: manifest.principal.companionId,
-          saveId: connection.scope.saveId,
-          worldId: connection.scope.worldId,
-        }),
-      );
-      const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(
-        Object.freeze({
-          manifest,
-          launcher: STARDEW_INTEGRATION_LAUNCHER,
-          launch,
-          expectedWorld: Object.freeze({
-            saveId: connection.scope.saveId,
-            worldId: connection.scope.worldId,
-          }),
-        }),
-      );
-      return createKnownSemanticGameFacadeFromReceiptBackedBinding(manifest, binding);
-    },
+    materializer.materialize,
     folderPicker,
   );
 }
