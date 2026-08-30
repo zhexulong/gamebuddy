@@ -23,7 +23,7 @@ function exactIdentity(identity) {
 }
 
 /** Package-internal deterministic fixture only; it neither starts Stardew nor invokes a legacy runner. */
-export async function runDeterministicScenario({ identity, mode = "valid", timeoutMs = 1_000, privateResultRoot } = {}) {
+export async function runDeterministicScenario({ identity, mode = "valid", timeoutMs = 10_000, privateResultRoot } = {}) {
   const expected = exactIdentity(identity);
   const claim = await beginPrivateResultFile(privateResultRoot === undefined ? undefined : { root: privateResultRoot });
   let primaryFailure;

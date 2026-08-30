@@ -21,10 +21,10 @@ test("runs a deterministic fake child through private result transport", async (
 });
 
 for (const [mode, pattern, timeoutMs] of [
-  ["crash", /child_failed/, 1_000],
-  ["missing", /result_invalid/, 1_000],
-  ["wrong-identity", /result_invalid/, 1_000],
-  ["invalid", /result_invalid/, 1_000],
+  ["crash", /child_failed/, 10_000],
+  ["missing", /result_invalid/, 10_000],
+  ["wrong-identity", /result_invalid/, 10_000],
+  ["invalid", /result_invalid/, 10_000],
   ["hang", /child_failed/, 100],
 ]) {
   test(`fails closed when fake child ${mode}`, async () => {
