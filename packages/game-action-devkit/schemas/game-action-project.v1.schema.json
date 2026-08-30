@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gamebuddy.local/game-action-devkit/schemas/game-action-project.v1.schema.json",
+  "title": "Game action project v1",
+  "description": "A bounded, game-neutral project manifest. References are project-owned relative files.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "gameId", "projectVersion", "adapter", "portfolio", "toolInventory", "evidenceRoot", "defaultProfileExample"],
+  "properties": {
+    "schema": { "const": "gamebuddy-action-project/v1" },
+    "gameId": { "$ref": "#/$defs/identifier" },
+    "projectVersion": { "type": "integer", "minimum": 1 },
+    "adapter": { "$ref": "#/$defs/projectPath" },
+    "portfolio": { "$ref": "#/$defs/projectPath" },
+    "toolInventory": { "$ref": "#/$defs/projectPath" },
+    "evidenceRoot": { "$ref": "#/$defs/projectPath" },
+    "defaultProfileExample": { "$ref": "#/$defs/projectPath" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "projectPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*\\u0000)(?!.*\\.\\.)(?!.*(?:^|/)\\.(?:/|$)).+$"
+    }
+  }
+}

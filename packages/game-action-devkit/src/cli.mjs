@@ -1,3 +1,4 @@
+import path from "node:path";
 import { runActionProject } from "./project-runner.mjs";
 
 const OPTION_TO_FIELD = new Map([
@@ -6,7 +7,8 @@ const OPTION_TO_FIELD = new Map([
   ["--profile", "profileFile"],
   ["--brief", "briefFile"],
 ]);
-const COMMANDS = new Set(["inventory", "check", "preflight", "run-live", "status"]);
+const COMMANDS = new Set(["check", "preflight", "run-live", "status"]);
+export const DEFAULT_PROJECT_FILE_NAME = "game-action-project.json";
 export const MAX_CLI_STDOUT_BYTES = 64 * 1024;
 export const MAX_CLI_REPORT_BYTES = MAX_CLI_STDOUT_BYTES - 1;
 
@@ -32,12 +34,13 @@ export function parseGameActionArgs(args) {
     if (command !== undefined || !COMMANDS.has(argument)) fail("invalid_command");
     command = argument;
   }
-  if (command === undefined || typeof values.projectFile !== "string") fail("missing_required_argument");
+  if (command === undefined) fail("missing_command");
+  const projectFile = values.projectFile ?? path.resolve(process.cwd(), DEFAULT_PROJECT_FILE_NAME);
   const invocation = { command };
   for (const field of ["actionId", "profileFile", "briefFile"]) {
     if (values[field] !== undefined) invocation[field] = values[field];
   }
-  return Object.freeze({ projectFile: values.projectFile, invocation: Object.freeze(invocation) });
+  return Object.freeze({ projectFile, invocation: Object.freeze(invocation) });
 }
 
 export function serializeCliReport(report) {

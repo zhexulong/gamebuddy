@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gamebuddy.local/game-action-devkit/schemas/game-action-profile-envelope.v1.schema.json",
+  "title": "Game action profile envelope v1",
+  "description": "A bounded neutral profile envelope. Profile values are opaque to the devkit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "gameId", "profileId", "revision", "payload"],
+  "properties": {
+    "schema": { "const": "gamebuddy-action-profile-envelope/v1" },
+    "gameId": { "$ref": "#/$defs/identifier" },
+    "profileId": { "$ref": "#/$defs/identifier" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "payload": { "type": "object", "additionalProperties": true, "maxProperties": 64 }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    }
+  }
+}
