@@ -1,38 +1,72 @@
-import { readFile, realpath } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { readGeneratedEquipToolContract } from "./contract-export.mjs";
 import { validateActionContractEquipTool } from "./action-contract.mjs";
 import { preflightEquipTool } from "./equip-tool-preflight.mjs";
-import { readEquipToolLiveStatus, runEquipToolLive } from "./equip-tool-live.mjs";
+import { readEquipToolLiveStatus } from "./equip-tool-live.mjs";
+
+const RESULT_SCHEMA = "gamebuddy-action-scenario-result/v1";
+const ACTION_ID = "equip_tool";
+const ACTION_BEARING_COMMANDS = new Set(["check", "preflight", "run-live", "status"]);
 
 function fail(code) {
   throw new Error(`stardew_action_project_${code}`);
 }
 
-const PACKAGE_DIRECTORY = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const PACKAGE_INVENTORY = path.join(PACKAGE_DIRECTORY, "tool-inventory.json");
+function assertActionBearingInvocation(invocation) {
+  if (ACTION_BEARING_COMMANDS.has(invocation.command) && invocation.actionId !== ACTION_ID) fail("action_not_available");
+}
+
+function report(invocation, status, fields = {}) {
+  return Object.freeze({
+    schema: RESULT_SCHEMA,
+    gameId: "stardew",
+    status,
+    actionId: ACTION_ID,
+    ...fields,
+    ...(invocation.briefFile === undefined ? {} : { briefFile: invocation.briefFile }),
+    ...(invocation.runId === undefined ? {} : { runId: invocation.runId }),
+  });
+}
+
+function safeReason(value, fallback) {
+  return typeof value === "string" && /^[a-z][a-z0-9_]{0,127}$/.test(value) ? value : fallback;
+}
+
+function preflightReport(invocation, result) {
+  const reasons = Array.isArray(result?.reasons) ? result.reasons.filter((reason) => typeof reason === "string" && reason.length > 0) : [];
+  const ready = result?.state === "READY" && result?.ready === true;
+  return report(invocation, "preflight", {
+    outcome: ready ? "ready" : "blocked",
+    ...(ready ? {} : { reasonCode: safeReason(reasons[0], "preflight_blocked") }),
+  });
+}
+
+function statusReport(invocation, result) {
+  const observation = result?.observation;
+  const available = observation?.availability === "available";
+  return report(invocation, "status", {
+    outcome: available ? "available" : "unavailable",
+    ...(available ? {} : { reasonCode: safeReason(observation?.reason, "status_unavailable") }),
+  });
+}
 
 export async function runActionProject({ manifest, invocation, dependencies }) {
-  if (!manifest || manifest.gameId !== "stardew" || !invocation) fail("invalid_invocation");
-  if (invocation.command === "preflight") return preflightEquipTool({ invocation, dependencies });
-  if (invocation.command === "run-live") return runEquipToolLive({ manifest, invocation, dependencies });
-  if (invocation.command === "status") return readEquipToolLiveStatus({ manifest, invocation, dependencies });
-  if (invocation.command === "check") {
-    if (invocation.actionId !== "equip_tool") fail("action_not_available");
-    let generated;
-    try { generated = await readGeneratedEquipToolContract(); } catch { fail("contract_export_invalid"); }
-    let contract;
-    try { contract = validateActionContractEquipTool(JSON.parse(generated.toString("utf8"))); } catch { fail("contract_invalid"); }
-    return Object.freeze({ gameId: "stardew", status: "checked", actionId: contract.actionId });
+  if (!manifest || manifest.gameId !== "stardew" || !invocation || typeof invocation.command !== "string") fail("invalid_invocation");
+  if (!["check", "preflight", "run-live", "status"].includes(invocation.command)) fail("command_not_available");
+  assertActionBearingInvocation(invocation);
+
+  if (invocation.command === "preflight") {
+    return preflightReport(invocation, await preflightEquipTool({ invocation, dependencies }));
   }
-  if (invocation.command !== "inventory") fail("command_not_available");
-  let expectedInventory;
-  let suppliedInventory;
-  try { [expectedInventory, suppliedInventory] = await Promise.all([realpath(PACKAGE_INVENTORY), realpath(manifest.inventoryFile)]); } catch { fail("inventory_unreadable"); }
-  if (expectedInventory !== suppliedInventory) fail("inventory_not_package_owned");
-  let inventory;
-  try { inventory = JSON.parse(await readFile(expectedInventory, "utf8")); } catch { fail("inventory_unreadable"); }
-  if (inventory.schema !== "gamebuddy-stardew-tool-inventory/v1" || !Array.isArray(inventory.entries)) fail("inventory_invalid");
-  return Object.freeze({ gameId: "stardew", status: "inventory", fileCount: inventory.entries.length });
+  if (invocation.command === "status") {
+    return statusReport(invocation, await readEquipToolLiveStatus({ manifest, invocation, dependencies }));
+  }
+  if (invocation.command === "run-live") {
+    if (typeof invocation.profileFile !== "string") fail("profile_missing");
+    return report(invocation, "blocked", { reasonCode: "live_not_exposed" });
+  }
+
+  let generated;
+  try { generated = await readGeneratedEquipToolContract(); } catch { fail("contract_export_invalid"); }
+  try { validateActionContractEquipTool(JSON.parse(generated.toString("utf8"))); } catch { fail("contract_invalid"); }
+  return report(invocation, "checked");
 }
