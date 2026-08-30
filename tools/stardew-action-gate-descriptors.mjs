@@ -8,6 +8,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   gate("equip_tool", 1, "run-stardew-native-local-player-equip-tool-smoke.mjs", "tool_selected"),
   gate("travel", 1, "run-stardew-native-local-player-travel-smoke.mjs", "travel_completed"),
   gate("enter_exit", 1, "run-stardew-native-local-player-enter-exit-smoke.mjs", "enter_exit_completed"),
+  gate("navigate_to_destination", 1, "run-stardew-native-local-player-navigation-mutation-smoke.mjs", "navigation_completed", "navigation_mutation_v1"),
   gate("till_soil", 1, "run-stardew-native-local-player-till-soil-smoke.mjs", "soil_tilled", "native_till_soil_v1"),
   gate(
     "pickup_forage",
