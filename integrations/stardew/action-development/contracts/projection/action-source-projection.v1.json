@@ -283,14 +283,6 @@
         "handlerGroup": null
       },
       {
-        "actionId": "navigate_to_destination",
-        "familyId": "world_navigation",
-        "identityVersion": 1,
-        "lifecycle": "published",
-        "kind": "execution",
-        "handlerGroup": "Movement"
-      },
-      {
         "actionId": "clear_debris",
         "familyId": "resource_gathering",
         "identityVersion": 1,
@@ -340,8 +332,7 @@
       "break_rock_source",
       "clear_hoedirt",
       "dig_artifact_spot",
-      "refill_watering_can",
-      "navigate_to_destination"
+      "refill_watering_can"
     ],
     "readOnlyActionIds": [
       "inspect_world_map",
@@ -375,7 +366,6 @@
       "machine_inspect",
       "machine_load",
       "move_to_tile",
-      "navigate_to_destination",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -403,7 +393,6 @@
       "machine_inspect",
       "machine_load",
       "move_to_tile",
-      "navigate_to_destination",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -431,7 +420,6 @@
       "machine_inspect",
       "machine_load",
       "move_to_tile",
-      "navigate_to_destination",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -460,7 +448,6 @@
       "machine_inspect",
       "machine_load",
       "move_to_tile",
-      "navigate_to_destination",
       "npc_relationship",
       "pet_animal",
       "pickup_forage",
@@ -491,7 +478,6 @@
       "machine_inspect",
       "machine_load",
       "move_to_tile",
-      "navigate_to_destination",
       "npc_relationship",
       "pet_animal",
       "pickup_forage",
@@ -522,7 +508,6 @@
       "machine_inspect",
       "machine_load",
       "move_to_tile",
-      "navigate_to_destination",
       "npc_relationship",
       "pet_animal",
       "pickup_forage",
@@ -629,7 +614,6 @@
       "machine_inspect",
       "machine_load",
       "move_to_tile",
-      "navigate_to_destination",
       "npc_relationship",
       "pet_animal",
       "pickup_forage",
@@ -666,7 +650,6 @@
     "Movement": [
       "enter_exit",
       "move_to_tile",
-      "navigate_to_destination",
       "travel"
     ],
     "ResourceTools": [
@@ -724,11 +707,6 @@
         "actionId": "enter_exit",
         "runner": "run-stardew-native-local-player-enter-exit-smoke.mjs",
         "fixtureScenario": null
-      },
-      {
-        "actionId": "navigate_to_destination",
-        "runner": "run-stardew-native-local-player-navigation-mutation-smoke.mjs",
-        "fixtureScenario": "navigation_mutation_v1"
       },
       {
         "actionId": "till_soil",
