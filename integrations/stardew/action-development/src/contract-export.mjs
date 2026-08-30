@@ -36,7 +36,7 @@ function run(command, args) {
 
 export async function readGeneratedEquipToolContract({ runExport, readArtifact } = {}) {
   const exportContract = runExport ?? (async () => {
-    await run("dotnet", ["build", EXPORT_PROJECT, "--no-restore", "--nologo"]);
+    await run("dotnet", ["build", EXPORT_PROJECT, "--nologo"]);
     return (await run("dotnet", [EXPORT_DLL, "equip_tool"])).stdout;
   });
   const readCheckedArtifact = readArtifact ?? (() => readFile(EQUIP_TOOL_ARTIFACT));
