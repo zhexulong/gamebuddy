@@ -3,21 +3,24 @@ import { lstat, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  cleanupAtomicDirectory,
+  commitAtomicDirectory,
+  prepareAtomicDirectory,
+} from "@gamebuddy/game-action-devkit";
+import {
   assertCanonicalDirectory,
   assertFrozenSnapshotIndex,
   assertSafeRelativePath,
   assertSnapshotManifest,
-  cleanupTransactionalOutput,
   collectUntrackedCandidates,
-  commitTransactionalOutput,
   copyVerifiedRequiredInputs,
   createSourceManifest,
-  prepareTransactionalOutput,
   readRequiredInputs,
   sha256,
 } from "./ci-snapshot-lib.mjs";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ATOMIC_DIRECTORY_CODE = "ci_snapshot";
 function fail(code) {
   throw new Error(`ci_snapshot_${code}`);
 }
@@ -179,31 +182,31 @@ export async function materializeCiSnapshot({
   const activeCandidates = await collectUntrackedCandidates(activeRoot, manifest.requiredInputs);
   if (JSON.stringify(activeCandidates) !== JSON.stringify(report.classified))
     fail("untracked_candidate_inventory_mismatch");
-  const transaction = await prepareTransactionalOutput(output, "output_root_invalid", { create: false });
+   const transaction = await prepareAtomicDirectory(output, { code: ATOMIC_DIRECTORY_CODE, create: false });
   try {
     // The full hash is resolved from this local repository. No remote ref is
     // consulted and clone --no-local prevents accidental local working-tree reuse.
-    await git(transaction.parent, ["clone", "--no-local", pathToFileURL(repository).href, transaction.temporary]);
-    await git(transaction.temporary, ["checkout", "--detach", manifest.baseCommit]);
-    await git(transaction.temporary, ["apply", "--index", "--binary", patchPath]);
-    await copyVerifiedRequiredInputs({
-      sourceRoot: activeRoot,
-      destinationRoot: transaction.temporary,
+     await git(dirname(transaction.stagingPath), ["clone", "--no-local", pathToFileURL(repository).href, transaction.stagingPath]);
+     await git(transaction.stagingPath, ["checkout", "--detach", manifest.baseCommit]);
+     await git(transaction.stagingPath, ["apply", "--index", "--binary", patchPath]);
+     await copyVerifiedRequiredInputs({
+       sourceRoot: activeRoot,
+       destinationRoot: transaction.stagingPath,
       inputs: manifest.requiredInputs,
       control: manifest.requiredInputsConfig,
     });
-    const copiedInputs = await readRequiredInputs(transaction.temporary);
+     const copiedInputs = await readRequiredInputs(transaction.stagingPath);
     if (JSON.stringify(copiedInputs) !== JSON.stringify(manifest.requiredInputs))
       fail("required_inputs_config_mismatch");
-    const source = await createSourceManifest(transaction.temporary);
+     const source = await createSourceManifest(transaction.stagingPath);
     if (
       source.digest !== manifest.source.digest ||
       JSON.stringify(source.entries) !== JSON.stringify(manifest.source.entries)
     )
       fail("source_manifest_mismatch");
-    await git(transaction.temporary, ["add", "-A"]);
-    await assertFrozenSnapshotIndex(transaction.temporary);
-    await commitTransactionalOutput(transaction);
+     await git(transaction.stagingPath, ["add", "-A"]);
+     await assertFrozenSnapshotIndex(transaction.stagingPath);
+     await commitAtomicDirectory(transaction);
     return Object.freeze({
       outputRoot: output,
       sourceDigest: source.digest,
@@ -211,7 +214,7 @@ export async function materializeCiSnapshot({
       staged: true,
     });
   } catch (error) {
-    await cleanupTransactionalOutput(transaction);
+     await cleanupAtomicDirectory(transaction, { recursive: true });
     throw error;
   }
 }

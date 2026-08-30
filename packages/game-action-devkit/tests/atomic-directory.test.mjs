@@ -32,11 +32,23 @@ test("atomically publishes one exclusive directory", async () => withRoot(async 
   await assert.rejects(prepareAtomicDirectory(output), /atomic_directory_output_exists/);
 }));
 
-test("cleanup only accepts empty owned staging", async () => withRoot(async (root) => {
+test("cleanup only accepts empty owned staging by default", async () => withRoot(async (root) => {
   const transaction = await prepareAtomicDirectory(path.join(root, "bundle"));
   await writeFile(path.join(transaction.stagingPath, "unexpected"), "x");
   await assert.rejects(cleanupAtomicDirectory(transaction), /atomic_directory_staging_not_empty/);
   await unlink(path.join(transaction.stagingPath, "unexpected"));
   await cleanupAtomicDirectory(transaction);
   await assert.rejects(lstat(transaction.stagingPath), { code: "ENOENT" });
+}));
+
+test("supports recursive cleanup and caller error codes", async () => withRoot(async (root) => {
+  const transaction = await prepareAtomicDirectory(path.join(root, "bundle"), { code: "ci_snapshot" });
+  await mkdir(path.join(transaction.stagingPath, "nested"));
+  await writeFile(path.join(transaction.stagingPath, "nested", "unexpected"), "x");
+  await cleanupAtomicDirectory(transaction, { recursive: true });
+  await assert.rejects(lstat(transaction.stagingPath), { code: "ENOENT" });
+
+  const missing = await prepareAtomicDirectory(path.join(root, "another", "bundle"), { code: "ci_snapshot", create: false });
+  assert.equal(missing.stagingPath.endsWith(".staging-" + missing.stagingPath.split(".staging-").at(-1)), true);
+  await assert.rejects(commitAtomicDirectory(missing), /ci_snapshot_temporary_output_invalid/);
 }));

@@ -6,9 +6,11 @@ import { dirname, join } from "node:path";
 import nodeTest from "node:test";
 import { promisify } from "node:util";
 import {
-  cleanupTransactionalOutput,
-  commitTransactionalOutput,
-  prepareTransactionalOutput,
+  cleanupAtomicDirectory,
+  commitAtomicDirectory,
+  prepareAtomicDirectory,
+} from "@gamebuddy/game-action-devkit";
+import {
   REQUIRED_INPUTS_PATH,
   REQUIRED_INPUTS_SCHEMA,
   sha256,
@@ -208,7 +210,7 @@ test("rejects an existing snapshot directory rather than mixing evidence", async
 test("fails closed when a competing destination appears before transactional commit", async () => {
   const parent = await mkdtemp(join(tmpdir(), "gamebuddy-ci-transaction-"));
   const output = join(parent, "snapshot");
-  const transaction = await prepareTransactionalOutput(output);
+  const transaction = await prepareAtomicDirectory(output, { code: "ci_snapshot" });
   try {
     // Simulate another creator winning the destination between prepare and
     // commit. The destination marker proves the failed commit never replaced
@@ -216,7 +218,7 @@ test("fails closed when a competing destination appears before transactional com
     await mkdir(output);
     await writeFile(join(output, "competitor.txt"), "competitor\n");
     await assert.rejects(
-      commitTransactionalOutput(transaction),
+       commitAtomicDirectory(transaction),
       new RegExp(
         process.platform === "win32"
           ? "ci_snapshot_output_exists"
@@ -224,9 +226,9 @@ test("fails closed when a competing destination appears before transactional com
       ),
     );
     assert.equal(await readFile(join(output, "competitor.txt"), "utf8"), "competitor\n");
-    await lstat(transaction.temporary);
+     await lstat(transaction.stagingPath);
   } finally {
-    await cleanupTransactionalOutput(transaction);
+     await cleanupAtomicDirectory(transaction, { recursive: true });
     await rm(parent, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 });
