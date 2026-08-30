@@ -1,4 +1,8 @@
 export {
+  GAME_RUNTIME_PLUGIN_API,
+  createGameRuntimePlugin,
+} from "./runtime-plugin.mjs";
+export {
   CLEANUP_TIMEOUT_MS,
   DEFAULT_SUITE_TIMEOUT_MS,
   runBoundedChild,
