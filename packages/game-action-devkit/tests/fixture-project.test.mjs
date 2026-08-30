@@ -166,7 +166,7 @@ test("runs fixture child supervision, records non-production evidence, and enfor
     assert.deepEqual((await readPassedEvidence({ root: evidenceRoot, identity: completeIdentity })).identity, completeIdentity);
     await assert.rejects(readPassedEvidence({ root: evidenceRoot, identity: incompleteIdentity }), /bundle_not_passing/);
   } finally {
-    await rm(evidenceRoot, { recursive: true, force: true });
+    await rm(evidenceRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   }
 
   const brief = {
