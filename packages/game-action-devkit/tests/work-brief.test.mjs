@@ -101,6 +101,22 @@ test("compares a clean supplied Git diff against the exact base and required che
   ]);
 });
 
+test("parses rename metadata and Git name-status rename records without changing path names", () => {
+  assert.deepEqual(parseGitDiffPaths("similarity index 100%\nrename from old farm name.txt\nrename to new farm name.txt\n"), [
+    "old farm name.txt",
+    "new farm name.txt",
+  ]);
+  assert.deepEqual(parseGitDiffPaths("R100\told farm name.txt\tnew farm name.txt\n"), [
+    "old farm name.txt",
+    "new farm name.txt",
+  ]);
+  const nul = String.fromCharCode(0);
+  assert.deepEqual(parseGitDiffPaths(`R100${nul}a/old farm name.txt${nul}b/new farm name.txt${nul}`), [
+    "a/old farm name.txt",
+    "b/new farm name.txt",
+  ]);
+});
+
 test("rejects wrong base, unowned paths, and missing required checks", () => {
   assert.throws(() => checkWorkBriefDiff(brief, observation({ baseCommit: WRONG_BASE_COMMIT })), /base_commit_mismatch/);
   assert.throws(() => checkWorkBriefDiff(brief, observation({ changedPaths: ["host/src/main.ts"] })), /changed_path_unowned/);
