@@ -49,7 +49,7 @@ async function withProject(files, callback) {
   } finally { await removeTree(root); }
 }
 
-const adapter = `export async function runActionProject({ manifest, invocation }) { return { gameId: manifest.gameId, status: invocation.command, actionId: invocation.actionId ?? null, runId: invocation.runId ?? null, evidenceRoot: manifest.evidenceRoot, briefFile: invocation.briefFile ?? null }; }`;
+const adapter = `export async function runActionProject({ manifest, invocation }) { return { schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: invocation.command, actionId: invocation.actionId ?? null, ...(invocation.runId === undefined ? {} : { runId: invocation.runId }), evidenceRoot: manifest.evidenceRoot, briefFile: invocation.briefFile ?? null }; }`;
 const manifestValue = { schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "./adapter.mjs", portfolio: "./portfolio.json", toolInventory: "./inventory.json", evidenceRoot: "./artifacts/action-runs", defaultProfileExample: "./profile.json" };
 const manifest = JSON.stringify(manifestValue);
 const dependencies = { "adapter.mjs": adapter, "portfolio.json": "{}", "inventory.json": "{}", "profile.json": "{}" };
@@ -71,7 +71,7 @@ test("loads a strict project manifest and delegates without a game registry", as
     const loaded = await readActionProjectManifest(path.join(root, "project.json"));
     assert.equal(loaded.gameId, "stardew");
     const result = await runActionProject({ projectFile: loaded.manifestFile, invocation: { command: "status", actionId: "equip_tool" } });
-    assert.deepEqual(result, { gameId: "stardew", status: "status", actionId: "equip_tool", runId: null, evidenceRoot: path.join(root, "artifacts", "action-runs"), briefFile: null });
+    assert.deepEqual(result, { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "status", actionId: "equip_tool", evidenceRoot: path.join(root, "artifacts", "action-runs"), briefFile: null });
   });
 });
 
@@ -130,6 +130,46 @@ test("rejects adapter and inventory dependencies that physically escape the proj
       });
     }
   } finally { await removeTree(outside); }
+});
+
+test("validates the neutral scenario-result schema and field bounds", async () => {
+  const reports = [
+    { gameId: "stardew", status: "ok" },
+    { schema: "wrong", gameId: "stardew", status: "ok" },
+    { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: null },
+    { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "x".repeat(129) },
+    ...["outcome", "reasonCode", "claimScope", "runId", "evidenceRoot"].map((field) => ({ schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "ok", [field]: null })),
+    { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "ok", actionId: "not opaque/id" },
+    { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "ok", reasonCode: "x".repeat(513) },
+  ];
+  await withProject({ "project.json": manifest, ...dependencies }, async (root) => {
+    for (const [index, report] of reports.entries()) {
+      const adapter = `./adapter-${index}.mjs`;
+      const projectFile = path.join(root, `project-${index}.json`);
+      await writeFile(path.join(root, `adapter-${index}.mjs`), `export async function runActionProject() { return ${JSON.stringify(report)}; }`);
+      await writeFile(projectFile, JSON.stringify({ ...manifestValue, adapter }));
+      await assert.rejects(runActionProject({ projectFile, invocation: { command: "status" } }), /adapter_report_invalid/);
+    }
+    const validIndex = reports.length;
+    const valid = {
+      schema: "gamebuddy-action-scenario-result/v1",
+      gameId: "stardew",
+      status: "ok",
+      actionId: null,
+      scenarioId: null,
+      briefFile: null,
+      outcome: "x".repeat(512),
+      reasonCode: "x".repeat(512),
+      claimScope: "x".repeat(512),
+      runId: "x".repeat(128),
+      evidenceRoot: "x".repeat(512),
+    };
+    const validProjectFile = path.join(root, `project-${validIndex}.json`);
+    await writeFile(path.join(root, `adapter-${validIndex}.mjs`), `export async function runActionProject() { return ${JSON.stringify(valid)}; }`);
+    await writeFile(validProjectFile, JSON.stringify({ ...manifestValue, adapter: `./adapter-${validIndex}.mjs` }));
+    const result = await runActionProject({ projectFile: validProjectFile, invocation: { command: "status" } });
+    assert.equal(result.status, "ok");
+  });
 });
 
 test("fails closed for malformed manifests, escaping references, missing dependencies, and invalid reports", async () => {
