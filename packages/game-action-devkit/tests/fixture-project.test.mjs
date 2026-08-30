@@ -97,21 +97,10 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
     briefFile: path.join(fixtureRoot, briefFile),
   });
 
-  const { stdout } = await execFile(process.execPath, [
-    binFile,
-    "inventory",
-    "--project",
-    projectFile,
-    "--action",
-    "toggle_lamp",
-  ], { encoding: "utf8" });
-  assert.deepEqual(JSON.parse(stdout), {
-    gameId: "clockwork_fixture",
-    status: "inventory_ready",
-    claimScope: "fixture_only",
-    actionId: "toggle_lamp",
-    briefFile: null,
-  });
+  await assert.rejects(
+    execFile(process.execPath, [binFile, "inventory", "--project", projectFile, "--action", "toggle_lamp"], { encoding: "utf8" }),
+    /invalid_command/,
+  );
 });
 
 test("keeps the fixture generic and import-free", async () => {

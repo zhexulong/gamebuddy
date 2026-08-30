@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gamebuddy.local/game-action-devkit/schemas/game-action-scenario-result.v1.schema.json",
+  "title": "Game action scenario result v1",
+  "description": "A bounded neutral adapter report. It carries opaque game and action identities only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "gameId", "status"],
+  "properties": {
+    "schema": { "const": "gamebuddy-action-scenario-result/v1" },
+    "gameId": { "$ref": "#/$defs/identifier" },
+    "actionId": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+    "scenarioId": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+    "status": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "outcome": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "reasonCode": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "claimScope": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "runId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "evidenceRoot": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "briefFile": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 512 }, { "type": "null" }] }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    }
+  }
+}

@@ -3,9 +3,12 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const COMMANDS = new Set(["inventory", "check", "preflight", "run-live", "status"]);
+const COMMANDS = new Set(["check", "preflight", "run-live", "status"]);
 const MANIFEST_KEYS = new Set(["schema", "gameId", "projectVersion", "adapter", "portfolio", "toolInventory", "evidenceRoot", "defaultProfileExample"]);
+const REPORT_KEYS = new Set(["schema", "gameId", "actionId", "scenarioId", "status", "outcome", "reasonCode", "claimScope", "runId", "evidenceRoot", "briefFile"]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const REPORT_TEXT_PATTERN = /^[^\u0000-\u001f\u007f]{1,512}$/u;
+export const MAX_ADAPTER_REPORT_BYTES = 64 * 1024 - 1;
 
 function fail(code) {
   throw new Error(`game_action_project_${code}`);
@@ -107,6 +110,28 @@ export async function readActionProjectManifest(projectFile) {
   });
 }
 
+function assertReportText(value, code, { nullable = false } = {}) {
+  if (nullable && value === null) return;
+  if (typeof value !== "string" || !REPORT_TEXT_PATTERN.test(value)) fail(code);
+}
+
+function validateAdapterReport(report, manifest) {
+  if (!isObject(report) || Object.keys(report).length > REPORT_KEYS.size) fail("adapter_report_invalid");
+  if (Object.keys(report).some((key) => !REPORT_KEYS.has(key)) || report.gameId !== manifest.gameId) fail("adapter_report_invalid");
+  if (report.schema !== undefined && report.schema !== "gamebuddy-action-scenario-result/v1") fail("adapter_report_invalid");
+  assertReportText(report.gameId, "adapter_report_invalid");
+  assertReportText(report.status, "adapter_report_invalid");
+  for (const field of ["actionId", "scenarioId", "reasonCode", "claimScope", "runId", "evidenceRoot", "briefFile", "outcome"]) {
+    if (report[field] !== undefined) assertReportText(report[field], "adapter_report_invalid", { nullable: true });
+  }
+  if (report.actionId !== undefined && report.actionId !== null && !ID_PATTERN.test(report.actionId)) fail("adapter_report_invalid");
+  if (report.scenarioId !== undefined && report.scenarioId !== null && !ID_PATTERN.test(report.scenarioId)) fail("adapter_report_invalid");
+  let serialized;
+  try { serialized = JSON.stringify(report); } catch { fail("adapter_report_invalid"); }
+  if (typeof serialized !== "string" || Buffer.byteLength(serialized, "utf8") > MAX_ADAPTER_REPORT_BYTES) fail("adapter_report_invalid");
+  return Object.freeze({ ...report });
+}
+
 export async function runActionProject({ projectFile, invocation }) {
   const manifest = await readActionProjectManifest(projectFile);
   const normalizedInvocation = normalizeInvocation(invocation);
@@ -134,6 +159,5 @@ export async function runActionProject({ projectFile, invocation }) {
   try { adapter = await import(pathToFileURL(manifest.adapterFile).href); } catch { fail("adapter_unloadable"); }
   if (typeof adapter.runActionProject !== "function") fail("adapter_contract_missing");
   const report = await adapter.runActionProject(Object.freeze({ manifest, invocation: immutableInvocation }));
-  if (!isObject(report) || report.gameId !== manifest.gameId || typeof report.status !== "string") fail("adapter_report_invalid");
-  return Object.freeze(report);
+  return validateAdapterReport(report, manifest);
 }

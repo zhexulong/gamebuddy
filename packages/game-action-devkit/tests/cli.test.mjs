@@ -18,8 +18,9 @@ test("parses one thin explicit project dispatch without a registry", () => {
   assert.ok(Object.isFrozen(parsed.invocation));
 });
 
-test("rejects absent, repeated, unknown, positional, and incomplete options", () => {
-  assert.throws(() => parseGameActionArgs(["check"]), /missing_required_argument/);
+test("resolves the omitted project only from the current working directory and rejects inventory", () => {
+  assert.equal(parseGameActionArgs(["check"]).projectFile, path.resolve(process.cwd(), "game-action-project.json"));
+  assert.throws(() => parseGameActionArgs(["inventory"]), /invalid_command/);
   assert.throws(() => parseGameActionArgs(["check", "--project", "a", "--project", "b"]), /invalid_projectFile/);
   assert.throws(() => parseGameActionArgs(["check", "--project", "a", "--game", "stardew"]), /unknown_option/);
   assert.throws(() => parseGameActionArgs(["check", "--project", "a", "equip_tool"]), /invalid_command/);
@@ -45,17 +46,18 @@ test("serializes only bounded JSON CLI reports", () => {
   assert.throws(() => serializeCliReport(undefined), /report_unserializable/);
 });
 
-test("binary stdout including its newline stays within the 64 KiB bound", async () => {
+test("binary rejects adapter reports outside the neutral bounded contract", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "game-action-cli-"));
-  const output = "x".repeat(MAX_CLI_REPORT_BYTES - Buffer.byteLength('{"gameId":"stardew","status":"ok","output":""}', "utf8"));
   try {
     await writeFile(path.join(root, "inventory.json"), "{}", "utf8");
     await writeFile(path.join(root, "portfolio.json"), "{}", "utf8");
     await writeFile(path.join(root, "profile.json"), "{}", "utf8");
-    await writeFile(path.join(root, "adapter.mjs"), `export async function runActionProject() { return { gameId: "stardew", status: "ok", output: ${JSON.stringify(output)} }; }`, "utf8");
-    await writeFile(path.join(root, "project.json"), JSON.stringify({ schema: "gamebuddy-action-project/v1", gameId: "stardew", projectVersion: 1, adapter: "adapter.mjs", portfolio: "portfolio.json", toolInventory: "inventory.json", evidenceRoot: "artifacts/action-runs", defaultProfileExample: "profile.json" }), "utf8");
-    const { stdout } = await execFile(process.execPath, [binFile, "status", "--project", path.join(root, "project.json")], { encoding: "buffer", maxBuffer: MAX_CLI_STDOUT_BYTES + 1 });
-    assert.equal(stdout.byteLength, MAX_CLI_STDOUT_BYTES);
+    await writeFile(path.join(root, "adapter.mjs"), `export async function runActionProject() { return { gameId: "opaque_game", status: "ok", output: ${JSON.stringify("x".repeat(MAX_CLI_REPORT_BYTES))} }; }`, "utf8");
+    await writeFile(path.join(root, "project.json"), JSON.stringify({ schema: "gamebuddy-action-project/v1", gameId: "opaque_game", projectVersion: 1, adapter: "adapter.mjs", portfolio: "portfolio.json", toolInventory: "inventory.json", evidenceRoot: "artifacts/action-runs", defaultProfileExample: "profile.json" }), "utf8");
+    await assert.rejects(
+      execFile(process.execPath, [binFile, "status", "--project", path.join(root, "project.json")], { encoding: "buffer", maxBuffer: MAX_CLI_STDOUT_BYTES + 1 }),
+      /adapter_report_invalid/,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
