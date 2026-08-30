@@ -6,6 +6,7 @@ import {
   runBoundedChild,
 } from "@gamebuddy/game-action-devkit";
 import { parseScenarioResultText } from "./scenario-result.mjs";
+import { validateEquipToolScenarioProof } from "./equip-tool-scenario-result.mjs";
 import { parseJsonWithoutDuplicateKeys } from "./json-text.mjs";
 import { LIFECYCLE_FAILURE_PHASES, LIFECYCLE_PHASE_RESULT_SCHEMA } from "./write-lifecycle-result.mjs";
 
@@ -163,14 +164,14 @@ export async function runEquipToolLifecycle({
     }
     let proof;
     try {
-      proof = parseScenarioResultText(await readResult(actionClaim), {
+      proof = validateEquipToolScenarioProof(parseScenarioResultText(await readResult(actionClaim), {
         gameId: "stardew",
         actionId: "equip_tool",
         runId,
         stage: "run-live",
         profileIdentity: profile.profileIdentity,
         claimScope: CLAIM_SCOPE,
-      });
+      }));
     } catch (error) {
       fail(isMissingResult(error) ? "action_result_missing" : "action_result_invalid");
     }

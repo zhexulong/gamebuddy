@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MAX_RESULT_BYTES, parseScenarioResultText, validateScenarioResult } from "../src/scenario-result.mjs";
+import { validateEquipToolScenarioProof } from "../src/equip-tool-scenario-result.mjs";
 
 const identity = Object.freeze({
   gameId: "stardew",
@@ -69,7 +70,7 @@ test("parses an exact private scenario result bound to its invocation", () => {
 });
 
 test("accepts a complete action-owned equip_tool live proof", () => {
-  const parsed = parseScenarioResultText(JSON.stringify(liveResult), liveIdentity);
+  const parsed = validateEquipToolScenarioProof(parseScenarioResultText(JSON.stringify(liveResult), liveIdentity));
   assert.deepEqual(parsed, liveResult);
   assert.ok(Object.isFrozen(parsed.receipt.request));
   assert.ok(Object.isFrozen(parsed.receipt.evidence));
@@ -96,7 +97,7 @@ test("fails closed for incomplete equip_tool live passed proofs", () => {
     { ...liveResult, postcondition: postconditionWithoutSelected },
   ];
   for (const incomplete of incompleteResults) {
-    assert.throws(() => parseScenarioResultText(JSON.stringify(incomplete), liveIdentity), /invalid_(receipt|postcondition|evidence)/);
+    assert.throws(() => validateEquipToolScenarioProof(parseScenarioResultText(JSON.stringify(incomplete), liveIdentity)), /invalid_(receipt|postcondition|evidence)/);
   }
 });
 
