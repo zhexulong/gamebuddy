@@ -9,6 +9,7 @@ const EFFECTS = new Set(["read_only", "mutation"]);
 const STATUSES = new Set(["draft", "frozen", "blocked", "withdrawn"]);
 const STAGES = new Set(["check", "preflight", "live", "status", "publication-check"]);
 const HANDOFF_REASONS = new Set(["timeout", "observer_failure", "observer_invalid", "git_diff_invalid", "check_failure"]);
+const GIT_NAME_STATUS_PATTERN = /^[ACDMRTUXB?!]+(?:\d+)?$/u;
 const BRIEF_KEYS = new Set([
   "schema",
   "gameId",
@@ -248,12 +249,16 @@ function stripGitPrefix(value) {
   return value;
 }
 
+function preserveGitPath(value) {
+  return value === "/dev/null" ? null : value;
+}
+
 function parseNameStatusRecord(record, paths) {
   const fields = record.split("\t");
   const status = fields[0];
-  if (/^[ACDMRTUXB?!]+(?:\d+)?$/u.test(status)) {
+  if (GIT_NAME_STATUS_PATTERN.test(status)) {
     for (const field of fields.slice(1)) {
-      const normalized = stripGitPrefix(field);
+      const normalized = preserveGitPath(field);
       if (normalized !== null && normalized.length > 0) paths.push(normalized);
     }
     return true;
@@ -270,10 +275,22 @@ export function parseGitDiffPaths(diff) {
   if (Array.isArray(diff)) return validateChangedPaths(diff);
   if (typeof diff !== "string" || Buffer.byteLength(diff, "utf8") > MAX_DIFF_BYTES) fail("invalid_git_diff");
   if (diff.includes("\0")) {
+    const records = diff.split("\0");
     const paths = [];
-    for (const record of diff.split("\0")) {
-      if (record.length === 0 || /^[ACDMRTUXB?!]+(?:\d+)?$/u.test(record)) continue;
-      const normalized = stripGitPrefix(record);
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (record.length === 0) continue;
+      if (GIT_NAME_STATUS_PATTERN.test(record)) {
+        // `git diff --name-status -z` emits a status, then one path for
+        // ordinary changes or old/new paths for a rename/copy.
+        const pathCount = /^[RC]/u.test(record) ? 2 : 1;
+        for (let pathIndex = 0; pathIndex < pathCount && index + 1 < records.length; pathIndex += 1) {
+          const normalized = preserveGitPath(records[++index]);
+          if (normalized !== null && normalized.length > 0) paths.push(normalized);
+        }
+        continue;
+      }
+      const normalized = preserveGitPath(record);
       if (normalized !== null && normalized.length > 0) paths.push(normalized);
     }
     return validateChangedPaths([...new Set(paths)]);
@@ -288,8 +305,15 @@ export function parseGitDiffPaths(diff) {
       if (normalized !== null && normalized.length > 0) paths.push(normalized);
       continue;
     }
-    if (line.startsWith("rename from ") || line.startsWith("rename to ")) {
-      const normalized = stripGitPrefix(line.slice(line.indexOf(" ") + 1));
+    const renamePrefix = line.startsWith("rename from ")
+      ? "rename from "
+      : line.startsWith("rename to ")
+        ? "rename to "
+        : null;
+    if (renamePrefix !== null) {
+      // Rename metadata contains the repository path after its full header;
+      // slice the known prefix so spaces in the path remain untouched.
+      const normalized = preserveGitPath(line.slice(renamePrefix.length));
       if (normalized !== null && normalized.length > 0) paths.push(normalized);
       continue;
     }
