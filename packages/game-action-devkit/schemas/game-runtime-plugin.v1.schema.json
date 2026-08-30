@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gamebuddy.local/game-action-devkit/schemas/game-runtime-plugin.v1.schema.json",
+  "title": "Game Runtime Plugin contract v1",
+  "description": "A game-neutral runtime boundary with opaque action identity and bounded lifecycle attestations.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "gameId", "targetId", "targetVersion", "actionId", "runId", "state", "verdict", "receipt", "postcondition", "cleanup", "failure"],
+  "properties": {
+    "schema": { "const": "gamebuddy-game-runtime-plugin-outcome/v1" },
+    "gameId": { "$ref": "#/$defs/identifier" },
+    "targetId": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+    "targetVersion": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+    "actionId": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+    "runId": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+    "state": { "enum": ["PASSED", "BLOCKED", "INCOMPLETE"] },
+    "verdict": { "enum": ["passed", "blocked", "uncertain"] },
+    "receipt": { "anyOf": [{ "$ref": "#/$defs/receipt" }, { "type": "null" }] },
+    "postcondition": { "anyOf": [{ "$ref": "#/$defs/postcondition" }, { "type": "null" }] },
+    "cleanup": { "$ref": "#/$defs/cleanup" },
+    "failure": { "anyOf": [{ "$ref": "#/$defs/failure" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "boundedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "state", "code", "evidence"],
+      "properties": {
+        "schema": { "const": "gamebuddy-game-runtime-plugin-receipt/v1" },
+        "state": { "enum": ["succeeded", "blocked", "uncertain"] },
+        "code": { "$ref": "#/$defs/identifier" },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/boundedText" }, { "type": "null" }] }
+      }
+    },
+    "postcondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "state", "code", "evidence"],
+      "properties": {
+        "schema": { "const": "gamebuddy-game-runtime-plugin-postcondition/v1" },
+        "state": { "enum": ["verified", "not_verified", "not_applicable"] },
+        "code": { "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+        "evidence": { "anyOf": [{ "$ref": "#/$defs/boundedText" }, { "type": "null" }] }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "state", "code"],
+      "properties": {
+        "schema": { "const": "gamebuddy-game-runtime-plugin-cleanup/v1" },
+        "state": { "enum": ["complete", "incomplete", "not_started", "quarantined"] },
+        "code": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "code"],
+      "properties": {
+        "phase": { "$ref": "#/$defs/identifier" },
+        "code": { "$ref": "#/$defs/identifier" }
+      }
+    }
+  }
+}
