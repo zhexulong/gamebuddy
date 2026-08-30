@@ -1,6 +1,5 @@
 import { types } from "node:util";
 import { parseJsonWithoutDuplicateKeys } from "./json-text.mjs";
-import { validateEquipToolScenarioProof } from "./equip-tool-scenario-result.mjs";
 
 const SCHEMA = "gamebuddy-action-scenario-result/v1";
 const KEYS = new Set([
@@ -105,10 +104,7 @@ export function validateScenarioResult(input, expected) {
 
 export function parseScenarioResultText(text, expected) {
   if (typeof text !== "string" || Buffer.byteLength(text, "utf8") === 0 || Buffer.byteLength(text, "utf8") > MAX_RESULT_BYTES) fail("invalid_size");
-  const result = validateScenarioResult(parseJsonWithoutDuplicateKeys(text, "stardew_action_scenario_result"), expected);
-  return result.actionId === "equip_tool" && result.stage === "run-live" && result.claimScope === "native-local-equip-tool-v1"
-    ? validateEquipToolScenarioProof(result)
-    : result;
+  return validateScenarioResult(parseJsonWithoutDuplicateKeys(text, "stardew_action_scenario_result"), expected);
 }
 
 export { MAX_RESULT_BYTES };

@@ -7,6 +7,7 @@ import {
   runBoundedChild,
 } from "@gamebuddy/game-action-devkit";
 import { parseScenarioResultText } from "./scenario-result.mjs";
+import { validateEquipToolScenarioProof } from "./equip-tool-scenario-result.mjs";
 
 const PACKAGE_DIRECTORY = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CHILD = path.join(PACKAGE_DIRECTORY, "tests", "fixtures", "fake-scenario-child.mjs");
@@ -43,7 +44,10 @@ export async function runDeterministicScenario({ identity, mode = "valid", timeo
       throw new Error(`stardew_action_deterministic_scenario_child_failed:${error instanceof Error ? error.message : "unknown"}`);
     }
     try {
-      const result = parseScenarioResultText(await readPrivateResultFile(claim), expected);
+      const parsed = parseScenarioResultText(await readPrivateResultFile(claim), expected);
+      const result = parsed.actionId === "equip_tool" && parsed.stage === "run-live" && parsed.claimScope === "native-local-equip-tool-v1"
+        ? validateEquipToolScenarioProof(parsed)
+        : parsed;
       return Object.freeze({ result, output: outcome.output });
     } catch (error) {
       throw new Error(`stardew_action_deterministic_scenario_result_invalid:${error instanceof Error ? error.message : "unknown"}`);
