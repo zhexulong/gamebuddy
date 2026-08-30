@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCHEMA = "gamebuddy-stardew-tool-inventory/v1";
-const ALLOWED_TOP_LEVEL_KEYS = new Set(["schema", "governedPatterns", "entries", "pilotLegacyClosure"]);
+const ALLOWED_TOP_LEVEL_KEYS = new Set(["schema", "governedPatterns", "trackedPathBaseline", "entries", "pilotLegacyClosure"]);
 const ALLOWED_ENTRY_KEYS = new Set(["path", "classification", "disposition", "futureProjectPath"]);
 const ALLOWED_CLASSIFICATIONS = new Set([
   "canonical-scenario",
@@ -89,7 +89,7 @@ export function readTrackedGovernedPaths(repositoryRoot) {
 
 export function validateToolInventory(inventory, { trackedPaths, repositoryRoot } = {}) {
   assertExactKeys(inventory, ALLOWED_TOP_LEVEL_KEYS, "invalid_top_level");
-  if (inventory.schema !== SCHEMA || !Array.isArray(inventory.governedPatterns) || !Array.isArray(inventory.entries) || !Array.isArray(inventory.pilotLegacyClosure)) {
+  if (inventory.schema !== SCHEMA || !Array.isArray(inventory.governedPatterns) || !Array.isArray(inventory.trackedPathBaseline) || !Array.isArray(inventory.entries) || !Array.isArray(inventory.pilotLegacyClosure)) {
     fail("invalid_schema");
   }
   const patterns = inventory.governedPatterns;
@@ -97,6 +97,12 @@ export function validateToolInventory(inventory, { trackedPaths, repositoryRoot 
     fail("invalid_governed_patterns");
   }
   caseFoldedUnique(patterns, "governed_pattern_duplicate");
+
+  const baselinePaths = inventory.trackedPathBaseline;
+  if (baselinePaths.some((entry) => !GOVERNED_PATH.test(entry))) fail("tracked_baseline_path_not_governed");
+  for (const entry of baselinePaths) assertSafePath(entry, "tracked_baseline_path_unsafe");
+  caseFoldedUnique(baselinePaths, "tracked_baseline_duplicate");
+  const normalizedBaseline = sortedUnique(baselinePaths);
 
   const entries = inventory.entries;
   const entryPaths = [];
@@ -120,7 +126,8 @@ export function validateToolInventory(inventory, { trackedPaths, repositoryRoot 
   caseFoldedUnique(actualTrackedPaths, "tracked_path_duplicate");
   const normalizedEntries = sortedUnique(entryPaths);
   const normalizedTracked = sortedUnique(actualTrackedPaths);
-  if (!sameSet(normalizedEntries, normalizedTracked)) fail("coverage_mismatch");
+  if (!sameSet(normalizedBaseline, normalizedTracked)) fail("tracked_path_baseline_mismatch");
+  if (!sameSet(normalizedEntries, normalizedBaseline)) fail("coverage_mismatch");
 
   const closure = inventory.pilotLegacyClosure;
   if (closure.some((entry) => typeof entry !== "string")) fail("pilot_closure_invalid");

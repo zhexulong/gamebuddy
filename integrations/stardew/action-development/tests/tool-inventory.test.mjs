@@ -32,8 +32,25 @@ test("rejects unknown keys, invalid categories, and invalid dispositions", () =>
 test("rejects missing, stale, duplicate, and unsafe governed paths", () => {
   assertRejected((candidate) => { candidate.entries.pop(); }, "coverage_mismatch");
   assertRejected((candidate) => { candidate.entries[0].path = "tools/run-stardew-not-tracked.mjs"; }, "coverage_mismatch");
+  assertRejected((candidate) => { candidate.trackedPathBaseline.push("tools/run-stardew-new-root-tool.mjs"); }, "tracked_path_baseline_mismatch");
+  assertRejected((candidate) => { candidate.trackedPathBaseline = candidate.trackedPathBaseline.slice(1); }, "tracked_path_baseline_mismatch");
   assertRejected((candidate) => { candidate.entries[1].path = candidate.entries[0].path; }, "entry_path_duplicate");
   assertRejected((candidate) => { candidate.entries[0].path = "tools/../run-stardew-unsafe.mjs"; }, "entry_path_not_governed");
+});
+
+test("rejects a newly tracked governed root tool even when inventory classifies it", () => {
+  const candidate = clone();
+  const newPath = "tools/run-stardew-new-root-tool.mjs";
+  candidate.entries.push({
+    path: newPath,
+    classification: "diagnostic",
+    disposition: "diagnostic-only",
+    futureProjectPath: "diagnostics/run-stardew-new-root-tool.mjs",
+  });
+  assert.throws(
+    () => validateToolInventory(candidate, { trackedPaths: [...trackedPaths, newPath] }),
+    /tracked_path_baseline_mismatch/,
+  );
 });
 
 test("rejects closure expansion or case-folded duplication", () => {
