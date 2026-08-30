@@ -61,6 +61,41 @@ test("named mutex API rejects non-Windows hosts and unsafe names", async () => {
   }
 });
 
+test("waitForExit clears its timeout when the child exits", async () => {
+  const broker = new WindowsNamedMutexBroker() as unknown as {
+    waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean>;
+  };
+  const child = new EventEmitter() as ChildProcess & {
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+  };
+  child.exitCode = null;
+  child.signalCode = null;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cleared = false;
+  globalThis.setTimeout = ((callback: () => void) => {
+    timer = originalSetTimeout(callback, 60_000);
+    return timer;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((value: ReturnType<typeof setTimeout>) => {
+    if (value === timer) cleared = true;
+    return originalClearTimeout(value);
+  }) as typeof clearTimeout;
+  try {
+    const wait = broker.waitForExit(child, 60_000);
+    child.emit("exit");
+    assert.equal(await wait, true);
+    assert.equal(cleared, true);
+    assert.equal(child.listenerCount("exit"), 0);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    if (timer !== undefined) originalClearTimeout(timer);
+  }
+});
+
 test("acquired mutex remains held until explicit release", { skip: process.platform !== "win32" }, async () => {
   const holder = new WindowsNamedMutexBroker();
   const contender = new WindowsNamedMutexBroker();
