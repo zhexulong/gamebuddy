@@ -116,7 +116,21 @@ test("failure before evidence creation is bounded without raw dependency details
 test("run-live binds unique run identity and finalizes only after lifecycle, staging, and lease cleanup", async () => {
   const fake = harness();
   const report = await invoke("ar1_first", fake.value);
-  assert.deepEqual(report, { gameId: "stardew", actionId: "equip_tool", status: "live", state: "PASSED", runId: "ar1_first", evidenceStatus: "complete", verdict: "passed" });
+  assert.deepEqual(report, {
+    gameId: "stardew",
+    actionId: "equip_tool",
+    status: "live",
+    state: "PASSED",
+    runId: "ar1_first",
+    evidenceStatus: "complete",
+    verdict: "passed",
+    verification: {
+      receipt: exactProof("ar1_first").receipt,
+      postcondition: exactProof("ar1_first").postcondition,
+      cleanup: { lifecycle: true, immutableStaging: true, runtimeLease: true },
+      reasonCode: "tool_selected",
+    },
+  });
   assert.deepEqual(fake.order, [
     "preflight", "profile", "lease:target-machine-lease", "evidence:C:\\project\\artifacts\\action-runs:ar1_first",
     `bundle:ar1_first:${"a".repeat(64)}`, "lifecycle", "child:ar1_first:C:\\lease\\immutable",

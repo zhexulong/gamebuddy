@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { runActionProject } from "../src/project-adapter.mjs";
+import { createProjectAdapter } from "../src/project-adapter-core.mjs";
+import { runActionProject as runProductionActionProject } from "../src/project-adapter.mjs";
 
 const projectDirectory = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const packageFile = path.join(projectDirectory, "package.json");
@@ -14,6 +15,13 @@ const manifest = Object.freeze({
 });
 const action = Object.freeze({ actionId: "equip_tool" });
 const schema = "gamebuddy-action-scenario-result/v1";
+
+async function runActionProject(input) {
+  const registrations = input.dependencies?.__testOnlyActionRegistrations;
+  if (registrations === undefined) return runProductionActionProject(input);
+  const dependencies = Object.freeze({ ...input.dependencies, __testOnlyActionRegistrations: undefined });
+  return await createProjectAdapter(registrations).runActionProject({ ...input, dependencies });
+}
 
 function syntheticRegistration(overrides = {}) {
   const actionId = overrides.actionId ?? "inspect_weather";
@@ -92,6 +100,17 @@ test("converts action evidence status to a neutral bounded report", async () => 
     } },
   });
   assert.deepEqual(report, expected(action, "status", { outcome: "available" }));
+});
+
+test("production adapter ignores caller-supplied action registrations and uses only its closure-owned registry", async () => {
+  await assert.rejects(
+    runProductionActionProject({
+      manifest,
+      invocation: { command: "check", actionId: "inspect_weather" },
+      dependencies: { __testOnlyActionRegistrations: [syntheticRegistration()], calls: [] },
+    }),
+    /action_not_available/,
+  );
 });
 
 test("rejects missing, unknown, and legacy inventory actions before dispatch", async () => {
@@ -188,7 +207,7 @@ test("dispatches a second synthetic action through registration without adapter 
 test("rejects a registration that omits any required verifier", async () => {
   const registration = syntheticRegistration({ verifyCleanup: undefined });
   await assert.rejects(
-    runActionProject({
+    () => runActionProject({
       manifest: { gameId: "stardew" },
       invocation: { command: "check", actionId: registration.actionId },
       dependencies: { __testOnlyActionRegistrations: [registration], calls: [] },

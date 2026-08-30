@@ -165,7 +165,20 @@ function validateAdapterReport(report, manifest) {
   let serialized;
   try { serialized = JSON.stringify(report); } catch { fail("adapter_report_invalid"); }
   if (typeof serialized !== "string" || Buffer.byteLength(serialized, "utf8") > MAX_ADAPTER_REPORT_BYTES) fail("adapter_report_invalid");
-  return Object.freeze({ ...report });
+  return Object.freeze(report);
+}
+
+function validateOwnerVerification(verification, manifest, invocation) {
+  if (!isObject(verification) || Object.getPrototypeOf(verification) !== Object.prototype) fail("adapter_report_verification_invalid");
+  const keys = Object.keys(verification);
+  const expectedKeys = ["schema", "gameId", "actionId", "runId", "verified"];
+  if (keys.length !== expectedKeys.length || expectedKeys.some((key) => !Object.hasOwn(verification, key))) fail("adapter_report_verification_invalid");
+  if (verification.schema !== "gamebuddy-action-project-report-verification/v1"
+    || verification.gameId !== manifest.gameId
+    || verification.actionId !== invocation.actionId
+    || verification.runId !== invocation.runId
+    || verification.verified !== true) fail("adapter_report_verification_invalid");
+  return true;
 }
 
 export async function runActionProject({ projectFile, invocation }) {
@@ -196,6 +209,22 @@ export async function runActionProject({ projectFile, invocation }) {
   let adapter;
   try { adapter = await import(pathToFileURL(manifest.adapterFile).href); } catch { fail("adapter_unloadable"); }
   if (typeof adapter.runActionProject !== "function") fail("adapter_contract_missing");
-  const report = await adapter.runActionProject(Object.freeze({ manifest, invocation: immutableInvocation }));
-  return validateAdapterReport(report, manifest);
+  const report = validateAdapterReport(
+    await adapter.runActionProject(Object.freeze({ manifest, invocation: immutableInvocation })),
+    manifest,
+  );
+  if (immutableInvocation.command === "run-live" && report.outcome === "passed") {
+    if (report.status !== "live" || report.actionId !== immutableInvocation.actionId || report.runId !== immutableInvocation.runId) {
+      fail("adapter_report_verification_invalid");
+    }
+    if (typeof adapter.verifyActionProjectReport !== "function") fail("adapter_report_verifier_missing");
+    let verification;
+    try {
+      verification = await adapter.verifyActionProjectReport(Object.freeze({ manifest, invocation: immutableInvocation, report }));
+    } catch {
+      fail("adapter_report_verification_failed");
+    }
+    validateOwnerVerification(verification, manifest, immutableInvocation);
+  }
+  return report;
 }

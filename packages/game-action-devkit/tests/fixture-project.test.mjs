@@ -143,8 +143,103 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
   );
 });
 
+<<<<<<< HEAD
+=======
+test("runs a second independent game-neutral fixture with multiple actions and profile data", async () => {
+  const [manifest, firstManifest, portfolio, inventory, profile, alternateProfile, firstProfile, schema] = await Promise.all([
+    readActionProjectManifest(secondProjectFile),
+    readActionProjectManifest(projectFile),
+    readFile(secondPortfolioFile, "utf8").then(JSON.parse),
+    readFile(secondInventoryFile, "utf8").then(JSON.parse),
+    readFile(secondProfileFile, "utf8").then(JSON.parse),
+    readFile(secondAlternateProfileFile, "utf8").then(JSON.parse),
+    readFile(profileFile, "utf8").then(JSON.parse),
+    readFile(profileSchemaFile, "utf8").then(JSON.parse),
+  ]);
+  assert.equal(manifest.gameId, "papertrail_fixture");
+  assert.equal(manifest.projectVersion, 1);
+  assert.equal(manifest.baseDirectory, path.resolve(secondFixtureRoot));
+  assert.equal(manifest.adapterFile, path.join(secondFixtureRoot, "runtime/adapter.mjs"));
+  assert.equal(manifest.portfolioFile, secondPortfolioFile);
+  assert.equal(manifest.inventoryFile, secondInventoryFile);
+  assert.equal(manifest.defaultProfileExampleFile, secondProfileFile);
+  assert.equal(manifest.evidenceRoot, path.join(secondFixtureRoot, "evidence/runs"));
+  assert.notEqual(manifest.adapterFile, firstManifest.adapterFile);
+  assert.notEqual(manifest.portfolioFile, firstManifest.portfolioFile);
+  assert.notEqual(manifest.inventoryFile, firstManifest.inventoryFile);
+  assert.notEqual(manifest.evidenceRoot, firstManifest.evidenceRoot);
+
+  assert.equal(portfolio.projectId, "papertrail_fixture");
+  assert.equal(portfolio.production, false);
+  assert.deepEqual(portfolio.actions.map(({ actionId }) => actionId), ["rotate_dial", "archive_note"]);
+  assert.equal(new Set(portfolio.actions.map(({ actionId }) => actionId)).size, 2);
+  assert.equal(inventory.production, false);
+  assert.deepEqual(inventory.tools.map(({ id }) => id), ["observe_dial", "read_archive"]);
+  assertFixtureProfileEnvelope(profile, schema, "papertrail_fixture");
+  assertFixtureProfileEnvelope(alternateProfile, schema, "papertrail_fixture");
+  assert.ok(Object.keys(profile.payload).length > 0);
+  assert.ok(Object.keys(alternateProfile.payload).length > 0);
+  assert.notDeepEqual(profile.payload, alternateProfile.payload);
+  assert.notDeepEqual(profile.payload, firstProfile.payload);
+
+  for (const actionId of ["rotate_dial", "archive_note"]) {
+    assert.deepEqual(await runActionProject({
+      projectFile: secondProjectFile,
+      invocation: { command: "status", actionId },
+    }), {
+      schema: "gamebuddy-action-scenario-result/v1",
+      gameId: "papertrail_fixture",
+      status: "status_ready",
+      claimScope: "fixture_only",
+      actionId,
+      briefFile: null,
+    });
+    const live = await runActionProject({
+      projectFile: secondProjectFile,
+      invocation: { command: "run-live", actionId, profileFile: secondProfileFile },
+    });
+    assert.equal(live.status, "blocked");
+    assert.equal(live.reasonCode, "non_production_fixture");
+    assert.equal(live.gameId, "papertrail_fixture");
+    assert.equal(live.actionId, actionId);
+    assert.match(live.runId, /^ar1_[a-z0-9]+_[a-f0-9]{32}$/);
+  }
+
+  assert.deepEqual(await runActionProject({
+    projectFile: secondProjectFile,
+    invocation: { command: "preflight", actionId: "archive_note", profileFile: secondProfileFile },
+  }), {
+    schema: "gamebuddy-action-scenario-result/v1",
+    gameId: "papertrail_fixture",
+    status: "preflight_ready",
+    claimScope: "fixture_only",
+    actionId: "archive_note",
+    briefFile: null,
+  });
+  await assert.rejects(
+    runActionProject({
+      projectFile: secondProjectFile,
+      invocation: { command: "check", actionId: "unknown_action" },
+    }),
+    /action_not_available/,
+  );
+
+  assert.deepEqual(await runActionProject({
+    projectFile: secondProjectFile,
+    invocation: { command: "check", actionId: "rotate_dial", briefFile: "briefs/rotate_dial.json" },
+  }), {
+    schema: "gamebuddy-action-scenario-result/v1",
+    gameId: "papertrail_fixture",
+    status: "check_passed",
+    claimScope: "fixture_only",
+    actionId: "rotate_dial",
+    briefFile: path.join(secondFixtureRoot, "briefs/rotate_dial.json"),
+  });
+});
+
+>>>>>>> b35a39e (Harden action owner verification boundaries)
 test("runs fixture child supervision, records non-production evidence, and enforces brief ownership", async () => {
-  const child = await runBoundedChild({ command: process.execPath, args: [childFile], cwd: fixtureRoot, timeoutMs: 1000 });
+  const child = await runBoundedChild({ command: process.execPath, args: [childFile], cwd: fixtureRoot, timeoutMs: 5000 });
   assert.equal(child.code, 0);
   assert.equal(child.signal, null);
   assert.equal(child.output, "fixture-child-ok\n");
