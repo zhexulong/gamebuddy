@@ -14,7 +14,10 @@
   "scripts": {
     "test": "node src/run-tests.mjs",
     "action:inventory": "node src/tool-inventory.mjs",
-    "action:check:equip-tool": "node src/standalone-contract-check.mjs",
+    "action:check": "node inputs/devkit/game-action-devkit/bin/game-action.mjs check --project game-action-project.json",
+    "action:status": "node inputs/devkit/game-action-devkit/bin/game-action.mjs status --project game-action-project.json",
+    "action:preflight": "node inputs/devkit/game-action-devkit/bin/game-action.mjs preflight --project game-action-project.json",
+    "action:run-live": "node inputs/devkit/game-action-devkit/bin/game-action.mjs run-live --project game-action-project.json",
     "action:portfolio": "node src/portfolio.mjs",
     "action:ci": "node src/portfolio.mjs --ci"
   }

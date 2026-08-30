@@ -30,13 +30,19 @@ test("checks only equip_tool through the generated Core contract artifact", asyn
     manifest: { gameId: "stardew" },
     invocation: { command: "check", actionId: "equip_tool" },
   });
-  assert.deepEqual(report, { gameId: "stardew", status: "checked", actionId: "equip_tool" });
+  assert.deepEqual(report, { schema: "gamebuddy-action-scenario-result/v1", gameId: "stardew", status: "checked", actionId: "equip_tool" });
   await assert.rejects(
     runActionProject({ manifest: { gameId: "stardew" }, invocation: { command: "check", actionId: "enter_mine" } }),
     /action_not_available/,
   );
+  const preflight = await runActionProject({
+    manifest: { gameId: "stardew" },
+    invocation: { command: "preflight", actionId: "equip_tool" },
+  });
+  assert.equal(preflight.status, "preflight");
+  assert.equal(preflight.outcome, "blocked");
   await assert.rejects(
-    runActionProject({ manifest: { gameId: "stardew" }, invocation: { command: "preflight", actionId: "equip_tool" } }),
+    runActionProject({ manifest: { gameId: "stardew" }, invocation: { command: "unknown", actionId: "equip_tool" } }),
     /command_not_available/,
   );
 });
