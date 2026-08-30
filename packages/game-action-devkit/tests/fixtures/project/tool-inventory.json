@@ -1,0 +1,10 @@
+{
+  "schema": "generic-action-fixture-tool-inventory/v1",
+  "production": false,
+  "tools": [
+    {
+      "id": "observe_clock",
+      "stage": "check"
+    }
+  ]
+}

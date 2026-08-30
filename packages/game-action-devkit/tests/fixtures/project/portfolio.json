@@ -1,0 +1,12 @@
+{
+  "schema": "generic-action-fixture-portfolio/v1",
+  "projectId": "clockwork_fixture",
+  "production": false,
+  "publication": "disabled",
+  "actions": [
+    {
+      "actionId": "toggle_lamp",
+      "stages": ["inventory", "check", "preflight", "status"]
+    }
+  ]
+}

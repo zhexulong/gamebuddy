@@ -1,0 +1,10 @@
+{
+  "schema": "gamebuddy-action-project/v1",
+  "gameId": "clockwork_fixture",
+  "projectVersion": 1,
+  "adapter": "./adapter.mjs",
+  "portfolio": "./portfolio.json",
+  "toolInventory": "./tool-inventory.json",
+  "evidenceRoot": "./artifacts/action-runs",
+  "defaultProfileExample": "./profile.json"
+}
