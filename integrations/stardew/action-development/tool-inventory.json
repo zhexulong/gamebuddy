@@ -1186,6 +1186,7 @@
     "tools/stardew-native-local-player-fixture.test.mjs",
     "tools/stardew-action-gate-descriptors.mjs",
     "tools/stardew-action-gate-descriptors.test.mjs",
+    "tools/lib/stardew-published-action-registry.mjs",
     "tools/resolve-stardew-action-gate-runner.mjs"
   ]
 }

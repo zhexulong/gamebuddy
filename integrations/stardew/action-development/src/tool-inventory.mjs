@@ -19,6 +19,7 @@ const ALLOWED_DISPOSITIONS = new Set([
   "fold-into-stardew-runtime",
   "diagnostic-only",
   "delete-obsolete",
+  "replace-and-delete",
 ]);
 const GOVERNED_PATH = /^tools\/(?:run|check|replay|prepare|restore)-stardew-[^/]+$/;
 const EXPECTED_CLOSURE = Object.freeze([
@@ -34,6 +35,7 @@ const EXPECTED_CLOSURE = Object.freeze([
   "tools/stardew-native-local-player-fixture.test.mjs",
   "tools/stardew-action-gate-descriptors.mjs",
   "tools/stardew-action-gate-descriptors.test.mjs",
+  "tools/lib/stardew-published-action-registry.mjs",
   "tools/resolve-stardew-action-gate-runner.mjs",
 ]);
 
@@ -77,6 +79,104 @@ function sortedUnique(paths) {
   return [...new Set(paths)].sort((a, b) => a.localeCompare(b));
 }
 
+const PROJECT_ROOT_SEGMENTS = Object.freeze(["tools", "host", "integrations", "packages", "protocol", "dialogue-web"]);
+const RESOLUTION_EXTENSIONS = Object.freeze([".mjs", ".js", ".cjs", ".ps1", ".json"]);
+
+function isProjectRootReference(reference) {
+  return PROJECT_ROOT_SEGMENTS.some((segment) => reference === segment || reference.startsWith(`${segment}/`));
+}
+
+function resolvePilotDependencyReference(reference, currentPath, expectedClosure, repositoryRoot, fileExists) {
+  if (typeof reference !== "string" || reference.length === 0 || reference.includes("\0")) fail("pilot_closure_dependency_malformed");
+  const normalizedReference = reference.replaceAll("\\", "/");
+  if (normalizedReference.includes("$") || normalizedReference.includes("`") || normalizedReference.includes("(") || normalizedReference.includes(")")) return null;
+  if (/^(?:[A-Za-z]:\/|\/)/.test(normalizedReference)) fail("pilot_closure_dependency_malformed");
+
+  let candidate;
+  if (normalizedReference.startsWith("./") || normalizedReference.startsWith("../")) {
+    candidate = path.posix.normalize(path.posix.join(path.posix.dirname(currentPath), normalizedReference));
+  } else if (isProjectRootReference(normalizedReference)) {
+    candidate = path.posix.normalize(normalizedReference);
+  } else {
+    return null;
+  }
+  if (candidate === "." || candidate === ".." || candidate.startsWith("../")) fail("pilot_closure_dependency_malformed");
+
+  const candidates = [candidate];
+  if (!path.posix.extname(candidate)) candidates.push(...RESOLUTION_EXTENSIONS.map((extension) => `${candidate}${extension}`));
+  const known = candidates.find((value) => expectedClosure.has(value));
+  if (known !== undefined) return known;
+  const existing = candidates.find((value) => fileExists(path.resolve(repositoryRoot, ...value.split("/"))));
+  return existing ?? candidate;
+}
+
+function readPilotClosureSource(repositoryRoot, relativePath, readFile) {
+  const absolutePath = path.resolve(repositoryRoot, ...relativePath.split("/"));
+  try {
+    const source = readFile(absolutePath, "utf8");
+    if (typeof source !== "string") fail("pilot_closure_dependency_malformed");
+    return source;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("stardew_action_tool_inventory_")) throw error;
+    fail("pilot_closure_dependency_unreadable");
+  }
+}
+
+function collectJavaScriptDependencies(source) {
+  const references = [];
+  const patterns = [
+    /\bimport\s+(?:[^"'();]*?\sfrom\s*)?(["'])([^"'\r\n]+)\1/g,
+    /\bexport\s+[^"'();]*?\sfrom\s*(["'])([^"'\r\n]+)\1/g,
+    /\brequire\s*\(\s*(["'])([^"'\r\n]+)\1\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) references.push(match[2]);
+  }
+  for (const match of source.matchAll(/\brequire\s*\(/g)) {
+    const remainder = source.slice(match.index + match[0].length);
+    if (!/^\s*(["'])[^"'\r\n]+\1\s*\)/.test(remainder)) fail("pilot_closure_dependency_malformed");
+  }
+  return references;
+}
+
+function collectPowerShellDependencies(source) {
+  const references = new Set();
+  const pathPattern = /^(?:(['"])([^'"\r\n]+?\.(?:mjs|cjs|js|ps1))\1|((?:[.]{1,2}[\\/]|(?:tools|host|integrations|packages|protocol|dialogue-web)[\\/])[^'"`;|&\s]+?\.(?:mjs|cjs|js|ps1)))/i;
+  for (const line of source.split(/\r?\n/)) {
+    for (const statement of line.split(";")) {
+      let candidate = statement.trim();
+      candidate = candidate.replace(/^&\s*/i, "");
+      candidate = candidate.replace(/^\.\s+/i, "");
+      candidate = candidate.replace(/^(?:node|pwsh|powershell)(?:\.exe)?\s+(?:-File\s+)?/i, "");
+      const match = pathPattern.exec(candidate);
+      if (match) references.add(match[2] ?? match[3]);
+    }
+  }
+  return [...references];
+}
+
+function validatePilotLegacyClosureDependencies(closure, repositoryRoot, { readFile, fileExists }) {
+  const expectedClosure = new Set(closure);
+  const queue = [...closure];
+  const visited = new Set();
+  while (queue.length > 0) {
+    const currentPath = queue.shift();
+    if (visited.has(currentPath)) continue;
+    visited.add(currentPath);
+    const source = readPilotClosureSource(repositoryRoot, currentPath, readFile);
+    const extension = path.posix.extname(currentPath).toLowerCase();
+    const references = extension === ".ps1" ? collectPowerShellDependencies(source) : collectJavaScriptDependencies(source);
+    for (const reference of references) {
+      const dependency = resolvePilotDependencyReference(reference, currentPath, expectedClosure, repositoryRoot, fileExists);
+      if (dependency === null) continue;
+      if (dependency.toLocaleLowerCase("en-US").startsWith("tools/") && !expectedClosure.has(dependency)) {
+        fail("pilot_closure_dependency_outside_frozen_closure");
+      }
+      if (expectedClosure.has(dependency) && !visited.has(dependency)) queue.push(dependency);
+    }
+  }
+}
+
 export function readTrackedGovernedPaths(repositoryRoot) {
   let output;
   try {
@@ -87,7 +187,7 @@ export function readTrackedGovernedPaths(repositoryRoot) {
   return output.split(/\r?\n/).filter((entry) => GOVERNED_PATH.test(entry)).sort((a, b) => a.localeCompare(b));
 }
 
-export function validateToolInventory(inventory, { trackedPaths, repositoryRoot } = {}) {
+export function validateToolInventory(inventory, { trackedPaths, repositoryRoot, readFile = readFileSync, fileExists = existsSync } = {}) {
   assertExactKeys(inventory, ALLOWED_TOP_LEVEL_KEYS, "invalid_top_level");
   if (inventory.schema !== SCHEMA || !Array.isArray(inventory.governedPatterns) || !Array.isArray(inventory.trackedPathBaseline) || !Array.isArray(inventory.entries) || !Array.isArray(inventory.pilotLegacyClosure)) {
     fail("invalid_schema");
@@ -112,6 +212,7 @@ export function validateToolInventory(inventory, { trackedPaths, repositoryRoot 
     assertExactKeys(entry, ALLOWED_ENTRY_KEYS, "invalid_entry");
     if (!GOVERNED_PATH.test(entry.path)) fail("entry_path_not_governed");
     assertSafePath(entry.path, "entry_path_unsafe");
+    if (!Object.hasOwn(entry, "futureProjectPath")) fail("future_project_path_required");
     assertSafePath(entry.futureProjectPath, "future_project_path_unsafe");
     if (!ALLOWED_CLASSIFICATIONS.has(entry.classification)) fail("classification_invalid");
     if (!ALLOWED_DISPOSITIONS.has(entry.disposition)) fail("disposition_invalid");
@@ -134,7 +235,8 @@ export function validateToolInventory(inventory, { trackedPaths, repositoryRoot 
   for (const entry of closure) assertSafePath(entry, "pilot_closure_path_unsafe");
   caseFoldedUnique(closure, "pilot_closure_duplicate");
   if (!sameSet(closure, EXPECTED_CLOSURE)) fail("pilot_closure_expanded_or_changed");
-  if (repositoryRoot && closure.some((entry) => !existsSync(path.join(repositoryRoot, entry)))) fail("pilot_closure_missing");
+  if (repositoryRoot && closure.some((entry) => !fileExists(path.join(repositoryRoot, entry)))) fail("pilot_closure_missing");
+  if (repositoryRoot) validatePilotLegacyClosureDependencies(closure, repositoryRoot, { readFile, fileExists });
 
   return Object.freeze({
     schema: SCHEMA,
