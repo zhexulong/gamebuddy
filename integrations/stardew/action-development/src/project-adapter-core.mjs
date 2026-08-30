@@ -127,7 +127,8 @@ function verifyReport(verifiedLiveReports, { manifest, invocation, report: candi
   });
 }
 
-async function runActionProjectWithRegistry({ manifest, invocation, dependencies }, registry, verifiedLiveReports) {
+async function runActionProjectWithRegistry({ manifest, invocation, dependencies }, registry, verifiedLiveReports, { allowDependencies = false } = {}) {
+  if (!allowDependencies && dependencies !== undefined) fail("dependency_override_forbidden");
   if (!manifest || manifest.gameId !== "stardew" || !invocation || typeof invocation.command !== "string") fail("invalid_invocation");
   if (!["check", "preflight", "run-live", "status"].includes(invocation.command)) fail("command_not_available");
   if (ACTION_BEARING_COMMANDS.has(invocation.command)) {
@@ -169,15 +170,24 @@ async function runActionProjectWithRegistry({ manifest, invocation, dependencies
   return report(invocation, "checked");
 }
 
-export function createProjectAdapter(registrations = ACTION_REGISTRY) {
-  const registry = registrations === ACTION_REGISTRY ? ACTION_REGISTRY : createActionRegistry(registrations);
+function createAdapterInstance(registry, { allowDependencies }) {
   const verifiedLiveReports = new WeakSet();
   return Object.freeze({
     runActionProject(input = {}) {
-      return runActionProjectWithRegistry(input, registry, verifiedLiveReports);
+      return runActionProjectWithRegistry(input, registry, verifiedLiveReports, { allowDependencies });
     },
     verifyActionProjectReport(input) {
       return verifyReport(verifiedLiveReports, input);
     },
   });
+}
+
+export function createProjectAdapter(registrations = ACTION_REGISTRY) {
+  const registry = registrations === ACTION_REGISTRY ? ACTION_REGISTRY : createActionRegistry(registrations);
+  return createAdapterInstance(registry, { allowDependencies: false });
+}
+
+export function createTestProjectAdapter(registrations = ACTION_REGISTRY) {
+  const registry = registrations === ACTION_REGISTRY ? ACTION_REGISTRY : createActionRegistry(registrations);
+  return createAdapterInstance(registry, { allowDependencies: true });
 }
