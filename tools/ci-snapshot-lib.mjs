@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
-import { chmod, constants, copyFile, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { chmod, constants, copyFile, lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, normalize, relative, resolve, sep } from "node:path";
 
 export const SNAPSHOT_SCHEMA = "gamebuddy-no-commit-clean-room-snapshot/v1";
 export const REQUIRED_INPUTS_SCHEMA = "gamebuddy-required-snapshot-inputs/v2";
@@ -436,103 +436,4 @@ export async function assertCanonicalDirectory(path, code) {
   const canonical = await realpath(path);
   if (normalize(canonical) !== normalize(resolve(path))) throw snapshotError(code);
   return canonical;
-}
-
-/**
- * Validate and, when necessary, create an output parent without traversing a
- * symlinked directory. The nearest existing ancestor is checked before mkdir;
- * this matters when the requested parent itself does not exist yet.
- */
-export async function prepareCanonicalOutputParent(outputPath, code = "output_root_invalid") {
-  const output = resolve(outputPath);
-  const parent = dirname(output);
-  let ancestor = parent;
-  while (true) {
-    try {
-      await lstat(ancestor);
-      break;
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-      const next = dirname(ancestor);
-      if (next === ancestor) throw snapshotError(code);
-      ancestor = next;
-    }
-  }
-  await assertCanonicalDirectory(ancestor, code);
-  await mkdir(parent, { recursive: true, mode: 0o700 });
-  await assertCanonicalDirectory(parent, code);
-  return Object.freeze({ output, parent });
-}
-
-/**
- * Reserve an output transaction in a private sibling directory. Callers must
- * commit it only after all evidence has been written and verified. The final
- * output is never visible in a partially-written state.
- */
-export async function prepareTransactionalOutput(outputPath, code = "output_root_invalid", { create = true } = {}) {
-  const prepared = await prepareCanonicalOutputParent(outputPath, code);
-  try {
-    await lstat(prepared.output);
-    throw snapshotError("output_exists");
-  } catch (error) {
-    if (error?.message === "ci_snapshot_output_exists") throw error;
-    if (error?.code !== "ENOENT") throw error;
-  }
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const temporary = join(prepared.parent, `.${basename(prepared.output)}.tmp-${process.pid}-${randomUUID()}`);
-    try {
-      if (create) {
-        await mkdir(temporary, { recursive: false, mode: 0o700 });
-        await assertCanonicalDirectory(temporary, code);
-      }
-      return Object.freeze({ ...prepared, temporary });
-    } catch (error) {
-      if (error?.code === "EEXIST") continue;
-      throw error;
-    }
-  }
-  throw snapshotError("temporary_output_unavailable");
-}
-
-/** Remove only a still-canonical directory at the exact tool-owned temp path. */
-export async function cleanupTransactionalOutput(transaction) {
-  if (!transaction?.temporary || !transaction?.parent) return;
-  try {
-    await assertCanonicalDirectory(transaction.parent, "output_root_invalid");
-    await assertCanonicalDirectory(transaction.temporary, "temporary_output_invalid");
-  } catch {
-    // Never recursively remove a path which was replaced by a symlink, file,
-    // or directory outside the prepared parent.
-    return;
-  }
-  await rm(transaction.temporary, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 });
-}
-
-export async function commitTransactionalOutput(transaction) {
-  // POSIX rename(2) replaces an existing empty directory, so the existence
-  // check below cannot provide a no-overwrite guarantee against a competing
-  // creator. Node does not expose a portable rename-no-replace directory
-  // primitive. The supported snapshot/release platform is therefore explicit:
-  // Windows MoveFileEx (via fs.rename) refuses an existing destination.
-  if (process.platform !== "win32") throw snapshotError("transactional_output_unsupported_platform");
-  await assertCanonicalDirectory(transaction.parent, "output_root_invalid");
-  await assertCanonicalDirectory(transaction.temporary, "temporary_output_invalid");
-  try {
-    await lstat(transaction.output);
-    throw snapshotError("output_exists");
-  } catch (error) {
-    if (error?.message === "ci_snapshot_output_exists") throw error;
-    if (error?.code !== "ENOENT") throw error;
-  }
-  try {
-    // On Windows this is the no-overwrite finalization boundary: if a
-    // competing destination appears after the lstat above, rename rejects it
-    // rather than replacing it. This is not a portable POSIX guarantee.
-    await rename(transaction.temporary, transaction.output);
-  } catch (error) {
-    if (error?.code === "EEXIST" || error?.code === "ENOTEMPTY" || error?.code === "EPERM")
-      throw snapshotError("output_exists");
-    throw error;
-  }
-  await assertCanonicalDirectory(transaction.output, "output_root_invalid");
 }

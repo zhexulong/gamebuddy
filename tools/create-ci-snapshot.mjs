@@ -3,12 +3,14 @@ import { writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  cleanupAtomicDirectory,
+  commitAtomicDirectory,
+  prepareAtomicDirectory,
+} from "@gamebuddy/game-action-devkit";
+import {
   assertCanonicalDirectory,
-  cleanupTransactionalOutput,
   collectUntrackedCandidates,
-  commitTransactionalOutput,
   createSourceManifest,
-  prepareTransactionalOutput,
   readRequiredInputs,
   SNAPSHOT_SCHEMA,
   sha256,
@@ -16,6 +18,7 @@ import {
 } from "./ci-snapshot-lib.mjs";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ATOMIC_DIRECTORY_CODE = "ci_snapshot";
 function fail(code) {
   throw new Error(`ci_snapshot_${code}`);
 }
@@ -65,14 +68,14 @@ export async function createCiSnapshot({ root = defaultRoot, outputRoot } = {}) 
   if (outputRoot === undefined) fail("create_usage");
   const destination = resolve(outputRoot);
   outside(sourceRoot, destination, "output_inside_source");
-  const transaction = await prepareTransactionalOutput(destination, "output_root_invalid");
+  const transaction = await prepareAtomicDirectory(destination, { code: ATOMIC_DIRECTORY_CODE });
   try {
     const inputs = await readRequiredInputs(sourceRoot);
     const source = await createSourceManifest(sourceRoot);
     const baseCommit = (await git(sourceRoot, ["rev-parse", "HEAD"])).toString("utf8").trim();
     if (!/^[0-9a-f]{40}$/.test(baseCommit)) fail("base_commit_invalid");
     const patch = await git(sourceRoot, ["diff", "--binary", "HEAD"]);
-    const patchPath = resolve(transaction.temporary, "tracked.patch");
+     const patchPath = resolve(transaction.stagingPath, "tracked.patch");
     await writeFile(patchPath, patch, { mode: 0o600, flag: "wx" });
     const report = await untrackedReport(sourceRoot, inputs);
     const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -85,13 +88,13 @@ export async function createCiSnapshot({ root = defaultRoot, outputRoot } = {}) 
       requiredInputs: inputs,
       source: Object.freeze({ digest: source.digest, entries: source.entries }),
     });
-    await writeSnapshotManifest(resolve(transaction.temporary, "snapshot-manifest.json"), manifest);
-    await writeFile(resolve(transaction.temporary, "untracked-input-report.json"), reportBytes, {
+     await writeSnapshotManifest(resolve(transaction.stagingPath, "snapshot-manifest.json"), manifest);
+     await writeFile(resolve(transaction.stagingPath, "untracked-input-report.json"), reportBytes, {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx",
     });
-    await commitTransactionalOutput(transaction);
+     await commitAtomicDirectory(transaction);
     return Object.freeze({
       manifest,
       report,
@@ -99,7 +102,7 @@ export async function createCiSnapshot({ root = defaultRoot, outputRoot } = {}) 
       patchPath: resolve(destination, "tracked.patch"),
     });
   } catch (error) {
-    await cleanupTransactionalOutput(transaction);
+     await cleanupAtomicDirectory(transaction, { recursive: true });
     throw error;
   }
 }
