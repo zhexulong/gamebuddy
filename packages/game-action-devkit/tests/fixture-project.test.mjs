@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  WORK_BRIEF_SCHEMA,
+  beginEvidenceRun,
+  checkWorkBriefOwnership,
+  finalizeEvidenceRun,
+  finalizeIncompleteEvidenceRun,
+  readEvidenceStatus,
+  readPassedEvidence,
+  runBoundedChild,
+  validateFrozenWorkBrief,
+} from "../src/index.mjs";
 import { parseGameActionArgs, runGameActionCli } from "../src/cli.mjs";
 import { readActionProjectManifest, runActionProject } from "../src/project-runner.mjs";
 
@@ -12,14 +24,38 @@ const execFile = promisify(execFileCallback);
 const fixtureRoot = fileURLToPath(new URL("./fixtures/project/", import.meta.url));
 const projectFile = path.join(fixtureRoot, "project.json");
 const profileFile = path.join(fixtureRoot, "profile.json");
+const profileSchemaFile = new URL("../schemas/game-action-profile-envelope.v1.schema.json", import.meta.url);
+const childFile = path.join(fixtureRoot, "child.mjs");
 const briefFile = "briefs/toggle_lamp.json";
 const binFile = fileURLToPath(new URL("../bin/game-action.mjs", import.meta.url));
+const fixtureBaseCommit = "a".repeat(40);
 
 async function fixtureFiles() {
   const entries = await readdir(fixtureRoot, { withFileTypes: true, recursive: true });
   return entries
     .filter((entry) => entry.isFile())
     .map((entry) => path.join(entry.parentPath ?? fixtureRoot, entry.name));
+}
+
+function assertFixtureProfileEnvelope(profile, schema, expectedGameId) {
+  const required = new Set(schema.required);
+  const keys = Object.keys(profile);
+  if (schema.additionalProperties !== false || keys.length !== required.size || keys.some((key) => !required.has(key))) {
+    throw new Error("fixture_profile_unexpected_root_property");
+  }
+  if (profile.schema !== schema.properties.schema.const) throw new Error("fixture_profile_schema_mismatch");
+  if (profile.gameId !== expectedGameId) throw new Error("fixture_profile_game_mismatch");
+  if (typeof profile.profileId !== "string" || !new RegExp(schema.$defs.identifier.pattern, "u").test(profile.profileId)) {
+    throw new Error("fixture_profile_invalid_profile_id");
+  }
+  if (!Number.isSafeInteger(profile.revision) || profile.revision < schema.properties.revision.minimum) {
+    throw new Error("fixture_profile_invalid_revision");
+  }
+  if (profile.payload === null || typeof profile.payload !== "object" || Array.isArray(profile.payload)
+    || Object.keys(profile.payload).length > schema.properties.payload.maxProperties) {
+    throw new Error("fixture_profile_invalid_payload");
+  }
+  return profile;
 }
 
 test("runs a non-production generic fixture through manifest, invocation, and CLI surfaces", async () => {
@@ -107,11 +143,82 @@ test("runs a non-production generic fixture through manifest, invocation, and CL
   );
 });
 
+test("runs fixture child supervision, records non-production evidence, and enforces brief ownership", async () => {
+  const child = await runBoundedChild({ command: process.execPath, args: [childFile], cwd: fixtureRoot, timeoutMs: 1000 });
+  assert.equal(child.code, 0);
+  assert.equal(child.signal, null);
+  assert.equal(child.output, "fixture-child-ok\n");
+  assert.ok(Buffer.byteLength(child.output, "utf8") < 64 * 1024);
+
+  const evidenceRoot = await mkdtemp(path.join(os.tmpdir(), "game-action-fixture-evidence-"));
+  try {
+    const relativeToFixture = path.relative(fixtureRoot, evidenceRoot);
+    assert.ok(relativeToFixture.startsWith("..") || path.isAbsolute(relativeToFixture));
+    const completeIdentity = { gameId: "clockwork_fixture", actionId: "toggle_lamp", runId: "fixture_complete" };
+    const incompleteIdentity = { gameId: "clockwork_fixture", actionId: "toggle_lamp", runId: "fixture_incomplete" };
+    await finalizeEvidenceRun(await beginEvidenceRun({ root: evidenceRoot, identity: completeIdentity }), {
+      status: "complete",
+      verdict: "passed",
+    });
+    await finalizeIncompleteEvidenceRun(await beginEvidenceRun({ root: evidenceRoot, identity: incompleteIdentity }), { verdict: "blocked" });
+    assert.equal((await readEvidenceStatus({ root: evidenceRoot, identity: completeIdentity })).verdict, "passed");
+    assert.equal((await readEvidenceStatus({ root: evidenceRoot, identity: incompleteIdentity })).verdict, "blocked");
+    assert.deepEqual((await readPassedEvidence({ root: evidenceRoot, identity: completeIdentity })).identity, completeIdentity);
+    await assert.rejects(readPassedEvidence({ root: evidenceRoot, identity: incompleteIdentity }), /bundle_not_passing/);
+  } finally {
+    await rm(evidenceRoot, { recursive: true, force: true });
+  }
+
+  const brief = {
+    schema: WORK_BRIEF_SCHEMA,
+    gameId: "clockwork_fixture",
+    actionId: "toggle_lamp",
+    baseCommit: fixtureBaseCommit,
+    contractVersion: 1,
+    status: "frozen",
+    effect: "mutation",
+    claimScope: "fixture_only",
+    ownedPaths: ["packages/game-action-devkit/tests/fixtures/project/**"],
+    sharedHubs: [],
+    requiredPortfolioEntries: [],
+    checks: ["fixture_child"],
+    liveAuthorized: false,
+  };
+  assert.equal(validateFrozenWorkBrief(brief, {
+    expectedGameId: "clockwork_fixture",
+    expectedActionId: "toggle_lamp",
+    expectedBaseCommit: fixtureBaseCommit,
+  }).gameId, "clockwork_fixture");
+  assert.deepEqual(checkWorkBriefOwnership(brief, ["packages/game-action-devkit/tests/fixtures/project/child.mjs"], {
+    expectedGameId: "clockwork_fixture",
+    expectedActionId: "toggle_lamp",
+    expectedBaseCommit: fixtureBaseCommit,
+  }), {
+    ownedPaths: ["packages/game-action-devkit/tests/fixtures/project/child.mjs"],
+    sharedHubPaths: [],
+  });
+  assert.throws(() => validateFrozenWorkBrief(brief, { expectedGameId: "wrong_fixture" }), /game_mismatch/);
+  assert.throws(() => checkWorkBriefOwnership(brief, ["packages/game-action-devkit/tests/fixture-project.test.mjs"]), /changed_path_unowned/);
+});
+
+test("accepts the fixture profile against the published envelope shape without a runtime validator", async () => {
+  const [profile, schema] = await Promise.all([
+    readFile(profileFile, "utf8").then(JSON.parse),
+    readFile(profileSchemaFile, "utf8").then(JSON.parse),
+  ]);
+  assert.equal(assertFixtureProfileEnvelope(profile, schema, "clockwork_fixture").gameId, "clockwork_fixture");
+  assert.throws(() => assertFixtureProfileEnvelope({ ...profile, unexpectedRootKey: true }, schema, "clockwork_fixture"), /unexpected_root_property/);
+  assert.throws(() => assertFixtureProfileEnvelope({ ...profile, gameId: "other_fixture" }, schema, "clockwork_fixture"), /game_mismatch/);
+});
+
 test("keeps the fixture generic and import-free", async () => {
   const files = await fixtureFiles();
   const source = await Promise.all(files.map(async (file) => [file, await readFile(file, "utf8")]));
   for (const [file, text] of source) {
     assert.doesNotMatch(text, /stardew/i, file);
-    assert.doesNotMatch(text, /(?:^|["'])\.\.\//u, file);
+    assert.doesNotMatch(text, /(?:^|[\s/"'`.:_-])(?:host|voice-gateway|dialogue-web)(?:$|[\s/"'`.:_-])/iu, file);
+    assert.doesNotMatch(text, /GameBuddy\.Windows/iu, file);
+    assert.doesNotMatch(text, /\.\.\//u, file);
+    assert.doesNotMatch(text, /(?:production|live|publication)\s*["']?\s*[:=]\s*true\b/iu, file);
   }
 });

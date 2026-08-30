@@ -1,5 +1,7 @@
 {
-  "schema": "generic-action-fixture-profile/v1",
+  "schema": "gamebuddy-action-profile-envelope/v1",
+  "gameId": "clockwork_fixture",
   "profileId": "default",
-  "production": false
+  "revision": 1,
+  "payload": {}
 }
