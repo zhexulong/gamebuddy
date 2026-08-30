@@ -1,7 +1,7 @@
 import { lstat, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { runBoundedChild } from "./test-supervisor.mjs";
+import { runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
 import { assertHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

@@ -2,7 +2,7 @@ import { access, cp, mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { resolveTypeScriptInvocation } from "./build-production-artifact.mjs";
-import { runBoundedChild } from "./test-supervisor.mjs";
+import { runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
 import { writeHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

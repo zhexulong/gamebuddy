@@ -6,7 +6,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { publishProductionArtifact, reachableProductionModules, readArtifactConfig, verifyWindowsReparseInspectorPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { buildWindowsReparseInspector, outputRoot as windowsReparseInspectorBuildRoot } from "./build-windows-reparse-inspector.mjs";
 import { buildWindowsStardewFolderPicker, outputRoot as windowsStardewFolderPickerBuildRoot } from "./build-windows-stardew-folder-picker.mjs";
-import { runBoundedChild } from "./test-supervisor.mjs";
+import { runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");

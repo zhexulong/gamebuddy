@@ -24,6 +24,7 @@
     "typebox": "1.1.38"
   },
   "devDependencies": {
+    "@gamebuddy/game-action-devkit": "workspace:*",
     "@types/node": "24.10.1",
     "ajv": "8.17.1",
     "typescript": "5.9.3"

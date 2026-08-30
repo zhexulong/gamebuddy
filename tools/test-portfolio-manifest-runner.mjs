@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
 import { readAndValidateTestPortfolioManifest } from "./test-portfolio-manifest.mjs";
 
 const manifestDefault = resolve(import.meta.dirname, "../.ci/test-portfolio-manifest.v1.json");
@@ -31,56 +31,6 @@ export async function gitNames(root, args) {
         : rejectOutput(new Error("portfolio_runner_git_failed")),
     );
   });
-}
-
-export function processTreeTerminationCommand(pid, platform = process.platform) {
-  if (!Number.isInteger(pid) || pid <= 0) fail("process_id_invalid");
-  return platform === "win32" ? { executable: "taskkill", args: ["/PID", String(pid), "/T", "/F"] } : null;
-}
-
-function waitForClose(child) {
-  return new Promise((resolveClose, rejectClose) => {
-    child.once("error", rejectClose);
-    child.once("close", (code, signal) => resolveClose({ code, signal }));
-  });
-}
-
-function ignoreMissingProcess(error) {
-  if (error?.code !== "ESRCH") throw error;
-}
-
-/**
- * Terminate the complete process tree without invoking a shell. POSIX children
- * are put in their own process group by execute(); Windows uses taskkill's
- * explicit tree switch because child.kill() only targets the direct child.
- */
-export async function terminateProcessTree(
-  child,
-  { platform = process.platform, spawnProcess = spawn, killProcess = process.kill, wait = delay, graceMs = 250 } = {},
-) {
-  if (!child?.pid) return;
-  const command = processTreeTerminationCommand(child.pid, platform);
-  if (command) {
-    const killer = spawnProcess(command.executable, command.args, {
-      shell: false,
-      windowsHide: true,
-      stdio: "ignore",
-    });
-    await waitForClose(killer);
-    return;
-  }
-
-  try {
-    killProcess(-child.pid, "SIGTERM");
-  } catch (error) {
-    ignoreMissingProcess(error);
-  }
-  await wait(graceMs);
-  try {
-    killProcess(-child.pid, "SIGKILL");
-  } catch (error) {
-    ignoreMissingProcess(error);
-  }
 }
 
 export function changedPathGitArgs(event) {
@@ -182,32 +132,20 @@ async function execute(entry) {
   let last;
   for (let attempt = 1; attempt <= entry.retryPolicy.maxAttempts; attempt += 1) {
     try {
-      await new Promise((resolveRun, rejectRun) => {
-        const child = spawn(executable, args, {
-          detached: process.platform !== "win32",
-          shell: false,
-          windowsHide: true,
-          stdio: "inherit",
-        });
-        let timedOut = false;
-        let termination;
-        const timer = setTimeout(() => {
-          timedOut = true;
-          termination = terminateProcessTree(child).catch(() => undefined);
-        }, entry.timeoutSeconds * 1000);
-        child.once("error", rejectRun);
-        child.once("close", async (code, signal) => {
-          clearTimeout(timer);
-          if (termination) await termination;
-          if (timedOut) rejectRun(new Error("timeout"));
-          else if (code !== 0) rejectRun(new Error(`exit_${code ?? signal}`));
-          else resolveRun();
-        });
+      await runBoundedChild({
+        command: executable,
+        args,
+        cwd: resolve(import.meta.dirname, ".."),
+        timeoutMs: entry.timeoutSeconds * 1000,
+        stdio: "inherit",
+        terminationPolicy: "term-then-kill",
       });
       return;
     } catch (error) {
       last = error;
-      if (attempt < entry.retryPolicy.maxAttempts) await delay(entry.retryPolicy.backoffSeconds * 1000);
+      if (attempt < entry.retryPolicy.maxAttempts) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, entry.retryPolicy.backoffSeconds * 1000));
+      }
     }
   }
   throw new Error(`${entry.id}:${last?.message ?? "failed"}`);
