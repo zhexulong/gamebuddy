@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { createProjectAdapter } from "../src/project-adapter-core.mjs";
+import { ACTION_REGISTRY } from "../src/action-registry.mjs";
+import { createTestProjectAdapter } from "../src/project-adapter-core.mjs";
 import { runActionProject as runProductionActionProject } from "../src/project-adapter.mjs";
 
 const projectDirectory = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -18,9 +19,9 @@ const schema = "gamebuddy-action-scenario-result/v1";
 
 async function runActionProject(input) {
   const registrations = input.dependencies?.__testOnlyActionRegistrations;
-  if (registrations === undefined) return runProductionActionProject(input);
+  if (input.dependencies === undefined) return runProductionActionProject(input);
   const dependencies = Object.freeze({ ...input.dependencies, __testOnlyActionRegistrations: undefined });
-  return await createProjectAdapter(registrations).runActionProject({ ...input, dependencies });
+  return await createTestProjectAdapter(registrations ?? ACTION_REGISTRY).runActionProject({ ...input, dependencies });
 }
 
 function syntheticRegistration(overrides = {}) {
@@ -102,14 +103,22 @@ test("converts action evidence status to a neutral bounded report", async () => 
   assert.deepEqual(report, expected(action, "status", { outcome: "available" }));
 });
 
-test("production adapter ignores caller-supplied action registrations and uses only its closure-owned registry", async () => {
+test("production adapter rejects all caller-supplied authority dependencies", async () => {
   await assert.rejects(
-    runProductionActionProject({
+    () => runProductionActionProject({
       manifest,
       invocation: { command: "check", actionId: "inspect_weather" },
       dependencies: { __testOnlyActionRegistrations: [syntheticRegistration()], calls: [] },
     }),
-    /action_not_available/,
+    /dependency_override_forbidden/,
+  );
+  await assert.rejects(
+    () => runProductionActionProject({
+      manifest,
+      invocation: { command: "check", actionId: "equip_tool" },
+      dependencies: { readGeneratedEquipToolContract: async () => Buffer.from("{}") },
+    }),
+    /dependency_override_forbidden/,
   );
 });
 
