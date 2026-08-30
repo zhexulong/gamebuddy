@@ -43,27 +43,18 @@ export type StardewLogicalActionRecoveryJournalOptions = Readonly<{
 
 export type StardewLogicalActionRecoveryJournalOpenOptions = Readonly<{
   directory: string;
-  ownerId: string;
-  epoch: number;
   scope?: Readonly<Record<string, unknown>>;
-  bindingIdentity?: Readonly<Record<string, unknown>>;
   maxRecords?: number;
   maxBytes?: number;
 }>;
 
 type Document = Readonly<{
   schemaVersion: 1;
-  ownerId: string;
-  epoch: number;
   scope?: Record<string, unknown>;
-  bindingIdentity?: Record<string, unknown>;
   records: StardewLogicalActionRecoveryRecord[];
 }>;
 
-type NormalizedOpenOptions = StardewLogicalActionRecoveryJournalOpenOptions & {
-  scope?: Readonly<Record<string, unknown>>;
-  bindingIdentity?: Readonly<Record<string, unknown>>;
-};
+type NormalizedOpenOptions = StardewLogicalActionRecoveryJournalOpenOptions;
 
 const FILE_NAME = "stardew-logical-action-recovery-journal.json";
 const DEFAULT_MAX_RECORDS = 256;
@@ -111,9 +102,7 @@ export class StardewLogicalActionRecoveryJournal {
     record: StardewLogicalActionRecoveryRecord,
   ) => void | StardewLogicalActionRecoveryRecord | Promise<void | StardewLogicalActionRecoveryRecord>;
   #scope?: Readonly<Record<string, unknown>>;
-  #bindingIdentity?: Readonly<Record<string, unknown>>;
-  #ownerId?: string;
-  #epoch?: number;
+  #scopeConfigured = false;
   #closed = false;
   #nextDispatchOrdinal = 1;
   #tail: Promise<void> = Promise.resolve();
@@ -148,11 +137,10 @@ export class StardewLogicalActionRecoveryJournal {
       { containmentRoot: normalized.directory },
     );
 
-    const journal = new StardewLogicalActionRecoveryJournal({ initialRecords: document!.records });
-    journal.#ownerId = normalized.ownerId;
-    journal.#epoch = normalized.epoch;
+    const journal = new StardewLogicalActionRecoveryJournal();
     journal.#scope = normalized.scope;
-    journal.#bindingIdentity = normalized.bindingIdentity;
+    journal.#scopeConfigured = true;
+    for (const record of document!.records) journal.#seed(record);
 
     journal.#write = async (record): Promise<StardewLogicalActionRecoveryRecord> => {
       let durableRecord: StardewLogicalActionRecoveryRecord | undefined;
@@ -269,13 +257,7 @@ export class StardewLogicalActionRecoveryJournal {
 
   #assertNew(record: StardewLogicalActionRecoveryRecord): void {
     assertRecord(record);
-    if (
-      this.#ownerId !== undefined &&
-      (record.ownerId !== this.#ownerId ||
-        record.epoch !== this.#epoch ||
-        !sameOptional(record.scope, this.#scope) ||
-        !sameOptional(record.bindingIdentity, this.#bindingIdentity))
-    ) {
+    if (this.#scopeConfigured && !sameOptional(record.scope, this.#scope)) {
       throw new Error("recovery_journal_scope_mismatch");
     }
     if (
@@ -334,19 +316,18 @@ function allowedTransition(from: StardewLogicalActionRecoveryState, to: StardewL
 }
 
 function normalizeOpenOptions(options: StardewLogicalActionRecoveryJournalOpenOptions): NormalizedOpenOptions {
-  if (!isRecord(options) || !validText(options.ownerId) || !Number.isSafeInteger(options.epoch) || options.epoch < 0) {
+  if (
+    !isRecord(options) ||
+    Object.keys(options).some((key) => !["directory", "scope", "maxRecords", "maxBytes"].includes(key))
+  ) {
     throw new Error("invalid_recovery_journal_scope");
   }
   if (options.scope !== undefined && (!isRecord(options.scope) || !isJsonSafe(options.scope))) {
     throw new Error("invalid_recovery_journal_scope");
   }
-  if (options.bindingIdentity !== undefined && (!isRecord(options.bindingIdentity) || !isJsonSafe(options.bindingIdentity))) {
-    throw new Error("invalid_recovery_journal_scope");
-  }
   return deepFreeze({
     ...options,
     ...(options.scope === undefined ? {} : { scope: canonicalize(options.scope) }),
-    ...(options.bindingIdentity === undefined ? {} : { bindingIdentity: canonicalize(options.bindingIdentity) }),
   }) as NormalizedOpenOptions;
 }
 
@@ -366,10 +347,7 @@ function assertBudget(maxRecords: number, maxBytes: number): void {
 function makeDocument(options: NormalizedOpenOptions, records: StardewLogicalActionRecoveryRecord[] = []): Document {
   return canonicalize({
     schemaVersion: 1,
-    ownerId: options.ownerId,
-    epoch: options.epoch,
     ...(options.scope === undefined ? {} : { scope: options.scope }),
-    ...(options.bindingIdentity === undefined ? {} : { bindingIdentity: options.bindingIdentity }),
     records,
   }) as Document;
 }
@@ -378,20 +356,11 @@ function validateDocument(value: unknown, options: NormalizedOpenOptions, maxRec
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
-    value.ownerId !== options.ownerId ||
-    value.epoch !== options.epoch ||
     !Array.isArray(value.records) ||
     value.records.length > maxRecords ||
+    !isOptionalJsonRecord(value.scope) ||
     !sameOptional(value.scope, options.scope) ||
-    !sameOptional(value.bindingIdentity, options.bindingIdentity) ||
-    !exactKeys(value, [
-      "schemaVersion",
-      "ownerId",
-      "epoch",
-      "records",
-      ...(options.scope === undefined ? [] : ["scope"]),
-      ...(options.bindingIdentity === undefined ? [] : ["bindingIdentity"]),
-    ])
+    !exactKeys(value, ["schemaVersion", "records", ...(options.scope === undefined ? [] : ["scope"])])
   ) {
     throw new Error("invalid_recovery_journal_document");
   }
@@ -404,10 +373,7 @@ function validateDocument(value: unknown, options: NormalizedOpenOptions, maxRec
     const record = item as StardewLogicalActionRecoveryRecord;
     assertRecord(record);
     if (
-      record.ownerId !== options.ownerId ||
-      record.epoch !== options.epoch ||
       !sameOptional(record.scope, options.scope) ||
-      !sameOptional(record.bindingIdentity, options.bindingIdentity) ||
       seenLogical.has(record.logicalActionId) ||
       seenRequest.has(record.requestId) ||
       seenIdempotency.has(record.idempotencyKey) ||
@@ -441,8 +407,8 @@ function assertRecord(record: StardewLogicalActionRecoveryRecord): void {
     !Number.isSafeInteger(record.expectedRevision) ||
     record.expectedRevision < 0 ||
     !Number.isFinite(record.deadlineMs) ||
-    !isJsonSafe(record.scope) ||
-    !isJsonSafe(record.bindingIdentity) ||
+    !isOptionalJsonRecord(record.scope) ||
+    !isOptionalJsonRecord(record.bindingIdentity) ||
     !isJsonSafe(record.canonicalRequest) ||
     !isJsonSafe(record.canonicalArgs) ||
     !STARDEW_LOGICAL_ACTION_RECOVERY_STATES.includes(record.state) ||
@@ -559,6 +525,10 @@ function isJsonSafe(value: unknown, ancestors = new Set<object>(), depth = 0): b
 
 function validText(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 128;
+}
+
+function isOptionalJsonRecord(value: unknown): value is Readonly<Record<string, unknown>> | undefined {
+  return value === undefined || (isRecord(value) && isJsonSafe(value));
 }
 
 function sameOptional(left: unknown, right: unknown): boolean {
