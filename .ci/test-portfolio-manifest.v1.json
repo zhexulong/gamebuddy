@@ -14,32 +14,6 @@
       "requiredOn": ["pull_request", "main"],
       "requires": [],
       "liveGate": "none"
-    },
-    {
-      "id": "p1.8-portfolio-isolation-static",
-      "riskId": "P1.8-R2",
-      "owner": "gamebuddy-ci",
-      "evidenceKind": "static",
-      "command": null,
-      "triggerPaths": ["tools/check-stardew-portfolio-isolation.mjs"],
-      "timeoutSeconds": null,
-      "retryPolicy": null,
-      "requiredOn": ["manual"],
-      "requires": [],
-      "liveGate": "none"
-    },
-    {
-      "id": "p1.8-live-environment-diagnostic",
-      "riskId": "P1.8-R3",
-      "owner": "gamebuddy-release",
-      "evidenceKind": "manual-diagnostic",
-      "command": null,
-      "triggerPaths": ["tools/check-stardew-portfolio-prerequisites.mjs"],
-      "timeoutSeconds": null,
-      "retryPolicy": null,
-      "requiredOn": ["manual"],
-      "requires": [],
-      "liveGate": "none"
     }
   ]
 }

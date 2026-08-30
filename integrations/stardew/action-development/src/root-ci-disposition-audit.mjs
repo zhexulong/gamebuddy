@@ -42,6 +42,10 @@ function occurrenceCount(text, value) {
   return text.split(value).length - 1;
 }
 
+function isStardewRootPortfolioEntry(entry) {
+  return /\bstardew\b/i.test(JSON.stringify(entry));
+}
+
 export async function auditRootStardewCiDisposition() {
   let workflowText;
   let rootPortfolio;
@@ -58,16 +62,24 @@ export async function auditRootStardewCiDisposition() {
     fail("inputs_unreadable");
   }
 
-  if (occurrenceCount(workflowText, PACKAGE_WORKFLOW_COMMAND) !== 1) fail("package_workflow_command_not_unique");
+  const workflowCommandOccurrences = occurrenceCount(workflowText, PACKAGE_WORKFLOW_COMMAND);
+  if (workflowCommandOccurrences !== 1) fail("package_workflow_command_not_unique");
   for (const command of RETIRED_WORKFLOW_COMMANDS) {
     if (workflowText.includes(command)) fail(`retired_workflow_command_present:${command}`);
   }
   for (const script of RETIRED_ROOT_SCRIPTS) {
     if (Object.hasOwn(rootPackage.scripts ?? {}, script)) fail(`retired_root_script_present:${script}`);
   }
-  if (rootPortfolio.entries?.some((entry) => entry?.id === RETIRED_ROOT_PORTFOLIO_ENTRY)) {
-    fail("retired_root_portfolio_entry_present");
+  for (const command of RETIRED_WORKFLOW_COMMANDS) {
+    if (Object.values(rootPackage.scripts ?? {}).some((script) => typeof script === "string" && script.includes(command))) {
+      fail(`retired_root_script_reference_present:${command}`);
+    }
   }
+
+  const rootPortfolioEntries = rootPortfolio.entries;
+  if (!Array.isArray(rootPortfolioEntries)) fail("root_portfolio_entries_invalid");
+  const stardewRootPortfolioEntries = rootPortfolioEntries.filter(isStardewRootPortfolioEntry);
+  if (stardewRootPortfolioEntries.length > 0) fail("stardew_root_portfolio_entries_present");
 
   const entryIds = packagePortfolio.entries?.map((entry) => entry?.id);
   if (JSON.stringify(entryIds) !== JSON.stringify(CANONICAL_PACKAGE_ENTRIES)) fail("package_portfolio_entries_invalid");
@@ -77,6 +89,8 @@ export async function auditRootStardewCiDisposition() {
     schema: "gamebuddy-stardew-root-ci-disposition-audit/v1",
     status: "package-owned",
     workflowCommand: PACKAGE_WORKFLOW_COMMAND,
+    workflowCommandOccurrences,
+    rootStardewPortfolioEntryCount: stardewRootPortfolioEntries.length,
     packageEntries: CANONICAL_PACKAGE_ENTRIES,
     retiredRootEdges: Object.freeze([
       ...RETIRED_ROOT_SCRIPTS,
