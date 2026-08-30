@@ -53,7 +53,7 @@ function proofMetadata({ runId, profile, proof, bundleDigest, cleanupComplete, l
   });
 }
 
-export async function runEquipToolLive({ manifest, invocation, dependencies } = {}) {
+async function runEquipToolLiveWithDependencies({ manifest, invocation, dependencies } = {}) {
   exactInvocation(invocation, { requireProfile: true, requireRunId: true });
   if (!manifest || manifest.gameId !== "stardew" || typeof manifest.evidenceRoot !== "string" || typeof manifest.baseDirectory !== "string") fail("manifest_invalid");
   const deps = {
@@ -164,6 +164,18 @@ export async function runEquipToolLive({ manifest, invocation, dependencies } = 
     } : {}),
   });
 }
+
+export async function runEquipToolLive({ manifest, invocation, dependencies } = {}) {
+  exactInvocation(invocation, { requireProfile: true, requireRunId: true });
+  if (!manifest || manifest.gameId !== "stardew" || typeof manifest.evidenceRoot !== "string" || typeof manifest.baseDirectory !== "string") fail("manifest_invalid");
+  if (dependencies !== undefined) fail("dependency_override_forbidden");
+  return runEquipToolLiveWithDependencies({ manifest, invocation });
+}
+
+/** Test-only composition seam; production callers must use runEquipToolLive. */
+export const __testOnly = Object.freeze({
+  runEquipToolLive: runEquipToolLiveWithDependencies,
+});
 
 export function verifyEquipToolReceiptEvidencePostcondition({ actionId, invocation, result } = {}) {
   if (actionId !== "equip_tool" || !invocation || typeof invocation.runId !== "string") fail("verification_input_invalid");

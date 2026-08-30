@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { writePrivateResultFile } from "@gamebuddy/game-action-devkit";
 import { runEquipToolLifecycle } from "../src/equip-tool-lifecycle.mjs";
-import { runEquipToolLive, readEquipToolLiveStatus } from "../src/equip-tool-live.mjs";
+import { __testOnly, runEquipToolLive, readEquipToolLiveStatus } from "../src/equip-tool-live.mjs";
 import { createImmutableReleaseBundleBinding } from "../src/immutable-release-bundle.mjs";
 
 const profile = Object.freeze({
@@ -81,12 +81,26 @@ function harness({ lifecycleFails = false, lifecycleFailureCode = "lifecycle fai
 }
 
 function invoke(runId, dependencies) {
-  return runEquipToolLive({
+  return __testOnly.runEquipToolLive({
     manifest: Object.freeze({ gameId: "stardew", baseDirectory: "C:\\project", evidenceRoot: "C:\\project\\artifacts\\action-runs" }),
     invocation: Object.freeze({ command: "run-live", actionId: "equip_tool", profileFile: "C:\\operator\\profile.json", runId }),
     dependencies,
   });
 }
+
+test("public production API rejects caller dependency overrides before fake lifecycle or finalization can pass", async () => {
+  const fake = harness();
+  await assert.rejects(
+    () => runEquipToolLive({
+      manifest: Object.freeze({ gameId: "stardew", baseDirectory: "C:\\project", evidenceRoot: "C:\\project\\artifacts\\action-runs" }),
+      invocation: Object.freeze({ command: "run-live", actionId: "equip_tool", profileFile: "C:\\operator\\profile.json", runId: "ar1_public_override" }),
+      dependencies: fake.value,
+    }),
+    /stardew_equip_tool_live_dependency_override_forbidden/,
+  );
+  assert.deepEqual(fake.order, []);
+  assert.deepEqual(fake.finalizations, []);
+});
 
 test("failure before evidence creation is bounded without raw dependency details", async () => {
   const fake = harness();
