@@ -42,9 +42,10 @@ const states = new WeakMap<object, FixedPairFacts>();
  * pair of the selected Host-TCB production generation. The generation
  * inventory must declare the exact pair with the verified construction origin;
  * without that deployment binding the published capability is unavailable. The
- * capability captures no unchecked native execution authority: Task 1 only
- * revalidates the complete pair and request, then remains unavailable. Native
- * execution is deliberately deferred until the Job/lease owner exists.
+ * capability captures no unchecked native execution authority. Task 1 has a
+ * separately verified resident native Job/lease owner, but this public adapter
+ * still only revalidates the complete pair and request, then remains unavailable
+ * until the native Desktop generation launcher predecessor owns that process.
  */
 export async function createPublishedWindowsStardewBootstrapGuardian(
   hostArtifactRoot: string,
@@ -63,9 +64,9 @@ export async function createPublishedWindowsStardewBootstrapGuardian(
  * guardian instance/epoch correlation; it never receives or exposes the
  * guardian lease locator, role Job names, or any public identity. Any unknown
  * or sensitive field (path, PID, token, bridge, lease substitution) is
- * rejected before any native authority can exist. In Task 1 no helper is
- * invoked and Job/spawn/lease behavior does not exist, so every admitted request reports
- * the fixed redacted `kept_unavailable` category.
+ * rejected before this public adapter can invoke any native authority. Task 1
+ * deliberately gives this adapter no resident-process launch seam, so every
+ * admitted request still reports the fixed redacted `kept_unavailable` category.
  */
 export async function armAttempt(
   capability: WindowsStardewBootstrapGuardianCapability,
@@ -115,7 +116,7 @@ type FixedPairFacts = Readonly<{
 /** Mints one capability over the canonical pair, capturing only facts that are
  * re-verified immediately before each operation. The digest is derived from the
  * pair bytes at mint time; the same synchronous verification runs for every
- * Task 1 operation before the fixed unavailable result is returned. */
+ * public-adapter operation before the fixed unavailable result is returned. */
 async function createFixedGuardian(
   pairRoot: string,
   root: string,

@@ -18,13 +18,21 @@ import type {
 } from "./stardew-player-host-process-owner.js";
 import { createStardewPrivateBootstrapComposition as createProductionComposition } from "./stardew-private-bootstrap-composer.internal.js";
 
-const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v2";
+const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v3";
+
+export type StardewGuardianBinding = Readonly<{
+  revision: string;
+  leaseName: string;
+  playerJobName: string;
+  aiJobName: string;
+}>;
 
 export type StardewExternalPlayerHostBootstrapOwnerRecord = Readonly<{
   schema: typeof OWNER_SCHEMA;
   bootstrapId: string;
   playerId: string;
   companionId: string;
+  guardian: StardewGuardianBinding;
   playerHost: Readonly<{ kind: "external_unattested" }>;
   aiClient: Readonly<{ kind: "launch_reserved"; launchGeneration: string }>;
   expiresAtMs: number;
@@ -38,6 +46,7 @@ export type StardewOwnedPlayerHostBootstrapOwnerRecord = Readonly<{
   bootstrapId: string;
   playerId: string;
   companionId: string;
+  guardian: StardewGuardianBinding;
   playerHost: Readonly<{ kind: "launch_reserved"; launchGeneration: string }>;
   aiClient: Readonly<{ kind: "launch_reserved"; launchGeneration: string }>;
   expiresAtMs: number;

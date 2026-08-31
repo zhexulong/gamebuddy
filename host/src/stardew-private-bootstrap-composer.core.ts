@@ -60,8 +60,9 @@ import {
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type {
   StardewAiClientLaunch,
-  StardewExternalPlayerHostBootstrapOwnerRecord,
-  StardewExternalPlayerHostPhaseAOwner,
+   StardewExternalPlayerHostBootstrapOwnerRecord,
+   StardewExternalPlayerHostPhaseAOwner,
+   StardewGuardianBinding,
   StardewOwnedPlayerHostBootstrapOwnerRecord,
   StardewOwnedPlayerHostPhaseAOwner,
   StardewPlayerHostLaunch,
@@ -69,7 +70,7 @@ import type {
   StardewPrivateBootstrapOwnerRecord,
 } from "./stardew-private-bootstrap-composer.js";
 
-const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v2";
+const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v3";
 const OWNER_FILE = "owner.json";
 const OWNER_LOCK_LEAF = pathLockPath(OWNER_FILE);
 const LAUNCH_GENERATION_ENVIRONMENT_VARIABLE = "GAMEBUDDY_STARDEW_LAUNCH_GENERATION";
@@ -162,6 +163,7 @@ type StardewPrivateBootstrapOwnerRecordBase = Readonly<{
   bootstrapId: string;
   playerId: string;
   companionId: string;
+  guardian: StardewGuardianBinding;
   aiClient: Readonly<{
     kind: "launch_reserved";
     launchGeneration: string;
@@ -177,8 +179,12 @@ export type StardewPrivateBootstrapCoreDependencies = Readonly<{
   rawProbe: StardewAiClientProcessProbe;
   rawPlayerHostSpawn: StardewPlayerHostProcessSpawn;
   rawPlayerHostProbe: StardewPlayerHostProcessProbe;
-  createBootstrapIdentity: () => string;
-  createLaunchGeneration: () => string;
+   createBootstrapIdentity: () => string;
+    createGuardianRevision: () => string;
+    createGuardianLeaseName: () => string;
+    createGuardianPlayerJobName: () => string;
+    createGuardianAiJobName: () => string;
+   createLaunchGeneration: () => string;
   createPlayerHostLaunchGeneration: () => string;
   createBridgePipeName: () => string;
   createBridgeToken: () => string;
@@ -276,8 +282,12 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
     rawProbe: productionProbe,
     rawPlayerHostSpawn: productionPlayerHostSpawn,
     rawPlayerHostProbe: productionPlayerHostProbe,
-    createBootstrapIdentity: randomUUID,
-    createLaunchGeneration: randomUUID,
+     createBootstrapIdentity: randomUUID,
+     createGuardianRevision: randomUUID,
+     createGuardianLeaseName: () => `Local\\GameBuddy-${randomUUID()}`,
+     createGuardianPlayerJobName: () => `Local\\GameBuddy-${randomUUID()}`,
+     createGuardianAiJobName: () => `Local\\GameBuddy-${randomUUID()}`,
+     createLaunchGeneration: randomUUID,
     createPlayerHostLaunchGeneration: randomUUID,
     createBridgePipeName: createPrivateBridgePipeName,
     createBridgeToken: createPrivateBridgeToken,
@@ -567,8 +577,9 @@ function createClosedComposition(
       try {
         durableOwner = await persistPrivateBootstrapOwner({
           runtimeRoot,
-          bootstrapFacts: claimRegistration.facts,
-          playerHost: { kind: "external_unattested" as const },
+           bootstrapFacts: claimRegistration.facts,
+           guardian: createGuardianBinding(dependencies),
+           playerHost: { kind: "external_unattested" as const },
           aiClientLaunchGeneration: aiLaunchRegistration.registration.launchGeneration,
           readClock: dependencies.nowMs,
         });
@@ -630,8 +641,9 @@ function createClosedComposition(
       try {
         durableOwner = await persistPrivateBootstrapOwner({
           runtimeRoot,
-          bootstrapFacts: claimRegistration.facts,
-          playerHost: {
+           bootstrapFacts: claimRegistration.facts,
+           guardian: createGuardianBinding(dependencies),
+           playerHost: {
             kind: "launch_reserved" as const,
             launchGeneration: playerHostLaunchRegistration.registration.launchGeneration,
           },
@@ -774,11 +786,12 @@ type DurableOwner = Readonly<{
   quarantine(): Promise<void>;
 }>;
 
-type PersistPrivateBootstrapOwnerInput<TPlayerHost extends StardewPrivateBootstrapOwnerRecord["playerHost"]> =
+   type PersistPrivateBootstrapOwnerInput<TPlayerHost extends StardewPrivateBootstrapOwnerRecord["playerHost"]> =
   Readonly<{
     runtimeRoot: string;
-    bootstrapFacts: StardewPrivateBootstrapFacts;
-    playerHost: TPlayerHost;
+     bootstrapFacts: StardewPrivateBootstrapFacts;
+     guardian: StardewGuardianBinding;
+     playerHost: TPlayerHost;
     aiClientLaunchGeneration: string;
     readClock: () => number;
   }>;
@@ -824,8 +837,9 @@ async function persistPrivateBootstrapOwner(
         schema: OWNER_SCHEMA as typeof OWNER_SCHEMA,
         bootstrapId: input.bootstrapFacts.bootstrapId,
         playerId: input.bootstrapFacts.playerId,
-        companionId: input.bootstrapFacts.companionId,
-        aiClient: {
+         companionId: input.bootstrapFacts.companionId,
+         guardian: input.guardian,
+         aiClient: {
           kind: "launch_reserved" as const,
           launchGeneration: input.aiClientLaunchGeneration,
         },
@@ -2686,6 +2700,47 @@ async function readDirectoryIfPresent(path: string, root: string): Promise<reado
   }
 }
 
+function createGuardianBinding(dependencies: StardewPrivateBootstrapCoreDependencies): StardewGuardianBinding {
+  const binding = {
+    revision: dependencies.createGuardianRevision(),
+    leaseName: dependencies.createGuardianLeaseName(),
+    playerJobName: dependencies.createGuardianPlayerJobName(),
+    aiJobName: dependencies.createGuardianAiJobName(),
+  };
+  if (!isOpaque(binding.revision) || !isGuardianName(binding.leaseName) || !isGuardianName(binding.playerJobName) || !isGuardianName(binding.aiJobName) ||
+      new Set([binding.leaseName, binding.playerJobName, binding.aiJobName]).size !== 3) throw new Error("invalid_stardew_guardian_binding");
+  return Object.freeze(binding);
+}
+
+export type StardewGuardianArmBindingRead = Readonly<{
+  ownerPath: string;
+  containmentRoot: string;
+  bootstrapId: string;
+  playerId: string;
+  companionId: string;
+  expectedRevision: string;
+  nowMs: number;
+}>;
+
+/** Composition-private projection of the sole strict owner record. */
+export async function readStardewGuardianArmBinding(
+  input: StardewGuardianArmBindingRead,
+): Promise<StardewGuardianBinding> {
+  const owner = await readAndValidateOwner(input.ownerPath, input.containmentRoot);
+  if (
+    owner.bootstrapId !== input.bootstrapId ||
+    owner.playerId !== input.playerId ||
+    owner.companionId !== input.companionId ||
+    owner.guardian.revision !== input.expectedRevision ||
+    owner.expiresAtMs <= input.nowMs ||
+    owner.state !== "reserved" ||
+    owner.cleanupDisposition !== "pending" ||
+    owner.managedPaths.length !== 1 ||
+    owner.managedPaths[0] !== OWNER_FILE
+  ) throw new Error("stardew_bootstrap_guardian_arm_binding_mismatch");
+  return Object.freeze({ ...owner.guardian });
+}
+
 async function readAndValidateOwner(
   path: string,
   root: string,
@@ -2700,8 +2755,9 @@ async function readAndValidateOwner(
       "schema",
       "bootstrapId",
       "playerId",
-      "companionId",
-      "playerHost",
+       "companionId",
+       "guardian",
+       "playerHost",
       "aiClient",
       "expiresAtMs",
       "state",
@@ -2711,8 +2767,9 @@ async function readAndValidateOwner(
     value.schema !== OWNER_SCHEMA ||
     !isOpaque(value.bootstrapId) ||
     !isOpaque(value.playerId) ||
-    !isOpaque(value.companionId) ||
-    (!isExternalPlayerHost(value.playerHost) && !isReservedPlayerHost(value.playerHost)) ||
+     !isOpaque(value.companionId) ||
+     !isGuardianBinding(value.guardian) ||
+     (!isExternalPlayerHost(value.playerHost) && !isReservedPlayerHost(value.playerHost)) ||
     !isReservedAiClient(value.aiClient) ||
     !Number.isSafeInteger(value.expiresAtMs) ||
     (value.state !== "reserved" && value.state !== "quarantined") ||
@@ -2756,8 +2813,9 @@ function validateTestingDependencies(value: StardewPrivateBootstrapCoreDependenc
     throw new TypeError("invalid_stardew_private_bootstrap_testing_dependencies");
   const optionalKeys = value.staging === undefined ? [] : ["staging"];
   if (!exactKeys(value, [
-        "rawSpawn", "rawProbe", "rawPlayerHostSpawn", "rawPlayerHostProbe",
-        "createBootstrapIdentity", "createLaunchGeneration", "createPlayerHostLaunchGeneration",
+         "rawSpawn", "rawProbe", "rawPlayerHostSpawn", "rawPlayerHostProbe",
+         "createBootstrapIdentity", "createGuardianRevision", "createGuardianLeaseName", "createGuardianPlayerJobName", "createGuardianAiJobName",
+         "createLaunchGeneration", "createPlayerHostLaunchGeneration",
         "createBridgePipeName", "createBridgeToken", "nowMs",
         ...optionalKeys,
       ]) ||
@@ -2765,8 +2823,12 @@ function validateTestingDependencies(value: StardewPrivateBootstrapCoreDependenc
       typeof value.rawProbe !== "function" ||
       typeof value.rawPlayerHostSpawn !== "function" ||
       typeof value.rawPlayerHostProbe !== "function" ||
-      typeof value.createBootstrapIdentity !== "function" ||
-      typeof value.createLaunchGeneration !== "function" ||
+       typeof value.createBootstrapIdentity !== "function" ||
+        typeof value.createGuardianRevision !== "function" ||
+        typeof value.createGuardianLeaseName !== "function" ||
+        typeof value.createGuardianPlayerJobName !== "function" ||
+        typeof value.createGuardianAiJobName !== "function" ||
+       typeof value.createLaunchGeneration !== "function" ||
       typeof value.createPlayerHostLaunchGeneration !== "function" ||
       typeof value.createBridgePipeName !== "function" ||
       typeof value.createBridgeToken !== "function" ||
@@ -2799,6 +2861,16 @@ function isManagedPathSet(value: unknown): value is readonly string[] {
 
 function isExternalPlayerHost(value: unknown): boolean {
   return isRecord(value) && exactKeys(value, ["kind"]) && value.kind === "external_unattested";
+}
+
+function isGuardianBinding(value: unknown): value is StardewGuardianBinding {
+  return isRecord(value) && exactKeys(value, ["revision", "leaseName", "playerJobName", "aiJobName"]) &&
+    isOpaque(value.revision) && isGuardianName(value.leaseName) && isGuardianName(value.playerJobName) && isGuardianName(value.aiJobName) &&
+    new Set([value.leaseName, value.playerJobName, value.aiJobName]).size === 3;
+}
+
+function isGuardianName(value: unknown): value is string {
+  return typeof value === "string" && /^Local\\[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
 function isReservedPlayerHost(value: unknown): boolean {
@@ -2836,6 +2908,7 @@ function freezeBootstrapFacts(facts: Readonly<{
 function freezeRecord<T extends StardewPrivateBootstrapOwnerRecord>(value: T): T {
   return Object.freeze({
     ...value,
+    guardian: Object.freeze({ ...value.guardian }),
     playerHost: Object.freeze({ ...value.playerHost }),
     aiClient: Object.freeze({ ...value.aiClient }),
     managedPaths: Object.freeze([...value.managedPaths]),
