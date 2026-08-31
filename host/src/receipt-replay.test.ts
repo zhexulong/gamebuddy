@@ -8,7 +8,7 @@ function receipt(
   revision: number,
   evidence: ExecutionReceipt["evidence"] = { detail: state },
 ): ExecutionReceipt {
-  return { executionId: "execution_01", requestId: "request_01", state, reasonCode: state, revision, evidence };
+  return { executionId: "execution_01", requestId: "request_01", actionId: "move_to_tile", state, reasonCode: state, revision, evidence };
 }
 
 test("receipt replay accepts authoritative terminal paths with monotonic revisions", () => {
