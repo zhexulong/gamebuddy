@@ -1,6 +1,6 @@
 import type { WorldFact } from "./event-pump.js";
-import { assertIntegrationModule, type GameIntegrationModule } from "./integration-module.js";
-import type { IntegrationConnection } from "./integration-types.js";
+import { assertIntegrationAdapter, type GameIntegrationAdapter } from "./game-integration-adapter.js";
+import type { GameConnection } from "./game-connection.js";
 import type { CompanionIdentity } from "./runtime.js";
 
 /**
@@ -43,10 +43,6 @@ export type ExecutionWakeSource = Readonly<{
   onExecutionWake(listener: (wake: ExecutionWake) => void): () => void;
 }>;
 
-export type WakeCapableIntegrationConnection = Readonly<{
-  executionWakeSource?: ExecutionWakeSource;
-}>;
-
 export type IntegrationEventSource = Readonly<{
   onFact(listener: (fact: WorldFact) => void): () => void;
   onLifecycle(listener: (event: IntegrationLifecycleEvent) => void): () => void;
@@ -56,7 +52,7 @@ export type IntegrationEventSource = Readonly<{
 
 /** The result of one explicit user-requested integration launch. */
 export type IntegrationLaunchHandle = Readonly<{
-  connection: IntegrationConnection;
+  connection: GameConnection;
   /**
    * Adapter-owned optional presentation capability. Generic Host code treats
    * this as opaque; an integration-specific composition must validate it
@@ -66,7 +62,7 @@ export type IntegrationLaunchHandle = Readonly<{
   /**
    * Adapter-owned optional narrow read-only recovery capability bound to this
    * exact authenticated launch. It is deliberately NOT exposed on
-   * IntegrationConnection; an integration-specific composition must validate
+   * GameConnection; an integration-specific composition must validate
    * it before running one bounded exact-receipt recovery pass. It never
    * reissues an action request.
    */
@@ -87,7 +83,7 @@ export type IntegrationLaunchHandle = Readonly<{
  */
 export type IntegrationLauncher = Readonly<{
   integrationId: string;
-  module: GameIntegrationModule;
+  module: GameIntegrationAdapter;
   launch(request: Readonly<{ identity: CompanionIdentity; config: unknown }>): Promise<IntegrationLaunchHandle>;
 }>;
 
@@ -120,7 +116,7 @@ export function assertReceiptBackedLaunch(
   ) {
     throw new Error("receipt_backed_integration_launch_required");
   }
-  assertIntegrationModule(launcher.module, launcher.integrationId);
+  assertIntegrationAdapter(launcher.module, launcher.integrationId);
   const actorId = launcher.module.actorId(handle.connection);
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(actorId))
     throw new Error("receipt_backed_integration_actor_required");

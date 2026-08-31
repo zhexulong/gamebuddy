@@ -11,9 +11,9 @@ import {
   type IntegrationLaunchHandle,
   RECEIPT_BACKED_INTEGRATION_AUTHORITY,
 } from "./integration-launcher.js";
-import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
-import type { IntegrationConnection } from "./integration-types.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
+import type { GameConnection } from "./game-connection.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const identity = { playerId: "player_01", companionId: "companion_01", saveId: "save_01", worldId: "world_01" };
 const snapshot: WorldFact = {
@@ -24,7 +24,7 @@ const snapshot: WorldFact = {
   payload: { zone: "alpha" },
 };
 
-function module(): GameIntegrationModule {
+function module(): GameIntegrationAdapter {
   const catalog = createIntegrationActionCatalog(
     [
       {
@@ -54,8 +54,9 @@ function module(): GameIntegrationModule {
       details: {
         receiptJson: JSON.stringify({
           requestId: "fixture_request",
-          executionId: "fixture_execution",
-          state: "succeeded",
+        executionId: "fixture_execution",
+        actionId: "activate_console",
+        state: "succeeded",
           reasonCode: "console_activated",
           evidence: { postcondition: "active" },
         }),
@@ -94,6 +95,7 @@ function module(): GameIntegrationModule {
     status: (connection) => ({
       connected: (connection.state as { connected: boolean }).connected,
       capabilities: ["activate_console"],
+      capabilityRevision: 1,
       snapshotRevision: 3,
       latestReceiptState: null,
       latestReasonCode: null,
@@ -107,7 +109,9 @@ function module(): GameIntegrationModule {
         familyId: "interaction",
         identityVersion: 1,
         lifecycle: "published" as const,
+        kind: "execution" as const,
       }],
+      capabilityRevision: 1,
       snapshotRevision: 3,
       activeExecution: null,
       latestReceipt: null,
@@ -120,6 +124,7 @@ function module(): GameIntegrationModule {
       const receipt = JSON.parse(receiptJson) as {
         requestId: string;
         executionId: string;
+        actionId: string;
         state: string;
         reasonCode: string;
         evidence: Record<string, unknown>;
@@ -136,7 +141,7 @@ function receiptBackedHandle(overrides: Partial<IntegrationLaunchHandle> = {}): 
   handle: IntegrationLaunchHandle;
 } {
   const integrationModule = module();
-  const connection: IntegrationConnection = {
+  const connection: GameConnection = {
     scope: { integrationId: "test-arcade" },
     module: integrationModule,
     state: { connected: true },
@@ -211,7 +216,7 @@ test("receipt-backed launcher rejects capability strings without authenticated r
   const { launcher, handle } = receiptBackedHandle();
   const moduleWithoutRegistrations = {
     ...launcher.module,
-    readState: (connection: IntegrationConnection) => ({
+    readState: (connection: GameConnection) => ({
       ...launcher.module.readState(connection),
       registrations: [],
     }),
@@ -228,11 +233,11 @@ test("receipt-backed launcher rejects capability strings without authenticated r
 
 test("Stardew launch validates catalog/live capability/policy without materializing executable tools", () => {
   let createToolSetCalls = 0;
-  const module: GameIntegrationModule = {
-    ...STARDEW_INTEGRATION_MODULE,
+  const module: GameIntegrationAdapter = {
+    ...STARDEW_GAME_INTEGRATION_ADAPTER,
     createToolSet: (context) => {
       createToolSetCalls++;
-      return STARDEW_INTEGRATION_MODULE.createToolSet(context);
+      return STARDEW_GAME_INTEGRATION_ADAPTER.createToolSet(context);
     },
   };
   const stardewIdentity = {
@@ -241,7 +246,7 @@ test("Stardew launch validates catalog/live capability/policy without materializ
     saveId: "save_01",
     worldId: "world_01",
   };
-  const connection: IntegrationConnection = {
+  const connection: GameConnection = {
     scope: {
       integrationId: "stardew",
       saveId: stardewIdentity.saveId,
