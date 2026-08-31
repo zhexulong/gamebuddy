@@ -192,6 +192,16 @@ test("fixture contains only schema, natural language task, target facts, and env
   assert.equal(fixture.environment.platform, "windows");
 });
 
+test("Task 0 current owner keeps the transitional direct route blocked on both predecessors", async () => {
+  const owner = await readFile(new URL("../design/domains/stardew/integration.md", import.meta.url), "utf8");
+
+  assert.match(owner, /直接 `pipeName`\/`bridgeToken` attach 是待移除的过渡 operator 路径/);
+  assert.match(owner, /当前产品路径仍缺少可跨进程重启安全消费的 installation registration 和 bootstrap containment/);
+  assert.match(owner, /headless operational gate 与完整玩家启动路径继续 blocked/);
+  assert.match(owner, /当前实现仍使用进程内 Node owner/);
+  assert.match(owner, /installation registration、guardian containment[\s\S]*均未闭合/);
+});
+
 test("runner source uses the production launcher-owned manifest and fresh STOP composition", async () => {
   const source = await readFile(new URL("./run-game-operational-gate.mjs", import.meta.url), "utf8");
   const launcher = await readFile(new URL("../host/scripts/start-production-artifact.mjs", import.meta.url), "utf8");
