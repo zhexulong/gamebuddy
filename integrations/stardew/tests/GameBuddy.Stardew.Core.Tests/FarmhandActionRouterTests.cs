@@ -9,12 +9,30 @@ namespace GameBuddy.Stardew.Core.Tests;
 
 public sealed class FarmhandActionRouterTests
 {
-    private sealed class StubLedger : IExecutionLedger
+    private sealed class StubLedger : IExecutionLedger, IDispatchExecutionLedger
     {
         private readonly Dictionary<string, LocalExecutionReceipt> receipts = new(StringComparer.Ordinal);
         public long CurrentRevision { get; set; } = 1;
         public bool IsBodyBusy { get; set; }
         public string? BoundActionId { get; private set; }
+        public string? BoundExecutionId { get; private set; }
+        public bool TryBindDispatch(string requestId, string actionId, string executionId, out string reasonCode)
+        {
+            if (BoundExecutionId is not null)
+            {
+                reasonCode = "execution_identity_conflict";
+                return false;
+            }
+            BoundActionId = actionId;
+            BoundExecutionId = executionId;
+            reasonCode = "bound";
+            return true;
+        }
+        public bool TryGetBoundExecutionId(string requestId, out string executionId)
+        {
+            executionId = BoundExecutionId!;
+            return BoundExecutionId is not null;
+        }
         public bool TryGetExistingReceipt(string requestId, out LocalExecutionReceipt receipt) => this.receipts.TryGetValue(requestId, out receipt!);
         public void BindAction(string requestId, string actionId) => this.BoundActionId = actionId;
         public LocalExecutionReceipt Remember(LocalExecutionReceipt receipt) => this.receipts[receipt.RequestId] = receipt;
@@ -29,8 +47,14 @@ public sealed class FarmhandActionRouterTests
 
     private sealed class StubActionHandler : IFarmhandActionHandler
     {
-        public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger) =>
-            ledger.RememberTerminal(request.RequestId, "exec_123", ExecutionState.Succeeded, "test_succeeded", null);
+        public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
+        {
+            string executionId = ledger is IDispatchExecutionLedger dispatchLedger
+                && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
+                ? boundExecutionId
+                : "exec_123";
+            return ledger.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "test_succeeded", null);
+        }
     }
 
     [Fact]
@@ -54,6 +78,22 @@ public sealed class FarmhandActionRouterTests
         reasonCode.Should().Be("accepted");
         receipt.State.Should().Be(ExecutionState.Succeeded);
         ledger.BoundActionId.Should().Be("navigate_to_destination");
+    }
+
+    [Fact]
+    public void TryRoute_WithDispatchExecutionId_BindsIdentityBeforeHandlerRuns()
+    {
+        var router = new FarmhandActionRouter();
+        router.Register(TestRegistration("till_soil"), new StubActionHandler());
+        var ledger = new StubLedger();
+        var request = new BridgeExecutionRequest("req_bound", "idemp_bound", "till_soil", new BridgeExecutionArgs { X = 10, Y = 20 }, 1, 5000);
+
+        bool routed = router.TryRoute(request, ledger, "exec_bound", out LocalExecutionReceipt receipt, out string reasonCode);
+
+        routed.Should().BeTrue(reasonCode);
+        reasonCode.Should().Be("accepted");
+        ledger.BoundExecutionId.Should().Be("exec_bound");
+        receipt.ExecutionId.Should().Be("exec_bound");
     }
 
     [Fact]
@@ -99,6 +139,23 @@ public sealed class FarmhandActionRouterTests
         routed.Should().BeTrue();
         reasonCode.Should().Be("replayed_existing_receipt");
         receipt.Should().BeSameAs(cachedReceipt);
+    }
+
+    [Fact]
+    public void TryRoute_ReplayWithDifferentDispatchExecutionId_FailsClosed()
+    {
+        var router = new FarmhandActionRouter();
+        var handler = new StubActionHandler();
+        router.Register(TestRegistration("till_soil"), handler);
+        var ledger = new StubLedger();
+        var request = new BridgeExecutionRequest("req_replay", "idemp_replay", "till_soil", new BridgeExecutionArgs(), 1, 5000);
+
+        router.TryRoute(request, ledger, "exec_first", out _, out _).Should().BeTrue();
+        bool replayed = router.TryRoute(request, ledger, "exec_other", out _, out string reasonCode);
+
+        replayed.Should().BeFalse();
+        reasonCode.Should().Be("execution_identity_conflict");
+        ledger.BoundExecutionId.Should().Be("exec_first");
     }
 
     [Fact]

@@ -335,6 +335,7 @@ export type ExecutionRequest = Readonly<{
   idempotencyKey: string;
   action:
     | "move_to_tile"
+    | "navigate_to_destination"
     | "equip_tool"
     | "travel"
     | "enter_exit"
@@ -440,6 +441,8 @@ export type NavigationReadResult =
 export type ExecutionReceipt = Readonly<{
   executionId: string;
   requestId: string;
+  /** Exact Mod-authored action lineage; Host must never infer it from tool context. */
+  actionId: string;
   state: ExecutionState;
   reasonCode: string;
   revision: number;
@@ -674,6 +677,7 @@ const SNAPSHOT_KEYS = [
 
 const EXECUTION_ACTION_ARGUMENT_KEYS: Readonly<Record<ExecutionRequest["action"], readonly string[]>> = {
   move_to_tile: ["x", "y"],
+  navigate_to_destination: ["destination"],
   equip_tool: ["slot"],
   travel: ["x", "y"],
   enter_exit: ["x", "y"],
@@ -968,6 +972,13 @@ function validateNavigationReadResult(value: Record<string, unknown>): string | 
     ? null : "invalid_navigation_read_result";
 }
 
+function isExecutionNavigationDestinationSelector(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  return value.kind === "label"
+    ? hasExactKeys(value, ["kind", "label"]) && isBoundedNonEmptyString(value.label, 128)
+    : value.kind === "ref" && hasExactKeys(value, ["kind", "ref"]) && typeof value.ref === "string" && /^dr1_[A-Za-z0-9_-]{21}[AQgw]$/.test(value.ref);
+}
+
 function isNavigationSelector(value: unknown): value is NavigationSelector {
   if (!isRecord(value) || !hasExactKeys(value, ["kind", "label", "ref"])) return false;
   return value.kind === "label"
@@ -1003,6 +1014,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (!isOpaqueId(value.requestId) || !isOpaqueId(value.idempotencyKey)) return "invalid_request_id";
   if (
     value.action !== "move_to_tile" &&
+    value.action !== "navigate_to_destination" &&
     value.action !== "equip_tool" &&
     value.action !== "travel" &&
     value.action !== "enter_exit" &&
@@ -1048,6 +1060,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
   if (value.action === "move_to_tile") {
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_target_tile";
+  } else if (value.action === "navigate_to_destination") {
+    if (!isExecutionNavigationDestinationSelector(value.args.destination)) return "invalid_navigation_destination";
   } else if (value.action === "equip_tool") {
     if (!isToolSlot(value.args.slot)) return "invalid_tool_slot";
   } else if (value.action === "travel") {
@@ -1637,6 +1651,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     isOpaqueId(value.requestId) &&
     isOpaqueId(value.idempotencyKey) &&
     (value.action === "move_to_tile" ||
+      value.action === "navigate_to_destination" ||
       value.action === "equip_tool" ||
       value.action === "travel" ||
       value.action === "enter_exit" ||
@@ -1674,9 +1689,11 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["executionId", "requestId", "state", "reasonCode", "revision", "evidence"]) &&
+  return hasExactKeys(value, ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"]) &&
     isOpaqueId(value.executionId) &&
     isOpaqueId(value.requestId) &&
+    typeof value.actionId === "string" &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(value.actionId) &&
     typeof value.state === "string" &&
     EXECUTION_STATES.includes(value.state as ExecutionState) &&
     isReasonCode(value.reasonCode) &&

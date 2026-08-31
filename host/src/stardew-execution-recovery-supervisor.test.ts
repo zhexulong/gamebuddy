@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createActionExecutionCoordinator } from "./action-execution-coordinator.internal.js";
-import type { IntegrationConnection } from "./integration-types.js";
+import type { GameConnection } from "./game-connection.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import type { ExecutionReceipt } from "./protocol.js";
 import {
   isExactReceiptRecoveryPort,
@@ -12,6 +13,7 @@ function receipt(state: ExecutionReceipt["state"]): ExecutionReceipt {
   return {
     requestId: "request_recovery_01",
     executionId: "execution_recovery_01",
+    actionId: "till_soil",
     state,
     reasonCode: state === "succeeded" ? "soil_tilled" : "accepted",
     revision: state === "succeeded" ? 2 : 1,
@@ -20,11 +22,14 @@ function receipt(state: ExecutionReceipt["state"]): ExecutionReceipt {
 }
 
 function coordinatorFixture() {
-  const connection = {
-    module: {
+  const connection: GameConnection = Object.freeze({
+    scope: Object.freeze({ integrationId: "stardew" }),
+    module: Object.freeze({
+      ...STARDEW_GAME_INTEGRATION_ADAPTER,
       cancelExecution: async () => receipt("cancelled"),
-    },
-  } as unknown as IntegrationConnection;
+    }),
+    state: Object.freeze({}),
+  });
   return createActionExecutionCoordinator(connection);
 }
 

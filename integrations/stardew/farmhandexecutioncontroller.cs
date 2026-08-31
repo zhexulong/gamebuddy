@@ -16,7 +16,7 @@ namespace GameBuddy.Stardew;
 /// native Game1.player and replays a request's current receipt on duplicates;
 /// it never starts a second body process for the same request.
 /// </summary>
-internal sealed partial class ExecutionManager : IExecutionLedger
+internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
     private const int DefaultDeadlineTicks = 60 * 20;
     private const int AnimalProductDiscoveryRadius = 1;
@@ -25,6 +25,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger
     private readonly Dictionary<string, LocalExecutionReceipt> receiptsByRequestId = new(StringComparer.Ordinal);
     /** Same bounded lifetime as receipts; the action identity is ledger-owned, not bridge cache state. */
     private readonly Dictionary<string, string> actionIdsByRequestId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> executionIdsByRequestId = new(StringComparer.Ordinal);
     private readonly Queue<string> receiptOrder = new();
     private readonly List<ExecutionTrace> trace = new();
     // An execution may have several native completion observations, but only
@@ -38,6 +39,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
     private readonly Action<ExecutionTrace>? tracePublished;
+    private readonly FarmhandExecutionJournal? executionJournal;
+    private readonly BridgeScope? executionScope;
+    private readonly Dictionary<string, FarmhandExecutionAdmission> durableAdmissionsByRequestId = new(StringComparer.Ordinal);
+    private readonly HashSet<string> durabilityFailuresByRequestId = new(StringComparer.Ordinal);
     private LocalMoveSpec? active;
     private LocalTravelSpec? activeTravel;
     private LocalPettingSpec? activePet;
@@ -89,8 +94,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger
         this.navigationApproachNative = driver ?? throw new ArgumentNullException(nameof(driver));
     }
 
-    /// <summary>Regression guard: production construction must never inject the fake.</summary>
-    internal bool UsesRealApproachNative => this.navigationApproachNative is null;
+/// <summary>Regression guard: production construction must never inject the fake or its authorization.</summary>
+internal bool UsesRealApproachNative =>
+this.navigationApproachNative is null && this.navigationLifecycleTestAuthorization is null;
 
     /// <summary>
     /// Test-only authorization for direct, non-live Navigation lifecycle tests.
@@ -115,12 +121,18 @@ internal sealed partial class ExecutionManager : IExecutionLedger
         IMonitor monitor,
         Func<FarmhandCapabilityPublication> capabilityPublicationProvider,
         Action<LocalExecutionReceipt>? receiptPublished = null,
-        Action<ExecutionTrace>? tracePublished = null)
+        Action<ExecutionTrace>? tracePublished = null,
+        FarmhandExecutionJournal? executionJournal = null,
+        BridgeScope? executionScope = null)
     {
         this.monitor = monitor;
         this.capabilityPublicationProvider = capabilityPublicationProvider ?? throw new ArgumentNullException(nameof(capabilityPublicationProvider));
         this.receiptPublished = receiptPublished;
         this.tracePublished = tracePublished;
+        if ((executionJournal is null) != (executionScope is null))
+            throw new ArgumentException("Durable execution journal and scope must be supplied together.");
+        this.executionJournal = executionJournal;
+        this.executionScope = executionScope;
         this.controller = new StardewBodyController(this.RecordControllerTransition);
     }
 
@@ -139,6 +151,98 @@ internal sealed partial class ExecutionManager : IExecutionLedger
     public long CurrentRevision => this.revision;
     public bool IsBodyBusy => !this.IsBodySettled;
     public IReadOnlyList<ExecutionTrace> Trace => this.trace;
+
+    internal bool TryAdmitNavigation(BridgeExecutionRequest request, string executionId, out string reasonCode)
+    {
+        if (this.durabilityFailuresByRequestId.Contains(request.RequestId))
+        {
+            reasonCode = "execution_durability_quarantined";
+            return false;
+        }
+        reasonCode = "accepted";
+        if (this.executionJournal is null || this.executionScope is null || request.Args.Destination is null)
+        {
+            reasonCode = "execution_durability_unavailable";
+            return false;
+        }
+
+        if (!this.TryBindDispatch(request.RequestId, request.Action, executionId, out reasonCode)
+            && reasonCode != "execution_identity_already_bound")
+        {
+            return false;
+        }
+
+        BridgeNavigationDestinationSelector destination = request.Args.Destination;
+        FarmhandExecutionAdmission admission = new(
+            this.executionScope,
+            request.RequestId,
+            request.IdempotencyKey,
+            request.Action,
+            FarmhandCanonicalRequest.NavigationDestination(request.Action, destination.Kind, destination.Label, destination.Ref),
+            request.ExpectedRevision,
+            request.DeadlineMs,
+            executionId);
+        FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryRecordAdmission(admission);
+        if (!result.IsSuccess)
+        {
+            this.durabilityFailuresByRequestId.Add(request.RequestId);
+            reasonCode = result.Code.ToString();
+            return false;
+        }
+
+        this.durableAdmissionsByRequestId[request.RequestId] = admission;
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal bool TryGetDurableReceipt(string requestId, string idempotencyKey, out LocalExecutionReceipt receipt, out string reasonCode)
+    {
+        receipt = default!;
+        if (this.executionJournal is null || this.executionScope is null)
+        {
+            reasonCode = "receipt_not_found";
+            return false;
+        }
+
+        FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryLoadAdmission(this.executionScope, requestId, idempotencyKey);
+        if (!result.IsSuccess || result.Record?.Receipt is not FarmhandExecutionReceipt persisted)
+        {
+            reasonCode = result.Code == FarmhandExecutionJournalResultCode.Succeeded
+                ? "receipt_not_found"
+                : result.Code.ToString();
+            return false;
+        }
+
+        receipt = new LocalExecutionReceipt(persisted.ExecutionId, persisted.RequestId, persisted.State, persisted.ReasonCode, persisted.Revision, persisted.Evidence, persisted.ActionId);
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal bool TryGetDurableAdmission(string requestId, string idempotencyKey, out FarmhandExecutionJournalRecord record, out string reasonCode)
+    {
+        record = default!;
+        if (this.executionJournal is null || this.executionScope is null)
+        {
+            reasonCode = "receipt_not_found";
+            return false;
+        }
+
+        FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryLoadAdmission(this.executionScope, requestId, idempotencyKey);
+        if (!result.IsSuccess)
+        {
+            reasonCode = result.Code == FarmhandExecutionJournalResultCode.NotFound
+                ? "receipt_not_found"
+                : result.Code.ToString();
+            return false;
+        }
+
+        record = result.Record!;
+        reasonCode = "accepted";
+        return true;
+    }
+
+    internal bool HasDurabilityFailure(string requestId) => this.durabilityFailuresByRequestId.Contains(requestId);
+
     public bool TryGetExistingReceipt(string requestId, out LocalExecutionReceipt receipt) => this.TryGetReceipt(requestId, out receipt);
 
     public void Halt(string reasonCode = "halted")
@@ -153,6 +257,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger
     }
 
     void IExecutionLedger.BindAction(string requestId, string actionId) => this.BindAction(requestId, actionId);
+
+    bool IDispatchExecutionLedger.TryBindDispatch(string requestId, string actionId, string executionId, out string reasonCode) =>
+        this.TryBindDispatch(requestId, actionId, executionId, out reasonCode);
+
+    bool IDispatchExecutionLedger.TryGetBoundExecutionId(string requestId, out string executionId) =>
+        this.executionIdsByRequestId.TryGetValue(requestId, out executionId!);
 
     LocalExecutionReceipt IExecutionLedger.Remember(LocalExecutionReceipt receipt)
     {
@@ -170,6 +280,54 @@ internal sealed partial class ExecutionManager : IExecutionLedger
 
     /// <summary>Returns the action identity captured on the game-thread dispatch lineage.</summary>
     public bool TryGetActionId(string requestId, out string actionId) => this.actionIdsByRequestId.TryGetValue(requestId, out actionId!);
+
+    private bool TryBindDispatch(string requestId, string actionId, string executionId, out string reasonCode)
+    {
+        reasonCode = string.Empty;
+        if (string.IsNullOrWhiteSpace(requestId)
+            || string.IsNullOrWhiteSpace(actionId)
+            || string.IsNullOrWhiteSpace(executionId))
+        {
+            reasonCode = "invalid_execution_identity";
+            return false;
+        }
+        if (this.receiptsByRequestId.ContainsKey(requestId))
+        {
+            reasonCode = "request_already_started";
+            return false;
+        }
+        if (this.actionIdsByRequestId.TryGetValue(requestId, out string? existingAction)
+            && !string.Equals(existingAction, actionId, StringComparison.Ordinal))
+        {
+            reasonCode = "request_action_conflict";
+            return false;
+        }
+        if (this.executionIdsByRequestId.TryGetValue(requestId, out string? existingExecution))
+        {
+            reasonCode = string.Equals(existingExecution, executionId, StringComparison.Ordinal)
+                ? "execution_identity_already_bound"
+                : "execution_identity_conflict";
+            return false;
+        }
+        if (this.executionIdsByRequestId.Values.Contains(executionId, StringComparer.Ordinal))
+        {
+            reasonCode = "execution_identity_reused";
+            return false;
+        }
+        this.actionIdsByRequestId[requestId] = actionId;
+        this.executionIdsByRequestId[requestId] = executionId;
+        reasonCode = "bound";
+        return true;
+    }
+
+    private string NewExecutionId(string requestId)
+    {
+        if (this.executionIdsByRequestId.TryGetValue(requestId, out string? bound))
+            return bound;
+        string executionId = Guid.NewGuid().ToString("N");
+        this.executionIdsByRequestId[requestId] = executionId;
+        return executionId;
+    }
 
     private void BindAction(string requestId, string actionId)
     {
@@ -2303,6 +2461,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger
                     this.navigationExecutionIds.Remove(evictedReceipt.ExecutionId);
                 this.receiptsByRequestId.Remove(evictedRequestId);
                 this.actionIdsByRequestId.Remove(evictedRequestId);
+                this.executionIdsByRequestId.Remove(evictedRequestId);
             }
         }
 
@@ -2323,6 +2482,26 @@ internal sealed partial class ExecutionManager : IExecutionLedger
             ExecutionState.Failed or ExecutionState.Expired or ExecutionState.Uncertain => "execution_settled_failed",
             _ => null,
         };
+        if (this.durableAdmissionsByRequestId.TryGetValue(receipt.RequestId, out FarmhandExecutionAdmission? admission)
+            && this.executionJournal is not null)
+        {
+            FarmhandExecutionReceipt durableReceipt = new(
+                receipt.ExecutionId,
+                receipt.RequestId,
+                admission.ActionId,
+                receipt.State,
+                receipt.ReasonCode,
+                receipt.Revision,
+                receipt.Evidence);
+            FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryPersistReceiptTransition(admission, durableReceipt);
+            if (!result.IsSuccess)
+            {
+                this.durabilityFailuresByRequestId.Add(receipt.RequestId);
+                return;
+            }
+        }
+        if (this.durabilityFailuresByRequestId.Contains(receipt.RequestId))
+            return;
         if (category is not null && !this.navigationExecutionIds.Contains(receipt.ExecutionId))
             this.AddPublicTrace(category, receipt.ExecutionId, receipt.RequestId);
         this.receiptPublished?.Invoke(receipt);

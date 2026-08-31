@@ -36,7 +36,10 @@ public sealed class ModEntry : Mod
         {
             this.fixture.VerifyCurrentSaveSlot();
             SaveGame.Load(this.fixture.ObservedSaveSlot);
-            this.Monitor.Log("GameBuddy P4 loader requested the authenticated transaction-owned native fixture slot; awaiting SaveLoaded.", LogLevel.Info);
+            // Match the target LoadGameMenu activation boundary so the original
+            // game/SMAPI lifecycle can establish Context.IsWorldReady.
+            Game1.exitActiveMenu();
+            this.Monitor.Log("GameBuddy P4 loader requested the authenticated transaction-owned native fixture slot; exited the native title menu and awaiting SaveLoaded.", LogLevel.Info);
         }
         catch (Exception exception)
         {

@@ -149,6 +149,7 @@ public sealed class ModEntry : Mod
 
             if (!created || reasonCode != "accepted" || topology is null)
             {
+                this.TraceTopologyRejection(reasonCode);
                 this.Emit(new RawObservation(
                     "blocked", "production_topology_creation_rejected", true, 1, true, true,
                     false, false, this.subscriptionInstalled, observedWarpCount));
@@ -194,6 +195,7 @@ public sealed class ModEntry : Mod
         }
         catch
         {
+            this.TraceTopologyRejection("unexpected_exception");
             this.Emit(new RawObservation(
                 "blocked", "production_topology_creation_rejected", extractorInvoked, extractorInvoked ? 1 : 0,
                 true, true, false, false, this.subscriptionInstalled, this.playerWarpEventCount));
@@ -259,6 +261,21 @@ public sealed class ModEntry : Mod
             this.Detach();
         }
     }
+
+    private void TraceTopologyRejection(string reasonCode)
+        => this.Monitor.Log(reasonCode switch
+        {
+            "world_or_binding_unavailable" => "GBMS_TOPOLOGY:world_or_binding_unavailable",
+            "loaded_locations_unavailable" => "GBMS_TOPOLOGY:loaded_locations_unavailable",
+            "loaded_source_identity_invalid" => "GBMS_TOPOLOGY:loaded_source_identity_invalid",
+            "loaded_source_identity_duplicate" => "GBMS_TOPOLOGY:loaded_source_identity_duplicate",
+            "ordinary_warp_target_identity_invalid" => "GBMS_TOPOLOGY:ordinary_warp_target_identity_invalid",
+            "ordinary_warp_target_coordinates_invalid" => "GBMS_TOPOLOGY:ordinary_warp_target_coordinates_invalid",
+            "accepted_destination_not_loaded" => "GBMS_TOPOLOGY:accepted_destination_not_loaded",
+            "ordinary_warp_target_not_loaded" => "GBMS_TOPOLOGY:ordinary_warp_target_not_loaded",
+            "unexpected_exception" => "GBMS_TOPOLOGY:unexpected_exception",
+            _ => "GBMS_TOPOLOGY:unknown_rejection",
+        }, LogLevel.Trace);
 
     private enum ProbePhase
     {

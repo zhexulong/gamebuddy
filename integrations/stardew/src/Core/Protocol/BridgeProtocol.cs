@@ -22,7 +22,13 @@ public static class BridgeProtocol
 
     public static bool TrySerialize<T>(T value, out string json, out string reasonCode)
     {
-        if (value is BridgeNavigationReadResult navigationResult && !IsValidNavigationReadResult(navigationResult))
+        BridgeNavigationReadResult? navigationResult = value switch
+        {
+            BridgeNavigationReadResult result => result,
+            BridgeEnvelope<BridgeNavigationReadResult> envelope => envelope.Payload,
+            _ => null,
+        };
+        if (navigationResult is not null && !IsValidNavigationReadResult(navigationResult))
         {
             json = string.Empty;
             reasonCode = "invalid_navigation_read_result";
@@ -57,26 +63,51 @@ public static class BridgeProtocol
 
     private static bool IsValidNavigationReadResult(BridgeNavigationReadResult result)
     {
-        if (result.Status == "succeeded")
+        bool noMap = result.Entries is null && result.NextCursor is null;
+        bool noSearch = result.Candidates is null && result.Destination is null && result.UnlockState is null;
+
+        return result.Status switch
         {
-            return result.Reason == "world_map_observed"
-                && result.Entries is not null
-                && result.Entries.Count <= 20
+            "succeeded" => result.Reason == "world_map_observed"
+                && result.Entries is { Count: <= 20 }
                 && result.Entries.All(IsValidWorldMapEntry)
-                && (result.NextCursor is null || IsNavigationHandle(result.NextCursor, "wc1_"));
-        }
-        return result.Entries is null
-            && result.NextCursor is null
-            && result.Status == "blocked"
-            && result.Reason is "world_map_node_invalid"
+                && (result.NextCursor is null || IsNavigationHandle(result.NextCursor, "wc1_"))
+                && noSearch,
+            "resolved" => noMap
+                && result.Reason is "exact_current_locale" or "exact_fallback_locale" or "exact_alias"
+                && result.Candidates is null
+                && result.Destination is not null
+                && IsValidNavigationDestinationSelector(result.Destination)
+                && result.UnlockState == "unknown",
+            "candidates" => noMap
+                && result.Reason is "ambiguous_exact" or "fuzzy_match"
+                && result.Candidates is { Count: >= 1 and <= 3 }
+                && result.Candidates.All(IsValidDestinationSearchCandidate)
+                && result.Destination is null
+                && result.UnlockState is null,
+            "not_found" => noMap && noSearch && result.Reason == "destination_not_found",
+            "invalid" => noMap && noSearch && result.Reason == "destination_search_invalid",
+            "blocked" => noMap && noSearch && result.Reason is
+                "world_map_node_invalid"
                 or "world_map_node_stale"
                 or "world_map_node_not_found"
                 or "world_map_unavailable"
                 or "world_map_cursor_invalid"
                 or "world_map_cursor_stale"
                 or "world_map_projection_too_large"
-                or "world_map_disclosure_budget_exhausted";
+                or "world_map_disclosure_budget_exhausted"
+                or "destination_search_unavailable",
+            _ => false,
+        };
     }
+
+    private static bool IsValidDestinationSearchCandidate(BridgeDestinationSearchCandidate candidate) =>
+        candidate.Label.Length is >= 1 and <= 128
+        && candidate.ContextLabel is null or { Length: >= 1 and <= 128 }
+        && candidate.UnlockState == "unknown"
+        && candidate.Destination.Kind == "ref"
+        && candidate.Destination.Label is null
+        && candidate.Destination.Ref is null;
 
     private static bool IsValidWorldMapEntry(BridgeWorldMapEntry entry)
     {
@@ -89,7 +120,8 @@ public static class BridgeProtocol
 
     private static bool IsValidNavigationDestinationSelector(BridgeNavigationDestinationSelector selector) =>
         (selector.Kind == "label" && selector.Label is { Length: >= 1 and <= 128 } && selector.Ref is null)
-        || (selector.Kind == "ref" && selector.Label is null && IsNavigationHandle(selector.Ref, "dr1_"));
+        || (selector.Kind == "ref" && selector.Label is null
+            && (selector.Ref is null || IsNavigationHandle(selector.Ref, "dr1_")));
 
     private static bool IsExactNavigationDestinationSelector(JsonElement destination)
     {
@@ -121,7 +153,8 @@ public static class BridgeProtocol
         if (encoded.Any(character => !((character >= 'A' && character <= 'Z')
             || (character >= 'a' && character <= 'z')
             || (character >= '0' && character <= '9')
-            || character is '-' or '_')))
+            || character is '-' or '_'))
+            || encoded[^1] is not ('A' or 'Q' or 'g' or 'w'))
             return false;
 
         Span<byte> bytes = stackalloc byte[16];

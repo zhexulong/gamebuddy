@@ -1459,6 +1459,19 @@
     "slotXYQualifiedTargetArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
     "slotQualifiedArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "expectedQualifiedItemId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "expectedQualifiedItemId": { "type": "string", "minLength": 1, "maxLength": 128 } } },
     "machineLoadArgs": { "type": "object", "additionalProperties": false, "required": ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "properties": { "slot": { "type": "integer", "minimum": 0, "maximum": 36 }, "x": { "$ref": "#/$defs/tile" }, "y": { "$ref": "#/$defs/tile" }, "expectedQualifiedItemId": { "const": "(O)433" }, "expectedTargetId": { "$ref": "#/$defs/opaqueId" } } },
+    "navigationDestinationArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["destination"],
+      "properties": {
+        "destination": {
+          "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["kind", "label"], "properties": { "kind": { "const": "label" }, "label": { "type": "string", "minLength": 1, "maxLength": 128 } } },
+            { "type": "object", "additionalProperties": false, "required": ["kind", "ref"], "properties": { "kind": { "const": "ref" }, "ref": { "type": "string", "pattern": "^dr1_[A-Za-z0-9_-]{21}[AQgw]$" } } }
+          ]
+        }
+      }
+    },
     "navigationSelector": {
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["kind", "label", "ref"], "properties": { "kind": { "const": "label" }, "label": { "type": "string", "minLength": 1, "maxLength": 128 }, "ref": { "type": "null" } } },
@@ -1538,6 +1551,7 @@
         { "if": { "required": ["action"], "properties": { "action": { "const": "dig_artifact_spot" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/digArtifactSpotArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "chop_tree_source" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/treeChopSourceArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["move_to_tile", "travel", "enter_exit", "till_soil"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyArgs" } } } },
+        { "if": { "required": ["action"], "properties": { "action": { "const": "navigate_to_destination" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/navigationDestinationArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "const": "equip_tool" } } }, "then": { "properties": { "args": { "$ref": "#/$defs/slotArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["pickup_forage", "pickup_item", "harvest_crop"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyQualifiedTargetArgs" } } } },
         { "if": { "required": ["action"], "properties": { "action": { "enum": ["water_crop", "machine_inspect", "machine_collect_output", "npc_relationship", "pet_animal"] } } }, "then": { "properties": { "args": { "$ref": "#/$defs/xyTargetArgs" } } } },
@@ -1556,6 +1570,7 @@
         "action": {
           "enum": [
             "move_to_tile",
+            "navigate_to_destination",
             "equip_tool",
             "travel",
             "enter_exit",

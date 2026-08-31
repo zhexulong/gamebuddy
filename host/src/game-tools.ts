@@ -8,8 +8,8 @@ import {
   searchActionsFromModCatalog,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
-import type { IntegrationDispatchAdmission } from "./integration-module.js";
-import type { CompanionIntegration } from "./integration-types.js";
+import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
+import type { StardewBridgeConnection } from "./game-connection.js";
 import {
   type ActionRegistration,
   type ExecutionReceipt,
@@ -20,7 +20,7 @@ import {
 type IntegrationDispatchAdmissionFactory = () => IntegrationDispatchAdmission;
 
 /** A bridge that executes only Mod-declared player-enabled capabilities. */
-export interface MoveCapableIntegration extends CompanionIntegration {
+export interface MoveCapableIntegration extends StardewBridgeConnection {
   execute(request: ExecutionRequest): Promise<ExecutionReceipt>;
   cancel(
     requestId: string,
@@ -29,7 +29,7 @@ export interface MoveCapableIntegration extends CompanionIntegration {
   ): Promise<ExecutionReceipt>;
 }
 function isMoveCapable(
-  value: CompanionIntegration,
+  value: StardewBridgeConnection,
 ): value is MoveCapableIntegration {
   return (
     "execute" in value &&
@@ -104,7 +104,7 @@ function callerRequestIds(
 }
 
 type NavigationActionId = "inspect_world_map" | "find_destination";
-type NavigationReadIntegration = CompanionIntegration & {
+type NavigationReadIntegration = StardewBridgeConnection & {
   navigationRead(request: Readonly<{
     operation: NavigationActionId;
     args: Readonly<Record<string, unknown>>;
@@ -113,7 +113,7 @@ type NavigationReadIntegration = CompanionIntegration & {
 
 /** Read-only tools always expose facts exactly as supplied by the Mod. */
 export function createStardewObservationTools(
-  integration: CompanionIntegration & Partial<NavigationReadIntegration>,
+  integration: StardewBridgeConnection & Partial<NavigationReadIntegration>,
   policy?: ActionPolicy,
 ) {
   const observe = defineTool({
@@ -243,6 +243,8 @@ export function createStardewObservationTools(
       catalogRevision?: number;
     };
     const snapshot = state.snapshot;
+    const deniedActions = new Set(policy?.deniedActions ?? []);
+    const deniedFamilies = new Set(policy?.deniedFamilies ?? []);
     return (
       state.connected &&
       snapshot !== null &&
@@ -251,9 +253,12 @@ export function createStardewObservationTools(
       state.catalogRevision === snapshot.catalogRevision &&
       state.capabilities.includes(actionId) &&
       snapshot.capabilities.includes(actionId) &&
+      !deniedActions.has(actionId) &&
+      !deniedFamilies.has("world_navigation") &&
       (state.catalogRegistrations ?? []).some(
         (registration) =>
           registration.actionId === actionId &&
+          registration.familyId === "world_navigation" &&
           registration.lifecycle === "published" &&
           registration.kind === "read_only" &&
           registration.identityVersion === 1,
@@ -366,7 +371,7 @@ export function createStardewObservationTools(
  * model prose as an authorization source.
  */
 export function createStardewActionTools(
-  integration: CompanionIntegration,
+  integration: StardewBridgeConnection,
   policy: ActionPolicy | undefined,
   dispatchAdmissionFactory?: IntegrationDispatchAdmissionFactory,
 ) {
@@ -393,6 +398,45 @@ export function createStardewActionTools(
     policy,
     dispatchAdmissionFactory,
   );
+  if (isVisible("navigate_to_destination")) {
+    tools.push(
+      makeGameActionTool({
+        name: STARDEW_ACTION_TOOL_NAMES.navigate_to_destination,
+        label: "Navigate Farmhand to Destination",
+        description:
+          "Navigate to exactly one destination selected by a label or canonical destination reference. Only the authoritative Mod receipt can report completion.",
+        parameters: Type.Object(
+          {
+            destination: Type.Union([
+              Type.Object(
+                {
+                  kind: Type.Literal("label"),
+                  label: Type.String({ minLength: 1, maxLength: 128 }),
+                },
+                { additionalProperties: false },
+              ),
+              Type.Object(
+                {
+                  kind: Type.Literal("ref"),
+                  ref: Type.String({ pattern: "^dr1_[A-Za-z0-9_-]{21}[AQgw]$" }),
+                },
+                { additionalProperties: false },
+              ),
+            ]),
+            requestId: Type.Optional(
+              Type.String({ minLength: 1, maxLength: 128 }),
+            ),
+            idempotencyKey: Type.Optional(
+              Type.String({ minLength: 1, maxLength: 128 }),
+            ),
+          },
+          { additionalProperties: false },
+        ),
+        action: "navigate_to_destination",
+        toArgs: (params) => ({ destination: params.destination }),
+      }),
+    );
+  }
   if (isVisible("move_to_tile")) {
     tools.push(
       makeGameActionTool({
@@ -1169,13 +1213,13 @@ async function executeBridge(
     requestId: request.requestId,
     idempotencyKey: request.idempotencyKey,
   };
-  admission.observer.beforeWrite(dispatch);
+  await admission.observer.beforeWrite(dispatch);
   try {
     const receipt = await integration.execute(request);
     admission.observer.bindReceipt(receipt);
     return receipt;
   } catch (error) {
-    admission.observer.markUncertain(dispatch);
+    await admission.observer.markUncertain(dispatch);
     throw error;
   }
 }

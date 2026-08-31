@@ -795,9 +795,51 @@ public sealed partial class ModEntry : Mod
         }
         if (fixture.FixtureScenario == "navigation_read_only_v1")
         {
-            // The direct Navigation gate needs an ordinary target-version world
-            // with no fixture-created player or world facts. It only publishes
-            // the two read-only operations after the native load is complete.
+            // Direct Navigation reads need an ordinary target-version world
+            // with no fixture-created or modified player/world facts.
+            this.nativeLocalPlayerFixtureInitialized = true;
+            return;
+        }
+        if (fixture.FixtureScenario == "navigation_mutation_v1")
+        {
+            // Select one reachable target from the same production destination,
+            // topology, and route-planning authorities used by execution. This
+            // writes only transaction-owned fixture configuration; it creates no
+            // player/world fact and grants no product capability.
+            if (fixture.NavigationMutationTargetLabel.Length != 0
+                || !DerivedDestinationSet.TryCreateCurrent("stardew", out DerivedDestinationSet? destinations, out _)
+                || Game1.player?.currentLocation?.NameOrUniqueName is not string currentSource)
+            {
+                this.nativeLocalPlayerFixtureTerminal = true;
+                this.Monitor.Log("GameBuddy Navigation mutation fixture could not derive a fresh target.", LogLevel.Error);
+                return;
+            }
+
+            var source = new Game1NavigationWorldSource();
+            var planner = new NavigationRoutePlanner();
+            NavigationDestination? selected = destinations!.SearchDestinations.FirstOrDefault(destination =>
+            {
+                if (destination.CanonicalIdentity == currentSource
+                    || destination.CanonicalLabel.Length is < 1 or > 128)
+                    return false;
+                int labelMatches = destinations.SearchDestinations.Count(candidate =>
+                    candidate.CanonicalLabel == destination.CanonicalLabel
+                    || (candidate.ExplicitAliases is not null && candidate.ExplicitAliases.Contains(destination.CanonicalLabel, StringComparer.Ordinal)));
+                if (labelMatches != 1)
+                    return false;
+                var binding = new NavigationDestinationBinding("stardew", destination.CanonicalIdentity, destinations.Generation, 0);
+                return source.TryCreateCurrentOrdinaryWarpTopology(binding, out NavigationOrdinaryWarpTopology? topology, out _)
+                    && planner.Plan(topology!, currentSource, binding).Kind == NavigationRoutePlanKind.NextEdge;
+            });
+            if (selected is null)
+            {
+                this.nativeLocalPlayerFixtureTerminal = true;
+                this.Monitor.Log("GameBuddy Navigation mutation fixture found no reachable non-current target.", LogLevel.Error);
+                return;
+            }
+
+            fixture.NavigationMutationTargetLabel = selected.CanonicalLabel;
+            this.Helper.WriteConfig(this.config);
             this.nativeLocalPlayerFixtureInitialized = true;
             return;
         }
@@ -1873,9 +1915,6 @@ public sealed partial class ModEntry : Mod
         }
 
         state.CapabilityPublication = FarmhandCapabilityPublication.Initial(this.config.EnabledActionSet);
-        state.Executions = new ExecutionManager(this.Monitor, () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
-            receipt => this.PublishReceipt(state, receipt),
-            trace => this.PublishBodyTrace(state, trace));
         string saveId = formalClientConfigured
             ? this.farmhandProvisioner!.Manifest.SaveId
             : this.config.SaveId;
@@ -1888,6 +1927,13 @@ public sealed partial class ModEntry : Mod
         string companionId = formalClientConfigured
             ? this.farmhandProvisioner!.Manifest.CompanionId
             : this.config.CompanionId;
+        BridgeScope executionScope = new("stardew", saveId, worldId, playerId, companionId);
+        FarmhandExecutionJournal executionJournal = new(new SmapiGlobalDataPersistence(this.Helper.Data));
+        state.Executions = new ExecutionManager(this.Monitor, () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
+            receipt => this.PublishReceipt(state, receipt),
+            trace => this.PublishBodyTrace(state, trace),
+            executionJournal,
+            executionScope);
         bool saveScopeMatches = saveId == Game1.uniqueIDForThisGame.ToString();
         bool worldScopeMatches = worldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString();
         bool playerScopeMatches = playerId == localPlayer!.UniqueMultiplayerID.ToString();
@@ -1911,7 +1957,7 @@ public sealed partial class ModEntry : Mod
             ? new BridgeSession(
                 state.Executions,
                 router,
-                new BridgeScope("stardew", saveId, worldId, playerId, companionId),
+                executionScope,
                 this.config.BridgeToken,
                 () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
                 navigationSetProvider: () => DerivedDestinationSet.TryCreateCurrent("stardew", out DerivedDestinationSet? set, out _) ? set : null,
@@ -2004,6 +2050,10 @@ public sealed partial class ModEntry : Mod
             ScreenEmbodimentState nativeLocalState = this.GetEmbodimentState();
             this.RefreshFarmhandCapabilityPublication(nativeLocalState);
             this.ObserveBridgeGeneration(nativeLocalState);
+            this.ObserveNativeChatPipeDeliveries(nativeLocalState);
+            this.ObserveNavigationPipeDeliveries(nativeLocalState);
+            this.ObserveExecutionResponsePipeDeliveries(nativeLocalState);
+            this.ObserveTerminalReceiptDeliveries(nativeLocalState);
             this.DrainLocalPipeBridge(nativeLocalState);
             nativeLocalState.Executions?.Update();
             this.PublishPendingStopObservation(nativeLocalState);
@@ -2044,6 +2094,8 @@ public sealed partial class ModEntry : Mod
         this.RefreshFarmhandCapabilityPublication(state);
         this.ObserveBridgeGeneration(state);
         this.ObserveNativeChatPipeDeliveries(state);
+        this.ObserveNavigationPipeDeliveries(state);
+        this.ObserveExecutionResponsePipeDeliveries(state);
         this.ObserveTerminalReceiptDeliveries(state);
         this.DrainLocalPipeBridge(state);
         state.Executions?.Update();
@@ -3402,6 +3454,11 @@ public sealed partial class ModEntry : Mod
                 string? correlationId = document.RootElement.TryGetProperty("correlationId", out System.Text.Json.JsonElement correlationElement)
                     && correlationElement.ValueKind == System.Text.Json.JsonValueKind.String ? correlationElement.GetString() : null;
                 string? requestType = typeElement.GetString();
+                if (requestType == "observe_request")
+                    this.MonitorNativeChatIngress("navigation_observe_dequeued");
+                if (requestType == "execution_request")
+                    this.MonitorNativeChatIngress("navigation_execution_dequeued");
+
                 string? response = requestType switch
                 {
                     "hello" => this.HandleHello(state, inbound.Generation, inbound.Json),
@@ -3415,7 +3472,49 @@ public sealed partial class ModEntry : Mod
                     "player_control_receipt" => this.HandlePlayerControlReceipt(state, inbound.Generation, inbound.Json, correlationId),
                     _ => this.SerializeError(state, correlationId, "unknown_message_type"),
                 };
-                if (response is not null && !state.LocalPipeBridge.TryEnqueueOutbound(inbound.Generation, response))
+
+                if (response is null)
+                {
+                    if (requestType == "observe_request")
+                        this.MonitorNativeChatIngress("navigation_observe_response_missing");
+                    if (requestType == "execution_request")
+                        this.MonitorNativeChatIngress("navigation_execution_response_missing");
+                    continue;
+                }
+
+                if (requestType == "observe_request")
+                {
+                    this.MonitorNativeChatIngress("navigation_observe_response_created");
+                    bool enqueued = state.LocalPipeBridge.TryEnqueueOutbound(inbound.Generation, response, out PipeOutboundCompletion completion);
+                    if (enqueued)
+                    {
+                        this.MonitorNativeChatIngress("navigation_observe_response_queued");
+                        this.TrackNavigationPipeDelivery(state, inbound.Generation, completion);
+                    }
+                    else
+                    {
+                        this.MonitorNativeChatIngress("navigation_observe_response_enqueue_failed");
+                    }
+                    continue;
+                }
+
+                if (requestType == "execution_request")
+                {
+                    this.MonitorNativeChatIngress("navigation_execution_response_created");
+                    bool enqueued = state.LocalPipeBridge.TryEnqueueOutbound(inbound.Generation, response, out PipeOutboundCompletion completion);
+                    if (enqueued)
+                    {
+                        this.MonitorNativeChatIngress("navigation_execution_response_queued");
+                        this.TrackExecutionResponsePipeDelivery(state, inbound.Generation, completion);
+                    }
+                    else
+                    {
+                        this.MonitorNativeChatIngress("navigation_execution_response_enqueue_failed");
+                    }
+                    continue;
+                }
+
+                if (!state.LocalPipeBridge.TryEnqueueOutbound(inbound.Generation, response))
                     this.Monitor.Log("GameBuddy discarded local bridge response after connection closed or backpressure.", LogLevel.Warn);
             }
             catch (System.Text.Json.JsonException)
@@ -3459,6 +3558,72 @@ public sealed partial class ModEntry : Mod
             {
                 state.NativeChatPipeDeliveries.Dequeue();
                 this.MonitorNativeChatIngress("ai_player_control_pipe_flush_unconfirmed");
+                continue;
+            }
+            break;
+        }
+    }
+
+    private void TrackNavigationPipeDelivery(ScreenEmbodimentState state, long generation, PipeOutboundCompletion completion)
+    {
+        if (state.NavigationPipeDeliveries.Count >= 8)
+        {
+            this.MonitorNativeChatIngress("navigation_observe_response_delivery_untracked");
+            return;
+        }
+        state.NavigationPipeDeliveries.Enqueue(new NavigationPipeDelivery(generation, completion, Environment.TickCount64));
+    }
+
+    private void ObserveNavigationPipeDeliveries(ScreenEmbodimentState state)
+    {
+        while (state.NavigationPipeDeliveries.TryPeek(out NavigationPipeDelivery? pending))
+        {
+            if (pending.Completion.Result.IsCompleted)
+            {
+                state.NavigationPipeDeliveries.Dequeue();
+                if (pending.Completion.Result.GetAwaiter().GetResult())
+                    this.MonitorNativeChatIngress("navigation_observe_response_flushed");
+                else
+                    this.MonitorNativeChatIngress("navigation_observe_response_write_failed");
+                continue;
+            }
+            if (Environment.TickCount64 - pending.EnqueuedAtMs >= 2_000)
+            {
+                state.NavigationPipeDeliveries.Dequeue();
+                this.MonitorNativeChatIngress("navigation_observe_response_flush_unconfirmed");
+                continue;
+            }
+            break;
+        }
+    }
+
+    private void TrackExecutionResponsePipeDelivery(ScreenEmbodimentState state, long generation, PipeOutboundCompletion completion)
+    {
+        if (state.ExecutionResponsePipeDeliveries.Count >= 8)
+        {
+            this.MonitorNativeChatIngress("navigation_execution_response_delivery_untracked");
+            return;
+        }
+        state.ExecutionResponsePipeDeliveries.Enqueue(new ExecutionResponsePipeDelivery(generation, completion, Environment.TickCount64));
+    }
+
+    private void ObserveExecutionResponsePipeDeliveries(ScreenEmbodimentState state)
+    {
+        while (state.ExecutionResponsePipeDeliveries.TryPeek(out ExecutionResponsePipeDelivery? pending))
+        {
+            if (pending.Completion.Result.IsCompleted)
+            {
+                state.ExecutionResponsePipeDeliveries.Dequeue();
+                if (pending.Completion.Result.GetAwaiter().GetResult())
+                    this.MonitorNativeChatIngress("navigation_execution_response_flushed");
+                else
+                    this.MonitorNativeChatIngress("navigation_execution_response_write_failed");
+                continue;
+            }
+            if (Environment.TickCount64 - pending.EnqueuedAtMs >= 2_000)
+            {
+                state.ExecutionResponsePipeDeliveries.Dequeue();
+                this.MonitorNativeChatIngress("navigation_execution_response_flush_unconfirmed");
                 continue;
             }
             break;
@@ -3609,9 +3774,16 @@ public sealed partial class ModEntry : Mod
             (BridgeEnvelope<BridgeNavigationReadRequest> r, out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reason) => state.BridgeSession!.TryNavigationRead(generation, r, out response, out reason), out _);
     }
 
-    private string? HandleExecute(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(state,
-        BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? request, out _) ? request : null,
-        (BridgeEnvelope<BridgeExecutionRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryExecute(generation, request, out response, out reason), out _);
+    private string? HandleExecute(ScreenEmbodimentState state, long generation, string json)
+    {
+        if (!BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? request, out _) || request is null)
+        {
+            this.MonitorNativeChatIngress("navigation_execution_parse_rejected");
+            return this.SerializeError(state, null, "invalid_envelope");
+        }
+        return this.SerializeBridgeResponse<BridgeExecutionRequest, BridgeReceipt>(state, request,
+            (BridgeEnvelope<BridgeExecutionRequest> request, out BridgeEnvelope<BridgeReceipt>? response, out string reason) => state.BridgeSession!.TryExecute(generation, request, out response, out reason), out _);
+    }
 
     private string? HandleCancel(ScreenEmbodimentState state, long generation, string json) => this.SerializeBridgeResponse<BridgeCancelRequest, BridgeReceipt>(state,
         BridgeProtocol.TryDeserializeInbound(json, "cancel_request", out BridgeEnvelope<BridgeCancelRequest>? request, out _, "requestId", "executionId", "cancelId", "cancelEpoch", "reasonCode") ? request : null,
@@ -3827,6 +3999,31 @@ public sealed partial class ModEntry : Mod
     private delegate bool TryBridgeRequest<TRequest, TResponse>(BridgeEnvelope<TRequest> request, out BridgeEnvelope<TResponse>? response, out string reasonCode);
     private static bool IsOpaqueRequestId(string value) => value.Length is >= 1 and <= 64 && value.All(character => (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or '-');
 
+    private sealed class SmapiGlobalDataPersistence : IModGlobalDataPersistence
+    {
+        private readonly IDataHelper data;
+
+        internal SmapiGlobalDataPersistence(IDataHelper data)
+        {
+            this.data = data ?? throw new ArgumentNullException(nameof(data));
+        }
+
+        public FarmhandExecutionJournalState? Read(string key) => this.data.ReadGlobalData<FarmhandExecutionJournalState>(key);
+
+        public bool TryWrite(string key, FarmhandExecutionJournalState state)
+        {
+            try
+            {
+                this.data.WriteGlobalData(key, state);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
+
     private sealed class ScreenEmbodimentState
     {
         internal FarmhandCapabilityPublication? CapabilityPublication { get; set; }
@@ -3839,10 +4036,14 @@ public sealed partial class ModEntry : Mod
         internal BridgeStopObservation? PendingStopObservation { get; set; }
         internal long LastBridgeGeneration { get; set; }
         internal Queue<NativeChatPipeDelivery> NativeChatPipeDeliveries { get; } = new();
+        internal Queue<NavigationPipeDelivery> NavigationPipeDeliveries { get; } = new();
+        internal Queue<ExecutionResponsePipeDelivery> ExecutionResponsePipeDeliveries { get; } = new();
         internal TerminalReceiptDeliveryTracker TerminalReceiptDeliveryTracker { get; } = new();
     }
 
     private sealed record NativeChatPipeDelivery(long Generation, PipeOutboundCompletion Completion, long EnqueuedAtMs);
+    private sealed record NavigationPipeDelivery(long Generation, PipeOutboundCompletion Completion, long EnqueuedAtMs);
+    private sealed record ExecutionResponsePipeDelivery(long Generation, PipeOutboundCompletion Completion, long EnqueuedAtMs);
     private sealed record TerminalReceiptDelivery(string RequestId, ExecutionState State, long Generation, PipeOutboundCompletion Completion, long EnqueuedAtMs);
     private sealed record UnconfirmedTerminalReceipt(string RequestId, ExecutionState State, long Generation, long EnqueuedAtMs);
 

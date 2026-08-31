@@ -68,7 +68,8 @@ internal sealed class NavigationReferenceStore
     {
         if (value is null || !value.StartsWith(prefix, StringComparison.Ordinal) || value.Length != prefix.Length + 22) return false;
         string encoded = value[prefix.Length..];
-        if (encoded.Any(character => !((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '-' or '_'))) return false;
+        if (encoded.Any(character => !((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '-' or '_'))
+            || encoded[^1] is not ('A' or 'Q' or 'g' or 'w')) return false;
         Span<byte> buffer = stackalloc byte[RandomHandleBytes];
         return Convert.TryFromBase64String(encoded.Replace('-', '+').Replace('_', '/') + "==", buffer, out int written) && written == RandomHandleBytes;
     }

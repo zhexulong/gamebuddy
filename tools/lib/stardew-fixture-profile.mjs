@@ -33,6 +33,7 @@ const CONFIG_TARGETS = Object.freeze([
 const BUNDLE_FILE_NAMES = Object.freeze([
   "GameBuddy.Stardew.dll",
   "GameBuddy.Stardew.Core.dll",
+  "Raffinert.FuzzySharp.dll",
   "manifest.json",
   "GameBuddy.Stardew.deps.json",
 ]);
@@ -624,20 +625,22 @@ async function deployModBundle(context, host, ai) {
   const releaseDll = join(context.releaseDir, "GameBuddy.Stardew.dll");
   const releaseManifest = join(context.releaseDir, "manifest.json");
   const releaseCoreDll = join(context.releaseDir, "GameBuddy.Stardew.Core.dll");
+  const releaseFuzzySharp = join(context.releaseDir, "Raffinert.FuzzySharp.dll");
   const releaseDeps = join(context.releaseDir, "GameBuddy.Stardew.deps.json");
-  for (const file of [releaseDll, releaseCoreDll, releaseManifest, releaseDeps])
+  for (const file of [releaseDll, releaseCoreDll, releaseFuzzySharp, releaseManifest, releaseDeps])
     if (!(await exists(file))) throw new Error(`release_bundle_missing:${file}`);
   for (const profile of PROFILE_NAMES) {
     const sidecarRoot = join(context.profiles, profile, "GameBuddy");
     const modRoot = join(context.profiles, profile, "Mods", "GameBuddy");
     await mkdir(sidecarRoot, { recursive: true });
     await mkdir(modRoot, { recursive: true });
-    // The custom SMAPI mods root contains both paths. Remove only the three
-    // managed bundle files from the sidecar for this transaction; config.json
+    // The custom SMAPI mods root contains both paths. Remove only the managed
+    // bundle files from the sidecar for this transaction; config.json
     // remains available as the transaction input and is restored separately.
     await Promise.all(BUNDLE_FILE_NAMES.map((fileName) => rm(join(sidecarRoot, fileName), { force: true })));
     await cp(releaseDll, join(modRoot, "GameBuddy.Stardew.dll"));
     await cp(releaseCoreDll, join(modRoot, "GameBuddy.Stardew.Core.dll"));
+    await cp(releaseFuzzySharp, join(modRoot, "Raffinert.FuzzySharp.dll"));
     await cp(releaseManifest, join(modRoot, "manifest.json"));
     await cp(releaseDeps, join(modRoot, "GameBuddy.Stardew.deps.json"));
   }

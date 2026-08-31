@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { validateBridgeMessage } from "../host/dist-test/protocol.js";
-import { STARDEW_INTEGRATION_MODULE } from "../host/dist-test/stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../host/dist-test/stardew-game-integration-adapter.js";
 
 export const NAVIGATION_ACTION = "navigate_to_destination";
 export const COMPLETION_REASON = "navigation_completed";
@@ -11,7 +11,7 @@ export const FORBIDDEN_EVIDENCE_PRIMITIVES = Object.freeze([ "route", "tile", "w
 function isRecord(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
 function isOpaqueId(v) { return typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v); }
 const defaultCompletionEvidence = (p) =>
-  STARDEW_INTEGRATION_MODULE.actionCatalog.hasCompletionEvidence(NAVIGATION_ACTION, p);
+  STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(NAVIGATION_ACTION, p);
 function forbiddenEvidencePrimitives(payload) {
   const evidence = payload?.evidence;
   // Privacy is a replay invariant independent of the current wire schema:

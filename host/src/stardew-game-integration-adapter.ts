@@ -399,6 +399,12 @@ function decremented(
   return left !== null && right !== null && right === left - 1;
 }
 
+/** Fixed Host-side description exported to the test-only Navigation surface producer. */
+export const STARDEW_NAVIGATION_COMPLETION_VERIFICATION = Object.freeze({
+  reasonCode: "navigation_completed",
+  requiredEvidence: Object.freeze({ arrived: "true", postcondition: "true" }),
+});
+
 function hasNavigationCompletionEvidence(detail: string): boolean {
   // The Mod emits exactly this navigation_completed evidence only from a fresh
   // post-warp coordinator re-read at the destination. It contains only the

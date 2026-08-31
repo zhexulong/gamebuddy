@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { GameIntegrationModule } from "./integration-module.js";
-import type { CompanionIntegration, CompanionIntegrationState } from "./integration-types.js";
+import type { GameIntegrationAdapter } from "./game-integration-adapter.js";
+import type { StardewBridgeConnection, StardewBridgeConnectionState } from "./game-connection.js";
 import type { KnowledgeBundle } from "./knowledge.js";
 import { NamedPipeTransport } from "./named-pipe.js";
 import {
@@ -21,10 +21,10 @@ import {
   type SystemNoticeRequest,
   validateBridgeMessage,
 } from "./protocol.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 
-export type LocalStardewBridgeState = CompanionIntegrationState &
+export type LocalStardewBridgeState = StardewBridgeConnectionState &
   Readonly<{
     authenticated: boolean;
     /** Current authenticated Mod availability publication for this bridge generation. */
@@ -41,8 +41,14 @@ export type LocalStardewConnectionFact = Readonly<{ state: "disconnected"; reaso
 /** Fixed, content-free local diagnostic emitted immediately before a fail-closed inbound rejection. */
 export type LocalStardewBridgeDiagnostic = Readonly<{
   stage:
-    | "native_chat_pipe_data_received"
-    | "native_chat_bridge_inbound_frame_received"
+  | "pipe_bytes_received"
+  | "pipe_frame_header_accepted"
+  | "pipe_frame_payload_complete"
+  | "pipe_frame_dispatched"
+  | "pipe_write_completed"
+  | "pipe_write_failed"
+  | "native_chat_pipe_data_received"
+  | "native_chat_bridge_inbound_frame_received"
     | "native_chat_bridge_player_control_validated"
     | "native_chat_bridge_inbound_rejected";
   reasonCode: string;
@@ -68,7 +74,7 @@ type OutboundRequestType =
  * Production Windows-local bridge adapter. The Mod's advertised capabilities
  * are the only action-policy summary; this transport never creates authority.
  */
-export class LocalStardewBridgeClient implements CompanionIntegration {
+export class LocalStardewBridgeClient implements StardewBridgeConnection {
   readonly #pending = new Map<string, PendingRequest>();
   #authenticated = false;
   #sessionId: string | null = null;
@@ -98,9 +104,12 @@ export class LocalStardewBridgeClient implements CompanionIntegration {
     }> | undefined,
     readonly knowledge?: KnowledgeBundle,
     readonly gameVersion?: string,
-    readonly module: GameIntegrationModule = STARDEW_INTEGRATION_MODULE,
+    readonly module: GameIntegrationAdapter = STARDEW_GAME_INTEGRATION_ADAPTER,
   ) {
     transport.onMessage((json) => this.receive(json));
+    transport.onFrameStage((stage) => {
+      for (const listener of this.#diagnosticListeners) listener({ stage, reasonCode: "observed" });
+    });
     transport.onData(() => {
       if (!this.#initialSnapshotReceived) return;
       for (const listener of this.#diagnosticListeners)

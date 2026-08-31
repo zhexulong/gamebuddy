@@ -61,6 +61,85 @@ public sealed class DestinationSearchTests
         result.Candidates!.Select(candidate => candidate.Selector.Ref).Should().OnlyContain(reference => reference == null);
     }
 
+    [Fact]
+    public void Find_FourExactMatches_ReturnsFirstThreeDeterministicCandidates()
+    {
+        DestinationSearchResult result = new DestinationSearch().Find(Set(
+            Leaf("Zulu", "Zulu", "mine"),
+            Leaf("Bravo", "Bravo", "mine"),
+            Leaf("Alpha", "Alpha", "mine"),
+            Leaf("Charlie", "Charlie", "mine")),
+            "mine");
+
+        result.Status.Should().Be("candidates");
+        result.Reason.Should().Be("ambiguous_exact");
+        result.Candidates.Should().NotBeNull();
+        result.Candidates!.Select(candidate => candidate.Label).Should().Equal("Alpha", "Bravo", "Charlie");
+        result.Candidates.Should().OnlyContain(candidate =>
+            candidate.Selector.Kind == "ref" && candidate.Selector.Label == null && candidate.Selector.Ref == null);
+    }
+
+    private static readonly string[] NavigationActions =
+    {
+        "inspect_world_map",
+        "find_destination",
+        "navigate_to_destination",
+    };
+
+    [Fact]
+    public void LegacyExplicitPolicy_PreservesTheExactPublishedNavigationSurface()
+    {
+        var config = new ModConfig
+        {
+            ActionPolicyVersion = 0,
+            EnabledActions = NavigationActions.ToList(),
+        };
+
+        config.HasValidActionPolicy.Should().BeTrue();
+        config.EnabledActionSet.Should().BeEquivalentTo(NavigationActions);
+    }
+
+    [Fact]
+    public void DefaultPolicy_DeniedWorldNavigationFamilyWithdrawsEveryNavigationOperation()
+    {
+        var config = new ModConfig
+        {
+            ActionPolicyVersion = 1,
+            DeniedActionFamilies = new List<string> { "world_navigation" },
+        };
+
+        config.HasValidActionPolicy.Should().BeTrue();
+        config.EnabledActionSet.Should().NotContain(NavigationActions);
+    }
+
+    [Fact]
+    public void NavigationMutationFixture_AllowsOnlyItsBoundedPrivateTargetField()
+    {
+        var fixture = new NativeLocalPlayerFixtureConfig
+        {
+            Enable = true,
+            LogicalSaveName = "GameBuddyFixtureNavigation",
+            ObservedSaveSlot = "GameBuddyFixtureNavigation_123456789",
+            TimeoutSeconds = 120,
+            FixtureScenario = "navigation_mutation_v1",
+        };
+
+        fixture.IsValid.Should().BeTrue();
+        fixture.NavigationMutationTargetLabel = "Localized target";
+        fixture.IsValid.Should().BeTrue();
+
+        var unrelated = new NativeLocalPlayerFixtureConfig
+        {
+            Enable = true,
+            LogicalSaveName = "GameBuddyFixtureNavigation",
+            ObservedSaveSlot = "GameBuddyFixtureNavigation_123456789",
+            TimeoutSeconds = 120,
+            FixtureScenario = string.Empty,
+            NavigationMutationTargetLabel = "Localized target",
+        };
+        unrelated.IsValid.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
@@ -77,6 +156,6 @@ public sealed class DestinationSearchTests
     private static DerivedDestinationSet Set(params NavigationSourceNode[] nodes) =>
         new("generation_01", new NavigationSourceNode("root", null, null, null, nodes));
 
-    private static NavigationSourceNode Leaf(string label, string identity) =>
-        new(identity, label, new NavigationDestination("stardew", identity, label, null), null, Array.Empty<NavigationSourceNode>());
+    private static NavigationSourceNode Leaf(string label, string identity, params string[] aliases) =>
+        new(identity, label, new NavigationDestination("stardew", identity, label, null, null, aliases), null, Array.Empty<NavigationSourceNode>());
 }

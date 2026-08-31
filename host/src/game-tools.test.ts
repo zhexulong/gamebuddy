@@ -4,10 +4,10 @@ import test from "node:test";
 import { createDeterministicBridgePair } from "./bridge.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
-import { CompanionIntegrationClient } from "./integration.js";
+import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
 import { newEnvelope, type Scope } from "./protocol.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const scope: Scope = {
   integrationId: "stardew",
@@ -31,9 +31,53 @@ function testAdmission(integration: MoveCapableIntegration) {
   };
 }
 
+function deferred(): Readonly<{ promise: Promise<void>; resolve: () => void }> {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function moveIntegration(
+  execute: MoveCapableIntegration["execute"],
+): MoveCapableIntegration {
+  return {
+    scope,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
+    state: {
+      connected: true,
+      sessionId: "session_01",
+      capabilities: ["move_to_tile"],
+      catalogRevision: 1,
+      enabledActionIds: ["move_to_tile"],
+      snapshot: {
+        revision: 3,
+        location: "Farm",
+        tile: { x: 1, y: 2 },
+        stamina: 100,
+        health: 100,
+        actionable: true,
+        capabilities: ["move_to_tile"],
+        catalogRevision: 1,
+        enabledActionIds: ["move_to_tile"],
+        presentationLocale: "en-US",
+        activeExecution: null,
+      },
+      latestReceipt: null,
+      latestReasonCode: null,
+      catalogRegistrations: TEST_MOD_REGISTRATIONS,
+    },
+    execute,
+    async cancel() {
+      throw new Error("unused");
+    },
+  };
+}
+
 test("Stardew Host tools expose only factual observation and receipt surfaces", async () => {
   const [host, mod] = createDeterministicBridgePair(scope);
-  const client = new CompanionIntegrationClient(scope, host, STARDEW_INTEGRATION_MODULE);
+  const client = new GameConnectionTestClient(scope, host, STARDEW_GAME_INTEGRATION_ADAPTER);
   const [observe, execution, catalog, search] = createStardewObservationTools(client);
   assert.deepEqual(
     [observe.name, execution.name, catalog.name, search.name],
@@ -48,7 +92,7 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
         newEnvelope(
           "hello_ack",
           scope,
-          { sessionId: "session_01", capabilities: ["move_to_tile"], presentationLocale: "en-US", registrations: [{"actionId":"move_to_tile","familyId":"movement_navigation","identityVersion":1,"lifecycle":"published"}] },
+          { sessionId: "session_01", capabilities: ["move_to_tile"], catalogRevision: 1, enabledActionIds: ["move_to_tile"], presentationLocale: "en-US", registrations: [{ actionId: "move_to_tile", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "execution" }], runtimeRole: "native_local_fixture", launchGeneration: null },
           message.correlationId,
           now,
         ),
@@ -67,6 +111,8 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
             health: 100,
             actionable: true,
             capabilities: ["move_to_tile"],
+catalogRevision: 1,
+            enabledActionIds: ["move_to_tile"],
             presentationLocale: "en-US",
             activeExecution: null,
           },
@@ -90,13 +136,14 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
   let enabled = true;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: enabled ? ["move_to_tile"] : [],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: enabled ? ["move_to_tile"] : [],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -104,6 +151,8 @@ test("mounted Game Action fails closed when the live Mod capability is withdrawn
           health: 100,
           actionable: true,
           capabilities: enabled ? ["move_to_tile"] : [],
+catalogRevision: 1,
+          enabledActionIds: enabled ? ["move_to_tile"] : [],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -139,13 +188,14 @@ test("a materialized tool does not call integration.execute after subtractive po
   };
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["move_to_tile"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["move_to_tile"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -153,6 +203,8 @@ test("a materialized tool does not call integration.execute after subtractive po
           health: 100,
           actionable: true,
           capabilities: ["move_to_tile"],
+catalogRevision: 1,
+          enabledActionIds: ["move_to_tile"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -182,13 +234,14 @@ test("the shared wrapper surfaces bridge execute errors as fail-closed receipt r
   let executeCalls = 0;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["move_to_tile"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["move_to_tile"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -196,6 +249,8 @@ test("the shared wrapper surfaces bridge execute errors as fail-closed receipt r
           health: 100,
           actionable: true,
           capabilities: ["move_to_tile"],
+catalogRevision: 1,
+          enabledActionIds: ["move_to_tile"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -231,13 +286,14 @@ test("equip_tool mounts only from a live capability and forwards the selected sl
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["equip_tool"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["equip_tool"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -245,6 +301,8 @@ test("equip_tool mounts only from a live capability and forwards the selected sl
           health: 100,
           actionable: true,
           capabilities: ["equip_tool"],
+catalogRevision: 1,
+          enabledActionIds: ["equip_tool"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -257,6 +315,7 @@ test("equip_tool mounts only from a live capability and forwards the selected sl
       received = request;
       return {
         executionId: "execution_tool_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "tool_selected",
@@ -287,13 +346,14 @@ test("enter_exit mounts from a live capability and forwards the door tile", asyn
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["enter_exit"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["enter_exit"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -301,6 +361,8 @@ test("enter_exit mounts from a live capability and forwards the door tile", asyn
           health: 100,
           actionable: true,
           capabilities: ["enter_exit"],
+catalogRevision: 1,
+          enabledActionIds: ["enter_exit"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -313,6 +375,7 @@ test("enter_exit mounts from a live capability and forwards the door tile", asyn
       received = request;
       return {
         executionId: "execution_door_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "accepted",
         reasonCode: "accepted",
@@ -342,13 +405,14 @@ test("published pickup_item mounts only from a live capability and forwards the 
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["pickup_item"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["pickup_item"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 25, y: 33 },
@@ -356,6 +420,8 @@ test("published pickup_item mounts only from a live capability and forwards the 
           health: 100,
           actionable: true,
           capabilities: ["pickup_item"],
+catalogRevision: 1,
+          enabledActionIds: ["pickup_item"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -368,6 +434,7 @@ test("published pickup_item mounts only from a live capability and forwards the 
       received = request;
       return {
         executionId: "execution_item_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "item_picked_up",
@@ -413,13 +480,14 @@ test("published refill_watering_can mounts only from a live capability and forwa
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["refill_watering_can"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["refill_watering_can"],        snapshot: {
           revision: 3,
           location: "FarmHouse",
           tile: { x: 9, y: 8 },
@@ -427,6 +495,8 @@ test("published refill_watering_can mounts only from a live capability and forwa
           health: 100,
           actionable: true,
           capabilities: ["refill_watering_can"],
+catalogRevision: 1,
+          enabledActionIds: ["refill_watering_can"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -439,6 +509,7 @@ test("published refill_watering_can mounts only from a live capability and forwa
       received = request;
       return {
         executionId: "execution_refill_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "watering_can_refilled",
@@ -496,13 +567,14 @@ test("published plant_seed mounts only from a live capability and forwards the o
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["plant_seed"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["plant_seed"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -510,6 +582,8 @@ test("published plant_seed mounts only from a live capability and forwards the o
           health: 100,
           actionable: true,
           capabilities: ["plant_seed"],
+catalogRevision: 1,
+          enabledActionIds: ["plant_seed"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -522,6 +596,7 @@ test("published plant_seed mounts only from a live capability and forwards the o
       received = request;
       return {
         executionId: "execution_seed_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "seed_planted",
@@ -566,13 +641,14 @@ test("published clear_hoedirt mounts only from a live capability and forwards ex
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["clear_hoedirt"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["clear_hoedirt"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -580,6 +656,8 @@ test("published clear_hoedirt mounts only from a live capability and forwards ex
           health: 100,
           actionable: true,
           capabilities: ["clear_hoedirt"],
+catalogRevision: 1,
+          enabledActionIds: ["clear_hoedirt"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -592,6 +670,7 @@ test("published clear_hoedirt mounts only from a live capability and forwards ex
       received = request;
       return {
         executionId: "execution_hoedirt_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "hoedirt_cleared",
@@ -637,13 +716,14 @@ test("published use_item mounts only from a live capability and forwards the foo
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["use_item"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["use_item"],        snapshot: {
           revision: 3,
           location: "FarmHouse",
           tile: { x: 1, y: 2 },
@@ -651,6 +731,8 @@ test("published use_item mounts only from a live capability and forwards the foo
           health: 100,
           actionable: true,
           capabilities: ["use_item"],
+catalogRevision: 1,
+          enabledActionIds: ["use_item"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -663,6 +745,7 @@ test("published use_item mounts only from a live capability and forwards the foo
       received = request;
       return {
         executionId: "execution_food_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "item_used",
@@ -698,13 +781,14 @@ test("published harvest_crop mounts only from a live capability and forwards the
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["harvest_crop"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["harvest_crop"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 38, y: 19 },
@@ -712,6 +796,8 @@ test("published harvest_crop mounts only from a live capability and forwards the
           health: 100,
           actionable: true,
           capabilities: ["harvest_crop"],
+catalogRevision: 1,
+          enabledActionIds: ["harvest_crop"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -724,6 +810,7 @@ test("published harvest_crop mounts only from a live capability and forwards the
       received = request;
       return {
         executionId: "execution_harvest_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "crop_harvested",
@@ -766,13 +853,14 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["chop_tree_source"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["chop_tree_source"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 38, y: 19 },
@@ -780,6 +868,8 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
           health: 100,
           actionable: true,
           capabilities: ["chop_tree_source"],
+catalogRevision: 1,
+          enabledActionIds: ["chop_tree_source"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -792,6 +882,7 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
       received = request;
       return {
         executionId: "execution_tree_chop_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "tree_source_chopped",
@@ -850,13 +941,14 @@ test("published break_rock_source mounts only from a live Mod capability and for
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["break_rock_source"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["break_rock_source"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 38, y: 19 },
@@ -864,6 +956,8 @@ test("published break_rock_source mounts only from a live Mod capability and for
           health: 100,
           actionable: true,
           capabilities: ["break_rock_source"],
+catalogRevision: 1,
+          enabledActionIds: ["break_rock_source"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -876,6 +970,7 @@ test("published break_rock_source mounts only from a live Mod capability and for
       received = request;
       return {
         executionId: "execution_rock_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "rock_source_broken",
@@ -934,13 +1029,14 @@ test("published machine_inspect mounts only from a live capability and forwards 
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["machine_inspect"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["machine_inspect"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -948,6 +1044,8 @@ test("published machine_inspect mounts only from a live capability and forwards 
           health: 100,
           actionable: true,
           capabilities: ["machine_inspect"],
+catalogRevision: 1,
+          enabledActionIds: ["machine_inspect"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -960,6 +1058,7 @@ test("published machine_inspect mounts only from a live capability and forwards 
       received = request;
       return {
         executionId: "execution_machine_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "machine_inspected",
@@ -1001,13 +1100,14 @@ test("published machine_load mounts only from a live capability and forwards the
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["machine_load"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["machine_load"],        snapshot: {
           revision: 3,
           location: "FarmHouse",
           tile: { x: 1, y: 2 },
@@ -1015,6 +1115,8 @@ test("published machine_load mounts only from a live capability and forwards the
           health: 100,
           actionable: true,
           capabilities: ["machine_load"],
+catalogRevision: 1,
+          enabledActionIds: ["machine_load"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -1027,6 +1129,7 @@ test("published machine_load mounts only from a live capability and forwards the
       received = request;
       return {
         executionId: "execution_machine_load_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "machine_coffee_loaded",
@@ -1070,13 +1173,14 @@ test("published machine_collect_output mounts only from a live capability and fo
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["machine_collect_output"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["machine_collect_output"],        snapshot: {
           revision: 3,
           location: "FarmHouse",
           tile: { x: 1, y: 2 },
@@ -1084,6 +1188,8 @@ test("published machine_collect_output mounts only from a live capability and fo
           health: 100,
           actionable: true,
           capabilities: ["machine_collect_output"],
+catalogRevision: 1,
+          enabledActionIds: ["machine_collect_output"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -1096,6 +1202,7 @@ test("published machine_collect_output mounts only from a live capability and fo
       received = request;
       return {
         executionId: "execution_machine_collect_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "machine_coffee_collected",
@@ -1150,13 +1257,14 @@ test("published bait_crab_pot mounts only from a live capability and forwards th
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["bait_crab_pot"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["bait_crab_pot"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -1164,6 +1272,8 @@ test("published bait_crab_pot mounts only from a live capability and forwards th
           health: 100,
           actionable: true,
           capabilities: ["bait_crab_pot"],
+catalogRevision: 1,
+          enabledActionIds: ["bait_crab_pot"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -1176,6 +1286,7 @@ test("published bait_crab_pot mounts only from a live capability and forwards th
       received = request;
       return {
         executionId: "execution_bait_01",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "crab_pot_baited",
@@ -1230,6 +1341,7 @@ test("published bait_crab_pot mounts only from a live capability and forwards th
 test("mounted Game Actions return authoritative Mod receipts without inventing completion", async () => {
   const receipt = {
     executionId: "execution_01",
+    actionId: "move_to_tile",
     requestId: "request_01",
     state: "accepted" as const,
     reasonCode: "accepted",
@@ -1238,13 +1350,14 @@ test("mounted Game Actions return authoritative Mod receipts without inventing c
   };
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_01",
         capabilities: ["move_to_tile", "cancel_active_execution"],
-        snapshot: {
+        catalogRevision: 1,
+        enabledActionIds: ["move_to_tile", "cancel_active_execution"],        snapshot: {
           revision: 3,
           location: "Farm",
           tile: { x: 1, y: 2 },
@@ -1252,6 +1365,8 @@ test("mounted Game Actions return authoritative Mod receipts without inventing c
           health: 100,
           actionable: true,
           capabilities: ["move_to_tile", "cancel_active_execution"],
+catalogRevision: 1,
+          enabledActionIds: ["move_to_tile", "cancel_active_execution"],
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -1287,11 +1402,13 @@ test("each executable action obtains a fresh runtime admission immediately befor
   const admittedOwners: string[] = [];
   const integration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     state: {
       connected: true,
       sessionId: "session",
       capabilities: ["move_to_tile"],
+      catalogRevision: 1,
+      enabledActionIds: ["move_to_tile"],
       snapshot: {
         revision: 1,
         location: "Farm",
@@ -1300,6 +1417,8 @@ test("each executable action obtains a fresh runtime admission immediately befor
         health: 1,
         actionable: true,
         capabilities: ["move_to_tile"],
+catalogRevision: 1,
+        enabledActionIds: ["move_to_tile"],
         presentationLocale: "en-US",
         activeExecution: null,
       },
@@ -1311,6 +1430,7 @@ test("each executable action obtains a fresh runtime admission immediately befor
       return {
         requestId: request.requestId,
         executionId: "execution_01",
+        actionId: "move_to_tile",
         state: "accepted",
         reasonCode: "accepted",
         revision: 1,
@@ -1327,7 +1447,9 @@ test("each executable action obtains a fresh runtime admission immediately befor
     return {
       owner: { ownerId, epoch: 0 },
       observer: {
-        beforeWrite: () => admittedOwners.push(ownerId),
+        beforeWrite: () => {
+          admittedOwners.push(ownerId);
+        },
         bindReceipt: () => undefined,
         markUncertain: () => undefined,
       },
@@ -1341,15 +1463,107 @@ test("each executable action obtains a fresh runtime admission immediately befor
   assert.deepEqual(admittedOwners, ["owner_1", "owner_2"]);
 });
 
+test("game action awaits admission beforeWrite before calling the bridge", async () => {
+  let executeCalls = 0;
+  const beforeWrite = deferred();
+  const integration = moveIntegration(async (request) => {
+    executeCalls++;
+    return {
+      requestId: request.requestId,
+      executionId: "execution_before_write_01",
+      actionId: "move_to_tile",
+      state: "accepted",
+      reasonCode: "accepted",
+      revision: 3,
+      evidence: null,
+    };
+  });
+  const [move] = createStardewActionTools(integration, undefined, () => ({
+    owner: { ownerId: "test_owner", epoch: 1 },
+    observer: {
+      beforeWrite: () => beforeWrite.promise,
+      bindReceipt: () => undefined,
+      markUncertain: () => undefined,
+    },
+    cancelExact: async () => {
+      throw new Error("unused");
+    },
+  }));
+  assert.ok(move);
+
+  const invocation = move.execute(
+    "test",
+    { x: 3, y: 4 },
+    new AbortController().signal,
+    () => undefined,
+    {} as never,
+  );
+  await Promise.resolve();
+  assert.equal(executeCalls, 0);
+  beforeWrite.resolve();
+  await invocation;
+  assert.equal(executeCalls, 1);
+});
+
+test("game action awaits markUncertain after a bridge execute failure", async () => {
+  let executeCalls = 0;
+  let markUncertainCalls = 0;
+  let invocationSettled = false;
+  const markUncertain = deferred();
+  const markUncertainStarted = deferred();
+  const integration = moveIntegration(async () => {
+    executeCalls++;
+    throw new Error("bridge_rejected:native_denied");
+  });
+  const [move] = createStardewActionTools(integration, undefined, () => ({
+    owner: { ownerId: "test_owner", epoch: 1 },
+    observer: {
+      beforeWrite: () => undefined,
+      bindReceipt: () => undefined,
+      markUncertain: () => {
+        markUncertainCalls++;
+        markUncertainStarted.resolve();
+        return markUncertain.promise;
+      },
+    },
+    cancelExact: async () => {
+      throw new Error("unused");
+    },
+  }));
+  assert.ok(move);
+
+  const invocation = move
+    .execute(
+      "test",
+      { x: 3, y: 4 },
+      new AbortController().signal,
+      () => undefined,
+      {} as never,
+    )
+    .then((result) => {
+      invocationSettled = true;
+      return result;
+    });
+  await markUncertainStarted.promise;
+  assert.equal(executeCalls, 1);
+  assert.equal(markUncertainCalls, 1);
+  assert.equal(invocationSettled, false);
+  markUncertain.resolve();
+  const result = await invocation;
+  assert.equal(invocationSettled, true);
+  assert.equal((result.details as { reasonCode?: string }).reasonCode, "native_denied");
+});
+
 test("model-facing tools never expose active-execution cancellation", () => {
   const integration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     state: {
       connected: true,
       sessionId: "session",
       capabilities: ["cancel_active_execution"],
-      snapshot: null,
+      catalogRevision: 1,
+      enabledActionIds: ["cancel_active_execution"],      snapshot: null,
       latestReceipt: null,
       latestReasonCode: null,
         catalogRegistrations: TEST_MOD_REGISTRATIONS,
@@ -1373,12 +1587,13 @@ test("model-facing tools never expose active-execution cancellation", () => {
 test("action tools fail closed without runtime-owned dispatch admission", () => {
   const integration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     state: {
       connected: true,
       sessionId: "session",
       capabilities: ["move_to_tile"],
-      snapshot: null,
+      catalogRevision: 1,
+      enabledActionIds: ["move_to_tile"],      snapshot: null,
       latestReceipt: null,
       latestReasonCode: null,
         catalogRegistrations: TEST_MOD_REGISTRATIONS,
