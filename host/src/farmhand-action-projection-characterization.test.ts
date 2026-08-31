@@ -9,7 +9,7 @@ import {
   type MoveCapableIntegration,
 } from "./game-tools.js";
 import type { ExecutionReceipt, ExecutionRequest, Scope } from "./protocol.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const scope: Scope = {
   integrationId: "stardew",
@@ -27,12 +27,14 @@ function integrationWithCapabilities(
 ): MoveCapableIntegration {
   return {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_projection_01",
         capabilities,
+        catalogRevision: 1,
+        enabledActionIds: capabilities,
         snapshot: {
           revision: 3,
           location: "Farm",
@@ -41,6 +43,8 @@ function integrationWithCapabilities(
           health: 100,
           actionable: true,
           capabilities,
+          catalogRevision: 1,
+          enabledActionIds: capabilities,
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -64,12 +68,14 @@ function integrationWithReadiness(
 ): MoveCapableIntegration {
   return {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected,
         sessionId: connected ? "session_projection_01" : null,
         capabilities: stateCapabilities,
+        catalogRevision: 1,
+        enabledActionIds: stateCapabilities,
         snapshot:
           snapshotCapabilities === null
             ? null
@@ -81,6 +87,8 @@ function integrationWithReadiness(
                 health: 100,
                 actionable: true,
                 capabilities: snapshotCapabilities,
+                catalogRevision: 1,
+                enabledActionIds: snapshotCapabilities,
                 presentationLocale: "en-US",
                 activeExecution: null,
               },
@@ -308,6 +316,7 @@ test("every materialized published Farmhand tool routes its exact action-specifi
       requests.push(request);
       return {
         executionId: `execution_${request.action}`,
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "completed",
@@ -539,12 +548,14 @@ test("a materialized Farmhand tool rereads the latest live revision at invocatio
   const requests: ExecutionRequest[] = [];
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: "session_projection_01",
         capabilities,
+        catalogRevision: 1,
+        enabledActionIds: capabilities,
         snapshot: {
           revision,
           location: "Farm",
@@ -553,6 +564,8 @@ test("a materialized Farmhand tool rereads the latest live revision at invocatio
           health: 100,
           actionable: true,
           capabilities,
+          catalogRevision: 1,
+          enabledActionIds: capabilities,
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -565,6 +578,7 @@ test("a materialized Farmhand tool rereads the latest live revision at invocatio
       requests.push(request);
       return {
         executionId: "execution_move_to_tile",
+        actionId: "move_to_tile",
         requestId: request.requestId,
         state: "succeeded",
         reasonCode: "completed",
@@ -614,12 +628,14 @@ test("a materialized session A tool cannot pre-write after session B withdraws i
   let executeCalls = 0;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       return {
         connected: true,
         sessionId: session,
         capabilities,
+        catalogRevision: 1,
+        enabledActionIds: capabilities,
         snapshot: {
           revision,
           location: "Farm",
@@ -628,6 +644,8 @@ test("a materialized session A tool cannot pre-write after session B withdraws i
           health: 100,
           actionable: true,
           capabilities,
+          catalogRevision: 1,
+          enabledActionIds: capabilities,
           presentationLocale: "en-US",
           activeExecution: null,
         },
@@ -675,13 +693,15 @@ test("a mounted Farmhand action fails closed when its live Mod capability is wit
   let executeCalls = 0;
   const integration: MoveCapableIntegration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     get state() {
       const capabilities = enabled ? ["move_to_tile"] : [];
       return {
         connected: true,
         sessionId: "session_projection_01",
         capabilities,
+        catalogRevision: 1,
+        enabledActionIds: capabilities,
         snapshot: {
           revision: 3,
           location: "Farm",
@@ -690,6 +710,8 @@ test("a mounted Farmhand action fails closed when its live Mod capability is wit
           health: 100,
           actionable: true,
           capabilities,
+          catalogRevision: 1,
+          enabledActionIds: capabilities,
           presentationLocale: "en-US",
           activeExecution: null,
         },
