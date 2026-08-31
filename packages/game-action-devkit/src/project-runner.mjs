@@ -186,7 +186,7 @@ export async function runActionProject({ projectFile, invocation }) {
   const manifest = normalizedInvocation.command === "status" && normalizedInvocation.actionId === undefined
     ? await loadActionProjectManifest(projectFile, { allowMissingPortfolio: true })
     : await readActionProjectManifest(projectFile);
-  if (["preflight", "run-live"].includes(normalizedInvocation.command) && normalizedInvocation.profileFile === undefined) fail("profile_required");
+  if (normalizedInvocation.command === "preflight" && normalizedInvocation.profileFile === undefined) fail("profile_required");
   let canonicalBriefFile;
   if (normalizedInvocation.briefFile !== undefined) {
     const declaredBriefFile = path.resolve(manifest.baseDirectory, normalizedInvocation.briefFile);
