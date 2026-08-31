@@ -1,7 +1,7 @@
-import type { BridgeFault, DeterministicBridgeEndpoint } from "./bridge.js";
-import type { GameIntegrationAdapter } from "./game-integration-adapter.js";
-import type { StardewBridgeConnectionState } from "./game-connection.js";
-import type { KnowledgeBundle } from "./knowledge.js";
+import type { BridgeFault, DeterministicBridgeEndpoint } from "../bridge.js";
+import type { GameIntegrationAdapter } from "../game-integration-adapter.js";
+import type { StardewBridgeConnectionState } from "../game-connection.js";
+import type { KnowledgeBundle } from "../knowledge.js";
 import {
   type ActionRegistration,
   type BridgeMessage,
@@ -12,19 +12,19 @@ import {
   nextCancelIdentity,
   type Scope,
   type Snapshot,
-} from "./protocol.js";
+} from "../protocol.js";
 
 /**
  * Host-side, game-neutral bridge state. It only caches Mod-originated facts;
  * it does not predict movement or reinterpret a receipt as success. The
  * deterministic endpoint is a test adapter, not a production IPC choice.
  */
-export class GameBridgeClient {
+export class GameConnectionTestClient {
   #sessionId: string | null = null;
   #capabilities: readonly string[] = [];
   #registrations: readonly ActionRegistration[] = [];
-  #catalogRevision: number | undefined;
-  #enabledActionIds: readonly string[] | undefined;
+  #catalogRevision: number | null = null;
+  #enabledActionIds: readonly string[] = [];
   #snapshot: Snapshot | null = null;
   #latestReceipt: ExecutionReceipt | null = null;
   #latestReasonCode: string | null = null;
@@ -40,13 +40,13 @@ export class GameBridgeClient {
     readonly knowledge?: KnowledgeBundle,
     readonly gameVersion?: string,
   ) {
-    this.#unsubscribeMessage = endpoint.onMessage((message) => this.acceptBridgeMessage(message));
+    this.#unsubscribeMessage = endpoint.onMessage((message) => this.acceptIntegrationMessage(message));
     this.#unsubscribeDisconnect = endpoint.onDisconnect((reasonCode) => {
       this.#sessionId = null;
       this.#capabilities = [];
       this.#registrations = [];
-      this.#catalogRevision = undefined;
-      this.#enabledActionIds = undefined;
+      this.#catalogRevision = null;
+      this.#enabledActionIds = [];
       this.#snapshot = null;
       this.#latestReceipt = null;
       this.#latestReasonCode = reasonCode;
@@ -64,8 +64,8 @@ export class GameBridgeClient {
       sessionId: this.#sessionId,
       capabilities: this.#capabilities,
       catalogRegistrations: this.#registrations,
-      ...(this.#catalogRevision === undefined ? {} : { catalogRevision: this.#catalogRevision }),
-      ...(this.#enabledActionIds === undefined ? {} : { enabledActionIds: this.#enabledActionIds }),
+      catalogRevision: this.#catalogRevision ?? undefined,
+      enabledActionIds: this.#enabledActionIds,
       snapshot: this.#snapshot,
       latestReceipt: this.#latestReceipt,
       latestReasonCode: this.#latestReasonCode,
@@ -85,10 +85,10 @@ export class GameBridgeClient {
     if (
       !this.state.connected ||
       this.#snapshot === null ||
-      this.#catalogRevision === undefined ||
+      this.#catalogRevision === null ||
       this.#snapshot.catalogRevision !== this.#catalogRevision ||
-      !sameActionIds(this.#snapshot.enabledActionIds, this.#enabledActionIds ?? []) ||
-      !(this.#enabledActionIds ?? []).includes(request.action) ||
+      !sameActionIds(this.#snapshot.enabledActionIds, this.#enabledActionIds) ||
+      !this.#enabledActionIds.includes(request.action) ||
       !this.#snapshot.capabilities.includes(request.action)
     )
       return "not_ready";
@@ -125,7 +125,7 @@ export class GameBridgeClient {
   }
 
   /** Accept a validated Mod-to-Host fact from any transport adapter. */
-  public acceptBridgeMessage(message: BridgeMessage): void {
+  public acceptIntegrationMessage(message: BridgeMessage): void {
     switch (message.type) {
       case "hello_ack":
         this.#sessionId = message.payload.sessionId;
@@ -139,7 +139,7 @@ export class GameBridgeClient {
         break;
       case "catalog_update":
         if (
-          this.#catalogRevision === undefined ||
+          this.#catalogRevision === null ||
           message.payload.catalogRevision <= this.#catalogRevision ||
           !message.payload.enabledActionIds.every((actionId) =>
             this.#registrations.some(
@@ -147,9 +147,8 @@ export class GameBridgeClient {
             ),
           )
         ) {
-          // Mirror production transport behavior: a malformed catalog update
-          // poisons this authenticated generation rather than merely hiding
-          // its cached projection while the endpoint stays usable.
+          // Mirror the production client's fail-closed behavior for stale or
+          // malformed availability publications.
           this.endpoint.disconnect("invalid_catalog_update");
           break;
         }
@@ -158,12 +157,11 @@ export class GameBridgeClient {
         this.#snapshot = null;
         break;
       case "snapshot":
-        // A delayed observation response must never replace newer Mod state.
-        // After a catalog update, only a snapshot that binds exactly to the
-        // current immutable availability publication may restore projection.
+        // A delayed observation response must never replace newer Mod state;
+        // snapshots must also bind exactly to the current availability.
         if (
           message.payload.catalogRevision === this.#catalogRevision &&
-          sameActionIds(message.payload.enabledActionIds, this.#enabledActionIds ?? []) &&
+          sameActionIds(message.payload.enabledActionIds, this.#enabledActionIds) &&
           (this.#snapshot === null || message.payload.revision > this.#snapshot.revision)
         )
           this.#snapshot = message.payload;
