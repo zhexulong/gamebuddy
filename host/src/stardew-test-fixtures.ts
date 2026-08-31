@@ -38,6 +38,7 @@ export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] =
         familyId,
         identityVersion: 1,
         lifecycle: "published" as const,
+        kind: "execution" as const,
       }),
     ),
   );
