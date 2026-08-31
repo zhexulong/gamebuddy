@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { P3Message } from "../p3-browser-api";
+import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { MessageBubble } from "./MessageBubble";
 
 export function Timeline({
@@ -9,7 +9,7 @@ export function Timeline({
   labels,
   preview = null,
 }: {
-  transcript: readonly P3Message[];
+  transcript: readonly BrowserMessageV1[];
   preview?: Readonly<{ turnHandle: string; text: string }> | null;
   companionName: string;
   chatTitle: string | null;

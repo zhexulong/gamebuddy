@@ -125,7 +125,7 @@ test("memory service source keeps the store, lease and coordinator authority pri
   assert.match(source, /from ["']\.\.\/\.\.\/continuity-semantic-production/);
   assert.doesNotMatch(
     source,
-    /continuity-semantic-production-coordinator\.internal|transitionP4Mounted|transitionP5Mounted/,
+    /continuity-semantic-production-coordinator\.internal|transitionMountedProviderStart|transitionMountedPresentation/,
   );
   assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|fetch)[^"']*["']/);
   assert.match(source, /resolveMagicContextExtensionEntry/);

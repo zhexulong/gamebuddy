@@ -345,9 +345,10 @@ export async function buildProductionArtifact({
     throw new Error("invalid_browser_build_invocation_observer");
   const buildId = randomUUID().replaceAll("-", "");
   // Lane C resolves its adapter only from this exact private Host path.
-  const stagingRoot = process.platform === "win32"
-    ? resolve(hostRoot, ".dist-production-emitted")
-    : resolve(hostRoot, `.dist-production-emitted-${process.pid}-${buildId}`);
+  // Every build owns fresh private roots. A canonical output is published only
+  // after this complete composition verifies; no platform gets a reusable
+  // mutable emit directory that another producer can observe or overwrite.
+  const stagingRoot = resolve(hostRoot, `.dist-production-emitted-${process.pid}-${buildId}`);
   const closureRoot = resolve(hostRoot, `.dist-production-closure-${process.pid}-${buildId}`);
   const browserStagingRoot = resolve(browserStagingParent, buildId);
   await rm(stagingRoot, { recursive: true, force: true });

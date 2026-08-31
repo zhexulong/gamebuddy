@@ -92,7 +92,7 @@ test("management service source keeps the store, lease and coordinator authority
   assert.match(source, /from "\.\/chat-title-management\.js"/);
   assert.doesNotMatch(
     source,
-    /continuity-semantic-production-coordinator\.internal|transitionP4Mounted|transitionP5Mounted/,
+    /continuity-semantic-production-coordinator\.internal|transitionMountedProviderStart|transitionMountedPresentation/,
   );
   assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|fetch)[^"']*["']/);
 });

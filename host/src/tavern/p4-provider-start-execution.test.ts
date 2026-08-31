@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { P4ProviderStartExecutionScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type {
   AttemptObservationV1,
   AttemptStartingTurn,
   CancelledTurn,
   ChatTurnLedger,
-  P4ProviderStartTransition,
-  P5PresentationTransition,
+  ProviderStartTransition,
+  PresentationTransition,
   FailedTurn,
   RunningTurn,
 } from "./chat-thread-store.js";
@@ -15,7 +15,7 @@ import { createChatEventStream } from "./chat-event-stream.js";
 import {
   P4C_CANONICAL_DIALOGUE_INPUT_KIND,
   renderCanonicalDialogueEnvelope,
-  runMountedP4ProviderStart,
+  runMountedProviderStart,
   type NativeChatPreviewPublisher,
 } from "./p4-provider-start-execution.js";
 
@@ -145,12 +145,12 @@ function createScope(overrides: ScopeOverrides = {}) {
                 : (_listener: (event: unknown) => void) => () => undefined,
           }),
         });
-  const transitions: P4ProviderStartTransition[] = [];
-  const presentationTransitions: P5PresentationTransition[] = [];
+  const transitions: ProviderStartTransition[] = [];
+  const presentationTransitions: PresentationTransition[] = [];
   let durableRunning: RunningTurn | undefined;
   let durablePresentation: ChatTurnLedger | undefined;
   const transitionStore = async (
-    command: P4ProviderStartTransition,
+    command: ProviderStartTransition,
   ): Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn> => {
     transitions.push(command);
     if (command.operation === "running") {
@@ -198,7 +198,7 @@ function createScope(overrides: ScopeOverrides = {}) {
     }
     return attemptStarting(Object.freeze({ phase: "armed", observedAtMs: command.observedAtMs }));
   };
-  const transitionPresentation = async (command: P5PresentationTransition): Promise<ChatTurnLedger> => {
+  const transitionPresentation = async (command: PresentationTransition): Promise<ChatTurnLedger> => {
     presentationTransitions.push(command);
     if (durableRunning === undefined || durablePresentation === undefined)
       throw new Error("p5_presentation_source_running_required");
@@ -311,7 +311,7 @@ function createScope(overrides: ScopeOverrides = {}) {
     reserveNativeContentCommit:
       overrides.reserveNativeContentCommit ?? (() => Object.freeze({ cancelEpoch: 1, release: () => undefined })),
     finalizeCancellation: async () => undefined,
-  }) as P4ProviderStartExecutionScope;
+  }) as ProviderInvocationScope;
   return { scope, transitions, presentationTransitions };
 }
 
@@ -353,7 +353,7 @@ test("P4c terminalizes an observed prompt without a durable presentation as fail
     }),
   });
 
-  const result = await runMountedP4ProviderStart(scope);
+  const result = await runMountedProviderStart(scope);
 
   assert.equal(promptCalls, 1);
   assert.equal(unregisterCalls, 1);
@@ -401,7 +401,7 @@ test("P4c runs when native assistant output settles before the provider observer
     }),
   });
 
-  const result = await runMountedP4ProviderStart(scope);
+  const result = await runMountedProviderStart(scope);
 
   assert.equal(result.outcome, "completed");
   assert.equal(result.ledger.status, "completed");
@@ -463,7 +463,7 @@ test("P5 commits final native assistant content once after durable running and c
     }),
   });
 
-  const result = await runMountedP4ProviderStart(scope, previewPublisher);
+  const result = await runMountedProviderStart(scope, previewPublisher);
 
   assert.equal(result.outcome, "completed");
   assert.equal(result.ledger.status, "completed");
@@ -527,7 +527,7 @@ test("P5 normalizes native preview deltas before the browser event contract and 
     }),
   });
 
-  const result = await runMountedP4ProviderStart(scope, previewPublisher);
+  const result = await runMountedProviderStart(scope, previewPublisher);
 
   assert.equal(result.outcome, "completed");
   assert.equal(result.ledger.status, "completed");
@@ -562,7 +562,7 @@ test("P4c terminalizes a rejected prompt after an observation as durable runtime
     }),
   });
 
-  const result = await runMountedP4ProviderStart(scope);
+  const result = await runMountedProviderStart(scope);
 
   assert.equal(promptCalls, 1);
   assert.equal(result.outcome, "failed");
@@ -591,7 +591,7 @@ test("P4c returns a normal durable Stop winner when an aborted prompt rejects", 
     }),
   });
 
-  const result = await runMountedP4ProviderStart(scope);
+  const result = await runMountedProviderStart(scope);
 
   assert.equal(promptCalls, 1);
   assert.equal(result.outcome, "cancelled");
@@ -621,7 +621,7 @@ test("P4c rereads a normal Stop winner that races completion", async () => {
     }),
   });
 
-  const result = await runMountedP4ProviderStart(scope);
+  const result = await runMountedProviderStart(scope);
 
   assert.equal(result.outcome, "cancelled");
   assert.equal(result.ledger.status, "cancelled");
@@ -650,7 +650,7 @@ test("P4c rereads a normal Stop winner after provider settlement", async () => {
     }),
   });
 
-  const result = await runMountedP4ProviderStart(scope);
+  const result = await runMountedProviderStart(scope);
 
   assert.equal(promptCalls, 1);
   assert.equal(result.outcome, "cancelled");

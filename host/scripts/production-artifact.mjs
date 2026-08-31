@@ -25,10 +25,10 @@ const configuredEntry = (entryRoots, entry) => typeof entry === "string" && entr
 const configuredVerificationRoot = (value) => typeof value === "string"
   && /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.js$/.test(value);
 const REQUIRED_VERIFICATION_ROOTS = Object.freeze([
-  "tavern/p4-durable-turn-acceptance.js",
-  "tavern/p4-provider-attempt.js",
+  "tavern/player-turn-acceptance.js",
+  "tavern/provider-attempt-claim.js",
   "tavern/chat-provider-start.js",
-  "tavern/p3-static-shell-composition.js",
+  "tavern/reference-pipeline-static-shell-composition.js",
   "reference-pipeline-dialogue-web.js",
   "tavern-management-dialogue-web.js",
   "tavern/tavern-management-static-shell-composition.js",

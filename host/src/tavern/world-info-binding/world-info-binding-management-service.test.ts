@@ -280,7 +280,7 @@ test("binding service source keeps store, resolver, lease and coordinator author
   assert.match(source, /from "\.\.\/chat-thread-store\.js"/);
   assert.doesNotMatch(
     source,
-    /continuity-semantic-production-coordinator\.internal|transitionP4Mounted|transitionP5Mounted/,
+    /continuity-semantic-production-coordinator\.internal|transitionMountedProviderStart|transitionMountedPresentation/,
   );
   assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|fetch)[^"']*["']/);
 });
