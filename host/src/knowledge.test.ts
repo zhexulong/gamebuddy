@@ -9,7 +9,7 @@ import {
   type KnowledgeBundle,
   parseKnowledgeBundle,
 } from "./knowledge.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const snapshot = {
   revision: 4,
@@ -19,6 +19,8 @@ const snapshot = {
   health: 100,
   actionable: true,
   capabilities: ["move_to_tile"],
+catalogRevision: 1,
+  enabledActionIds: ["move_to_tile"],
   presentationLocale: "en-US",
   activeExecution: null,
 } as const;
@@ -72,7 +74,7 @@ test("mounted knowledge exposes advisory rules only for live, version-matched ca
       playerId: "player_01",
       companionId: "companion_01",
     },
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     gameVersion: "1.6.15",
     knowledge: bundle,
     state: {
@@ -123,7 +125,7 @@ test("unmounted knowledge remains unavailable rather than inventing guidance", a
       playerId: "player_01",
       companionId: "companion_01",
     },
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     state: {
       connected: true,
       sessionId: "session_01",
@@ -177,6 +179,7 @@ test("execution presentation never calls acceptance or unsupported success a com
   assert.match(
     formatExecutionForPlayer({
       executionId: "execution_01",
+      actionId: "move_to_tile",
       requestId: "request_01",
       state: "accepted",
       reasonCode: "accepted",
@@ -188,6 +191,7 @@ test("execution presentation never calls acceptance or unsupported success a com
   assert.match(
     formatExecutionForPlayer({
       executionId: "execution_01",
+      actionId: "move_to_tile",
       requestId: "request_01",
       state: "succeeded",
       reasonCode: "postcondition",
@@ -199,6 +203,7 @@ test("execution presentation never calls acceptance or unsupported success a com
   assert.match(
     formatExecutionForPlayer({
       executionId: "execution_01",
+      actionId: "move_to_tile",
       requestId: "request_01",
       state: "succeeded",
       reasonCode: "missing_evidence",

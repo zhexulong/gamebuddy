@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { type ActionPolicy, visibleActionsFromModCatalog } from "./action-registry.js";
-import type { CompanionIntegration } from "./integration-types.js";
+import type { StardewBridgeConnection } from "./game-connection.js";
 import type { ActionRegistration, ExecutionReceipt, Snapshot } from "./protocol.js";
 
 export type KnowledgeRule = Readonly<{
@@ -294,7 +294,7 @@ export function knowledgeCatalog(
  * Mod snapshot facts decide whether the rules are applicable.
  */
 export function createStardewKnowledgeTools(
-  integration: CompanionIntegration,
+  integration: StardewBridgeConnection,
   policy: ActionPolicy = { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
 ) {
   const result = (details: KnowledgeToolDetails) => ({
@@ -374,7 +374,7 @@ export function createStardewKnowledgeTools(
   return [catalog, knowledge] as const;
 }
 
-export function createStardewKnowledgeTool(integration: CompanionIntegration, policy?: ActionPolicy) {
+export function createStardewKnowledgeTool(integration: StardewBridgeConnection, policy?: ActionPolicy) {
   return createStardewKnowledgeTools(integration, policy)[1];
 }
 
