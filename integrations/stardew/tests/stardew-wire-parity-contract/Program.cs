@@ -103,7 +103,6 @@ internal static class Program
         {
             executionId = receipt.ExecutionId,
             requestId = receipt.RequestId,
-            actionId = receipt.ActionId,
             state = receipt.State,
             reasonCode = receipt.ReasonCode,
             revision = receipt.Revision,
@@ -179,7 +178,7 @@ internal static class Program
             using JsonDocument document = JsonDocument.Parse(json);
             JsonElement root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object
-                || !HasExactProperties(root, "messageId", "correlationId", "timestampMs", "scope", "executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"))
+                || !HasExactProperties(root, "messageId", "correlationId", "timestampMs", "scope", "executionId", "requestId", "state", "reasonCode", "revision", "evidence"))
                 throw new WireContractException("invalid_receipt_input");
 
             ReceiptInput? input = JsonSerializer.Deserialize<ReceiptInput>(root.GetRawText(), BridgeProtocol.JsonOptions);
@@ -189,7 +188,6 @@ internal static class Program
                 || !input.Scope.IsValid
                 || !BridgeProtocol.IsOpaqueId(input.ExecutionId)
                 || !BridgeProtocol.IsOpaqueId(input.RequestId)
-                || !BridgeProtocol.IsOpaqueId(input.ActionId)
                 || !IsExecutionState(input.State)
                 || !BridgeProtocol.IsReasonCode(input.ReasonCode)
                 || input.Revision < 0
@@ -320,7 +318,6 @@ internal static class Program
         BridgeScope Scope,
         string ExecutionId,
         string RequestId,
-        string ActionId,
         string State,
         string ReasonCode,
         long Revision,

@@ -50,7 +50,7 @@ export async function auditRootStardewCiDisposition() {
       location: ".github/workflows/ci.yml",
       command,
       disposition: "retain_until_package_parity",
-      reason: "current package action:ci intentionally excludes root tools, Host/protocol projection, and target-assembly/static-verifier checks",
+      reason: "standalone action:ci proves only the frozen deterministic closure; current Host/Core codec wire parity and target-assembly/static-verifier checks remain separate root-package evidence",
     })),
     Object.freeze({
       location: ".ci/test-portfolio-manifest.v1.json",
