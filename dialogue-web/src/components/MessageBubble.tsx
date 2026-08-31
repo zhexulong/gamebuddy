@@ -1,11 +1,11 @@
-import type { P3Message } from "../p3-browser-api";
+import type { BrowserMessageV1 } from "../reference-pipeline-api";
 
 export function MessageBubble({
   message,
   companionName,
   playerLabel,
 }: {
-  message: P3Message;
+  message: BrowserMessageV1;
   companionName: string;
   playerLabel: string;
 }) {

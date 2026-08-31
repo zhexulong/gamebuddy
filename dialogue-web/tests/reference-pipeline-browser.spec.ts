@@ -145,8 +145,8 @@ async function startMountedReferenceComposition(eventWindowSize = 64) {
       let settle!: (outcome: "release" | "fail") => void;
       const armedTurn = new Promise<void>((resolve) => { armed = resolve; });
       const terminalSignal = new Promise<"release" | "fail">((resolve) => { settle = resolve; });
-      activeTurn = coordinator.startMountedP4Attempt(manifest, lease, (invocation: unknown) =>
-        coordinator.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope: {
+      activeTurn = coordinator.startMountedAttempt(manifest, lease, (invocation: unknown) =>
+        coordinator.consumeMountedAttemptInvocationAdmission(invocation, async (scope: {
           transitionStore(command: unknown): Promise<unknown>;
           beginActivePrompt(): () => void;
           readCurrentTurnLedger(): Promise<unknown>;

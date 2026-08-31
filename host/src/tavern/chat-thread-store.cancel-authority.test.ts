@@ -7,12 +7,12 @@ import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
-  claimP4MountedAttempt,
+  claimMountedAttempt,
   createChatThreadStore,
-  transitionP4MountedProviderStart as rawTransitionP4MountedProviderStart,
-  transitionP5MountedPresentation as rawTransitionP5MountedPresentation,
+  transitionMountedProviderStart as rawTransitionP4MountedProviderStart,
+  transitionMountedPresentation as rawTransitionP5MountedPresentation,
 } from "./chat-thread-store.js";
-import { createP4P5MountedTransitionAuthority } from "./chat-thread-store.p4-p5-transition-authority.internal.js";
+import { createMountedTurnTransitionAuthority } from "./chat-thread-store.mounted-turn-transition.internal.js";
 
 /**
  * P6 durable cancel authority prerequisite — characterization only.
@@ -35,8 +35,8 @@ import { createP4P5MountedTransitionAuthority } from "./chat-thread-store.p4-p5-
  * No production file is modified by this suite.
  */
 
-const testTransitionAuthority = createP4P5MountedTransitionAuthority();
-const transitionP4MountedProviderStart = async (
+const testTransitionAuthority = createMountedTurnTransitionAuthority();
+const transitionMountedProviderStart = async (
   binding: Omit<Parameters<typeof rawTransitionP4MountedProviderStart>[0], "authority" | "operationAuthority">,
   command: Parameters<typeof rawTransitionP4MountedProviderStart>[1],
 ) => {
@@ -50,7 +50,7 @@ const transitionP4MountedProviderStart = async (
     operation.revoke();
   }
 };
-const transitionP5MountedPresentation = async (
+const transitionMountedPresentation = async (
   binding: Omit<Parameters<typeof rawTransitionP5MountedPresentation>[0], "authority" | "operationAuthority">,
   command: Parameters<typeof rawTransitionP5MountedPresentation>[1],
 ) => {
@@ -120,32 +120,32 @@ async function prepare(
     chatSurfaceSessionId: "surface_01",
     opening: "blank",
   });
-  const { acceptP4MountedPlayerMessage } = await import("./chat-thread-store.js");
+  const { acceptMountedPlayerMessage } = await import("./chat-thread-store.js");
   const binding = bindingFor(root);
-  await acceptP4MountedPlayerMessage(binding, {
+  await acceptMountedPlayerMessage(binding, {
     text: "Hello",
     locale: "en-US",
     idempotencyKey: "abcdefghijklmnopqrstuv",
     expectedDraftRevision: 0,
   });
   if (target === "accepted_queued") return { store, attemptId: "" };
-  const claimed = await claimP4MountedAttempt(binding);
+  const claimed = await claimMountedAttempt(binding);
   const attemptId = claimed.attempt.attemptId;
   if (target === "attempt_starting") return { store, attemptId };
   const prefix = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
-  await transitionP4MountedProviderStart(
+  await transitionMountedProviderStart(
     { ...bindingFor(root), attemptId },
     { operation: "arm", observedAtMs: prefix + 1 },
   );
   if (target === "armed") return { store, attemptId };
   if (target === "not_started") {
-    await transitionP4MountedProviderStart(
+    await transitionMountedProviderStart(
       { ...bindingFor(root), attemptId },
       { operation: "not_started", reasonCode: "admission_revoked", observedAtMs: prefix + 2 },
     );
     return { store, attemptId };
   }
-  await transitionP4MountedProviderStart(
+  await transitionMountedProviderStart(
     { ...bindingFor(root), attemptId },
     { operation: "running", statusClass: "success", observedAtMs: prefix + 2 },
   );
@@ -161,7 +161,7 @@ test("cancel authority prerequisite: claim_cancel rejects an accepted_queued tur
     // it before any cancel CAS can be evaluated.
     await assert.rejects(
       () =>
-        transitionP5MountedPresentation(
+        transitionMountedPresentation(
           { ...bindingFor(root), attemptId: "attempt_pending_01" },
           { operation: "claim_cancel", claimedAtMs: 200 },
         ),
@@ -175,19 +175,19 @@ test("cancel authority prerequisite: claim_cancel rejects an accepted_queued tur
     // The rejection is side-effect free: the later P4b/P4c path (claim → arm →
     // running → presentation activation/commit → completion) stays fully
     // usable, i.e. the rejected cancel did not poison the later activation.
-    const claimed = await claimP4MountedAttempt(bindingFor(root));
+    const claimed = await claimMountedAttempt(bindingFor(root));
     const attemptId = claimed.attempt.attemptId;
     const prefix = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
-    await transitionP4MountedProviderStart(
+    await transitionMountedProviderStart(
       { ...bindingFor(root), attemptId },
       { operation: "arm", observedAtMs: prefix + 1 },
     );
-    await transitionP4MountedProviderStart(
+    await transitionMountedProviderStart(
       { ...bindingFor(root), attemptId },
       { operation: "running", statusClass: "success", observedAtMs: prefix + 2 },
     );
     const committedAt = prefix + 3;
-    const committed = await transitionP5MountedPresentation(
+    const committed = await transitionMountedPresentation(
       { ...bindingFor(root), attemptId },
       {
         operation: "commit_presentation",
@@ -215,7 +215,7 @@ test("cancel authority prerequisite: claim_cancel rejects attempt_starting sourc
     assert.equal(unarmed.turnLedger?.observation, undefined);
     await assert.rejects(
       () =>
-        transitionP5MountedPresentation(
+        transitionMountedPresentation(
           { ...bindingFor(root), attemptId },
           { operation: "claim_cancel", claimedAtMs: unarmed.thread.updatedAtMs + 1 },
         ),
@@ -225,7 +225,7 @@ test("cancel authority prerequisite: claim_cancel rejects attempt_starting sourc
 
     // The rejection never closes/poisons the start path: arm is still legal.
     const prefix = unarmed.thread.updatedAtMs;
-    await transitionP4MountedProviderStart(
+    await transitionMountedProviderStart(
       { ...bindingFor(root), attemptId },
       { operation: "arm", observedAtMs: prefix + 1 },
     );
@@ -236,7 +236,7 @@ test("cancel authority prerequisite: claim_cancel rejects attempt_starting sourc
     // still not a legal cancel source.
     await assert.rejects(
       () =>
-        transitionP5MountedPresentation(
+        transitionMountedPresentation(
           { ...bindingFor(root), attemptId },
           { operation: "claim_cancel", claimedAtMs: prefix + 2 },
         ),
@@ -246,17 +246,17 @@ test("cancel authority prerequisite: claim_cancel rejects attempt_starting sourc
 
     // Cancel becomes reachable only after the source-owned durable `running`
     // observation exists.
-    await transitionP4MountedProviderStart(
+    await transitionMountedProviderStart(
       { ...bindingFor(root), attemptId },
       { operation: "running", statusClass: "success", observedAtMs: prefix + 2 },
     );
     const runningBase = (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
-    const claimedCancel = await transitionP5MountedPresentation(
+    const claimedCancel = await transitionMountedPresentation(
       { ...bindingFor(root), attemptId },
       { operation: "claim_cancel", claimedAtMs: runningBase + 1 },
     );
     assert.equal(claimedCancel.status, "cancel_claimed");
-    const cancelled = await transitionP5MountedPresentation(
+    const cancelled = await transitionMountedPresentation(
       { ...bindingFor(root), attemptId },
       { operation: "cancel", cancelledAtMs: runningBase + 2 },
     );
@@ -275,7 +275,7 @@ test("cancel authority prerequisite: claim_cancel rejects a not_started attempt 
     assert.equal(before.turnLedger?.observation?.phase, "not_started");
     await assert.rejects(
       () =>
-        transitionP5MountedPresentation(
+        transitionMountedPresentation(
           { ...bindingFor(root), attemptId },
           { operation: "claim_cancel", claimedAtMs: before.thread.updatedAtMs + 1 },
         ),
@@ -384,19 +384,19 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
 
     // Active cancel: claim → repeat claim (stable) → late presentation
     // rejected → terminal cancelled; repeat terminal cancel is stable.
-    const claimedCancel = await transitionP5MountedPresentation(
+    const claimedCancel = await transitionMountedPresentation(
       { ...bindingFor(root), attemptId },
       { operation: "claim_cancel", claimedAtMs: base + 1 },
     );
     assert.equal(claimedCancel.status, "cancel_claimed");
-    const repeatedClaim = await transitionP5MountedPresentation(
+    const repeatedClaim = await transitionMountedPresentation(
       { ...bindingFor(root), attemptId },
       { operation: "claim_cancel", claimedAtMs: base + 2 },
     );
     assert.deepEqual(repeatedClaim, claimedCancel);
     await assert.rejects(
       () =>
-        transitionP5MountedPresentation(
+        transitionMountedPresentation(
           { ...bindingFor(root), attemptId },
           {
             operation: "commit_presentation",
@@ -407,12 +407,12 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
         ),
       /p5_presentation_source_running_required/,
     );
-    const cancelled = await transitionP5MountedPresentation(
+    const cancelled = await transitionMountedPresentation(
       { ...bindingFor(root), attemptId },
       { operation: "cancel", cancelledAtMs: base + 4 },
     );
     assert.equal(cancelled.status, "cancelled");
-    const repeatedCancel = await transitionP5MountedPresentation(
+    const repeatedCancel = await transitionMountedPresentation(
       { ...bindingFor(root), attemptId },
       { operation: "cancel", cancelledAtMs: base + 5 },
     );
@@ -426,7 +426,7 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
     try {
       const second = await prepare(secondRoot, "running");
       const secondBase = (await second.store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
-      await transitionP5MountedPresentation(
+      await transitionMountedPresentation(
         { ...bindingFor(secondRoot), attemptId: second.attemptId },
         {
           operation: "commit_presentation",
@@ -435,27 +435,27 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
           committedAtMs: secondBase + 1,
         },
       );
-      const completionClaimed = await transitionP5MountedPresentation(
+      const completionClaimed = await transitionMountedPresentation(
         { ...bindingFor(secondRoot), attemptId: second.attemptId },
         { operation: "claim_completion", claimedAtMs: secondBase + 2 },
       );
       assert.equal(completionClaimed.status, "completion_claimed");
       await assert.rejects(
         () =>
-          transitionP5MountedPresentation(
+          transitionMountedPresentation(
             { ...bindingFor(secondRoot), attemptId: second.attemptId },
             { operation: "claim_cancel", claimedAtMs: secondBase + 3 },
           ),
         /p5_presentation_cancel_source_required/,
       );
-      const completed = await transitionP5MountedPresentation(
+      const completed = await transitionMountedPresentation(
         { ...bindingFor(secondRoot), attemptId: second.attemptId },
         { operation: "complete", completedAtMs: secondBase + 4 },
       );
       assert.equal(completed.status, "completed");
       await assert.rejects(
         () =>
-          transitionP5MountedPresentation(
+          transitionMountedPresentation(
             { ...bindingFor(secondRoot), attemptId: second.attemptId },
             { operation: "claim_cancel", claimedAtMs: secondBase + 5 },
           ),

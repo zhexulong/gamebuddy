@@ -91,8 +91,8 @@ const mountPreamble = `
   const { createChatThreadStore } = await import(storeUrl);
   const { identityKey } = await import(runtimeUrl);
   const { composeTavernProfile } = await import(contractUrl);
-  const { createP4DurableTurnAcceptanceFacade } = await import(p4aUrl);
-  const { createP4ProviderAttemptFacade } = await import(p4bUrl);
+  const { createPlayerTurnAcceptor } = await import(p4aUrl);
+  const { createProviderAttemptClaimer } = await import(p4bUrl);
   const internal = await import(internalUrl);
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", storeUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", storeUrl).href);
@@ -117,8 +117,8 @@ const mountPreamble = `
       authority,
       lease,
       facade: await createReferencePipelineStateFacade(fixtureManifest, lease, profile),
-      accept: createP4DurableTurnAcceptanceFacade(fixtureManifest, lease),
-      attempt: createP4ProviderAttemptFacade(fixtureManifest, lease),
+      accept: createPlayerTurnAcceptor(fixtureManifest, lease),
+      attempt: createProviderAttemptClaimer(fixtureManifest, lease),
       store,
     });
   }
@@ -128,8 +128,8 @@ const mountPreamble = `
     if (target === "accepted_queued") return accepted;
     const claimed = await fx.attempt.claim();
     if (target === "attempt_starting") return claimed;
-    return internal.startMountedP4Attempt(fx.manifest, fx.lease, (invocation) =>
-      internal.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope) => {
+    return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
         const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
         await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
         const running = await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
@@ -161,8 +161,8 @@ async function mounted(body: string): Promise<Record<string, unknown>> {
   const storeUrl = new URL("./chat-thread-store.js", import.meta.url).href;
   const runtimeUrl = new URL("../runtime.js", import.meta.url).href;
   const contractUrl = new URL("./browser-contract/index.js", import.meta.url).href;
-  const p4aUrl = new URL("./p4-durable-turn-acceptance.js", import.meta.url).href;
-  const p4bUrl = new URL("./p4-provider-attempt.js", import.meta.url).href;
+  const p4aUrl = new URL("./player-turn-acceptance.js", import.meta.url).href;
+  const p4bUrl = new URL("./provider-attempt-claim.js", import.meta.url).href;
   const internalUrl = new URL(
     "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
     import.meta.url,

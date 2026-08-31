@@ -1,5 +1,5 @@
 import { attachNativeCompanionContent } from "../native-companion-content.js";
-import type { P4ProviderStartExecutionScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
+import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type {
   AttemptStartingTurn,
   CancelledTurn,
@@ -57,13 +57,13 @@ export function renderCanonicalDialogueEnvelope(
   return JSON.stringify(envelope);
 }
 
-export type P4ProviderStartResult =
+export type ProviderStartResult =
   | Readonly<{ outcome: "completed"; ledger: CompletedTurn }>
   | Readonly<{ outcome: "cancelled"; ledger: CancelledTurn }>
   | Readonly<{ outcome: "failed"; ledger: FailedTurn }>
   | Readonly<{ outcome: "armed"; ledger: AttemptStartingTurn }>
   | Readonly<{ outcome: "not_started"; ledger: AttemptStartingTurn }>;
-export type P4ProviderStartLedger = AttemptStartingTurn | CompletedTurn | CancelledTurn | FailedTurn;
+export type ProviderStartLedger = AttemptStartingTurn | CompletedTurn | CancelledTurn | FailedTurn;
 
 /** Ephemeral delta projection; it has no message ID or durable authority. */
 export type NativeChatPreview = Readonly<{
@@ -76,11 +76,11 @@ export type NativeChatPreviewPublisher = Readonly<{
   clear(): void | Promise<void>;
 }>;
 
-export async function runMountedP4ProviderStartLedger(
-  scope: P4ProviderStartExecutionScope,
+export async function runMountedProviderStartLedger(
+  scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
-): Promise<P4ProviderStartLedger> {
-  return (await runMountedP4ProviderStart(scope, previewPublisher)).ledger;
+): Promise<ProviderStartLedger> {
+  return (await runMountedProviderStart(scope, previewPublisher)).ledger;
 }
 
 function isDeadlineExpired(error: unknown): boolean {
@@ -128,7 +128,7 @@ function nativeResponseMessageId(attemptId: string): string {
   return `chat_native_${attemptId}`;
 }
 
-async function currentTerminalResult(scope: P4ProviderStartExecutionScope): Promise<P4ProviderStartResult | undefined> {
+async function currentTerminalResult(scope: ProviderInvocationScope): Promise<ProviderStartResult | undefined> {
   const ledger = await scope.readCurrentTurnLedger();
   if (ledger.status === "cancelled") return { outcome: "cancelled", ledger };
   if (ledger.status === "completed") return { outcome: "completed", ledger };
@@ -153,10 +153,10 @@ async function currentTerminalResult(scope: P4ProviderStartExecutionScope): Prom
  * the browser can reread the normal failure state and submit again. There is
  * no second Host invocation and no generation 2 on any path.
  */
-export async function runMountedP4ProviderStart(
-  scope: P4ProviderStartExecutionScope,
+export async function runMountedProviderStart(
+  scope: ProviderInvocationScope,
   previewPublisher?: NativeChatPreviewPublisher,
-): Promise<P4ProviderStartResult> {
+): Promise<ProviderStartResult> {
   // Pre-arm linearization: an expired or revoked admission rejects with zero
   // store mutation and no Host prompt invocation.
   scope.assertAdmission();

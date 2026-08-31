@@ -56,9 +56,9 @@ function launcher(): ConfigurableIntegrationLauncher {
     ]),
     defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
     parsePolicy: (value) => value as never,
+    actorId: () => principal.playerId,
     assertIdentityBinding: (_connection, identity) => {
       if (
-        identity.playerId !== principal.playerId ||
         identity.companionId !== principal.companionId ||
         identity.saveId !== "save_01" ||
         identity.worldId !== "world_01"

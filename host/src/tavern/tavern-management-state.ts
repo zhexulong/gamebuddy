@@ -6,6 +6,7 @@ import type { HostDeploymentManifest } from "../deployment-manifest.js";
 import { assertProfileMatchesBinding, readIdentityProfile, readIdentityProfileBinding } from "../identity-profile.js";
 import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import {
+  type BrowserMessageV1,
   type BrowserTurnV1,
   type ComposedTavernProfile,
   isComposedTavernProfile,
@@ -14,7 +15,6 @@ import {
   type WorldInfoStateV1,
 } from "./browser-contract/index.js";
 import { type ChatThreadState, type ChatTurnLedger, createChatThreadStore } from "./chat-thread-store.js";
-import type { P3ExactChatMessage } from "./p3-exact-chat-state.js";
 import type { WorldInfoBindingManagementService } from "./world-info-binding/world-info-binding-management-service.js";
 
 const MAX_TRANSCRIPT_MESSAGES = 500;
@@ -39,7 +39,7 @@ export type TavernManagementState = Readonly<{
   }>;
   companionDisplayName: string;
   title: string | null;
-  transcript: readonly P3ExactChatMessage[];
+  transcript: readonly BrowserMessageV1[];
   draft: Readonly<{ revision: number; text: string | null }>;
   turn: BrowserTurnV1 | null;
   operations: readonly TavernBrowserOperationV1[];
@@ -223,7 +223,7 @@ function projectMessage(
   lease: MountedChatRuntimeLease,
   message: ChatThreadState["messages"][number],
   order: number,
-): P3ExactChatMessage {
+): BrowserMessageV1 {
   if (message.role !== "player" && message.role !== "companion") throw unavailable();
   if (!safeBrowserRevision(order) || !safeBrowserRevision(1)) throw unavailable();
   return Object.freeze({

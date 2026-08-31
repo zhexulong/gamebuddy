@@ -100,15 +100,15 @@ test("service source keeps start/claim private and imports no HTTP/response surf
   // The service composes durable acceptance/claim facades and one normal
   // mounted provider-start operation; no proof-only P4/P5 forwarding facade
   // remains on its production path.
-  assert.match(source, /from "\.\/p4-durable-turn-acceptance\.js"/);
-  assert.match(source, /from "\.\/p4-provider-attempt\.js"/);
+  assert.match(source, /from "\.\/player-turn-acceptance\.js"/);
+  assert.match(source, /from "\.\/provider-attempt-claim\.js"/);
   assert.match(source, /from "\.\/chat-provider-start\.js"/);
   assert.doesNotMatch(source, /p5-presentation-commit|p4-provider-start/);
   assert.match(source, /stopMountedChatPresentationEpoch/);
   // No raw store transition/coordinator ingress and no HTTP/response/transport import.
   assert.doesNotMatch(
     source,
-    /acceptP4MountedPlayerMessage|claimP4MountedAttempt|transitionP4MountedProviderStart|transitionP5MountedPresentation|startMountedP4|consumeMountedP4/,
+    /acceptMountedPlayerMessage|claimMountedAttempt|transitionMountedProviderStart|transitionMountedPresentation|startMounted|consumeMounted/,
   );
   assert.doesNotMatch(source, /from ["'][^"']*(node:http|express|router|request|respons(e|es?)|fetch)[^"']*["']/);
   // The opaque browser-safe surface is exactly the frozen Task-2 contract.
@@ -167,8 +167,8 @@ const mountPreamble = `
   const serviceFor = (fx, fakeStart) => createChatPipelineService({ manifest: fx.manifest, lease: fx.lease, profile, deps: Object.freeze({ start: Object.freeze({ start: fakeStart }) }) });
   const knownServiceFor = (manifest, lease, fakeStart) => createChatPipelineService({ manifest, lease, profile, deps: Object.freeze({ start: Object.freeze({ start: fakeStart }) }) });
   async function driveToTerminal(fx, terminal) {
-    return internal.startMountedP4Attempt(fx.manifest, fx.lease, (invocation) =>
-      internal.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope) => {
+    return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
         const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
         await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
         const running = await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
@@ -323,8 +323,8 @@ test(
   const service = serviceFor(fx, async () => { startCalls += 1; await startGate; });
   const first = await service.submitAfterResponseCommit(commandFor(fx, {}), "zbcdefghijklmnopqrstuv", async () => undefined);
   await waitFor(() => startCalls === 1);
-  await internal.startMountedP4Attempt(fx.manifest, fx.lease, (invocation) =>
-    internal.consumeMountedP4AttemptInvocationAdmission(invocation, async (scope) => {
+  await internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
+    internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
       await scope.transitionStore({ operation: "arm", observedAtMs: await nextTime() });
       releasePrompt = scope.beginActivePrompt();
       return scope.readCurrentTurnLedger();

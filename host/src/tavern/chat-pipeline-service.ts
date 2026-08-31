@@ -40,8 +40,8 @@ import {
   createChatThreadStore,
   type FailedTurn,
 } from "./chat-thread-store.js";
-import { createP4DurableTurnAcceptanceFacade } from "./p4-durable-turn-acceptance.js";
-import { createP4ProviderAttemptFacade } from "./p4-provider-attempt.js";
+import { createPlayerTurnAcceptor } from "./player-turn-acceptance.js";
+import { createProviderAttemptClaimer } from "./provider-attempt-claim.js";
 import { startMountedChatProvider } from "./chat-provider-start.js";
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
@@ -80,8 +80,8 @@ export type ChatPipelineStartDependency = Readonly<{
 /**
  * Narrow injected facade dependencies, allowed only where the existing public
  * P4 facades cannot be scripted (the live provider start). Durable acceptance
- * (`createP4DurableTurnAcceptanceFacade`) and the P4b attempt claim
- * (`createP4ProviderAttemptFacade`) are always the real scripted facades.
+ * (`createPlayerTurnAcceptor`) and the P4b attempt claim
+ * (`createProviderAttemptClaimer`) are always the real scripted facades.
  */
 export type ChatPipelineServiceDependencies = Readonly<{
   start: ChatPipelineStartDependency;
@@ -200,8 +200,8 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
             }),
       ),
   });
-  const accept = createP4DurableTurnAcceptanceFacade(manifest, lease);
-  const claim = createP4ProviderAttemptFacade(manifest, lease);
+  const accept = createPlayerTurnAcceptor(manifest, lease);
+  const claim = createProviderAttemptClaimer(manifest, lease);
 
   let closing = false;
   let closed = false;

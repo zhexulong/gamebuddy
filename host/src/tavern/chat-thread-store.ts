@@ -3,11 +3,11 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  assertP4P5MountedTransitionAuthority,
-  assertP4P5MountedTransitionOperationAuthority,
-  type P4P5MountedTransitionAuthority,
-  type P4P5MountedTransitionOperationAuthority,
-} from "./chat-thread-store.p4-p5-transition-authority.internal.js";
+  assertMountedTurnTransitionAuthority,
+  assertMountedTurnTransitionOperationAuthority,
+  type MountedTurnTransitionAuthority,
+  type MountedTurnTransitionOperationAuthority,
+} from "./chat-thread-store.mounted-turn-transition.internal.js";
 
 /**
  * Scoped Tavern persistence seam. It owns only a ChatThread's visible opening
@@ -246,7 +246,7 @@ export type ChatTurnLedger =
   | CancelledTurn
   | FailedTurn;
 
-type MountedP4AcceptanceInput = Readonly<{
+type MountedAcceptanceInput = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
   playerId: string;
@@ -260,7 +260,7 @@ type MountedP4AcceptanceInput = Readonly<{
 }>;
 
 /** Player-controlled fields only. Binding facts come solely from a consumed mounted admission. */
-type P4MountedAcceptanceCommand = Readonly<{
+type MountedAcceptanceCommand = Readonly<{
   text: string;
   locale: string;
   idempotencyKey: string;
@@ -424,8 +424,8 @@ type ThreadMetadata = {
 };
 
 const genuineChatThreadStores = new WeakSet<object>();
-const p4AcceptanceByStore = new WeakMap<object, (input: MountedP4AcceptanceInput) => Promise<AcceptedQueuedTurn>>();
-type MountedP4AttemptClaimInput = Readonly<{
+const acceptanceByStore = new WeakMap<object, (input: MountedAcceptanceInput) => Promise<AcceptedQueuedTurn>>();
+type MountedAttemptClaimInput = Readonly<{
   chatThreadId: string;
   chatSurfaceSessionId: string;
   playerId: string;
@@ -435,13 +435,13 @@ type MountedP4AttemptClaimInput = Readonly<{
   runtimeBindingDigest: string;
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
 }>;
-const p4AttemptClaimByStore = new WeakMap<
+const attemptClaimByStore = new WeakMap<
   object,
-  (input: MountedP4AttemptClaimInput) => Promise<AttemptStartingTurn>
+  (input: MountedAttemptClaimInput) => Promise<AttemptStartingTurn>
 >();
 
 /** P4c's three frozen store transitions: arm, local pre-invocation not_started, running. */
-export type P4ProviderStartTransition =
+export type ProviderStartTransition =
   | Readonly<{ operation: "arm"; observedAtMs: number }>
   | Readonly<{
       operation: "not_started";
@@ -464,7 +464,7 @@ export type P5TerminalFailureReason =
  * the coordinator bound at admission; any mismatch fails closed with zero
  * durable mutation.
  */
-export type P5PresentationTransition =
+export type PresentationTransition =
   | Readonly<{
       operation: "commit_presentation";
       cancelEpoch: number;
@@ -477,9 +477,9 @@ export type P5PresentationTransition =
   | Readonly<{ operation: "cancel"; cancelledAtMs: number }>
   | Readonly<{ operation: "fail"; reasonCode: P5TerminalFailureReason; failedAtMs: number }>;
 
-type MountedP5PresentationInput = Readonly<{
-  authority: P4P5MountedTransitionAuthority;
-  operationAuthority: P4P5MountedTransitionOperationAuthority;
+type MountedPresentationInput = Readonly<{
+  authority: MountedTurnTransitionAuthority;
+  operationAuthority: MountedTurnTransitionOperationAuthority;
   chatThreadId: string;
   chatSurfaceSessionId: string;
   playerId: string;
@@ -490,13 +490,13 @@ type MountedP5PresentationInput = Readonly<{
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
   attemptId: string;
 }>;
-const p5PresentationByStore = new WeakMap<
+const presentationByStore = new WeakMap<
   object,
-  (input: MountedP5PresentationInput, command: P5PresentationTransition) => Promise<ChatTurnLedger>
+  (input: MountedPresentationInput, command: PresentationTransition) => Promise<ChatTurnLedger>
 >();
-type MountedP4ProviderStartInput = Readonly<{
-  authority: P4P5MountedTransitionAuthority;
-  operationAuthority: P4P5MountedTransitionOperationAuthority;
+type MountedProviderStartInput = Readonly<{
+  authority: MountedTurnTransitionAuthority;
+  operationAuthority: MountedTurnTransitionOperationAuthority;
   chatThreadId: string;
   chatSurfaceSessionId: string;
   playerId: string;
@@ -507,20 +507,20 @@ type MountedP4ProviderStartInput = Readonly<{
   runtimeOwner: AttemptClaimV1["runtimeOwner"];
   attemptId: string;
 }>;
-const p4ProviderStartByStore = new WeakMap<
+const providerStartByStore = new WeakMap<
   object,
   (
-    input: MountedP4ProviderStartInput,
-    command: P4ProviderStartTransition,
+    input: MountedProviderStartInput,
+    command: ProviderStartTransition,
   ) => Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn>
 >();
 
 /**
  * Host-private P4 store ingress. Its binding input has no exported type and is
- * derived only by p4-durable-turn-acceptance.internal.ts after coordinator
+ * derived only by player-turn-acceptance.internal.ts after coordinator
  * admission consumption; it is not part of ChatThreadStore's public surface.
  */
-export async function acceptP4MountedPlayerMessage(
+export async function acceptMountedPlayerMessage(
   binding: Readonly<{
     runtimeRoot: string;
     playerId: string;
@@ -530,13 +530,13 @@ export async function acceptP4MountedPlayerMessage(
     chatSurfaceSessionId: string;
     selectionGeneration: number;
   }>,
-  command: P4MountedAcceptanceCommand,
+  command: MountedAcceptanceCommand,
 ): Promise<AcceptedQueuedTurn> {
   const store = createChatThreadStore(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const accept = p4AcceptanceByStore.get(store);
+  const accept = acceptanceByStore.get(store);
   if (accept === undefined) throw new Error("p4_acceptance_port_unavailable");
   try {
     return await accept(Object.freeze({ ...binding, ...command }));
@@ -549,7 +549,7 @@ export async function acceptP4MountedPlayerMessage(
  * Host-private P4b durable ingress. The coordinator supplies the runtime facts
  * only after consuming a mounted claim admission; this port never prompts Pi.
  */
-export async function claimP4MountedAttempt(
+export async function claimMountedAttempt(
   binding: Readonly<{
     runtimeRoot: string;
     playerId: string;
@@ -566,7 +566,7 @@ export async function claimP4MountedAttempt(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const claim = p4AttemptClaimByStore.get(store);
+  const claim = attemptClaimByStore.get(store);
   if (claim === undefined) throw new Error("p4_attempt_claim_port_unavailable");
   try {
     return await claim(Object.freeze({ ...binding }));
@@ -580,10 +580,10 @@ export async function claimP4MountedAttempt(
  * and exact attemptId only after consuming the mounted invocation admission;
  * this port never prompts Pi and never reads provider data.
  */
-export async function transitionP4MountedProviderStart(
+export async function transitionMountedProviderStart(
   binding: Readonly<{
-    authority: P4P5MountedTransitionAuthority;
-    operationAuthority: P4P5MountedTransitionOperationAuthority;
+    authority: MountedTurnTransitionAuthority;
+    operationAuthority: MountedTurnTransitionOperationAuthority;
     runtimeRoot: string;
     playerId: string;
     companionId: string;
@@ -595,15 +595,15 @@ export async function transitionP4MountedProviderStart(
     runtimeOwner: AttemptClaimV1["runtimeOwner"];
     attemptId: string;
   }>,
-  command: P4ProviderStartTransition,
+  command: ProviderStartTransition,
 ): Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn> {
-  assertP4P5MountedTransitionAuthority(binding.authority);
-  assertP4P5MountedTransitionOperationAuthority(binding.operationAuthority);
+  assertMountedTurnTransitionAuthority(binding.authority);
+  assertMountedTurnTransitionOperationAuthority(binding.operationAuthority);
   const store = createChatThreadStore(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const transition = p4ProviderStartByStore.get(store);
+  const transition = providerStartByStore.get(store);
   if (transition === undefined) throw new Error("p4_provider_start_port_unavailable");
   try {
     return await transition(Object.freeze({ ...binding }), validateProviderStartTransition(command));
@@ -617,10 +617,10 @@ export async function transitionP4MountedProviderStart(
  * the exact attemptId only after consuming the mounted P5 presentation
  * admission; it never reads provider data and never prompts Pi.
  */
-export async function transitionP5MountedPresentation(
+export async function transitionMountedPresentation(
   binding: Readonly<{
-    authority: P4P5MountedTransitionAuthority;
-    operationAuthority: P4P5MountedTransitionOperationAuthority;
+    authority: MountedTurnTransitionAuthority;
+    operationAuthority: MountedTurnTransitionOperationAuthority;
     runtimeRoot: string;
     playerId: string;
     companionId: string;
@@ -632,24 +632,24 @@ export async function transitionP5MountedPresentation(
     runtimeOwner: AttemptClaimV1["runtimeOwner"];
     attemptId: string;
   }>,
-  command: P5PresentationTransition,
+  command: PresentationTransition,
 ): Promise<ChatTurnLedger> {
-  assertP4P5MountedTransitionAuthority(binding.authority);
-  assertP4P5MountedTransitionOperationAuthority(binding.operationAuthority);
+  assertMountedTurnTransitionAuthority(binding.authority);
+  assertMountedTurnTransitionOperationAuthority(binding.operationAuthority);
   const store = createChatThreadStore(
     binding.runtimeRoot,
     identityKeyForP4(binding.playerId, binding.companionId, binding.continuityId),
   );
-  const transition = p5PresentationByStore.get(store);
+  const transition = presentationByStore.get(store);
   if (transition === undefined) throw new Error("p5_presentation_port_unavailable");
   try {
-    return await transition(asMountedP5PresentationInput(binding), validatePresentationTransition(command));
+    return await transition(asMountedPresentationInput(binding), validatePresentationTransition(command));
   } finally {
     store.close?.();
   }
 }
 
-function asMountedP5PresentationInput(
+function asMountedPresentationInput(
   value: Readonly<{
     runtimeRoot: string;
     playerId: string;
@@ -661,10 +661,10 @@ function asMountedP5PresentationInput(
     runtimeBindingDigest: string;
     runtimeOwner: AttemptClaimV1["runtimeOwner"];
     attemptId: string;
-    authority: P4P5MountedTransitionAuthority;
-    operationAuthority: P4P5MountedTransitionOperationAuthority;
+    authority: MountedTurnTransitionAuthority;
+    operationAuthority: MountedTurnTransitionOperationAuthority;
   }>,
-): MountedP5PresentationInput {
+): MountedPresentationInput {
   return Object.freeze({ ...value });
 }
 
@@ -1297,13 +1297,13 @@ export function createChatThreadStore(
   genuineChatThreadStores.add(store);
   initialExactContentCapabilities.add(initialCapability);
   initialExactContentCapabilityByStore.set(store, initialCapability);
-  p4AcceptanceByStore.set(store, acceptMounted);
-  p4AttemptClaimByStore.set(store, claimMountedAttempt);
-  p4ProviderStartByStore.set(store, transitionMountedProviderStart);
-  p5PresentationByStore.set(store, transitionMountedPresentation);
+  acceptanceByStore.set(store, acceptMounted);
+  attemptClaimByStore.set(store, claimMountedAttempt);
+  providerStartByStore.set(store, transitionMountedProviderStart);
+  presentationByStore.set(store, transitionMountedPresentation);
   return store;
 
-  async function acceptMounted(input: MountedP4AcceptanceInput): Promise<AcceptedQueuedTurn> {
+  async function acceptMounted(input: MountedAcceptanceInput): Promise<AcceptedQueuedTurn> {
     validateAcceptanceInput(input);
     return withDb((db) => {
       const current = readStateFromDb(db, input.chatThreadId);
@@ -1384,7 +1384,7 @@ export function createChatThreadStore(
     });
   }
 
-  async function claimMountedAttempt(input: MountedP4AttemptClaimInput): Promise<AttemptStartingTurn> {
+  async function claimMountedAttempt(input: MountedAttemptClaimInput): Promise<AttemptStartingTurn> {
     validateAttemptClaimInput(input);
     return withDb((db) => {
       const current = readStateFromDb(db, input.chatThreadId);
@@ -1437,13 +1437,13 @@ export function createChatThreadStore(
   }
 
   async function transitionMountedProviderStart(
-    input: MountedP4ProviderStartInput,
-    command: P4ProviderStartTransition,
+    input: MountedProviderStartInput,
+    command: ProviderStartTransition,
   ): Promise<AttemptStartingTurn | RunningTurn | FailedTurn | CancelledTurn> {
     validateProviderStartInput(input);
     return withDb((db) => {
-      assertP4P5MountedTransitionAuthority(input.authority);
-      assertP4P5MountedTransitionOperationAuthority(input.operationAuthority);
+      assertMountedTurnTransitionAuthority(input.authority);
+      assertMountedTurnTransitionOperationAuthority(input.operationAuthority);
       const current = readStateFromDb(db, input.chatThreadId);
       const thread = current.thread;
       if (
@@ -1542,13 +1542,13 @@ export function createChatThreadStore(
   }
 
   async function transitionMountedPresentation(
-    input: MountedP5PresentationInput,
-    command: P5PresentationTransition,
+    input: MountedPresentationInput,
+    command: PresentationTransition,
   ): Promise<ChatTurnLedger> {
     validatePresentationInput(input);
     return withDb((db) => {
-      assertP4P5MountedTransitionAuthority(input.authority);
-      assertP4P5MountedTransitionOperationAuthority(input.operationAuthority);
+      assertMountedTurnTransitionAuthority(input.authority);
+      assertMountedTurnTransitionOperationAuthority(input.operationAuthority);
       const current = readStateFromDb(db, input.chatThreadId);
       const thread = current.thread;
       if (
@@ -1560,7 +1560,7 @@ export function createChatThreadStore(
       if (thread.lifecycleStatus !== "active") throw new Error("chat_thread_lifecycle_not_active");
       const ledger = current.turnLedger;
       if (ledger === null || !isTurnWithAttempt(ledger)) throw new Error("p5_presentation_claim_missing");
-      assertExactP5Attempt(ledger.attempt, input);
+      assertExactPresentationAttempt(ledger.attempt, input);
       const atMs = timestampFor(command);
       if (atMs < thread.updatedAtMs) throw new Error("p5_presentation_time_regression");
 
@@ -2337,7 +2337,7 @@ function validateIdempotency(value: unknown): IdempotencyRecord {
   return Object.freeze({ key: value.key, fingerprint: value.fingerprint, result });
 }
 
-function validateAcceptanceInput(value: MountedP4AcceptanceInput): void {
+function validateAcceptanceInput(value: MountedAcceptanceInput): void {
   assertId("chatThreadId", value.chatThreadId);
   assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
   assertId("playerId", value.playerId);
@@ -2355,7 +2355,7 @@ function validateAcceptanceInput(value: MountedP4AcceptanceInput): void {
   assertIdempotencyKey(value.idempotencyKey);
 }
 
-function validateAttemptClaimInput(value: MountedP4AttemptClaimInput): void {
+function validateAttemptClaimInput(value: MountedAttemptClaimInput): void {
   assertId("chatThreadId", value.chatThreadId);
   assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
   assertId("playerId", value.playerId);
@@ -2371,7 +2371,7 @@ function validateAttemptClaimInput(value: MountedP4AttemptClaimInput): void {
   });
 }
 
-function validateProviderStartInput(value: MountedP4ProviderStartInput): void {
+function validateProviderStartInput(value: MountedProviderStartInput): void {
   assertId("chatThreadId", value.chatThreadId);
   assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
   assertId("playerId", value.playerId);
@@ -2388,7 +2388,7 @@ function validateProviderStartInput(value: MountedP4ProviderStartInput): void {
   });
 }
 
-function validatePresentationInput(value: MountedP5PresentationInput): void {
+function validatePresentationInput(value: MountedPresentationInput): void {
   assertId("chatThreadId", value.chatThreadId);
   assertId("chatSurfaceSessionId", value.chatSurfaceSessionId);
   assertId("playerId", value.playerId);
@@ -2425,7 +2425,7 @@ function presentationOf(ledger: Exclude<ChatTurnLedger, AcceptedQueuedTurn>): Pr
   return null;
 }
 
-function timestampFor(command: P5PresentationTransition): number {
+function timestampFor(command: PresentationTransition): number {
   if (command.operation === "commit_presentation") return command.committedAtMs;
   if (command.operation === "claim_completion") return command.claimedAtMs;
   if (command.operation === "complete") return command.completedAtMs;
@@ -2434,7 +2434,7 @@ function timestampFor(command: P5PresentationTransition): number {
   return command.failedAtMs;
 }
 
-function assertExactP5Attempt(attempt: AttemptClaimV1, input: MountedP5PresentationInput): void {
+function assertExactPresentationAttempt(attempt: AttemptClaimV1, input: MountedPresentationInput): void {
   if (
     attempt.attemptId !== input.attemptId ||
     attempt.generation !== 1 ||
@@ -2448,7 +2448,7 @@ function assertExactP5Attempt(attempt: AttemptClaimV1, input: MountedP5Presentat
     throw new Error("p5_presentation_attempt_mismatch");
 }
 
-function validatePresentationTransition(value: P5PresentationTransition): P5PresentationTransition {
+function validatePresentationTransition(value: PresentationTransition): PresentationTransition {
   if (!isRecord(value)) throw new Error("invalid_chat_thread_observation");
   switch (value.operation) {
     case "commit_presentation": {
@@ -2527,8 +2527,8 @@ function validatePresentationTransition(value: P5PresentationTransition): P5Pres
 
 function assertP5ReadBack(
   ledger: ChatTurnLedger | null,
-  command: P5PresentationTransition,
-  input: MountedP5PresentationInput,
+  command: PresentationTransition,
+  input: MountedPresentationInput,
 ): void {
   if (ledger === null) throw new Error("chat_p5_readback_mismatch");
   const operation = command.operation;
@@ -2577,7 +2577,7 @@ function validatePresentationCommit(value: unknown): PresentationCommitV1 {
   });
 }
 
-function validateProviderStartTransition(value: P4ProviderStartTransition): P4ProviderStartTransition {
+function validateProviderStartTransition(value: ProviderStartTransition): ProviderStartTransition {
   if (!isRecord(value) || !isTimestamp(value.observedAtMs)) throw new Error("invalid_chat_thread_observation");
   if (value.operation === "arm" && onlyKeys(value, ["operation", "observedAtMs"]))
     return Object.freeze({ operation: "arm", observedAtMs: value.observedAtMs });
@@ -2622,7 +2622,7 @@ function validateProviderStartTransition(value: P4ProviderStartTransition): P4Pr
   throw new Error("invalid_chat_thread_observation");
 }
 
-function assertExactProviderStartAttempt(attempt: AttemptClaimV1, input: MountedP4ProviderStartInput): void {
+function assertExactProviderStartAttempt(attempt: AttemptClaimV1, input: MountedProviderStartInput): void {
   if (
     attempt.attemptId !== input.attemptId ||
     attempt.selectionGeneration !== input.selectionGeneration ||
@@ -2637,8 +2637,8 @@ function assertExactProviderStartAttempt(attempt: AttemptClaimV1, input: Mounted
 
 function assertProviderStartReadBack(
   ledger: ChatTurnLedger | null,
-  command: P4ProviderStartTransition,
-  input: MountedP4ProviderStartInput,
+  command: ProviderStartTransition,
+  input: MountedProviderStartInput,
 ): void {
   if (ledger === null) throw new Error("chat_provider_start_readback_mismatch");
   if (command.operation === "arm") {
@@ -2694,7 +2694,7 @@ function assertIdempotencyKey(value: unknown): asserts value is string {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{22}$/u.test(value)) throw new Error("invalid_idempotency_key");
 }
 
-function acceptanceFingerprint(input: MountedP4AcceptanceInput): string {
+function acceptanceFingerprint(input: MountedAcceptanceInput): string {
   const fields = [
     "chat.message.submit",
     input.chatThreadId,

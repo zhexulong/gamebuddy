@@ -7,18 +7,18 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   type AttemptStartingTurn,
-  claimP4MountedAttempt,
+  claimMountedAttempt,
   createChatThreadStore,
   type GreetingSource,
   MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES,
   type RunningTurn,
-  transitionP4MountedProviderStart as rawTransitionP4MountedProviderStart,
-  transitionP5MountedPresentation as rawTransitionP5MountedPresentation,
+  transitionMountedProviderStart as rawTransitionP4MountedProviderStart,
+  transitionMountedPresentation as rawTransitionP5MountedPresentation,
 } from "./chat-thread-store.js";
-import { createP4P5MountedTransitionAuthority } from "./chat-thread-store.p4-p5-transition-authority.internal.js";
+import { createMountedTurnTransitionAuthority } from "./chat-thread-store.mounted-turn-transition.internal.js";
 
-const testTransitionAuthority = createP4P5MountedTransitionAuthority();
-const transitionP4MountedProviderStart = async (
+const testTransitionAuthority = createMountedTurnTransitionAuthority();
+const transitionMountedProviderStart = async (
   binding: Omit<Parameters<typeof rawTransitionP4MountedProviderStart>[0], "authority" | "operationAuthority">,
   command: Parameters<typeof rawTransitionP4MountedProviderStart>[1],
 ) => {
@@ -33,7 +33,7 @@ const transitionP4MountedProviderStart = async (
   }
 };
 
-const transitionP5MountedPresentation = async (
+const transitionMountedPresentation = async (
   binding: Omit<Parameters<typeof rawTransitionP5MountedPresentation>[0], "authority" | "operationAuthority">,
   command: Parameters<typeof rawTransitionP5MountedPresentation>[1],
 ) => {
@@ -500,7 +500,7 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
       selectionGeneration: 1,
     };
 
-    const accepted = await (await import("./chat-thread-store.js")).acceptP4MountedPlayerMessage(binding, {
+    const accepted = await (await import("./chat-thread-store.js")).acceptMountedPlayerMessage(binding, {
       text: "Hello from P4",
       locale: "en-US",
       idempotencyKey: "abcdefghijklmnopqrstuv",
@@ -519,22 +519,22 @@ test("P4 durable turn acceptance, claim, start, and presentation transitions wor
       },
     };
 
-    const claimed = await claimP4MountedAttempt(claimBinding);
+    const claimed = await claimMountedAttempt(claimBinding);
     assert.equal(claimed.status, "attempt_starting");
 
-    const armed = await transitionP4MountedProviderStart(
+    const armed = await transitionMountedProviderStart(
       { ...claimBinding, attemptId: claimed.attempt.attemptId },
       { operation: "arm", observedAtMs: t0 + 1000 },
     );
     assert.equal(armed.status, "attempt_starting");
 
-    const running = await transitionP4MountedProviderStart(
+    const running = await transitionMountedProviderStart(
       { ...claimBinding, attemptId: claimed.attempt.attemptId },
       { operation: "running", statusClass: "success", observedAtMs: t0 + 2000 },
     );
     assert.equal(running.status, "running");
 
-    const committed = await transitionP5MountedPresentation(
+    const committed = await transitionMountedPresentation(
       { ...claimBinding, attemptId: claimed.attempt.attemptId },
       {
         operation: "commit_presentation",

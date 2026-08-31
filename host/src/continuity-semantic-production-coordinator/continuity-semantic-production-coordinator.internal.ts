@@ -45,14 +45,14 @@ import { identityKey, type RuntimeSession } from "../runtime.js";
 import type { CreateChatThreadRequest } from "../tavern/chat-thread-store.js";
 import {
   createChatThreadStore,
-  transitionP4MountedProviderStart,
-  transitionP5MountedPresentation,
+  transitionMountedProviderStart,
+  transitionMountedPresentation,
 } from "../tavern/chat-thread-store.js";
 import {
-  createP4P5MountedTransitionAuthority,
-  type P4P5MountedTransitionAuthorityLease,
-  type P4P5MountedTransitionOperationAuthorityLease,
-} from "../tavern/chat-thread-store.p4-p5-transition-authority.internal.js";
+  createMountedTurnTransitionAuthority,
+  type MountedTurnTransitionAuthorityLease,
+  type MountedTurnTransitionOperationAuthorityLease,
+} from "../tavern/chat-thread-store.mounted-turn-transition.internal.js";
 import {
   createManifestDerivedInitialChatExactContentPort,
   type InitialChatExactContentPort,
@@ -152,7 +152,7 @@ type MountedChatRuntimeLeaseRecord = {
    */
   readonly startedAttemptIds: Set<string>;
   /** Revoked synchronously when this mounted lease begins closing. */
-  readonly transitionAuthority: P4P5MountedTransitionAuthorityLease;
+  readonly transitionAuthority: MountedTurnTransitionAuthorityLease;
   /**
    * Chat-owned in-process presentation epoch (design/71 §3.4). It is created
    * once at mount, stored privately, and never durable; the ledger CAS is the
@@ -239,7 +239,7 @@ export type ProviderInvocationScope = Readonly<{
    * bound to the mounted runtime root and full origin tuple.
    */
   transitionStore(
-    command: import("../tavern/chat-thread-store.js").P4ProviderStartTransition,
+    command: import("../tavern/chat-thread-store.js").ProviderStartTransition,
   ): Promise<
     | import("../tavern/chat-thread-store.js").AttemptStartingTurn
     | import("../tavern/chat-thread-store.js").RunningTurn
@@ -252,7 +252,7 @@ export type ProviderInvocationScope = Readonly<{
    * be retained outside this callback scope.
    */
   transitionPresentation(
-    command: import("../tavern/chat-thread-store.js").P5PresentationTransition,
+    command: import("../tavern/chat-thread-store.js").PresentationTransition,
   ): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger>;
   /** Reads the exact durable accepted player message text for the canonical envelope. */
   readAcceptedMessageText(): Promise<string>;
@@ -493,7 +493,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
   if (record === undefined || !record.active.value || !record.lease.active || record.consuming.value)
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_attempt_invocation_rejected");
   record.consuming.value = true;
-  let operationAuthority: P4P5MountedTransitionOperationAuthorityLease | undefined;
+  let operationAuthority: MountedTurnTransitionOperationAuthorityLease | undefined;
   try {
     const mounted = record.lease;
     const runtimeSession = mounted.providerRuntimeSession;
@@ -530,7 +530,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_provider_start_deadline_expired");
     };
     const transitionStore = async (
-      command: import("../tavern/chat-thread-store.js").P4ProviderStartTransition,
+      command: import("../tavern/chat-thread-store.js").ProviderStartTransition,
     ): Promise<
       | import("../tavern/chat-thread-store.js").AttemptStartingTurn
       | import("../tavern/chat-thread-store.js").RunningTurn
@@ -538,7 +538,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
       | import("../tavern/chat-thread-store.js").CancelledTurn
     > => {
       assertScopeActive();
-      return transitionP4MountedProviderStart(
+      return transitionMountedProviderStart(
         Object.freeze({
           authority: mounted.transitionAuthority.authority,
           operationAuthority: scopedOperationAuthority.authority,
@@ -557,10 +557,10 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
       );
     };
     const transitionPresentation = async (
-      command: import("../tavern/chat-thread-store.js").P5PresentationTransition,
+      command: import("../tavern/chat-thread-store.js").PresentationTransition,
     ): Promise<import("../tavern/chat-thread-store.js").ChatTurnLedger> => {
       assertScopeActive();
-      return transitionP5MountedPresentation(
+      return transitionMountedPresentation(
         Object.freeze({
           authority: mounted.transitionAuthority.authority,
           operationAuthority: scopedOperationAuthority.authority,
@@ -941,7 +941,7 @@ export async function stopMountedChatPresentationEpoch(
       if (ledger.status === "attempt_starting") {
         if (ledger.observation?.phase !== "armed")
           throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
-        const cancelled = await transitionP4MountedProviderStart(
+        const cancelled = await transitionMountedProviderStart(
           Object.freeze({
             authority: record.transitionAuthority.authority,
             operationAuthority: operationAuthority.authority,
@@ -964,7 +964,7 @@ export async function stopMountedChatPresentationEpoch(
       }
       if (ledger.status !== "running" && ledger.status !== "presentation_committed")
         throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p5_presentation_epoch_unavailable");
-      const cancelled = await transitionP5MountedPresentation(
+      const cancelled = await transitionMountedPresentation(
         Object.freeze({
           authority: record.transitionAuthority.authority,
           operationAuthority: operationAuthority.authority,
@@ -1621,7 +1621,7 @@ async function createFreshChatRuntimeAuthority(
           }),
           ...(runtimeSession === undefined ? {} : { providerRuntimeSession: runtimeSession }),
           startedAttemptIds: new Set<string>(),
-          transitionAuthority: createP4P5MountedTransitionAuthority(),
+          transitionAuthority: createMountedTurnTransitionAuthority(),
           presentationEpoch: createCompanionInterruption(),
           begin,
           close: () => authority.close(),
