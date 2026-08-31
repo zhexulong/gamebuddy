@@ -10,12 +10,12 @@ import {
   startFarmhandCompanionPreviewForTest,
 } from "./farmhand-companion-preview.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "./integration-launcher.js";
-import type { IntegrationConnection } from "./integration-types.js";
+import type { GameConnection } from "./game-connection.js";
 import {
   type ExactReceiptRecoveryPort,
   StardewExecutionRecoverySupervisor,
 } from "./stardew-execution-recovery-supervisor.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const config = {
   schemaVersion: 1,
@@ -35,10 +35,18 @@ function handle(presentationLocale = "zh-CN"): IntegrationLaunchHandle {
       playerId: "player_01",
       companionId: "companion_01",
     },
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     state: {
       connected: true,
+      sessionId: "stardew_session",
       capabilities: ["move_to_tile"],
+      catalogRegistrations: [{
+        actionId: "move_to_tile",
+        familyId: "movement_navigation",
+        identityVersion: 1,
+        lifecycle: "published",
+        kind: "execution",
+      }],
       latestReceipt: null,
       latestReasonCode: null,
       snapshot: { revision: 3, presentationLocale },
@@ -76,7 +84,7 @@ function dependencies(
   return {
     launcher: {
       integrationId: "stardew",
-      module: STARDEW_INTEGRATION_MODULE,
+      module: STARDEW_GAME_INTEGRATION_ADAPTER,
       launch: async () => {
         events.push("launch");
         return launch;
@@ -265,7 +273,7 @@ function gameRuntimeWithCoordinator(events: string[]) {
         evidence: null,
       }),
     },
-  } as unknown as IntegrationConnection;
+  } as unknown as GameConnection;
   const coordinator = createActionExecutionCoordinator(connection);
   const admission = coordinator.createAdmission();
   const dispatch = {
@@ -412,6 +420,7 @@ test("one explicit relaunch launches once, recovers the private coordinator once
         return {
           requestId: query.requestId,
           executionId: "execution_recovery_01",
+          actionId: "till_soil",
           state: "succeeded" as const,
           reasonCode: "soil_tilled",
           revision: 2,
@@ -455,7 +464,7 @@ test("relaunch is single-flight; a concurrent explicit relaunch fails closed", a
   const deps = {
     launcher: {
       integrationId: "stardew",
-      module: STARDEW_INTEGRATION_MODULE,
+      module: STARDEW_GAME_INTEGRATION_ADAPTER,
       launch: async () => {
         launchCount++;
         await gate;
