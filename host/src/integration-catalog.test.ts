@@ -7,7 +7,7 @@ import {
   type ConfigurableIntegrationLauncher,
   createIntegrationCatalog,
 } from "./integration-catalog.js";
-import { createIntegrationActionCatalog, type GameIntegrationModule } from "./integration-module.js";
+import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import { parseStardewOperatorConfig, STARDEW_INTEGRATION_LAUNCHER } from "./stardew-integration-launcher.js";
 
 function launcher(id = "arcade"): ConfigurableIntegrationLauncher {
@@ -18,7 +18,8 @@ function launcher(id = "arcade"): ConfigurableIntegrationLauncher {
     parameters: Type.Object({}),
     execute: async () => ({ content: [], details: {} }),
   });
-  const module: GameIntegrationModule = {
+  const module: GameIntegrationAdapter = {
+    actorId: () => `actor-${id}`,
     descriptor: { integrationId: id, version: "fixture-v1", toolNamePrefix: "arcade_" },
     actionCatalog: createIntegrationActionCatalog([
       {
@@ -42,6 +43,7 @@ function launcher(id = "arcade"): ConfigurableIntegrationLauncher {
       connected: true,
       sessionId: "fixture",
       capabilities: ["execute"],
+      capabilityRevision: 1,
       snapshotRevision: 1,
       activeExecution: null,
       latestReceipt: null,
@@ -50,6 +52,7 @@ function launcher(id = "arcade"): ConfigurableIntegrationLauncher {
     status: () => ({
       connected: true,
       capabilities: ["execute"],
+      capabilityRevision: 1,
       snapshotRevision: 1,
       latestReceiptState: null,
       latestReasonCode: null,
