@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseProviderModel, resolveFallbackChain } from "./resolve-fallbacks";
+import { modelBodyField, parseProviderModel, resolveFallbackChain } from "./resolve-fallbacks";
 
 describe("resolveFallbackChain", () => {
     // Policy: user-config-only. There is NO builtin provider-agnostic chain —
@@ -59,6 +59,18 @@ describe("resolveFallbackChain", () => {
         expect(
             resolveFallbackChain(["  anthropic/claude-sonnet-4-6  ", "\tgoogle/gemini-3-flash\n"]),
         ).toEqual(["anthropic/claude-sonnet-4-6", "google/gemini-3-flash"]);
+    });
+});
+
+describe("modelBodyField", () => {
+    test("sends the active entry variant and leaves a bare entry unqualified", () => {
+        expect(modelBodyField({ model: "anthropic/claude-sonnet", qualifier: "high" })).toEqual({
+            model: { providerID: "anthropic", modelID: "claude-sonnet" },
+            variant: "high",
+        });
+        expect(modelBodyField("google/gemini-flash")).toEqual({
+            model: { providerID: "google", modelID: "gemini-flash" },
+        });
     });
 });
 

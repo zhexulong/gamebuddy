@@ -193,19 +193,70 @@ function mergeMemoryRow(
     if (typeof sourceId !== "number") return false;
     const collision = db
         .prepare(
-            `SELECT id, seen_count
+            `SELECT *
                FROM memories
               WHERE project_path = ? AND category = ? AND normalized_hash = ? AND id <> ?
               LIMIT 1`,
         )
-        .get(toIdentity, row.category, row.normalized_hash, sourceId) as
-        | { id?: unknown; seen_count?: unknown }
-        | undefined;
+        .get(toIdentity, row.category, row.normalized_hash, sourceId) as SqliteRow | undefined;
     if (collision && typeof collision.id === "number") {
-        const mergedSeen = Math.max(Number(collision.seen_count ?? 1), Number(row.seen_count ?? 1));
+        const targetId = collision.id;
+        const targetSeen = Number(collision.seen_count ?? 1);
+        const mergedSeen = Math.max(targetSeen, Number(row.seen_count ?? 1));
+        const sourceClassifiedAt = Number(row.classified_at ?? 0);
+        const targetClassifiedAt = Number(collision.classified_at ?? 0);
+        if (sourceClassifiedAt > targetClassifiedAt) {
+            db.prepare(
+                `UPDATE memories
+                     SET importance = ?, scope = ?, shareable = ?, classified_at = ?, updated_at = ?
+                   WHERE id = ?`,
+            ).run(row.importance, row.scope, row.shareable, row.classified_at, mergedAt, targetId);
+        }
+        const sourceHasCue = typeof row.mural_cue === "string" && row.mural_cue.length > 0;
+        const targetHasCue =
+            typeof collision.mural_cue === "string" && collision.mural_cue.length > 0;
+        const sourceCueAt = Number(row.mural_cue_at ?? 0);
+        const targetCueAt = Number(collision.mural_cue_at ?? 0);
+        if (sourceHasCue && (!targetHasCue || sourceCueAt > targetCueAt)) {
+            db.prepare(
+                `UPDATE memories
+                     SET mural_cue = ?, mural_cue_hash = ?, mural_cue_at = ?,
+                         mural_cue_rejection_count = ?, updated_at = ?
+                   WHERE id = ?`,
+            ).run(
+                row.mural_cue,
+                row.mural_cue_hash,
+                row.mural_cue_at,
+                row.mural_cue_rejection_count,
+                mergedAt,
+                targetId,
+            );
+        }
         db.prepare(
-            "UPDATE memories SET seen_count = ?, status = COALESCE(status, 'active') WHERE id = ?",
-        ).run(mergedSeen, collision.id);
+            `INSERT INTO memory_verifications
+                 (memory_id, file_path, verified_at, mapped_at, mapping_origin)
+              SELECT ?, file_path, verified_at, mapped_at, mapping_origin
+                FROM memory_verifications
+               WHERE memory_id = ?
+              ON CONFLICT(memory_id, file_path) DO UPDATE SET
+                 verified_at = MAX(memory_verifications.verified_at, excluded.verified_at),
+                 mapped_at = MAX(memory_verifications.mapped_at, excluded.mapped_at),
+                 mapping_origin = CASE
+                     WHEN excluded.mapped_at >= memory_verifications.mapped_at
+                         THEN excluded.mapping_origin
+                     ELSE memory_verifications.mapping_origin
+                 END`,
+        ).run(targetId, sourceId);
+        db.prepare("DELETE FROM memory_verifications WHERE memory_id = ?").run(sourceId);
+        if (
+            mergedSeen !== targetSeen ||
+            collision.status === null ||
+            collision.status === undefined
+        ) {
+            db.prepare(
+                "UPDATE memories SET seen_count = ?, status = COALESCE(status, 'active'), updated_at = ? WHERE id = ?",
+            ).run(mergedSeen, mergedAt, targetId);
+        }
         db.prepare(
             `UPDATE memories
                 SET status = 'archived',
@@ -216,12 +267,12 @@ function mergeMemoryRow(
                     END,
                     updated_at = ?
               WHERE id = ? AND project_path = ?`,
-        ).run(collision.id, String(sourceId), "identity-merge", mergedAt, sourceId, fromIdentity);
+        ).run(targetId, String(sourceId), "identity-merge", mergedAt, sourceId, fromIdentity);
         db.prepare(
             `INSERT INTO memory_mutation_log
                 (project_path, mutation_type, target_memory_id, superseded_by_id, category, queued_at)
              VALUES (?, 'superseded', ?, ?, ?, ?)`,
-        ).run(fromIdentity, sourceId, collision.id, row.category, mergedAt);
+        ).run(fromIdentity, sourceId, targetId, row.category, mergedAt);
         logRow(
             db,
             fromIdentity,
@@ -229,18 +280,63 @@ function mergeMemoryRow(
             "memories",
             String(sourceId),
             "superseded",
-            String(collision.id),
+            String(targetId),
             mergedAt,
         );
         return true;
     }
 
     const result = db
-        .prepare("UPDATE memories SET project_path = ? WHERE id = ? AND project_path = ?")
-        .run(toIdentity, sourceId, fromIdentity) as { changes?: number };
+        .prepare(
+            "UPDATE memories SET project_path = ?, updated_at = ? WHERE id = ? AND project_path = ?",
+        )
+        .run(toIdentity, mergedAt, sourceId, fromIdentity) as { changes?: number };
     if ((result.changes ?? 0) === 0) return false;
     logRow(db, fromIdentity, toIdentity, "memories", String(sourceId), "rekeyed", null, mergedAt);
     return true;
+}
+
+function nullableMaximum(left: unknown, right: unknown): number | null {
+    const values = [left, right].filter((value): value is number => typeof value === "number");
+    return values.length > 0 ? Math.max(...values) : null;
+}
+
+function oldestOpenCycleStart(left: unknown, right: unknown): number | null {
+    const values = [left, right].filter(
+        (value): value is number => typeof value === "number" && value > 0,
+    );
+    return values.length > 0 ? Math.min(...values) : null;
+}
+
+function reconcileTaskScheduleCollision(db: Database, source: SqliteRow, target: SqliteRow): void {
+    const sourceIsNewer =
+        typeof source.last_run_at === "number" &&
+        (typeof target.last_run_at !== "number" || source.last_run_at > target.last_run_at);
+    const latest = sourceIsNewer ? source : target;
+
+    // Take schedule outcome fields from the newest completed run. Merge progress
+    // independently: retrospective checks keep the furthest completed position, while
+    // an active broad verification pass keeps its earliest start. This preserves
+    // completed checks as newer than the pass watermark when identities are merged.
+    db.prepare(
+        `UPDATE task_schedule_state
+            SET last_run_at = ?, next_due_at = ?, schedule = ?, last_status = ?,
+                last_error = ?, retry_count = ?, last_checked_commit = ?,
+                last_broad_run_at = ?, retrospective_watermark_ms = ?
+          WHERE project_path = ? AND task = ?`,
+    ).run(
+        nullableMaximum(source.last_run_at, target.last_run_at),
+        latest.next_due_at,
+        latest.schedule,
+        latest.last_status,
+        latest.last_error,
+        latest.retry_count,
+        latest.last_checked_commit,
+        oldestOpenCycleStart(source.last_broad_run_at, target.last_broad_run_at),
+        nullableMaximum(source.retrospective_watermark_ms, target.retrospective_watermark_ms),
+        target.project_path,
+        target.task,
+    );
 }
 
 function rekeyGenericRow(
@@ -254,6 +350,9 @@ function rekeyGenericRow(
     const rowId = rowKey(db, table.name, row);
     const collision = findUniqueCollision(db, table, row, fromIdentity, toIdentity);
     if (collision) {
+        if (table.name === "task_schedule_state") {
+            reconcileTaskScheduleCollision(db, row, collision);
+        }
         const sourcePredicate = rowPredicate(db, table.name, row);
         const result = db
             .prepare(`DELETE FROM ${quoteIdentifier(table.name)} WHERE ${sourcePredicate.sql}`)

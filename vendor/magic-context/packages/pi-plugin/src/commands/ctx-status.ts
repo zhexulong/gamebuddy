@@ -1,17 +1,25 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
 import { getMostRecentTaskRunAt } from "@magic-context/core/features/magic-context/dreamer/storage-task-schedule";
+import { getDreamTaskBacklogs } from "@magic-context/core/features/magic-context/dreamer/task-gates";
+import { CANONICAL_DREAM_TASKS } from "@magic-context/core/features/magic-context/dreamer/task-registry";
 import { getMemoryCount } from "@magic-context/core/features/magic-context/memory/storage-memory";
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
 import { getPendingOps } from "@magic-context/core/features/magic-context/storage";
 import { getOrCreateSessionMeta } from "@magic-context/core/features/magic-context/storage-meta";
+import { getOverflowState } from "@magic-context/core/features/magic-context/storage-meta-persisted";
 import { getNotes } from "@magic-context/core/features/magic-context/storage-notes";
 import { getTagsBySession } from "@magic-context/core/features/magic-context/storage-tags";
 import { executeStatus } from "@magic-context/core/hooks/magic-context/execute-status";
-import { formatBytes } from "@magic-context/core/hooks/magic-context/format-bytes";
+import { getMagicContextStorageResolution } from "@magic-context/core/shared/data-path";
 import { describeError } from "@magic-context/core/shared/error-message";
+import { resolveTailHygieneStatus } from "@magic-context/core/shared/tail-hygiene-status";
+
+import { getPiChannel1Baseline } from "../ctx-reduce-nudge-pi";
 import { showStatusDialog } from "../dialogs/status-dialog";
-import { resolveSessionId, sendCtxStatusMessage } from "./pi-command-utils";
+import { resolvePiWindowGeometry } from "../pi-context-limit";
+import { resolvePiPressureSnapshot } from "../pi-pressure";
+import { createCtxStatusSender, resolveSessionId } from "./pi-command-utils";
 
 export interface RegisterCtxStatusDeps {
 	db: ContextDatabase;
@@ -33,6 +41,8 @@ export interface RegisterCtxStatusDeps {
 		[modelKey: string]: number | undefined;
 	};
 	dreamer?: { runnable?: boolean; scheduleSummary?: string };
+	/** User-owned profile selected for the project, after config resolution. */
+	activeProfile?: string;
 }
 
 export type CtxStatusRuntimeDeps = Omit<
@@ -52,10 +62,12 @@ export interface CtxStatusDetails {
 	lastCompartmentRange: string | null;
 	memoryCount: number;
 	noteCount: number;
+	activeProfile: string | null;
 	dreamer: {
 		enabled: boolean;
 		scheduleSummary: string | null;
 		lastRunAt: number | null;
+		backlog?: ReturnType<typeof getDreamTaskBacklogs>;
 	};
 	historian: {
 		lastFireCount: number;
@@ -73,6 +85,7 @@ export function registerCtxStatusCommand(
 	pi.registerCommand("ctx-status", {
 		description: "Show Magic Context status for the current Pi session",
 		handler: async (_args, ctx) => {
+			const sendStatus = createCtxStatusSender(pi, ctx);
 			const runtimeDeps = deps.resolveStatusDeps?.(ctx) ?? deps;
 			const projectIdentity =
 				runtimeDeps.resolveProject?.(ctx).projectIdentity ??
@@ -80,7 +93,7 @@ export function registerCtxStatusCommand(
 			const currentDeps = { ...runtimeDeps, projectIdentity };
 			const sessionId = resolveSessionId(ctx);
 			if (!sessionId) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-status",
 					text: "## Magic Status\n\nNo active Pi session is available.",
 					level: "error",
@@ -98,6 +111,31 @@ export function registerCtxStatusCommand(
 				const modelKey = ctx.model
 					? `${ctx.model.provider}/${ctx.model.id}`
 					: undefined;
+				let detectedContextLimit: number | undefined;
+				try {
+					const detected = getOverflowState(
+						currentDeps.db,
+						sessionId,
+					).detectedContextLimit;
+					if (detected > 0) detectedContextLimit = detected;
+				} catch {
+					// Status remains available when overflow metadata cannot be read.
+				}
+				const meta = getOrCreateSessionMeta(currentDeps.db, sessionId);
+				const windowGeometry = resolvePiWindowGeometry({
+					rawContextWindow: usage?.contextWindow ?? ctx.model?.contextWindow,
+					model: ctx.model,
+					detectedContextLimit,
+					persistedInputTokens: meta.lastInputTokens,
+					persistedPercentage: meta.lastContextPercentage,
+				});
+				const usableContextLimit = windowGeometry?.usableSoft;
+				const pressure = resolvePiPressureSnapshot({
+					persistedPercentage: meta.lastContextPercentage,
+					persistedInputTokens: meta.lastInputTokens,
+					liveInputTokens: usage?.tokens,
+					usableContextLimit,
+				});
 				const statusText = executeStatus(
 					currentDeps.db,
 					sessionId,
@@ -107,16 +145,32 @@ export function registerCtxStatusCommand(
 					currentDeps.historyBudgetPercentage,
 					currentDeps.commitClusterTrigger,
 					currentDeps.executeThresholdTokens,
-					usage?.contextWindow,
+					usableContextLimit,
+					{
+						backlog: getDreamTaskBacklogs(
+							currentDeps.db,
+							currentDeps.projectIdentity,
+							CANONICAL_DREAM_TASKS,
+						),
+					},
+					windowGeometry,
+					resolveTailHygieneStatus(getPiChannel1Baseline(sessionId)),
+					pressure,
 				);
 				const details = buildStatusDetails(currentDeps, sessionId);
-				sendCtxStatusMessage(
-					pi,
-					{ title: "/ctx-status", text: statusText, level: "info" },
+				const profileStatus = currentDeps.activeProfile ?? "none";
+				const storage = getMagicContextStorageResolution();
+				sendStatus(
+					{
+						title: "/ctx-status",
+						text: `${statusText}\n\nActive profile: ${profileStatus}\n\nStorage: ${storage.path} (${storage.source})`,
+						level: "info",
+						rpcDisplay: "dialog",
+					},
 					details,
 				);
 			} catch (error) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-status",
 					text: `## Magic Status — Failed\n\n${describeError(error).brief}`,
 					level: "error",
@@ -141,6 +195,7 @@ function buildStatusDetails(
 	return {
 		sessionId,
 		projectIdentity: deps.projectIdentity,
+		activeProfile: deps.activeProfile ?? null,
 		activeTags: activeTags.length,
 		droppedTags: droppedTags.length,
 		totalBytes,
@@ -162,6 +217,11 @@ function buildStatusDetails(
 		dreamer: {
 			enabled: deps.dreamer?.runnable === true,
 			scheduleSummary: deps.dreamer?.scheduleSummary ?? null,
+			backlog: getDreamTaskBacklogs(
+				deps.db,
+				deps.projectIdentity,
+				CANONICAL_DREAM_TASKS,
+			),
 			// Dreamer V2 retired the V1 dream_state['last_dream_at'] field; the
 			// live "last successful run" is MAX(last_run_at) across the project's
 			// task_schedule_state rows (issue #194).

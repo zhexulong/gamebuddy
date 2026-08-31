@@ -9,16 +9,11 @@ import {
     getLastCompartmentEndMessageId,
     type SessionFact,
 } from "../../features/magic-context/compartment-storage";
-import {
-    MEMORY_CATEGORY_ORDER_SQL,
-    V2_MEMORY_CATEGORIES,
-} from "../../features/magic-context/memory/constants";
+import { V2_MEMORY_CATEGORIES } from "../../features/magic-context/memory/constants";
 import {
     getMaxMemoryIdForProjects,
     getMemoriesByProject,
     getMemoriesByProjects,
-    getMemorySelectColumns,
-    isMemoryRow,
 } from "../../features/magic-context/memory/storage-memory";
 import type { Memory } from "../../features/magic-context/memory/types";
 import { resolveMuralWire } from "../../features/magic-context/mural/render-trigger";
@@ -49,15 +44,16 @@ import {
     type WorkspaceIdentitySet,
 } from "../../features/magic-context/workspaces";
 import { BoundedSessionMap } from "../../shared/bounded-session-map";
+import { piModelRefToCanonical } from "../../shared/harness-provider-map";
 import { sessionLog } from "../../shared/logger";
 import type { Database, Statement as PreparedStatement } from "../../shared/sqlite";
+import { reconcileForkOrphanedCompactionMarkers } from "./compaction-marker-manager";
 import {
     COMPARTMENT_RENDER_EPOCH,
     decodeCachedM0UpgradeIdentity,
     encodeCachedM0UpgradeIdentity,
 } from "./compartment-render-epoch";
 import { extractM0Block, renderCompartmentAtTier, renderDecayedCompartments } from "./decay-render";
-
 import { getMessageTimesFromOpenCodeDb } from "./read-session-db";
 import { estimateTokens } from "./read-session-formatting";
 import type { MessageLike } from "./tag-messages";
@@ -72,6 +68,14 @@ export interface PreparedCompartmentInjection {
     factCount: number;
     memoryCount: number;
     rebuiltFromDb: boolean;
+    /**
+     * Set when the injection stayed degraded (boundary not in the visible
+     * window) AND no durable compartment boundary is visible either, so no
+     * safe re-anchor splice exists. The transform queues a fresh
+     * materialization so the baseline is re-cut instead of silently looping
+     * (#264 layer-B fallback).
+     */
+    needsFreshMaterialization?: boolean;
 }
 
 /**
@@ -90,13 +94,99 @@ export interface PreparedCompartmentInjection {
  */
 const INJECTION_CACHE_MAX = 100;
 type InjectionCacheEntry =
-    | { kind: "empty"; compartmentEndMessageId: string; renderedBytes: number }
-    | { kind: "populated"; injection: PreparedCompartmentInjection };
+    | { db: Database; kind: "empty"; compartmentEndMessageId: string; renderedBytes: number }
+    | { db: Database; kind: "populated"; injection: PreparedCompartmentInjection };
 
 const injectionCache = new BoundedSessionMap<InjectionCacheEntry>(INJECTION_CACHE_MAX);
 
 export function clearInjectionCache(sessionId: string): void {
     injectionCache.delete(sessionId);
+    // A cache clear means compartment state changed (historian publish / recomp /
+    // flush), so any in-flight degraded-mode bookkeeping for the OLD boundary is
+    // stale. Reset it so the re-anchor countdown restarts against the new state.
+    resetDegradedReanchorState(sessionId);
+}
+
+// ── Degraded-mode re-anchor (#263/#264) ─────────────────────────
+//
+// When the compartment boundary message is not in the visible window, the
+// splice is a no-op and zero drops are queued. If a NEWER compaction marker
+// (typically a fork-orphan, #263) cuts the window above our boundary, that
+// state repeats on every pass with no recovery path (#264). Two layers fix
+// it:
+//   - Layer A (root cause): on the first degraded detection we run the
+//     fork-orphan marker hygiene pass, which removes the foreign marker that
+//     outranks ours so filterCompacted stops at our marker again.
+//   - Layer B (resilience): if the boundary stays invisible for
+//     REANCHOR_MIN_DEGRADED_PASSES consecutive rebuilds, we re-anchor the
+//     splice to the newest durable compartment boundary that IS visible (or,
+//     if none is visible, surface a fresh-materialization request) instead of
+//     looping. The re-anchor changes bytes, so it only ever applies on a
+//     cache-busting pass — never first-applied on a defer pass (invariant 2).
+
+/**
+ * Consecutive rebuilds during which the natural compartment boundary was not
+ * present in the visible window. Reset to 0 the moment a rebuild finds the
+ * boundary again. Defer-pass cache replays deliberately do NOT touch this —
+ * they splice at the cached (possibly re-anchored) boundary and say nothing
+ * about the natural boundary's visibility.
+ */
+const degradedRebuildCountBySession = new BoundedSessionMap<number>(INJECTION_CACHE_MAX);
+/** Log-once latch so the re-anchor is announced loudly once, not per pass. */
+const reAnchorLoggedBySession = new BoundedSessionMap<boolean>(INJECTION_CACHE_MAX);
+
+/**
+ * Number of consecutive degraded rebuilds before layer-B re-anchors. A small
+ * threshold recovers fast; requiring more than one avoids reacting to a
+ * single-pass transient (e.g. a marker-drain lag that heals next pass).
+ */
+const REANCHOR_MIN_DEGRADED_PASSES = 2;
+
+export function resetDegradedReanchorState(sessionId: string): void {
+    degradedRebuildCountBySession.delete(sessionId);
+    reAnchorLoggedBySession.delete(sessionId);
+}
+
+function noteDegradedRebuild(sessionId: string): number {
+    const next = (degradedRebuildCountBySession.get(sessionId) ?? 0) + 1;
+    degradedRebuildCountBySession.set(sessionId, next);
+    return next;
+}
+
+function clearDegradedRebuild(sessionId: string): void {
+    degradedRebuildCountBySession.delete(sessionId);
+    reAnchorLoggedBySession.delete(sessionId);
+}
+
+/** Announce a re-anchor loudly once per degraded episode, not per pass. */
+function logReanchorOnce(sessionId: string, message: string): void {
+    if (reAnchorLoggedBySession.get(sessionId)) return;
+    reAnchorLoggedBySession.set(sessionId, true);
+    sessionLog(sessionId, message);
+}
+
+/**
+ * Find the newest durable compartment whose end message IS present in the
+ * visible window, scanning newest→oldest. Returns its index into
+ * `compartments` or -1. This is the layer-B re-anchor target: splicing there
+ * removes only messages covered by compartments that are actually in view, so
+ * no history is lost even though a newer marker cut the window above us.
+ */
+function findVisibleReanchorIndex(
+    compartments: readonly Compartment[],
+    visibleMessageIds: ReadonlySet<string>,
+): number {
+    for (let index = compartments.length - 1; index >= 0; index -= 1) {
+        const endMessageId = compartments[index]?.endMessageId;
+        if (
+            typeof endMessageId === "string" &&
+            endMessageId.length > 0 &&
+            visibleMessageIds.has(endMessageId)
+        ) {
+            return index;
+        }
+    }
+    return -1;
 }
 
 /**
@@ -230,11 +320,24 @@ export function prepareCompartmentInjection(
     // On defer (cache-safe) passes, replay the cached injection result so that
     // historian publications between passes do not bust the prompt-cache prefix.
     const cached = injectionCache.get(sessionId);
-    if (!isCacheBusting && cached) {
-        if (cached.kind === "empty") {
+    if (cached && cached.db !== db) {
+        // Session ids are unique in production, but tests and explicit database
+        // paths can reuse one across independent stores. Never replay a block
+        // rendered from a different database into the current session.
+        //
+        // clearInjectionCache (not a bare delete) so the degraded-mode re-anchor
+        // bookkeeping is dropped with it: that count gates a byte-CHANGING
+        // re-anchor, so inheriting another store's episode could re-anchor early
+        // — the same cross-store leak, on the path where it costs more.
+        clearInjectionCache(sessionId);
+    }
+    const usableCached = cached?.db === db ? cached : undefined;
+
+    if (!isCacheBusting && usableCached) {
+        if (usableCached.kind === "empty") {
             return null;
         }
-        const prepared = cached.injection;
+        const prepared = usableCached.injection;
         if (prepared.compartmentEndMessageId === null) {
             sessionLog(
                 sessionId,
@@ -329,6 +432,7 @@ export function prepareCompartmentInjection(
     // Nothing to inject if we have no compartments, no facts, and no memories
     if (compartments.length === 0 && facts.length === 0 && !memoryBlock) {
         injectionCache.set(sessionId, {
+            db,
             kind: "empty",
             compartmentEndMessageId: "",
             renderedBytes: 0,
@@ -373,7 +477,7 @@ export function prepareCompartmentInjection(
             memoryCount,
             rebuiltFromDb: true,
         };
-        injectionCache.set(sessionId, { kind: "populated", injection: result });
+        injectionCache.set(sessionId, { db, kind: "populated", injection: result });
         return result;
     }
 
@@ -438,34 +542,94 @@ export function prepareCompartmentInjection(
             memoryCount,
             rebuiltFromDb: true,
         };
-        injectionCache.set(sessionId, { kind: "populated", injection: result });
+        injectionCache.set(sessionId, { db, kind: "populated", injection: result });
         return result;
     }
 
     let skippedVisibleMessages = 0;
+    let needsFreshMaterialization = false;
+    let resultEndMessage: number = lastEnd;
+    let resultEndMessageId: string | null = null;
     const cutoffIndex = messages.findIndex((message) => message.info.id === trimEndMessageId);
     if (cutoffIndex >= 0) {
+        // Natural boundary is visible — normal splice, and any degraded-mode
+        // bookkeeping from earlier passes is cleared.
+        clearDegradedRebuild(sessionId);
         skippedVisibleMessages = cutoffIndex + 1;
         const remaining = messages.slice(cutoffIndex + 1);
         messages.splice(0, messages.length, ...remaining);
+        resultEndMessageId = trimEndMessageId;
     } else {
-        sessionLog(
-            sessionId,
-            `compartment injection entering degraded mode: boundary ${trimEndMessageId} not in visible messages`,
-        );
+        // Degraded: the natural boundary message is not in the visible window.
+        const degradedCount = noteDegradedRebuild(sessionId);
+        // Layer A (#263): on the FIRST degraded detection of an episode, run the
+        // fork-orphan marker hygiene pass. If a foreign marker outranks ours this
+        // removes it, so the next pass's window stops at our marker and we
+        // recover. Gated to the degraded trigger so steady state pays nothing.
+        if (degradedCount === 1) {
+            reconcileForkOrphanedCompactionMarkers(db, sessionId);
+        }
+
+        let reAnchored = false;
+        if (degradedCount >= REANCHOR_MIN_DEGRADED_PASSES && isCacheBusting) {
+            // Layer B (#264): the boundary has stayed invisible for long enough;
+            // stop looping and re-anchor. This changes bytes, so it only runs on a
+            // cache-busting pass (never first-applied on a defer pass).
+            const visibleMessageIds = new Set<string>();
+            for (const message of messages) {
+                if (typeof message.info.id === "string") visibleMessageIds.add(message.info.id);
+            }
+            const reAnchorIndex = findVisibleReanchorIndex(compartments, visibleMessageIds);
+            if (reAnchorIndex >= 0) {
+                const reAnchorCompartment = compartments[reAnchorIndex];
+                const reAnchorCutoff = messages.findIndex(
+                    (message) => message.info.id === reAnchorCompartment.endMessageId,
+                );
+                if (reAnchorCutoff >= 0) {
+                    skippedVisibleMessages = reAnchorCutoff + 1;
+                    const remaining = messages.slice(reAnchorCutoff + 1);
+                    messages.splice(0, messages.length, ...remaining);
+                    resultEndMessage = reAnchorCompartment.endMessage;
+                    resultEndMessageId = reAnchorCompartment.endMessageId;
+                    reAnchored = true;
+                    logReanchorOnce(
+                        sessionId,
+                        `compartment injection re-anchored: natural boundary ${trimEndMessageId} not visible for ${degradedCount} passes; splicing at visible compartment boundary ${resultEndMessageId} (ordinal ${resultEndMessage})`,
+                    );
+                }
+            }
+            if (!reAnchored) {
+                // No durable compartment boundary is visible either, so there is no
+                // safe splice target. Surface the state and request a fresh
+                // materialization to re-cut the baseline instead of silently looping.
+                needsFreshMaterialization = true;
+                logReanchorOnce(
+                    sessionId,
+                    `compartment injection degraded: boundary ${trimEndMessageId} not visible for ${degradedCount} passes and no compartment boundary is visible; requesting fresh materialization to re-cut the baseline`,
+                );
+            }
+        } else {
+            sessionLog(
+                sessionId,
+                `compartment injection entering degraded mode: boundary ${trimEndMessageId} not in visible messages (consecutive degraded passes: ${degradedCount})`,
+            );
+        }
     }
 
     const result: PreparedCompartmentInjection = {
         block,
-        compartmentEndMessage: lastEnd,
-        compartmentEndMessageId: cutoffIndex >= 0 ? trimEndMessageId : null,
+        compartmentEndMessage: resultEndMessage,
+        compartmentEndMessageId: resultEndMessageId,
         compartmentCount: compartments.length,
         skippedVisibleMessages,
         factCount: facts.length,
         memoryCount,
         rebuiltFromDb: true,
     };
-    injectionCache.set(sessionId, { kind: "populated", injection: result });
+    if (needsFreshMaterialization) {
+        result.needsFreshMaterialization = true;
+    }
+    injectionCache.set(sessionId, { db, kind: "populated", injection: result });
     return result;
 }
 
@@ -571,26 +735,31 @@ export interface M0SnapshotMarkers {
     sessionFactsVersion: number;
     upgradeState: string | null;
     compartmentRenderEpoch: string | null;
-    // HARD-bust markers: provider-side cache-eviction signals. A change in any
-    // of these means the Anthropic prompt cache was already dead (tools/system
-    // block changed, or model switched), so folding m[1] into m[0] is "free".
-    // Captured from runtime signals at the injectM0M1 call site (NOT a pure DB
-    // read), so readCurrentM0SnapshotMarkers takes them as inputs.
+    // HARD-bust markers are captured from runtime signals at the injectM0M1
+    // call site (NOT a pure DB read), so readCurrentM0SnapshotMarkers takes
+    // them as inputs. The tool-set hash is retained for attribution only: its
+    // process-global scope makes it deliberately ineligible to trigger a fold.
     systemHash: string;
+    toolSetHash: string;
     modelKey: string;
     projectIdentity?: string | null;
     /** Hash of the image identity folded into this m0 baseline. */
     muralHash?: string | null;
+    muralEnabled: boolean | null;
+    renderBudgetIdentity: string | null;
 }
 
 /**
  * Runtime cache-eviction signals threaded into the materialization decision.
  * These are NOT derived from durable DB state like the content markers — they
  * come from the current flight (system-prompt hash, tool-set fingerprint,
- * provider/model key) plus the TTL idle window.
+ * provider/model key) plus the TTL idle window. Tool-set changes are observed
+ * for attribution only; they never request a materialization.
  */
 export interface M0HardSignals {
     systemHash: string;
+    /** Empty or absent means the provider tool set is not observable this pass. */
+    toolSetHash?: string;
     modelKey: string;
     /** True when the provider cache TTL has elapsed since lastResponseTime. */
     cacheExpired: boolean;
@@ -600,6 +769,7 @@ export interface M0HardSignals {
 
 const EMPTY_HARD_SIGNALS: M0HardSignals = {
     systemHash: "",
+    toolSetHash: "",
     modelKey: "",
     cacheExpired: false,
     lastResponseTime: 0,
@@ -643,6 +813,8 @@ export interface M0M1RenderOptions {
     projectDirectory?: string;
     /** Defaults true. When false, m[0] omits the <project-docs> block and stores an empty docs hash. */
     injectDocs?: boolean;
+    /** Defaults true. When false, suppress every memory-derived m[0]/m[1] surface. */
+    memoryEnabled?: boolean;
     memoryInjectionBudgetTokens?: number;
     historyBudgetTokens?: number;
     userProfileBudgetTokens?: number;
@@ -654,11 +826,20 @@ export interface M0M1RenderOptions {
      * so the injected data-url only swaps on a natural fold. Tests may still pass
      * an explicit `mural` to drive the render deterministically. */
     mural?: { enabled: boolean; supportsVision: boolean; dataUrl?: string; contentHash?: string };
-    /** Experimental mural feature switch (experimental.mural.enabled). When true
+    /** Mural feature switch (mural.enabled). When true
      * and the fold's model accepts images, materializeM0 resolves + renders the
      * deterministic mural on demand and folds its image into the m[0] baseline. */
     muralEnabled?: boolean;
     isCacheBustingPass?: boolean;
+    /**
+     * Compaction-off mode (issue #266): materialize through the
+     * zero-compartment path — memory/docs/user-profile render into m[0], but
+     * historical compartment rows never reach `<session-history>` (no render,
+     * no raw-tail trim, no boundary splice, no marker write), and the
+     * isSubagent skip in injectM0M1 is lifted so subagent sessions receive
+     * the additive knowledge blocks too.
+     */
+    compactionOff?: boolean;
     /** Provider-side cache-eviction signals for HARD-bust detection. */
     hardSignals?: M0HardSignals;
     workspaceIdentitySet?: WorkspaceIdentitySet;
@@ -668,6 +849,20 @@ export interface M0M1RenderOptions {
 export interface MaterializeDecision {
     value: boolean;
     reason: string | null;
+    /** Present only when the system-hash operands triggered this decision. */
+    systemHashPrev?: string;
+    systemHashNew?: string;
+    /** Present only when the canonical model-key operands triggered this decision. */
+    m0ModelKeyPrev?: string;
+    m0ModelKeyNew?: string;
+    /**
+     * Present when the decision site compared the cached and live tool-set
+     * fingerprints. These operands are observational: a difference never
+     * triggers materialization. A null previous value means the cached baseline
+     * had no recorded tool-set fingerprint yet.
+     */
+    m0ToolSetHashPrev?: string | null;
+    m0ToolSetHashNew?: string | null;
 }
 
 export interface MaterializeM0Result {
@@ -728,6 +923,10 @@ function lastCompartmentBoundaryId(compartments: readonly M0Compartment[]): stri
 
 const DEFAULT_HISTORY_BUDGET_TOKENS = 60_000;
 export const DEFAULT_MEMORY_BUDGET_TOKENS = 8_000;
+
+function renderBudgetIdentity(memoryBudget?: number, historyBudget?: number): string {
+    return `m${memoryBudget ?? DEFAULT_MEMORY_BUDGET_TOKENS}-h${historyBudget ?? DEFAULT_HISTORY_BUDGET_TOKENS}`;
+}
 
 export const DEFAULT_USER_PROFILE_BUDGET_TOKENS = 4_000;
 const MAX_FORCED_MEMORIES_PER_DELTA = 10;
@@ -950,6 +1149,11 @@ interface M0SnapshotMarkerReadArgs {
     projectPath?: string;
     projectDirectory?: string;
     injectDocs?: boolean;
+    /** False suppresses the profile and mural surfaces alongside project memory. */
+    memoryEnabled?: boolean;
+    muralEnabled?: boolean;
+    memoryInjectionBudgetTokens?: number;
+    historyBudgetTokens?: number;
     hardSignals?: M0HardSignals;
     workspaceIdentitySet?: WorkspaceIdentitySet;
 }
@@ -1189,8 +1393,14 @@ function readCurrentM0SnapshotMarkersUncached(args: M0SnapshotMarkerReadArgs): {
             upgradeState: getUpgradeState(args.db, args.sessionId),
             compartmentRenderEpoch: COMPARTMENT_RENDER_EPOCH,
             systemHash: hard.systemHash,
-            modelKey: hard.modelKey,
+            toolSetHash: hard.toolSetHash ?? "",
+            modelKey: piModelRefToCanonical(hard.modelKey),
             projectIdentity: args.projectPath ?? null,
+            muralEnabled: args.memoryEnabled !== false && args.muralEnabled === true,
+            renderBudgetIdentity: renderBudgetIdentity(
+                args.memoryInjectionBudgetTokens,
+                args.historyBudgetTokens,
+            ),
         },
     };
 }
@@ -1209,8 +1419,14 @@ function refreshVolatileMarkerInputs(
                 : "",
         materializedAt: Date.now(),
         systemHash: hard.systemHash,
+        toolSetHash: hard.toolSetHash ?? "",
         modelKey: hard.modelKey,
         projectIdentity: args.projectPath ?? null,
+        muralEnabled: args.memoryEnabled !== false && args.muralEnabled === true,
+        renderBudgetIdentity: renderBudgetIdentity(
+            args.memoryInjectionBudgetTokens,
+            args.historyBudgetTokens,
+        ),
     };
 }
 
@@ -1287,9 +1503,12 @@ function snapshotMarkersFromCachedM0(state: M0M1State): M0SnapshotMarkers | null
         upgradeState: cachedUpgradeIdentity.upgradeState,
         compartmentRenderEpoch: cachedUpgradeIdentity.compartmentRenderEpoch,
         systemHash: state.cachedM0SystemHash ?? "",
+        toolSetHash: state.cachedM0ToolSetHash ?? "",
         modelKey: state.cachedM0ModelKey ?? "",
         projectIdentity: state.cachedM0ProjectIdentity ?? null,
         muralHash: state.cachedM0MuralHash ?? null,
+        muralEnabled: cachedUpgradeIdentity.muralEnabled,
+        renderBudgetIdentity: cachedUpgradeIdentity.renderBudgetIdentity,
     };
 }
 
@@ -1309,6 +1528,15 @@ function snapshotMarkersFromCachedM0(state: M0M1State): M0SnapshotMarkers | null
  * whole point of the m[0]=frozen-prefix / m[1]=volatile-delta split: a routine
  * historian publish must keep the Anthropic prompt-cache prefix intact.
  */
+const MEMORY_DERIVED_BLOCK_PATTERN =
+    /<(?:project-memory|user-profile|new-user-profile|memory-updates|memory-mural)(?:>|\s)/;
+
+function cachedMemoryDerivedSurfacePresent(state: M0M1State): boolean {
+    return [state.cachedM0Bytes, state.cachedM1Bytes].some(
+        (bytes) => bytes !== null && MEMORY_DERIVED_BLOCK_PATTERN.test(bytes.toString("utf8")),
+    );
+}
+
 export function mustMaterialize(args: {
     db: Database;
     sessionId: string;
@@ -1318,20 +1546,46 @@ export function mustMaterialize(args: {
     hardSignals?: M0HardSignals;
     workspaceIdentitySet?: WorkspaceIdentitySet;
     injectDocs?: boolean;
+    /** False suppresses the profile and mural surfaces alongside project memory. */
+    memoryEnabled?: boolean;
+    muralEnabled?: boolean;
+    memoryInjectionBudgetTokens?: number;
+    historyBudgetTokens?: number;
 }): MaterializeDecision {
     if (!args.state.cachedM0Bytes) return { value: true, reason: "first_render" };
     if (!args.state.cachedM1Bytes) return { value: true, reason: "cached_m1_missing" };
     const hard = args.hardSignals ?? EMPTY_HARD_SIGNALS;
     // `current.workspaceFingerprint` is resolved inside readCurrentM0SnapshotMarkers
-    // (it resolves its own workspace context); the HARD memory gate below keys on
-    // that vs the cached fingerprint, so no local workspace context is needed here.
+    // (it resolves its own workspace context); the later workspace-identity HARD
+    // gate compares it with the cached fingerprint, so no local context is needed.
     const current = readCurrentM0SnapshotMarkers(args);
     const cachedUpgradeIdentity = decodeCachedM0UpgradeIdentity(args.state.cachedM0UpgradeState);
+
+    // The system-prompt hook runs after the message transform, so its changed hash
+    // reaches this decision one pass late. A memory-off process must not replay one
+    // request of the old memory-bearing m[0]/m[1] while waiting for that signal.
+    // The rendered bytes make this transition self-consuming without another
+    // durable flag: once suppressed, the next pass finds no memory-derived block.
+    if (args.memoryEnabled === false && cachedMemoryDerivedSurfacePresent(args.state)) {
+        return { value: true, reason: "render_config" };
+    }
 
     // Renderer-format changes must fold cached m[0] once before sanitized bytes can
     // mix with a stale baseline. Persisting the new component consumes this trigger.
     if (cachedUpgradeIdentity.compartmentRenderEpoch !== current.compartmentRenderEpoch) {
         return { value: true, reason: "compartment_render_epoch" };
+    }
+    // Null components are legacy rows encoded before mural/budget joined the
+    // identity: adopt silently (the values persist on the next natural HARD)
+    // rather than folding the whole fleet once at upgrade. Only a real change
+    // against a RECORDED component triggers.
+    if (
+        (cachedUpgradeIdentity.muralEnabled !== null &&
+            cachedUpgradeIdentity.muralEnabled !== current.muralEnabled) ||
+        (cachedUpgradeIdentity.renderBudgetIdentity !== null &&
+            cachedUpgradeIdentity.renderBudgetIdentity !== current.renderBudgetIdentity)
+    ) {
+        return { value: true, reason: "render_config" };
     }
 
     // ── HARD: provider-side cache eviction (the cache was already dead) ──
@@ -1340,12 +1594,38 @@ export function mustMaterialize(args: {
     // baseline marker means a real change; an empty current signal means
     // "unknown this pass" and is never treated as a change (avoids spurious
     // folds before the signal is known).
-    if (hard.modelKey !== "" && hard.modelKey !== (args.state.cachedM0ModelKey ?? "")) {
-        return { value: true, reason: "model_change" };
+    const canonicalHardModelKey = piModelRefToCanonical(hard.modelKey);
+    const canonicalCachedModelKey = piModelRefToCanonical(args.state.cachedM0ModelKey ?? "");
+    if (canonicalHardModelKey !== "" && canonicalHardModelKey !== canonicalCachedModelKey) {
+        return {
+            value: true,
+            reason: "model_change",
+            m0ModelKeyPrev: canonicalCachedModelKey,
+            m0ModelKeyNew: canonicalHardModelKey,
+        };
     }
-    if (hard.systemHash !== "" && hard.systemHash !== (args.state.cachedM0SystemHash ?? "")) {
-        return { value: true, reason: "system_hash" };
+    const cachedSystemHash = args.state.cachedM0SystemHash ?? "";
+    if (hard.systemHash !== "" && hard.systemHash !== cachedSystemHash) {
+        return {
+            value: true,
+            reason: "system_hash",
+            systemHashPrev: cachedSystemHash,
+            systemHashNew: hard.systemHash,
+        };
     }
+    // Tool-set changes are deliberately not HARD-fold triggers: this signal is
+    // process-global, so folding on it would manufacture unrelated session busts.
+    // Preserve the actual operands from this decision site for a later query.
+    const liveToolSetHash = hard.toolSetHash ?? "";
+    const toolSetHashComparison =
+        liveToolSetHash !== ""
+            ? {
+                  m0ToolSetHashPrev: args.state.cachedM0ToolSetHash,
+                  m0ToolSetHashNew: liveToolSetHash,
+              }
+            : null;
+    const withToolSetHashComparison = (decision: MaterializeDecision): MaterializeDecision =>
+        toolSetHashComparison ? { ...decision, ...toolSetHashComparison } : decision;
     // Idle > TTL: the provider evicted the cache while the user was away. Guard
     // for idempotence across a multi-pass "came back" turn: cacheExpired stays
     // true on every pass until lastResponseTime updates at end-of-response, so
@@ -1358,7 +1638,7 @@ export function mustMaterialize(args: {
         hard.lastResponseTime > 0 &&
         hard.lastResponseTime > (args.state.cachedM0MaterializedAt ?? 0)
     ) {
-        return { value: true, reason: "ttl_idle" };
+        return withToolSetHashComparison({ value: true, reason: "ttl_idle" });
     }
 
     // ── HARD: genuine m[0] CONTENT change (the rendered baseline bytes differ) ──
@@ -1372,7 +1652,7 @@ export function mustMaterialize(args: {
                 )
                 .run(current.projectIdentity, args.sessionId);
         } else if (cachedProjectIdentity !== current.projectIdentity) {
-            return { value: true, reason: "project_change" };
+            return withToolSetHashComparison({ value: true, reason: "project_change" });
         }
     }
 
@@ -1387,7 +1667,7 @@ export function mustMaterialize(args: {
         (args.state.cachedM0WorkspaceFingerprint ?? null) !== null
     ) {
         if ((args.state.cachedM0WorkspaceFingerprint ?? null) !== current.workspaceFingerprint) {
-            return { value: true, reason: "project_memory_epoch" };
+            return withToolSetHashComparison({ value: true, reason: "project_memory_epoch" });
         }
     } else if (args.state.cachedM0ProjectMemoryEpoch !== current.projectMemoryEpoch) {
         return { value: true, reason: "project_memory_epoch" };
@@ -1415,12 +1695,12 @@ export function mustMaterialize(args: {
     // reads fresh docs whenever a natural HARD fold happens and stores that hash
     // with the bytes it actually rendered.
     if (args.state.cachedM0MaxMutationId !== current.maxMutationId) {
-        return { value: true, reason: "max_mutation_id" };
+        return withToolSetHashComparison({ value: true, reason: "max_mutation_id" });
     }
     if (cachedUpgradeIdentity.upgradeState !== current.upgradeState) {
-        return { value: true, reason: "upgrade_state" };
+        return withToolSetHashComparison({ value: true, reason: "upgrade_state" });
     }
-    return { value: false, reason: null };
+    return withToolSetHashComparison({ value: false, reason: null });
 }
 
 export interface TrimMemoriesResultV2 {
@@ -1829,13 +2109,16 @@ function applyMarkersToState(
     state.cachedM0UpgradeState = encodeCachedM0UpgradeIdentity(
         markers.upgradeState,
         markers.compartmentRenderEpoch,
+        markers.muralEnabled,
+        markers.renderBudgetIdentity,
     );
-    // HARD-bust markers must be mirrored into the flat state fields too: the next
-    // pass's mustMaterialize reads state.cachedM0SystemHash/ModelKey
-    // directly (not snapshotMarkers). Omitting them here leaves the flat fields at
-    // their pre-materialize values until a DB reload re-syncs them, which would
-    // re-fire the same HARD trigger on the very next pass (double-fold).
+    // Runtime markers must be mirrored into flat state because the next
+    // mustMaterialize pass reads cachedM0SystemHash/ToolSetHash/ModelKey directly
+    // rather than snapshotMarkers. Omitting them leaves a stale baseline until a
+    // DB reload; for HARD triggers that would re-fire the same fold, while the
+    // tool-set marker would lose its comparison baseline.
     state.cachedM0SystemHash = markers.systemHash;
+    state.cachedM0ToolSetHash = markers.toolSetHash;
     state.cachedM0ModelKey = markers.modelKey;
     state.cachedM0ProjectIdentity = markers.projectIdentity;
     state.cachedM0MuralHash = markers.muralHash ?? null;
@@ -1871,7 +2154,7 @@ function resolveMuralForM0(
     modelKey: string,
     budgetTokens: number,
 ): MuralWireOptions | undefined {
-    if (!options.muralEnabled) return undefined;
+    if (options.memoryEnabled === false || !options.muralEnabled) return undefined;
     return resolveMuralWire(options.db, projectPath, modelKey, true, budgetTokens);
 }
 
@@ -1911,6 +2194,10 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             projectPath,
             projectDirectory,
             injectDocs: options.injectDocs,
+            memoryEnabled: options.memoryEnabled,
+            muralEnabled: options.muralEnabled,
+            memoryInjectionBudgetTokens: options.memoryInjectionBudgetTokens,
+            historyBudgetTokens: options.historyBudgetTokens,
             hardSignals: options.hardSignals,
             workspaceIdentitySet: {
                 identities: workspace.identities,
@@ -1919,7 +2206,13 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
         });
         docs = readProjectDocsForM0(projectDirectory, options.injectDocs);
         snapshotMarkers.projectDocsHash = docs.canonicalHash;
-        compartments = readM0Compartments(options.db, options.sessionId);
+        // Compaction-off: the zero-compartment path — historical compartment
+        // rows exist but never render into <session-history>. The snapshot
+        // markers still read the real maxCompartmentSeq so the staleness
+        // check stays accurate; only the render input is emptied.
+        compartments = options.compactionOff
+            ? []
+            : readM0Compartments(options.db, options.sessionId);
         // v2 faithful facts: session_facts is retired as a render source (facts
         // promote to project memory, rendered below via `memories`). Keep `facts`
         // empty so renderSessionHistoryWithDecay never emits a <session_facts>
@@ -1942,7 +2235,7 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
                       foldMaterializedAt,
                   )
             : [];
-        userMemories = safeGetActiveUserMemories(options.db);
+        userMemories = options.memoryEnabled === false ? [] : safeGetActiveUserMemories(options.db);
         options.db.exec("COMMIT");
     } catch (error) {
         try {
@@ -1977,8 +2270,10 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
     // (not on defers), so the injected image only swaps on a natural fold — the
     // baked-in cachedM0MuralDataUrl replays on defer passes.
     const mural =
-        options.mural ??
-        resolveMuralForM0(options, projectPath, snapshotMarkers.modelKey, memoryBudget);
+        options.memoryEnabled === false
+            ? undefined
+            : (options.mural ??
+              resolveMuralForM0(options, projectPath, snapshotMarkers.modelKey, memoryBudget));
     let decayPressureMultiplier = 1;
     let m0Text = renderM0({
         projectDocs: docs.renderedBlock,
@@ -2071,8 +2366,11 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             // THIS request) — they cannot change mid-materialization-transaction,
             // so carry the captured values and exclude them from the stale check.
             systemHash: snapshotMarkers.systemHash,
+            toolSetHash: snapshotMarkers.toolSetHash,
             modelKey: snapshotMarkers.modelKey,
             projectIdentity: projectPath ?? null,
+            muralEnabled: snapshotMarkers.muralEnabled,
+            renderBudgetIdentity: snapshotMarkers.renderBudgetIdentity,
         };
         // NOTE: maxMemoryId is deliberately EXCLUDED from this stale-check.
         // Additive memory writes (write/promote) do not invalidate the rendered
@@ -2134,8 +2432,11 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             upgradeState: encodeCachedM0UpgradeIdentity(
                 snapshotMarkers.upgradeState,
                 snapshotMarkers.compartmentRenderEpoch,
+                snapshotMarkers.muralEnabled,
+                snapshotMarkers.renderBudgetIdentity,
             ),
             systemHash: snapshotMarkers.systemHash,
+            toolSetHash: snapshotMarkers.toolSetHash,
             modelKey: snapshotMarkers.modelKey,
             projectIdentity: snapshotMarkers.projectIdentity,
         });
@@ -2379,7 +2680,10 @@ function renderM1WithMetadata(
     if (newMemoriesBlock) blocks.push(newMemoriesBlock);
 
     const currentUserProfileVersion = getGlobalUserProfileVersion(options.db);
-    if (currentUserProfileVersion !== markers.projectUserProfileVersion) {
+    if (
+        options.memoryEnabled !== false &&
+        currentUserProfileVersion !== markers.projectUserProfileVersion
+    ) {
         const profileBlock = renderUserProfileBlock(
             trimUserMemoriesToBudget(
                 safeGetActiveUserMemories(options.db),
@@ -2449,6 +2753,7 @@ interface CachedM0M1Row {
     cached_m0_session_facts_version: number | null;
     cached_m0_upgrade_state: string | null;
     cached_m0_system_hash: string | null;
+    cached_m0_tool_set_hash: string | null;
     cached_m0_model_key: string | null;
     cached_m0_project_identity: string | null;
     memory_block_ids: string | null;
@@ -2495,9 +2800,10 @@ function readCachedM0M1Row(db: Database, sessionId: string): CachedM0M1Row | nul
                     cached_m0_project_docs_hash,
                     cached_m0_materialized_at,
                     cached_m0_session_facts_version,
-                    cached_m0_upgrade_state,
-                    cached_m0_system_hash,
-                    cached_m0_model_key,
+                     cached_m0_upgrade_state,
+                     cached_m0_system_hash,
+                     cached_m0_tool_set_hash,
+                     cached_m0_model_key,
                     cached_m0_project_identity,
                     memory_block_ids
                FROM session_meta
@@ -2530,9 +2836,12 @@ function markersFromCachedRow(row: CachedM0M1Row): M0SnapshotMarkers | null {
         upgradeState: cachedUpgradeIdentity.upgradeState,
         compartmentRenderEpoch: cachedUpgradeIdentity.compartmentRenderEpoch,
         systemHash: row.cached_m0_system_hash ?? "",
+        toolSetHash: row.cached_m0_tool_set_hash ?? "",
         modelKey: row.cached_m0_model_key ?? "",
         projectIdentity: row.cached_m0_project_identity ?? null,
         muralHash: row.cached_m0_mural_hash ?? null,
+        muralEnabled: cachedUpgradeIdentity.muralEnabled,
+        renderBudgetIdentity: cachedUpgradeIdentity.renderBudgetIdentity,
     };
 }
 
@@ -2556,7 +2865,9 @@ function cachedRowMatchesState(row: CachedM0M1Row, state: M0M1State): boolean {
         row.cached_m0_session_facts_version === state.cachedM0SessionFactsVersion &&
         (row.cached_m0_upgrade_state ?? null) === (state.cachedM0UpgradeState ?? null) &&
         (row.cached_m0_system_hash ?? "") === (state.cachedM0SystemHash ?? "") &&
-        (row.cached_m0_model_key ?? "") === (state.cachedM0ModelKey ?? "") &&
+        (row.cached_m0_tool_set_hash ?? "") === (state.cachedM0ToolSetHash ?? "") &&
+        piModelRefToCanonical(row.cached_m0_model_key ?? "") ===
+            piModelRefToCanonical(state.cachedM0ModelKey ?? "") &&
         (row.cached_m0_project_identity ?? null) === (state.cachedM0ProjectIdentity ?? null)
     );
 }
@@ -2585,8 +2896,11 @@ function applyCachedRowToState(state: M0M1State, row: CachedM0M1Row): void {
     state.cachedM0UpgradeState = encodeCachedM0UpgradeIdentity(
         markers.upgradeState,
         markers.compartmentRenderEpoch,
+        markers.muralEnabled,
+        markers.renderBudgetIdentity,
     );
     state.cachedM0SystemHash = markers.systemHash;
+    state.cachedM0ToolSetHash = markers.toolSetHash;
     state.cachedM0ModelKey = markers.modelKey;
     state.cachedM0ProjectIdentity = markers.projectIdentity;
     state.snapshotMarkers = markers;
@@ -2783,6 +3097,11 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
         projectPath,
         projectDirectory,
         injectDocs: options.injectDocs,
+        memoryEnabled: options.memoryEnabled,
+        muralEnabled: options.muralEnabled,
+        memoryInjectionBudgetTokens: options.memoryInjectionBudgetTokens,
+        historyBudgetTokens: options.historyBudgetTokens,
+        hardSignals: options.hardSignals,
         workspaceIdentitySet: {
             identities: workspace.identities,
             namesByIdentity: workspace.namesByIdentity,
@@ -2798,11 +3117,14 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
     // cleared this pass), use 0 (stable: renders all memories with no expiry
     // filtering, deterministic across passes — matches Pi fallback).
     snapshotMarkers.materializedAt = options.state.cachedM0MaterializedAt ?? 0;
-    const compartments = withCompartmentDates(
-        options.sessionId,
-        readM0Compartments(options.db, options.sessionId),
-        options.temporalAwareness,
-    );
+    // Compaction-off renders through the zero-compartment path here too.
+    const compartments = options.compactionOff
+        ? []
+        : withCompartmentDates(
+              options.sessionId,
+              readM0Compartments(options.db, options.sessionId),
+              options.temporalAwareness,
+          );
     // Use the SAME frozen cutoff for the baseline memory read as m[1] does, so a
     // memory crossing expires_at between two fallback passes can't shift the m[0]
     // baseline bytes either (live Date.now() default would reintroduce drift).
@@ -2823,7 +3145,8 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
                   snapshotMarkers.materializedAt,
               )
         : [];
-    const userMemories = safeGetActiveUserMemories(options.db);
+    const userMemories =
+        options.memoryEnabled === false ? [] : safeGetActiveUserMemories(options.db);
     const memoryBudget = options.memoryInjectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS;
     const memoryRenderOptions: MemoryRenderOptions = {
         sourceNameByMemoryId: sourceNamesForMemories({
@@ -2843,8 +3166,10 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
         : trimMemoriesToBudgetV2(options.sessionId, memories, memoryBudget);
     const budget = options.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS;
     const mural =
-        options.mural ??
-        resolveMuralForM0(options, projectPath, snapshotMarkers.modelKey, memoryBudget);
+        options.memoryEnabled === false
+            ? undefined
+            : (options.mural ??
+              resolveMuralForM0(options, projectPath, snapshotMarkers.modelKey, memoryBudget));
     let decayPressureMultiplier = 1;
     let m0Text = renderM0({
         projectDocs: docs.renderedBlock,
@@ -2914,7 +3239,7 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
         m0Bytes: options.state.cachedM0Bytes,
         m1Text: null,
     };
-    if (options.state.isSubagent) return skipped;
+    if (options.state.isSubagent && !options.compactionOff) return skipped;
 
     const decision = mustMaterialize({
         db: options.db,
@@ -2925,6 +3250,10 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
         hardSignals: options.hardSignals,
         workspaceIdentitySet: options.workspaceIdentitySet,
         injectDocs: options.injectDocs,
+        memoryEnabled: options.memoryEnabled,
+        muralEnabled: options.muralEnabled,
+        memoryInjectionBudgetTokens: options.memoryInjectionBudgetTokens,
+        historyBudgetTokens: options.historyBudgetTokens,
     });
     let rematerialized = false;
     let contentionExhausted = false;

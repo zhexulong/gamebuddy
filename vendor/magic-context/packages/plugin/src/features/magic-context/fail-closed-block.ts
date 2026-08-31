@@ -11,12 +11,53 @@
  * those stay fail-open pass-through in the outer transform wrappers.
  */
 
+import { sanitizeDiagnosticText } from "../../shared/redaction";
+import type { ProcessKind, ProcessProbeEvidence } from "../../shared/rpc-utils";
+
 export const FAIL_CLOSED_DOCTOR_COMMAND = "npx @cortexkit/magic-context@latest doctor";
 
 /** How often a blocked transform pass re-attempts storage open (1 = every pass). */
 export const FAIL_CLOSED_REPROBE_EVERY_N = 5;
 
+export type FailClosedProcessKind = ProcessKind;
+
+export interface FailClosedBlockingProcess {
+    /** The detected kind of process holding the shared database. */
+    kind?: FailClosedProcessKind;
+    /** Legacy callers may still provide the old display label. */
+    harness?: string;
+    pid: number;
+    /** Epoch milliseconds from the process identity probe, when available. */
+    startTime?: number | null;
+    /** Raw command line from the process probe, when available. */
+    commandLine?: string | null;
+}
+
+/**
+ * Preserve the old enumerable blocker shape while carrying fresh probe details
+ * to the diagnostic formatter. This keeps legacy reason snapshots stable while
+ * still making the evidence available through normal property access.
+ */
+export function attachFailClosedBlockingProcessEvidence(
+    process: FailClosedBlockingProcess,
+    evidence: ProcessProbeEvidence,
+): FailClosedBlockingProcess {
+    Object.defineProperties(process, {
+        startTime: { configurable: true, value: evidence.startTime },
+        commandLine: { configurable: true, value: evidence.commandLine },
+    });
+    return process;
+}
+
 export type FailClosedReason =
+    | {
+          kind: "migration_guard";
+          persistedVersion: number;
+          supportedVersion: number;
+          blockingProcesses: readonly FailClosedBlockingProcess[];
+          unreadableFile?: string;
+          unreadableArm?: "parse" | "io";
+      }
     | {
           kind: "schema_fence";
           persistedVersion: number;
@@ -59,14 +100,139 @@ function isMagicContextHiddenAgentName(agent: string): boolean {
     return false;
 }
 
+const MAX_FORMATTED_BLOCKING_PROCESSES = 8;
+const MAX_FORMATTED_COMMAND_LINE_LENGTH = 80;
+
+function normalizeFailClosedProcessKind(process: FailClosedBlockingProcess): FailClosedProcessKind {
+    switch (process.kind) {
+        case "OpenCode server":
+        case "OpenCode instance (TUI/CLI)":
+        case "Pi":
+        case "process":
+            return process.kind;
+    }
+    switch (process.harness?.trim().toLowerCase()) {
+        case "opencode server":
+            return "OpenCode server";
+        case "opencode instance (tui/cli)":
+        case "opencode instance":
+            return "OpenCode instance (TUI/CLI)";
+        case "pi":
+        case "pi harness":
+        case "omp":
+            return "Pi";
+        default:
+            return "process";
+    }
+}
+
+function formatFailClosedProcessStartTime(startTime: number | null | undefined): string {
+    if (!Number.isFinite(startTime) || (startTime as number) <= 0) return "unverified";
+    try {
+        const parts = new Intl.DateTimeFormat("en-US", {
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            month: "short",
+            hour12: false,
+        }).formatToParts(new Date(startTime as number));
+        const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+        if (!values.month || !values.day || !values.hour || !values.minute) return "unverified";
+        return `${values.month} ${values.day} ${values.hour}:${values.minute}`;
+    } catch {
+        return "unverified";
+    }
+}
+
+function formatFailClosedCommandLine(commandLine: string | null | undefined): string {
+    if (typeof commandLine !== "string" || commandLine.trim().length === 0) return "unverified";
+    try {
+        const normalized = commandLine.replaceAll("\u0000", " ").replace(/\s+/g, " ").trim();
+        if (normalized.length === 0) return "unverified";
+        const sanitized = sanitizeDiagnosticText(normalized).trim();
+        if (sanitized.length === 0) return "unverified";
+        return sanitized.length > MAX_FORMATTED_COMMAND_LINE_LENGTH
+            ? `${sanitized.slice(0, MAX_FORMATTED_COMMAND_LINE_LENGTH - 3)}...`
+            : sanitized;
+    } catch {
+        // A diagnostic probe or sanitizer must never hide the fail-closed error.
+        return "unverified";
+    }
+}
+
+interface FormattedBlockingProcess {
+    kind: FailClosedProcessKind;
+    pid: number;
+    startTime?: number | null;
+    commandLine?: string | null;
+}
+
+export function formatFailClosedBlockingProcesses(
+    processes: readonly FailClosedBlockingProcess[],
+): string {
+    const uniqueProcesses = new Map<number, FormattedBlockingProcess>();
+    for (const process of processes) {
+        if (!Number.isInteger(process.pid) || process.pid <= 0) continue;
+        const candidate: FormattedBlockingProcess = {
+            kind: normalizeFailClosedProcessKind(process),
+            pid: process.pid,
+            startTime: process.startTime,
+            commandLine: process.commandLine,
+        };
+        const previous = uniqueProcesses.get(process.pid);
+        if (!previous || (previous.kind === "process" && candidate.kind !== "process")) {
+            uniqueProcesses.set(process.pid, candidate);
+        } else {
+            uniqueProcesses.set(process.pid, {
+                ...previous,
+                startTime: previous.startTime ?? candidate.startTime,
+                commandLine: previous.commandLine ?? candidate.commandLine,
+            });
+        }
+    }
+    const entries = [...uniqueProcesses.values()];
+    const visible = entries.slice(0, MAX_FORMATTED_BLOCKING_PROCESSES);
+    const rendered = visible.map(({ kind, pid }) => `${kind} (PID ${pid})`);
+    const omitted = entries.length - visible.length;
+    if (omitted > 0) rendered.push(`${omitted} more blocking process(es)`);
+    if (rendered.length === 0) return "a live process";
+
+    const summary =
+        rendered.length === 1
+            ? rendered[0]
+            : `${rendered.slice(0, -1).join(", ")}, and ${rendered.at(-1)}`;
+    const evidence = entries
+        .map(
+            ({ kind, pid, startTime, commandLine }) =>
+                `- PID ${pid}: ${kind}, started ${formatFailClosedProcessStartTime(startTime)}, cmd: ${formatFailClosedCommandLine(commandLine)}`,
+        )
+        .join("\n");
+    return `${summary}\nBlocking process evidence:\n${evidence}`;
+}
+
 export function formatFailClosedBlockingMessage(reason: FailClosedReason): string {
+    if (reason.kind === "migration_guard") {
+        if (reason.unreadableFile) {
+            const arm = reason.unreadableArm ?? "io";
+            const recovery =
+                arm === "io"
+                    ? `If none of these processes are running, it is safe to delete ${reason.unreadableFile} and retry.`
+                    : `The file may be a recent incomplete write; retry after the file is older than the ten-minute grace window, or stop the relevant process before deleting it.`;
+            return [
+                `Magic Context cannot migrate the shared database because RPC discovery file ${reason.unreadableFile} is uncertain (${arm} arm), so the absence of a live process cannot be proven.`,
+                recovery,
+                `Recovery: ${FAIL_CLOSED_DOCTOR_COMMAND}`,
+            ].join(" ");
+        }
+        return [
+            `Magic Context cannot migrate the shared database because ${formatFailClosedBlockingProcesses(reason.blockingProcesses)} may be running an older Magic Context build that would fail against the migrated database.`,
+            "Restart the blocking process (it will pick up the new build and migrate on start), or shut it down and retry.",
+            `Recovery: ${FAIL_CLOSED_DOCTOR_COMMAND}`,
+        ].join(" ");
+    }
     if (reason.kind === "schema_fence") {
         return [
-            `Magic Context cannot operate: shared database schema v${reason.persistedVersion}`,
-            `is newer than this build supports (max v${reason.supportedVersion}).`,
-            "A newer OpenCode/Pi instance upgraded the database; this build fail-closed",
-            "so it cannot corrupt the cache or silently fall back to native compaction.",
-            `Update or unpin Magic Context on this harness, then restart.`,
+            `Magic Context cannot operate: this Magic Context build is older than the database; upgrade/restart this harness (upstream migration lane v${reason.persistedVersion}, build supports through v${reason.supportedVersion}).`,
             `Recovery: ${FAIL_CLOSED_DOCTOR_COMMAND}`,
         ].join(" ");
     }
@@ -181,7 +347,7 @@ export function createFailClosedController(options?: {
                 (blockedPassCount === 1 || blockedPassCount % reprobeEveryN === 0);
             if (shouldReprobe) {
                 try {
-                    const healed = await input.tryReopen!();
+                    const healed = await input.tryReopen?.();
                     if (healed) {
                         reason = null;
                         blockedPassCount = 0;

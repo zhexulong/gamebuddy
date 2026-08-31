@@ -42,7 +42,7 @@ export function applyHeuristicCleanup(
     config: {
         protectedTags: number;
         /**
-         * Tiered target-headroom emergency drop. Provided only on the ≥85%
+         * Tiered target-headroom emergency drop. Provided only on the the derived force band
          * force-materialize (cache-busting) pass; undefined on routine execute
          * passes (Phase 2 removed routine age-based tool drops entirely). When
          * present, the emergency drop runs before dedup/injection-strip.
@@ -51,6 +51,12 @@ export function applyHeuristicCleanup(
             currentTotalInputTokens: number;
             ceilingTokens: number;
         };
+        /**
+         * Whether ordinary deduplication, injection stripping, and caveman
+         * compression may first-apply on this pass. Emergency selection remains
+         * independent so a force-band edge can still reclaim enough headroom.
+         */
+        routine?: boolean;
         /**
          * Age-tier caveman text compression settings. Caller is responsible
          * for forwarding this only for primary sessions where caveman is enabled.
@@ -89,9 +95,9 @@ export function applyHeuristicCleanup(
 
     // ── Tiered target-headroom emergency drop (Phase 2) ──
     // Replaces the old need-blind routine age-drop + `dropAllTools` nuke. Runs
-    // only when the caller supplies `emergency` (i.e. ≥85% force-materialize
+    // only when the caller supplies `emergency` (i.e. the derived force band force-materialize
     // cache-busting pass). Selection is pure (`planEmergencyDrop`); we apply the
-    // returned plan and advance the persisted watermark so each tag drops once.
+    // returned plan and latch the pressure episode so it cannot trickle.
     if (config.emergency) {
         const emergency = config.emergency;
         const priorInputSample = getEmergencyInputSample(db, sessionId);
@@ -154,50 +160,52 @@ export function applyHeuristicCleanup(
         } else {
             sessionLog(sessionId, `emergency tiered drop skipped: ${plan.reason}`);
         }
-        // Record every acting emergency sample, including a pass where the selector
-        // found no eligible target. This prevents repeated cache busts on stale input.
+        // Latch every force-episode evaluation, including one with no eligible
+        // target, until pressure exits or an independent bust rearms the lane.
         setEmergencyDropSample(db, sessionId, emergency.currentTotalInputTokens);
     }
 
-    db.transaction(() => {
-        // Strip or drop system injections (todo continuation, skill reminders, etc.)
-        for (const tag of tags) {
-            if (tag.status !== "active") continue;
-            if (tag.tagNumber > protectedCutoff) continue;
-            if (tag.type !== "message") continue;
+    if (config.routine !== false) {
+        db.transaction(() => {
+            // Strip or drop system injections (todo continuation, skill reminders, etc.)
+            for (const tag of tags) {
+                if (tag.status !== "active") continue;
+                if (tag.tagNumber > protectedCutoff) continue;
+                if (tag.type !== "message") continue;
 
-            const target = targets.get(tag.tagNumber);
-            if (!target) continue;
+                const target = targets.get(tag.tagNumber);
+                if (!target) continue;
 
-            const content = target.getContent?.();
-            if (!content) continue;
+                const content = target.getContent?.();
+                if (!content) continue;
 
-            const stripped = stripSystemInjection(content);
-            if (stripped === null) continue;
-            const strippedSource = stripTagPrefix(stripped);
+                const stripped = stripSystemInjection(content);
+                if (stripped === null) continue;
+                const strippedSource = stripTagPrefix(stripped);
 
-            if (strippedSource.trim().length === 0) {
-                const dropResult = target.drop?.() ?? "absent";
-                const didReplace =
-                    dropResult === "absent"
-                        ? target.setContent(`[dropped §${tag.tagNumber}§]`)
-                        : false;
-                if (dropResult === "removed" || dropResult === "absent") {
-                    replaceSourceContent(db, sessionId, tag.tagNumber, "");
-                    updateTagStatus(db, sessionId, tag.tagNumber, "dropped");
-                    if (dropResult === "removed" || didReplace) {
+                if (strippedSource.trim().length === 0) {
+                    const dropResult = target.drop?.() ?? "absent";
+                    const didReplace =
+                        dropResult === "absent"
+                            ? target.setContent(`[dropped §${tag.tagNumber}§]`)
+                            : false;
+                    if (dropResult === "removed" || dropResult === "absent") {
+                        replaceSourceContent(db, sessionId, tag.tagNumber, "");
+                        updateTagStatus(db, sessionId, tag.tagNumber, "dropped");
+                        if (dropResult === "removed" || didReplace) {
+                            droppedInjections++;
+                        }
+                    }
+                } else {
+                    const didSet = target.setContent(stripped);
+                    if (didSet) {
+                        replaceSourceContent(db, sessionId, tag.tagNumber, strippedSource);
                         droppedInjections++;
                     }
                 }
-            } else {
-                const didSet = target.setContent(stripped);
-                if (didSet) {
-                    replaceSourceContent(db, sessionId, tag.tagNumber, strippedSource);
-                    droppedInjections++;
-                }
             }
-        }
-    })();
+        })();
+    }
 
     // Deduplication: auto-drop older identical tool calls (same tool + same params)
     //
@@ -213,7 +221,7 @@ export function applyHeuristicCleanup(
     //     dedup as expected.
     const allMessages = Array.from(messageTagNumbers.keys());
     const toolFingerprints = buildToolFingerprints(allMessages);
-    if (toolFingerprints.size > 0) {
+    if (config.routine !== false && toolFingerprints.size > 0) {
         const tagsByCompositeKey = new Map<string, TagEntry>();
         for (const tag of tags) {
             if (tag.type === "tool" && tag.status === "active" && tag.messageId) {
@@ -271,7 +279,7 @@ export function applyHeuristicCleanup(
     // check enabled.
     let compressedTextTags = 0;
     let mutatedTextTags = 0;
-    if (config.caveman?.enabled) {
+    if (config.routine !== false && config.caveman?.enabled) {
         const cavemanResult = applyCavemanCleanup(sessionId, db, targets, tags, {
             enabled: true,
             minChars: config.caveman.minChars,

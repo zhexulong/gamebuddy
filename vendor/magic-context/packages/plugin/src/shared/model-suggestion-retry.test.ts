@@ -56,6 +56,33 @@ describe("promptSyncWithModelSuggestionRetry", () => {
         expect(prompt).toHaveBeenCalledTimes(1);
     });
 
+    test("each active fallback sends only its own variant", async () => {
+        const prompt = mock(async () => {
+            if (prompt.mock.calls.length <= 2) throw new Error("attempt failed");
+            return {};
+        });
+        const client = createClient(prompt);
+
+        await promptSyncWithModelSuggestionRetry(
+            client,
+            {
+                path: { id: "ses-test" },
+                body: { model: { providerID: "anthropic", modelID: "primary" }, variant: "high" },
+            },
+            {
+                fallbackModels: [{ model: "anthropic/fallback", qualifier: "low" }, "google/bare"],
+            },
+        );
+
+        expect((prompt.mock.calls[1]?.[0] as PromptCall).body).toMatchObject({
+            model: { providerID: "anthropic", modelID: "fallback" },
+            variant: "low",
+        });
+        const bareFallbackBody = (prompt.mock.calls[2]?.[0] as PromptCall).body;
+        expect(bareFallbackBody.model).toEqual({ providerID: "google", modelID: "bare" });
+        expect(bareFallbackBody.variant).toBeUndefined();
+    });
+
     test("primary fails, fallback[0] succeeds", async () => {
         const prompt = mock(async () => {
             if (prompt.mock.calls.length === 1) throw new Error("primary failed");

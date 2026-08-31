@@ -369,6 +369,32 @@ describe("task-scheduler — runDueTasksForProject", () => {
         expect(state?.retrospectiveWatermarkMs).toBe(1700000000000);
     });
 
+    it("partial broad success advances the schedule while keeping its cycle open", async () => {
+        db = freshDb();
+        seedActiveMemory(db);
+        const now = Date.now();
+        const tasks = [cfg("verify-broad", "0 3 * * 0")];
+        writeTaskScheduleState(db, {
+            projectPath: PROJECT,
+            task: "verify-broad",
+            lastRunAt: null,
+            nextDueAt: now - 1000,
+            schedule: "0 3 * * 0",
+            lastStatus: null,
+            lastError: null,
+            retryCount: 0,
+            lastBroadRunAt: 123,
+        });
+
+        const executor = async (): Promise<TaskExecOutcome> => ({ status: "completed" });
+        await runDueTasksForProject({ db, projectIdentity: PROJECT, tasks, executor, now });
+        const state = getTaskScheduleState(db, PROJECT, "verify-broad");
+        expect(state?.lastStatus).toBe("completed");
+        expect(state?.lastRunAt).toBeGreaterThanOrEqual(now);
+        expect(state?.nextDueAt).toBeGreaterThan(now);
+        expect(state?.lastBroadRunAt).toBe(123);
+    });
+
     it("a busy domain lease defers its tasks (next_due unchanged, no run)", async () => {
         db = freshDb();
         seedActiveMemory(db);

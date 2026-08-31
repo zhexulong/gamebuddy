@@ -5,7 +5,6 @@ import {
     applyMidTurnDeferral,
     type BypassInput,
     detectMidTurnBypassReason,
-    FORCE_MATERIALIZE_PERCENTAGE,
 } from "./boundary-execution";
 
 describe("applyMidTurnDeferral", () => {
@@ -49,14 +48,26 @@ describe("detectMidTurnBypassReason", () => {
             sessionMeta: { isSubagent: false },
             historyRefreshSessions: new Set<string>(),
             sessionId: "session-1",
+            effectiveExecuteThresholdPercentage: 65,
             ...overrides,
         };
     }
 
-    it("fires force-materialize at or above the force percentage", () => {
+    it("fires force-materialize at the band derived above the execute threshold", () => {
         expect(
             detectMidTurnBypassReason(
-                makeInput({ contextUsage: { percentage: FORCE_MATERIALIZE_PERCENTAGE } }),
+                makeInput({
+                    contextUsage: { percentage: 91 },
+                    effectiveExecuteThresholdPercentage: 90,
+                }),
+            ),
+        ).toBe("none");
+        expect(
+            detectMidTurnBypassReason(
+                makeInput({
+                    contextUsage: { percentage: 92 },
+                    effectiveExecuteThresholdPercentage: 90,
+                }),
             ),
         ).toBe("force-materialize");
     });

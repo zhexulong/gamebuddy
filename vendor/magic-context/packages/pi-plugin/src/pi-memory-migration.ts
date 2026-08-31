@@ -11,6 +11,10 @@ import { getAllActiveMemoriesForMigration } from "@magic-context/core/features/m
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
 import { insertUserMemoryCandidates } from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
 import { sessionLog } from "@magic-context/core/shared/logger";
+import type {
+	ModelInput,
+	ResolvedModelEntry,
+} from "@magic-context/core/shared/model-resolution";
 import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
 
 /**
@@ -39,16 +43,19 @@ export interface PiMemoryMigrationDeps {
 	 * starts at `model` (the historian model), preserving prior behavior.
 	 */
 	primaryModel?: string;
-	fallbackModels?: readonly string[];
+	fallbackModels?: readonly ModelInput[];
 	timeoutMs?: number;
 	thinkingLevel?: string;
 	/** Project working directory (resolves project identity). */
 	directory: string;
+	/** Allow a session started exactly in the canonical home directory only when user-level configuration enables it. */
+	allowHomeProject?: boolean;
 	/** Session id used for token accounting attribution. */
 	sessionId: string;
 	/** Route user_observations to the user-memory candidate pool when enabled. */
 	userMemoriesEnabled?: boolean;
 	language?: string;
+	signal?: AbortSignal;
 }
 
 export interface PiMemoryMigrationOutcome {
@@ -56,10 +63,19 @@ export interface PiMemoryMigrationOutcome {
 	summary: string;
 }
 
+const CANCELLED_OUTCOME: PiMemoryMigrationOutcome = {
+	ran: false,
+	summary: "Memory migration cancelled during session shutdown.",
+};
+
 export async function runPiMemoryMigration(
 	deps: PiMemoryMigrationDeps,
 ): Promise<PiMemoryMigrationOutcome> {
-	const projectPath = resolveProjectIdentityForSession(deps.directory);
+	if (deps.signal?.aborted) return CANCELLED_OUTCOME;
+	const projectPath = resolveProjectIdentityForSession(
+		deps.directory,
+		deps.allowHomeProject,
+	);
 	if (!projectPath) {
 		return {
 			ran: false,
@@ -105,26 +121,37 @@ export async function runPiMemoryMigration(
 	// and for a misconfigured historian (e.g. an empty-returning provider) it
 	// would waste an attempt on a model OpenCode never tries. Then the configured
 	// fallbacks. Each de-duplicated.
-	const modelChain: string[] = [];
+	const modelChain: ResolvedModelEntry[] = [];
 	const seenModels = new Set<string>();
-	for (const m of [
-		deps.primaryModel ?? deps.model,
-		...(deps.fallbackModels ?? []),
+	for (const candidate of [
+		{
+			model: deps.primaryModel ?? deps.model,
+			...(deps.primaryModel
+				? {}
+				: deps.thinkingLevel
+					? { qualifier: deps.thinkingLevel }
+					: {}),
+		},
+		...(deps.fallbackModels ?? []).map((fallback) =>
+			typeof fallback === "string" ? { model: fallback } : fallback,
+		),
 	]) {
-		if (m && !seenModels.has(m)) {
-			seenModels.add(m);
-			modelChain.push(m);
+		const key = `${candidate.model}\u0000${candidate.qualifier ?? ""}`;
+		if (candidate.model && !seenModels.has(key)) {
+			seenModels.add(key);
+			modelChain.push(candidate);
 		}
 	}
 
 	let parsed: ReturnType<typeof parseMemoryMigrationOutput> | null = null;
 	let lastFailReason = "no output";
 	for (let i = 0; i < modelChain.length; i += 1) {
+		if (deps.signal?.aborted) return CANCELLED_OUTCOME;
 		const model = modelChain[i];
 		if (i > 0) {
 			sessionLog(
 				deps.sessionId,
-				`memory-migration: escalating to configured fallback model ${model} (${i}/${modelChain.length - 1})`,
+				`memory-migration: escalating to configured fallback model ${model.model} (${i}/${modelChain.length - 1})`,
 			);
 		}
 		const result = await deps.runner.run({
@@ -134,18 +161,20 @@ export async function runPiMemoryMigration(
 				deps.language,
 			),
 			userMessage: prompt,
-			model,
+			model: model.model,
 			// We drive the chain here (validating each), so don't let the runner
 			// re-iterate its own hard-failure-only chain.
 			fallbackModels: undefined,
 			timeoutMs: deps.timeoutMs ?? 5 * 60 * 1000,
 			cwd: deps.directory,
-			thinkingLevel: deps.thinkingLevel,
+			thinkingLevel: model.qualifier,
 			accountingSessionId: deps.sessionId,
 			// Reuse the "recomp" accounting bucket — memory migration is part of the
 			// session-upgrade flow and there is no dedicated subagent tag for it.
 			accountingSubagent: "recomp",
+			signal: deps.signal,
 		});
+		if (deps.signal?.aborted) return CANCELLED_OUTCOME;
 
 		if (!result.ok) {
 			lastFailReason = `historian ${result.reason}`;
@@ -191,6 +220,7 @@ export async function runPiMemoryMigration(
 		};
 	}
 
+	if (deps.signal?.aborted) return CANCELLED_OUTCOME;
 	// Persist observations BEFORE the destructive apply.
 	let routed = 0;
 	if (deps.userMemoriesEnabled && parsed.userObservations.length > 0) {

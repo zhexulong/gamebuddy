@@ -36,6 +36,15 @@ export interface ToolArc {
     resOrdinal: number | null;
 }
 
+/** True when a tail beginning at `boundary` would retain a completed result without its call. */
+export function completedToolArcCrossesBoundary(
+    invOrdinal: number,
+    resOrdinal: number,
+    boundary: number,
+): boolean {
+    return invOrdinal < boundary && boundary <= resOrdinal;
+}
+
 export interface TrueRawTokenIndexBuildOptions extends TrueRawEstimateOptions {
     cacheNamespace: string;
     /**
@@ -488,20 +497,55 @@ export function buildToolArcs(messages: readonly RawMessage[]): ToolArc[] {
     );
 }
 
+export function fenceBoundaryForCompletedToolArcs(
+    candidate: number,
+    arcs: readonly ToolArc[],
+    publicationFloorOrdinal: number,
+): number {
+    const completed = arcs
+        .filter((arc): arc is ToolArc & { resOrdinal: number } => arc.resOrdinal !== null)
+        .map((arc) => ({ invocation: arc.invOrdinal, result: arc.resOrdinal }));
+    const component = completed.filter((arc) =>
+        completedToolArcCrossesBoundary(arc.invocation, arc.result, candidate),
+    );
+    if (component.length === 0) return candidate;
+
+    // Overlapping arcs are one atomic interval. Expand the whole component before
+    // selecting its safe side so moving around one pair cannot split its neighbor.
+    for (let pass = 0; pass <= completed.length; pass += 1) {
+        const minInvocation = Math.min(...component.map((arc) => arc.invocation));
+        const maxResult = Math.max(...component.map((arc) => arc.result));
+        const before = component.length;
+        for (const arc of completed) {
+            if (
+                arc.invocation <= maxResult &&
+                arc.result >= minInvocation &&
+                !component.includes(arc)
+            ) {
+                component.push(arc);
+            }
+        }
+        if (component.length === before) break;
+    }
+
+    const minInvocation = Math.min(...component.map((arc) => arc.invocation));
+    const maxResult = Math.max(...component.map((arc) => arc.result));
+    return minInvocation < publicationFloorOrdinal ? maxResult + 1 : minInvocation;
+}
+
 export function fenceBoundaryForToolArcs(
     candidate: number,
     arcs: readonly ToolArc[],
     lastCompartmentEndOrdinal: number,
     recentOpenArcCutoff: number,
 ): number {
-    let boundary = candidate;
+    const boundary = fenceBoundaryForCompletedToolArcs(
+        candidate,
+        arcs,
+        lastCompartmentEndOrdinal + 1,
+    );
     for (const arc of arcs) {
-        if (arc.resOrdinal !== null) {
-            if (arc.invOrdinal < boundary && boundary <= arc.resOrdinal) {
-                boundary = arc.resOrdinal + 1;
-            }
-            continue;
-        }
+        if (arc.resOrdinal !== null) continue;
         // Open arc (a tool invocation with no matching result in the window).
         // Only an open arc inside the live protected-tail window
         // (invOrdinal >= recentOpenArcCutoff, the size-walk start) is treated as
@@ -551,20 +595,21 @@ export function buildTrueRawTokenIndex(
     // offset-forward query (the only kind the boundary makes) is byte-identical
     // because the pre-offset prefix term cancels in the suffix/range subtraction.
     const sliceCount = ordered.length;
-    // Guard against ordinal GAPS: malformed rows keep their ordinal slot but
-    // produce no array element (both the DB reader and the in-memory converter
-    // share this contract), so `messages.length` can be smaller than the
-    // highest ordinal. Sizing by length alone would silently drop every valid
-    // message past a gap from the prefix sums. Size by the max of all three.
-    const maxOrdinal = ordered.length > 0 ? ordered[ordered.length - 1].ordinal : 0;
+    const firstOrdinal = ordered.length > 0 ? ordered[0].ordinal : 1;
+    const terminalOrdinal = ordered.length > 0 ? ordered[ordered.length - 1].ordinal : 0;
+    // Keep the public count compatible with absolute-session callers, but index token sums
+    // over the represented ordinal span. A continued lineage can begin at prior_last+1;
+    // treating its absolute ordinal as an array index would clamp every tail lookup to the
+    // same final element and silently collapse boundary token math.
     const rawMessageCount = Math.max(
         sliceCount,
-        maxOrdinal,
+        terminalOrdinal,
         options.absoluteMessageCount ?? sliceCount,
     );
+    const ordinalSpan = terminalOrdinal >= firstOrdinal ? terminalOrdinal - firstOrdinal + 1 : 0;
     const tokensByOrdinal = new Map<number, number>();
     const idsByOrdinal = new Map<number, string>();
-    const prefix = new Array<number>(rawMessageCount + 1).fill(0);
+    const prefix = new Array<number>(ordinalSpan + 1).fill(0);
     for (const message of ordered) {
         // Prefer the durable stored total (tags.token_count) when available; it
         // equals the live tokenization of the same content (the tagger stores
@@ -577,18 +622,19 @@ export function buildTrueRawTokenIndex(
                 : tokenForMessage(message, options).total;
         tokensByOrdinal.set(message.ordinal, total);
         idsByOrdinal.set(message.ordinal, message.id);
-        // Park the token at its absolute-ordinal slot; cumulate below.
-        if (message.ordinal >= 1 && message.ordinal <= rawMessageCount) {
-            prefix[message.ordinal] = total;
+        // Park the token in the dense span while retaining its absolute ordinal key.
+        const relative = message.ordinal - firstOrdinal + 1;
+        if (relative >= 1 && relative <= ordinalSpan) {
+            prefix[relative] = total;
         }
     }
     // Convert the per-ordinal tokens into a cumulative prefix sum. O(N) integer
     // adds (no I/O, no parse) — negligible versus the avoided full-session read.
-    for (let k = 1; k <= rawMessageCount; k += 1) {
+    for (let k = 1; k <= ordinalSpan; k += 1) {
         prefix[k] += prefix[k - 1];
     }
     const ordinalToIndex = (ordinal: number): number =>
-        Math.max(0, Math.min(rawMessageCount, ordinal - 1));
+        Math.max(0, Math.min(ordinalSpan, ordinal - firstOrdinal));
     return {
         sessionId,
         providerShapeVersion: options.providerShapeVersion,
@@ -600,23 +646,23 @@ export function buildTrueRawTokenIndex(
             return idsByOrdinal.get(ordinal) ?? null;
         },
         suffixTokensFromOrdinal(ordinal: number): number {
-            if (ordinal <= 1) return prefix[rawMessageCount];
-            if (ordinal > rawMessageCount) return 0;
-            return prefix[rawMessageCount] - prefix[ordinalToIndex(ordinal)];
+            if (ordinal <= firstOrdinal) return prefix[ordinalSpan];
+            if (ordinal > terminalOrdinal) return 0;
+            return prefix[ordinalSpan] - prefix[ordinalToIndex(ordinal)];
         },
         rangeTokens(startInclusive: number, endExclusive: number): number {
-            const start = Math.max(1, startInclusive);
-            const end = Math.max(start, Math.min(rawMessageCount + 1, endExclusive));
-            return prefix[end - 1] - prefix[start - 1];
+            const start = Math.max(firstOrdinal, startInclusive);
+            const end = Math.max(start, Math.min(terminalOrdinal + 1, endExclusive));
+            return prefix[end - firstOrdinal] - prefix[start - firstOrdinal];
         },
         findSuffixStartForTokens(tokens: number): number {
-            if (!Number.isFinite(tokens) || tokens <= 0) return rawMessageCount + 1;
+            if (!Number.isFinite(tokens) || tokens <= 0) return terminalOrdinal + 1;
             const target = Math.max(0, Math.floor(tokens));
-            const total = prefix[rawMessageCount];
-            if (total < target) return 1;
+            const total = prefix[ordinalSpan];
+            if (total < target) return firstOrdinal;
             const cut = total - target;
             let lo = 0;
-            let hi = rawMessageCount;
+            let hi = ordinalSpan;
             let best = 0;
             while (lo <= hi) {
                 const mid = (lo + hi) >> 1;
@@ -627,27 +673,29 @@ export function buildTrueRawTokenIndex(
                     hi = mid - 1;
                 }
             }
-            return best + 1;
+            return firstOrdinal + best;
         },
         findHeadEndForCap(startInclusive: number, endExclusive: number, capTokens: number): number {
-            const start = Math.max(1, Math.min(rawMessageCount + 1, startInclusive));
-            const end = Math.max(start, Math.min(rawMessageCount + 1, endExclusive));
+            const start = Math.max(firstOrdinal, Math.min(terminalOrdinal + 1, startInclusive));
+            const end = Math.max(start, Math.min(terminalOrdinal + 1, endExclusive));
             if (!Number.isFinite(capTokens) || capTokens <= 0) return start;
-            const startPrefix = prefix[start - 1];
-            const cut = startPrefix + Math.floor(capTokens);
-            let lo = start;
-            let hi = end - 1;
-            let bestEnd = start;
+            const startIndex = start - firstOrdinal;
+            const endIndex = end - firstOrdinal;
+            const cut = prefix[startIndex] + Math.floor(capTokens);
+            let lo = startIndex + 1;
+            let hi = endIndex;
+            let bestEndIndex = startIndex;
             while (lo <= hi) {
                 const mid = (lo + hi) >> 1;
                 if (prefix[mid] <= cut) {
-                    bestEnd = mid + 1;
+                    bestEndIndex = mid;
                     lo = mid + 1;
                 } else {
                     hi = mid - 1;
                 }
             }
-            if (bestEnd === start && start < end) return start + 1;
+            let bestEnd = firstOrdinal + bestEndIndex;
+            if (bestEnd === start && start < end) bestEnd = start + 1;
             return Math.min(bestEnd, end);
         },
     };

@@ -1,0 +1,116 @@
+{
+  "constants": {
+    "synthetic_call_id_prefix": "mc_synthetic_todo_",
+    "terminal_statuses": [
+      "completed",
+      "cancelled"
+    ],
+    "title_done_statuses": [
+      "completed"
+    ],
+    "default_priority": "medium",
+    "tool_name": "todowrite",
+    "completed_status": "completed",
+    "synthetic_timestamp": 0
+  },
+  "cases": [
+    {
+      "label": "minimal valid list",
+      "input_json": "[{\"content\":\"Plan work\",\"status\":\"pending\",\"priority\":\"high\"}]",
+      "normalized": "[{\"content\":\"Plan work\",\"status\":\"pending\",\"priority\":\"high\"}]",
+      "call_id": "mc_synthetic_todo_9252806378b83e5d",
+      "result_state_json": "{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"Plan work\",\"status\":\"pending\",\"priority\":\"high\"}]},\"output\":\"[\\n  {\\n    \\\"content\\\": \\\"Plan work\\\",\\n    \\\"status\\\": \\\"pending\\\",\\n    \\\"priority\\\": \\\"high\\\"\\n  }\\n]\",\"title\":\"1 todos\",\"metadata\":{\"todos\":[{\"content\":\"Plan work\",\"status\":\"pending\",\"priority\":\"high\"}],\"truncated\":false},\"time\":{\"start\":0,\"end\":0}}"
+    },
+    {
+      "label": "extra fields and id stripped",
+      "input_json": "[{\"id\":\"todo-1\",\"content\":\"Strip extras\",\"status\":\"pending\",\"priority\":\"low\",\"ignored\":{\"nested\":true}}]",
+      "normalized": "[{\"content\":\"Strip extras\",\"status\":\"pending\",\"priority\":\"low\"}]",
+      "call_id": "mc_synthetic_todo_0163fea89fc975a2",
+      "result_state_json": "{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"Strip extras\",\"status\":\"pending\",\"priority\":\"low\"}]},\"output\":\"[\\n  {\\n    \\\"content\\\": \\\"Strip extras\\\",\\n    \\\"status\\\": \\\"pending\\\",\\n    \\\"priority\\\": \\\"low\\\"\\n  }\\n]\",\"title\":\"1 todos\",\"metadata\":{\"todos\":[{\"content\":\"Strip extras\",\"status\":\"pending\",\"priority\":\"low\"}],\"truncated\":false},\"time\":{\"start\":0,\"end\":0}}"
+    },
+    {
+      "label": "id-less item defaults priority",
+      "input_json": "[{\"content\":\"Default priority\",\"status\":\"in_progress\"}]",
+      "normalized": "[{\"content\":\"Default priority\",\"status\":\"in_progress\",\"priority\":\"medium\"}]",
+      "call_id": "mc_synthetic_todo_ede1d5203daef33e",
+      "result_state_json": "{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"Default priority\",\"status\":\"in_progress\",\"priority\":\"medium\"}]},\"output\":\"[\\n  {\\n    \\\"content\\\": \\\"Default priority\\\",\\n    \\\"status\\\": \\\"in_progress\\\",\\n    \\\"priority\\\": \\\"medium\\\"\\n  }\\n]\",\"title\":\"1 todos\",\"metadata\":{\"todos\":[{\"content\":\"Default priority\",\"status\":\"in_progress\",\"priority\":\"medium\"}],\"truncated\":false},\"time\":{\"start\":0,\"end\":0}}"
+    },
+    {
+      "label": "all status values with cancelled counted in title",
+      "input_json": "[{\"content\":\"Status pending\",\"status\":\"pending\",\"priority\":\"medium\"},{\"content\":\"Status in_progress\",\"status\":\"in_progress\",\"priority\":\"medium\"},{\"content\":\"Status completed\",\"status\":\"completed\",\"priority\":\"low\"},{\"content\":\"Status cancelled\",\"status\":\"cancelled\",\"priority\":\"medium\"}]",
+      "normalized": "[{\"content\":\"Status pending\",\"status\":\"pending\",\"priority\":\"medium\"},{\"content\":\"Status in_progress\",\"status\":\"in_progress\",\"priority\":\"medium\"},{\"content\":\"Status completed\",\"status\":\"completed\",\"priority\":\"low\"},{\"content\":\"Status cancelled\",\"status\":\"cancelled\",\"priority\":\"medium\"}]",
+      "call_id": "mc_synthetic_todo_bb0afce5f3f3a3f2",
+      "result_state_json": "{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"Status pending\",\"status\":\"pending\",\"priority\":\"medium\"},{\"content\":\"Status in_progress\",\"status\":\"in_progress\",\"priority\":\"medium\"},{\"content\":\"Status completed\",\"status\":\"completed\",\"priority\":\"low\"},{\"content\":\"Status cancelled\",\"status\":\"cancelled\",\"priority\":\"medium\"}]},\"output\":\"[\\n  {\\n    \\\"content\\\": \\\"Status pending\\\",\\n    \\\"status\\\": \\\"pending\\\",\\n    \\\"priority\\\": \\\"medium\\\"\\n  },\\n  {\\n    \\\"content\\\": \\\"Status in_progress\\\",\\n    \\\"status\\\": \\\"in_progress\\\",\\n    \\\"priority\\\": \\\"medium\\\"\\n  },\\n  {\\n    \\\"content\\\": \\\"Status completed\\\",\\n    \\\"status\\\": \\\"completed\\\",\\n    \\\"priority\\\": \\\"low\\\"\\n  },\\n  {\\n    \\\"content\\\": \\\"Status cancelled\\\",\\n    \\\"status\\\": \\\"cancelled\\\",\\n    \\\"priority\\\": \\\"medium\\\"\\n  }\\n]\",\"title\":\"3 todos\",\"metadata\":{\"todos\":[{\"content\":\"Status pending\",\"status\":\"pending\",\"priority\":\"medium\"},{\"content\":\"Status in_progress\",\"status\":\"in_progress\",\"priority\":\"medium\"},{\"content\":\"Status completed\",\"status\":\"completed\",\"priority\":\"low\"},{\"content\":\"Status cancelled\",\"status\":\"cancelled\",\"priority\":\"medium\"}],\"truncated\":false},\"time\":{\"start\":0,\"end\":0}}"
+    },
+    {
+      "label": "empty list normalizes but builds no part",
+      "input_json": "[]",
+      "normalized": "[]",
+      "call_id": "mc_synthetic_todo_4f53cda18c2baa0c",
+      "result_state_json": null
+    },
+    {
+      "label": "all terminal todos normalize but build no part",
+      "input_json": "[{\"content\":\"Done\",\"status\":\"completed\",\"priority\":\"high\"},{\"content\":\"Cancelled\",\"status\":\"cancelled\",\"priority\":\"low\"}]",
+      "normalized": "[{\"content\":\"Done\",\"status\":\"completed\",\"priority\":\"high\"},{\"content\":\"Cancelled\",\"status\":\"cancelled\",\"priority\":\"low\"}]",
+      "call_id": "mc_synthetic_todo_10075a1eff73f1da",
+      "result_state_json": null
+    },
+    {
+      "label": "invalid non-array",
+      "input_json": "{\"todos\":[]}",
+      "normalized": null,
+      "call_id": null,
+      "result_state_json": null
+    },
+    {
+      "label": "invalid non-object item rejects whole state",
+      "input_json": "[{\"content\":\"Valid\",\"status\":\"pending\",\"priority\":\"high\"},\"bad item\"]",
+      "normalized": null,
+      "call_id": null,
+      "result_state_json": null
+    },
+    {
+      "label": "invalid missing content rejects whole state",
+      "input_json": "[{\"status\":\"pending\",\"priority\":\"medium\"}]",
+      "normalized": null,
+      "call_id": null,
+      "result_state_json": null
+    },
+    {
+      "label": "invalid missing status rejects whole state",
+      "input_json": "[{\"content\":\"Missing status\",\"priority\":\"medium\"}]",
+      "normalized": null,
+      "call_id": null,
+      "result_state_json": null
+    },
+    {
+      "label": "invalid non-string priority rejects whole state",
+      "input_json": "[{\"content\":\"Bad priority\",\"status\":\"pending\",\"priority\":7}]",
+      "normalized": null,
+      "call_id": null,
+      "result_state_json": null
+    },
+    {
+      "label": "unicode and long content",
+      "input_json": "[{\"content\":\"Unicode café 🚀\\nlong long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long 終わり\",\"status\":\"pending\",\"priority\":\"medium\"}]",
+      "normalized": "[{\"content\":\"Unicode café 🚀\\nlong long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long 終わり\",\"status\":\"pending\",\"priority\":\"medium\"}]",
+      "call_id": "mc_synthetic_todo_bef48282a74d5c75",
+      "result_state_json": "{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"Unicode café 🚀\\nlong long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long 終わり\",\"status\":\"pending\",\"priority\":\"medium\"}]},\"output\":\"[\\n  {\\n    \\\"content\\\": \\\"Unicode café 🚀\\\\nlong long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long 終わり\\\",\\n    \\\"status\\\": \\\"pending\\\",\\n    \\\"priority\\\": \\\"medium\\\"\\n  }\\n]\",\"title\":\"1 todos\",\"metadata\":{\"todos\":[{\"content\":\"Unicode café 🚀\\nlong long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long 終わり\",\"status\":\"pending\",\"priority\":\"medium\"}],\"truncated\":false},\"time\":{\"start\":0,\"end\":0}}"
+    },
+    {
+      "label": "key order scrambled canonicalization A",
+      "input_json": "[{\"content\":\"Scrambled\",\"status\":\"pending\",\"priority\":\"low\",\"id\":\"drop-me\"}]",
+      "normalized": "[{\"content\":\"Scrambled\",\"status\":\"pending\",\"priority\":\"low\"}]",
+      "call_id": "mc_synthetic_todo_72e51fec0d7e5bcd",
+      "result_state_json": "{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"Scrambled\",\"status\":\"pending\",\"priority\":\"low\"}]},\"output\":\"[\\n  {\\n    \\\"content\\\": \\\"Scrambled\\\",\\n    \\\"status\\\": \\\"pending\\\",\\n    \\\"priority\\\": \\\"low\\\"\\n  }\\n]\",\"title\":\"1 todos\",\"metadata\":{\"todos\":[{\"content\":\"Scrambled\",\"status\":\"pending\",\"priority\":\"low\"}],\"truncated\":false},\"time\":{\"start\":0,\"end\":0}}"
+    },
+    {
+      "label": "key order scrambled canonicalization B",
+      "input_json": "[{\"id\":\"drop-me\",\"priority\":\"low\",\"status\":\"pending\",\"content\":\"Scrambled\"}]",
+      "normalized": "[{\"content\":\"Scrambled\",\"status\":\"pending\",\"priority\":\"low\"}]",
+      "call_id": "mc_synthetic_todo_72e51fec0d7e5bcd",
+      "result_state_json": "{\"status\":\"completed\",\"input\":{\"todos\":[{\"content\":\"Scrambled\",\"status\":\"pending\",\"priority\":\"low\"}]},\"output\":\"[\\n  {\\n    \\\"content\\\": \\\"Scrambled\\\",\\n    \\\"status\\\": \\\"pending\\\",\\n    \\\"priority\\\": \\\"low\\\"\\n  }\\n]\",\"title\":\"1 todos\",\"metadata\":{\"todos\":[{\"content\":\"Scrambled\",\"status\":\"pending\",\"priority\":\"low\"}],\"truncated\":false},\"time\":{\"start\":0,\"end\":0}}"
+    }
+  ]
+}

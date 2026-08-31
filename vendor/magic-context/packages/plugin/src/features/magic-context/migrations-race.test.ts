@@ -8,8 +8,10 @@ import { $ } from "bun";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
 import {
+    FORK_MIGRATION_VERSION_FLOOR,
     isSiblingMigrationConflict,
     LATEST_MIGRATION_VERSION,
+    MIGRATIONS,
     MigrationLockBusyError,
     runMigrations,
     runMigrationsWithRetry,
@@ -19,8 +21,8 @@ import { initializeDatabase } from "./storage-db";
 /**
  * Multi-instance migration race tolerance.
  *
- * Each migration takes BEGIN IMMEDIATE and re-reads MAX(version) under
- * that lock. Concurrent starters therefore cannot both take stale read
+ * Each migration takes BEGIN IMMEDIATE and re-reads the upstream-lane
+ * version under that lock. Concurrent starters therefore cannot both take stale read
  * snapshots before upgrading to writers; the waiter observes the winner's
  * committed version and skips it. The narrow PK-conflict guard remains as
  * a secondary compatibility backstop.
@@ -36,6 +38,8 @@ describe("migration race tolerance", () => {
             runMigrations(setup);
             setup.exec(`
                 DELETE FROM schema_migrations WHERE version >= 51;
+                INSERT INTO schema_migrations (version, description, applied_at)
+                    VALUES (${FORK_MIGRATION_VERSION_FLOOR}, 'fork row', 0);
                 DROP TABLE tool_owner_backfill_state;
             `);
             closeQuietly(setup);
@@ -49,25 +53,47 @@ describe("migration race tolerance", () => {
                 const db = new sqlite.Database(${JSON.stringify(path)});
                 db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL");
                 migrations.runMigrations(db);
-                const version = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version;
+                const version = db.prepare("SELECT MAX(version) AS version FROM schema_migrations WHERE version < ${FORK_MIGRATION_VERSION_FLOOR}").get().version;
+                const forkRow = db.prepare("SELECT 1 FROM schema_migrations WHERE version = ${FORK_MIGRATION_VERSION_FLOOR}").get();
                 const table = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tool_owner_backfill_state'").get());
                 db.close();
-                console.log(JSON.stringify({ version, table }));
+                console.log(JSON.stringify({ version, forkRow: forkRow != null, table }));
             `;
 
             const [first, second] = await Promise.all([
-                $`bun -e ${script}`.json() as Promise<{ version: number; table: boolean }>,
-                $`bun -e ${script}`.json() as Promise<{ version: number; table: boolean }>,
+                $`bun -e ${script}`.json() as Promise<{
+                    version: number;
+                    forkRow: boolean;
+                    table: boolean;
+                }>,
+                $`bun -e ${script}`.json() as Promise<{
+                    version: number;
+                    forkRow: boolean;
+                    table: boolean;
+                }>,
             ]);
 
-            expect(first).toEqual({ version: LATEST_MIGRATION_VERSION, table: true });
-            expect(second).toEqual({ version: LATEST_MIGRATION_VERSION, table: true });
+            expect(first).toEqual({
+                version: LATEST_MIGRATION_VERSION,
+                forkRow: true,
+                table: true,
+            });
+            expect(second).toEqual({
+                version: LATEST_MIGRATION_VERSION,
+                forkRow: true,
+                table: true,
+            });
 
             const verify = new Database(path);
             expect(
                 verify
                     .prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 51")
                     .get(),
+            ).toEqual({ count: 1 });
+            expect(
+                verify
+                    .prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version = ?")
+                    .get(FORK_MIGRATION_VERSION_FLOOR),
             ).toEqual({ count: 1 });
             expect(
                 verify
@@ -101,6 +127,67 @@ describe("migration race tolerance", () => {
         };
         expect(after2.v).toBe(initialMax);
 
+        closeQuietly(db);
+    });
+
+    test("does not reselect an already-recorded sibling migration row", () => {
+        const db = new Database(":memory:");
+        initializeDatabase(db);
+        runMigrations(db);
+        db.prepare(
+            "INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)",
+        ).run(FORK_MIGRATION_VERSION_FLOOR, "sibling migration", 0);
+        MIGRATIONS.push({
+            version: FORK_MIGRATION_VERSION_FLOOR,
+            description: "sibling migration",
+            up: () => {
+                throw new Error("already-recorded sibling migration was reselected");
+            },
+        });
+        try {
+            expect(() => runMigrations(db)).not.toThrow();
+        } finally {
+            MIGRATIONS.pop();
+            closeQuietly(db);
+        }
+    });
+
+    test("replays missing upstream rows while preserving downstream rows", () => {
+        const db = new Database(":memory:");
+        initializeDatabase(db);
+        runMigrations(db);
+        db.prepare(
+            "INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?), (?, ?, ?)",
+        ).run(
+            FORK_MIGRATION_VERSION_FLOOR,
+            "fork migration 10000",
+            0,
+            FORK_MIGRATION_VERSION_FLOOR + 1,
+            "fork migration 10001",
+            0,
+        );
+        db.prepare("DELETE FROM schema_migrations WHERE version = ?").run(LATEST_MIGRATION_VERSION);
+
+        expect(() => runMigrations(db)).not.toThrow();
+        expect(
+            (
+                db
+                    .prepare(
+                        "SELECT MAX(version) AS version FROM schema_migrations WHERE version < ?",
+                    )
+                    .get(FORK_MIGRATION_VERSION_FLOOR) as { version: number }
+            ).version,
+        ).toBe(LATEST_MIGRATION_VERSION);
+        expect(
+            db
+                .prepare(
+                    "SELECT version, description FROM schema_migrations WHERE version >= ? ORDER BY version",
+                )
+                .all(FORK_MIGRATION_VERSION_FLOOR),
+        ).toEqual([
+            { version: FORK_MIGRATION_VERSION_FLOOR, description: "fork migration 10000" },
+            { version: FORK_MIGRATION_VERSION_FLOOR + 1, description: "fork migration 10001" },
+        ]);
         closeQuietly(db);
     });
 
@@ -313,7 +400,7 @@ describe("migration race tolerance", () => {
         );
         const originalPrepare = db.prepare.bind(db);
         (db as unknown as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
-            if (sql.toLowerCase().includes("select max(version)")) {
+            if (sql.toLowerCase().includes("max(version)")) {
                 throw Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
             }
             return originalPrepare(sql);
@@ -333,7 +420,7 @@ describe("migration race tolerance", () => {
         const originalPrepare = db.prepare.bind(db);
         let versionReads = 0;
         (db as unknown as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
-            if (sql.toLowerCase().includes("select max(version)")) {
+            if (sql.toLowerCase().includes("max(version)")) {
                 versionReads += 1;
                 throw new Error("synthetic migration failure");
             }

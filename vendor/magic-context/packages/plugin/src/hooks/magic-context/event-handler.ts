@@ -33,6 +33,7 @@ import {
     scheduleOpenCodeTransformDecisionWrite,
 } from "../../features/magic-context/transform-decision-log";
 import type { ContextUsage, SessionMeta } from "../../features/magic-context/types";
+import { captureWindowReport } from "../../features/magic-context/window-report-ledger";
 import { log, sessionLog } from "../../shared/logger";
 import {
     refreshModelLimitsAfterAuthOnce,
@@ -69,6 +70,7 @@ interface ContextUsageEntry {
     usage: ContextUsage;
     updatedAt: number;
     lastResponseTime?: number;
+    hasUsageTokens?: boolean;
 }
 
 interface MessageRemovedCleanupResult {
@@ -78,6 +80,13 @@ interface MessageRemovedCleanupResult {
 export interface EventHandlerDeps {
     contextUsageMap: Map<string, ContextUsageEntry>;
     compactionHandler: ReturnType<typeof createCompactionHandler>;
+    /**
+     * Compaction-off mode (issue #266), boot-resolved. Overflow recovery is
+     * never armed in this mode (record the provider-reported limit only, so
+     * raw-usage math stays accurate) and Channel-2 delivery stays silent;
+     * the off-transition clears any persisted intent.
+     */
+    compactionOff?: boolean;
     onSessionCacheInvalidated?: (sessionId: string) => void;
     onRustWireInvalidated?: (sessionId: string) => void;
     onSessionDeleted?: (sessionId: string) => void;
@@ -127,32 +136,29 @@ function evictExpiredUsageEntries(contextUsageMap: Map<string, ContextUsageEntry
 }
 
 /**
- * Fire-and-forget Channel 2 ceiling-nudge delivery for a final-stop assistant
- * turn. No-ops unless a `pending` intent exists; reads the undropped-token count
- * from the Channel 1 baseline for the nudge wording.
+ * Fire-and-forget Channel 2 ceiling-nudge delivery for an assistant step-boundary
+ * event. Primary sessions keep their existing final-stop fallback; subagents are
+ * delivered only while their run is still active. No-ops unless a `pending`
+ * intent exists; reads the undropped-token count from the Channel 1 baseline for
+ * the nudge wording.
  */
 async function deliverChannel2IfPending(deps: EventHandlerDeps, sessionId: string): Promise<void> {
     try {
         // Channel 2 fires for primaries AND subagents. Delivery routes through the
         // in-process client (input.client), which on OpenCode >= 1.17.7 coalesces
         // the synthetic-user nudge into the in-flight runner; it no-ops unless a
-        // `pending` intent exists and a client is wired.
+        // `pending` intent exists, a client is wired, and a subagent run is still
+        // active.
         const baseline = deps.channel1StateBySession?.get(sessionId);
-        // If the agent already called ctx_reduce since the last transform refreshed
-        // the baseline, the tailToolTokens/turnToolTokens here are STALE-HIGH (they
-        // predate the reduction) — delivering now would nudge the agent to drop
-        // output it just dropped. Skip until the next transform recomputes a fresh
-        // baseline. Parity with Pi's maybeDeliverChannel2Pi (reducedSinceRefresh
-        // guard). The pending intent stays armed for that fresh re-evaluation.
+        // A reduce after the persisted generation invalidates its U/T values.
+        // Hold the pending intent until a cache-busting pass rewalks the final
+        // rendered tail; delivery must never burn the cap from stale mass.
         if (baseline?.reducedSinceRefresh) return;
         const delivered = await maybeDeliverChannel2(sessionId, {
             db: deps.db,
             client: deps.client,
             directiveText: deps.channel2DirectiveTextBySession?.get(sessionId),
-            reclaimableTokens: baseline
-                ? baseline.tailToolTokens + baseline.turnToolTokens
-                : undefined,
-            usableTokens: baseline?.usableTokens,
+            baseline,
             oldestReclaimableToolTags: baseline?.oldestReclaimableToolTags,
         });
         if (delivered || getChannel2NudgeState(deps.db, sessionId) !== "pending") {
@@ -294,6 +300,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
                 if (!detection.isOverflow) {
                     return;
                 }
+                captureWindowReport({
+                    db: deps.db,
+                    sessionID: errInfo.sessionID,
+                    matchedPattern: detection.matchedPattern,
+                    reportedLimit: detection.reportedLimit,
+                    reportedLimitProvenance: detection.reportedLimitProvenance,
+                    error: errInfo.error,
+                });
                 // Subagents cannot recover from overflow themselves — the
                 // transform-side emergency path (`needs_emergency_recovery` →
                 // 95% → historian) is gated by `fullFeatureMode` and skips
@@ -317,20 +331,54 @@ export function createEventHandler(deps: EventHandlerDeps) {
                             deps.db,
                             errInfo.sessionID,
                             detection.reportedLimit,
+                            undefined,
+                            detection.reportedLimitProvenance,
                         );
                     }
                     sessionLog(
                         errInfo.sessionID,
-                        `overflow detected on subagent: reportedLimit=${detection.reportedLimit ?? "unknown"} pattern=${detection.matchedPattern ?? "n/a"} — recorded limit only (subagents cannot run historian)`,
+                        `overflow detected on subagent: reportedLimit=${detection.reportedLimit ?? "unknown"} provenance=${detection.reportedLimitProvenance ?? "n/a"} pattern=${detection.matchedPattern ?? "n/a"} — recorded limit only (subagents cannot run historian)`,
                     );
                     return;
                 }
                 const existing = getOverflowState(deps.db, errInfo.sessionID);
+                if (deps.compactionOff) {
+                    // Compaction-off: never arm MC emergency recovery — the
+                    // latch machinery is gated off and the off-transition
+                    // clears any persisted latch. The provider-reported limit
+                    // is still useful for raw-usage math (the sidebar's only
+                    // numeric source in this mode), so record it without
+                    // arming, exactly like the subagent path above.
+                    if (
+                        typeof detection.reportedLimit === "number" &&
+                        detection.reportedLimit > 0
+                    ) {
+                        recordDetectedContextLimit(
+                            deps.db,
+                            errInfo.sessionID,
+                            detection.reportedLimit,
+                            undefined,
+                            detection.reportedLimitProvenance,
+                        );
+                    }
+                    sessionLog(
+                        errInfo.sessionID,
+                        `overflow detected in compaction-off mode: reportedLimit=${detection.reportedLimit ?? "unknown"} provenance=${detection.reportedLimitProvenance ?? "n/a"} pattern=${detection.matchedPattern ?? "n/a"} — recorded limit only (recovery disarmed; native compaction owns the window)`,
+                    );
+                    return;
+                }
                 dropSlot(errInfo.sessionID, "overflow-recovery-arm");
-                recordOverflowDetected(deps.db, errInfo.sessionID, detection.reportedLimit);
+                recordOverflowDetected(
+                    deps.db,
+                    errInfo.sessionID,
+                    detection.reportedLimit,
+                    undefined,
+                    "provider_overflow",
+                    detection.reportedLimitProvenance,
+                );
                 sessionLog(
                     errInfo.sessionID,
-                    `overflow detected via session.error: reportedLimit=${detection.reportedLimit ?? "unknown"} pattern=${detection.matchedPattern ?? "n/a"} (previousRecovery=${existing.needsEmergencyRecovery})`,
+                    `overflow detected via session.error: reportedLimit=${detection.reportedLimit ?? "unknown"} provenance=${detection.reportedLimitProvenance ?? "n/a"} pattern=${detection.matchedPattern ?? "n/a"} (previousRecovery=${existing.needsEmergencyRecovery})`,
                 );
                 deps.onSessionCacheInvalidated?.(errInfo.sessionID);
             } catch (error) {
@@ -389,6 +437,20 @@ export function createEventHandler(deps: EventHandlerDeps) {
                 if (detection.isOverflow) {
                     messageHadOverflowError = true;
                     try {
+                        captureWindowReport({
+                            db: deps.db,
+                            sessionID: info.sessionID,
+                            providerID: info.providerID,
+                            modelID: info.modelID,
+                            matchedPattern: detection.matchedPattern,
+                            reportedLimit: detection.reportedLimit,
+                            reportedLimitProvenance: detection.reportedLimitProvenance,
+                            attemptedTokens:
+                                (info.tokens?.input ?? 0) +
+                                (info.tokens?.cache?.read ?? 0) +
+                                (info.tokens?.cache?.write ?? 0),
+                            error: info.error,
+                        });
                         const overflowModelKey = resolveModelKey(info.providerID, info.modelID);
                         const metaForOverflow = getOrCreateSessionMeta(deps.db, info.sessionID);
                         if (metaForOverflow.isSubagent) {
@@ -404,11 +466,31 @@ export function createEventHandler(deps: EventHandlerDeps) {
                                     info.sessionID,
                                     detection.reportedLimit,
                                     overflowModelKey,
+                                    detection.reportedLimitProvenance,
                                 );
                             }
                             sessionLog(
                                 info.sessionID,
-                                `overflow detected on subagent via message.updated: reportedLimit=${detection.reportedLimit ?? "unknown"} pattern=${detection.matchedPattern ?? "n/a"} — recorded limit only`,
+                                `overflow detected on subagent via message.updated: reportedLimit=${detection.reportedLimit ?? "unknown"} provenance=${detection.reportedLimitProvenance ?? "n/a"} pattern=${detection.matchedPattern ?? "n/a"} — recorded limit only`,
+                            );
+                        } else if (deps.compactionOff) {
+                            // Compaction-off: record the limit only, never arm
+                            // recovery (mirrors the session.error path above).
+                            if (
+                                typeof detection.reportedLimit === "number" &&
+                                detection.reportedLimit > 0
+                            ) {
+                                recordDetectedContextLimit(
+                                    deps.db,
+                                    info.sessionID,
+                                    detection.reportedLimit,
+                                    overflowModelKey,
+                                    detection.reportedLimitProvenance,
+                                );
+                            }
+                            sessionLog(
+                                info.sessionID,
+                                `overflow detected in compaction-off mode via message.updated: reportedLimit=${detection.reportedLimit ?? "unknown"} provenance=${detection.reportedLimitProvenance ?? "n/a"} pattern=${detection.matchedPattern ?? "n/a"} — recorded limit only`,
                             );
                         } else {
                             dropSlot(info.sessionID, "overflow-recovery-arm");
@@ -417,10 +499,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
                                 info.sessionID,
                                 detection.reportedLimit,
                                 overflowModelKey,
+                                "provider_overflow",
+                                detection.reportedLimitProvenance,
                             );
                             sessionLog(
                                 info.sessionID,
-                                `overflow detected via message.updated: reportedLimit=${detection.reportedLimit ?? "unknown"} pattern=${detection.matchedPattern ?? "n/a"}`,
+                                `overflow detected via message.updated: reportedLimit=${detection.reportedLimit ?? "unknown"} provenance=${detection.reportedLimitProvenance ?? "n/a"} pattern=${detection.matchedPattern ?? "n/a"}`,
                             );
                             deps.onSessionCacheInvalidated?.(info.sessionID);
                         }
@@ -560,6 +644,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
                         },
                         updatedAt: now,
                         lastResponseTime: now,
+                        hasUsageTokens: true,
                     });
 
                     updates.lastContextPercentage = percentage;
@@ -601,7 +686,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
             }
 
             // Channel 2 ceiling nudge delivery. Fire on STEP boundaries — both
-            // mid-turn ("tool-calls") and turn-end ("stop") assistant events.
+            // mid-turn ("tool-calls") and turn-end ("stop") assistant events for
+            // primaries; the delivery helper rejects terminal subagent runs.
             // Mid-turn delivery is the point of the channel: the reclaimable
             // pile grows WHILE the agent works, and a queued user message is
             // picked up by OpenCode's run loop at the next step boundary
@@ -611,12 +697,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
             // happened. promptAsync is mid-turn-safe: the in-process client
             // (input.client) coalesces into the in-flight run on OpenCode
             // >= 1.17.7, never splicing mid-prefix. Fires for primaries and
-            // subagents alike; no-ops unless a `pending` intent exists.
+            // subagents alike, but a subagent must still have an active run; it
+            // no-ops unless a `pending` intent exists.
             // Fire-and-forget, never blocking the event loop.
             if (
                 (info.finish === "stop" || info.finish === "tool-calls") &&
                 deps.client &&
-                deps.channel1StateBySession
+                deps.channel1StateBySession &&
+                !deps.compactionOff
             ) {
                 void deliverChannel2IfPending(deps, info.sessionID);
             }

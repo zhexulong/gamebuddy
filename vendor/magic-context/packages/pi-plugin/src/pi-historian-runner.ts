@@ -57,6 +57,7 @@ import {
 	clearEmergencyRecovery,
 	clearHistorianDrainFailure,
 	clearHistorianFailureState,
+	describeProtectedTailDrainBudgetSkip,
 	getOverflowState,
 	incrementHistorianFailure,
 	isWrapupInProgress,
@@ -90,6 +91,8 @@ import {
 import {
 	buildHistorianFailureNotice,
 	buildHistorianRepairPrompt,
+	HISTORIAN_BOUNDARY_HEALING_SLACK,
+	shouldDiscardLastHistorianCompartment,
 	validateChunkCoverage,
 	validateHistorianOutput,
 	validateStoredCompartments,
@@ -113,6 +116,10 @@ import { estimateTokens } from "@magic-context/core/hooks/magic-context/read-ses
 import { buildReferenceBlocks } from "@magic-context/core/hooks/magic-context/reference-retrieval";
 import { describeError } from "@magic-context/core/shared/error-message";
 import { sessionLog } from "@magic-context/core/shared/logger";
+import type {
+	ModelInput,
+	ResolvedModelEntry,
+} from "@magic-context/core/shared/model-resolution";
 import type { Database } from "@magic-context/core/shared/sqlite";
 import type {
 	SubagentProgressEvent,
@@ -128,7 +135,7 @@ import {
 } from "./read-session-pi";
 
 const HISTORIAN_AGENT_NAME = "magic-context-historian";
-const DEFAULT_HISTORIAN_TIMEOUT_MS = 120_000;
+const DEFAULT_HISTORIAN_TIMEOUT_MS = 600_000;
 const MAX_HISTORIAN_RETRIES = 2;
 
 /** Keep historian alert noise to once per minute per session. */
@@ -273,19 +280,29 @@ async function runHistorianSubagentWithTransientRetries(args: {
 
 function buildHistorianFallbackChain(
 	primaryModel: string,
-	fallbackModels?: readonly string[],
+	primaryThinkingLevel: string | undefined,
+	fallbackModels?: readonly ModelInput[],
 	fallbackModelId?: string,
-): Array<{ modelId: string; kind: "configured" | "session" }> {
-	const seen = new Set<string>();
-	if (primaryModel) seen.add(primaryModel);
-	const chain: Array<{ modelId: string; kind: "configured" | "session" }> = [];
+): Array<{ entry: ResolvedModelEntry; kind: "configured" | "session" }> {
+	const seen = new Set<string>([
+		`${primaryModel}\u0000${primaryThinkingLevel ?? ""}`,
+	]);
+	const chain: Array<{
+		entry: ResolvedModelEntry;
+		kind: "configured" | "session";
+	}> = [];
 	for (const candidate of fallbackModels ?? []) {
-		if (!candidate || seen.has(candidate)) continue;
-		seen.add(candidate);
-		chain.push({ modelId: candidate, kind: "configured" });
+		const entry =
+			typeof candidate === "string" ? { model: candidate } : candidate;
+		const key = `${entry.model}\u0000${entry.qualifier ?? ""}`;
+		if (!entry.model || seen.has(key)) continue;
+		seen.add(key);
+		chain.push({ entry, kind: "configured" });
 	}
-	if (fallbackModelId && !seen.has(fallbackModelId)) {
-		chain.push({ modelId: fallbackModelId, kind: "session" });
+	if (fallbackModelId) {
+		const entry = { model: fallbackModelId };
+		const key = `${entry.model}\u0000`;
+		if (!seen.has(key)) chain.push({ entry, kind: "session" });
 	}
 	return chain;
 }
@@ -345,8 +362,8 @@ export interface PiHistorianDeps {
 	runner: SubagentRunner;
 	/** Historian model id (provider/model) — required for PiSubagentRunner. */
 	historianModel: string;
-	/** Optional ordered fallback chain. */
-	fallbackModels?: readonly string[];
+	/** Optional ordered fallback chain, retaining each entry's Pi thinking level. */
+	fallbackModels?: readonly ModelInput[];
 	/** Live session model used as the final fallback after configured fallbacks. */
 	fallbackModelId?: string;
 	/** Historian context window — used to derive chunk token budget. */
@@ -360,8 +377,12 @@ export interface PiHistorianDeps {
 	refreshBoundarySnapshot?: () => ProtectedTailBoundarySnapshot;
 	/** Current resolved context limit used to reject stale snapshots after model switches. */
 	currentContextLimit?: number;
-	/** Optional per-call timeout (default 120s). */
+	/** Optional per-call timeout (default 600s). */
 	historianTimeoutMs?: number;
+	/** Sampling temperature carried to the serialized provider request. */
+	temperature?: number;
+	/** Output-token budget carried to the serialized provider request. */
+	maxOutputTokens?: number;
 	/** Optional cancellation signal for the historian run and retry backoff. */
 	signal?: AbortSignal;
 	/** Test seam for transient retry backoff. Defaults to OpenCode's retry cadence. */
@@ -377,6 +398,8 @@ export interface PiHistorianDeps {
 	thinkingLevel?: string;
 	/** Cross-session memory feature gate (`memory.enabled`). */
 	memoryEnabled?: boolean;
+	/** Allow a session started exactly in the canonical home directory only when user-level configuration enables it. */
+	allowHomeProject?: boolean;
 	/** Automatic-promotion gate (`memory.auto_promote`). */
 	autoPromote?: boolean;
 	/** Semantic taxonomy used by historian facts/promotion. */
@@ -444,11 +467,14 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 		refreshBoundarySnapshot,
 		currentContextLimit,
 		historianTimeoutMs = DEFAULT_HISTORIAN_TIMEOUT_MS,
+		temperature = 0.1,
+		maxOutputTokens = 32_000,
 		signal,
 		retryBackoffMs,
 		twoPass,
 		thinkingLevel,
 		memoryEnabled,
+		allowHomeProject,
 		autoPromote,
 		memoryDomain = "coding-project",
 		userMemoriesEnabled,
@@ -632,12 +658,9 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 							boundarySnapshot.executeThresholdPercentage,
 					});
 			if (!reserve.ok) {
-				sessionLog(
-					sessionId,
-					`historian rate-limit skip: ${reserve.skippedReason ?? "quota exhausted"}`,
-				);
+				sessionLog(sessionId, describeProtectedTailDrainBudgetSkip(reserve));
 				telemetry.status = "noop";
-				telemetry.failureReason = "protected-tail drain quota exhausted";
+				telemetry.failureReason = "internal protected-tail drain budget spent";
 				return;
 			}
 			drainReservation = reserve.reservation;
@@ -693,7 +716,10 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			// memory block so historian can dedup new facts against existing
 			// project memories. Cross-harness coherence comes free here —
 			// memories written by OpenCode show up in this Pi historian run.
-			const projectPath = resolveProjectIdentityForSession(directory);
+			const projectPath = resolveProjectIdentityForSession(
+				directory,
+				allowHomeProject,
+			);
 			if (!projectPath) {
 				rollbackDrainReservation();
 				return;
@@ -842,6 +868,8 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 					cwd: directory,
 					signal,
 					thinkingLevel,
+					temperature,
+					maxOutputTokens,
 					onProgress: buildProgressLogger("first"),
 					accountingSessionId: sessionId,
 					accountingSubagent: "historian",
@@ -894,6 +922,8 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 						cwd: directory,
 						signal,
 						thinkingLevel,
+						temperature,
+						maxOutputTokens,
 						onProgress: buildProgressLogger("repair"),
 						accountingSessionId: sessionId,
 						accountingSubagent: "historian",
@@ -922,6 +952,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			// current model is appended as the final last-resort candidate.
 			const fallbackChain = buildHistorianFallbackChain(
 				historianModel,
+				thinkingLevel,
 				fallbackModels,
 				fallbackModelId,
 			);
@@ -937,7 +968,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 					const candidate = fallbackChain[i];
 					sessionLog(
 						sessionId,
-						`historian: escalating to ${candidate.kind === "session" ? "session-model last resort" : "configured fallback model"} ${candidate.modelId}`,
+						`historian: escalating to ${candidate.kind === "session" ? "session-model last resort" : "configured fallback model"} ${candidate.entry.model}`,
 					);
 					const fbResult = await runHistorianSubagentWithTransientRetries({
 						runner,
@@ -949,11 +980,13 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 							agent: HISTORIAN_AGENT_NAME,
 							systemPrompt: historianSystemPrompt,
 							userMessage: prompt,
-							model: candidate.modelId,
+							model: candidate.entry.model,
 							timeoutMs: historianTimeoutMs,
 							cwd: directory,
 							signal,
-							thinkingLevel,
+							thinkingLevel: candidate.entry.qualifier,
+							temperature,
+							maxOutputTokens,
 							onProgress: buildProgressLogger("fallback"),
 							accountingSessionId: sessionId,
 							accountingSubagent: "historian",
@@ -1027,6 +1060,8 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 							cwd: directory,
 							signal,
 							thinkingLevel,
+							temperature,
+							maxOutputTokens,
 							onProgress: buildProgressLogger("editor"),
 							accountingSessionId: sessionId,
 							accountingSubagent: "historian_editor",
@@ -1068,10 +1103,11 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			// ~the whole chunk (≤ SLACK messages of lookahead past the last
 			// compartment), drop that provisional compartment so it's re-derived
 			// next run with real following context (offset re-reads its range).
-			// Guards: k >= 2 (never zero-progress), not emergency (keep all for
-			// max relief at ≥95%). Self-healing — a wrong discard re-derives the
-			// same compartment next run.
-			const BOUNDARY_HEALING_SLACK = 2;
+			// Require at least two emitted compartments so one remains and publication
+			// advances; never leave the persisted boundary inside a completed invocation/
+			// result pair; and retain everything during emergency recovery for immediate
+			// space relief. Outside emergency recovery, the next run safely re-derives a
+			// discarded compartment with additional following context.
 			const inEmergency = getOverflowState(
 				db,
 				sessionId,
@@ -1081,17 +1117,15 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			if (
 				!inEmergency &&
 				!forceKeepLastCompartmentForChunk &&
-				emittedCompartments.length >= 2
+				shouldDiscardLastHistorianCompartment(emittedCompartments, chunk)
 			) {
 				const lastEmitted = emittedCompartments[emittedCompartments.length - 1];
 				const lookaheadMargin = chunk.endIndex - lastEmitted.endMessage;
-				if (lookaheadMargin <= BOUNDARY_HEALING_SLACK) {
-					newCompartments = emittedCompartments.slice(0, -1);
-					sessionLog(
-						sessionId,
-						`historian discard-last: dropped provisional compartment ${lastEmitted.startMessage}-${lastEmitted.endMessage} (lookaheadMargin=${lookaheadMargin} <= ${BOUNDARY_HEALING_SLACK}); will re-derive next run`,
-					);
-				}
+				newCompartments = emittedCompartments.slice(0, -1);
+				sessionLog(
+					sessionId,
+					`historian discard-last: dropped provisional compartment ${lastEmitted.startMessage}-${lastEmitted.endMessage} (lookaheadMargin=${lookaheadMargin} <= ${HISTORIAN_BOUNDARY_HEALING_SLACK}); will re-derive next run`,
+				);
 			}
 			const lastNewEnd =
 				newCompartments[newCompartments.length - 1]?.endMessage ?? 0;
@@ -1158,13 +1192,11 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 			// can preserve coverage. In both cases, facts/observations/primers must not
 			// become durable memory from an unanchored range.
 			const skipUnanchoredPromotion =
-				discardedLast || weakLookaheadFinalCompartment;
-			// `forceKeepLastCompartment` is a test-only terminal probe path.
-			// Unlike production's weak-lookahead preservation, it explicitly
-			// retains the final compartment as an anchored unit so the shared
-			// admission/promotion lifecycle can be exercised without inventing a
-			// near-limit player conversation. Normal final weak-lookahead behavior
-			// remains non-promotable because forceKeepLastCompartment is false.
+				discardedLast || (weakLookaheadFinalCompartment && forceKeepLastCompartment !== true);
+			// `forceKeepLastCompartment` is a test-only terminal probe path. It
+			// explicitly treats the retained final compartment as anchored so the
+			// shared admission/promotion lifecycle can be exercised without
+			// inventing a near-limit player conversation. Production never sets it.
 
 			// Two distinct gates (parity with OpenCode): embeddingActive = memory
 			// feature on (drives registration + embedding, the ctx_search / dreamer
@@ -1713,7 +1745,7 @@ export function buildPiCompactionSummary(
  * cut at, so defer there too.
  */
 export function findFirstKeptEntryId(
-	entries: unknown[],
+	entries: readonly unknown[],
 	lastCompactedOrdinal: number,
 ): string | null {
 	const rawMessages = convertEntriesToRawMessages(entries);

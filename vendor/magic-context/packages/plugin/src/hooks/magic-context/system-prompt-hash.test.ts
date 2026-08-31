@@ -17,9 +17,11 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { convertToOpenAICompatibleChatMessages } from "@ai-sdk/openai-compatible/internal";
 import { buildHiddenAgentRegistrations } from "../../agents/hidden-agent-registrations";
 import { CLASSIFY_SYSTEM_PROMPT } from "../../features/magic-context/dreamer/classify-prompt";
 import { MAP_MEMORIES_SYSTEM_PROMPT } from "../../features/magic-context/dreamer/map-memories-prompt";
@@ -40,6 +42,9 @@ import {
     openDatabase,
     updateSessionMeta,
 } from "../../features/magic-context/storage";
+import type { PromptSurfaceConfig } from "../../shared/prompt-surface";
+import type { PromptSurfaceRuntime } from "../../shared/prompt-surface-runtime";
+import { createPromptSurfaceRuntime } from "../../shared/prompt-surface-runtime";
 import {
     COMPARTMENT_AGENT_SYSTEM_PROMPT,
     COMPARTMENT_STRUCTURAL_SYSTEM_PROMPT,
@@ -73,6 +78,33 @@ afterEach(() => {
     tempDirs.length = 0;
 });
 
+async function captureAnthropicSystem(system: string[]): Promise<unknown> {
+    const capturedBodies: Array<{ system?: unknown }> = [];
+    const model = createAnthropic({
+        apiKey: "test-key",
+        fetch: async (_input, init) => {
+            capturedBodies.push(JSON.parse(String(init?.body)) as { system?: unknown });
+            throw new Error("request captured");
+        },
+    }).messages("claude-sonnet-4-20250514");
+
+    await model
+        .doGenerate({
+            prompt: [
+                ...system.map((content) => ({ role: "system" as const, content })),
+                {
+                    role: "user" as const,
+                    content: [{ type: "text" as const, text: "Hello" }],
+                },
+            ],
+            maxOutputTokens: 1,
+        })
+        .catch(() => undefined);
+
+    expect(capturedBodies).toHaveLength(1);
+    return capturedBodies[0]?.system;
+}
+
 function buildHandler(opts?: {
     historyRefreshSessions?: Set<string>;
     systemPromptRefreshSessions?: Set<string>;
@@ -83,13 +115,22 @@ function buildHandler(opts?: {
     experimentalUserMemories?: boolean;
     internalChildSessions?: Set<string>;
     experimentalCavemanTextCompression?: boolean;
+    experimentalTemporalAwareness?: boolean;
     language?: string;
+    protectedTags?: number;
+    promptSurface?: PromptSurfaceConfig;
+    promptSurfaceRuntime?: PromptSurfaceRuntime;
+    resolveModel?: (sessionId: string) => { providerID: string; modelID: string } | undefined;
 }): ReturnType<typeof createSystemPromptHashHandler> {
     return createSystemPromptHashHandler({
         db: openDatabase(),
-        protectedTags: 1,
+        protectedTags: opts?.protectedTags ?? 1,
         language: opts?.language,
         dreamerEnabled: opts?.dreamerEnabled ?? false,
+        promptSurface: opts?.promptSurface,
+        promptSurfaceRuntime: opts?.promptSurfaceRuntime,
+        resolveModel:
+            opts?.resolveModel ?? (() => ({ providerID: "provider", modelID: "default-model" })),
         historyRefreshSessions: opts?.historyRefreshSessions ?? new Set<string>(),
         systemPromptRefreshSessions: opts?.systemPromptRefreshSessions ?? new Set<string>(),
         pendingMaterializationSessions: opts?.pendingMaterializationSessions ?? new Set<string>(),
@@ -99,6 +140,7 @@ function buildHandler(opts?: {
         experimentalUserMemories: opts?.experimentalUserMemories,
         internalChildSessions: opts?.internalChildSessions,
         experimentalCavemanTextCompression: opts?.experimentalCavemanTextCompression,
+        experimentalTemporalAwareness: opts?.experimentalTemporalAwareness,
     });
 }
 
@@ -287,6 +329,7 @@ describe("system-prompt-hash v2 system prompt contents", () => {
         await handler({ sessionID: sessionId }, { system });
         const joined = system.join("\n");
 
+        expect(system).toHaveLength(1);
         expect(joined).toContain("## Magic Context");
         expect(joined).toContain("Today's date: 2026-05-28");
         expect(joined).not.toContain("<project-docs>");
@@ -338,6 +381,126 @@ describe("system-prompt-hash v2 system prompt contents", () => {
         expect(historyRefreshSessions.has(sessionId)).toBe(false);
         expect(pendingMaterializationSessions.has(sessionId)).toBe(false);
         expect(getOrCreateSessionMeta(db, sessionId).systemPromptHash).not.toBe("");
+    });
+});
+
+describe("single system-entry serialization (issue #311)", () => {
+    it("produces one system message through the real OpenAI-compatible converter", async () => {
+        useTempDataHome("sph-openai-single-system-");
+        const sessionId = "ses-openai-single-system";
+        const system = ["You are a helpful coding assistant."];
+        const { handler } = buildHandler();
+
+        await handler({ sessionID: sessionId }, { system });
+
+        expect(system).toHaveLength(1);
+        expect(system[0]).toContain("## Magic Context");
+        const wireMessages = convertToOpenAICompatibleChatMessages([
+            { role: "system", content: system[0] },
+            {
+                role: "user",
+                content: [{ type: "text", text: "Hello" }],
+            },
+        ]);
+        const wireSystemMessages = wireMessages.filter((message) => message.role === "system");
+        expect(wireSystemMessages).toHaveLength(1);
+        expect(wireSystemMessages[0]?.content).toBe(system[0]);
+    });
+
+    it("documents Anthropic's unavoidable two-block to one-block byte transition", async () => {
+        useTempDataHome("sph-anthropic-blocks-");
+        const sessionId = "ses-anthropic-blocks";
+        const hostPrompt = "You are a helpful coding assistant.";
+        const system = [hostPrompt];
+        const { handler } = buildHandler();
+
+        await handler({ sessionID: sessionId }, { system });
+
+        expect(system).toHaveLength(1);
+        const prefix = `${hostPrompt}\n\n`;
+        expect(system[0]).toStartWith(prefix);
+        const guidance = system[0].slice(prefix.length);
+        expect(guidance).toContain("## Magic Context");
+
+        const previousWireSystem = await captureAnthropicSystem([hostPrompt, guidance]);
+        const mergedWireSystem = await captureAnthropicSystem(system);
+        expect(previousWireSystem).toEqual([
+            { type: "text", text: hostPrompt },
+            { type: "text", text: guidance },
+        ]);
+        expect(mergedWireSystem).toEqual([{ type: "text", text: system[0] }]);
+        expect(JSON.stringify(mergedWireSystem)).not.toBe(JSON.stringify(previousWireSystem));
+    });
+
+    it("changes the persisted hash once so the existing HARD-fold signals coordinate migration", async () => {
+        useTempDataHome("sph-single-system-fold-");
+        const referenceSessionId = "ses-single-system-reference";
+        const sessionId = "ses-single-system-fold";
+        const hostPrompt = "You are a helpful coding assistant.";
+        const historyRefreshSessions = new Set<string>();
+        const systemPromptRefreshSessions = new Set<string>();
+        const pendingMaterializationSessions = new Set<string>();
+        const { handler } = buildHandler({
+            historyRefreshSessions,
+            systemPromptRefreshSessions,
+            pendingMaterializationSessions,
+        });
+        resolveCtxReduceAvailabilityFromMessages(referenceSessionId, [
+            { info: { role: "user", tools: { "*": true } } },
+        ]);
+        resolveCtxReduceAvailabilityFromMessages(sessionId, [
+            { info: { role: "user", tools: { "*": true } } },
+        ]);
+
+        const referenceSystem = [hostPrompt];
+        await handler(
+            {
+                sessionID: referenceSessionId,
+                model: { providerID: "provider", modelID: "model" },
+            },
+            { system: referenceSystem },
+        );
+        const guidance = referenceSystem[0].slice(`${hostPrompt}\n\n`.length);
+        expect(guidance).toContain("## Magic Context");
+        const previousTwoEntryHash = createHash("md5")
+            .update(`${hostPrompt}\n${guidance}`)
+            .digest("hex");
+        const db = openDatabase();
+        getOrCreateSessionMeta(db, sessionId);
+        updateSessionMeta(db, sessionId, {
+            systemPromptHash: previousTwoEntryHash,
+            cachedM0SystemHash: previousTwoEntryHash,
+        });
+
+        const migratedSystem = [hostPrompt];
+        await handler(
+            { sessionID: sessionId, model: { providerID: "provider", modelID: "model" } },
+            { system: migratedSystem },
+        );
+
+        expect(migratedSystem).toHaveLength(1);
+        const migratedHash = createHash("md5").update(migratedSystem[0]).digest("hex");
+        const migratedMeta = getOrCreateSessionMeta(db, sessionId);
+        expect(migratedHash).not.toBe(previousTwoEntryHash);
+        expect(migratedMeta.systemPromptHash).toBe(migratedHash);
+        expect(migratedMeta.cachedM0SystemHash).toBe(previousTwoEntryHash);
+        expect(historyRefreshSessions.has(sessionId)).toBe(true);
+        expect(systemPromptRefreshSessions.has(sessionId)).toBe(true);
+        expect(pendingMaterializationSessions.has(sessionId)).toBe(true);
+
+        historyRefreshSessions.clear();
+        systemPromptRefreshSessions.clear();
+        pendingMaterializationSessions.clear();
+        const stableSystem = [hostPrompt];
+        await handler(
+            { sessionID: sessionId, model: { providerID: "provider", modelID: "model" } },
+            { system: stableSystem },
+        );
+        expect(stableSystem).toEqual(migratedSystem);
+        expect(getOrCreateSessionMeta(db, sessionId).systemPromptHash).toBe(migratedHash);
+        expect(historyRefreshSessions.has(sessionId)).toBe(false);
+        expect(systemPromptRefreshSessions.has(sessionId)).toBe(false);
+        expect(pendingMaterializationSessions.has(sessionId)).toBe(false);
     });
 });
 
@@ -422,9 +585,10 @@ describe("system-prompt-hash skips OpenCode internal hidden agents (issue #52)",
         const system = ["You are a helpful coding assistant."];
         await handler({ sessionID: sessionId }, { system });
 
-        // The normal-agent path still appends the magic-context guidance.
-        expect(system.length).toBeGreaterThan(1);
-        expect(system.join("\n")).toContain("## Magic Context");
+        // The normal-agent path keeps host identity and guidance in one entry.
+        expect(system).toHaveLength(1);
+        expect(system[0]).toContain("## Magic Context");
+        expect(system[0]).toContain("You are a helpful coding assistant.");
     });
 });
 
@@ -709,9 +873,9 @@ describe("system-prompt-hash honors per-agent opt-out (issue #53)", () => {
         const system = ["You are a normal agent without any skip marker."];
         await handler({ sessionID: sessionId }, { system });
 
-        // Injection still happened — guidance was appended.
-        expect(system.length).toBeGreaterThan(1);
-        expect(system.join("\n")).toContain("## Magic Context");
+        // Injection still happened without adding a second system entry.
+        expect(system).toHaveLength(1);
+        expect(system[0]).toContain("## Magic Context");
     });
 
     it("ignores empty skip-signature strings (would otherwise match everything)", async () => {
@@ -729,8 +893,8 @@ describe("system-prompt-hash honors per-agent opt-out (issue #53)", () => {
         await handler({ sessionID: sessionId }, { system });
 
         // Empty signature ignored, real signature didn't match → guidance injected.
-        expect(system.length).toBeGreaterThan(1);
-        expect(system.join("\n")).toContain("## Magic Context");
+        expect(system).toHaveLength(1);
+        expect(system[0]).toContain("## Magic Context");
     });
 
     it("does NOT update systemPromptHash for opted-out calls", async () => {
@@ -830,5 +994,247 @@ describe("provisional ctx_reduce availability (pre-first-user race)", () => {
         const meta = getOrCreateSessionMeta(db, sessionId);
         expect(meta.systemPromptHash).not.toBe("");
         expect(meta.systemPromptHash).not.toBe("0");
+    });
+});
+
+function readA1PrimaryGuidance(): { guidance: string; hash: string } {
+    const document = readFileSync(
+        join(import.meta.dir, "../../shared/prompt-surface-a1-golden.md"),
+        "utf8",
+    );
+    const guidance = document.match(
+        /### PRIMARY full \(reduce=on, memory=on, dreamer=on, temporal=on\)[\s\S]*?```markdown\n([\s\S]*?)\n```/,
+    )?.[1];
+    const hash = document.match(/\| PRIMARY full \| \d+ \| `([0-9a-f]{32})` \|/)?.[1];
+    if (!guidance || !hash) throw new Error("Malformed A1 primary guidance golden");
+    return { guidance, hash };
+}
+
+describe("OpenCode prompt-surface guidance epochs", () => {
+    it("matches A1 guidance for no config and explicit full", async () => {
+        useTempDataHome("sph-a1-full-");
+        const golden = readA1PrimaryGuidance();
+        const common = {
+            protectedTags: 20,
+            dreamerEnabled: true,
+            experimentalTemporalAwareness: true,
+        };
+        resolveCtxReduceAvailabilityFromMessages("ses-a1-implicit", [
+            { info: { role: "user", tools: { "*": true } } },
+        ]);
+        resolveCtxReduceAvailabilityFromMessages("ses-a1-explicit", [
+            { info: { role: "user", tools: { "*": true } } },
+        ]);
+        const implicit = buildHandler(common);
+        const explicit = buildHandler({
+            ...common,
+            promptSurface: { default: "full" },
+        });
+        const implicitSystem = ["Base system prompt"];
+        const explicitSystem = ["Base system prompt"];
+
+        await implicit.handler(
+            {
+                sessionID: "ses-a1-implicit",
+                model: { providerID: "provider", modelID: "model" },
+            },
+            { system: implicitSystem },
+        );
+        await explicit.handler(
+            {
+                sessionID: "ses-a1-explicit",
+                model: { providerID: "provider", modelID: "model" },
+            },
+            { system: explicitSystem },
+        );
+
+        expect(implicitSystem).toHaveLength(1);
+        expect(explicitSystem).toHaveLength(1);
+        const guidancePrefix = "Base system prompt\n\n";
+        const implicitGuidance = implicitSystem[0].slice(guidancePrefix.length);
+        const explicitGuidance = explicitSystem[0].slice(guidancePrefix.length);
+        expect(implicitSystem[0]).toStartWith(guidancePrefix);
+        expect(explicitSystem[0]).toStartWith(guidancePrefix);
+        expect(implicitGuidance).toBe(golden.guidance);
+        expect(explicitGuidance).toBe(golden.guidance);
+        expect(createHash("md5").update(implicitGuidance).digest("hex")).toBe(golden.hash);
+        expect(implicitSystem[0]).toBe(explicitSystem[0]);
+        const expectedComposedHash = createHash("md5").update(implicitSystem[0]).digest("hex");
+        expect(getOrCreateSessionMeta(openDatabase(), "ses-a1-implicit").systemPromptHash).toBe(
+            expectedComposedHash,
+        );
+        expect(getOrCreateSessionMeta(openDatabase(), "ses-a1-explicit").systemPromptHash).toBe(
+            expectedComposedHash,
+        );
+    });
+
+    it("defers the baseline until the model route is resolved", async () => {
+        useTempDataHome("sph-model-freeze-");
+        const sessionID = "ses-model-freeze";
+        resolveCtxReduceAvailabilityFromMessages(sessionID, [
+            { info: { role: "user", tools: { "*": true } } },
+        ]);
+        let recoveredModel: { providerID: string; modelID: string } | undefined;
+        const historyRefreshSessions = new Set<string>();
+        const systemPromptRefreshSessions = new Set<string>();
+        const pendingMaterializationSessions = new Set<string>();
+        const { handler } = buildHandler({
+            promptSurface: {
+                default: "full",
+                models: { "provider/light": "light" },
+            },
+            resolveModel: () => recoveredModel,
+            historyRefreshSessions,
+            systemPromptRefreshSessions,
+            pendingMaterializationSessions,
+        });
+
+        const modelLessSystem = ["Base system prompt"];
+        await handler({ sessionID }, { system: modelLessSystem });
+        const afterModelLess = getOrCreateSessionMeta(openDatabase(), sessionID);
+        expect(
+            afterModelLess.systemPromptHash === "" || afterModelLess.systemPromptHash === "0",
+        ).toBe(true);
+
+        recoveredModel = { providerID: "provider", modelID: "light" };
+        const resolvedSystem = ["Base system prompt"];
+        await handler({ sessionID }, { system: resolvedSystem });
+        const baselineHash = getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash;
+        expect(baselineHash).not.toBe("");
+        expect(baselineHash).not.toBe("0");
+        expect(resolvedSystem.join("\n")).not.toBe(modelLessSystem.join("\n"));
+        expect(historyRefreshSessions.has(sessionID)).toBe(false);
+        expect(systemPromptRefreshSessions.has(sessionID)).toBe(false);
+        expect(pendingMaterializationSessions.has(sessionID)).toBe(false);
+
+        const stableSystem = ["Base system prompt"];
+        await handler({ sessionID }, { system: stableSystem });
+        expect(getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash).toBe(
+            baselineHash,
+        );
+        expect(historyRefreshSessions.has(sessionID)).toBe(false);
+    });
+
+    it("coalesces a midnight date and preset flip into one hash change", async () => {
+        useTempDataHome("sph-midnight-preset-");
+        const sessionID = "ses-midnight-preset";
+        resolveCtxReduceAvailabilityFromMessages(sessionID, [
+            { info: { role: "user", tools: { "*": true } } },
+        ]);
+        const historyRefreshSessions = new Set<string>();
+        const systemPromptRefreshSessions = new Set<string>();
+        const pendingMaterializationSessions = new Set<string>();
+        const { handler } = buildHandler({
+            promptSurface: {
+                default: "full",
+                models: { "provider/light": "light" },
+            },
+            historyRefreshSessions,
+            systemPromptRefreshSessions,
+            pendingMaterializationSessions,
+        });
+        const run = async (modelID: string, date: string) => {
+            const system = [`Base prompt\nToday's date: ${date}`];
+            await handler({ sessionID, model: { providerID: "provider", modelID } }, { system });
+            return system.join("\n");
+        };
+
+        await run("full", "Mon Jan 01 2024");
+        const firstHash = getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash;
+        historyRefreshSessions.clear();
+        systemPromptRefreshSessions.clear();
+        pendingMaterializationSessions.clear();
+
+        const changed = await run("light", "Tue Jan 02 2024");
+        const changedHash = getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash;
+        expect(changed).toContain("Today's date: Tue Jan 02 2024");
+        expect(changedHash).not.toBe(firstHash);
+        expect(historyRefreshSessions.has(sessionID)).toBe(true);
+
+        historyRefreshSessions.clear();
+        systemPromptRefreshSessions.clear();
+        pendingMaterializationSessions.clear();
+        const stable = await run("light", "Tue Jan 02 2024");
+        expect(stable).toBe(changed);
+        expect(getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash).toBe(
+            changedHash,
+        );
+        expect(historyRefreshSessions.has(sessionID)).toBe(false);
+    });
+
+    it("emits one hash fold when a preset/model boundary selects authored light", async () => {
+        useTempDataHome("sph-prompt-epoch-");
+        const config = {
+            default: "full" as const,
+            models: { "provider/light": "light" as const },
+        };
+        const warnings: string[] = [];
+        const runtime = createPromptSurfaceRuntime({
+            userConfigDirectory: process.cwd(),
+            warn: (warning) => warnings.push(warning),
+        });
+        const historyRefreshSessions = new Set<string>();
+        const systemPromptRefreshSessions = new Set<string>();
+        const pendingMaterializationSessions = new Set<string>();
+        const { handler } = buildHandler({
+            promptSurface: config,
+            promptSurfaceRuntime: runtime,
+            historyRefreshSessions,
+            systemPromptRefreshSessions,
+            pendingMaterializationSessions,
+        });
+        const sessionID = "ses-prompt-surface-epoch";
+        resolveCtxReduceAvailabilityFromMessages(sessionID, [
+            { info: { role: "user", tools: { "*": true } } },
+        ]);
+        const run = (modelID: string) => {
+            const system = ["Base system prompt"];
+            return handler(
+                {
+                    sessionID,
+                    model: { providerID: "provider", modelID },
+                },
+                { system },
+            ).then(() => system.join("\n"));
+        };
+
+        const first = await run("full");
+        const firstHash = getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash;
+        expect(first).toContain("## Magic Context");
+        historyRefreshSessions.clear();
+        systemPromptRefreshSessions.clear();
+        pendingMaterializationSessions.clear();
+
+        for (let pass = 0; pass < 5; pass++) {
+            const frozen = await run("full");
+            expect(frozen).toBe(first);
+            expect(getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash).toBe(
+                firstHash,
+            );
+            expect(historyRefreshSessions.has(sessionID)).toBe(false);
+            expect(pendingMaterializationSessions.has(sessionID)).toBe(false);
+        }
+
+        const changed = await run("light");
+        const changedHash = getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash;
+        expect(changed).not.toBe(first);
+        expect(changedHash).not.toBe(firstHash);
+        expect(historyRefreshSessions.has(sessionID)).toBe(true);
+        expect(systemPromptRefreshSessions.has(sessionID)).toBe(true);
+        expect(pendingMaterializationSessions.has(sessionID)).toBe(true);
+        expect(warnings).toEqual([]);
+
+        historyRefreshSessions.clear();
+        systemPromptRefreshSessions.clear();
+        pendingMaterializationSessions.clear();
+        for (let pass = 0; pass < 5; pass++) {
+            const stable = await run("light");
+            expect(stable).toBe(changed);
+            expect(getOrCreateSessionMeta(openDatabase(), sessionID).systemPromptHash).toBe(
+                changedHash,
+            );
+            expect(historyRefreshSessions.has(sessionID)).toBe(false);
+            expect(pendingMaterializationSessions.has(sessionID)).toBe(false);
+        }
     });
 });

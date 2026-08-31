@@ -11,6 +11,7 @@ import {
     getCachedVersion,
     getLatestVersion,
     getLocalDevVersion,
+    hasExplicitNonExactPluginVersion,
     type PreparedConfigUpdate,
     preparePluginUpdate,
 } from "./checker";
@@ -297,6 +298,15 @@ async function runBackgroundUpdateCheck(
     const pluginInfo = findPluginEntry(ctx.directory);
     if (!pluginInfo) {
         log("[auto-update-checker] Plugin not found in config");
+        return;
+    }
+
+    if (hasExplicitNonExactPluginVersion(pluginInfo.entry)) {
+        if (pluginInfo.entry === `${PACKAGE_NAME}@latest`) {
+            log(
+                "[auto-update-checker] Explicit @latest leaves the active package unpinned; OpenCode may delete it mid-session.",
+            );
+        }
         return;
     }
 

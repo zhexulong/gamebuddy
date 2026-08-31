@@ -17,6 +17,7 @@ import {
     computeChunkSliceMs,
     runCompressCues,
 } from "./compress-cues";
+import { validateCue } from "./cue-validation";
 import {
     computeCueContentHash,
     getMuralCueState,
@@ -68,6 +69,24 @@ function timeoutCueClient(onPrompt?: () => void) {
     };
 }
 
+/** A client that repeats one candidate cue for every memory in the pool. */
+function repeatingCueClient(cue: string) {
+    let manifest = "";
+    return {
+        session: {
+            create: async () => ({ data: { id: "cue-child" } }),
+            prompt: async (args: { body?: { parts?: Array<{ text?: string }> } }) => {
+                const prompt = args.body?.parts?.[0]?.text ?? "";
+                const ids = [...prompt.matchAll(/^\[(\d+)\]/gm)].map((match) => Number(match[1]));
+                manifest = `<cues>${ids.map((id) => `<cue id="${id}">${cue}</cue>`).join("")}</cues>`;
+                return {};
+            },
+            messages: async () => ({ data: assistantMessages(manifest) }),
+            delete: async () => ({}),
+        },
+    };
+}
+
 /** A client whose prompt succeeds but returns output with no <cues> manifest,
  *  so output validation fails. This is a VALIDATION-class failure (bad manifest),
  *  which must NOT trip the timeout breaker — every chunk is still attempted. */
@@ -80,6 +99,33 @@ function invalidOutputCueClient(onPrompt?: () => void) {
                 return {};
             },
             messages: async () => ({ data: assistantMessages("garbage without a cues root") }),
+            delete: async () => ({}),
+        },
+    };
+}
+
+function providerFailureCueClient(onPrompt?: () => void) {
+    return {
+        session: {
+            create: async () => ({ data: { id: "cue-child" } }),
+            prompt: async () => {
+                onPrompt?.();
+                return {};
+            },
+            messages: async () => ({
+                data: [
+                    {
+                        info: {
+                            role: "assistant",
+                            time: { created: Date.now() },
+                            finish: "stop",
+                            error: null,
+                            tokens: { output: 8, reasoning: 0 },
+                        },
+                        parts: [{ type: "text", text: "All Antigravity endpoints failed" }],
+                    },
+                ],
+            }),
             delete: async () => ({}),
         },
     };
@@ -253,6 +299,46 @@ describe("runCompressCues disposition", () => {
         }
     });
 
+    test("provider-outage completion aborts remaining chunks after the model ladder", async () => {
+        const db = freshDb();
+        try {
+            const projectIdentity = "git:cues-provider-outage";
+            for (let index = 0; index < 120; index += 1) {
+                insertMemory(db, {
+                    projectPath: projectIdentity,
+                    category: "ARCHITECTURE",
+                    content: `Cue outage fact ${index}.`,
+                    sourceSessionId: "ses",
+                });
+            }
+            const args = cueArgs(db, projectIdentity);
+            let promptCalls = 0;
+            args.client = providerFailureCueClient(() => {
+                promptCalls += 1;
+            }) as never;
+            args.fallbackModels = ["provider/fallback-one", "provider/fallback-two"];
+
+            let thrown: unknown;
+            try {
+                await runCompressCues(args);
+            } catch (error) {
+                thrown = error;
+            }
+
+            expect(String(thrown)).toContain("provider-outage completion");
+            expect(promptCalls).toBe(3);
+            expect(
+                db
+                    .prepare(
+                        "SELECT COUNT(*) AS count FROM memories WHERE project_path = ? AND mural_cue IS NOT NULL",
+                    )
+                    .get(projectIdentity),
+            ).toEqual({ count: 0 });
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
     test("validation failures do not trip the timeout breaker (every chunk still attempted)", async () => {
         const db = freshDb();
         try {
@@ -279,6 +365,129 @@ describe("runCompressCues disposition", () => {
             expect(result.chunks).toBe(3);
             expect(result.compressed).toBe(0);
             expect(result.complete).toBe(false);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("cue validation precision", () => {
+    test("rejects only the memory's own id and accepts legitimate issue references", () => {
+        expect(validateCue("leaked #123", 50, 123)?.reason).toBe("leaked-id");
+        expect(validateCue("PR #21729 → issue #31638", 50, 123)).toBeNull();
+        expect(validateCue("foreign #999", 50, 123)).toBeNull();
+        expect(validateCue("embedded #1234", 50, 123)).toBeNull();
+    });
+
+    test("writes live-shaped PR and issue cues instead of retrying them", () => {
+        const db = freshDb();
+        try {
+            const projectIdentity = "git:cues-live-shape";
+            const prMemory = insertMemory(db, {
+                projectPath: projectIdentity,
+                category: "KNOWN_ISSUES",
+                content: "PR #21729 tracks the parser fix.",
+                sourceSessionId: "ses",
+            });
+            const issueMemory = insertMemory(db, {
+                projectPath: projectIdentity,
+                category: "KNOWN_ISSUES",
+                content: "Issue #31638 tracks the retry loop.",
+                sourceSessionId: "ses",
+            });
+            const chunk = [
+                { memory: prMemory, contentHash: computeCueContentHash(prMemory.content) },
+                { memory: issueMemory, contentHash: computeCueContentHash(issueMemory.content) },
+            ];
+            const manifest = `<cues><cue id="${prMemory.id}">PR #21729 → parser fix</cue><cue id="${issueMemory.id}">issue #31638 → retry loop</cue></cues>`;
+
+            expect(applyCues(cueArgs(db, projectIdentity), chunk, manifest)).toEqual({
+                compressed: 2,
+                skipped: 0,
+            });
+            expect(getMuralCueState(db, [prMemory.id]).get(prMemory.id)?.cue).toBe(
+                "PR #21729 → parser fix",
+            );
+            expect(getMuralCueState(db, [issueMemory.id]).get(issueMemory.id)?.cue).toBe(
+                "issue #31638 → retry loop",
+            );
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("cue rejection latch", () => {
+    test("falls back after three same-content rejections and completes the run", async () => {
+        const db = freshDb();
+        try {
+            const projectIdentity = "git:cues-latch";
+            const memory = insertMemory(db, {
+                projectPath: projectIdentity,
+                category: "KNOWN_ISSUES",
+                content: "The repeater must remain stable for issue #31638.",
+                importance: 90,
+                sourceSessionId: "ses",
+            });
+            const overBudget = "x ".repeat(49);
+            const client = repeatingCueClient(overBudget);
+
+            const first = cueArgs(db, projectIdentity);
+            first.client = client as never;
+            const firstResult = await runCompressCues(first);
+            expect(firstResult).toMatchObject({ compressed: 0, skipped: 1, remaining: 1 });
+
+            const second = cueArgs(db, projectIdentity);
+            second.client = client as never;
+            const secondResult = await runCompressCues(second);
+            expect(secondResult).toMatchObject({ compressed: 0, skipped: 1, remaining: 1 });
+
+            const third = cueArgs(db, projectIdentity);
+            third.client = client as never;
+            const thirdResult = await runCompressCues(third);
+            expect(thirdResult).toMatchObject({
+                compressed: 1,
+                skipped: 0,
+                remaining: 0,
+                complete: true,
+            });
+
+            const state = getMuralCueState(db, [memory.id]).get(memory.id);
+            expect(state?.cue).toBeTruthy();
+            expect(state?.cue).not.toContain(`#${memory.id}`);
+            expect([...(state?.cue ?? "")].length).toBeLessThanOrEqual(90);
+            expect(validateCue(state?.cue ?? "", 90, memory.id)).toBeNull();
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("content edits clear the rejection latch before the next attempt", () => {
+        const db = freshDb();
+        try {
+            const projectIdentity = "git:cues-latch-reset";
+            const memory = insertMemory(db, {
+                projectPath: projectIdentity,
+                category: "KNOWN_ISSUES",
+                content: "Original issue #31638 content.",
+                sourceSessionId: "ses",
+            });
+            const chunk = [{ memory, contentHash: computeCueContentHash(memory.content) }];
+            const invalid = `<cues><cue id="${memory.id}">broken (</cue></cues>`;
+            applyCues(cueArgs(db, projectIdentity), chunk, invalid);
+            expect(getMuralCueState(db, [memory.id]).get(memory.id)?.rejectionCount).toBe(1);
+
+            updateMemoryContent(
+                db,
+                memory.id,
+                "Edited issue #31638 content.",
+                computeNormalizedHash("Edited issue #31638 content."),
+            );
+
+            const state = getMuralCueState(db, [memory.id]).get(memory.id);
+            expect(state?.cue).toBeNull();
+            expect(state?.hash).toBeNull();
+            expect(state?.rejectionCount ?? 0).toBe(0);
         } finally {
             closeQuietly(db);
         }

@@ -5,19 +5,30 @@ process.env.OPENCODE_CLIENT = "desktop";
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { appendCompartments } from "../../features/magic-context/compartment-storage";
 import { ensureContextStoreUuid } from "../../features/magic-context/context-authority";
 import { writeTaskScheduleState } from "../../features/magic-context/dreamer/storage-task-schedule";
 import { insertMemory } from "../../features/magic-context/memory";
+import type {
+    EmbeddingProvider,
+    EmbeddingPurpose,
+} from "../../features/magic-context/memory/embedding-provider";
 import {
     __resetProjectIdentityForTests,
     __setProjectIdentityTestHooks,
     resolveProjectIdentity,
 } from "../../features/magic-context/memory/project-identity";
 import { __resetMessageIndexAsyncForTests } from "../../features/magic-context/message-index-async";
+import {
+    _resetProjectEmbeddingRegistryForTests,
+    _setTestProviderFactoryForProject,
+    getEmbeddingCoverageStatus,
+} from "../../features/magic-context/project-embedding-registry";
 import type { Scheduler } from "../../features/magic-context/scheduler";
+import { recordSessionProjectIdentity } from "../../features/magic-context/session-project-storage";
 import {
     closeDatabase,
     getOrCreateSessionMeta,
@@ -27,6 +38,7 @@ import {
 } from "../../features/magic-context/storage";
 import type { Tagger } from "../../features/magic-context/tagger";
 import { Database } from "../../shared/sqlite";
+import { autoEmbedAttemptedBySession, clearEmbedSessionState } from "./embed-session-state";
 import { createMagicContextHook, type MagicContextDeps } from "./hook";
 import { createLiveSessionState } from "./live-session-state";
 import { closeReadOnlySessionDb } from "./read-session-db";
@@ -40,6 +52,32 @@ type PromptMocks = {
     showToast: ReturnType<typeof mock>;
 };
 
+class HookFakeEmbeddingProvider implements EmbeddingProvider {
+    readonly modelId = "hook-fake-embedding-model";
+
+    async initialize(): Promise<boolean> {
+        return true;
+    }
+
+    async embed(text: string, _signal?: AbortSignal): Promise<Float32Array> {
+        return new Float32Array([text.length, 1]);
+    }
+
+    async embedBatch(
+        texts: string[],
+        _signal?: AbortSignal,
+        _purpose?: EmbeddingPurpose,
+    ): Promise<Float32Array[]> {
+        return texts.map((text) => new Float32Array([text.length, 1]));
+    }
+
+    async dispose(): Promise<void> {}
+
+    isLoaded(): boolean {
+        return true;
+    }
+}
+
 const tempDirs: string[] = [];
 const originalXdgDataHome = process.env.XDG_DATA_HOME;
 
@@ -50,6 +88,9 @@ function makeTempDir(prefix: string): string {
 }
 
 afterEach(() => {
+    autoEmbedAttemptedBySession.clear();
+    _resetProjectEmbeddingRegistryForTests();
+    _setTestProviderFactoryForProject(null);
     __resetProjectIdentityForTests();
     __resetMessageIndexAsyncForTests();
     closeReadOnlySessionDb();
@@ -221,6 +262,34 @@ describe("magic-context hook", () => {
         expect(createMagicContextHook(deps)).not.toBeNull();
     });
 
+    it("constructs and resolves a project when sandbox policy denies realpath for the home directory", () => {
+        process.env.XDG_DATA_HOME = makeTempDir("hook-realpath-sandbox-data-");
+        const projectDir = makeTempDir("hook-realpath-sandbox-project-");
+        const deniedHome = makeTempDir("hook-realpath-sandbox-home-");
+        const originalNative = realpathSync.native;
+        const permissionDenied = new Error("sandbox denied realpath") as NodeJS.ErrnoException;
+        permissionDenied.code = "EPERM";
+        __setProjectIdentityTestHooks({ homeDirectory: () => deniedHome });
+        Object.defineProperty(realpathSync, "native", {
+            configurable: true,
+            value: (() => {
+                throw permissionDenied;
+            }) as typeof realpathSync.native,
+        });
+        const deps = createMockDeps();
+        deps.directory = projectDir;
+
+        try {
+            expect(createMagicContextHook(deps)).not.toBeNull();
+            expect(resolveProjectIdentity(projectDir)).toMatch(/^dir:[0-9a-f]{12}$/);
+        } finally {
+            Object.defineProperty(realpathSync, "native", {
+                configurable: true,
+                value: originalNative,
+            });
+        }
+    });
+
     it("rehydrates pending marker sessions into both deferred signal sets", () => {
         process.env.XDG_DATA_HOME = makeTempDir("hook-marker-rehydrate-");
         const db = openDatabase();
@@ -310,6 +379,137 @@ describe("magic-context hook", () => {
         expect(typeof hook["tool.execute.after"]).toBe("function");
     });
 
+    it("intercepts a Desktop slashless status command before an LLM completion", async () => {
+        process.env.XDG_DATA_HOME = makeTempDir("hook-stripped-status-");
+        const promptMocks = createPromptMocks();
+        const hook = requireHook(createMagicContextHook(createMockDeps(promptMocks)));
+        let persistedCommandRows = 0;
+        let llmCompletions = 0;
+
+        const promptPipeline = async () => {
+            await hook["chat.message"]!(
+                {
+                    sessionID: "ses-stripped-status",
+                    agent: "build",
+                    model: { providerID: "anthropic", modelID: "claude" },
+                    variant: "high",
+                },
+                {
+                    message: {} as never,
+                    parts: [{ type: "text", text: "ctx-status" } as never],
+                },
+            );
+            persistedCommandRows += 1;
+            llmCompletions += 1;
+        };
+
+        await expectSentinel(promptPipeline(), "__CONTEXT_MANAGEMENT_CTX-STATUS_HANDLED__");
+
+        expect(persistedCommandRows).toBe(0);
+        expect(llmCompletions).toBe(0);
+        expect(promptMocks.prompt).toHaveBeenCalledTimes(1);
+        const notification = promptMocks.prompt?.mock.calls[0]?.[0] as {
+            body?: {
+                noReply?: boolean;
+                parts?: Array<{ text?: string; ignored?: boolean }>;
+            };
+        };
+        expect(notification.body?.noReply).toBe(true);
+        expect(notification.body?.parts?.[0]?.ignored).toBe(true);
+        expect(notification.body?.parts?.[0]?.text).toContain("## Magic Context Status");
+    });
+
+    it("keeps the native slash-command path unchanged", async () => {
+        process.env.XDG_DATA_HOME = makeTempDir("hook-native-status-");
+        const promptMocks = createPromptMocks();
+        const hook = requireHook(createMagicContextHook(createMockDeps(promptMocks)));
+
+        await expectSentinel(
+            hook["command.execute.before"]!(
+                { command: "ctx-status", sessionID: "ses-native-status", arguments: "" },
+                { parts: [] },
+            ),
+            "__CONTEXT_MANAGEMENT_CTX-STATUS_HANDLED__",
+        );
+
+        expect(promptMocks.prompt).toHaveBeenCalledTimes(1);
+        const notification = promptMocks.prompt?.mock.calls[0]?.[0] as {
+            body?: { noReply?: boolean; parts?: Array<{ ignored?: boolean }> };
+        };
+        expect(notification.body?.noReply).toBe(true);
+        expect(notification.body?.parts?.[0]?.ignored).toBe(true);
+    });
+
+    it("re-arms auto-embed when the first transform precedes compartment work", async () => {
+        process.env.XDG_DATA_HOME = makeTempDir("hook-auto-embed-data-");
+        const projectDir = makeTempDir("hook-auto-embed-project-");
+        mkdirSync(join(projectDir, ".cortexkit"));
+        writeFileSync(
+            join(projectDir, ".cortexkit", "magic-context.jsonc"),
+            JSON.stringify({
+                embedding: { provider: "local", model: "hook-fake-embedding-model" },
+                memory: { enabled: true },
+            }),
+        );
+        _setTestProviderFactoryForProject(() => new HookFakeEmbeddingProvider());
+        const deps = createMockDeps();
+        deps.directory = projectDir;
+        const hook = requireHook(createMagicContextHook(deps));
+        const db = openDatabase();
+        const sessionId = "ses-hook-auto-embed";
+        const projectIdentity = resolveProjectIdentity(projectDir);
+        recordSessionProjectIdentity(db, sessionId, projectIdentity);
+        const runTransform = async () => {
+            const messages = [
+                {
+                    info: { id: "u1", role: "user", sessionID: sessionId },
+                    parts: [{ type: "text", text: "hello" }],
+                },
+            ];
+            await hook["experimental.chat.messages.transform"]!({}, { messages });
+        };
+        const waitUntil = async (predicate: () => boolean): Promise<void> => {
+            const deadline = Date.now() + 3_000;
+            while (!predicate() && Date.now() < deadline) {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            expect(predicate()).toBe(true);
+        };
+
+        try {
+            await runTransform();
+            await waitUntil(() => !autoEmbedAttemptedBySession.has(sessionId));
+
+            appendCompartments(db, sessionId, [
+                {
+                    sequence: 0,
+                    startMessage: 1,
+                    endMessage: 1,
+                    startMessageId: "u1",
+                    endMessageId: "u1",
+                    title: "Late compartment",
+                    content: "Late compartment content",
+                    p1: "Late compartment content",
+                },
+            ]);
+            db.prepare(
+                "INSERT INTO message_history_fts (session_id, message_ordinal, message_id, role, content) VALUES (?, ?, ?, ?, ?)",
+            ).run(sessionId, 1, "u1", "user", "Late compartment source text");
+
+            await runTransform();
+            await waitUntil(() => {
+                const coverage = getEmbeddingCoverageStatus(db, projectIdentity, sessionId);
+                return (
+                    coverage.session.total === 1 &&
+                    coverage.session.embedded === 1 &&
+                    autoEmbedAttemptedBySession.has(sessionId)
+                );
+            });
+        } finally {
+            clearEmbedSessionState(sessionId);
+        }
+    });
+
     it("initializes the dream queue table during setup", () => {
         process.env.XDG_DATA_HOME = makeTempDir("hook-dream-queue-init-");
         requireHook(createMagicContextHook(createMockDeps()));
@@ -369,7 +569,7 @@ describe("magic-context hook", () => {
                     parts: [
                         {
                             type: "text",
-                            text: expect.stringContaining("## Magic Status"),
+                            text: expect.stringContaining("## Magic Context Status"),
                             ignored: true,
                         },
                     ],
@@ -550,11 +750,11 @@ describe("magic-context hook", () => {
             expect.objectContaining({
                 path: { id: "ses-dream" },
                 body: expect.objectContaining({
-                    parts: [
+                    parts: expect.arrayContaining([
                         expect.objectContaining({
-                            text: 'Running dream task "curate"...',
+                            text: expect.stringContaining("Backlog before starting:"),
                         }),
-                    ],
+                    ]),
                 }),
             }),
         );

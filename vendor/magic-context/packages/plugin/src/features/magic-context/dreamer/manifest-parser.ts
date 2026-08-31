@@ -38,3 +38,56 @@ export function assertManifestCoversExactly(
         if (!ids.includes(id)) throw new Error(`${rootName} manifest missing id ${id}`);
     }
 }
+
+const OPEN_TAG_RE = /<([A-Za-z][\w:-]*)\b/;
+
+/** Name the shape a model actually emitted when a Dreamer parser found zero
+ *  entries. Wrong-but-rooted output (`<map>`, JSON array, `<mapping>`) used to
+ *  parse as `[]` and pass validation, so the fallback-model chain never fired.
+ *  The message is thrown inside `validateOutput` and must name what was found. */
+export function describeUnrecognizedManifestShape(
+    text: string,
+    expectedRoot: string,
+    expectedEntry: string,
+): string {
+    const expected = `expected <${expectedRoot}> with <${expectedEntry}> entries`;
+    const trimmed = text.trim();
+
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+        return `JSON ${trimmed.startsWith("[") ? "array" : "object"} unrecognized; ${expected}`;
+    }
+
+    const firstTag = OPEN_TAG_RE.exec(trimmed)?.[1];
+    if (firstTag && firstTag.toLowerCase() !== expectedRoot.toLowerCase()) {
+        return `root <${firstTag}> unrecognized; ${expected}`;
+    }
+
+    const escapedRoot = expectedRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const bodyMatch = new RegExp(
+        `<${escapedRoot}\\b[^>]*>([\\s\\S]*?)<\\/${escapedRoot}>`,
+        "i",
+    ).exec(text);
+    const body = (bodyMatch?.[1] ?? "").trim();
+    if (body.startsWith("[") || body.startsWith("{")) {
+        return `JSON ${body.startsWith("[") ? "array" : "object"} unrecognized; ${expected}`;
+    }
+    const innerTag = OPEN_TAG_RE.exec(body)?.[1];
+    if (innerTag && innerTag.toLowerCase() !== expectedEntry.toLowerCase()) {
+        return `root <${innerTag}> unrecognized; ${expected}`;
+    }
+    return `parsed zero entries; ${expected}`;
+}
+
+/** Reject a zero-entry parse when the caller asked for a non-empty batch.
+ *  Empty output against a non-empty request must be retry-visible. */
+export function assertParsedManifestNonEmpty(
+    parsedCount: number,
+    expectedCount: number,
+    text: string,
+    expectedRoot: string,
+    expectedEntry: string,
+): void {
+    if (expectedCount > 0 && parsedCount === 0) {
+        throw new Error(describeUnrecognizedManifestShape(text, expectedRoot, expectedEntry));
+    }
+}

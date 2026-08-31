@@ -15,10 +15,6 @@ interface CommitEmbeddingRow {
     model_id: string;
 }
 
-interface StoredCommitModelIdRow {
-    modelId: string | null;
-}
-
 interface UnembeddedRow {
     sha: string;
     message: string;
@@ -28,9 +24,6 @@ const saveStatements = new WeakMap<Database, PreparedStatement>();
 const loadProjectStatements = new WeakMap<Database, PreparedStatement>();
 const loadUnembeddedStatements = new WeakMap<Database, PreparedStatement>();
 const countEmbeddedStatements = new WeakMap<Database, PreparedStatement>();
-const clearProjectStatements = new WeakMap<Database, PreparedStatement>();
-const clearProjectModelStatements = new WeakMap<Database, PreparedStatement>();
-const distinctModelIdStatements = new WeakMap<Database, PreparedStatement>();
 
 function getSaveStatement(db: Database): PreparedStatement {
     let stmt = saveStatements.get(db);
@@ -85,44 +78,6 @@ function getCountEmbeddedStatement(db: Database): PreparedStatement {
              JOIN git_commits c ON c.sha = e.sha WHERE c.project_path = ? AND e.model_id = ?`,
         );
         countEmbeddedStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getClearProjectStatement(db: Database): PreparedStatement {
-    let stmt = clearProjectStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare(
-            `DELETE FROM git_commit_embeddings
-             WHERE sha IN (SELECT sha FROM git_commits WHERE project_path = ?)`,
-        );
-        clearProjectStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getClearProjectModelStatement(db: Database): PreparedStatement {
-    let stmt = clearProjectModelStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare(
-            `DELETE FROM git_commit_embeddings
-             WHERE model_id = ? AND sha IN (SELECT sha FROM git_commits WHERE project_path = ?)`,
-        );
-        clearProjectModelStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getDistinctModelIdStatement(db: Database): PreparedStatement {
-    let stmt = distinctModelIdStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare(
-            `SELECT DISTINCT e.model_id AS modelId
-             FROM git_commit_embeddings e
-             JOIN git_commits c ON c.sha = e.sha
-             WHERE c.project_path = ?`,
-        );
-        distinctModelIdStatements.set(db, stmt);
     }
     return stmt;
 }

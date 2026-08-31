@@ -12,11 +12,13 @@ import { join } from "node:path";
  * synthetic-user interrupt the run loop must address — is the firmer lever, and
  * a subagent runs under the same in-process client so promptAsync reaches it.
  * The two gates that previously excluded subagents were:
- *   1. transform.ts: `channel2MetricsKnown = fullFeatureMode && …` (trigger)
+ *   1. transform.ts: a `fullFeatureMode` trigger gate
  *   2. event-handler.ts: `if (meta.isSubagent) return;` (delivery wrapper)
- * Both are removed. The ONLY gate now is ctx_reduce being effective (the
- * enclosing Channel-1 block) so we never nudge toward an uncallable tool.
- * This guard pins that against a silent revert.
+ * Both are removed. Channel 2 remains armed for subagents when ctx_reduce is
+ * callable, while delivery additionally requires the subagent's run to still be
+ * active so a terminal report cannot be followed by a synthetic turn. This
+ * guard pins the subagent-enabled trigger and delivery wiring against a silent
+ * revert.
  */
 
 function codeWithoutComments(path: string): string {
@@ -27,17 +29,14 @@ function codeWithoutComments(path: string): string {
 }
 
 describe("channel 2 fires for subagents", () => {
-    it("transform trigger does NOT gate channel2MetricsKnown on fullFeatureMode", () => {
+    it("transform trigger does NOT gate the persisted U/T baseline on fullFeatureMode", () => {
         const src = codeWithoutComments(join(import.meta.dir, "transform.ts"));
-        const idx = src.indexOf("const channel2MetricsKnown =");
+        const idx = src.indexOf("const channelBaseline =");
         expect(idx).toBeGreaterThan(-1);
-        // The whole assignment up to its terminating semicolon must not mention
-        // fullFeatureMode (it used to lead the conjunction).
-        const stmt = src.slice(idx, src.indexOf(";", idx));
-        expect(stmt).not.toContain("fullFeatureMode");
-        // It still requires the metrics to be known.
-        expect(stmt).toContain("resolvedContextLimit");
-        expect(stmt).toContain("resolvedExecuteThresholdPct");
+        const triggerBlock = src.slice(idx, src.indexOf("const elapsed", idx));
+        expect(triggerBlock).not.toContain("fullFeatureMode");
+        expect(triggerBlock).toContain("evaluateChannel2");
+        expect(triggerBlock).toContain("channelBaseline.evaluable");
     });
 
     it("delivery wrapper does NOT early-return for subagents", () => {

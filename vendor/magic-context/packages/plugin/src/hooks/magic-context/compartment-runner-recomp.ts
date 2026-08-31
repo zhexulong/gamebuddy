@@ -26,6 +26,7 @@ import { getErrorMessage } from "../../shared/error-message";
 import { getHarness } from "../../shared/harness";
 import { sessionLog } from "../../shared/logger";
 import type { Database } from "../../shared/sqlite";
+import { logSlowWriteTransaction } from "../../shared/write-transaction-timing";
 import { updateCompactionMarkerAfterPublication } from "./compaction-marker-manager";
 import { buildCompartmentAgentPrompt } from "./compartment-prompt";
 import { queueDropsForCompartmentalizedMessages } from "./compartment-runner-drop-queue";
@@ -96,6 +97,7 @@ export function promoteRecompStagingWithM0Mutation(
     }>;
 } | null {
     const now = Date.now();
+    const transactionStartedAt = performance.now();
     db.exec("BEGIN IMMEDIATE");
     let finished = false;
     try {
@@ -132,6 +134,7 @@ export function promoteRecompStagingWithM0Mutation(
 
         db.exec("COMMIT");
         finished = true;
+        logSlowWriteTransaction("historian-publish:recomp", transactionStartedAt);
         return { compartments: staging.compartments, facts: staging.facts };
     } finally {
         if (!finished) {
@@ -409,6 +412,7 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
 
             const validatedPass = await runValidatedHistorianPass({
                 client,
+                db,
                 parentSessionId: sessionId,
                 sessionDirectory,
                 prompt,
@@ -417,6 +421,7 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
                 sequenceOffset: candidateCompartments.length,
                 dumpLabelBase: `recomp-${sessionId}-${chunk.startIndex}-${chunk.endIndex}-pass-${passCount + 1}`,
                 timeoutMs: historianTimeoutMs,
+                model: deps.model,
                 fallbackModelId: deps.fallbackModelId,
                 fallbackModels: deps.fallbackModels,
                 twoPass: deps.historianTwoPass,

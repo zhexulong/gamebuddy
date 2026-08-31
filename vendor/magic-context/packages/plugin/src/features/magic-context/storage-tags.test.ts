@@ -3,11 +3,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
+import { queuePendingOp } from "./storage-ops";
 import {
     adoptFallbackTagMessageId,
     findAdoptableFallbackTags,
     getActiveTagsBySession,
     getActiveTagTokenAggregate,
+    getDroppedTagsByNumbers,
     getMaxDroppedTagNumber,
     getOldestActiveUnprotectedToolTags,
     getTagById,
@@ -118,8 +120,45 @@ describe("storage-tags", () => {
             const hints = getOldestActiveUnprotectedToolTags(db, "ses-hint", 2, 4);
 
             expect(hints).toEqual([
-                { tagNumber: 1, toolName: "read" },
                 { tagNumber: 3, toolName: "grep" },
+                { tagNumber: 1, toolName: "read" },
+            ]);
+        });
+
+        it("#then excludes queued drops while retaining unqueued sibling candidates", () => {
+            db = makeMemoryDatabase();
+            insertTag(
+                db,
+                "ses-queued-hint",
+                "queued-output",
+                "tool",
+                9000,
+                1,
+                0,
+                "bash",
+                0,
+                null,
+                null,
+                { tokenCount: 900, inputTokenCount: 0, reasoningTokenCount: 0 },
+            );
+            insertTag(
+                db,
+                "ses-queued-hint",
+                "sibling-output",
+                "tool",
+                9000,
+                2,
+                0,
+                "read",
+                0,
+                null,
+                null,
+                { tokenCount: 900, inputTokenCount: 0, reasoningTokenCount: 0 },
+            );
+            queuePendingOp(db, "ses-queued-hint", 1, "drop", 1);
+
+            expect(getOldestActiveUnprotectedToolTags(db, "ses-queued-hint")).toEqual([
+                { tagNumber: 2, toolName: "read" },
             ]);
         });
 
@@ -142,29 +181,79 @@ describe("storage-tags", () => {
             expect(hints).toEqual([{ tagNumber: 2, toolName: "bash" }]);
         });
 
-        it("#then skips trivially-small sized outputs below the token floor", () => {
+        it("#then skips control-plane and tiny tags to prioritize reclaimable tool output", () => {
             db = makeMemoryDatabase();
-            // tiny control-plane outputs (ctx_reduce/bash_status) below the floor
-            insertTag(db, "ses-floor", "msg-1", "tool", 50, 1, 0, "ctx_reduce", 0, null, null, {
-                tokenCount: 40,
-                inputTokenCount: 0,
-                reasoningTokenCount: 0,
-            });
-            insertTag(db, "ses-floor", "msg-2", "tool", 60, 2, 0, "bash_status", 0, null, null, {
-                tokenCount: 33,
-                inputTokenCount: 0,
-                reasoningTokenCount: 0,
-            });
-            // a real, reclaimable bash output above the floor
-            insertTag(db, "ses-floor", "msg-3", "tool", 9000, 3, 0, "bash", 0, null, null, {
-                tokenCount: 2300,
-                inputTokenCount: 0,
-                reasoningTokenCount: 0,
-            });
+            const tag = (tagNumber: number, toolName: string, tokenCount: number) =>
+                insertTag(
+                    db,
+                    "ses-priority",
+                    `msg-${tagNumber}`,
+                    "tool",
+                    9000,
+                    tagNumber,
+                    0,
+                    toolName,
+                    0,
+                    null,
+                    null,
+                    {
+                        tokenCount,
+                        inputTokenCount: 0,
+                        reasoningTokenCount: 0,
+                    },
+                );
 
-            const hints = getOldestActiveUnprotectedToolTags(db, "ses-floor", 0, 4);
+            // The oldest tags are coordination output or too small to justify a drop.
+            tag(1, "work", 900);
+            tag(2, "board", 900);
+            tag(3, "bash", 40);
+            // Older miscellaneous outputs (T3) lead edit/search (T2) and navigation (T1) output.
+            tag(4, "bash", 2300);
+            tag(5, "bash", 1800);
+            tag(6, "aft_search", 900);
+            tag(7, "read", 900);
 
-            expect(hints).toEqual([{ tagNumber: 3, toolName: "bash" }]);
+            const hints = getOldestActiveUnprotectedToolTags(db, "ses-priority", 0, 4);
+
+            expect(hints).toEqual([
+                { tagNumber: 4, toolName: "bash" },
+                { tagNumber: 5, toolName: "bash" },
+                { tagNumber: 6, toolName: "aft_search" },
+                { tagNumber: 7, toolName: "read" },
+            ]);
+        });
+
+        it("#then omits the hint when every candidate is control-plane output", () => {
+            db = makeMemoryDatabase();
+            for (const [tagNumber, toolName] of [
+                [1, "work"],
+                [2, "board"],
+                [3, "ask"],
+                [4, "ctx_memory"],
+                [5, "bash_status"],
+                [6, "todoread"],
+            ] as const) {
+                insertTag(
+                    db,
+                    "ses-control-only",
+                    `msg-${tagNumber}`,
+                    "tool",
+                    9000,
+                    tagNumber,
+                    0,
+                    toolName,
+                    0,
+                    null,
+                    null,
+                    {
+                        tokenCount: 900,
+                        inputTokenCount: 0,
+                        reasoningTokenCount: 0,
+                    },
+                );
+            }
+
+            expect(getOldestActiveUnprotectedToolTags(db, "ses-control-only", 0, 4)).toEqual([]);
         });
 
         it("#then keeps tags with NO cached token count (cannot size → never hidden by the floor)", () => {
@@ -520,6 +609,70 @@ describe("storage-tags", () => {
 
             // Order matches by ORDER BY tag_number ASC, id ASC in both.
             expect(fromHelper).toEqual(fromFull);
+        });
+    });
+
+    describe("#given getDroppedTagsByNumbers", () => {
+        it("#when tagNumbers is empty #then returns no rows", () => {
+            db = makeMemoryDatabase();
+            insertTag(db, "ses-1", "msg-1", "message", 100, 1);
+
+            expect(getDroppedTagsByNumbers(db, "ses-1", [])).toEqual([]);
+        });
+
+        it("#when statuses and drop modes are mixed #then returns only targeted dropped rows", () => {
+            db = makeMemoryDatabase();
+            insertTag(db, "ses-1", "active-text", "message", 100, 1);
+            const droppedText = insertTag(db, "ses-1", "dropped-text", "message", 100, 2);
+            const fullTool = insertTag(db, "ses-1", "call-full", "tool", 100, 3);
+            const truncatedTool = insertTag(db, "ses-1", "call-truncated", "tool", 100, 4);
+            const editMarkerTool = insertTag(db, "ses-1", "call-edit", "tool", 100, 5);
+            const compacted = insertTag(db, "ses-1", "compacted", "message", 100, 6);
+            const nonTargetDropped = insertTag(
+                db,
+                "ses-1",
+                "non-target-dropped",
+                "message",
+                100,
+                7,
+            );
+            for (const tagNumber of [droppedText, fullTool, truncatedTool, editMarkerTool]) {
+                updateTagStatus(db, "ses-1", tagNumber, "dropped");
+            }
+            updateTagStatus(db, "ses-1", compacted, "compacted");
+            updateTagStatus(db, "ses-1", nonTargetDropped, "dropped");
+            updateTagDropMode(db, "ses-1", fullTool, "full");
+            updateTagDropMode(db, "ses-1", truncatedTool, "truncated");
+            updateTagDropMode(db, "ses-1", editMarkerTool, "edit_marker");
+
+            const rows = getDroppedTagsByNumbers(db, "ses-1", [1, 2, 3, 4, 5, 6]);
+
+            // This exact set makes the status predicate observable: removing
+            // `status = 'dropped'` leaks active tag 1 and compacted tag 6.
+            expect(rows.map((tag) => tag.tagNumber)).toEqual([2, 3, 4, 5]);
+            expect(rows.map((tag) => [tag.type, tag.dropMode])).toEqual([
+                ["message", "full"],
+                ["tool", "full"],
+                ["tool", "truncated"],
+                ["tool", "edit_marker"],
+            ]);
+            expect(rows.every((tag) => tag.status === "dropped")).toBe(true);
+        });
+
+        it("#when more than 900 numbers are requested #then chunks without returning active rows", () => {
+            db = makeMemoryDatabase();
+            for (let tagNumber = 1; tagNumber <= 1_001; tagNumber++) {
+                const id = insertTag(db, "ses-1", `msg-${tagNumber}`, "message", 10, tagNumber);
+                if (tagNumber % 2 === 0) {
+                    updateTagStatus(db, "ses-1", id, "dropped");
+                }
+            }
+            const requested = Array.from({ length: 1_001 }, (_, index) => index + 1);
+
+            const rows = getDroppedTagsByNumbers(db, "ses-1", requested);
+
+            expect(rows).toHaveLength(500);
+            expect(rows.every((tag) => tag.tagNumber % 2 === 0)).toBe(true);
         });
     });
 

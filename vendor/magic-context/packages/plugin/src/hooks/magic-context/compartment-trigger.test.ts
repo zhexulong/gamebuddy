@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+
 import {
     closeDatabase,
     insertTag,
@@ -14,8 +15,17 @@ import {
 import type { SessionMeta } from "../../features/magic-context/types";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
-import { checkCompartmentTrigger, type InMemoryTailSource } from "./compartment-trigger";
+import {
+    checkCompartmentTrigger,
+    formatProjectedPostDropPercentage,
+    type InMemoryTailSource,
+} from "./compartment-trigger";
 import type { RawMessage } from "./read-session-raw";
+
+it("formats an unavailable post-drop projection without a percent suffix", () => {
+    expect(formatProjectedPostDropPercentage(null)).toBe("none");
+    expect(formatProjectedPostDropPercentage(67.54)).toBe("67.5%");
+});
 
 const tempDirs: string[] = [];
 const originalXdgDataHome = process.env.XDG_DATA_HOME;
@@ -469,6 +479,68 @@ describe("checkCompartmentTrigger", () => {
         expect(result).toEqual({ shouldFire: false });
     });
 
+    it("projects aged reasoning only when the provider can clear it from the wire", () => {
+        // Match issue #274's shape: at 36.8% usage, 70% of tagged bytes are
+        // aged reasoning. Counting it as reclaimable projects 11.0%, below the
+        // 16.2% post-drop target; a provider that cannot clear it must instead
+        // fire the historian at the real 36.8% pressure.
+        useTempDataHome("compartment-trigger-unavailable-reasoning-");
+        const sessionId = "ses-unavailable-reasoning";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "a ".repeat(3500) },
+            { id: "m-2", role: "assistant", text: "done" },
+            { id: "m-3", role: "user", text: "b ".repeat(3500) },
+            { id: "m-4", role: "assistant", text: "done" },
+            { id: "m-5", role: "user", text: "c ".repeat(3500) },
+            { id: "m-6", role: "assistant", text: "done" },
+            { id: "m-7", role: "user", text: "protected tail 1" },
+            { id: "m-8", role: "user", text: "protected tail 2" },
+            { id: "m-9", role: "user", text: "protected tail 3" },
+            { id: "m-10", role: "user", text: "protected tail 4" },
+            { id: "m-11", role: "user", text: "protected tail 5" },
+        ]);
+        const db = openDatabase();
+        // Total tagged bytes = 1,000; tag 1's 700 reasoning bytes are old
+        // enough for clearing because tag 51 establishes the age cutoff.
+        insertTag(db, sessionId, "m-1", "message", 299, 1, 700);
+        insertTag(db, sessionId, "m-11", "message", 1, 51);
+        const runTrigger = (reasoningProjection: {
+            providerID?: string;
+            canClearReasoning?: boolean;
+        }) =>
+            checkCompartmentTrigger(
+                db,
+                sessionId,
+                makeSessionMeta(sessionId, 36.8),
+                { percentage: 36.8, inputTokens: 736_000 },
+                36.8,
+                21.6,
+                6500,
+                50,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                reasoningProjection,
+            );
+
+        // Mutation direction: removing the provider gate would count the 700
+        // reasoning bytes, project 11.0%, and make this assertion fail.
+        expect(runTrigger({ providerID: "opencode" })).toMatchObject({
+            shouldFire: true,
+            reason: "projected_headroom",
+        });
+        // Anthropic safely clears reasoning through its empty-content sentinel,
+        // so the aged bytes stay projected as reclaimable and suppress this fire.
+        expect(runTrigger({ providerID: "anthropic" })).toEqual({ shouldFire: false });
+        // Pi clears typed thinking for every provider, so its explicit shared
+        // trigger capability retains the same projection on an OpenCode-like id.
+        expect(runTrigger({ providerID: "opencode", canClearReasoning: true })).toEqual({
+            shouldFire: false,
+        });
+    });
+
     it("does not force-fire at 80% when pending drops are enough to bring usage below target", () => {
         useTempDataHome("compartment-trigger-force-skip-");
         createOpenCodeDb("ses-force-skip", [
@@ -492,6 +564,65 @@ describe("checkCompartmentTrigger", () => {
         );
 
         expect(result).toEqual({ shouldFire: false });
+    });
+
+    it("keeps raised-threshold usage below the force band on the proactive ladder", () => {
+        useTempDataHome("compartment-trigger-derived-force-band-");
+        const sessionId = "ses-derived-force-band";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "a ".repeat(3500) },
+            { id: "m-2", role: "assistant", text: "b ".repeat(3500) },
+            { id: "m-3", role: "user", text: "live prompt" },
+            { id: "m-4", role: "assistant", text: "live response" },
+        ]);
+        const db = openDatabase();
+        insertCoveredMessageTag(db, sessionId, "m-1", 1, 7_000);
+
+        // With T=90 the force band is 92. Reverting the trigger to literal 80
+        // would force-fire this runnable head instead of reaching the proactive floor.
+        expect(
+            checkCompartmentTrigger(
+                db,
+                sessionId,
+                makeSessionMeta(sessionId, 85),
+                { percentage: 86, inputTokens: 17_200 },
+                85,
+                90,
+                6_500,
+                undefined,
+                undefined,
+                undefined,
+                20_000,
+            ),
+        ).toEqual({ shouldFire: false });
+    });
+
+    it("force-fires at the unchanged default-config band", () => {
+        useTempDataHome("compartment-trigger-default-force-band-");
+        const sessionId = "ses-default-force-band";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "a ".repeat(3500) },
+            { id: "m-2", role: "assistant", text: "b ".repeat(3500) },
+            { id: "m-3", role: "user", text: "live prompt" },
+            { id: "m-4", role: "assistant", text: "live response" },
+        ]);
+        const db = openDatabase();
+
+        expect(
+            checkCompartmentTrigger(
+                db,
+                sessionId,
+                makeSessionMeta(sessionId, 84),
+                { percentage: 85, inputTokens: 17_000 },
+                84,
+                65,
+                6_500,
+                undefined,
+                undefined,
+                undefined,
+                20_000,
+            ),
+        ).toMatchObject({ shouldFire: true, reason: "force_band" });
     });
 
     it("does not fire when only unsummarized history is inside the protected tail", () => {

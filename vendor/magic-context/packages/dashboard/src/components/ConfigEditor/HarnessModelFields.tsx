@@ -1,0 +1,248 @@
+import { For, Show } from "solid-js";
+import ModelSelect from "./ModelSelect";
+
+export type Harness = "opencode" | "pi";
+
+export function modelCatalogForHarness(
+  catalogs: { opencode: string[]; pi: string[] },
+  harness: Harness,
+): string[] {
+  return catalogs[harness];
+}
+
+export type OpenCodeModelEntry = string | { model: string; variant?: string };
+export type PiModelEntry = string | { model: string; thinking_level?: string };
+export type ModelEntry = OpenCodeModelEntry | PiModelEntry;
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+export function modelId(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  const candidate = record(value).model;
+  return typeof candidate === "string" ? candidate : undefined;
+}
+
+export function modelQualifier(value: unknown, harness: Harness): string | undefined {
+  const candidate = record(value)[harness === "opencode" ? "variant" : "thinking_level"];
+  return typeof candidate === "string" ? candidate : undefined;
+}
+
+export function modelEntryWithModel(
+  value: unknown,
+  harness: Harness,
+  model: string | undefined,
+): ModelEntry | undefined {
+  if (!model) return undefined;
+  const qualifier = modelQualifier(value, harness);
+  return qualifier ? modelEntryWithQualifier(model, harness, qualifier) : model;
+}
+
+export function modelEntryWithQualifier(
+  value: unknown,
+  harness: Harness,
+  qualifier: string | undefined,
+): ModelEntry | undefined {
+  const model = modelId(value);
+  if (!model) return undefined;
+  if (!qualifier) return model;
+  return harness === "opencode"
+    ? { model, variant: qualifier }
+    : { model, thinking_level: qualifier };
+}
+
+export function fallbackEntries(value: unknown): ModelEntry[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is ModelEntry => Boolean(modelId(entry)))
+    : [];
+}
+
+function QualifierControl(props: {
+  harness: Harness;
+  label: string;
+  description: string;
+  value: string | undefined;
+  onChange: (value: string | undefined) => void;
+}) {
+  const qualifier = () => (props.harness === "opencode" ? "variant" : "thinking_level");
+
+  return (
+    <div class="config-field">
+      <div class="config-field-header">
+        <span class="config-field-label">{props.label}</span>
+        <span class="config-field-key">{qualifier()}</span>
+      </div>
+      <span class="config-field-desc">{props.description}</span>
+      <Show
+        when={props.harness === "opencode"}
+        fallback={
+          <select
+            class="config-input config-select"
+            value={props.value ?? ""}
+            onChange={(event) => props.onChange(event.currentTarget.value || undefined)}
+          >
+            <option value="">Use harness default</option>
+            <For each={THINKING_LEVELS}>{(level) => <option value={level}>{level}</option>}</For>
+          </select>
+        }
+      >
+        <input
+          class="config-input"
+          type="text"
+          value={props.value ?? ""}
+          placeholder="e.g. high"
+          onInput={(event) => props.onChange(event.currentTarget.value || undefined)}
+        />
+      </Show>
+    </div>
+  );
+}
+
+interface HarnessModelFieldsProps {
+  harness: Harness;
+  models: string[];
+  value: unknown;
+  onChange: (value: Record<string, unknown>) => void;
+  agent: "historian" | "dreamer";
+}
+
+export default function HarnessModelFields(props: HarnessModelFieldsProps) {
+  const block = () => record(props.value);
+  const qualifierKey = () => (props.harness === "opencode" ? "variant" : "thinking_level");
+  const label = () => (props.harness === "opencode" ? "Variant" : "Thinking level");
+  const updateBlock = (patch: Record<string, unknown>) => {
+    const next = { ...block(), ...patch };
+    for (const key of Object.keys(next)) {
+      if (next[key] === undefined) delete next[key];
+    }
+    props.onChange(next);
+  };
+  const model = () => modelId(block().model);
+  const fallbacks = () => fallbackEntries(block().fallback_models);
+  const updateFallback = (index: number, entry: ModelEntry | undefined) => {
+    const next = fallbacks();
+    if (entry) next[index] = entry;
+    else next.splice(index, 1);
+    updateBlock({ fallback_models: next.length > 0 ? next : undefined });
+  };
+
+  return (
+    <div class="harness-model-fields" data-harness={props.harness}>
+      <div class="config-field">
+        <div class="config-field-header">
+          <span class="config-field-label">Model</span>
+          <span class="config-field-key">
+            {props.agent}.{props.harness}.model
+          </span>
+        </div>
+        <span class="config-field-desc">
+          Primary model for the {props.agent} {props.harness} harness
+        </span>
+        <ModelSelect
+          models={props.models}
+          value={model()}
+          onChange={(next) =>
+            updateBlock({
+              model: modelEntryWithModel(block().model, props.harness, next || undefined),
+            })
+          }
+          placeholder="— Use fallback chain —"
+        />
+      </div>
+
+      <QualifierControl
+        harness={props.harness}
+        label={`Primary ${label().toLowerCase()}`}
+        description="Stored on this model entry and used only by this harness."
+        value={modelQualifier(block().model, props.harness)}
+        onChange={(next) =>
+          updateBlock({ model: modelEntryWithQualifier(block().model, props.harness, next) })
+        }
+      />
+
+      <QualifierControl
+        harness={props.harness}
+        label={`Default ${label().toLowerCase()}`}
+        description="Used when the primary entry does not specify its own qualifier."
+        value={
+          typeof block()[qualifierKey()] === "string"
+            ? (block()[qualifierKey()] as string)
+            : undefined
+        }
+        onChange={(next) => updateBlock({ [qualifierKey()]: next })}
+      />
+
+      <div class="config-field">
+        <div class="config-field-header">
+          <span class="config-field-label">Fallback Models</span>
+          <span class="config-field-key">
+            {props.agent}.{props.harness}.fallback_models
+          </span>
+        </div>
+        <span class="config-field-desc">
+          Fallback entries keep their own {label().toLowerCase()} and never inherit the primary
+          entry's value.
+        </span>
+        <div class="model-chain-list">
+          <Show
+            when={fallbacks().length > 0}
+            fallback={<span class="model-chain-empty">Using built-in fallback chain</span>}
+          >
+            <For each={fallbacks()}>
+              {(entry, index) => (
+                <div class="model-chain-item">
+                  <div style={{ flex: 1 }}>
+                    <ModelSelect
+                      models={props.models}
+                      value={modelId(entry)}
+                      onChange={(next) =>
+                        updateFallback(
+                          index(),
+                          modelEntryWithModel(entry, props.harness, next || undefined),
+                        )
+                      }
+                      placeholder="— Select fallback model —"
+                    />
+                    <QualifierControl
+                      harness={props.harness}
+                      label={`Fallback ${label().toLowerCase()}`}
+                      description="Optional qualifier for this fallback entry."
+                      value={modelQualifier(entry, props.harness)}
+                      onChange={(next) =>
+                        updateFallback(index(), modelEntryWithQualifier(entry, props.harness, next))
+                      }
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    class="btn sm danger"
+                    onClick={() => updateFallback(index(), undefined)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </For>
+          </Show>
+        </div>
+        <div class="model-chain-add">
+          <ModelSelect
+            models={props.models.filter(
+              (candidate) => !fallbacks().some((entry) => modelId(entry) === candidate),
+            )}
+            value={undefined}
+            onChange={(next) => {
+              if (next) updateBlock({ fallback_models: [...fallbacks(), next] });
+            }}
+            placeholder="— Add fallback model —"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

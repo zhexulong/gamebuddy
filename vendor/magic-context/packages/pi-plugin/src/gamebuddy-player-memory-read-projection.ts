@@ -3,7 +3,7 @@ import {
     type Memory,
     MemoryCommandFacade,
 } from "@magic-context/core/features/magic-context/memory";
-import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
+import { resolveProjectIdentityOrFallback } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { openDatabaseAsync } from "@magic-context/core/features/magic-context/storage-db";
 
 /**
@@ -15,8 +15,9 @@ export function resolveGameBuddyMemoryProjectPath(
     runtimeCwd: string,
     continuityId: string,
 ): string {
-    const projectIdentity = resolveProjectIdentityForSession(runtimeCwd);
-    if (!projectIdentity) throw new Error("gamebuddy_memory_project_identity_unavailable");
+    // GameBuddy passes its private product runtime root, not an interactive Pi
+    // project cwd. It may legitimately live beneath the player's home directory.
+    const projectIdentity = resolveProjectIdentityOrFallback(runtimeCwd);
     return `gamebuddy:${projectIdentity}:continuity:${continuityId}`;
 }
 

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CTX_REDUCE_KEEP } from "../../features/magic-context/reclaim-protection";
 import {
     closeDatabase,
     insertTag,
@@ -11,7 +12,11 @@ import {
     queuePendingOp,
 } from "../../features/magic-context/storage";
 import { createTagger } from "../../features/magic-context/tagger";
-import { buildEditSupersessionReclaim, buildSupersessionReclaimOps } from "./supersession-reclaim";
+import {
+    buildEditSupersessionReclaim,
+    buildSupersessionReclaimOps,
+    SUPERSESSION_RECENT_MESSAGE_WINDOW,
+} from "./supersession-reclaim";
 import { type MessageLike, type TagTarget, tagMessages } from "./tag-messages";
 
 const tempDirs: string[] = [];
@@ -78,16 +83,17 @@ describe("buildSupersessionReclaimOps", () => {
         expect(ids(ops)).toEqual([1, 2]);
     });
 
-    it("keeps newest 5 ctx_reduce, drops older ones", () => {
+    it("keeps the newest three ctx_reduce exemplars and drops older ones", () => {
         const db = freshDb();
         const targets = new Map<number, TagTarget>();
-        for (let n = 1; n <= 7; n += 1) {
-            insertTag(db, SES, `c${n}`, "tool", 40, n, 0, "ctx_reduce");
+        for (let n = 1; n <= 5; n += 1) {
+            insertTag(db, SES, `reduce-${n}`, "tool", 40, n, 0, "ctx_reduce");
             targets.set(n, target());
         }
         const ops = buildSupersessionReclaimOps({ db, sessionId: SES, targets });
-        // newest 5 (3..7) kept; 1 and 2 dropped.
+
         expect(ids(ops)).toEqual([1, 2]);
+        expect(CTX_REDUCE_KEEP).toBe(3);
     });
 
     it("drops all zero-value meta (bash_status / bash_kill)", () => {
@@ -132,6 +138,31 @@ describe("buildSupersessionReclaimOps", () => {
         expect(ops).toHaveLength(0);
     });
 
+    it("withholds owners in the newest 20-message continuation floor", () => {
+        const db = freshDb();
+        const targets = new Map<number, TagTarget>();
+        for (let n = 1; n <= 22; n += 1) {
+            insertTag(db, SES, `status-${n}`, "tool", 30, n, 0, "bash_status", 0, `owner-${n}`);
+            targets.set(n, target());
+        }
+        const recentMessageIds = new Set(
+            Array.from(
+                { length: SUPERSESSION_RECENT_MESSAGE_WINDOW },
+                (_, index) => `owner-${index + 3}`,
+            ),
+        );
+
+        const ops = buildSupersessionReclaimOps({
+            db,
+            sessionId: SES,
+            targets,
+            recentMessageIds,
+        });
+
+        expect(ids(ops)).toEqual([1, 2]);
+        expect(SUPERSESSION_RECENT_MESSAGE_WINDOW).toBe(20);
+    });
+
     it("excludes tags already in pendingOps and tags that cannot reclaim", () => {
         const db = freshDb();
         insertTag(db, SES, "c1", "tool", 30, 1, 0, "bash_status");
@@ -174,6 +205,25 @@ describe("buildEditSupersessionReclaim (superseded-edit compression)", () => {
         // newest A (2) and only-B (3) kept; older A (1) compressed.
         expect(ids(ops)).toEqual([1]);
         expect([...editMarkerTagIds]).toEqual([1]);
+    });
+
+    it("withholds a superseded edit whose owner is in the recent-message floor", () => {
+        const db = freshDb();
+        insertTag(db, SES, "c1", "tool", 900, 1, 0, "edit", 0, "owner-old");
+        insertTag(db, SES, "c2", "tool", 900, 2, 0, "edit", 0, "owner-new");
+        const targets = new Map<number, TagTarget>([
+            [1, target({ filePath: "A.ts" })],
+            [2, target({ filePath: "A.ts" })],
+        ]);
+
+        const { ops } = buildEditSupersessionReclaim({
+            db,
+            sessionId: SES,
+            targets,
+            recentMessageIds: new Set(["owner-old", "owner-new"]),
+        });
+
+        expect(ops).toHaveLength(0);
     });
 
     it("never marks an edit whose filePath is unresolvable (fail safe)", () => {

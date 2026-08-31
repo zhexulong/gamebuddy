@@ -6,9 +6,10 @@ import { log } from "../shared/logger";
  * # Why this exists
  *
  * Hidden agents (`historian`, `historian-editor`, `dreamer`, `sidekick`) are
- * registered with `mode: "subagent"` and `hidden: true`, but those flags
- * only control visibility in the UI picker — they do NOT restrict which
- * tools the spawned session can call. By default a registered subagent
+ * registered with `mode: "primary"` and `hidden: true`: primary mode keeps
+ * them out of OpenCode's general Task candidate list, while hidden keeps them
+ * out of the UI picker. Those flags do NOT restrict which tools the spawned
+ * session can call. By default a registered agent
  * inherits the FULL primary-agent tool surface: `task`, `bash`, `edit`,
  * `webfetch`, `websearch`, `read`, `grep`, `glob`, every MCP tool, etc.
  *
@@ -106,6 +107,103 @@ export function buildAllowOnlyPermission(
         permission[tool] = "allow";
     }
     return permission;
+}
+
+type PermissionAction = "ask" | "allow" | "deny";
+
+function isPermissionAction(value: unknown): value is PermissionAction {
+    return value === "ask" || value === "allow" || value === "deny";
+}
+
+function isPermissionMap(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Add final `permission.task` denies for Magic Context's internal workers.
+ *
+ * OpenCode accepts either a whole-permission action or a pattern map for
+ * `permission.task`; its visibility evaluator uses the last matching rule.
+ * Normalize the whole-permission form, retain unrelated user rules, then append
+ * our exact agent-id denies. When the ambient task policy has a wildcard deny,
+ * re-emit that wildcard after the named denies so the Task tool is hidden rather
+ * than shown as a callable-but-refused tool.
+ */
+export function denyTaskRoutingToAgents(
+    permission: unknown,
+    internalAgentIds: readonly string[],
+): Record<string, unknown> {
+    const configured = isPermissionAction(permission)
+        ? { "*": permission }
+        : isPermissionMap(permission)
+          ? permission
+          : {};
+    const { task, ...otherPermissions } = configured;
+    const configuredTask = isPermissionAction(task)
+        ? { "*": task }
+        : isPermissionMap(task)
+          ? task
+          : {};
+    const internalAgentIdSet = new Set(internalAgentIds);
+    const hasAmbientWildcardDeny = configuredTask["*"] === "deny";
+    const retainedTask = Object.fromEntries(
+        Object.entries(configuredTask).filter(
+            ([agentId]) =>
+                !internalAgentIdSet.has(agentId) && (agentId !== "*" || !hasAmbientWildcardDeny),
+        ),
+    );
+
+    return {
+        ...otherPermissions,
+        task: {
+            ...retainedTask,
+            ...Object.fromEntries(internalAgentIds.map((agentId) => [agentId, "deny"])),
+            // OpenCode's Permission.disabled uses findLast. Re-inserting the
+            // ambient wildcard after our named routing denies keeps its whole-tool
+            // deny as the final match and makes the Task tool invisible.
+            ...(hasAmbientWildcardDeny ? { "*": "deny" } : {}),
+        },
+    };
+}
+
+const BUILTIN_TASK_CALLER_IDS = ["build", "plan"] as const;
+
+function isTaskRoutingCaller(agentId: string, config: Record<string, unknown>): boolean {
+    const mode = config.mode;
+    // OpenCode compatibility:
+    // Only strictly-primary callers receive explicit Task routing rules.
+    // Agents that may execute as Task children are intentionally left untouched,
+    // because explicit task permissions can alter OpenCode's default anti-nesting
+    // behavior in the currently supported permission model.
+    if (mode === "primary") return true;
+    if (mode === "subagent" || mode === "all") return false;
+    return agentId === "build" || agentId === "plan";
+}
+
+/**
+ * Apply Task routing denies only to agents that can act as Task callers.
+ *
+ * A top-level permission rule is merged into every OpenCode agent. Adding one
+ * there would suppress the Task tool's default deny for ordinary subagents, so
+ * seed only the built-in interactive callers and configured primary agents.
+ */
+export function denyTaskRoutingToCallerAgents(
+    agentConfigs: Record<string, Record<string, unknown>>,
+    internalAgentIds: readonly string[],
+): Record<string, Record<string, unknown>> {
+    const result = { ...agentConfigs };
+    const candidateIds = new Set([...BUILTIN_TASK_CALLER_IDS, ...Object.keys(agentConfigs)]);
+
+    for (const agentId of candidateIds) {
+        const agentConfig = agentConfigs[agentId] ?? {};
+        if (!isTaskRoutingCaller(agentId, agentConfig)) continue;
+        result[agentId] = {
+            ...agentConfig,
+            permission: denyTaskRoutingToAgents(agentConfig.permission, internalAgentIds),
+        };
+    }
+
+    return result;
 }
 
 /**

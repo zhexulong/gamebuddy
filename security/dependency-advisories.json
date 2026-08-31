@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "artifactKind": "dependency_advisory_snapshot",
-  "snapshotId": "p3-6-pnpm-audit-20260813-remediated",
+  "snapshotId": "pi-0.84.4-magic-context-0.41.0-upgrade",
   "generatedAt": "2026-08-13T00:10:36.521Z",
   "scanner": {
     "identity": "pnpm-audit",
@@ -12,15 +12,15 @@
   "lockfiles": {
     "pnpm-lock.yaml": {
       "present": true,
-      "sha256": "52691f74ec9b82fe6276d03f3536f1205a024487b72926a9b035ed3f80a8c84a"
+      "sha256": "e9e4ebb5f13e2b7aa60d90e5585a8a337d82d2ace720bab91bd62d162d391cd3"
     },
     "vendor/magic-context/bun.lock": {
       "present": true,
-      "sha256": "a7fdcf02987afc0ba636c5e580482481a7b8c5f587a633c668d3780cf7178392"
+      "sha256": "9b7cf5be22fb36175c55dac50c08ab490864bfddc82af4a79f838e4bdb55c324"
     },
     "integrations/stardew/packages.lock.json": {
       "present": true,
-      "sha256": "f19e94ecb6c83805916ae8cec4573f19865a96bc196fb62c336800a2dc61719a"
+      "sha256": "938bcea4b1529466c6c5fc02ce6924048021a236899f35b2e8e8444d57d9b8c1"
     }
   },
   "advisories": []

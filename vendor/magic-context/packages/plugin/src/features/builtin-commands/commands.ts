@@ -1,6 +1,11 @@
 import type { BuiltinCommandConfig } from "./types";
 
-export function getMagicContextBuiltinCommands(): BuiltinCommandConfig {
+const COMPACTION_ENABLED_PATH = `compaction${".enabled"}`;
+
+export function getMagicContextBuiltinCommands(compactionEnabled = true) {
+    const unavailableInCompactionOff = (command: string) =>
+        `Unavailable when ${COMPACTION_ENABLED_PATH} is false: /${command} manages compacted history.`;
+
     return {
         "ctx-status": {
             template: "ctx-status",
@@ -8,12 +13,15 @@ export function getMagicContextBuiltinCommands(): BuiltinCommandConfig {
         },
         "ctx-recomp": {
             template: "ctx-recomp",
-            description:
-                "Rebuild compartments and facts from raw history (full or <start>-<end> range)",
+            description: compactionEnabled
+                ? "Rebuild compartments and facts from raw history (full or <start>-<end> range)"
+                : unavailableInCompactionOff("ctx-recomp"),
         },
         "ctx-wrapup": {
             template: "ctx-wrapup",
-            description: "Compact older live history while keeping the newest messages raw",
+            description: compactionEnabled
+                ? "Compact older live history while keeping the newest messages raw"
+                : unavailableInCompactionOff("ctx-wrapup"),
         },
         "ctx-session-upgrade": {
             template: "ctx-session-upgrade",
@@ -22,7 +30,9 @@ export function getMagicContextBuiltinCommands(): BuiltinCommandConfig {
         },
         "ctx-flush": {
             template: "ctx-flush",
-            description: "Force-process all pending magic context operations immediately",
+            description: compactionEnabled
+                ? "Force-process all pending magic context operations immediately"
+                : unavailableInCompactionOff("ctx-flush"),
         },
         "ctx-aug": {
             template: "ctx-aug",
@@ -37,5 +47,9 @@ export function getMagicContextBuiltinCommands(): BuiltinCommandConfig {
             description:
                 "Embedding status, or start/pause history compartment embedding (start | pause)",
         },
-    };
+    } satisfies BuiltinCommandConfig;
 }
+
+export type MagicContextBuiltinCommandName = keyof ReturnType<
+    typeof getMagicContextBuiltinCommands
+>;

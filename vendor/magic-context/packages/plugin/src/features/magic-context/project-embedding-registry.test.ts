@@ -41,6 +41,7 @@ import {
     registerProjectShadowEmbedding,
     sweepAllRegisteredProjects,
     sweepStaleEmbeddingIdentitiesForProject,
+    TestProviderFactoryRequiredError,
 } from "./project-embedding-registry";
 import { recordSessionProjectIdentity } from "./session-project-storage";
 import { closeDatabase, openDatabase } from "./storage";
@@ -281,6 +282,112 @@ describe("project embedding registry", () => {
             providerIdentity: "embedding-provider:off",
             runtimeFingerprint: "embedding-provider:off",
         });
+    });
+
+    it("fails closed before a test constructs a provider without a factory (#388)", () => {
+        expect(process.env.MAGIC_CONTEXT_TEST_DATA_DIR).toBeTruthy();
+
+        let thrown: unknown;
+        try {
+            registerProjectShadowEmbedding(
+                useTempDb(),
+                "git:no-test-provider-factory",
+                {
+                    provider: "synapse",
+                    model: "test-synapse-model",
+                    synapse_fingerprint: "test-fingerprint",
+                    synapse_table_epoch: 1,
+                    synapse_dims: 8,
+                } as unknown as EmbeddingConfig,
+                "/tmp/no-test-provider-factory",
+            );
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(TestProviderFactoryRequiredError);
+        expect(thrown).toMatchObject({
+            name: "TestProviderFactoryRequiredError",
+            message:
+                "test constructed a network-capable embedding provider without a test factory — install _setTestProviderFactoryForProject or set embedding.provider off in the fixture",
+        });
+    });
+
+    it("keeps provider off as a clean null without a test factory", async () => {
+        const db = useTempDb();
+        registerProjectEmbedding(
+            db,
+            "git:test-provider-off",
+            { provider: "off" },
+            { memoryEnabled: true, gitCommitEnabled: false },
+            "/tmp/test-provider-off",
+        );
+
+        await expect(
+            embedTextForProject("git:test-provider-off", "not embedded"),
+        ).resolves.toBeNull();
+    });
+
+    it("default local config (no local_dtype) keeps the golden identity — no re-embed on upgrade (#259)", () => {
+        const db = useTempDb();
+        const features = { memoryEnabled: true, gitCommitEnabled: true };
+        const noDtype = registerProjectEmbedding(
+            db,
+            "golden-local-nodtype",
+            { provider: "local", model: "Xenova/all-MiniLM-L6-v2" },
+            features,
+            "/repo",
+        );
+        // Must match the golden local identity from the test above — adding
+        // the local_dtype field must NOT change the default identity string.
+        expect(noDtype.providerIdentity).toBe(
+            "embedding-provider:c447205ebd551e83d18c4fd5fd8fc357",
+        );
+    });
+
+    it("a non-default local_dtype folds into the identity and differs from the default (#259)", () => {
+        const db = useTempDb();
+        const features = { memoryEnabled: true, gitCommitEnabled: true };
+        const withDtype = registerProjectEmbedding(
+            db,
+            "golden-local-q8",
+            {
+                provider: "local",
+                model: "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+                local_dtype: "q8",
+            },
+            features,
+            "/repo",
+        );
+        const sameModelNoDtype = registerProjectEmbedding(
+            db,
+            "golden-local-multilingual-nodtype",
+            {
+                provider: "local",
+                model: "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+            },
+            features,
+            "/repo",
+        );
+        // A non-default dtype must produce a DIFFERENT identity than the same
+        // model without a dtype — otherwise switching dtype would mix vector
+        // spaces instead of re-embedding.
+        expect(withDtype.providerIdentity).not.toBe(sameModelNoDtype.providerIdentity);
+        // And the dtype must actually participate (identity changes with dtype).
+        const withFp32 = registerProjectEmbedding(
+            db,
+            "golden-local-multilingual-fp32",
+            {
+                provider: "local",
+                model: "Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+                local_dtype: "fp32",
+            },
+            features,
+            "/repo",
+        );
+        // fp32 is the default, so an explicit fp32 must match the no-dtype
+        // identity (default behavior preserved exactly).
+        expect(withFp32.providerIdentity).toBe(sameModelNoDtype.providerIdentity);
     });
 
     it("takes a BEGIN IMMEDIATE write lock while registering a project", () => {
@@ -1519,5 +1626,62 @@ describe("project embedding registry", () => {
         await flushShadowEmbeddingBacklog(projectIdentity);
 
         expect(getShadowBackfillStopReason(projectIdentity, "memory")).toBe("stalled_no_progress");
+    });
+
+    it("re-arms a stalled shadow backfill when the same identity registers after recovery", async () => {
+        let providerRecovered = false;
+        _setTestProviderFactoryForProject((config) => {
+            if (config.provider === "local") return new FakeEmbeddingProvider(config.model);
+            return new (class extends FakeEmbeddingProvider {
+                override async embedBatch(texts: string[]): Promise<Float32Array[]> {
+                    return providerRecovered
+                        ? super.embedBatch(texts)
+                        : texts.map(() => null as unknown as Float32Array);
+                }
+            })("shadow");
+        });
+        const db = useTempDb();
+        const projectIdentity = "git:shadow-rearm";
+        registerProjectEmbedding(
+            db,
+            projectIdentity,
+            localConfig("model-primary"),
+            { memoryEnabled: true, gitCommitEnabled: false },
+            "/tmp/shadow-rearm",
+        );
+        for (let i = 0; i < 3; i++) {
+            const memory = insertMemory(db, {
+                projectPath: projectIdentity,
+                category: "CONSTRAINTS",
+                content: `recoverable shadow memory ${i}`,
+            });
+            saveEmbedding(db, memory.id, new Float32Array([i, 1]), currentModelId(projectIdentity));
+        }
+        const shadowConfig = {
+            provider: "synapse",
+            model: "synapse-model",
+            synapse_fingerprint: "fp-rearm",
+        } as unknown as EmbeddingConfig;
+        const first = registerProjectShadowEmbedding(
+            db,
+            projectIdentity,
+            shadowConfig,
+            "/tmp/shadow-rearm",
+        );
+        await flushShadowEmbeddingBacklog(projectIdentity);
+        expect(getShadowBackfillStopReason(projectIdentity, "memory")).toBe("stalled_no_progress");
+
+        providerRecovered = true;
+        const repeated = registerProjectShadowEmbedding(
+            db,
+            projectIdentity,
+            shadowConfig,
+            "/tmp/shadow-rearm",
+        );
+        expect(repeated?.generation).toBe(first?.generation);
+        await flushShadowEmbeddingBacklog(projectIdentity);
+
+        expect(getShadowBackfillStopReason(projectIdentity, "memory")).toBe("drained");
+        expect(loadAllEmbeddings(db, projectIdentity, repeated!.modelId).size).toBe(3);
     });
 });

@@ -76,8 +76,8 @@ describe("validateCue (per-cue, applied on write)", () => {
         expect(validateCue("   ", 50)?.reason).toBe("empty");
     });
 
-    test("rejects a leaked source id", () => {
-        expect(validateCue("see #7863 for detail", 80)?.reason).toBe("leaked-id");
+    test("rejects the memory's own leaked source id", () => {
+        expect(validateCue("see #7863 for detail", 80, 7863)?.reason).toBe("leaked-id");
     });
 
     test("rejects unbalanced parentheses", () => {

@@ -5,6 +5,7 @@ import { getAuthorityManagedMarker } from "../../features/magic-context/context-
 import {
     archiveMemory,
     CATEGORY_PRIORITY,
+    clearMemoryVerifications,
     getMemoriesByIds,
     getMemoriesByProject,
     getMemoryByHash,
@@ -57,6 +58,8 @@ import {
 } from "./types";
 import { runImmediateTransaction } from "./verification-recording";
 
+export { CTX_MEMORY_LIGHT_DESCRIPTION } from "../light-descriptions";
+
 const MEMORY_CATEGORIES = new Set<string>(CATEGORY_PRIORITY);
 
 function isMemoryCategory(value: string): value is MemoryCategory {
@@ -89,13 +92,23 @@ function normalizeCategory(category?: string): string | undefined {
     return trimmed ? trimmed : undefined;
 }
 
-function moduleMemoryText(response: unknown): string | null {
+function memoryAuthorityRefusal(args: CtxMemoryArgs, cause?: string): string {
+    const readiness = "Rust memory authority is not ready.";
+    const refusal =
+        (args.action === "write" || args.action === "update" || args.action === "merge") &&
+        typeof args.content === "string"
+            ? `Error: ${readiness} Write REFUSED and NOT saved; RESEND the same call after authority is ready; the Rust module typically recovers in seconds-to-minutes.\nContent to resend:\n${args.content}`
+            : `Error: ${readiness} Request REFUSED and NOT applied; RESEND the same call after authority is ready; the Rust module typically recovers in seconds-to-minutes.`;
+    return cause ? `${cause}\n${refusal}` : refusal;
+}
+
+function moduleMemoryText(response: unknown, args: CtxMemoryArgs): string | null {
     let value = response;
     if (value !== null && typeof value === "object" && "result" in value) {
         value = (value as { result?: unknown }).result;
     }
     if (isRustAuthorityDrainingError(value)) {
-        return "Error: Rust memory authority is not ready; TypeScript fallback is disabled.";
+        return memoryAuthorityRefusal(args);
     }
     if (typeof value === "string") return value;
     if (value !== null && typeof value === "object") {
@@ -337,6 +350,7 @@ function updateMemoryContentInCurrentTransaction(
         db.prepare("UPDATE memories SET classified_at = NULL WHERE id = ?").run(memory.id);
     }
     db.prepare("DELETE FROM memory_embeddings WHERE memory_id = ?").run(memory.id);
+    clearMemoryVerifications(db, memory.id);
     invalidateMemory(memory.projectPath, memory.id);
 }
 
@@ -420,7 +434,11 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                         })) ?? null;
                 } catch (error) {
                     if (marker) {
-                        return `Error: Rust memory authority is unavailable. ${error instanceof Error ? error.message : String(error)}`;
+                        const detail = error instanceof Error ? error.message : String(error);
+                        return memoryAuthorityRefusal(
+                            args,
+                            `Error: Rust memory authority is unavailable. ${detail}`,
+                        );
                     }
                 }
                 if (authorityState === "MODULE") {
@@ -443,19 +461,24 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                                 ids: args.ids,
                                 reason: args.reason,
                             }),
+                            args,
                         );
                         return (
                             text ?? "Error: Rust module returned an invalid ctx_memory response."
                         );
                     } catch (error) {
                         if (isRustAuthorityDrainingError(error)) {
-                            return "Error: Rust memory authority is not ready; TypeScript fallback is disabled.";
+                            return memoryAuthorityRefusal(args);
                         }
-                        return `Error: Rust module ctx_memory failed. ${error instanceof Error ? error.message : String(error)}`;
+                        const detail = error instanceof Error ? error.message : String(error);
+                        return memoryAuthorityRefusal(
+                            args,
+                            `Error: Rust module ctx_memory failed. ${detail}`,
+                        );
                     }
                 }
                 if (marker || authorityState === "PREPARING" || authorityState === "DRAINING") {
-                    return "Error: Rust memory authority is not ready; TypeScript fallback is disabled.";
+                    return memoryAuthorityRefusal(args);
                 }
             }
             const workspaceIdentitySet = resolveWorkspaceIdentitySet(deps.db, projectPath);

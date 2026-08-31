@@ -6,6 +6,7 @@ import {
     captureLkgSlot,
     projectLkgEntry,
     replayLkg,
+    validateAnthropicReasoningRuns,
     validateLkgEntry,
     validateLkgSeam,
 } from "./lkg-replay";
@@ -298,6 +299,69 @@ describe("LKG transform replay", () => {
         expect(getSlot("anthropic-invalid")).toBeUndefined();
     });
 
+    test("serves a new Anthropic thinking run after a completed tool result", () => {
+        resetLkgSlotsForTest();
+        const prefix = assistant("a-prefix", 1, [
+            { type: "step-start" },
+            { type: "thinking", thinking: "first signed trace", signature: "sig-a" },
+            { type: "text", text: "calling a tool" },
+            {
+                type: "tool",
+                callID: "call-1",
+                tool: "read",
+                providerExecuted: false,
+                state: { status: "completed", input: {}, output: "result" },
+            },
+            { type: "step-finish" },
+        ]);
+        captureSlot("anthropic-tool-boundary", {
+            jsonPrefix: JSON.stringify([prefix]),
+            inputIdSeq: ["u-anchor"],
+            inputContentDigests: [
+                lkgContentDigest(
+                    user("u-anchor", 2, { providerID: "anthropic", modelID: "claude-test" }),
+                )!,
+            ],
+            lastInputMessageId: "u-anchor",
+            modelKey: "anthropic/claude-test",
+            providerKey: "anthropic",
+            capturedAt: 1,
+        });
+        const current = [
+            user("u-anchor", 2, { providerID: "anthropic", modelID: "claude-test" }),
+            assistant("a-tail", 3, [
+                { type: "thinking", thinking: "second signed trace", signature: "sig-b" },
+                { type: "text", text: "second response" },
+            ]),
+        ];
+
+        const replay = replayLkg({
+            sessionId: "anthropic-tool-boundary",
+            messages: current,
+            modelKey: "anthropic/claude-test",
+            providerKey: "anthropic",
+        });
+        expect(replay).toEqual({ ok: true, messages: [prefix, current[1]] });
+    });
+
+    test("declines a new thinking run after a provider-executed tool", () => {
+        const first = assistant("a-prefix", 1, [
+            { type: "thinking", thinking: "first signed trace", signature: "sig-a" },
+            {
+                type: "tool",
+                callID: "call-1",
+                tool: "provider-tool",
+                providerExecuted: true,
+                state: { status: "completed", input: {}, output: "result" },
+            },
+        ]);
+        const second = assistant("a-tail", 2, [
+            { type: "thinking", thinking: "second signed trace", signature: "sig-b" },
+        ]);
+
+        expect(validateAnthropicReasoningRuns([first, second])).toBe(false);
+    });
+
     test("serves an Anthropic replay with one leading thinking block in an assistant run", () => {
         resetLkgSlotsForTest();
         captureSlot("anthropic-valid", {
@@ -335,6 +399,30 @@ describe("LKG transform replay", () => {
                 "a-prefix",
                 "a-tail",
             ]);
+    });
+
+    test("replays across Pi-native model aliases without treating them as a model switch", () => {
+        resetLkgSlotsForTest();
+        const input = [user("u0", 1)];
+        expect(
+            captureLkgSlot({
+                sessionId: "model-alias",
+                input,
+                output: structuredClone(input),
+                modelKey: "openai/gpt-5.6-sol",
+                providerKey: "openai",
+            }),
+        ).toBe(true);
+
+        const current = [...structuredClone(input), user("u1", 2)] as MessageLike[];
+        expect(
+            replayLkg({
+                sessionId: "model-alias",
+                messages: current,
+                modelKey: "openai-codex/gpt-5.6-sol",
+                providerKey: "openai-codex",
+            }),
+        ).toMatchObject({ ok: true });
     });
 
     test("outermost handler rethrows emergency fail-closed errors", async () => {

@@ -17,16 +17,30 @@
  * read-only; writes to stdout when no path is given.
  */
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { getMagicContextStorageDir } from "../src/shared/data-path";
 
-const dbPath =
-    process.env.MAGIC_CONTEXT_DB ??
-    join(homedir(), ".local", "share", "cortexkit", "magic-context", "context.db");
-const db = new Database(`file:${dbPath}?mode=ro`, { readonly: true });
+const canonicalHome = realpathSync.native(homedir());
+const homeIdentity = `dir:${createHash("md5").update(canonicalHome, "utf8").digest("hex").slice(0, 12)}`;
+
+function isCanonicalHomeRoot(root: string): boolean {
+    try {
+        return realpathSync.native(resolve(root)) === canonicalHome;
+    } catch {
+        return false;
+    }
+}
+
+const dbPath = process.env.MAGIC_CONTEXT_DB ?? join(getMagicContextStorageDir(), "context.db");
+// Plain path + options object, not a file: URI — bun:sqlite on Linux rejects
+// file: URIs (the CLI database-access fix established this pattern).
+const db = new Database(dbPath, { readonly: true });
 const openCodePath =
     process.env.OPENCODE_DB ?? join(homedir(), ".local", "share", "opencode", "opencode.db");
-const opencodeDb = new Database(`file:${openCodePath}?mode=ro`, { readonly: true });
+const opencodeDb = new Database(openCodePath, { readonly: true });
 
 interface Row {
     identity: string;
@@ -48,9 +62,14 @@ for (const r of opencodeDb
 for (const r of db
     .prepare("SELECT session_id, project_path AS identity FROM session_projects")
     .all() as Array<{ session_id: string; identity: string }>) {
+    const root = directoryBySession.get(r.session_id) ?? null;
+    // A home identity is valid for an explicitly opted-in session, but must
+    // never seed the fleet registry: its root would otherwise contain every
+    // unrelated directory below $HOME.
+    if (r.identity === homeIdentity || (root !== null && isCanonicalHomeRoot(root))) continue;
     rows.push({
         identity: r.identity,
-        root: directoryBySession.get(r.session_id) ?? null,
+        root,
         source: "session_bindings",
     });
 }
@@ -62,6 +81,9 @@ for (const r of db
         "SELECT DISTINCT project_path AS identity FROM memories WHERE project_path LIKE 'git:%' OR project_path LIKE 'dir:%'",
     )
     .all() as Array<{ identity: string }>) {
+    // Memory-only rows have no harness root to inspect, so recognize the same
+    // canonical-home dir: identity directly.
+    if (r.identity === homeIdentity) continue;
     rows.push({ identity: r.identity, root: null, source: "memory_rows" });
 }
 

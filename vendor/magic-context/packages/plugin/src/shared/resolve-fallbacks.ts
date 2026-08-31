@@ -1,3 +1,5 @@
+import type { ModelInput, ResolvedModelEntry } from "./model-resolution";
+
 /**
  * Resolve the fallback model list to attempt for a hidden-agent (historian /
  * dreamer / sidekick) call when its configured primary fails.
@@ -71,10 +73,23 @@ export function parseProviderModel(spec: string): { providerID: string; modelID:
  * unparseable (the session falls back to its default model). Spread into a
  * `client.session.prompt` body.
  */
-export function modelBodyField(spec: string | undefined): {
+export function modelBodyField(spec: ModelInput | undefined): {
     model?: { providerID: string; modelID: string };
+    variant?: string;
 } {
-    if (!spec) return {};
-    const parsed = parseProviderModel(spec);
-    return parsed ? { model: parsed } : {};
+    const entry = toModelEntry(spec);
+    if (!entry) return {};
+    const parsed = parseProviderModel(entry.model);
+    return parsed
+        ? { model: parsed, ...(entry.qualifier ? { variant: entry.qualifier } : {}) }
+        : {};
+}
+
+/** Convert legacy string call sites and resolved entries into one active attempt shape. */
+export function toModelEntry(spec: ModelInput | undefined): ResolvedModelEntry | undefined {
+    if (typeof spec === "string") {
+        const model = spec.trim();
+        return model ? { model } : undefined;
+    }
+    return spec;
 }

@@ -188,4 +188,49 @@ describe("compiled smart-note QuickJS runner", () => {
             expect(result).toEqual({ ok: true, result: { met: true } });
         }
     });
+
+    test("returns a queued run promptly when its sweep is cancelled", async () => {
+        let hostCallStarted!: () => void;
+        const hostCallStartedPromise = new Promise<void>((resolve) => {
+            hostCallStarted = resolve;
+        });
+        let releaseOwner!: () => void;
+        const owner = runCompiledSmartNoteCheck({
+            compiledCheck: `async function check(cap) { await cap.httpGet("https://example.test/"); return { met: false }; }`,
+            capabilityFactory: () => ({
+                ...fakeCap,
+                httpGet: () => {
+                    hostCallStarted();
+                    return new Promise((resolve) => {
+                        releaseOwner = () => resolve({ status: 200, body: "ok" });
+                    });
+                },
+            }),
+            timeoutMs: 1_000,
+        });
+        await hostCallStartedPromise;
+
+        const controller = new AbortController();
+        const releaseTimer = setTimeout(releaseOwner, 500);
+        const abortTimer = setTimeout(() => controller.abort(new Error("sweep deadline")), 25);
+        const startedAt = Date.now();
+        const queued = await runCompiledSmartNoteCheck({
+            compiledCheck: `function check() { return { met: true }; }`,
+            capabilities: fakeCap,
+            signal: controller.signal,
+        });
+        const elapsed = Date.now() - startedAt;
+        clearTimeout(abortTimer);
+        clearTimeout(releaseTimer);
+        releaseOwner();
+        await owner;
+
+        expect(queued).toEqual({
+            ok: false,
+            cancelled: true,
+            error: "sweep deadline",
+            network: false,
+        });
+        expect(elapsed).toBeLessThan(250);
+    });
 });

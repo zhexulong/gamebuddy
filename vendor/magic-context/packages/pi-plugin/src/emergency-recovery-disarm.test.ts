@@ -75,7 +75,7 @@ describe("emergency-recovery disarm predicate", () => {
 		);
 		const gateRegion = codeOnly.slice(noFire, disarm);
 		expect(gateRegion).toContain(
-			"usage.percentage < FORCE_MATERIALIZATION_PERCENTAGE",
+			"usage.percentage < historianForceMaterializationPercentage",
 		);
 	});
 });

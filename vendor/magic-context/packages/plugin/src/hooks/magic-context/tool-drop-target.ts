@@ -59,6 +59,51 @@ function setToolContent(part: unknown, content: string): void {
     }
 }
 
+/**
+ * Deep-copy a tool part so a clamp/drop can rewrite the copy without touching
+ * the original object. The transform receives `args.messages` whose part
+ * objects are the LIVE instances OpenCode still holds (it reads the same
+ * objects back for the wire and, for a tool that is still executing, for the
+ * execution itself). Rewriting one of those in place can corrupt a live run —
+ * e.g. clamping a background task part's `input.prompt` while the child agent
+ * is still spawning from it. Cloning first confines every byte change to the
+ * wire copy that replaces the part in the message array. Parts are plain
+ * JSON-serializable data, so structuredClone (with a JSON fallback for
+ * runtimes/edge values that reject it) is sufficient.
+ */
+function clonePart(part: unknown): unknown {
+    if (part === null || typeof part !== "object") return part;
+    try {
+        return structuredClone(part);
+    } catch {
+        try {
+            return JSON.parse(JSON.stringify(part));
+        } catch {
+            // Non-serializable part: return it as-is rather than throw. The
+            // clamp then mutates the original, which is the pre-existing
+            // behavior; this branch is only reachable for exotic parts that
+            // cannot be cloned or serialized at all.
+            return part;
+        }
+    }
+}
+
+/**
+ * Apply a clamp to a throwaway clone of the occurrence's part and swap the
+ * clone into the message's parts array, leaving the original part object
+ * byte-identical. This is the mutation-safety guarantee: the wire (the array
+ * OpenCode reads back) carries the clamped copy, while the live object OpenCode
+ * may still execute from is never touched. The swap is by reference identity
+ * (`indexOf`), so it is a no-op if the part is no longer in the array.
+ */
+function clampCloneInPlace(occurrence: IndexedOccurrence, clamp: (part: unknown) => void): void {
+    const clone = clonePart(occurrence.part);
+    clamp(clone);
+    const parts = occurrence.message.parts;
+    const index = parts.indexOf(occurrence.part);
+    if (index >= 0) parts[index] = clone;
+}
+
 function truncateToolPart(part: unknown, tagId: number): void {
     if (!isRecord(part)) return;
 
@@ -218,6 +263,33 @@ function clearThinkingParts(thinkingParts: ThinkingLikePart[]): void {
     }
 }
 
+/**
+ * True when a tool part carries a COMPLETED result — i.e. the arc is closed and
+ * OpenCode will not read its input again. This is the selection gate that keeps
+ * open arcs (an invocation with no result yet) out of every drop/clamp selector.
+ *
+ * OpenCode's single-part `{ type: "tool" }` representation is classified as a
+ * "result" observation by its TYPE even while the call is still pending/running
+ * (no output written yet). The arc is closed in either of two arms: a completed
+ * result (`state.output` is a string) OR an errored call (`state.status ===
+ * "error"`, carrying `state.error`). OpenCode serializes an errored part as an
+ * `output-error` block built from `state.error` and never reads its input again
+ * (opencode message-v2.ts error arm), so it is just as safe to reclaim as a
+ * completed one — excluding it would leak bulky inputs (e.g. a failed write with
+ * a large content arg). Pending/running parts have neither an output nor an
+ * error status and stay excluded. Anthropic's separate `tool_result` part only
+ * exists after the call finished, so it always counts. Invocation-shaped parts
+ * (`tool-invocation` / `tool_use`) never carry a result and are excluded here.
+ */
+export function partHasCompletedResult(part: unknown): boolean {
+    if (!isRecord(part)) return false;
+    if (part.type === "tool") {
+        if (!isRecord(part.state)) return false;
+        return typeof part.state.output === "string" || part.state.status === "error";
+    }
+    return part.type === "tool_result";
+}
+
 export function extractToolCallObservation(part: unknown): ToolCallObservation | null {
     if (!isRecord(part)) return null;
     if (part.type === "tool" && isToolCallId(part.callID)) {
@@ -327,8 +399,10 @@ export function createToolDropTarget(
         if (!entry.hasResult) return "incomplete";
 
         for (const occurrence of entry.occurrences) {
-            // Truncate both result parts (output) and invocation parts (args/input)
-            truncateToolPart(occurrence.part, tagId);
+            // Truncate both result parts (output) and invocation parts
+            // (args/input). Clamp a CLONE and swap it into the wire so the live
+            // part object OpenCode may still execute from stays byte-identical.
+            clampCloneInPlace(occurrence, (part) => truncateToolPart(part, tagId));
         }
         clearThinkingParts(thinkingParts);
         return "truncated";
@@ -340,7 +414,9 @@ export function createToolDropTarget(
         if (!entry.hasResult) return "incomplete";
 
         for (const occurrence of entry.occurrences) {
-            editMarkerToolPart(occurrence.part, tagId);
+            // Same mutation-safety guarantee as truncate(): clamp a clone, never
+            // the live part object.
+            clampCloneInPlace(occurrence, (part) => editMarkerToolPart(part, tagId));
         }
         clearThinkingParts(thinkingParts);
         return "truncated";

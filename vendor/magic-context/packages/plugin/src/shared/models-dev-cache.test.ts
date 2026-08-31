@@ -7,9 +7,12 @@ import {
     getModelsDevCacheState,
     getSdkContextLimit,
     getSdkInputLimit,
+    getSdkWindowGeometry,
     refreshModelLimitsAfterAuthOnce,
     refreshModelLimitsFromApi,
     resetAuthRewarmLatchForTest,
+    resolveLimit,
+    setOutputReserveConfig,
 } from "./models-dev-cache";
 
 /**
@@ -18,6 +21,105 @@ import {
  * cold start. We no longer read OpenCode's `models.json` file ourselves (a torn
  * read produced impossible limits and a stale copy out-voted the live cap).
  */
+describe("output-token reservation", () => {
+    beforeEach(() => setOutputReserveConfig(undefined));
+
+    test("keeps a pre-carved OpenAI catalog input limit unchanged", () => {
+        expect(
+            resolveLimit(
+                { context: 1_050_000, input: 922_000, output: 128_000 },
+                "openai",
+                "gpt-5.4",
+            ),
+        ).toBe(922_000);
+    });
+
+    test("input equal to context falls through to shared-window reservation", () => {
+        expect(
+            resolveLimit(
+                { context: 372_000, input: 372_000, output: 64_000 },
+                "openai",
+                "literal-config",
+            ),
+        ).toBe(308_000);
+    });
+
+    test("reserves output for Anthropic shared windows", () => {
+        expect(resolveLimit({ context: 1_000_000, output: 64_000 }, "anthropic", "claude")).toBe(
+            936_000,
+        );
+    });
+
+    test("makes the reporter's 95% send safe under the shared provider wall", () => {
+        const usable = resolveLimit(
+            { context: 122_880, output: 16_384 },
+            "openai-compatible",
+            "reporter-model",
+        );
+        expect(usable).toBe(106_496);
+        expect((usable ?? 0) * 0.95 + 16_384).toBeLessThanOrEqual(131_072);
+    });
+
+    test("caps absurd catalog output at 25% of context", () => {
+        expect(
+            resolveLimit({ context: 100_000, output: 60_000 }, "anthropic", "absurd-output"),
+        ).toBe(75_000);
+    });
+
+    test("keeps proven separate-quota Gemini windows unchanged", () => {
+        expect(
+            resolveLimit({ context: 1_048_576, output: 65_536 }, "google", "gemini-2.5-pro"),
+        ).toBe(1_048_576);
+        expect(
+            resolveLimit(
+                { context: 1_048_576, output: 65_536 },
+                "google-antigravity",
+                "gemini-2.5-pro",
+            ),
+        ).toBe(1_048_576);
+    });
+
+    test("output_reserve accepts both harness provider spellings with canonical precedence", () => {
+        const limit = { context: 100_000, output: 20_000 };
+        expect(
+            resolveLimit(limit, "openai-codex", "gpt-5.6-sol", {
+                default: 0,
+                "openai-codex/gpt-5.6-sol": 8_000,
+            }),
+        ).toBe(92_000);
+        expect(
+            resolveLimit(limit, "openai-codex", "gpt-5.6-sol", {
+                default: 0,
+                "openai-codex/gpt-5.6-sol": 8_000,
+                "openai/gpt-5.6-sol": 4_000,
+            }),
+        ).toBe(96_000);
+    });
+
+    test("output_reserve overrides shared and separate quota defaults", () => {
+        expect(resolveLimit({ context: 100_000, output: 20_000 }, "anthropic", "claude", 0)).toBe(
+            100_000,
+        );
+        const perModelReserve = { default: 4_000, "google/gemini": 8_000 };
+        expect(
+            resolveLimit({ context: 100_000, output: 20_000 }, "google", "gemini", perModelReserve),
+        ).toBe(92_000);
+        expect(
+            resolveLimit(
+                { context: 100_000, output: 20_000 },
+                "google-antigravity",
+                "gemini",
+                perModelReserve,
+            ),
+        ).toBe(92_000);
+    });
+
+    test("clamps reservation to both the 50% and 1024-token usable floors", () => {
+        expect(resolveLimit({ context: 100_000 }, "custom", "tiny", 90_000)).toBe(50_000);
+        expect(resolveLimit({ context: 1_200 }, "custom", "micro", 1_000)).toBe(1_024);
+    });
+});
+
 describe("models-dev-cache (SDK-only)", () => {
     let tempDir: string;
     let originalXdgData: string | undefined;
@@ -32,6 +134,7 @@ describe("models-dev-cache (SDK-only)", () => {
         // touch the real ~/.local/share/cortexkit/magic-context cache.
         originalXdgData = process.env.XDG_DATA_HOME;
         process.env.XDG_DATA_HOME = tempDir;
+        setOutputReserveConfig(undefined);
         clearModelsDevCache();
     });
 
@@ -44,6 +147,30 @@ describe("models-dev-cache (SDK-only)", () => {
             /* Ignore EBUSY on Windows */
         }
         clearModelsDevCache();
+    });
+
+    test("honors the reporter's default output_reserve on the SDK geometry path", async () => {
+        await refreshModelLimitsFromApi(
+            makeClient([
+                {
+                    id: "openai-codex",
+                    models: {
+                        "gpt-5.6-sol": {
+                            limit: { context: 400_000, input: 272_000, output: 128_000 },
+                        },
+                    },
+                },
+            ]),
+        );
+        setOutputReserveConfig({ default: 16_384 });
+
+        const geometry = getSdkWindowGeometry("openai-codex", "gpt-5.6-sol");
+        expect(geometry?.usableSoft).toBe(272_000 - 16_384);
+        expect(geometry?.derivation).toMatchObject({
+            window: 272_000,
+            reserve: 16_384,
+            reserveSource: "output_config",
+        });
     });
 
     test("resolves from the SDK and prefers limit.input over limit.context", async () => {
@@ -101,6 +228,32 @@ describe("models-dev-cache (SDK-only)", () => {
         expect(getSdkContextLimit("openai", "gpt-5.4")).toBe(922000);
         expect(getSdkContextLimit("openai", "gpt-5.4-fast")).toBe(922000);
         expect(getSdkContextLimit("openai", "gpt-5.4-mini")).toBe(922000);
+    });
+
+    test("narrows raw context with detected wire truth before reserving output", async () => {
+        await refreshModelLimitsFromApi(
+            makeClient([
+                {
+                    id: "anthropic",
+                    models: {
+                        claude: { limit: { context: 200_000, output: 20_000 } },
+                    },
+                },
+            ]),
+        );
+
+        expect(
+            getSdkContextLimit("anthropic", "claude", 120_000, {
+                detectedLimitProvenance: "combined",
+            }),
+        ).toBe(100_000);
+        // A provider-reported prompt ceiling is already pre-carved. Treating it
+        // as combined would subtract the 20K output allowance a second time.
+        expect(
+            getSdkContextLimit("anthropic", "claude", 120_000, {
+                detectedLimitProvenance: "prompt_only",
+            }),
+        ).toBe(120_000);
     });
 
     test("matches a tagged ollama model against its tag-less SDK entry", async () => {
@@ -377,5 +530,65 @@ describe("models-dev-cache (SDK-only)", () => {
 
         expect(getSdkContextLimit("p", "m1")).toBe(200000);
         expect(getSdkContextLimit("p", "m3")).toBe(200000);
+    });
+});
+
+describe("getSdkContextLimit prompt_only pre-carve arm", () => {
+    // The v0.34.0 re-verify found no behavioral test for the provenance
+    // ternary: a prompt_only detected limit must enter the pre-carved INPUT
+    // arm (no output subtraction), while combined detections narrow the raw
+    // context BEFORE reservation. A regression routing prompt_only through
+    // the context arm double-reserves and these fixtures go red.
+    beforeEach(() => clearModelsDevCache());
+    afterEach(() => clearModelsDevCache());
+    const seed = () =>
+        refreshModelLimitsFromApi({
+            config: {
+                providers: async () => ({
+                    data: {
+                        providers: [
+                            {
+                                id: "anthropic",
+                                models: {
+                                    "prov-model": {
+                                        limit: { context: 200000, output: 64000 },
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                }),
+            },
+        });
+
+    test("prompt_only detection routes through the input arm without double reservation", async () => {
+        await seed();
+        expect(
+            getSdkContextLimit("anthropic", "prov-model", 167000, {
+                detectedLimitProvenance: "prompt_only",
+            }),
+        ).toBe(167000);
+    });
+
+    test("combined detection narrows raw context before reservation", async () => {
+        await seed();
+        // min(200000, 131072) = 131072, then arm-2 reserve min(64000, 25%) = 32768.
+        expect(
+            getSdkContextLimit("anthropic", "prov-model", 131072, {
+                detectedLimitProvenance: "combined",
+            }),
+        ).toBe(131072 - 32768);
+    });
+
+    test("prompt_only with reservation none serves the prompt cap as the native denominator", async () => {
+        await seed();
+        // The input arm short-circuits before reservation: the native metric
+        // sees the provider-enforced prompt wall, not the raw window.
+        expect(
+            getSdkContextLimit("anthropic", "prov-model", 167000, {
+                detectedLimitProvenance: "prompt_only",
+                reservation: "none",
+            }),
+        ).toBe(167000);
     });
 });

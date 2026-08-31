@@ -6,6 +6,7 @@ import {
     createToolDropTarget,
     extractToolCallObservation,
     hasMeaningfulPart,
+    partHasCompletedResult,
     type ToolCallIndex,
     ToolMutationBatch,
 } from "./tool-drop-target";
@@ -41,7 +42,11 @@ function buildIndex(messages: MessageLike[]): ToolCallIndex {
                     hasResult: false,
                 };
                 entry.occurrences.push({ message: msg, part, kind: observation.kind });
-                if (observation.kind === "result") entry.hasResult = true;
+                // Mirror production (tag-messages.ts): an OpenCode `{ type: "tool" }`
+                // part is a "result" observation by type even while pending, so gate
+                // hasResult on an actual completed result.
+                if (observation.kind === "result" && partHasCompletedResult(part))
+                    entry.hasResult = true;
                 index.set(observation.callId, entry);
             }
         }
@@ -86,6 +91,51 @@ describe("tool-drop-target", () => {
                     expect(extractToolCallObservation({ type: "text", text: "plain" })).toBeNull();
                 });
             });
+        });
+    });
+
+    describe("partHasCompletedResult", () => {
+        it("counts a completed OpenCode tool part (output string) as closed", () => {
+            expect(
+                partHasCompletedResult({ type: "tool", callID: "c", state: { output: "done" } }),
+            ).toBe(true);
+        });
+
+        it("counts an errored OpenCode tool part (status error, no output) as closed", () => {
+            expect(
+                partHasCompletedResult({
+                    type: "tool",
+                    callID: "c",
+                    state: { status: "error", error: "boom", input: { content: "x".repeat(600) } },
+                }),
+            ).toBe(true);
+        });
+
+        it("keeps a running OpenCode tool part (no output, no error) open", () => {
+            expect(
+                partHasCompletedResult({
+                    type: "tool",
+                    callID: "c",
+                    state: { status: "running", input: { prompt: "p" } },
+                }),
+            ).toBe(false);
+        });
+
+        it("keeps a pending OpenCode tool part open", () => {
+            expect(
+                partHasCompletedResult({ type: "tool", callID: "c", state: { status: "pending" } }),
+            ).toBe(false);
+        });
+
+        it("counts an Anthropic tool_result part as closed", () => {
+            expect(partHasCompletedResult({ type: "tool_result", tool_use_id: "c" })).toBe(true);
+        });
+
+        it("excludes invocation-shaped parts and non-records", () => {
+            expect(partHasCompletedResult({ type: "tool-invocation", callID: "c" })).toBe(false);
+            expect(partHasCompletedResult({ type: "tool_use", id: "c" })).toBe(false);
+            expect(partHasCompletedResult(null)).toBe(false);
+            expect(partHasCompletedResult({ type: "tool" })).toBe(false);
         });
     });
 
@@ -303,7 +353,12 @@ describe("tool-drop-target", () => {
 
                     expect(hasCall(messages, "call-3")).toBe(true);
                     expect(messages).toHaveLength(3);
-                    expect(toolPart.state as Record<string, unknown>).toEqual({
+
+                    // The wire copies now in the message array carry the sentinel...
+                    const wireToolPart = messages[1]?.parts[0] as {
+                        state: Record<string, unknown>;
+                    };
+                    expect(wireToolPart.state).toEqual({
                         input: {
                             query: "abcdef",
                             short: "abc",
@@ -314,7 +369,26 @@ describe("tool-drop-target", () => {
                         },
                         output: "[dropped \u00a77\u00a7]",
                     });
-                    expect(toolResultPart.content).toBe("[dropped \u00a77\u00a7]");
+                    const wireResultPart = messages[2]?.parts[0] as { content: string };
+                    expect(wireResultPart.content).toBe("[dropped \u00a77\u00a7]");
+
+                    // ...while the LIVE part objects OpenCode handed us stay
+                    // byte-identical: the clamp swaps in a clone and never touches
+                    // the originals (mutation-safety guarantee).
+                    expect(toolPart.state as Record<string, unknown>).toEqual({
+                        input: {
+                            query: "abcdef",
+                            short: "abc",
+                            files: ["a", "b"],
+                            metadata: { nested: true },
+                            exact: true,
+                            limit: 2,
+                        },
+                        output: "old-tool",
+                    });
+                    expect(toolResultPart.content).toBe("old-result");
+                    expect(wireToolPart).not.toBe(toolPart);
+                    expect(wireResultPart).not.toBe(toolResultPart);
                     expect(thinkingParts[0]?.thinking).toBe("[cleared]");
                     expect(thinkingParts[1]?.text).toBe("[cleared]");
                 });
@@ -349,7 +423,11 @@ describe("tool-drop-target", () => {
 
                     expect(target.truncate()).toBe("truncated");
 
-                    expect(toolPart.state as Record<string, unknown>).toEqual({
+                    // The wire copy now in the message array carries the clamp...
+                    const wireToolPart = messages[1]?.parts[0] as {
+                        state: Record<string, unknown>;
+                    };
+                    expect(wireToolPart.state).toEqual({
                         input: {
                             query: "xxxxx...[truncated]",
                             files: "[2 items]",
@@ -357,6 +435,134 @@ describe("tool-drop-target", () => {
                         },
                         output: "[dropped \u00a79\u00a7]",
                     });
+
+                    // ...while the LIVE part object stays byte-identical (long
+                    // prompt intact) so a still-executing tool is never corrupted.
+                    expect(toolPart.state as Record<string, unknown>).toEqual({
+                        input: {
+                            query: largeQuery,
+                            files: ["a", "b"],
+                            metadata: { nested: true },
+                        },
+                        output: "old-tool",
+                    });
+                    expect(wireToolPart).not.toBe(toolPart);
+                });
+            });
+        });
+
+        describe("#given a pending/running OpenCode tool part (no result output yet)", () => {
+            describe("#when any drop/clamp selector runs", () => {
+                it("#then it is treated as an open arc: never targeted and left byte-identical", () => {
+                    const longPrompt = `Fix the auth bug and add coverage. ${"x".repeat(600)}`;
+                    const taskPart = {
+                        type: "tool",
+                        tool: "task",
+                        callID: "call-task",
+                        state: {
+                            status: "running",
+                            input: { prompt: longPrompt, subagent_type: "mason" },
+                        },
+                    };
+                    const pristine = JSON.stringify(taskPart);
+                    const messages: MessageLike[] = [message("m-task", "assistant", [taskPart])];
+                    const index = buildIndex(messages);
+                    const batch = new ToolMutationBatch(messages);
+                    const target = createToolDropTarget("call-task", [], index, batch, 11);
+
+                    // Open arc (invocation with no completed result) is excluded
+                    // from EVERY selector: canDrop, drop, truncate, editMarker.
+                    expect(target.canDrop()).toBe(false);
+                    expect(target.truncate()).toBe("incomplete");
+                    expect(target.drop()).toBe("incomplete");
+                    expect(target.editMarker()).toBe("incomplete");
+
+                    // The live part object is byte-identical and still the same
+                    // reference in the wire array.
+                    expect(JSON.stringify(taskPart)).toBe(pristine);
+                    expect(messages[0]?.parts[0]).toBe(taskPart);
+                });
+            });
+        });
+
+        describe("#given a completed tool part with a long argument (background task shape)", () => {
+            describe("#when truncate runs", () => {
+                it("#then the wire copy carries the clamp while the live object stays intact", () => {
+                    const longPrompt = `Investigate and fix the regression. ${"y".repeat(600)}`;
+                    const taskPart = {
+                        type: "tool",
+                        tool: "task",
+                        callID: "call-bg",
+                        state: {
+                            status: "completed",
+                            input: { prompt: longPrompt, subagent_type: "mason" },
+                            output: '<task state="running">started</task>',
+                        },
+                    };
+                    const pristine = JSON.stringify(taskPart);
+                    const messages: MessageLike[] = [message("m-bg", "assistant", [taskPart])];
+                    const index = buildIndex(messages);
+                    const batch = new ToolMutationBatch(messages);
+                    const target = createToolDropTarget("call-bg", [], index, batch, 12);
+
+                    expect(target.canDrop()).toBe(true);
+                    expect(target.truncate()).toBe("truncated");
+
+                    // The wire copy now in the array is clamped + sentinelled...
+                    const wire = messages[0]?.parts[0] as {
+                        state: { input: Record<string, unknown>; output: string };
+                    };
+                    expect(wire).not.toBe(taskPart);
+                    expect(wire.state.output).toBe("[dropped \u00a712\u00a7]");
+                    expect(wire.state.input.prompt).toBe("Inves...[truncated]");
+
+                    // ...but the LIVE object OpenCode still holds is byte-identical
+                    // to before the reclaim pass — the long prompt is intact, so a
+                    // child agent spawning from it is never corrupted.
+                    expect(JSON.stringify(taskPart)).toBe(pristine);
+                    expect(taskPart.state.input.prompt).toBe(longPrompt);
+                });
+            });
+        });
+
+        describe("#given an errored OpenCode tool part (status error, no output, large input)", () => {
+            describe("#when the selectors run", () => {
+                it("#then it IS clamp-eligible (closed arm) and the clamp stays on the wire only", () => {
+                    const bigContent = "z".repeat(600);
+                    const failedWrite = {
+                        type: "tool",
+                        tool: "write",
+                        callID: "call-err",
+                        state: {
+                            status: "error",
+                            error: "permission denied",
+                            input: { filePath: "/spec.md", content: bigContent },
+                        },
+                    };
+                    const pristine = JSON.stringify(failedWrite);
+                    const messages: MessageLike[] = [message("m-err", "assistant", [failedWrite])];
+                    const index = buildIndex(messages);
+                    const batch = new ToolMutationBatch(messages);
+                    const target = createToolDropTarget("call-err", [], index, batch, 13);
+
+                    // Errored arm is closed → eligible for every selector (this is
+                    // the reclaim the old type-based gate also allowed; the new
+                    // gate must NOT leak it).
+                    expect(target.canDrop()).toBe(true);
+                    expect(target.truncate()).toBe("truncated");
+
+                    // Wire copy carries the clamp + sentinel...
+                    const wire = messages[0]?.parts[0] as {
+                        state: { input: Record<string, unknown>; output: string };
+                    };
+                    expect(wire).not.toBe(failedWrite);
+                    expect(wire.state.output).toBe("[dropped \u00a713\u00a7]");
+                    expect(wire.state.input.content).toBe("zzzzz...[truncated]");
+
+                    // ...live object stays byte-identical: reclaimed via a clone,
+                    // never by mutating the original part.
+                    expect(JSON.stringify(failedWrite)).toBe(pristine);
+                    expect(failedWrite.state.input.content).toBe(bigContent);
                 });
             });
         });

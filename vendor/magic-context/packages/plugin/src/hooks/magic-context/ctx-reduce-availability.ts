@@ -1,3 +1,4 @@
+import type { PluginContext } from "../../plugin/types";
 import { BoundedSessionMap } from "../../shared/bounded-session-map";
 import { sessionLog } from "../../shared/logger";
 import { openCodeDbExists, withReadOnlySessionDb } from "./read-session-db";
@@ -19,6 +20,13 @@ import { openCodeDbExists, withReadOnlySessionDb } from "./read-session-db";
  * first-message map is fixed at session spawn, so the verdict is deterministic
  * across passes and restarts.
  *
+ * The ctx_reduce verdict intentionally remains frozen even when OpenCode's live
+ * permission rules deny the tool. Its value gates guidance and the system-prompt
+ * hash; changing it mid-session would invalidate the provider prefix for a
+ * permission change that is otherwise not part of the prompt. Todowrite's
+ * synthetic pair has a separate live permission check at cache-busting
+ * boundaries, so this asymmetry is deliberate and load-bearing.
+ *
  * Fail-open: no tools map (normal sessions), no wildcard-deny, or an
  * unreadable OpenCode DB all resolve to "available" — current behavior.
  */
@@ -34,8 +42,38 @@ export interface ToolAvailabilityVerdict {
     frozen: boolean;
 }
 
+// `ctx_reduce` is registered process-globally by the tool registry at boot.
+// In compaction-off mode (the `compaction` config block's `enabled` field set
+// to false) the registry skips registering it, so no session can ever call
+// the tool — regardless of the per-session spawn tools map (a normal session
+// with no tools map would otherwise fail-open to "callable"). This
+// process-global override makes unregistration flow naturally to every
+// ctx_reduce-availability consumer: the no-reduce guidance variant
+// (system-prompt-hash.ts), Channel-1/Channel-2 nudges, and §N§ prefix
+// injection (transform.ts). Default true (registered) preserves today's
+// behavior for tests/legacy callers that never call the setter. The
+// compaction-off mode reuses the existing no-reduce guidance variant
+// machinery rather than minting a third template.
+let ctxReduceRegisteredGlobally = true;
+
 /**
- * Historical alias. ctx_reduce was the first consumer of this resolver; the
+ * Set whether `ctx_reduce` is registered process-globally. Called once at
+ * plugin boot from the tool registry resolution. When false, every
+ * `resolveCtxReduceAvailability*` call returns a frozen `callable: false`
+ * verdict without consulting the per-session tools map or the OpenCode DB.
+ */
+export function setCtxReduceRegisteredGlobally(registered: boolean): void {
+    ctxReduceRegisteredGlobally = registered;
+}
+
+/** Test-only reset so the availability suite's default-true baseline is
+ *  unaffected by a prior test that flipped the override. Production code
+ *  never needs to re-enable mid-process (boot-resolved, process-stable). */
+export function resetCtxReduceRegisteredGloballyForTest(): void {
+    ctxReduceRegisteredGlobally = true;
+}
+
+/** Historical alias. ctx_reduce was the first consumer of this resolver; the
  * verdict shape is identical for every tool, so the name is kept so existing
  * ctx_reduce call sites stay untouched.
  */
@@ -51,6 +89,24 @@ const TODOWRITE_TOOL = "todowrite";
  * across the two tools we currently resolve (ctx_reduce + todowrite).
  */
 const availabilityBySession = new BoundedSessionMap<boolean>(1000);
+
+/** The cached permission verdict is updated only during cache-busting passes;
+ * defer passes reuse it without performing a live permission read. */
+const permissionDeniedBySession = new BoundedSessionMap<boolean>(2000);
+const ctxReducePermissionDenyLogged = new BoundedSessionMap<boolean>(1000);
+
+type PermissionAction = "ask" | "allow" | "deny";
+
+/** The small rule shape used by OpenCode's Permission.disabled evaluator. */
+export interface PermissionRule {
+    permission: string;
+    pattern: string;
+    action: PermissionAction;
+}
+
+function permissionCacheKey(toolName: string, sessionId: string): string {
+    return `${toolName}\u0000${sessionId}`;
+}
 
 function cacheKey(toolName: string, sessionId: string): string {
     return `${toolName}\u0000${sessionId}`;
@@ -76,6 +132,13 @@ export function resolveToolAvailabilityFromMessages(
     toolName: string,
     messages: ReadonlyArray<{ info?: { role?: string; tools?: unknown } }>,
 ): ToolAvailabilityVerdict {
+    // Process-global registration override: when ctx_reduce is not registered
+    // (compaction-off mode) the tool is uncallable for every session, full
+    // stop. Frozen so the system-prompt hash persists this verdict as the
+    // session baseline (no provisional-then-flip cache bust).
+    if (toolName === CTX_REDUCE_TOOL && !ctxReduceRegisteredGlobally) {
+        return { callable: false, frozen: true };
+    }
     const key = cacheKey(toolName, sessionId);
     const cached = availabilityBySession.get(key);
     if (cached !== undefined) return { callable: cached, frozen: true };
@@ -105,6 +168,10 @@ export function resolveToolAvailability(
     sessionId: string,
     toolName: string,
 ): ToolAvailabilityVerdict {
+    // Process-global registration override (see resolveToolAvailabilityFromMessages).
+    if (toolName === CTX_REDUCE_TOOL && !ctxReduceRegisteredGlobally) {
+        return { callable: false, frozen: true };
+    }
     const key = cacheKey(toolName, sessionId);
     const cached = availabilityBySession.get(key);
     if (cached !== undefined) return { callable: cached, frozen: true };
@@ -155,6 +222,182 @@ export function resolveCtxReduceAvailability(sessionId: string): CtxReduceAvaila
 
 export function clearCtxReduceAvailability(sessionId: string): void {
     clearToolAvailability(sessionId, CTX_REDUCE_TOOL);
+}
+
+// --- live OpenCode permission signal ---
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function responseData(value: unknown): unknown {
+    if (isRecord(value) && Object.hasOwn(value, "data")) return value.data;
+    return value;
+}
+
+function escapeRegExpLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function permissionNameMatches(rulePermission: string, toolName: string): boolean {
+    if (rulePermission === "*" || rulePermission === toolName) return true;
+    if (!rulePermission.includes("*")) return false;
+    const pattern = rulePermission.split("*").map(escapeRegExpLiteral).join(".*");
+    return new RegExp(`^${pattern}$`).test(toolName);
+}
+
+/**
+ * Apply OpenCode's Permission.disabled rule: the last matching permission
+ * rule wins, and only a deny of the whole permission pattern disables it.
+ * Keeping this evaluator pure makes the findLast behavior testable without a
+ * live OpenCode server.
+ */
+export function permissionDisabled(toolName: string, rules: readonly PermissionRule[]): boolean {
+    let finalRule: PermissionRule | undefined;
+    for (let index = rules.length - 1; index >= 0; index -= 1) {
+        const rule = rules[index];
+        if (rule && permissionNameMatches(rule.permission, toolName)) {
+            finalRule = rule;
+            break;
+        }
+    }
+    return finalRule?.action === "deny" && finalRule.pattern === "*";
+}
+
+function actionOf(value: unknown): PermissionAction | null {
+    return value === "ask" || value === "allow" || value === "deny" ? value : null;
+}
+
+function appendPermissionRule(
+    target: PermissionRule[],
+    permission: unknown,
+    pattern: unknown,
+    action: unknown,
+): void {
+    if (typeof permission !== "string" || permission.length === 0) return;
+    const normalizedAction = actionOf(action);
+    if (!normalizedAction) return;
+    const patterns = Array.isArray(pattern) ? pattern : [pattern ?? "*"];
+    for (const candidate of patterns) {
+        if (typeof candidate === "string") {
+            target.push({ permission, pattern: candidate, action: normalizedAction });
+        }
+    }
+}
+
+/** Normalize both OpenCode's object shorthand and its already-expanded rules. */
+function permissionRules(value: unknown): PermissionRule[] {
+    if (Array.isArray(value)) {
+        const result: PermissionRule[] = [];
+        for (const item of value) {
+            if (!isRecord(item)) continue;
+            appendPermissionRule(
+                result,
+                item.permission ?? item.tool ?? item.name,
+                item.pattern,
+                item.action ?? item.value,
+            );
+        }
+        return result;
+    }
+    if (!isRecord(value)) return [];
+
+    const result: PermissionRule[] = [];
+    if (Array.isArray(value.rules)) result.push(...permissionRules(value.rules));
+    for (const [permission, configured] of Object.entries(value)) {
+        if (permission === "rules") continue;
+        const simpleAction = actionOf(configured);
+        if (simpleAction) {
+            // OpenCode's simple string form (`todowrite: "deny"`) expands to
+            // the same whole-tool rule used by Permission.disabled.
+            appendPermissionRule(result, permission, "*", simpleAction);
+            continue;
+        }
+        if (!isRecord(configured)) continue;
+        for (const [pattern, action] of Object.entries(configured)) {
+            appendPermissionRule(result, permission, pattern, action);
+        }
+    }
+    return result;
+}
+
+function activeAgentNameFromSession(value: unknown): string | undefined {
+    if (!isRecord(value)) return undefined;
+    const agent = value.agent;
+    return typeof agent === "string" && agent.length > 0 ? agent : undefined;
+}
+
+/**
+ * Read OpenCode's merged agent permissions plus the session overlay and apply
+ * the same last-rule evaluator OpenCode uses. The SDK declarations in older
+ * plugin peer versions do not expose the newer permission fields, so the
+ * response is intentionally narrowed at this boundary.
+ */
+export async function resolveToolPermissionDenied(
+    client: PluginContext["client"],
+    sessionId: string,
+    toolName: string,
+    activeAgent?: string,
+): Promise<boolean> {
+    const sdk = client as unknown as {
+        app?: { agents?: () => Promise<unknown> };
+        session?: { get?: (input: { path: { id: string } }) => Promise<unknown> };
+    };
+    if (!sdk.app?.agents || !sdk.session?.get) {
+        throw new Error("OpenCode permission APIs are unavailable");
+    }
+
+    const [agentsResponse, sessionResponse] = await Promise.all([
+        sdk.app.agents(),
+        sdk.session.get({ path: { id: sessionId } }),
+    ]);
+    const agents = responseData(agentsResponse);
+    const session = responseData(sessionResponse);
+    const agentName = activeAgent ?? activeAgentNameFromSession(session);
+    const agent = Array.isArray(agents)
+        ? agents.find((candidate) => isRecord(candidate) && candidate.name === agentName)
+        : undefined;
+    const agentRules = permissionRules(isRecord(agent) ? agent.permission : undefined);
+    const sessionRules = permissionRules(
+        isRecord(session) ? (session.permission ?? session.permissions) : undefined,
+    );
+    const denied = permissionDisabled(toolName, [...agentRules, ...sessionRules]);
+    permissionDeniedBySession.set(permissionCacheKey(toolName, sessionId), denied);
+    return denied;
+}
+
+export function todowritePermissionDenied(
+    client: PluginContext["client"],
+    sessionId: string,
+    activeAgent?: string,
+): Promise<boolean> {
+    return resolveToolPermissionDenied(client, sessionId, TODOWRITE_TOOL, activeAgent);
+}
+
+/** Cached live verdict used by defer passes; undefined means no bust has read it yet. */
+export function cachedToolPermissionDenied(
+    sessionId: string,
+    toolName: string,
+): boolean | undefined {
+    return permissionDeniedBySession.get(permissionCacheKey(toolName, sessionId));
+}
+
+export function clearToolPermissionDenied(sessionId: string, toolName?: string): void {
+    if (toolName) {
+        permissionDeniedBySession.delete(permissionCacheKey(toolName, sessionId));
+    } else {
+        permissionDeniedBySession.delete(permissionCacheKey(TODOWRITE_TOOL, sessionId));
+        permissionDeniedBySession.delete(permissionCacheKey(CTX_REDUCE_TOOL, sessionId));
+    }
+    ctxReducePermissionDenyLogged.delete(sessionId);
+}
+
+export function hasLoggedCtxReducePermissionDeny(sessionId: string): boolean {
+    return ctxReducePermissionDenyLogged.get(sessionId) === true;
+}
+
+export function markCtxReducePermissionDenyLogged(sessionId: string): void {
+    ctxReducePermissionDenyLogged.set(sessionId, true);
 }
 
 // --- todowrite convenience wrappers ---

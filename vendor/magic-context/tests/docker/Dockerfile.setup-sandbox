@@ -1,0 +1,89 @@
+# Magic Context: interactive setup/doctor sandbox
+#
+# A clean, throwaway machine for MANUALLY exercising the published setup and
+# doctor flows after a release, driven interactively (e.g. via a PTY). Unlike
+# Dockerfile.opencode / Dockerfile.pi (which copy the locally-built dist and run
+# a scripted smoke), this image installs the REAL published
+# `@cortexkit/magic-context@latest` from npm, so what you test is exactly what a
+# user gets. Rebuild after each release to pick up the newest version.
+#
+# It deliberately has NO entrypoint script: it drops you into a shell so you can
+# run the wizard yourself and inspect where config + state actually land:
+#   - user config   →  ~/.config/cortexkit/magic-context.jsonc
+#   - project config →  <project>/.cortexkit/magic-context.jsonc
+#   - shared DB      →  ~/.local/share/cortexkit/magic-context/context.db
+#
+# Build + run (use the helper, which forces a fresh @latest fetch):
+#   tests/docker/setup-sandbox.sh
+# or by hand:
+#   docker build --platform linux/amd64 \
+#     --build-arg CACHE_BUST=$(date +%s) \
+#     -f tests/docker/Dockerfile.setup-sandbox -t mc-setup-sandbox .
+#   docker run --rm -it --platform linux/amd64 mc-setup-sandbox
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    ca-certificates \
+    unzip \
+    python3 \
+    build-essential \
+    sqlite3 \
+    jq \
+    less \
+    nano \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node 24: the runtime the published CLI and both harnesses target. python3 +
+# build-essential are present so any native dep (better-sqlite3) can build from
+# source if no prebuilt binary matches.
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bun: the CLI's setup wizard may invoke Bun-shaped tooling on some paths, and
+# real users frequently have it installed.
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:$PATH"
+
+# OpenCode (official curl|bash install), so the OpenCode setup/doctor path has a
+# real binary to detect and a real ~/.config/opencode to edit.
+RUN curl -fsSL https://opencode.ai/install | bash
+ENV PATH="/root/.opencode/bin:$PATH"
+
+# Pi coding agent, so the Pi setup/doctor path (`--harness pi`) has a real
+# binary to detect and a real ~/.pi/agent to edit.
+RUN npm install -g @earendil-works/pi-coding-agent@latest \
+    && mkdir -p /root/.pi/agent
+
+# A clean test project that is a git repo, so Magic Context's project-identity
+# resolution (git root commit hash) behaves the same as on a real machine and the
+# project-level config lands under <project>/.cortexkit/.
+RUN git config --global user.email "sandbox@cortexkit.local" && \
+    git config --global user.name "MC Setup Sandbox" && \
+    mkdir -p /test/project && cd /test/project && git init -q && \
+    echo '{"name":"sandbox","version":"1.0.0"}' > package.json && \
+    git add -A && git commit -q -m "init"
+
+# Install the PUBLISHED CLI. CACHE_BUST (set to a timestamp by the helper) forces
+# this layer to re-run on every build so it always fetches the current @latest
+# rather than a cached older release. MC_VERSION can pin a specific version.
+ARG MC_VERSION=latest
+ARG CACHE_BUST=0
+RUN echo "cache-bust=${CACHE_BUST}" \
+    && npm install -g "@cortexkit/magic-context@${MC_VERSION}" \
+    && magic-context --version
+
+# A help banner on every interactive shell so the manual test steps are obvious.
+# Sourced from .bashrc only (the login shell sources .bashrc via /etc/profile on
+# Debian); putting it ALSO in /etc/profile.d would print it twice.
+COPY tests/docker/setup-sandbox-banner.sh /root/.mc-sandbox-banner.sh
+RUN printf '\n[ -t 1 ] && . /root/.mc-sandbox-banner.sh\n' >> /root/.bashrc
+
+WORKDIR /test/project
+
+# No ENTRYPOINT script: a login shell so the banner shows and you drive it.
+CMD ["bash", "-l"]

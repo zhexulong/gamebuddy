@@ -1,9 +1,5 @@
-import {
-    type Database,
-    type Statement as PreparedStatement,
-    registerPrivilegedWriter,
-} from "../../../shared/sqlite";
-import { hasMuralCueColumns } from "../mural/storage-mural-cues";
+import type { Database, Statement as PreparedStatement } from "../../../shared/sqlite";
+import { hasMuralCueColumns, hasMuralCueRejectionCountColumn } from "../mural/storage-mural-cues";
 import { MEMORY_CATEGORY_ORDER_SQL } from "./constants";
 import { invalidateMemory, invalidateProject } from "./embedding-cache";
 import { computeNormalizedHash } from "./normalize-hash";
@@ -115,6 +111,7 @@ const memoryImportanceColumnCache = new WeakMap<Database, boolean>();
 const memoryScopeColumnCache = new WeakMap<Database, boolean>();
 const memoryShareableColumnCache = new WeakMap<Database, boolean>();
 const memoryClassifiedAtColumnCache = new WeakMap<Database, boolean>();
+const memoryVerificationsTableCache = new WeakMap<Database, boolean>();
 
 export interface MemoryCountsByStatus {
     total: number;
@@ -172,6 +169,20 @@ export function hasMemoryClassifiedAtColumn(db: Database): boolean {
     const hasColumn = columns.some((column) => column.name === "classified_at");
     memoryClassifiedAtColumnCache.set(db, hasColumn);
     return hasColumn;
+}
+
+function hasMemoryVerificationsTable(db: Database): boolean {
+    const cached = memoryVerificationsTableCache.get(db);
+    if (cached !== undefined) return cached;
+    const hasTable = Boolean(
+        db
+            .prepare(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_verifications'",
+            )
+            .get(),
+    );
+    memoryVerificationsTableCache.set(db, hasTable);
+    return hasTable;
 }
 
 /** Memory ids (from the given set) that have never been classified — the
@@ -599,7 +610,6 @@ export class ModuleMemoryAuthorityError extends Error {
 }
 
 function assertTsMemoryWriteAllowed(db: Database, projectPath: string): void {
-    registerPrivilegedWriter(db);
     try {
         const managed = db
             .prepare(
@@ -621,6 +631,14 @@ function assertTsMemoryIdWriteAllowed(db: Database, id: number): Memory | null {
 }
 
 export function insertMemory(db: Database, input: MemoryInput): Memory {
+    // The "user" sourceType is reserved for FUTURE dashboard manual entry and
+    // must never be written by agent-originated paths (historian/dreamer/tool).
+    // Guard at the single write choke point so no caller can slip it through.
+    if (input.sourceType === "user") {
+        throw new Error(
+            `sourceType "user" is reserved for future dashboard manual entry and cannot be written by agent paths`,
+        );
+    }
     assertTsMemoryWriteAllowed(db, input.projectPath);
     const now = Date.now();
     const normalizedHash = computeNormalizedHash(input.content);
@@ -1040,9 +1058,19 @@ export function updateMemoryContent(
         // it, and the compress-cues gate re-selects this memory (NULL cue).
         // Column-guarded for pre-v65 DBs.
         if (hasMuralCueColumns(db)) {
+            const rejectionReset = hasMuralCueRejectionCountColumn(db)
+                ? ", mural_cue_rejection_count = 0"
+                : "";
             db.prepare(
-                "UPDATE memories SET mural_cue = NULL, mural_cue_hash = NULL, mural_cue_at = NULL WHERE id = ?",
+                `UPDATE memories SET mural_cue = NULL, mural_cue_hash = NULL, mural_cue_at = NULL${rejectionReset} WHERE id = ?`,
             ).run(id);
+        }
+
+        // A changed fact may name different backing files. Drop its old mapping so
+        // map-memories selects it again instead of retaining a stale fallback or file set.
+        // Some legacy fixtures do not include the memory_verifications table.
+        if (hasMemoryVerificationsTable(db)) {
+            db.prepare("DELETE FROM memory_verifications WHERE memory_id = ?").run(id);
         }
 
         // Invalidate stale embedding — backfill will regenerate with new content.

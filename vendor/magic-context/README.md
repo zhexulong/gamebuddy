@@ -69,7 +69,7 @@ Magic Context gives them one. It is the **hippocampus** for coding agents, the p
 
 - **Capture.** As the historian compresses your history, it lifts the durable knowledge (decisions, constraints, conventions) into project memory. You get a memory system for free, from work you are already doing.
 - **Consolidate.** Overnight, dreamer agents do what sleep does for you: verify memories against the codebase, curate duplicates and stale entries, and promote what recurs.
-- **Recall.** The right memories surface automatically every turn, and the agent can search across memories, past conversations, and git history on demand. Across sessions, and across OpenCode and Pi.
+- **Recall.** The right memories surface automatically every turn, and the agent can search across memories, past conversations, and git history on demand. Across sessions, and across OpenCode, Pi, and OMP.
 
 Two promises: your agent **never stops to manage its context** (no compaction pauses, no broken flow) and it **never forgets**.
 
@@ -96,24 +96,78 @@ irm https://raw.githubusercontent.com/cortexkit/magic-context/master/scripts/ins
 npx @cortexkit/magic-context@latest setup
 ```
 
-The wizard auto-detects which harnesses you have (OpenCode, Pi, or both), adds the plugin, disables built-in compaction, helps you pick models for the historian, dreamer, and sidekick, and resolves conflicts with other context-management plugins. Target a specific harness with `--harness opencode` or `--harness pi`.
+The wizard auto-detects which harnesses you have (OpenCode, Pi, OMP, or any combination), adds the plugin, disables built-in compaction, helps you pick models for the historian, dreamer, and sidekick, and resolves conflicts with other context-management plugins. Target one with `--harness opencode`, `--harness pi`, or `--harness omp`.
 
 > **Why disable built-in compaction?** Magic Context manages context itself. The host's compaction would interfere with its cache-aware deferred operations and double-compress.
 
-**Manual setup** (OpenCode): add the plugin and turn compaction off in `opencode.json`, then drop a `magic-context.jsonc` in `<project>/.cortexkit/` (or `~/.config/cortexkit/` for user-wide defaults). See the [configuration reference](./CONFIGURATION.md).
+### Manual setup (OpenCode)
+
+If you cannot run the wizard, add this to `opencode.jsonc`:
 
 ```jsonc
 {
-  "plugin": ["@cortexkit/opencode-magic-context"],
+  "plugin": ["@cortexkit/opencode-magic-context@latest"],
   "compaction": { "auto": false, "prune": false }
 }
 ```
 
+> **Plugin updates:** A bare plugin entry is pinned to the downloaded exact version before restart so OpenCode does not remove the active package mid-session. To deliberately keep it unpinned after removing a version, write `@latest` explicitly.
+
+Then create `magic-context.jsonc` with the OpenCode historian setting:
+
+```jsonc
+{
+  "$schema": "https://raw.githubusercontent.com/cortexkit/magic-context/master/assets/magic-context.schema.json",
+  "historian": {
+    "opencode": { "model": "provider/model-id" }
+  }
+}
+```
+
+- **Required:** `historian.opencode.model` must be a real `provider/model-id`. Without it, the plugin loads but historian runs fail, older history is not summarized, and repeated failures show a `Magic Context — history comparting needs attention` notice.
+- **Optional:** `dreamer` and `sidekick` model/disable blocks. Omit them to leave periodic memory consolidation and `/ctx-aug` off.
+- **Optional:** `embedding`. Omit it to use the local `Xenova/all-MiniLM-L6-v2`; turning embeddings off removes semantic/embedding-backed search, but keyword search and context management continue.
+
+### Flat model-config migration (before/after)
+
+Existing flat model settings migrate automatically on the first config read. The
+flat form below is shown only as a migration **before** example; write the
+per-harness **after** form for all new configuration.
+
+**Before (flat shape — migration only):**
+
+```jsonc
+{
+  "historian": {
+    "model": "provider/model-id",
+    "thinking_level": "medium"
+  }
+}
+```
+
+**After (per-harness shape):**
+
+```jsonc
+{
+  "historian": {
+    "opencode": { "model": "provider/model-id" },
+    "pi": {
+      "model": "provider/model-id",
+      "thinking_level": "medium"
+    }
+  }
+}
+```
+
+User-level config is `~/.config/cortexkit/magic-context.jsonc` on macOS/Linux and `%USERPROFILE%\.config\cortexkit\magic-context.jsonc` on Windows (or `$XDG_CONFIG_HOME/cortexkit/magic-context.jsonc` when set). OpenCode Desktop users can use the dashboard's config editor or hand-edit that file; Desktop does not include the CLI setup wizard.
+
 **Pi:** `npx @cortexkit/magic-context@latest setup --harness pi` (requires Pi `>= 0.74.0`). The Pi extension shares the same database as OpenCode; project memories and embeddings pool across both.
 
-**Troubleshooting:** `npx @cortexkit/magic-context@latest doctor` auto-detects your harnesses, checks for conflicts (compaction, OMO hooks, DCP), verifies the plugin and TUI sidebar, runs an integrity check on the database, and fixes what it can. Add `--issue` to file a ready-to-submit bug report.
+**Oh My Pi (OMP):** `npx @cortexkit/magic-context@latest setup --harness omp` (requires OMP `>= 17.1.7`). Setup installs the Pi-compatible extension through `omp plugin`, disables OMP native compaction and automatic memory, and honors OMP profiles, `PI_CODING_AGENT_DIR`, and initialized XDG layouts.
 
-Works the same on a brand-new or a long-running project: install, restart the harness, and Magic Context captures context from that point forward. It does not backfill OpenCode or Pi sessions from before it was installed.
+**Troubleshooting:** `npx @cortexkit/magic-context@latest doctor` auto-detects your harnesses, checks host-specific conflicts, verifies plugin registration and database integrity, and fixes what it can. Add `--issue` to file a ready-to-submit bug report.
+
+Works the same on a brand-new or a long-running project: install, restart the harness, and Magic Context captures context from that point forward. It does not backfill OpenCode, Pi, or OMP sessions from before it was installed.
 
 <details>
 <summary><strong>Compatibility with other context-management plugins</strong></summary>
@@ -123,6 +177,8 @@ Works the same on a brand-new or a long-running project: install, restart the ha
 Magic Context owns context management end to end, so it **disables itself** if another plugin is already doing that job. Running two context managers at once would double-compress your history and thrash the prompt cache. On startup it checks for the following; setup and `doctor` help you resolve each, and until they're resolved Magic Context stays off (fail-safe) and tells you why:
 
 - **OpenCode built-in compaction** (`compaction.auto` / `compaction.prune`) — Magic Context replaces it. Setup turns it off.
+- **OMP native compaction** (`compaction.enabled`) — Magic Context replaces it. OMP setup turns it off transactionally.
+- **OMP automatic memory** (`memory.backend`) — a second memory injector duplicates recall and retention. OMP setup sets it to `off`; existing data is not deleted.
 - **DCP** (`opencode-dcp`) — a separate context-pruning plugin. The two cannot run together; remove it from your `plugin` list.
 - **oh-my-opencode (OMO)** — setup offers to disable the three hooks that overlap:
   - `preemptive-compaction` — triggers compaction that conflicts with the historian.
@@ -215,7 +271,7 @@ Because it runs during idle time, the dreamer pairs well with local models, even
 - **`ctx_expand`**: pull a compressed history range back to the original `U:`/`A:` transcript when the agent needs the exact details.
 - **`ctx_note`**: a scratchpad for deferred intentions. Notes resurface at natural boundaries (after commits, after historian runs, when todos finish). **Smart notes** carry an open-ended condition the dreamer watches for.
 
-Recall works **across sessions** (a new session inherits everything) and **across harnesses** (write a memory in OpenCode, retrieve it in Pi).
+Recall works **across sessions** (a new session inherits everything) and **across harnesses** (write a memory in OpenCode, retrieve it in Pi or OMP).
 
 > **Auto search hints** *(on by default)* run a background `ctx_search` each turn and whisper a "vague recall" when something relevant exists — like almost remembering a note you took. It appends only compact fragments, never full content; set `memory.auto_search.enabled: false` to turn it off. **Git commit indexing** *(opt-in)* makes your project history semantically searchable as an additional `ctx_search` source — enable with `memory.git_commit_indexing.enabled: true`.
 
@@ -267,7 +323,9 @@ It reads directly from Magic Context's SQLite database. No extra server, no API.
 
 ## Configuration
 
-Settings live in `magic-context.jsonc`. Everything has sensible defaults; project config merges on top of user-wide settings. For the full reference — cache TTL tuning, per-model execute thresholds, historian and dreamer model selection, embedding providers, and memory settings — see **[CONFIGURATION.md](./CONFIGURATION.md)** or the **[configuration reference on docs.cortexkit.io](https://docs.cortexkit.io/magic-context/reference/configuration/)**.
+Settings live in `magic-context.jsonc`. Most settings have sensible defaults, but the active harness's historian model (`historian.opencode.model` or `historian.pi.model`) is required for history compacting; project config merges on top of user-wide settings. For the full reference — cache TTL tuning, per-model execute thresholds, historian and dreamer model selection, embedding providers, memory settings, and prompt-surface presets (`full`/`light`) — see **[CONFIGURATION.md](./CONFIGURATION.md)** or the **[configuration reference on docs.cortexkit.io](https://docs.cortexkit.io/magic-context/reference/configuration/)**.
+
+> **Note on per-model settings (OpenCode/Pi):** settings that route per model — like `prompt_surface.models` — apply to the injected guidance block. Tool descriptions are registered once per process by the current (v1) plugin API and follow the default preset; per-model tool descriptions arrive with the OpenCode v2 plugin API once the SDK stabilizes ([#260](https://github.com/cortexkit/magic-context/issues/260)).
 
 **Config locations** (one shared CortexKit location, project overrides user):
 1. `<project-root>/.cortexkit/magic-context.jsonc`
@@ -275,11 +333,31 @@ Settings live in `magic-context.jsonc`. Everything has sensible defaults; projec
 
 Upgrading from an earlier version? Your existing config is moved here automatically on first run (a `.MOVED_READPLEASE` breadcrumb is left at the old path).
 
+### Work and personal repository model profiles
+
+If your personal repositories use one hidden-agent model set and work repositories use another, define the profiles in user config and let each work repository select its name:
+
+```jsonc
+// ~/.config/cortexkit/magic-context.jsonc
+{
+  "profile": "personal",
+  "profiles": {
+    "personal": { "historian": { "opencode": { "model": "anthropic/claude-sonnet-4-6" } } },
+    "work": { "historian": { "opencode": { "model": "openai/gpt-5.2-codex" } } }
+  }
+}
+
+// <work-repo>/.cortexkit/magic-context.jsonc
+{ "profile": "work" }
+```
+
+This is the work-repositories-versus-personal-repositories setup requested by kagbodji. Profiles overlay only hidden-agent model selection, preserve base settings that they do not mention, and are defined only in user config. A project can select a known user profile but cannot supply its contents. See [CONFIGURATION.md](./CONFIGURATION.md#per-repository-model-profiles) for the full OpenCode/Pi example, fallback behavior, and trust boundary.
+
 ---
 
 ## Storage
 
-All durable state lives in a local SQLite database under the shared CortexKit store (`~/.local/share/cortexkit/magic-context/context.db`, XDG-equivalent on Windows; legacy OpenCode-folder databases are migrated forward on first boot). If the database can't be opened, Magic Context disables itself and notifies you. Memories are keyed to a **stable project identity** derived from the repo, so they follow a project across worktrees, clones, and forks rather than being tied to a directory path.
+All durable state lives in a local SQLite database under the shared CortexKit store (`~/.local/share/cortexkit/magic-context/context.db`, XDG-equivalent on Windows; legacy OpenCode-folder databases are migrated forward on first boot). Set `MAGIC_CONTEXT_STORAGE_DIR` to an absolute, complete Magic Context storage directory when a host isolates `XDG_DATA_HOME`; the explicit path takes precedence over the XDG-derived path. Every process sharing the store must receive the same explicit value. Hosts propagate this variable when explicitly configured but Magic Context never originates it from its own default resolution. The override moves the harness-side database only; the per-user `subc` daemon state remains in its own shared location. Mixed-version processes continue to block migrations on a shared directory until all processes are updated. If the database can't be opened, Magic Context disables itself and notifies you. Memories are keyed to a **stable project identity** derived from the repo, so they follow a project across worktrees, clones, and forks rather than being tied to a directory path.
 
 Magic Context also writes to a few other locations:
 

@@ -124,8 +124,10 @@ export function getDueCompiledSmartNoteChecks(
     projectPath: string,
     now: number,
     limit: number,
+    retinaHandoff = false,
 ): SmartNoteCheckNote[] {
     return getPendingSmartNotes(db, projectPath)
+        .filter((note) => !retinaHandoff || note.compileStatus !== "compiled")
         .map(toSmartNote)
         .filter(
             (note) =>
@@ -144,8 +146,10 @@ export function getSmartNotesNeedingCompilation(
     projectPath: string,
     now: number,
     limit: number,
+    retinaHandoff = false,
 ): SmartNoteCheckNote[] {
     return getPendingSmartNotes(db, projectPath)
+        .filter((note) => !retinaHandoff || note.compileStatus !== "compiled")
         .map(toSmartNote)
         .filter(
             (note) =>
@@ -164,10 +168,12 @@ export function getStaleCompiledSmartNotes(
     projectPath: string,
     now: number,
     limit: number,
+    retinaHandoff = false,
 ): SmartNoteCheckNote[] {
     const staleBefore = now - SMART_NOTE_CHECK_MAX_STALENESS_MS;
     const livenessBefore = now - SMART_NOTE_CHECK_LIVENESS_RECHECK_MS;
     return getPendingSmartNotes(db, projectPath)
+        .filter((note) => !retinaHandoff || note.compileStatus !== "compiled")
         .map(toSmartNote)
         .filter(
             (note) =>

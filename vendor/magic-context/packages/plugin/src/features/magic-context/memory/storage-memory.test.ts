@@ -121,6 +121,19 @@ describe("storage-memory", () => {
             expect(memory.lastRetrievedAt).toBeNull();
         });
 
+        it("#when inserting a memory with sourceType 'user' #then it rejects the write", () => {
+            db = makeMemoryDatabase();
+
+            expect(() =>
+                insertMemory(db, {
+                    projectPath: "/repo/project",
+                    category: "USER_DIRECTIVES",
+                    content: "Operator-stated rule",
+                    sourceType: "user",
+                }),
+            ).toThrow(/reserved for future dashboard manual entry/);
+        });
+
         it("#when looking up by hash and id #then it returns the matching memory", () => {
             db = makeMemoryDatabase();
             const inserted = insertMemory(db, {

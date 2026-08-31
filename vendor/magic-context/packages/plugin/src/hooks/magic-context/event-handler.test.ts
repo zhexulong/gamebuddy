@@ -1,9 +1,10 @@
 /// <reference types="bun-types" />
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
     __resetMessageIndexAsyncForTests,
     isSessionReconciled,
@@ -38,6 +39,7 @@ import {
     __test as transformDecisionLogTest,
 } from "../../features/magic-context/transform-decision-log";
 import type { ContextUsage } from "../../features/magic-context/types";
+import { getWindowReportsPath } from "../../features/magic-context/window-report-ledger";
 import { clearModelsDevCache, refreshModelLimitsFromApi } from "../../shared/models-dev-cache";
 import { createEventHandler } from "./event-handler";
 
@@ -45,6 +47,7 @@ type ContextUsageCacheEntry = {
     usage: ContextUsage;
     updatedAt: number;
     lastResponseTime?: number;
+    hasUsageTokens?: boolean;
 };
 
 const tempDirs: string[] = [];
@@ -79,8 +82,8 @@ function useTempDataHome(prefix: string): void {
 
 function resolveContextLimit(): number {
     // Tests don't specify providerID/modelID in most events, so the real
-    // resolveContextLimit falls through to DEFAULT_CONTEXT_LIMIT = 128_000.
-    return 128_000;
+    // resolveContextLimit falls through to DEFAULT_CONTEXT_LIMIT = 200_000.
+    return 200_000;
 }
 
 function countIndexedMessages(sessionId: string, messageId: string): number {
@@ -176,6 +179,10 @@ describe("createEventHandler", () => {
             decision: "defer",
             materialized: false,
             materializeReason: null,
+            systemHashPrev: null,
+            systemHashNew: null,
+            m0ModelKeyPrev: null,
+            m0ModelKeyNew: null,
             emergency: false,
             droppedTokens: 0,
             droppedCount: 0,
@@ -189,6 +196,10 @@ describe("createEventHandler", () => {
             decision: "execute",
             materialized: true,
             materializeReason: "ttl_idle",
+            systemHashPrev: null,
+            systemHashNew: null,
+            m0ModelKeyPrev: null,
+            m0ModelKeyNew: null,
             emergency: false,
             droppedTokens: 0,
             droppedCount: 1,
@@ -204,6 +215,10 @@ describe("createEventHandler", () => {
             decision: "defer",
             materialized: false,
             materializeReason: null,
+            systemHashPrev: null,
+            systemHashNew: null,
+            m0ModelKeyPrev: null,
+            m0ModelKeyNew: null,
             emergency: false,
             droppedTokens: 0,
             droppedCount: 0,
@@ -222,6 +237,10 @@ describe("createEventHandler", () => {
             decision: "execute",
             materialized: true,
             materializeReason: "explicit_flush",
+            systemHashPrev: null,
+            systemHashNew: null,
+            m0ModelKeyPrev: null,
+            m0ModelKeyNew: null,
             emergency: false,
             droppedTokens: 0,
             droppedCount: 2,
@@ -269,6 +288,10 @@ describe("createEventHandler", () => {
             decision: "defer",
             materialized: false,
             materializeReason: null,
+            systemHashPrev: null,
+            systemHashNew: null,
+            m0ModelKeyPrev: null,
+            m0ModelKeyNew: null,
             emergency: false,
             droppedTokens: 0,
             droppedCount: 0,
@@ -345,6 +368,10 @@ describe("createEventHandler", () => {
                 decision: "execute",
                 materialized: true,
                 materializeReason: "pressure_refold",
+                systemHashPrev: null,
+                systemHashNew: null,
+                m0ModelKeyPrev: null,
+                m0ModelKeyNew: null,
                 emergency: false,
                 droppedTokens: 0,
                 droppedCount: 3,
@@ -482,6 +509,7 @@ describe("createEventHandler", () => {
         const expectedPercentage = ((120_000 + 15_000) / resolveContextLimit()) * 100;
         expect(usageEntry?.usage.inputTokens).toBe(135_000);
         expect(usageEntry?.usage.percentage).toBeCloseTo(expectedPercentage, 5);
+        expect(usageEntry?.hasUsageTokens).toBe(true);
         expect(usageEntry?.lastResponseTime).toBeGreaterThanOrEqual(before);
         expect(
             getOrCreateSessionMeta(openDatabase(), "ses-usage").lastResponseTime,
@@ -883,7 +911,7 @@ describe("createEventHandler", () => {
         const originalPrepare = deps.db.prepare.bind(deps.db);
         let failCleanup = true;
         (deps.db as unknown as { prepare: typeof deps.db.prepare }).prepare = ((sql: string) => {
-            if (failCleanup && sql === "DELETE FROM source_contents WHERE session_id = ?") {
+            if (failCleanup && sql === "DELETE FROM source_contents WHERE session_id IN (?)") {
                 failCleanup = false;
                 throw new Error("synthetic session cleanup failure");
             }
@@ -1098,5 +1126,184 @@ describe("createEventHandler", () => {
         expect(getTagsBySession(openDatabase(), "ses-noop")).toHaveLength(0);
         expect(countIndexedMessages("ses-noop", "msg-missing")).toBe(0);
         expect(countSessionMetaRows("ses-noop")).toBe(0);
+    });
+});
+
+describe("createEventHandler — compaction-off overflow gating (issue #266 S3)", () => {
+    const OVERFLOW_ERROR =
+        "This model's maximum context length is 120000 tokens. Please reduce the length of the messages.";
+
+    function readOverflowState(sessionId: string): {
+        needsEmergencyRecovery: number;
+        detectedContextLimit: number;
+    } {
+        const row = openDatabase()
+            .prepare(
+                "SELECT needs_emergency_recovery, detected_context_limit FROM session_meta WHERE session_id = ?",
+            )
+            .get(sessionId) as
+            | { needs_emergency_recovery: number | null; detected_context_limit: number | null }
+            | undefined;
+        return {
+            needsEmergencyRecovery: row?.needs_emergency_recovery ?? 0,
+            detectedContextLimit: row?.detected_context_limit ?? 0,
+        };
+    }
+
+    it("compaction ON: a provider overflow arms emergency recovery (regression baseline)", async () => {
+        useTempDataHome("context-event-overflow-on-");
+        const deps = createDeps(new Map());
+        const handler = createEventHandler(deps);
+
+        await handler({
+            event: {
+                type: "session.error",
+                properties: { sessionID: "ses-on", error: OVERFLOW_ERROR },
+            },
+        });
+
+        const state = readOverflowState("ses-on");
+        expect(state.needsEmergencyRecovery).toBe(1);
+        expect(state.detectedContextLimit).toBe(120000);
+    });
+
+    it("compaction OFF: overflow never arms recovery, but the provider limit is still recorded for raw-usage math", async () => {
+        useTempDataHome("context-event-overflow-off-");
+        const deps = { ...createDeps(new Map()), compactionOff: true };
+        const handler = createEventHandler(deps);
+
+        await handler({
+            event: {
+                type: "session.error",
+                properties: { sessionID: "ses-off", error: OVERFLOW_ERROR },
+            },
+        });
+
+        const state = readOverflowState("ses-off");
+        // The latch machinery is gated off — native compaction owns recovery.
+        expect(state.needsEmergencyRecovery).toBe(0);
+        // The provider-reported limit stays useful for the raw-usage % the
+        // sidebar renders in this mode.
+        expect(state.detectedContextLimit).toBe(120000);
+    });
+
+    it("captures session.error overflow without guessing provider metadata", async () => {
+        useTempDataHome("context-event-window-report-session-error-");
+        const deps = createDeps(new Map());
+        updateSessionMeta(deps.db, "ses-session-error-report", {
+            lastObservedModelKey: "anthropic/claude-sonnet-4-5",
+        });
+        const handler = createEventHandler(deps);
+
+        await handler({
+            event: {
+                type: "session.error",
+                properties: { sessionID: "ses-session-error-report", error: OVERFLOW_ERROR },
+            },
+        });
+
+        const report = JSON.parse(readFileSync(getWindowReportsPath(), "utf8")) as Record<
+            string,
+            unknown
+        >;
+        expect(report).toMatchObject({
+            access_path: "api",
+            extracted_limit: 120000,
+            extracted_limit_units: "provider",
+            geometry: "combined",
+        });
+        // Session errors lack a model identity. A stale session value is not evidence.
+        expect("provider_id" in report).toBe(false);
+        expect("model_id" in report).toBe(false);
+        // Absent = unknown routing (refuses promotion); the reporter never
+        // asserts false — an explicit false would PERMIT promotion, a claim
+        // the one-directional forwarder detector cannot support.
+        expect("path_may_forward" in report).toBe(false);
+    });
+
+    it("captures message.updated overflow with observed model, token, and routing facts", async () => {
+        useTempDataHome("context-event-window-report-message-updated-");
+        const deps = createDeps(new Map());
+        updateSessionMeta(deps.db, "ses-message-report", {
+            lastObservedModelKey: "openrouter/anthropic/claude-sonnet-4-5",
+            observedSafeInputTokens: 150,
+        });
+        const handler = createEventHandler(deps);
+
+        await handler({
+            event: {
+                type: "message.updated",
+                properties: {
+                    info: {
+                        id: "msg-window-report",
+                        sessionID: "ses-message-report",
+                        role: "assistant",
+                        providerID: "openrouter",
+                        modelID: "anthropic/claude-sonnet-4-5",
+                        error: { message: OVERFLOW_ERROR, status: 400 },
+                        finish: "stop",
+                        tokens: { input: 100, cache: { read: 50, write: 0 } },
+                        time: { completed: Date.now() },
+                    },
+                },
+            },
+        });
+
+        const report = JSON.parse(readFileSync(getWindowReportsPath(), "utf8")) as Record<
+            string,
+            unknown
+        >;
+        expect(report).toMatchObject({
+            provider_id: "openrouter",
+            model_id: "anthropic/claude-sonnet-4-5",
+            status: 400,
+            attempted_tokens: 150,
+            attempted_tokens_units: "estimate",
+            largest_success: 150,
+            largest_success_units: "estimate",
+            path_may_forward: true,
+            served_by_hint: "anthropic",
+        });
+    });
+
+    it("does not append reports for non-overflow errors", async () => {
+        useTempDataHome("context-event-window-report-non-overflow-");
+        const handler = createEventHandler(createDeps(new Map()));
+
+        await handler({
+            event: {
+                type: "session.error",
+                properties: { sessionID: "ses-non-overflow", error: "connection timed out" },
+            },
+        });
+
+        expect(existsSync(getWindowReportsPath())).toBe(false);
+    });
+
+    it("compaction OFF: message.updated overflow also records limit only, never arms", async () => {
+        useTempDataHome("context-event-overflow-off-mu-");
+        const deps = { ...createDeps(new Map()), compactionOff: true };
+        const handler = createEventHandler(deps);
+
+        await handler({
+            event: {
+                type: "message.updated",
+                properties: {
+                    info: {
+                        id: "msg-1",
+                        sessionID: "ses-off-mu",
+                        role: "assistant",
+                        error: OVERFLOW_ERROR,
+                        finish: "stop",
+                        tokens: { input: 100, cache: { read: 0, write: 0 } },
+                        time: { completed: Date.now() },
+                    },
+                },
+            },
+        });
+
+        const state = readOverflowState("ses-off-mu");
+        expect(state.needsEmergencyRecovery).toBe(0);
+        expect(state.detectedContextLimit).toBe(120000);
     });
 });

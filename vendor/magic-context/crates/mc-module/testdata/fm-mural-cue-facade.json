@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "drill_id": "FM-MURAL-CUE-FACADE",
+  "fault": "MODULE-owned mural cue writes lose their mirror-back or the escalation counter is reset on reopen",
+  "mutations": [
+    {
+      "name": "DROP_FACADE_MIRROR_BACK",
+      "fix": "compress-cues MODULE facade convergence",
+      "applied_diff": {
+        "path": "packages/plugin/src/features/magic-context/dreamer/task-executor.test.ts",
+        "before": "moduleCall applies the memory changefeed page before returning the accepted module row",
+        "after": "moduleCall returns the accepted module row without applying the mirror page",
+        "changed": true
+      },
+      "command": "bun test --timeout 30000 src/features/magic-context/dreamer/task-executor.test.ts -t \"writes MODULE-owned cues through the facade\"",
+      "observed_failure": {
+        "exit_status": 1,
+        "output": "expected completed, received failed/transient: compress-cues incomplete: 1 remain (was 1 at run start; processed 0 this run)"
+      }
+    },
+    {
+      "name": "RESET_COUNTER_ON_REOPEN",
+      "fix": "boundary-divergence escalation counter persistence",
+      "applied_diff": {
+        "path": "crates/mc-store/src/lib.rs",
+        "before": "load deserializes persisted ModuleMeta unchanged",
+        "after": "load sets boundary_divergence_pending_count = 0 after deserialization",
+        "changed": true
+      },
+      "command": "cargo test -p mc-store boundary_divergence_counter_cas_loser_does_not_double_increment_and_survives_reopen --lib",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "assertion left == right failed at crates/mc-store/src/lib.rs:16414:9; left: 0; right: 1"
+      }
+    }
+  ],
+  "reverted_rerun": {
+    "command": "cargo test -p mc-store boundary_divergence_counter_cas_loser_does_not_double_increment_and_survives_reopen --lib && bun test --timeout 30000 src/features/magic-context/dreamer/task-executor.test.ts -t \"writes MODULE-owned cues through the facade\"",
+    "status": "pass",
+    "output": "both regression tests pass after reverting the mutations"
+  }
+}

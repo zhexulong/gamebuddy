@@ -29,6 +29,8 @@
  * the runner contract is purely additive on the OpenCode side.
  */
 
+import type { ModelInput } from "./model-resolution";
+
 /**
  * Configuration for one subagent invocation.
  *
@@ -63,8 +65,12 @@ export interface SubagentRunOptions {
     systemPrompt: string;
     userMessage: string;
     model?: string | undefined;
-    fallbackModels?: readonly string[];
+    fallbackModels?: readonly ModelInput[];
     timeoutMs?: number | undefined;
+    /** Sampling temperature for the provider request when the harness can enforce it. */
+    temperature?: number | undefined;
+    /** Requested output-token budget for the provider request. */
+    maxOutputTokens?: number | undefined;
     cwd?: string | undefined;
     signal?: AbortSignal | undefined;
     /**

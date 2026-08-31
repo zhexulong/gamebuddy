@@ -26,6 +26,7 @@ import { log } from "../../../shared/logger";
 const GIT_TIMEOUT_MS = 5_000;
 const TRANSIENT_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
 const identityCache = new Map<string, string>();
+const linkedGitWorktreeCache = new Map<string, boolean>();
 const lastKnownGitIdentityCache = new Map<string, string>();
 // Cached `dir:` fallbacks for directories that have NO `.git` entry in their
 // ancestor chain. We only cache the no-`.git` case: once a `.git` appears we
@@ -45,6 +46,7 @@ const dubiousOwnershipLoggedDirectories = new Set<string>();
 const dubiousOwnershipWarnedDirectories = new Set<string>();
 const transientGitIdentityReuseLoggedDirectories = new Set<string>();
 let execFileSyncForIdentity: typeof execFileSync = execFileSync;
+let userHomeDirectoryForIdentity = (): string => homedir();
 let nowMs = (): number => Date.now();
 
 /**
@@ -408,12 +410,24 @@ export function takeDubiousOwnershipProjectIdentityWarning(directory: string): s
 
 /**
  * Compare filesystem-canonical paths so a symlink spelling of $HOME cannot
- * accidentally create a second directory identity. Descendants remain valid
- * project directories; only the exact home directory is rejected.
+ * accidentally create a second directory identity. The session resolver also
+ * checks descendants whose nearest git root is the home directory.
  */
+function canonicalUserHomeDirectory(): string {
+    const homeDirectory = userHomeDirectoryForIdentity();
+    try {
+        return realpathSync.native(homeDirectory);
+    } catch {
+        // Sandboxed OpenCode processes may know $HOME but be denied access to its
+        // metadata. Returning the original path lets later checks still recognize
+        // projects under the user's home directory without aborting plugin startup.
+        return homeDirectory;
+    }
+}
+
 export function isUserHomeDirectory(directory: string): boolean {
     try {
-        return realpathSync.native(path.resolve(directory)) === realpathSync.native(homedir());
+        return realpathSync.native(path.resolve(directory)) === canonicalUserHomeDirectory();
     } catch {
         return false;
     }
@@ -498,22 +512,59 @@ function hasGitDir(canonical: string): boolean {
     }
 }
 
-function hasGitDirInAncestorChain(startDirectory: string): boolean {
+function gitRootInAncestorChain(startDirectory: string): string | null {
     let current = startDirectory;
     while (true) {
         if (existsSync(path.join(current, ".git"))) {
-            return true;
+            try {
+                return realpathSync.native(current);
+            } catch {
+                return path.resolve(current);
+            }
         }
         const parent = path.dirname(current);
         if (parent === current) {
-            return false;
+            return null;
         }
         current = parent;
     }
 }
 
-export function resolveProjectIdentityForSession(directory: string): string | undefined {
-    if (isUserHomeDirectory(directory)) return undefined;
+function hasGitDirInAncestorChain(startDirectory: string): boolean {
+    return gitRootInAncestorChain(startDirectory) !== null;
+}
+
+function gitRootDirectory(canonical: string): string | null {
+    const direct = gitRootInAncestorChain(canonical);
+    if (direct) return direct;
+    try {
+        const realCanonical = realpathSync.native(canonical);
+        return realCanonical === canonical ? null : gitRootInAncestorChain(realCanonical);
+    } catch {
+        return null;
+    }
+}
+
+export function resolveProjectIdentityForSession(
+    directory: string,
+    allowHomeProject = false,
+): string | undefined {
+    const canonicalHome = canonicalUserHomeDirectory();
+    const canonicalDirectory = (() => {
+        try {
+            return realpathSync.native(path.resolve(directory));
+        } catch {
+            return path.resolve(directory);
+        }
+    })();
+    const inheritsHomeRepository = gitRootDirectory(canonicalDirectory) === canonicalHome;
+    if (canonicalDirectory === canonicalHome || inheritsHomeRepository) {
+        if (!allowHomeProject) return undefined;
+        // A session whose effective git root is $HOME belongs to the same protected
+        // home identity as an exact-home session. This prevents a child directory
+        // from bypassing the opt-in by inheriting $HOME/.git.
+        return directoryFallback(canonicalHome);
+    }
     return resolveProjectIdentityOrFallback(directory);
 }
 
@@ -556,11 +607,49 @@ export function storedPathBelongsToIdentity(
     );
 }
 
+/**
+ * Detect whether a directory belongs to a linked Git worktree. Linked worktrees
+ * have a per-worktree git dir while sharing the primary checkout's common dir.
+ * The probe is cached because authority recovery can be considered every pass.
+ */
+export function isLinkedGitWorktree(directory: string): boolean {
+    const resolvedDirectory = path.resolve(directory);
+    const cached = linkedGitWorktreeCache.get(resolvedDirectory);
+    if (cached !== undefined) return cached;
+
+    let linked = false;
+    try {
+        const output = execFileSyncForIdentity(
+            "git",
+            ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+            {
+                cwd: resolvedDirectory,
+                encoding: "utf8",
+                timeout: GIT_TIMEOUT_MS,
+                windowsHide: true,
+            },
+        );
+        const [gitDir, commonDir] = String(output)
+            .split(/\r?\n/u)
+            .map((line) => line.trim())
+            .filter(Boolean);
+        linked = Boolean(gitDir && commonDir && path.resolve(gitDir) !== path.resolve(commonDir));
+    } catch {
+        // If Git metadata exists but its topology cannot be resolved, fail closed:
+        // the checkout may be linked and must not be allowed to drain shared authority.
+        linked = hasGitDir(resolvedDirectory);
+    }
+    linkedGitWorktreeCache.set(resolvedDirectory, linked);
+    return linked;
+}
+
 export function __setProjectIdentityTestHooks(hooks: {
     execFileSync?: typeof execFileSync;
+    homeDirectory?: () => string;
     nowMs?: () => number;
 }): void {
     execFileSyncForIdentity = hooks.execFileSync ?? execFileSync;
+    userHomeDirectoryForIdentity = hooks.homeDirectory ?? (() => homedir());
     nowMs = hooks.nowMs ?? (() => Date.now());
 }
 
@@ -582,6 +671,7 @@ export function __clearProjectIdentityResolutionCacheForTests(directory?: string
 
 export function __resetProjectIdentityForTests(): void {
     identityCache.clear();
+    linkedGitWorktreeCache.clear();
     lastKnownGitIdentityCache.clear();
     directoryFallbackCache.clear();
     transientFailureCooldown.clear();
@@ -590,5 +680,6 @@ export function __resetProjectIdentityForTests(): void {
     dubiousOwnershipWarnedDirectories.clear();
     transientGitIdentityReuseLoggedDirectories.clear();
     execFileSyncForIdentity = execFileSync;
+    userHomeDirectoryForIdentity = (): string => homedir();
     nowMs = (): number => Date.now();
 }

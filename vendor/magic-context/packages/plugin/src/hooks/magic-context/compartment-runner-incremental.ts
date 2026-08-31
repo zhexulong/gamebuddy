@@ -31,6 +31,7 @@ import {
     clearEmergencyRecovery,
     clearHistorianDrainFailure,
     clearHistorianFailureState,
+    describeProtectedTailDrainBudgetSkip,
     getOverflowState,
     incrementHistorianFailure,
     isWrapupInProgress,
@@ -53,6 +54,7 @@ import { insertUserMemoryCandidates } from "../../features/magic-context/user-me
 import { normalizeSDKResponse } from "../../shared";
 import { describeError } from "../../shared/error-message";
 import { sessionLog } from "../../shared/logger";
+import { logSlowWriteTransaction } from "../../shared/write-transaction-timing";
 import { updateCompactionMarkerAfterPublication } from "./compaction-marker-manager";
 import { buildCompartmentAgentPrompt } from "./compartment-prompt";
 import { queueDropsForCompartmentalizedMessages } from "./compartment-runner-drop-queue";
@@ -60,6 +62,8 @@ import { runValidatedHistorianPass } from "./compartment-runner-historian";
 import type { CompartmentRunnerDeps } from "./compartment-runner-types";
 import {
     buildHistorianFailureNotice,
+    HISTORIAN_BOUNDARY_HEALING_SLACK,
+    shouldDiscardLastHistorianCompartment,
     validateChunkCoverage,
     validateStoredCompartments,
 } from "./compartment-runner-validation";
@@ -341,12 +345,9 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                   executeThresholdPercentage: boundarySnapshot.executeThresholdPercentage,
               });
         if (!reserve.ok) {
-            sessionLog(
-                sessionId,
-                `historian rate-limit skip: ${reserve.skippedReason ?? "quota exhausted"}`,
-            );
+            sessionLog(sessionId, describeProtectedTailDrainBudgetSkip(reserve));
             telemetry.status = "noop";
-            telemetry.failureReason = "protected-tail drain quota exhausted";
+            telemetry.failureReason = "internal protected-tail drain budget spent";
             return;
         }
         drainReservation = reserve.reservation;
@@ -458,6 +459,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         retainDrainReservationForRetryThrottle = true;
         const validatedPass = await runValidatedHistorianPass({
             client,
+            db,
             parentSessionId: sessionId,
             sessionDirectory,
             prompt,
@@ -497,25 +499,27 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         // is re-derived next run with real following context. The existing
         // `offset = lastCompartment.end + 1` logic then re-reads its range at the
         // head — zero extra plumbing. Guards:
-        //   - k >= 2: never drop the only compartment (would make zero progress).
+        //   - at least two compartments were emitted, so one remains and publication advances.
+        //   - the retained boundary cannot split a completed invocation/result pair.
         //   - not emergency: at ≥95% recovery we need maximum relief NOW, so keep
         //     all k and accept the boundary risk (correctness > quality).
         // Self-healing: a wrong discard re-derives the same compartment next run
         // (now non-last → persisted), so erring toward more slack is safe.
-        const BOUNDARY_HEALING_SLACK = 2;
         const inEmergency = getOverflowState(db, sessionId).needsEmergencyRecovery;
         let persistedCompartments = emittedCompartments;
-        if (!inEmergency && !forceKeepLastCompartmentForChunk && emittedCompartments.length >= 2) {
+        if (
+            !inEmergency &&
+            !forceKeepLastCompartmentForChunk &&
+            shouldDiscardLastHistorianCompartment(emittedCompartments, chunk)
+        ) {
             const lastEmitted = emittedCompartments[emittedCompartments.length - 1];
             const lookaheadMargin = chunk.endIndex - lastEmitted.endMessage;
-            if (lookaheadMargin <= BOUNDARY_HEALING_SLACK) {
-                persistedCompartments = emittedCompartments.slice(0, -1);
-                telemetry.discardedLast = true;
-                sessionLog(
-                    sessionId,
-                    `historian discard-last: dropped provisional compartment ${lastEmitted.startMessage}-${lastEmitted.endMessage} (lookaheadMargin=${lookaheadMargin} <= ${BOUNDARY_HEALING_SLACK}); will re-derive from raw next run`,
-                );
-            }
+            persistedCompartments = emittedCompartments.slice(0, -1);
+            telemetry.discardedLast = true;
+            sessionLog(
+                sessionId,
+                `historian discard-last: dropped provisional compartment ${lastEmitted.startMessage}-${lastEmitted.endMessage} (lookaheadMargin=${lookaheadMargin} <= ${HISTORIAN_BOUNDARY_HEALING_SLACK}); will re-derive from raw next run`,
+            );
         }
 
         const newCompartments = persistedCompartments;
@@ -634,6 +638,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             return;
         }
         let published = false;
+        const transactionStartedAt = performance.now();
         db.exec("BEGIN IMMEDIATE");
         try {
             if (!isCompartmentLeaseHeld(db, sessionId, holderId)) {
@@ -724,6 +729,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             }
             db.exec("COMMIT");
             published = true;
+            logSlowWriteTransaction("historian-publish", transactionStartedAt);
         } finally {
             if (!published) {
                 try {

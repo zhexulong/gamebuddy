@@ -55,6 +55,8 @@ import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
 import {
     hasRunnableCompartmentWindow,
+    type ProtectedTailBoundarySnapshot,
+    recordHighPressureNoEligibleHead,
     resolveOpenCodeProtectedTailBoundary,
     resolveWrapupProtectedTailBoundary,
     validateBoundarySnapshot,
@@ -272,6 +274,31 @@ describe("protected-tail boundary integration", () => {
             });
             // The live prompt and everything after it stays protected.
             expect(snapshot.protectedTailStart).toBeLessThanOrEqual(livePromptOrdinal);
+
+            // At T=90, 85% remains below the derived 92% force band. Reverting
+            // this gate to literal 80 would lift the floor and cross the prompt.
+            const raisedThreshold = resolveOpenCodeProtectedTailBoundary({
+                db,
+                sessionId,
+                mode: "trigger",
+                contextLimit: 64_000,
+                executeThresholdPercentage: 90,
+                usage: { percentage: 85, inputTokens: 54_400 },
+                usageSource: "live",
+            });
+            expect(raisedThreshold.protectedTailStart).toBeLessThanOrEqual(livePromptOrdinal);
+
+            // Default configurations still lift the floor at the unchanged 85% band.
+            const defaultThreshold = resolveOpenCodeProtectedTailBoundary({
+                db,
+                sessionId,
+                mode: "trigger",
+                contextLimit: 64_000,
+                executeThresholdPercentage: 65,
+                usage: { percentage: 85, inputTokens: 54_400 },
+                usageSource: "live",
+            });
+            expect(defaultThreshold.protectedTailStart).toBeGreaterThan(livePromptOrdinal);
 
             // Emergency-scaled re-resolution (force-path second attempt) is
             // ALLOWED to cross the floor — sparse sessions must remain
@@ -621,6 +648,58 @@ it("bails a snapshot when the current context limit differs from the trigger lim
     } finally {
         closeQuietly(db);
         closeQuietly(opencodeDb);
+    }
+});
+
+function pressureGateSnapshot(
+    sessionId: string,
+    executeThresholdPercentage: number,
+): ProtectedTailBoundarySnapshot {
+    return {
+        sessionId,
+        mode: "trigger",
+        offset: 1,
+        offsetMessageId: "m1",
+        protectedTailStart: 2,
+        protectedTailStartMessageId: "m2",
+        eligibleEndOrdinal: 1,
+        eligibleEndMessageId: null,
+        rawMessageCountAtTrigger: 2,
+        rawLastMessageIdAtTrigger: "m2",
+        N: 2_000,
+        usagePercentage: 85,
+        usageInputTokens: 85_000,
+        usageSource: "live",
+        contextLimit: 100_000,
+        executeThresholdPercentage,
+        triggerBudget: 5_000,
+        priorBoundaryOrdinal: 1,
+        migrationFloorActive: false,
+        providerShapeVersion: "opencode-v1",
+        cacheNamespace: "pressure-gate-test",
+        createdAt: 1,
+        rawRangeFingerprint: "stable",
+        trueRawEligibleTokens: 500,
+        oversizeAtomicUnit: false,
+        boundaryReason: "size-walk",
+    };
+}
+
+it("keeps runnable-window and no-head gates below a raised force band", () => {
+    const raised = pressureGateSnapshot("ses-raised-pressure-gates", 90);
+    const defaultThreshold = pressureGateSnapshot("ses-default-pressure-gates", 65);
+
+    // If the implementation incorrectly uses a literal 80% gate, the
+    // raised-threshold assertion becomes true.
+    expect(hasRunnableCompartmentWindow(raised)).toBe(false);
+    expect(hasRunnableCompartmentWindow(defaultThreshold)).toBe(true);
+
+    const db = createContextDb();
+    try {
+        expect(recordHighPressureNoEligibleHead(db, raised)).toBe(0);
+        expect(recordHighPressureNoEligibleHead(db, defaultThreshold)).toBe(1);
+    } finally {
+        closeQuietly(db);
     }
 });
 

@@ -60,13 +60,15 @@ import {
 	adoptPiFallbackMessageTag,
 	adoptPiFallbackToolOwnerTag,
 	type ContextDatabase,
+	captureChannel1PostReduceGraceBaseline,
 	casChannel2NudgeState,
 	clearPendingPiCompactionMarkerStateIf,
 	deriveTagLoadFloor,
 	findAdoptableFallbackTags,
 	findPiFallbackToolOwnerTags,
 	getActiveTagsBySession,
-	getActiveTagTokenAggregate,
+	getChannel1NudgeState,
+	getDroppedTagsByNumbers,
 	getHistorianFailureState,
 	getMaxDroppedTagNumber,
 	getOldestActiveUnprotectedToolTags,
@@ -74,6 +76,7 @@ import {
 	getPendingPiCompactionMarkerState,
 	getPersistedToolTagAccounting,
 	getTagsByNumbers,
+	getTagsBySession,
 	getTagsForPendingOperations,
 	hasPiFallbackMessageTags,
 	hasPiFallbackToolOwnerTags,
@@ -90,13 +93,13 @@ import {
 	clearHistorianFailureState,
 	clearPersistedReasoningWatermark,
 	getAutoSearchHintDecisions,
+	getEmergencyInputSample,
 	getNoteNudgeAnchors,
 	getOverflowState,
 	type PendingPiCompactionMarker,
 	peekDeferredExecutePending,
 	pruneAutoSearchHintDecisions,
 	pruneNoteNudgeAnchors,
-	resetLastNudgeCycleIfTailShrank,
 	setDeferredExecutePendingIfAbsent,
 } from "@magic-context/core/features/magic-context/storage-meta-persisted";
 import { getSourceContents } from "@magic-context/core/features/magic-context/storage-source";
@@ -121,13 +124,18 @@ import {
 	detectMidTurnBypassReason,
 } from "@magic-context/core/hooks/magic-context/boundary-execution";
 import { replayCavemanCompression } from "@magic-context/core/hooks/magic-context/caveman-cleanup";
+import {
+	rearmChannel2AfterCoverageAdvancingHardFold,
+	rearmChannel2AfterMeasuredCollapse,
+} from "@magic-context/core/hooks/magic-context/channel2-cycle";
 import { checkCompartmentTrigger } from "@magic-context/core/hooks/magic-context/compartment-trigger";
-import { shouldTriggerChannel2 } from "@magic-context/core/hooks/magic-context/ctx-reduce-nudge";
+import { evaluateChannel2 } from "@magic-context/core/hooks/magic-context/ctx-reduce-nudge";
 import { deriveTriggerBudget } from "@magic-context/core/hooks/magic-context/derive-budgets";
 import {
 	DEFAULT_CONTEXT_LIMIT,
 	resolveExecuteThreshold,
 } from "@magic-context/core/hooks/magic-context/event-resolvers";
+import { foldExecutesThisPass } from "@magic-context/core/hooks/magic-context/fold-execution-gate";
 import { getVisibleMemoryIds } from "@magic-context/core/hooks/magic-context/inject-compartments";
 import {
 	markNoteNudgeDelivered,
@@ -156,13 +164,17 @@ import {
 	advanceToolReclaimWatermarkToCurrentMax,
 	buildSyntheticToolReclaimOps,
 } from "@magic-context/core/hooks/magic-context/tool-reclaim";
+import { escalationBands } from "@magic-context/core/shared/escalation-bands";
+import { piModelRefToCanonical } from "@magic-context/core/shared/harness-provider-map";
 import { log, sessionLog } from "@magic-context/core/shared/logger";
+import type { ModelInput } from "@magic-context/core/shared/model-resolution";
 import { isSaneLimit } from "@magic-context/core/shared/models-dev-cache";
 import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
 import {
 	TEXT_TAG_IDENTITY_MARKER,
 	tagTranscript,
 } from "@magic-context/core/shared/tag-transcript";
+
 import {
 	clearAutoSearchForPiSession,
 	runAutoSearchHintForPi,
@@ -174,12 +186,16 @@ import {
 	applyDeferredPiCompactionMarker,
 } from "./compaction-marker-manager-pi";
 import {
+	commitPiCompactionModeRecord,
+	reconcilePiCompactionMode,
+} from "./compaction-off-pi";
+import {
 	hasPiTransformTimingObserver,
 	recordPiTransformTiming,
 } from "./context-perf-hooks";
 import {
 	clearPiChannel1State,
-	computeTailTokenEstimatePi,
+	getPiChannel1Baseline,
 	setPiChannel1Baseline,
 } from "./ctx-reduce-nudge-pi";
 import { detectRecentCommit } from "./detect-recent-commit";
@@ -202,7 +218,15 @@ import {
 } from "./gamebuddy-stable-context-source";
 import { publishGameOperationalGateMaterialization } from "./tavern-narrative-gate-marker";
 import { hasVisibleNoteReadCallPi } from "./note-visibility-pi";
+import {
+	resolvePiUsableContextLimit,
+	resolvePiWindowGeometry,
+} from "./pi-context-limit";
 import { type PiHistorianDeps, runPiHistorian } from "./pi-historian-runner";
+import {
+	formatPiPressureForLog,
+	resolvePiPressureSnapshot,
+} from "./pi-pressure";
 import { injectSyntheticTodowriteForPi } from "./pi-todo-inject";
 import {
 	convertEntriesToRawMessages,
@@ -221,8 +245,17 @@ import {
 import { stripPiDroppedPlaceholderMessages } from "./strip-placeholders-pi";
 import { stripPiProcessedImages } from "./strip-processed-images-pi";
 import { clearPiSystemPromptSession } from "./system-prompt";
-import { injectPiTemporalMarkers } from "./temporal-awareness-pi";
-/** Force-materialization threshold — mirrors OpenCode's FORCE_MATERIALIZE_PERCENTAGE (85%). */
+import {
+	assertPiTailHygieneContentUnchanged,
+	countRealPiUserMessages,
+	effectivePiTailHygiene,
+	refreshPiTailHygieneBaseline,
+} from "./tail-hygiene-walk-pi";
+import {
+	injectPiTemporalMarkers,
+	stripPiLeadingTemporalMarker,
+	withoutPiLeadingTemporalMarker,
+} from "./temporal-awareness-pi";
 import { withTimeout } from "./timeout";
 import {
 	type PiMessageTokenCacheEntry,
@@ -230,50 +263,19 @@ import {
 } from "./tokenize-pi-messages";
 import { createPiTranscript } from "./transcript-pi";
 
-const FORCE_MATERIALIZATION_PERCENTAGE = 85;
-
 /** Emergency-block threshold — mirrors OpenCode's >=95% emergency path. */
 const EMERGENCY_BLOCK_PERCENTAGE = 95;
 
-// estimateTokens (char-based) under-counts the real provider
-// tokenizer + untagged structural/reasoning parts: the observed overflow was
-// >400K real vs a ~340K forward estimate (~15% gap). Scaling the limit DOWN for
-// the forward percentage trips the 85% force / 95% emergency bands at a real size
-// that genuinely corresponds to the window, not at the under-counted estimate.
-// 0.85 (not 0.90): 0.90 would make the 95% emergency band fire only at ~360K
-// estimated, still short of the >400K real seen here.
-const FORWARD_PRESSURE_LIMIT_FACTOR = 0.85;
-
-// Returns { percentage, inputTokens } floored by Pi's FORWARD usage estimate.
-// piUsage.tokens = last assistant usage + estimateTokens of every message after
-// it (pi-mono estimateContextTokens), recomputed from the LIVE array each call —
-// so it catches a mid-turn balloon the message_end-persisted trailing number
-// misses. Keep ONLY .tokens (forward, input-side); .percent is discarded (counts
-// output on Pi's own denominator). Immune to NULL token_count (live array, not
-// our tag store). NEVER lowers (max), so it's never less reactive than today.
-function applyForwardPressureFloor(
-	trailingPercentage: number,
-	trailingInputTokens: number,
-	piUsageTokens: number | null | undefined,
-	correctedLimit: number | undefined,
-): { percentage: number; inputTokens: number } {
-	const forwardTokens =
-		typeof piUsageTokens === "number" && piUsageTokens > 0 ? piUsageTokens : 0;
-	if (forwardTokens === 0 || !isSaneLimit(correctedLimit)) {
-		return { percentage: trailingPercentage, inputTokens: trailingInputTokens };
-	}
-	// Scale the LIMIT only for this forward percentage — do NOT mutate the real
-	// usageContextLimit (history-budget + emergency-drop ceiling rely on the true
-	// limit) and do NOT inflate forwardTokens (emergency-drop needs the raw
-	// current assembled size).
-	const forwardPressureLimit = correctedLimit * FORWARD_PRESSURE_LIMIT_FACTOR;
-	const forwardPercentage = (forwardTokens / forwardPressureLimit) * 100;
-	return forwardPercentage > trailingPercentage
-		? {
-				percentage: forwardPercentage,
-				inputTokens: Math.max(trailingInputTokens, forwardTokens),
-			}
-		: { percentage: trailingPercentage, inputTokens: trailingInputTokens };
+function isPiHardCacheExpired(
+	lastResponseTime: number,
+	ttlMs: number,
+	now: number,
+): boolean {
+	// Strict > matches the Rust scheduler's predicate exactly: at elapsed == ttl
+	// both sides DEFER (one more pass at the boundary is safe; a premature HARD
+	// fold is a paid cache rebuild). Keep the comparators identical — the Rust
+	// doc comment asserts this parity and an audit caught them disagreeing.
+	return lastResponseTime > 0 && now - lastResponseTime > ttlMs;
 }
 
 let injectM0M1PiForRun = injectM0M1Pi;
@@ -283,11 +285,19 @@ let persistStableIdSchemeForRun = updateSessionMeta;
 let afterFallbackAdoptionForTests:
 	| ((stableIdSchemeCutover: boolean) => void)
 	| undefined;
+let mutationGateObserverForTests:
+	| ((snapshot: {
+			foldDue: boolean;
+			foldExecuted: boolean;
+			shouldApplyPendingOps: boolean;
+			shouldRunHeuristics: boolean;
+			shouldRunReasoningCleanup: boolean;
+	  }) => void)
+	| undefined;
 
 export const __test = {
-	FORWARD_PRESSURE_LIMIT_FACTOR,
+	isPiHardCacheExpired,
 	adoptPiFallbackTags,
-	applyForwardPressureFloor,
 	buildEntryFingerprintMap,
 	buildPiToolOwnerMap,
 	readPiBranchEntriesForContext,
@@ -335,6 +345,14 @@ export const __test = {
 		afterFallbackAdoptionForTests = fn;
 		return () => {
 			afterFallbackAdoptionForTests = undefined;
+		};
+	},
+	setMutationGateObserverForTests(
+		fn: typeof mutationGateObserverForTests,
+	): () => void {
+		mutationGateObserverForTests = fn;
+		return () => {
+			mutationGateObserverForTests = undefined;
 		};
 	},
 };
@@ -472,9 +490,14 @@ function buildPiTextIdentityPlan(
 		if (messageId === undefined) continue;
 		currentSourcesByMessageId.set(
 			messageId,
+			// Temporal gap markers are derived from the current projection. They are
+			// not part of the stored message identity and can disappear when a newly
+			// applied compaction boundary promotes a user message to the wire head.
 			message.parts
 				.filter((part) => part.kind === "text")
-				.map((part) => stripTagPrefix(part.getText() ?? "")),
+				.map((part) =>
+					withoutPiLeadingTemporalMarker(stripTagPrefix(part.getText() ?? "")),
+				),
 		);
 	}
 
@@ -535,7 +558,8 @@ function buildPiTextIdentityPlan(
 			legacyRows.every(
 				(row, index) =>
 					row.ordinal === index &&
-					sourceCache.get(row.tagId) === currentSources[index],
+					withoutPiLeadingTemporalMarker(sourceCache.get(row.tagId) ?? "") ===
+						currentSources[index],
 			);
 		if (!vectorMatches) driftedMessageIds.add(messageId);
 	}
@@ -879,12 +903,16 @@ export interface PiHistorianOptions {
 	runner: SubagentRunner;
 	/** Historian provider/model id (e.g. `anthropic/claude-haiku-4-5`). */
 	model: string;
-	/** Optional ordered fallback chain. */
-	fallbackModels?: readonly string[];
+	/** Optional ordered fallback chain, retaining each entry's Pi thinking level. */
+	fallbackModels?: readonly ModelInput[];
 	/** Historian context window — used to derive chunk token budget. */
 	historianChunkTokens: number;
-	/** Optional per-call timeout (default 120s). */
+	/** Optional per-call timeout (default 600s). */
 	timeoutMs?: number;
+	/** Provider sampling temperature; when omitted, uses the temperature configured for historian runs. */
+	temperature?: number;
+	/** Provider output budget; when omitted, uses the output-token budget configured for historian runs. */
+	maxOutputTokens?: number;
 	/** When true, run a second editor pass after a successful first pass to
 	 *  clean low-signal U: lines and cross-compartment duplicates. Mirrors
 	 *  OpenCode's `historian.two_pass` config. */
@@ -895,6 +923,8 @@ export interface PiHistorianOptions {
 	thinkingLevel?: string;
 	/** Cross-session memory feature gate (`memory.enabled`). */
 	memoryEnabled?: boolean;
+	/** Allow a session started exactly in the canonical home directory only when user-level configuration enables it. */
+	allowHomeProject?: boolean;
 	/** Automatic-promotion gate (`memory.auto_promote`). */
 	autoPromote?: boolean;
 	/** Semantic taxonomy used by historian facts/promotion. */
@@ -962,7 +992,7 @@ export interface PiInjectionOptions {
 	injectDocs?: boolean;
 	injectionBudgetTokens: number;
 	temporalAwareness?: boolean;
-	/** experimental.mural.enabled — on-demand deterministic mural image on HARD folds. */
+	/** mural.enabled — when enabled, generate a deterministic image of memories that did not fit the context budget whenever the system performs a full (HARD) context fold. */
 	muralEnabled?: boolean;
 }
 
@@ -1045,6 +1075,10 @@ export interface PiContextHandlerOptions {
 	 * cwd. Tests omit it (the static options are used directly).
 	 */
 	resolveForProject?: (projectDir: string) => PiContextHandlerOptions;
+	/** Boot-resolved compaction-off flag. It remains fixed for this Pi process. */
+	compactionOff?: boolean;
+	/** Allow a session started exactly in the canonical home directory only when user-level configuration enables it. */
+	allowHomeProject?: boolean;
 	maybeAutoEmbedSession?: (
 		sessionId: string,
 		projectDir: string,
@@ -1481,6 +1515,52 @@ function buildPiAlignedEntryIds(
 		if (isPiContextEmitEligible(entry)) ids.push(entry.id);
 	}
 	return ids;
+}
+
+// The first two prepended Pi messages already contain the compartment summaries.
+// Calling appendCompaction makes Pi add the same summary during the next projection,
+// changing bytes sent to the provider one pass after cache invalidation. Remove it
+// only when the branch entry proves this plugin created the matching compaction.
+function stripMcOwnedPiCompactionSummary(
+	messages: PiAgentMessage[],
+	entryIds: (string | undefined)[],
+	branchEntries: readonly unknown[],
+): boolean {
+	const summaryMessage = messages[0] as
+		| { role?: unknown; summary?: unknown; tokensBefore?: unknown }
+		| undefined;
+	if (summaryMessage?.role !== "compactionSummary") return false;
+
+	let compaction:
+		| {
+				type?: unknown;
+				summary?: unknown;
+				tokensBefore?: unknown;
+				fromHook?: unknown;
+				details?: unknown;
+		  }
+		| undefined;
+	for (let index = branchEntries.length - 1; index >= 0; index -= 1) {
+		const entry = branchEntries[index] as typeof compaction;
+		if (entry?.type === "compaction") {
+			compaction = entry;
+			break;
+		}
+	}
+	if (compaction?.fromHook !== true) return false;
+	const details = compaction.details as { source?: unknown } | undefined;
+	if (details?.source !== "magic-context") return false;
+	if (
+		summaryMessage.summary !== compaction.summary ||
+		summaryMessage.tokensBefore !== compaction.tokensBefore ||
+		entryIds[0] !== undefined
+	) {
+		return false;
+	}
+
+	messages.splice(0, 1);
+	entryIds.splice(0, 1);
+	return true;
 }
 
 function getPiBranchEntryLookup(
@@ -2018,7 +2098,10 @@ export function registerPiContextHandler(
 			const schedulerConfig = options.scheduler ?? DEFAULT_SCHEDULER_CONFIG;
 			const scheduler = schedulerFor(options);
 			const projectIdentity =
-				resolveProjectIdentityForSession(projectDirectory) ?? "";
+				resolveProjectIdentityForSession(
+					projectDirectory,
+					options.allowHomeProject,
+				) ?? "";
 			updateSessionProjectTracking(sessionId, projectIdentity, options.db);
 			logTransformTiming(
 				sessionId,
@@ -2069,7 +2152,24 @@ export function registerPiContextHandler(
 								branchEntries,
 							);
 			const strictEntryIds = resolvedEntryIds ? [...resolvedEntryIds] : null;
-			if (strictEntryIds && options.injection) {
+			if (
+				strictEntryIds &&
+				branchEntries &&
+				options.injection &&
+				!options.compactionOff &&
+				stripMcOwnedPiCompactionSummary(
+					event.messages as PiAgentMessage[],
+					strictEntryIds,
+					branchEntries,
+				)
+			) {
+				logTransformTiming(
+					sessionId,
+					"mcCompactionSummarySuppression",
+					tEntryBranch,
+				);
+			}
+			if (strictEntryIds && options.injection && !options.compactionOff) {
 				const removed = trimPiMessagesToCachedBoundary(
 					options.db,
 					sessionId,
@@ -2178,7 +2278,8 @@ export function registerPiContextHandler(
 			const modelChanged =
 				previousModelKey !== undefined &&
 				currentModelKey !== undefined &&
-				previousModelKey !== currentModelKey;
+				piModelRefToCanonical(previousModelKey) !==
+					piModelRefToCanonical(currentModelKey);
 			if (currentModelKey !== undefined) {
 				liveModelBySession.set(sessionId, currentModelKey);
 			}
@@ -2202,6 +2303,39 @@ export function registerPiContextHandler(
 			const tMeta = performance.now();
 			const sessionMetaForUsage = getOrCreateSessionMeta(options.db, sessionId);
 			logTransformTiming(sessionId, "getOrCreateSessionMeta", tMeta);
+
+			// The Pi equivalent of OpenCode marker cleanup is durable
+			// pending_pi_compaction_marker_state plus these deferred-drain sets.
+			// Reconcile before any transform phase so an off pass cannot drain or
+			// render stale MC compaction state.
+			const compactionTransition = reconcilePiCompactionMode({
+				db: options.db,
+				sessionId,
+				compactionOff: options.compactionOff === true,
+				historianRunnable: options.historian !== undefined,
+			});
+			if (compactionTransition.recordToWrite) {
+				if (compactionTransition.clearDeferredMarkerState) {
+					clearPiCompactionOffInMemoryState(sessionId);
+				}
+				if (compactionTransition.invalidatedBaseline) {
+					clearPiInjectionTokenCountCache(sessionId);
+					sessionMetaForUsage.cachedM0Bytes = null;
+					sessionMetaForUsage.cachedM1Bytes = null;
+				}
+				let noticeDelivered = compactionTransition.notice === null;
+				if (compactionTransition.notice && ctx.ui?.notify) {
+					ctx.ui.notify(compactionTransition.notice, "info");
+					noticeDelivered = true;
+				}
+				if (noticeDelivered) {
+					commitPiCompactionModeRecord(
+						options.db,
+						sessionId,
+						compactionTransition.recordToWrite,
+					);
+				}
+			}
 			// Model change invalidates the safe-token baseline + alert state too
 			// (new model, new limits), so it clears all four pressure fields.
 			const usageReset = {
@@ -2292,6 +2426,7 @@ export function registerPiContextHandler(
 			let usageContextLimit = isSaneLimit(piUsage?.contextWindow)
 				? piUsage.contextWindow
 				: undefined;
+			let detectedContextLimit: number | undefined;
 
 			// Overflow recovery: a previous LLM call ended with a
 			// provider context-overflow error AND the pi.on("message_end")
@@ -2311,8 +2446,11 @@ export function registerPiContextHandler(
 			let needsEmergencyBump = false;
 			let emergencyRecoveryArmed = false;
 			try {
-				const overflowState = getOverflowState(options.db, sessionId);
+				const overflowState = options.compactionOff
+					? { detectedContextLimit: 0, needsEmergencyRecovery: false }
+					: getOverflowState(options.db, sessionId);
 				if (overflowState.detectedContextLimit > 0) {
+					detectedContextLimit = overflowState.detectedContextLimit;
 					// Always prefer detected limit over reported window
 					// when one exists — the reported window came from
 					// metadata that produced a wrong answer last time.
@@ -2352,6 +2490,25 @@ export function registerPiContextHandler(
 					usageContextLimit = modelWindow;
 				}
 			}
+			const windowGeometry = resolvePiWindowGeometry({
+				rawContextWindow: usageContextLimit,
+				model: ctx.model,
+				detectedContextLimit,
+			});
+			usageContextLimit = windowGeometry?.usableSoft;
+			const effectiveExecuteThresholdPercentage = resolveExecuteThreshold(
+				schedulerConfig.executeThresholdPercentage,
+				modelKey,
+				65,
+				{
+					tokensConfig: schedulerConfig.executeThresholdTokens,
+					contextLimit: usageContextLimit,
+					sessionId,
+				},
+			);
+			const { forceMaterializationPercentage } = escalationBands(
+				effectiveExecuteThresholdPercentage,
+			);
 			// Fallback-path percentage correction: when we DIDN'T use persisted
 			// usage, `usagePercentage` is on Pi's raw denominator — which is wrong
 			// once we've corrected the limit (detected-overflow cap, or a sane
@@ -2366,12 +2523,12 @@ export function registerPiContextHandler(
 				usagePercentage = (usageInputTokens / usageContextLimit) * 100;
 			}
 			({ percentage: usagePercentage, inputTokens: usageInputTokens } =
-				applyForwardPressureFloor(
-					usagePercentage,
-					usageInputTokens,
-					piUsage?.tokens,
-					usageContextLimit,
-				));
+				resolvePiPressureSnapshot({
+					persistedPercentage: usagePercentage,
+					persistedInputTokens: usageInputTokens,
+					liveInputTokens: piUsage?.tokens,
+					usableContextLimit: usageContextLimit,
+				}));
 			const realUsagePercentageBeforeEmergencyBump = usagePercentage;
 			// Emergency bump LAST so it floors recovery pressure without capping
 			// a higher live forward-pressure reading.
@@ -2422,7 +2579,7 @@ export function registerPiContextHandler(
 				usagePercentage === 0 &&
 				sessionMeta.lastResponseTime === 0 &&
 				piMessageCount >= 50;
-			if (looksLikeImportedSession) {
+			if (looksLikeImportedSession && !options.compactionOff) {
 				schedulerDecision = "execute";
 				sessionLog(
 					sessionId,
@@ -2466,7 +2623,7 @@ export function registerPiContextHandler(
 					`stable-id scheme cutover deferred: real SessionEntry ids unavailable this pass (branch resolution failed) — will retry when getBranch() succeeds`,
 				);
 			}
-			if (stableIdSchemeCutover) {
+			if (stableIdSchemeCutover && !options.compactionOff) {
 				schedulerDecision = "execute";
 				signalPiPendingMaterialization(sessionId);
 				// Re-keying of stripped_placeholder_ids from pi-msg-* to real ids is
@@ -2491,16 +2648,22 @@ export function registerPiContextHandler(
 				sessionMeta,
 				historyRefreshSessions,
 				sessionId,
+				effectiveExecuteThresholdPercentage,
 			});
 
 			const { midTurnAdjustedSchedulerDecision, sideEffect } =
-				applyMidTurnDeferral({
-					base: schedulerDecisionEarly,
-					bypassReason,
-					midTurn,
-				});
+				options.compactionOff
+					? {
+							midTurnAdjustedSchedulerDecision: "defer" as const,
+							sideEffect: "none" as const,
+						}
+					: applyMidTurnDeferral({
+							base: schedulerDecisionEarly,
+							bypassReason,
+							midTurn,
+						});
 
-			if (sideEffect === "set-flag") {
+			if (sideEffect === "set-flag" && !options.compactionOff) {
 				const flagPayload = {
 					id: crypto.randomUUID(),
 					reason: `${schedulerDecisionEarly}-${bypassReason}`,
@@ -2527,10 +2690,20 @@ export function registerPiContextHandler(
 				`[boundary-exec] base=${schedulerDecisionEarly} bypass=${bypassReason} midTurn=${midTurn} effective=${midTurnAdjustedSchedulerDecision} sideEffect=${sideEffect}`,
 			);
 
-			// Force-materialization @ 85%+: aggressive drop-all-tools mode.
+			// At the derived force band, enable aggressive drop-all-tools mode.
 			// Mirrors OpenCode transform-postprocess-phase.ts:145-146.
 			const forceMaterialization =
-				usagePercentage >= FORCE_MATERIALIZATION_PERCENTAGE;
+				!options.compactionOff &&
+				usagePercentage >= forceMaterializationPercentage;
+			// Leaving the force band ends the pressure episode. Fresh usage samples
+			// inside the band do not release this latch; only a later re-entry may
+			// originate another emergency batch.
+			if (
+				!forceMaterialization &&
+				getEmergencyInputSample(options.db, sessionId) > 0
+			) {
+				clearEmergencyDropSample(options.db, sessionId);
+			}
 
 			// 95% emergency block: usage is dangerous enough that we
 			// MUST wait for any in-flight historian to finish so its
@@ -2550,8 +2723,20 @@ export function registerPiContextHandler(
 			//   - We cap the wait at 30s to avoid stalling the user's
 			//     turn forever if historian hangs. After 30s we fall
 			//     through to the normal pipeline (with drop-all-tools
-			//     still active via the 85%+ branch).
-			const isEmergency = usagePercentage >= EMERGENCY_BLOCK_PERCENTAGE;
+			//     still active via the derived force-band branch).
+			const hardUsagePercentage = needsEmergencyBump
+				? Math.max(EMERGENCY_BLOCK_PERCENTAGE, usagePercentage)
+				: windowGeometry?.usableHard && usageInputTokens > 0
+					? (usageInputTokens / windowGeometry.usableHard) * 100
+					: usagePercentage;
+			// Direct/test callers without a model cannot resolve geometry. Keep the
+			// prior denominator in that compatibility lane; production always has ctx.model.
+			const emergencyPercentage = ctx.model
+				? hardUsagePercentage
+				: usagePercentage;
+			const isEmergency =
+				!options.compactionOff &&
+				emergencyPercentage >= EMERGENCY_BLOCK_PERCENTAGE;
 			if (isEmergency) {
 				const lastNotifiedAt =
 					lastEmergencyNotificationAtMs.get(sessionId) ?? 0;
@@ -2593,7 +2778,7 @@ export function registerPiContextHandler(
 				if (
 					emergencyRecoveryArmed &&
 					realUsagePercentageBeforeEmergencyBump <
-						FORCE_MATERIALIZATION_PERCENTAGE &&
+						forceMaterializationPercentage &&
 					!inFlightHistorian.has(sessionId) &&
 					!hasEligiblePiCompartmentHistory(options.db, sessionId)
 				) {
@@ -2641,7 +2826,7 @@ export function registerPiContextHandler(
 
 			sessionLog(
 				sessionId,
-				`transform: usage=${usagePercentage.toFixed(1)}% (${usageInputTokens} tokens, limit=${usageContextLimit ?? "?"}) decision=${schedulerDecision}${forceMaterialization ? " force=true" : ""}${isEmergency ? " EMERGENCY=true" : ""}${isCacheBusting ? " busting=true" : ""}`,
+				`transform: ${formatPiPressureForLog({ percentage: usagePercentage, inputTokens: usageInputTokens, contextLimit: usageContextLimit })} decision=${schedulerDecision}${forceMaterialization ? " force=true" : ""}${isEmergency ? " EMERGENCY=true" : ""}${isCacheBusting ? " busting=true" : ""}`,
 			);
 			logTransformTiming(
 				sessionId,
@@ -2721,9 +2906,10 @@ export function registerPiContextHandler(
 				stableIdSchemeCutover,
 				schedulerDecision,
 				// 95% emergency forces drop-all-tools regardless of the
-				// 85% gate, so the LLM call sees the smallest possible
+				// derived force gate, so the LLM call sees the smallest possible
 				// prompt before we hand control back to Pi.
 				forceMaterialization: forceMaterialization || isEmergency,
+				forceMaterializationPercentage,
 				contextUsage: {
 					percentage: usagePercentage,
 					inputTokens: usageInputTokens,
@@ -2739,6 +2925,7 @@ export function registerPiContextHandler(
 				appendCompaction: resolvePiAppendCompaction(ctx),
 				readBranchEntries: resolvePiReadBranchEntries(ctx),
 				isSubagent: sessionMeta.isSubagent,
+				compactionOff: options.compactionOff === true,
 			});
 			logTransformTiming(sessionId, "runPipeline", tRunPipeline);
 			const postPipelineStart = performance.now();
@@ -2764,6 +2951,18 @@ export function registerPiContextHandler(
 							result.materializeReason,
 							result.materialized,
 						),
+						systemHashPrev: result.materialized
+							? (result.injectionResult?.systemHashPrev ?? null)
+							: null,
+						systemHashNew: result.materialized
+							? (result.injectionResult?.systemHashNew ?? null)
+							: null,
+						m0ModelKeyPrev: result.materialized
+							? (result.injectionResult?.m0ModelKeyPrev ?? null)
+							: null,
+						m0ModelKeyNew: result.materialized
+							? (result.injectionResult?.m0ModelKeyNew ?? null)
+							: null,
 						emergency: result.emergency,
 						droppedTokens: result.droppedTokens,
 						droppedCount: result.droppedCount,
@@ -2784,7 +2983,7 @@ export function registerPiContextHandler(
 			// behavior is the Step 4b.2 contract, and historian is
 			// fire-and-forget so we never block the LLM call on it.
 			const tHistorianScheduling = performance.now();
-			if (options.historian) {
+			if (options.historian && !options.compactionOff) {
 				maybeFireHistorian({
 					pi,
 					ctx,
@@ -2810,26 +3009,28 @@ export function registerPiContextHandler(
 			// already-mutated messages unchanged.
 			const tPostTransform = performance.now();
 			let outputMessages = result.messages as PiAgentMessage[];
+			let assertTailHygieneLastWriter: (() => void) | undefined;
 
 			const tNoteNudges = performance.now();
 			try {
-				outputMessages = applyNoteNudges({
-					sessionId,
-					db: options.db,
-					messages: outputMessages,
-					projectIdentity,
-					entryIds: strictEntryIds,
-					// Post-commit/post-splice ref-map (see sticky reminder above).
-					entryIdByRef: result.postCommitEntryIdByRef,
-					// Same signal OpenCode uses to gate sticky-anchor GC
-					// (isCacheBustingPass = history-refresh OR work executed).
-					isCacheBusting: isCacheBusting || result.executedWorkThisPass,
-					// Id-less synthetic injections present in outputMessages: the
-					// m[0]/m[1] prepends. (The rolling-nudge synthetic was removed in
-					// the ctx_reduce nudge redesign.) Excluded from the anchor-GC
-					// denominator.
-					syntheticLeadingCount: result.syntheticLeadingCount,
-				});
+				if (!options.compactionOff) {
+					outputMessages = applyNoteNudges({
+						sessionId,
+						db: options.db,
+						messages: outputMessages,
+						projectIdentity,
+						entryIds: strictEntryIds,
+						// Use the map produced after commits and splices because those operations
+						// can change the final message-reference to entry-ID mapping.
+						entryIdByRef: result.postCommitEntryIdByRef,
+						// Same signal OpenCode uses to gate sticky-anchor GC
+						// (isCacheBustingPass = history-refresh OR work executed).
+						isCacheBusting: isCacheBusting || result.executedWorkThisPass,
+						// These leading synthetic messages have no persisted entry IDs, so
+						// exclude them from the sticky-anchor GC denominator.
+						syntheticLeadingCount: result.syntheticLeadingCount,
+					});
+				}
 			} catch (err) {
 				sessionLog(
 					sessionId,
@@ -2839,14 +3040,15 @@ export function registerPiContextHandler(
 			logTransformTiming(sessionId, "noteNudges", tNoteNudges);
 
 			const tAutoSearch = performance.now();
-			if (options.autoSearch?.enabled) {
+			if (options.autoSearch?.enabled && !options.compactionOff) {
 				try {
 					outputMessages = await runAutoSearchHintForPi({
 						sessionId,
 						db: options.db,
 						messages: outputMessages,
 						entryIds: strictEntryIds,
-						// Post-commit/post-splice ref-map (see sticky reminder above).
+						// Use the map produced after commits and splices because those operations
+						// can change the final message-reference to entry-ID mapping.
 						entryIdByRef: result.postCommitEntryIdByRef,
 						ensureProjectRegistered: () =>
 							ensureProjectRegisteredFromPiDirectory(
@@ -2898,6 +3100,7 @@ export function registerPiContextHandler(
 					sessionId,
 				);
 				if (
+					!options.compactionOff &&
 					!sessionMetaForTodo.isSubagent &&
 					sessionMetaForTodo.lastTodoState !== ""
 				) {
@@ -2922,134 +3125,117 @@ export function registerPiContextHandler(
 			}
 			logTransformTiming(sessionId, "todoCapture", tTodoCapture);
 
-			// Channel 1 baseline snapshot + Channel 2 ceiling trigger. Mirrors
-			// OpenCode's transform.ts end-of-pass block. Computed from the final
-			// `outputMessages` (already trimmed to the live tail), refreshing here
-			// (a proven transform boundary) zeroes the per-turn accumulator. The
-			// `tool_result` handler in index.ts reads this baseline. Primary-only:
-			// a missing baseline is how Channel 1 stays off for subagents.
+			// Walk Pi's final rendered entry stream once to calculate both nudge-channel
+			// totals. A cache-busting pass replaces the saved baseline; a deferred pass
+			// keeps it and adds only newly appended content and protection-boundary moves.
 			const tChannelAccounting = performance.now();
 			try {
 				const sessionMetaForCh1 = getOrCreateSessionMeta(options.db, sessionId);
-				// Gate on ctx_reduce being callable. Primary Pi sessions register the
-				// tool; subagents do not, so a baseline/nudge there would point at a
-				// missing session-scoped tool. A missing baseline is also how Channel 1
-				// stays off.
-				if (!sessionMetaForCh1.isSubagent) {
-					// Resolve through the SCHEDULER config (the real execute
-					// threshold), not options.historian — when historian is disabled
-					// the historian threshold falls back to 65 and ignores the user's
-					// execute_threshold_percentage / _tokens.
-					const resolvedExecuteThresholdPct = resolveExecuteThreshold(
-						schedulerConfig.executeThresholdPercentage ?? 65,
-						liveModelBySession.get(sessionId),
-						65,
-						{
-							tokensConfig: schedulerConfig.executeThresholdTokens,
-							contextLimit: usageContextLimit ?? 0,
-						},
+				if (!options.compactionOff && !sessionMetaForCh1.isSubagent) {
+					const tags = getTagsBySession(options.db, sessionId);
+					const protectedTags = options.protectedTags ?? 20;
+					// Queued ctx_reduce drops are completed agent decisions. Their bytes
+					// remain in T until a cache-busting materialization, but not in U.
+					const pendingDropTagNumbers = new Set(
+						getPendingOps(options.db, sessionId)
+							.filter((operation) => operation.operation === "drop")
+							.map((operation) => operation.tagId),
 					);
-					const historyBudgetTokens = resolveHistoryBudgetTokensForPi({
-						historyBudgetPercentage: options.historian?.historyBudgetPercentage,
-						usagePercentage,
-						usageInputTokens,
-						usageContextLimit,
-						// Execute threshold from the SCHEDULER config (its real
-						// home), so the budget denominator matches the threshold
-						// used for Channel severity even when historian is disabled.
-						executeThresholdPercentage:
-							schedulerConfig.executeThresholdPercentage,
-						executeThresholdTokens: schedulerConfig.executeThresholdTokens,
-						modelKey: liveModelBySession.get(sessionId),
+					const stableId = (message: unknown): string | undefined =>
+						message && typeof message === "object"
+							? result.postCommitEntryIdByRef.get(message)
+							: undefined;
+					const baseline = refreshPiTailHygieneBaseline({
+						messages: outputMessages,
+						tags,
+						protectedTags,
+						pendingDropTagNumbers,
+						stableId,
+						syntheticLeadingCount: result.syntheticLeadingCount,
+						cacheBusting: result.bustedThisPass,
+						previous: getPiChannel1Baseline(sessionId),
 					});
-					// Real-tokenizer counts from the durable tag store (injected
-					// m[0]/m[1] blocks are never tagged → injected-free live tail).
-					// reclaimable = non-dropped tool OUTPUT; liveTail = conv + tool
-					// I/O. Falls back to a byte-approx live-tail walk only if the store read
-					// fails. Mirrors OpenCode's transform path exactly.
-					let tailToolTokens: number;
-					let liveTailTokens: number;
-					try {
-						// reclaimable (toolOutput) excludes the protected top-N tags
-						// (parity with OpenCode) — the agent can't ctx_reduce those, so
-						// counting them would nag forever about undroppable tail output.
-						const agg = getActiveTagTokenAggregate(
-							options.db,
-							sessionId,
-							options.protectedTags ?? 20,
-						);
-						tailToolTokens = agg.toolOutput;
-						liveTailTokens = agg.conversation + agg.toolCall;
-					} catch {
-						const estimate = computeTailTokenEstimatePi(
-							outputMessages as unknown[],
-						);
-						tailToolTokens = estimate.tailToolTokens;
-						liveTailTokens = estimate.liveTailTokens;
-					}
-					// usable = executeThresholdTokens − inputTokens + liveTail (the
-					// agent's working range). Computed BEFORE the baseline write so
-					// it persists with the same measurement — Channel-2 delivery
-					// revalidates the full trigger predicate from this snapshot.
-					const executeThresholdTokensPi = Math.round(
-						((usageContextLimit ?? 0) * resolvedExecuteThresholdPct) / 100,
-					);
-					const usableTokensPi = Math.max(
-						0,
-						executeThresholdTokensPi - usageInputTokens + liveTailTokens,
-					);
-					// Same rationale as OpenCode: a historian publish, emergency drop,
-					// or pending-op replay can shrink the tail without a ctx_reduce
-					// tool call, so a regrowth must not inherit a stale persisted band.
-					resetLastNudgeCycleIfTailShrank(
-						options.db,
-						sessionId,
-						tailToolTokens,
-					);
+					const effective = effectivePiTailHygiene(baseline);
+					const durableGrace =
+						baseline.evaluable && !baseline.generationInvalidated
+							? captureChannel1PostReduceGraceBaseline(
+									options.db,
+									sessionId,
+									effective.u,
+								)
+							: getChannel1NudgeState(options.db, sessionId);
+					baseline.channel1PostReduceGrace =
+						durableGrace.postReduceGracePending ||
+						durableGrace.postReduceGraceBaselineU !== undefined
+							? {
+									pending: durableGrace.postReduceGracePending === true,
+									baselineU: durableGrace.postReduceGraceBaselineU,
+									preReduceLevel:
+										durableGrace.postReduceGracePreLevel ?? durableGrace.level,
+								}
+							: undefined;
 					const oldestReclaimableToolTags = getOldestActiveUnprotectedToolTags(
 						options.db,
 						sessionId,
-						options.protectedTags ?? 20,
+						protectedTags,
 					);
-					setPiChannel1Baseline(sessionId, {
-						tailToolTokens,
-						historyBudgetTokens: historyBudgetTokens ?? 0,
-						contextLimit: usageContextLimit ?? 0,
-						executeThresholdPercentage: resolvedExecuteThresholdPct,
-						lastInputTokens: usageInputTokens,
-						turnToolTokens: 0,
-						usableTokens: usableTokensPi,
+					const channelState = {
+						...baseline,
+						usableWindow: usageContextLimit ?? 0,
+						realUserTurnCount: countRealPiUserMessages({
+							messages: outputMessages,
+							tags,
+							protectedTags,
+							pendingDropTagNumbers,
+							stableId,
+							syntheticLeadingCount: result.syntheticLeadingCount,
+						}),
 						reducedSinceRefresh: false,
+						agentDropsAppliedThisPass: result.agentDropsAppliedThisPass,
 						oldestReclaimableToolTags,
-					});
+					};
+					setPiChannel1Baseline(sessionId, channelState);
 
-					// Channel 2 (ceiling) trigger — fire when reclaimable tool output
-					// is at least a third of the usable working range (the gap
-					// between fixed overhead and the execute-threshold ceiling).
-					// Delivery happens on `agent_end`/`tool_result` via a hidden
-					// pi.sendMessage custom message. Only escalate from '' so an
-					// in-flight claim/delivery is never reset.
-					if (
-						usageContextLimit &&
-						usageContextLimit > 0 &&
-						resolvedExecuteThresholdPct > 0
-					) {
-						const channel2ShouldTrigger = shouldTriggerChannel2({
-							reclaimableTokens: tailToolTokens,
-							usableTokens: usableTokensPi,
-						});
-						if (channel2ShouldTrigger) {
+					const channel2Evaluation = evaluateChannel2(channelState);
+					if (channel2Evaluation.evaluable) {
+						try {
+							rearmChannel2AfterMeasuredCollapse({
+								db: options.db,
+								sessionId,
+								baseline: channelState,
+							});
+						} catch (error) {
+							sessionLog(
+								sessionId,
+								`pi channel2 U-collapse reset failed: ${error instanceof Error ? error.message : String(error)}`,
+							);
+						}
+						if (channel2Evaluation.shouldTrigger) {
 							casChannel2NudgeState(options.db, sessionId, "", "pending");
 						} else {
-							// Cancel stale, undelivered intents when fresh metrics say the
-							// trigger no longer holds; claimed/delivered are never reset.
 							casChannel2NudgeState(options.db, sessionId, "pending", "");
 						}
 					}
+
+					assertTailHygieneLastWriter = () =>
+						assertPiTailHygieneContentUnchanged({
+							messages: outputMessages,
+							tags,
+							protectedTags,
+							pendingDropTagNumbers,
+							stableId,
+							syntheticLeadingCount: result.syntheticLeadingCount,
+							expectedSignature: baseline.contentSignature,
+						});
 				} else {
 					clearPiChannel1State(sessionId);
 				}
 			} catch (err) {
+				const stale = getPiChannel1Baseline(sessionId);
+				if (stale) {
+					stale.evaluable = false;
+					stale.generationInvalidated = true;
+				}
 				sessionLog(
 					sessionId,
 					`channel1 baseline / channel2 trigger failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -3086,7 +3272,7 @@ export function registerPiContextHandler(
 			logTransformTiming(sessionId, "workMetrics", tWorkMetrics);
 
 			const tStableIdSchemePersist = performance.now();
-			if (stableIdSchemeCutover) {
+			if (stableIdSchemeCutover && !options.compactionOff) {
 				// Scheme stamps only after the cutover pass completed. If this write
 				// fails, the outer fail-open path ships the original messages and the
 				// next pass repeats forced placeholder discovery.
@@ -3132,13 +3318,20 @@ export function registerPiContextHandler(
 				sessionId,
 				`transform completed in ${transformElapsedMs.toFixed(1)}ms (${outputMessages.length} messages, ${result.targetCount} targets, watermark: ${result.reasoningWatermark})`,
 			);
+			if (
+				assertTailHygieneLastWriter &&
+				process.env.NODE_ENV !== "production"
+			) {
+				assertTailHygieneLastWriter();
+			}
 			return { messages: outputMessages } as {
 				messages: typeof event.messages;
 			};
 		} catch (err) {
 			// Loud fail-closed / emergency aborts must reach the user — do not
 			// swallow into native-compaction fallthrough.
-			if (isFailClosedBlockingError(err)) throw err;
+			if (isFailClosedBlockingError(err) && !baseOptions.compactionOff)
+				throw err;
 			const message = err instanceof Error ? err.message : String(err);
 			const stack = err instanceof Error ? err.stack : undefined;
 			log(
@@ -3181,14 +3374,22 @@ export function registerPiContextHandler(
 const inFlightHistorian = new Map<string, Promise<unknown>>();
 
 /**
- * Wait for all in-flight historian runs to complete. Called from the
- * Pi `session_shutdown` event handler so historian can finish writing
- * compartments before the process exits. Returns immediately if no
- * runs are in-flight.
+ * Wait for one session's in-flight historian run to complete. Called from the
+ * Pi `session_shutdown` event handler so its historian can finish writing
+ * compartments before that session shuts down. Omitting the session id waits
+ * for all runs and remains available for process-exit callers and tests. Returns
+ * immediately if no matching runs are in-flight.
  */
-export async function awaitInFlightHistorians(): Promise<void> {
-	if (inFlightHistorian.size === 0) return;
-	await Promise.allSettled(Array.from(inFlightHistorian.values()));
+export async function awaitInFlightHistorians(
+	sessionId?: string,
+): Promise<void> {
+	const runs = sessionId
+		? [inFlightHistorian.get(sessionId)].filter(
+				(run): run is Promise<unknown> => run !== undefined,
+			)
+		: [...inFlightHistorian.values()];
+	if (runs.length === 0) return;
+	await Promise.allSettled(runs);
 }
 
 export function resolvePiHistorianTriggerInputs(args: {
@@ -3460,9 +3661,12 @@ function spawnPiHistorianRun(args: {
 				refreshBoundarySnapshot,
 				currentContextLimit,
 				historianTimeoutMs: historian.timeoutMs,
+				temperature: historian.temperature,
+				maxOutputTokens: historian.maxOutputTokens,
 				twoPass: historian.twoPass,
 				thinkingLevel: historian.thinkingLevel,
 				memoryEnabled: historian.memoryEnabled,
+				allowHomeProject: historian.allowHomeProject,
 				autoPromote: historian.autoPromote,
 				memoryDomain: historian.memoryDomain,
 				userMemoriesEnabled: historian.userMemoriesEnabled,
@@ -3502,7 +3706,7 @@ function spawnPiHistorianRun(args: {
 					//     historian published; persists until the next pipeline
 					//     pass actually materializes them. Without this signal,
 					//     drops sit in pending_ops and context climbs until the
-					//     85% force-materialization threshold — exactly the
+					//     derived force-materialization threshold — exactly the
 					//     "context kept going up after historian ran" symptom
 					//     users observed at 64% → 69%+ on Pi.
 					//
@@ -3626,6 +3830,7 @@ function maybeFireHistorian(args: {
 		usageContextLimit = isSaneLimit(piUsage?.contextWindow)
 			? piUsage.contextWindow
 			: undefined;
+		let detectedContextLimit: number | undefined;
 		// Cold-start: fall back to the model's window when usage hasn't reported
 		// a sane one yet (first pass after restart).
 		if (
@@ -3639,6 +3844,7 @@ function maybeFireHistorian(args: {
 		try {
 			const overflowState = getOverflowState(db, sessionId);
 			if (overflowState.detectedContextLimit > 0) {
+				detectedContextLimit = overflowState.detectedContextLimit;
 				usageContextLimit = Math.min(
 					usageContextLimit ?? overflowState.detectedContextLimit,
 					overflowState.detectedContextLimit,
@@ -3647,6 +3853,11 @@ function maybeFireHistorian(args: {
 		} catch {
 			// Best-effort — fall through with the uncorrected limit.
 		}
+		usageContextLimit = resolvePiUsableContextLimit({
+			rawContextWindow: usageContextLimit,
+			model: ctx.model,
+			detectedContextLimit,
+		});
 		const sessionMetaForUsage = getOrCreateSessionMeta(db, sessionId);
 		if (
 			sessionMetaForUsage.lastContextPercentage > 0 &&
@@ -3688,12 +3899,12 @@ function maybeFireHistorian(args: {
 			};
 			usageSource = "piUsage fallback";
 		}
-		usage = applyForwardPressureFloor(
-			usage.percentage,
-			usage.inputTokens,
-			piUsage?.tokens,
-			usageContextLimit,
-		);
+		usage = resolvePiPressureSnapshot({
+			persistedPercentage: usage.percentage,
+			persistedInputTokens: usage.inputTokens,
+			liveInputTokens: piUsage?.tokens,
+			usableContextLimit: usageContextLimit,
+		});
 		sessionLog(
 			sessionId,
 			`historian trigger eval: usage=${usage.percentage.toFixed(1)}% (${usage.inputTokens} tokens) [${usageSource}], checking trigger...`,
@@ -3724,6 +3935,9 @@ function maybeFireHistorian(args: {
 		modelKey,
 		usageContextLimit,
 	});
+	const historianForceMaterializationPercentage = escalationBands(
+		triggerInputs.executeThresholdPercentage,
+	).forceMaterializationPercentage;
 	const boundaryContextLimit = triggerInputs.contextLimit;
 	const resolvePiBoundarySnapshot = (
 		emergencyTailScale?: 0.5 | 0.25,
@@ -3747,7 +3961,13 @@ function maybeFireHistorian(args: {
 			let snapshot = ensureRunnablePiBoundaryForTests(
 				resolvePiBoundarySnapshot(),
 			);
-			if (!hasRunnableCompartmentWindow(snapshot) && usage.percentage >= 80) {
+			// Derived band, not literal 80: under a raised execute threshold the
+			// emergency-scaled retry must not relax the boundary below the force
+			// band (same escalation class as the OpenCode trigger's force gate).
+			if (
+				!hasRunnableCompartmentWindow(snapshot) &&
+				usage.percentage >= historianForceMaterializationPercentage
+			) {
 				snapshot = ensureRunnablePiBoundaryForTests(
 					resolvePiBoundarySnapshot(usage.percentage >= 95 ? 0.25 : 0.5),
 				);
@@ -3806,6 +4026,9 @@ function maybeFireHistorian(args: {
 			}
 		}
 
+		// Pi's cleared thinking is safe to project for every provider: its
+		// serializers omit empty thinking blocks, unlike OpenCode's
+		// canonical-Anthropic-only empty-sentinel path.
 		const trigger = checkCompartmentTrigger(
 			db,
 			sessionId,
@@ -3823,6 +4046,7 @@ function maybeFireHistorian(args: {
 				return { messages, absoluteMessageCount: messages.length };
 			},
 			args.taggerFloor,
+			{ canClearReasoning: true },
 		);
 		if (!trigger.shouldFire) {
 			sessionLog(
@@ -3850,14 +4074,14 @@ function maybeFireHistorian(args: {
 				const overflowState = getOverflowState(db, sessionId);
 				if (
 					overflowState.needsEmergencyRecovery &&
-					usage.percentage < FORCE_MATERIALIZATION_PERCENTAGE &&
+					usage.percentage < historianForceMaterializationPercentage &&
 					!inFlightHistorian.has(sessionId)
 				) {
 					boundarySnapshot ??= resolveRunnablePiBoundarySnapshot();
 				}
 				if (
 					overflowState.needsEmergencyRecovery &&
-					usage.percentage < FORCE_MATERIALIZATION_PERCENTAGE &&
+					usage.percentage < historianForceMaterializationPercentage &&
 					!inFlightHistorian.has(sessionId) &&
 					boundarySnapshot !== undefined &&
 					!hasRunnableCompartmentWindow(boundarySnapshot)
@@ -3932,6 +4156,8 @@ interface RunPipelineArgs {
 		caveman?: { enabled: boolean; minChars: number };
 	};
 	isSubagent?: boolean;
+	/** Additive-only transform mode: no tags, drops, history trim, markers, or nudges. */
+	compactionOff?: boolean;
 	/** ceiling = contextLimit × executeThreshold% for the tiered emergency drop. */
 	emergencyCeilingTokens?: number;
 	/** Memory-injection config — when omitted, no <session-history> injection runs. */
@@ -3948,7 +4174,7 @@ interface RunPipelineArgs {
 		 *  injection budget. Drives compartment tier demotion in renderM0Pi. */
 		historyBudgetTokens?: number;
 		temporalAwareness?: boolean;
-		/** experimental.mural.enabled — on-demand deterministic mural image on HARD folds. */
+		/** mural.enabled — when enabled, generate a deterministic image of memories that did not fit the context budget whenever the system performs a full (HARD) context fold. */
 		muralEnabled?: boolean;
 	};
 	/**
@@ -3993,10 +4219,12 @@ interface RunPipelineArgs {
 	schedulerDecision: "execute" | "defer";
 	/**
 	 * Force-materialization signal: when true, drop-all-tools mode
-	 * activates (mirrors OpenCode's >=85% emergency cleanup). Caller
+	 * activates (mirrors OpenCode's derived force-band emergency cleanup). Caller
 	 * computes from current usage percentage.
 	 */
 	forceMaterialization?: boolean;
+	/** Resolved escalation band for this pass (defaults to 85 for test/direct callers). */
+	forceMaterializationPercentage?: number;
 	contextUsage: { percentage: number; inputTokens: number };
 	/**
 	 * One-shot signal that the injection cache should be invalidated and
@@ -4057,6 +4285,7 @@ interface RunPipelineResult {
 	droppedCount: number;
 	emergency: boolean;
 	bustedThisPass: boolean;
+	agentDropsAppliedThisPass: boolean;
 	targetCount: number;
 	reasoningWatermark: number;
 	activeTags: ReturnType<typeof getActiveTagsBySession>;
@@ -4145,7 +4374,56 @@ function captureReasoningMutationRollback(
 	};
 }
 
+async function runCompactionOffPipeline(
+	args: RunPipelineArgs,
+): Promise<RunPipelineResult> {
+	let injectionResult: PiInjectionResult | null = null;
+	if (args.injection) {
+		injectionResult = injectM0M1Pi(
+			{
+				sessionId: args.sessionId,
+				projectIdentity: args.projectIdentity,
+				projectDirectory: args.projectDirectory,
+				memoryEnabled: args.injection.memoryEnabled,
+				injectDocs: args.injection.injectDocs,
+				injectionBudgetTokens: args.injection.injectionBudgetTokens,
+				historyBudgetTokens: args.injection.historyBudgetTokens,
+				muralEnabled: args.injection.muralEnabled === true,
+				compactionOff: true,
+			},
+			args.db,
+			args.messages as Parameters<typeof injectM0M1Pi>[2],
+			args.entryIds,
+			false,
+		);
+	}
+	return {
+		messages: args.messages as unknown[],
+		heuristicsExecuted: false,
+		executedWorkThisPass: false,
+		historyInjected: false,
+		syntheticLeadingCount: injectionResult?.syntheticLeadingCount ?? 0,
+		heuristicsResult: null,
+		injectionResult,
+		materialized: injectionResult?.m0Materialized === true,
+		materializeReason: injectionResult?.m0Reason ?? null,
+		droppedTokens: 0,
+		droppedCount: 0,
+		emergency: false,
+		bustedThisPass: injectionResult?.m0Materialized === true,
+		agentDropsAppliedThisPass: false,
+		targetCount: 0,
+		reasoningWatermark: args.sessionMeta.clearedReasoningThroughTag ?? 0,
+		activeTags: [],
+		postCommitEntryIdByRef: new Map(),
+	};
+}
+
 async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
+	if (args.compactionOff) return runCompactionOffPipeline(args);
+	const forceMaterializationPercentage =
+		args.forceMaterializationPercentage ??
+		escalationBands(65).forceMaterializationPercentage;
 	let executedWorkThisPass = false;
 	let historyWasConsumedThisPass = false;
 	let materializationSatisfiedThisPass = false;
@@ -4254,21 +4532,15 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	const canConsumeDeferredLate =
 		args.schedulerDecision === "execute" ||
 		args.forceMaterialization === true ||
-		args.contextUsage.percentage >= FORCE_MATERIALIZATION_PERCENTAGE;
+		args.contextUsage.percentage >= forceMaterializationPercentage;
 	const deferredMaterializeEligible =
 		canConsumeDeferredLate &&
 		deferredMaterializationSessions.has(args.sessionId);
-	// Known-bust fold: if Pi m[0] is going to HARD-fold this pass (model /
-	// system-hash / ttl-idle / project-memory epoch / mutation id / upgrade —
-	// whatever mustMaterializePi decides), the Anthropic prefix is being
-	// re-cached regardless. Drain queued tool-drops + run heuristics into THAT
-	// bust instead of causing a second bust on a later execute pass. Advisory
-	// only: early-true widens the gates below; early-false changes nothing —
-	// injectM0M1Pi keeps its own independent late mustMaterializePi recheck, so a
-	// cross-process epoch/mutation bump arriving after this read still folds via
-	// the late path. Keep this as a separate boolean; do not fold it into the
-	// deferred/explicit materialization signals, which drive their own drain
-	// bookkeeping.
+	// A HARD decision alone is not a cache bust. Execute it against a shadow
+	// message array first, then let pending drops, heuristics, and reasoning cleanup
+	// ride the bust only when m[0] actually materialized. Contention or any other
+	// suppressed attempt keeps defer replay immutable; the wire injection below
+	// still performs its own late decision for races after this preflight.
 	const piHardSignals = args.injection
 		? (() => {
 				// HARD-bust signals (parity with OpenCode). systemHash + TTL idle
@@ -4287,35 +4559,101 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 							? hardMeta.systemPromptHash
 							: "",
 					modelKey: liveModelBySession.get(args.sessionId) ?? "",
-					cacheExpired:
-						hardMeta.lastResponseTime > 0 &&
-						Date.now() - hardMeta.lastResponseTime >= piTtlMs,
+					cacheExpired: isPiHardCacheExpired(
+						hardMeta.lastResponseTime,
+						piTtlMs,
+						Date.now(),
+					),
 					lastResponseTime: hardMeta.lastResponseTime,
 				};
 			})()
 		: undefined;
-	const m0HardFoldThisPass =
+	// Build the fold state once and reuse it for both the preflight and the wire
+	// injection. Omitting a render-affecting field from only one of those calls can
+	// manufacture a HARD signal that the real injection immediately disproves.
+	const piM0State =
 		args.injection && piHardSignals
-			? mustMaterializePi(
-					{
-						sessionId: args.sessionId,
-						projectIdentity: args.projectIdentity,
-						projectDirectory: args.projectDirectory,
-						memoryEnabled: args.injection.memoryEnabled,
-						injectionBudgetTokens: args.injection.injectionBudgetTokens,
-						historyBudgetTokens: args.injection.historyBudgetTokens,
-						hardSignals: piHardSignals,
-					},
-					args.db,
-					getCompartments(args.db, args.sessionId),
-				).value
-			: false;
+			? {
+					sessionId: args.sessionId,
+					projectIdentity: args.projectIdentity,
+					projectDirectory: args.projectDirectory,
+					memoryEnabled: args.injection.memoryEnabled,
+					injectDocs: args.injection.injectDocs,
+					injectionBudgetTokens: args.injection.injectionBudgetTokens,
+					historyBudgetTokens: args.injection.historyBudgetTokens,
+					hardSignals: piHardSignals,
+					muralEnabled: args.injection.muralEnabled === true,
+				}
+			: undefined;
+	const foldDueDecision = piM0State
+		? mustMaterializePi(
+				piM0State,
+				args.db,
+				getCompartments(args.db, args.sessionId),
+			)
+		: { value: false, reason: null };
+	let foldExecutedThisPass = false;
+	let preFoldInjectionResult: PiInjectionResult | null = null;
+	const persistedM0BeforeFold = getOrCreateSessionMeta(args.db, args.sessionId);
+	const m0CoverageBeforeFold =
+		persistedM0BeforeFold.cachedM0Bytes === null
+			? -1
+			: persistedM0BeforeFold.cachedM0MaxCompartmentSeq;
+	if (foldDueDecision.value && piM0State) {
+		try {
+			// Persist the fold before opening mutation gates. The shadow array keeps
+			// this pre-execution off the outgoing wire; the normal injection below
+			// replays the persisted pair into the real message array.
+			preFoldInjectionResult = injectM0M1PiForRun(
+				piM0State,
+				args.db,
+				[],
+				undefined,
+				false,
+			);
+			foldExecutedThisPass = foldExecutesThisPass(
+				foldDueDecision.value,
+				preFoldInjectionResult.m0Materialized === true,
+			);
+			const m0CoverageAfterFold = getOrCreateSessionMeta(
+				args.db,
+				args.sessionId,
+			).cachedM0MaxCompartmentSeq;
+			try {
+				rearmChannel2AfterCoverageAdvancingHardFold({
+					db: args.db,
+					sessionId: args.sessionId,
+					foldExecuted: foldExecutedThisPass,
+					compactionOff: false,
+					previousCoverage: m0CoverageBeforeFold,
+					currentCoverage: m0CoverageAfterFold,
+				});
+			} catch (error) {
+				sessionLog(
+					args.sessionId,
+					`pi channel2 fold-cycle reset failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		} catch (error) {
+			sessionLog(
+				args.sessionId,
+				`pi m[0] HARD fold pre-execution failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		const mismatch = foldDueDecision.mismatch
+			? ` mismatch=${JSON.stringify(foldDueDecision.mismatch)}`
+			: "";
+		sessionLog(
+			args.sessionId,
+			`pi m[0] HARD fold decision: reason=${foldDueDecision.reason ?? "unknown"}${mismatch} executed=${foldExecutedThisPass}`,
+		);
+	}
 	const historianRunning = inFlightHistorian.has(args.sessionId);
-	// Match OpenCode's compartment-running veto: a normal execute/deferred drain
-	// must wait while the historian is reading its raw snapshot, but unavoidable
-	// busts still drain immediately so they do not create a second cache bust later.
+	// A normal execute/deferred drain waits while the historian reads its raw
+	// snapshot. Only a fold that was persisted successfully may bypass the veto;
+	// an advisory mismatch or contention fallback cannot authorize mutations.
 	const bypassHistorianGate =
-		args.forceMaterialization === true || m0HardFoldThisPass;
+		args.forceMaterialization === true || foldExecutedThisPass;
 	const hasPendingMaterializeSignal = hasPendingMaterialization(args.sessionId);
 	// Pi sessions are primary-equivalent today. If Pi adds subagents on this
 	// transform path, subagents should bypass this once-per-turn guard like
@@ -4326,10 +4664,9 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 		(args.forceMaterialization === true ||
 			hasPendingMaterializeSignal ||
 			deferredMaterializeEligible ||
-			// A known m[0] hard fold busts the prefix regardless, so fold this
-			// pass's reductions into that unavoidable bust instead of waiting for a
-			// later execute pass.
-			m0HardFoldThisPass ||
+			// A fold persisted earlier in this pass already busted the prefix, so
+			// reductions may ride it without causing an independent bust.
+			foldExecutedThisPass ||
 			(args.schedulerDecision === "execute" && !alreadyRanHeuristicsThisTurn));
 
 	// 1. Tagging: assigns tag numbers + injects §N§ prefixes when ctx_reduce
@@ -4456,9 +4793,8 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	// detection in `before_agent_start` also signals this set so a
 	// real prompt-content change forces materialization on the same
 	// turn the cache already busts.
-	// Normal drains wait while this session's historian is in flight; force
-	// materialization and m[0] hard folds are already cache-busting, so they bypass
-	// the historian gate and drain now.
+	// Normal drains wait while this session's historian is in flight. Force
+	// materialization and successfully executed m[0] folds may bypass that veto.
 	//
 	// PEEK-then-drain-on-success pattern (Oracle audit Round 8 #6):
 	// the signal is only deleted AFTER applyPendingOperations succeeds.
@@ -4470,14 +4806,29 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 		args.sessionId,
 	);
 	const deferredHistoryRefreshWasPending = deferredHistoryWasPendingAtPassStart;
-	const pendingOps = getPendingOps(args.db, args.sessionId);
-	const pendingOperationTags = getTagsForPendingOperations(
-		args.db,
-		args.sessionId,
-		pendingOps.map((operation) => operation.tagId),
-		args.protectedTags,
-		RECENT_TOOL_SKELETON_WINDOW,
-	);
+	// Defer passes replay persisted tag statuses below; they never apply newly
+	// queued operations. Avoid reading pending_ops unless this pass can consume
+	// them, matching OpenCode's cache-stable per-pass gate.
+	const shouldReadPendingOps =
+		!args.compactionOff &&
+		(args.schedulerDecision === "execute" ||
+			args.forceMaterialization ||
+			hasPendingMaterializeSignal ||
+			foldExecutedThisPass ||
+			historianRunning);
+	const pendingOps = shouldReadPendingOps
+		? getPendingOps(args.db, args.sessionId)
+		: [];
+	const pendingOperationTags =
+		pendingOps.length > 0
+			? getTagsForPendingOperations(
+					args.db,
+					args.sessionId,
+					pendingOps.map((operation) => operation.tagId),
+					args.protectedTags,
+					RECENT_TOOL_SKELETON_WINDOW,
+				)
+			: [];
 	// The deferred-execute flag is drain-on-success ONLY — it must NOT appear
 	// here. OpenCode never gates work on the flag (peekDeferredExecutePending is
 	// read solely by the drain in transform-postprocess-phase.ts); the idempotent
@@ -4491,7 +4842,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 		args.schedulerDecision === "execute" ||
 		args.forceMaterialization ||
 		hasPendingMaterializeSignal ||
-		m0HardFoldThisPass;
+		foldExecutedThisPass;
 	// `canConsumeDeferredLate` is computed ONCE, earlier (above shouldRunHeuristics),
 	// as a mid-turn-aware gate independent of shouldRunHeuristics — mirroring
 	// OpenCode's canConsumeDeferredOnThisPass. It must NOT be re-derived from
@@ -4506,6 +4857,14 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	const shouldApplyPendingOps =
 		(baseShouldApplyPendingOps || deferredMaterialize) &&
 		(!historianRunning || bypassHistorianGate);
+	mutationGateObserverForTests?.({
+		foldDue: foldDueDecision.value,
+		foldExecuted: foldExecutedThisPass,
+		shouldApplyPendingOps,
+		shouldRunHeuristics,
+		shouldRunReasoningCleanup:
+			args.reasoningClearing !== undefined && shouldRunHeuristics,
+	});
 	if (shouldApplyPendingOps) {
 		const applyReason = hasPendingMaterializeSignal
 			? "explicit_flush"
@@ -4513,8 +4872,8 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				? "deferred_publication"
 				: args.forceMaterialization
 					? "force_materialization"
-					: m0HardFoldThisPass && args.schedulerDecision !== "execute"
-						? `m0_hard_fold (drain folded into known m[0] bust, scheduler=${args.schedulerDecision})`
+					: foldExecutedThisPass && args.schedulerDecision !== "execute"
+						? `m0_hard_fold (drain folded into executed m[0] bust, scheduler=${args.schedulerDecision})`
 						: `scheduler_execute (scheduler=${args.schedulerDecision})`;
 		sessionLog(
 			args.sessionId,
@@ -4578,30 +4937,28 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	// execute passes. Mirrors OpenCode's `applyFlushedStatuses` call
 	// at transform.ts:728.
 	//
-	// P0 perf: applyFlushedStatuses only ever mutates tags whose
-	// tag_number is in `targets`, so feed it just that slice instead
-	// of the whole session (~50k rows on long sessions). Without this
-	// pre-load it lazy-loads via getTagsBySession internally — exactly
-	// the full-table scan we eliminated in OpenCode's transform.
+	// Status replay only acts on dropped targets. Filter by both status and
+	// visible tag number in SQLite so active rows are not materialized merely to
+	// be discarded by applyFlushedStatuses.
 	const targetTagNumbers = [...targets.keys()];
 	const tGetTags = performance.now();
-	const flushedSliceTags = getTagsByNumbers(
+	const flushedDroppedTags = getDroppedTagsByNumbers(
 		args.db,
 		args.sessionId,
 		targetTagNumbers,
 	);
 	logTransformTiming(
 		args.sessionId,
-		"getTagsByNumbers",
+		"getDroppedTagsByNumbers",
 		tGetTags,
-		`targets=${targetTagNumbers.length} fetched=${flushedSliceTags.length}`,
+		`targets=${targetTagNumbers.length} fetched=${flushedDroppedTags.length}`,
 	);
 	const tFlushed = performance.now();
 	didMutateFromFlushedStatuses = applyFlushedStatuses(
 		args.sessionId,
 		args.db,
 		targets,
-		flushedSliceTags,
+		flushedDroppedTags,
 	);
 	logTransformTiming(args.sessionId, "applyFlushedStatuses", tFlushed);
 	logTransformTiming(args.sessionId, "batchFinalize:flushed", tFlushed);
@@ -4732,8 +5089,8 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	if (shouldRunHeuristics) {
 		const reason = args.forceMaterialization
 			? "force_materialization"
-			: m0HardFoldThisPass && args.schedulerDecision !== "execute"
-				? `m0_hard_fold (drain folded into known m[0] bust, scheduler=${args.schedulerDecision})`
+			: foldExecutedThisPass && args.schedulerDecision !== "execute"
+				? `m0_hard_fold (drain folded into executed m[0] bust, scheduler=${args.schedulerDecision})`
 				: `scheduler_execute (pendingOps=${pendingOps.length}, scheduler=${args.schedulerDecision})`;
 		sessionLog(
 			args.sessionId,
@@ -4747,6 +5104,21 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	if (shouldRunHeuristics && args.heuristics) {
 		try {
 			const tHeuristic = performance.now();
+			const independentMutationBeforeHeuristics =
+				pendingOpsDidMutate || foldExecutedThisPass;
+			// A queued drop or completed hard fold already changes provider-visible
+			// bytes on this pass. Rearm so accumulated candidates join that same cache
+			// rebuild instead of waiting for a new pressure period. Do not treat frozen
+			// status replay as a new mutation: Pi rebuilds raw messages every pass, so
+			// replay is expected restoration and must not authorize another emergency
+			// batch on every pass.
+			if (
+				args.forceMaterialization === true &&
+				independentMutationBeforeHeuristics &&
+				getEmergencyInputSample(args.db, args.sessionId) > 0
+			) {
+				clearEmergencyDropSample(args.db, args.sessionId);
+			}
 			heuristicsResult = applyPiHeuristicCleanup(
 				args.sessionId,
 				args.db,
@@ -4755,9 +5127,9 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				{
 					protectedTags: args.protectedTags,
 					staleReduceStripEnabled: args.canUseEmptySentinels,
-					// Tiered emergency drop fires only at ≥85% AND when the
+					// Tiered emergency drop fires only at the derived force band AND when the
 					// ceiling is known. forceMaterialization already incorporates
-					// the ≥85% / emergency condition for Pi (primary-equivalent).
+					// the derived force-band / emergency condition for Pi (primary-equivalent).
 					emergency:
 						args.forceMaterialization === true &&
 						args.emergencyCeilingTokens !== undefined &&
@@ -4906,7 +5278,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 		pendingOpsDidMutate || heuristicOrReasoningDidMutate;
 	const emergencyDropEligible =
 		args.forceMaterialization === true ||
-		args.contextUsage.percentage >= FORCE_MATERIALIZATION_PERCENTAGE;
+		args.contextUsage.percentage >= forceMaterializationPercentage;
 	let autoReclaimTargetCount = 0;
 	let autoReclaimDidMutate = false;
 	if (
@@ -5102,10 +5474,6 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				(stableContext !== undefined || publishedStableContextHashBySession.has(args.sessionId)) &&
 				priorStableHash !== stableHash;
 			if (stablePublicationChanged) {
-				// A replacement remains a source-aware SOFT update: the fork retains
-				// m[0] and serializes its replacement/tombstone delta into m[1]. Only
-				// losing a formerly bound Tavern publication is a surface transition;
-				// fail closed by discarding the old Tavern baseline before Game can run.
 				if (stableContext === undefined) {
 					clearM0M1PiCache(
 						args.db,
@@ -5115,20 +5483,8 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				}
 				publishedStableContextHashBySession.set(args.sessionId, stableHash);
 			}
-			injectionResult = injectM0M1PiForRun(
-				{
-					sessionId: args.sessionId,
-					projectIdentity: args.projectIdentity,
-					projectDirectory: args.projectDirectory,
-					memoryEnabled: args.injection.memoryEnabled,
-					memoryDomain: args.injection.memoryDomain,
-					injectDocs: args.injection.injectDocs,
-					injectionBudgetTokens: args.injection.injectionBudgetTokens,
-					historyBudgetTokens: args.injection.historyBudgetTokens,
-					hardSignals: piHardSignals,
-					muralEnabled: args.injection.muralEnabled === true,
-					...(stableContext === undefined ? {} : { stableContext }),
-				},
+			const wireInjectionResult = injectM0M1PiForRun(
+				piM0State!,
 				args.db,
 				args.messages as Parameters<typeof injectM0M1Pi>[2],
 				args.entryIds,
@@ -5148,6 +5504,30 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 				// byte-identical by retaining the default false.
 				true,
 			);
+			injectionResult = preFoldInjectionResult?.m0Materialized
+				? {
+						...wireInjectionResult,
+						m0Materialized: true,
+						m0Reason:
+							preFoldInjectionResult.m0Reason ?? wireInjectionResult.m0Reason,
+						systemHashPrev: preFoldInjectionResult.systemHashPrev ?? null,
+						systemHashNew: preFoldInjectionResult.systemHashNew ?? null,
+						m0ModelKeyPrev: preFoldInjectionResult.m0ModelKeyPrev ?? null,
+						m0ModelKeyNew: preFoldInjectionResult.m0ModelKeyNew ?? null,
+					}
+				: wireInjectionResult;
+			// Temporal markers are derived before history injection trims raw messages.
+			// If that trim promotes a user message to the raw-history head, its marker
+			// was based on a predecessor that is no longer visible. Remove it now so the
+			// marker-applying pass matches the next pass, where trimming happens first.
+			if (
+				args.temporalAwareness &&
+				injectionResult.skippedVisibleMessages > 0
+			) {
+				const firstRetainedMessage =
+					args.messages[injectionResult.syntheticLeadingCount];
+				stripPiLeadingTemporalMarker(firstRetainedMessage);
+			}
 			// PEEK-then-drain-on-success (Oracle audit Round 8 #6):
 			// only drain `historyRefreshSessions` if the rebuild
 			// succeeded AND this pass was busting the cache. If
@@ -5397,6 +5777,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 		droppedCount,
 		emergency,
 		bustedThisPass,
+		agentDropsAppliedThisPass: pendingOpsDidMutate,
 		targetCount: targets.size,
 		reasoningWatermark: args.sessionMeta.clearedReasoningThroughTag ?? 0,
 		activeTags,
@@ -5777,6 +6158,14 @@ function appendReminderToPiUserMessage(
 	// Image-only or empty array — push a new text block. Trim leading
 	// `\n\n` because there's nothing to separate from.
 	contentArr.push({ type: "text", text: reminder.trimStart() });
+}
+
+function clearPiCompactionOffInMemoryState(sessionId: string): void {
+	historyRefreshSessions.delete(sessionId);
+	deferredHistoryRefreshSessions.delete(sessionId);
+	pendingMaterializationSessions.delete(sessionId);
+	deferredMaterializationSessions.delete(sessionId);
+	clearPiChannel1State(sessionId);
 }
 
 /**

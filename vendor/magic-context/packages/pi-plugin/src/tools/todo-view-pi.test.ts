@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type {
 	ExtensionCommandContext,
 	ExtensionUIContext,
@@ -48,8 +48,13 @@ function widgetFactory(call: unknown[]) {
 		theme: typeof identityTheme,
 	) => { render: (width: number) => string[]; invalidate: () => void };
 }
+let dateNowSpy: ReturnType<typeof spyOn>;
 beforeEach(() => {
 	__resetTodoSnapshotsForTests();
+	dateNowSpy = spyOn(Date, "now").mockReturnValue(0);
+});
+afterEach(() => {
+	dateNowSpy.mockRestore();
 });
 describe("todowrite tool rendering", () => {
 	it("renders glyph lines while preserving the exact JSON text result", async () => {

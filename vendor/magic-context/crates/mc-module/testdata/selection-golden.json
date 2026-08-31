@@ -1,0 +1,1743 @@
+[
+  {
+    "label": "supersession: todowrite keep-1",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "todowrite",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "todowrite"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 100,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "todowrite",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "todowrite"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 100,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "todowrite",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "todowrite"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 100,
+        "token_count": null,
+        "arc_id": "c3#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": true,
+    "frozen": [],
+    "expected": {
+      "c2#0": "drop",
+      "c1#0": "drop"
+    }
+  },
+  {
+    "label": "supersession: ctx_reduce keep-3 exemplars",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c4#0",
+        "ordinal": 4,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c4#1",
+        "ordinal": 4,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c5#0",
+        "ordinal": 5,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c5#0"
+      },
+      {
+        "id": "c5#1",
+        "ordinal": 5,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40,
+        "token_count": null,
+        "arc_id": "c5#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": true,
+    "frozen": [],
+    "expected": {
+      "c2#0": "drop",
+      "c1#0": "drop"
+    }
+  },
+  {
+    "label": "supersession: zero-value meta drop-all",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "bash_status",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash_status"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 30,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "bash_kill",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash_kill"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 30,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 30,
+        "token_count": null,
+        "arc_id": "c3#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": true,
+    "frozen": [],
+    "expected": {
+      "c2#0": "drop",
+      "c1#0": "drop"
+    }
+  },
+  {
+    "label": "supersession: running zero-value call stays untouched",
+    "items": [
+      {
+        "id": "running#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "bash_status",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "running#0"
+      },
+      {
+        "id": "completed#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "bash_kill",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "completed#0"
+      },
+      {
+        "id": "completed#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash_kill"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 30,
+        "token_count": null,
+        "arc_id": "completed#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": true,
+    "frozen": [],
+    "expected": {
+      "completed#0": "drop"
+    }
+  },
+  {
+    "label": "supersession: ctx_note read+dismiss drop, write keep",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_note",
+            "input": {
+              "action": "read"
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_note"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 50,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_note",
+            "input": {
+              "action": "dismiss"
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_note"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 50,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_note",
+            "input": {
+              "action": "write",
+              "content": "x"
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_note"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 50,
+        "token_count": null,
+        "arc_id": "c3#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": true,
+    "frozen": [],
+    "expected": {
+      "c2#0": "drop",
+      "c1#0": "drop"
+    }
+  },
+  {
+    "label": "edit: older-per-file → edit_marker, newest full",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "edit",
+            "input": {
+              "filePath": "a.ts",
+              "oldString": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "newString": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+              "__cortexkit_edit_input_key_order_v1": [
+                "filePath",
+                "oldString",
+                "newString"
+              ]
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "edit"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 500,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "edit",
+            "input": {
+              "filePath": "a.ts",
+              "oldString": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+              "newString": "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+              "__cortexkit_edit_input_key_order_v1": [
+                "filePath",
+                "oldString",
+                "newString"
+              ]
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "edit"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 500,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "write",
+            "input": {
+              "filePath": "b.ts",
+              "content": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+              "__cortexkit_edit_input_key_order_v1": [
+                "filePath",
+                "content"
+              ]
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "write"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 500,
+        "token_count": null,
+        "arc_id": "c3#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": true,
+    "frozen": [],
+    "expected": {
+      "c1#0": "edit_marker"
+    }
+  },
+  {
+    "label": "edit: no filePath → skip (fail-safe)",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "edit",
+            "input": {
+              "oldString": "x",
+              "newString": "y",
+              "__cortexkit_edit_input_key_order_v1": [
+                "oldString",
+                "newString"
+              ]
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "edit"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 500,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "edit",
+            "input": {
+              "oldString": "p",
+              "newString": "q",
+              "__cortexkit_edit_input_key_order_v1": [
+                "oldString",
+                "newString"
+              ]
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "edit"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 500,
+        "token_count": null,
+        "arc_id": "c2#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": true,
+    "frozen": [],
+    "expected": {}
+  },
+  {
+    "label": "two_pass: drop tools at/under watermark",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 200,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "read",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "read"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 200,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "grep",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "grep"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 200,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c4#0",
+        "ordinal": 4,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c4#1",
+        "ordinal": 4,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 200,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c5#0",
+        "ordinal": 5,
+        "kind": {
+          "ToolCall": {
+            "name": "edit",
+            "input": {
+              "__cortexkit_edit_input_key_order_v1": []
+            }
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c5#0"
+      },
+      {
+        "id": "c5#1",
+        "ordinal": 5,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "edit"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 200,
+        "token_count": null,
+        "arc_id": "c5#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 3,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": true,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {
+      "c1#0": "drop",
+      "c2#0": "drop",
+      "c3#0": "drop"
+    }
+  },
+  {
+    "label": "two_pass: ctx_reduce keep-3 exemplars",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": 1000,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": 1000,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": 1000,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c4#0",
+        "ordinal": 4,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c4#1",
+        "ordinal": 4,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": 1000,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c5#0",
+        "ordinal": 5,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c5#0"
+      },
+      {
+        "id": "c5#1",
+        "ordinal": 5,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": 1000,
+        "arc_id": "c5#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 5,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": true,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {
+      "c1#0": "drop",
+      "c2#0": "drop"
+    }
+  },
+  {
+    "label": "two_pass: skip sub-floor arcs",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 2000,
+        "token_count": 249,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "read",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "read"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 2000,
+        "token_count": 250,
+        "arc_id": "c2#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 2,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": true,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {
+      "c2#0": "drop"
+    }
+  },
+  {
+    "label": "two_pass: keep newest todowrite",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "todowrite",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "todowrite"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 2000,
+        "token_count": 300,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "todowrite",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "todowrite"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 2000,
+        "token_count": 300,
+        "arc_id": "c2#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "Execute",
+      "current_total_input_tokens": 0,
+      "ceiling_tokens": 0,
+      "protected_cutoff_ordinal": 0,
+      "last_execute_ordinal": 2,
+      "scheduler_pressure_execute": true,
+      "pass_already_busting": true,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {
+      "c1#0": "drop"
+    }
+  },
+  {
+    "label": "emergency: tier order T3→T2→T1 to headroom",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "read",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "read"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40000,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "grep",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "grep"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40000,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40000,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c4#0",
+        "ordinal": 4,
+        "kind": {
+          "ToolCall": {
+            "name": "web",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c4#1",
+        "ordinal": 4,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "web"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 40000,
+        "token_count": null,
+        "arc_id": "c4#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "EmergencyForce",
+      "current_total_input_tokens": 200000,
+      "ceiling_tokens": 160000,
+      "protected_cutoff_ordinal": 4,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": false,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {
+      "c3#0": "drop",
+      "c4#0": "drop"
+    }
+  },
+  {
+    "label": "emergency: ctx_reduce keep-3 exemplars",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c4#0",
+        "ordinal": 4,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c4#1",
+        "ordinal": 4,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c5#0",
+        "ordinal": 5,
+        "kind": {
+          "ToolCall": {
+            "name": "ctx_reduce",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c5#0"
+      },
+      {
+        "id": "c5#1",
+        "ordinal": 5,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "ctx_reduce"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 4000,
+        "token_count": null,
+        "arc_id": "c5#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "EmergencyForce",
+      "current_total_input_tokens": 6000,
+      "ceiling_tokens": 1000,
+      "protected_cutoff_ordinal": 5,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": false,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {
+      "c1#0": "drop",
+      "c2#0": "drop"
+    }
+  },
+  {
+    "label": "emergency: protected tail excluded",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 80000,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c2#0",
+        "ordinal": 2,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c2#1",
+        "ordinal": 2,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 80000,
+        "token_count": null,
+        "arc_id": "c2#0"
+      },
+      {
+        "id": "c3#0",
+        "ordinal": 3,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c3#1",
+        "ordinal": 3,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 80000,
+        "token_count": null,
+        "arc_id": "c3#0"
+      },
+      {
+        "id": "c4#0",
+        "ordinal": 4,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c4#0"
+      },
+      {
+        "id": "c4#1",
+        "ordinal": 4,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 80000,
+        "token_count": null,
+        "arc_id": "c4#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "EmergencyForce",
+      "current_total_input_tokens": 200000,
+      "ceiling_tokens": 160000,
+      "protected_cutoff_ordinal": 2,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": false,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {
+      "c1#0": "drop",
+      "c2#0": "drop"
+    }
+  },
+  {
+    "label": "emergency: idempotence latch (same sample → noop)",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 80000,
+        "token_count": null,
+        "arc_id": "c1#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "EmergencyForce",
+      "current_total_input_tokens": 200000,
+      "ceiling_tokens": 160000,
+      "protected_cutoff_ordinal": 1,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": false,
+      "pass_already_busting": false,
+      "prior_input_sample": 200000,
+      "has_prior_drop": true,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {}
+  },
+  {
+    "label": "emergency: reclaim below min → noop",
+    "items": [
+      {
+        "id": "c1#0",
+        "ordinal": 1,
+        "kind": {
+          "ToolCall": {
+            "name": "bash",
+            "input": {}
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 0,
+        "token_count": null,
+        "arc_id": "c1#0"
+      },
+      {
+        "id": "c1#1",
+        "ordinal": 1,
+        "kind": {
+          "ToolResult": {
+            "tool_name": "bash"
+          }
+        },
+        "provider_executed": false,
+        "byte_size": 8000,
+        "token_count": null,
+        "arc_id": "c1#0"
+      }
+    ],
+    "ctx": {
+      "pass_class": "EmergencyForce",
+      "current_total_input_tokens": 160500,
+      "ceiling_tokens": 160000,
+      "protected_cutoff_ordinal": 1,
+      "last_execute_ordinal": 0,
+      "scheduler_pressure_execute": false,
+      "pass_already_busting": false,
+      "prior_input_sample": 0,
+      "has_prior_drop": false,
+      "agent_drop_ids": []
+    },
+    "smart_drops": false,
+    "frozen": [],
+    "expected": {}
+  }
+]

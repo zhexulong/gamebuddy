@@ -1,14 +1,16 @@
 {
 	"name": "@cortexkit/pi-magic-context",
-	"version": "0.33.0-gamebuddy.5",
+	"version": "0.41.0-gamebuddy.1",
 	"type": "module",
-	"description": "Pi coding agent extension for Magic Context — cross-session memory and context management",
+	"description": "Pi and OMP coding agent extension for Magic Context — cross-session memory and context management",
 	"main": "dist/index.js",
 	"license": "MIT",
 	"author": "ualtinok",
 	"keywords": [
 		"pi",
 		"pi-coding-agent",
+		"omp",
+		"oh-my-pi",
 		"extension",
 		"context",
 		"memory",
@@ -21,14 +23,16 @@
 		"url": "https://github.com/cortexkit/magic-context",
 		"directory": "packages/pi-plugin"
 	},
-	"files": [
-		"dist",
-		"README.md"
-	],
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
 	"scripts": {
-		"build": "rm -rf dist && bun build src/index.ts src/subagent-entry.ts src/embedded-historian-gate.ts --outdir dist --target node --format esm --splitting --external @earendil-works/pi-coding-agent --external @earendil-works/pi-tui --external @earendil-works/pi-ai --external @huggingface/transformers --external node:sqlite",
-		"typecheck": "tsc --noEmit",
-		"test": "bun test",
+		"build": "tsc -p ../retina-local-fs/tsconfig.build.json && rm -rf dist && mkdir -p dist && bun build src/index.ts src/subagent-entry.ts src/historian-calibration-extension.ts src/embedded-historian-gate.ts --outdir dist --target node --format esm --splitting --external @earendil-works/pi-coding-agent --external @earendil-works/pi-tui --external @huggingface/transformers --external node:sqlite",
+		"build:e2e-argv": "bun build src/subagent-runner.ts --outfile ../../tests/docker/.generated/subagent-runner-e2e.mjs --target node --format esm --external node:sqlite",
+		"typecheck": "tsc -p ../retina-local-fs/tsconfig.build.json && tsc --noEmit",
+		"test": "bun install --frozen-lockfile && bun test",
 		"lint": "biome check src",
 		"lint:fix": "biome check --write src",
 		"format": "biome format --write src",
@@ -38,8 +42,8 @@
 		"prepublishOnly": "bun run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.84.1",
-		"@huggingface/transformers": "^4.2.0",
+		"@cortexkit/subc-client": "0.4.1",
+		"@huggingface/transformers": "^4.1.0",
 		"@jitl/quickjs-singlefile-cjs-release-asyncify": "0.32.0",
 		"ai-tokenizer": "^1.0.6",
 		"comment-json": "^5.0.0",
@@ -49,16 +53,25 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.1",
-		"@earendil-works/pi-coding-agent": "^0.84.1",
-		"@earendil-works/pi-tui": "^0.84.1",
+		"@earendil-works/pi-ai": "0.84.4",
+		"@earendil-works/pi-coding-agent": "0.84.4",
+		"@earendil-works/pi-tui": "0.84.4",
 		"@types/better-sqlite3": "^7.6.13",
 		"@types/bun": "^1.3.10",
 		"@types/node": "^22.20.0",
 		"typescript": "^5.8.0"
 	},
 	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "^0.84.1",
-		"@earendil-works/pi-tui": "^0.84.1"
+		"@earendil-works/pi-coding-agent": "0.84.4",
+		"@earendil-works/pi-tui": "0.84.4"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		},
+		"@earendil-works/pi-tui": {
+			"optional": true
+		}
 	},
 	"exports": {
 		".": {
@@ -66,6 +79,11 @@
 		}
 	},
 	"pi": {
+		"extensions": [
+			"./dist/index.js"
+		]
+	},
+	"omp": {
 		"extensions": [
 			"./dist/index.js"
 		]

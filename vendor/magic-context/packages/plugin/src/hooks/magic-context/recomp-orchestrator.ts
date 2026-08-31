@@ -12,6 +12,7 @@ import {
     isWrapupInProgress,
 } from "../../features/magic-context/storage-meta-persisted";
 import type { PluginContext } from "../../plugin/types";
+import type { ModelInput } from "../../shared/model-resolution";
 import type { Database } from "../../shared/sqlite";
 import {
     executeContextRecomp,
@@ -64,8 +65,10 @@ export interface ManagedRecompContext {
     historianTimeoutMs: number;
     memoryEnabled: boolean;
     autoPromote: boolean;
+    /** Active OpenCode historian entry, including its outbound request variant. */
+    historianModel?: ModelInput;
     /** Resolved historian fallback chain (config `fallback_models` → builtin). */
-    fallbackModels: readonly string[];
+    fallbackModels: readonly ModelInput[];
     language?: string;
     /** Pre-resolved last-resort model key (the live session model). When omitted,
      *  the orchestrator resolves it from `liveModelBySession`. The hook path passes
@@ -237,6 +240,7 @@ function buildRecompDeps(ctx: ManagedRecompContext, sessionId: string) {
         // Fallback resilience (was missing on the RPC dialog paths):
         //  - fallbackModels: configured chain (e.g. anthropic/claude-sonnet-4-6)
         //  - fallbackModelId: the live session model as a last-ditch retry
+        model: ctx.historianModel,
         fallbackModels: ctx.fallbackModels,
         language: ctx.language,
         fallbackModelId:
@@ -504,7 +508,9 @@ async function runUpgradeMemoryMigration(
             // fallbacks remain the safety net behind it.
             primaryModelId:
                 ctx.fallbackModelId ?? resolveLiveModelKey(ctx.liveSessionState, sessionId),
-            fallbackModels: ctx.fallbackModels,
+            fallbackModels: ctx.fallbackModels.map((entry) =>
+                typeof entry === "string" ? entry : entry.model,
+            ),
             timeoutMs: ctx.historianTimeoutMs,
             userMemoriesEnabled: ctx.userMemoriesEnabled,
             language: ctx.language,

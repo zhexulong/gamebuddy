@@ -250,6 +250,28 @@ export function queueTuiPreferenceUpdate(
 
 const WATCH_DEBOUNCE_MS = 150;
 
+type WatchReadFile = (file: string) => Promise<string>;
+type WatchDirectory = (
+    directory: string,
+    listener: (event: string, filename: string | null) => void,
+) => { close(): void };
+
+let watchReadFile: WatchReadFile = (file) => readFile(file, "utf8");
+let watchDirectory: WatchDirectory = (directory, listener) => watch(directory, listener);
+
+export function __setTuiPreferencesWatchTestHooks(hooks: {
+    readFile?: WatchReadFile;
+    watch?: WatchDirectory;
+}): void {
+    watchReadFile = hooks.readFile ?? ((file) => readFile(file, "utf8"));
+    watchDirectory = hooks.watch ?? ((directory, listener) => watch(directory, listener));
+}
+
+export function __resetTuiPreferencesWatchTestHooks(): void {
+    watchReadFile = (file) => readFile(file, "utf8");
+    watchDirectory = (directory, listener) => watch(directory, listener);
+}
+
 // Watches the DIRECTORY, not the file: editors and our own atomic writes replace
 // the file via rename, which kills file-level watchers.
 //
@@ -266,16 +288,22 @@ export function watchTuiPreferences(onChange: () => void): () => void {
     const name = basename(file);
     let timer: ReturnType<typeof setTimeout> | null = null;
     let lastSeen: string | null = null;
-    // Seed asynchronously; a real change before the seed resolves still wins
-    // because the debounce re-reads fresh and compares against `lastSeen` (null
-    // → does not match → fires).
-    void readFile(file, "utf8")
-        .then((text) => {
-            if (lastSeen === null) lastSeen = text;
-        })
-        .catch(() => {});
     try {
-        const watcher = watch(dirname(file), (_event, filename) => {
+        lastSeen = readFileSync(file, "utf8");
+    } catch {
+        // A missing or temporarily unreadable baseline is retried after registration.
+    }
+    const reconcile = (): void => {
+        void watchReadFile(file)
+            .catch(() => null)
+            .then((text) => {
+                if (text === null || text === lastSeen) return;
+                lastSeen = text;
+                onChange();
+            });
+    };
+    try {
+        const watcher = watchDirectory(dirname(file), (_event, filename) => {
             const isOurs =
                 filename === name ||
                 (filename?.startsWith(`${name}.`) && filename.endsWith(".tmp"));
@@ -283,16 +311,13 @@ export function watchTuiPreferences(onChange: () => void): () => void {
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => {
                 timer = null;
-                void readFile(file, "utf8")
-                    .catch(() => null)
-                    .then((text) => {
-                        if (text === null) return;
-                        if (text === lastSeen) return;
-                        lastSeen = text;
-                        onChange();
-                    });
+                reconcile();
             }, WATCH_DEBOUNCE_MS);
         });
+        // Reconcile after registration: a change between the baseline read and
+        // watcher installation is observed here, while later changes schedule
+        // the same reconciliation path through the watcher callback above.
+        reconcile();
         return () => {
             if (timer) clearTimeout(timer);
             watcher.close();

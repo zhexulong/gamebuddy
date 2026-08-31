@@ -23,9 +23,13 @@ import {
     setProjectState,
 } from "../../features/magic-context/storage";
 import { initializeDatabase } from "../../features/magic-context/storage-db";
+import { insertUserMemory } from "../../features/magic-context/user-memory/storage-user-memory";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
-import { COMPARTMENT_RENDER_EPOCH } from "./compartment-render-epoch";
+import {
+    COMPARTMENT_RENDER_EPOCH,
+    encodeCachedM0UpgradeIdentity,
+} from "./compartment-render-epoch";
 import {
     clearInjectionCache,
     getVisibleMemoryIds,
@@ -66,6 +70,21 @@ function makeProjectDir(): string {
     const dir = mkdtempSync(join(tmpdir(), "mc-renderer-test-"));
     tempDirs.push(dir);
     return dir;
+}
+
+function createUserMemoryTable(): void {
+    db.exec(`
+        CREATE TABLE user_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            promoted_at INTEGER NOT NULL,
+            source_candidate_ids TEXT DEFAULT '[]',
+            source_candidate_provenance TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+    `);
 }
 
 function createOpenCodeMessageTimes(rows: Array<{ id: string; timestamp: number }>): void {
@@ -316,6 +335,41 @@ describe("prepareCompartmentInjection — empty compartments fallback", () => {
         expect(firstPart.text).toContain("</session-history>");
         expect(firstPart.text).toContain("test directive");
         expect(firstPart.text).toContain("original");
+    });
+});
+
+describe("prepareCompartmentInjection — cross-database cache isolation", () => {
+    it("does not replay a block rendered from a different database", () => {
+        // The injection cache is process-global and keyed by session id alone,
+        // while the value it holds is rendered FROM a database. Two independent
+        // stores that share a session id must not see each other's blocks.
+        const first = makeDb();
+        try {
+            insertMemory(first, {
+                projectPath: PROJECT_PATH,
+                category: "CONSTRAINTS",
+                content: "MEMORY-ONLY-IN-FIRST-DATABASE",
+            });
+            const populated = prepareCompartmentInjection(
+                first,
+                SESSION_ID,
+                [userMessage("m1", "hi")],
+                true,
+                PROJECT_PATH,
+            );
+            expect(populated?.block).toContain("MEMORY-ONLY-IN-FIRST-DATABASE");
+        } finally {
+            closeQuietly(first);
+        }
+
+        // Second store: same session id, no memories, and a DEFER pass — the
+        // path that replays the cached injection.
+        db = makeDb();
+        const messages: MessageLike[] = [userMessage("m1", "hi")];
+        const replayed = prepareCompartmentInjection(db, SESSION_ID, messages, false, PROJECT_PATH);
+
+        expect(replayed?.block ?? "").not.toContain("MEMORY-ONLY-IN-FIRST-DATABASE");
+        expect(replayed).toBeNull();
     });
 });
 
@@ -1113,7 +1167,12 @@ describe("m[0]/m[1] materialization", () => {
             cachedM0MaxMutationId: 0,
             cachedM0ProjectDocsHash: "",
             cachedM0SessionFactsVersion: 0,
-            cachedM0UpgradeState: `ready|compartment-render:${COMPARTMENT_RENDER_EPOCH}`,
+            cachedM0UpgradeState: encodeCachedM0UpgradeIdentity(
+                "ready",
+                COMPARTMENT_RENDER_EPOCH,
+                false,
+                "m8000-h60000",
+            ),
         };
 
         expect(
@@ -1544,6 +1603,7 @@ describe("m[0]/m[1] materialization", () => {
                 sessionId: SESSION_ID,
                 state,
                 projectPath: PROJECT_PATH,
+                memoryInjectionBudgetTokens: budget,
                 hardSignals: hardV1,
             }),
         ).toEqual({ value: false, reason: null });
@@ -1703,7 +1763,7 @@ describe("m[0]/m[1] materialization", () => {
         expect(typeof row.cached_m0_materialized_at).toBe("number");
         expect(row.cached_m0_session_facts_version).toBe(0);
         expect(row.cached_m0_upgrade_state).toBe(
-            `ready|compartment-render:${COMPARTMENT_RENDER_EPOCH}`,
+            encodeCachedM0UpgradeIdentity("ready", COMPARTMENT_RENDER_EPOCH, false, "m8000-h60000"),
         );
     });
 
@@ -1930,7 +1990,7 @@ describe("m[0]/m[1] materialization", () => {
         expect(typeof state.cachedM0MaterializedAt).toBe("number");
         expect(state.cachedM0SessionFactsVersion).toBe(0);
         expect(state.cachedM0UpgradeState).toBe(
-            `ready|compartment-render:${COMPARTMENT_RENDER_EPOCH}`,
+            encodeCachedM0UpgradeIdentity("ready", COMPARTMENT_RENDER_EPOCH, false, "m8000-h60000"),
         );
         expect(state.snapshotMarkers?.maxMemoryId).toBe(0);
         expect(
@@ -1944,21 +2004,20 @@ describe("m[0]/m[1] materialization", () => {
         ).toBe(false);
     });
 
-    it("injectM0M1 does NOT render <project-memory> when projectPath is undefined (memory.enabled=false config bypass guard)", () => {
-        // Regression: when memory.enabled=false the caller passes projectPath
-        // undefined (projectIdentity is deliberately undefined). materializeM0
-        // renders <project-memory> purely on projectPath presence, so the old
-        // `projectIdentity ?? deps.projectPath` fallback re-supplied the launch
-        // path and injected project memories despite the config being OFF. With
-        // the fallback removed, projectPath stays undefined and no memory renders.
+    it("suppresses every memory-derived surface when memory.enabled=false", () => {
+        // Regression: the caller deliberately omits projectPath when memory is
+        // disabled, but user-profile and mural rendering used separate ungated
+        // reads. Cover the baseline, delta, and multipart mural together.
         db = makeDb();
         const projectDirectory = makeProjectDir();
-        // Seed memories that WOULD render if the path leaked through.
+        createUserMemoryTable();
         insertMemory(db, {
             projectPath: PROJECT_PATH,
             category: "ARCHITECTURE",
-            content: "Should NOT appear when memory disabled",
+            content: "project memory must not leak when disabled",
         });
+        insertUserMemory(db, "profile baseline must not leak", []);
+        setProjectState(db, "__global__", { projectUserProfileVersion: 1 });
         const state = readStateFromMeta();
         const messages = [userMessage("m1", "hello")];
 
@@ -1969,12 +2028,137 @@ describe("m[0]/m[1] materialization", () => {
             state,
             projectPath: undefined,
             projectDirectory,
+            memoryEnabled: false,
+            mural: {
+                enabled: true,
+                supportsVision: true,
+                dataUrl: "data:image/png;base64,cHJvZmlsZS1tdXJhbA==",
+            },
         });
 
         expect(result.injected).toBe(true);
         const m0 = renderedText(messages[0]);
         expect(m0).not.toContain("<project-memory>");
-        expect(m0).not.toContain("Should NOT appear when memory disabled");
+        expect(m0).not.toContain("project memory must not leak when disabled");
+        expect(m0).not.toContain("<user-profile>");
+        expect(m0).not.toContain("profile baseline must not leak");
+        expect(m0).not.toContain("<memory-mural>");
+        expect(messages[0].parts).toHaveLength(1);
+
+        // A cache-busting m[1] refresh sees a newer profile version but must not
+        // turn it into a <new-user-profile> delta while memory remains disabled.
+        insertUserMemory(db, "profile delta must not leak", []);
+        setProjectState(db, "__global__", { projectUserProfileVersion: 2 });
+        const refreshed = [userMessage("m2", "again")];
+        injectM0M1({
+            db,
+            sessionId: SESSION_ID,
+            messages: refreshed,
+            state,
+            projectPath: undefined,
+            projectDirectory,
+            memoryEnabled: false,
+            isCacheBustingPass: true,
+        });
+        const m1 = renderedText(refreshed[1]);
+        expect(m1).not.toContain("<new-user-profile>");
+        expect(m1).not.toContain("profile delta must not leak");
+    });
+
+    it("uses an immediate render-config HARD path for a memory-on to memory-off transition", () => {
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        createUserMemoryTable();
+        insertMemory(db, {
+            projectPath: PROJECT_PATH,
+            category: "ARCHITECTURE",
+            content: "transition project fact",
+        });
+        insertUserMemory(db, "transition profile fact", []);
+        setProjectState(db, "__global__", { projectUserProfileVersion: 1 });
+        const state = readStateFromMeta();
+
+        const on = [userMessage("m1", "before")];
+        injectM0M1({
+            db,
+            sessionId: SESSION_ID,
+            messages: on,
+            state,
+            projectPath: PROJECT_PATH,
+            projectDirectory,
+            memoryEnabled: true,
+            hardSignals: { systemHash: "memory-guidance-on", modelKey: "test/model" },
+        });
+        expect(renderedText(on[0])).toContain("transition profile fact");
+
+        const off = [userMessage("m2", "after")];
+        const transition = injectM0M1({
+            db,
+            sessionId: SESSION_ID,
+            messages: off,
+            state,
+            projectPath: undefined,
+            projectDirectory,
+            memoryEnabled: false,
+            // The system hook publishes its changed hash after message transform.
+            // Keep the old hash here to prove the memory gate itself prevents a
+            // one-request replay of the memory-bearing cache.
+            hardSignals: { systemHash: "memory-guidance-on", modelKey: "test/model" },
+        });
+        expect(transition.decision.reason).toBe("render_config");
+        expect(transition.m0RematerializedThisPass).toBe(true);
+        expect(renderedText(off[0])).not.toContain("transition profile fact");
+        const suppressedBytes = transition.m0Bytes?.toString("utf8");
+
+        // When injection is deferred, replay the frozen suppressed m[0] unchanged instead of rendering it again.
+        const defer = [userMessage("m3", "still off")];
+        const replay = injectM0M1({
+            db,
+            sessionId: SESSION_ID,
+            messages: defer,
+            state,
+            projectPath: undefined,
+            projectDirectory,
+            memoryEnabled: false,
+            hardSignals: { systemHash: "memory-guidance-on", modelKey: "test/model" },
+        });
+        expect(replay.m0RematerializedThisPass).toBe(false);
+        expect(replay.m0Bytes?.toString("utf8")).toBe(suppressedBytes);
+        expect(renderedText(defer[0])).not.toContain("transition profile fact");
+    });
+
+    it("keeps the memory-on m[0]/m[1] shape byte-identical", () => {
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        createUserMemoryTable();
+        insertMemory(db, {
+            projectPath: PROJECT_PATH,
+            category: "ARCHITECTURE",
+            content: "memory-on project fact",
+        });
+        insertUserMemory(db, "memory-on profile fact", []);
+        setProjectState(db, "__global__", { projectUserProfileVersion: 1 });
+
+        const defaultRender = materializeM0({
+            db,
+            sessionId: SESSION_ID,
+            state: readStateFromMeta(),
+            projectPath: PROJECT_PATH,
+            projectDirectory,
+        });
+        const explicitlyEnabledRender = materializeM0({
+            db,
+            sessionId: SESSION_ID,
+            state: readStateFromMeta(),
+            projectPath: PROJECT_PATH,
+            projectDirectory,
+            memoryEnabled: true,
+        });
+
+        expect(explicitlyEnabledRender.m0Text).toBe(defaultRender.m0Text);
+        expect(explicitlyEnabledRender.m1Text).toBe(defaultRender.m1Text);
+        expect(defaultRender.m0Text).toContain("memory-on profile fact");
+        expect(defaultRender.m0Text).toContain("memory-on project fact");
     });
 
     it("injectM0M1 still injects history when materialization contention exhausts with NO cached baseline (no throw, no empty history)", () => {
@@ -2984,5 +3168,92 @@ describe("m[0]/m[1] materialization", () => {
         expect(renderedText(bust[0])).toBe(baselineM0);
         expect(result.m1Text).toContain("docs-hash-only CAS delta memory");
         expect(renderedText(bust[1])).toContain("docs-hash-only CAS delta memory");
+    });
+    it("records NULL for an unmaterialized tool-set baseline", () => {
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        const baselineSignals = {
+            systemHash: "sys-tool-observation-null",
+            modelKey: "model-tool-observation-null",
+            cacheExpired: false,
+            lastResponseTime: 0,
+        };
+        const state = readStateFromMeta();
+
+        injectM0M1({
+            db,
+            sessionId: SESSION_ID,
+            state,
+            projectPath: PROJECT_PATH,
+            projectDirectory,
+            hardSignals: baselineSignals,
+        });
+
+        // Simulate a cached m[0] created before tool-set telemetry existed.
+        state.cachedM0ToolSetHash = null;
+        db.prepare(
+            "UPDATE session_meta SET cached_m0_tool_set_hash = NULL WHERE session_id = ?",
+        ).run(SESSION_ID);
+
+        expect(
+            mustMaterialize({
+                db,
+                sessionId: SESSION_ID,
+                state,
+                projectPath: PROJECT_PATH,
+                projectDirectory,
+                hardSignals: { ...baselineSignals, toolSetHash: "tools-v2" },
+            }),
+        ).toEqual({
+            value: false,
+            reason: null,
+            m0ToolSetHashPrev: null,
+            m0ToolSetHashNew: "tools-v2",
+        });
+    });
+
+    it("persists observed tool-set hashes without turning tool changes into a fold trigger", () => {
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        const baselineSignals = {
+            systemHash: "sys-tool-observation",
+            modelKey: "model-tool-observation",
+            toolSetHash: "tools-v1",
+            cacheExpired: false,
+            lastResponseTime: 0,
+        };
+        const state = readStateFromMeta();
+
+        injectM0M1({
+            db,
+            sessionId: SESSION_ID,
+            state,
+            projectPath: PROJECT_PATH,
+            projectDirectory,
+            hardSignals: baselineSignals,
+        });
+
+        expect(state.cachedM0ToolSetHash).toBe("tools-v1");
+        expect(
+            db
+                .prepare("SELECT cached_m0_tool_set_hash FROM session_meta WHERE session_id = ?")
+                .get(SESSION_ID),
+        ).toEqual({ cached_m0_tool_set_hash: "tools-v1" });
+
+        expect(
+            mustMaterialize({
+                db,
+                sessionId: SESSION_ID,
+                state,
+                projectPath: PROJECT_PATH,
+                projectDirectory,
+                hardSignals: { ...baselineSignals, toolSetHash: "tools-v2" },
+            }),
+        ).toEqual({
+            value: false,
+            reason: null,
+            m0ToolSetHashPrev: "tools-v1",
+            m0ToolSetHashNew: "tools-v2",
+        });
     });
 });

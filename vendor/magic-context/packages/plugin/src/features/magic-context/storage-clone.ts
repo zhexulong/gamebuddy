@@ -24,6 +24,10 @@ export interface CloneSessionStateFilter {
     mapMessageId?: (messageId: string) => string;
     /** Opt into remapping globally keyed tag ids; leave undefined for Pi compatibility. */
     mapTagId?: (sourceTagId: number, destinationTagId: number) => number;
+    /** Pi forks inherit session notes/facts in the same atomic prefix copy. */
+    copySessionNotesAndFacts?: boolean;
+    /** Return the destination ordinal for an inherited source anchor. */
+    mapOrdinal?: (sourceOrdinal: number) => number | undefined;
     selectPendingPiMarker(
         rawState: string | null,
         copiedCompartments: readonly CloneCompartmentRow[],
@@ -35,6 +39,8 @@ export interface CopySessionStateForCloneResult {
     compartmentsCopied: number;
     tagsCopied: number;
     pendingOpsCopied: number;
+    notesCopied: number;
+    factsCopied: number;
     pendingMarkerMigrated: boolean;
 }
 
@@ -110,7 +116,7 @@ function runImmediate<T>(db: Database, body: () => T): T {
     }
 }
 
-function countRows(db: Database, table: "compartments" | "tags", sessionId: string): number {
+function countRows(db: Database, table: string, sessionId: string): number {
     const row = db
         .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE session_id = ?`)
         .get(sessionId) as { count?: number } | undefined;
@@ -120,6 +126,84 @@ function countRows(db: Database, table: "compartments" | "tags", sessionId: stri
 function mapMessageId(filter: CloneSessionStateFilter, messageId: string | null): string | null {
     if (messageId === null) return null;
     return filter.mapMessageId?.(messageId) ?? messageId;
+}
+
+function tableExists(db: Database, table: string): boolean {
+    const row = db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table);
+    return row !== null && row !== undefined;
+}
+
+function insertDynamicRow(db: Database, table: string, row: Record<string, unknown>): void {
+    const names = Object.keys(row);
+    const quoted = names.map((name) => `"${name.replaceAll('"', '""')}"`);
+    const placeholders = names.map(() => "?").join(", ");
+    db.prepare(
+        `INSERT INTO "${table.replaceAll('"', '""')}" (${quoted.join(", ")}) VALUES (${placeholders})`,
+    ).run(...names.map((name) => row[name]));
+}
+
+function anchoredMessageId(blockId: string): string {
+    const separator = blockId.lastIndexOf("#");
+    return separator > 0 ? blockId.slice(0, separator) : blockId;
+}
+
+function copyPiSessionNotesAndFacts(
+    db: Database,
+    sourceSessionId: string,
+    destinationSessionId: string,
+    filter: CloneSessionStateFilter,
+): { notesCopied: number; factsCopied: number } {
+    let notesCopied = 0;
+    if (tableExists(db, "notes")) {
+        const sourceNotes = db
+            .prepare(
+                "SELECT * FROM notes WHERE session_id = ? AND type = 'session' ORDER BY id ASC",
+            )
+            .all(sourceSessionId) as Array<Record<string, unknown>>;
+        for (const source of sourceNotes) {
+            const row: Record<string, unknown> = {
+                ...source,
+                session_id: destinationSessionId,
+            };
+            delete row.id;
+            const blockId =
+                typeof source.anchor_block_id === "string" ? source.anchor_block_id : "";
+            if (blockId) {
+                const sourceMessageId = anchoredMessageId(blockId);
+                if (!filter.includeMessageId(sourceMessageId)) continue;
+                const mappedMessageId = mapMessageId(filter, sourceMessageId) ?? sourceMessageId;
+                row.anchor_block_id = `${mappedMessageId}${blockId.slice(sourceMessageId.length)}`;
+                const mappedOrdinal = filter.resolveBoundaryOrdinal(sourceMessageId);
+                if (mappedOrdinal === undefined) continue;
+                if ("anchor_ordinal" in row) row.anchor_ordinal = mappedOrdinal;
+            } else if (typeof source.anchor_ordinal === "number" && filter.mapOrdinal) {
+                const mappedOrdinal = filter.mapOrdinal(source.anchor_ordinal);
+                if (mappedOrdinal === undefined) continue;
+                row.anchor_ordinal = mappedOrdinal;
+            }
+            insertDynamicRow(db, "notes", row);
+            notesCopied += 1;
+        }
+    }
+
+    let factsCopied = 0;
+    if (tableExists(db, "session_facts")) {
+        const sourceFacts = db
+            .prepare("SELECT * FROM session_facts WHERE session_id = ? ORDER BY id ASC")
+            .all(sourceSessionId) as Array<Record<string, unknown>>;
+        for (const source of sourceFacts) {
+            const row: Record<string, unknown> = {
+                ...source,
+                session_id: destinationSessionId,
+            };
+            delete row.id;
+            insertDynamicRow(db, "session_facts", row);
+            factsCopied += 1;
+        }
+    }
+    return { notesCopied, factsCopied };
 }
 
 function filterIdBlob(raw: string | null, filter: CloneSessionStateFilter): string {
@@ -155,13 +239,19 @@ export function copySessionStateForClone(
     return runImmediate(db, () => {
         if (
             countRows(db, "compartments", destinationSessionId) > 0 ||
-            countRows(db, "tags", destinationSessionId) > 0
+            countRows(db, "tags", destinationSessionId) > 0 ||
+            (filter.copySessionNotesAndFacts === true &&
+                ((tableExists(db, "notes") && countRows(db, "notes", destinationSessionId) > 0) ||
+                    (tableExists(db, "session_facts") &&
+                        countRows(db, "session_facts", destinationSessionId) > 0)))
         ) {
             return {
                 kind: "destination-not-empty",
                 compartmentsCopied: 0,
                 tagsCopied: 0,
                 pendingOpsCopied: 0,
+                notesCopied: 0,
+                factsCopied: 0,
                 pendingMarkerMigrated: false,
             };
         }
@@ -333,6 +423,11 @@ export function copySessionStateForClone(
             }
         }
 
+        const inherited =
+            filter.copySessionNotesAndFacts === true
+                ? copyPiSessionNotesAndFacts(db, sourceSessionId, destinationSessionId, filter)
+                : { notesCopied: 0, factsCopied: 0 };
+
         const meta = db
             .prepare(
                 `SELECT cleared_reasoning_through_tag, tool_reclaim_watermark,
@@ -405,6 +500,8 @@ export function copySessionStateForClone(
             compartmentsCopied: copiedCompartments.length,
             tagsCopied: copiedTagNumbers.length,
             pendingOpsCopied: typeof pendingOpsRow?.count === "number" ? pendingOpsRow.count : 0,
+            notesCopied: inherited.notesCopied,
+            factsCopied: inherited.factsCopied,
             pendingMarkerMigrated: pendingMarker !== null,
         };
     });

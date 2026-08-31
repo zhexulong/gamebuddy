@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "drill_id": "FM-PI-1",
+  "fault": "SIGKILL of the external module, represented at Pi by the JSONL/branch-entry outage seam",
+  "lineage_key": "session_id",
+  "supervised_precondition": {
+    "module_id": "magic-context",
+    "required": "external-provider",
+    "assertion": "the Pi drill must fail if the harness reports magic-context as a supervised module"
+  },
+  "both_halves": [
+    {
+      "test_id": "FM-PI-1-CONTINUE-JSONL",
+      "half": "continue",
+      "assertion": "a Pi-owned branch or pipeline fault continues with the original/loud-raw message path and retains the same lineage"
+    },
+    {
+      "test_id": "FM-PI-1-REFUSE-JSONL",
+      "half": "bail-loudly",
+      "assertion": "the explicit Pi fail-closed seam rethrows instead of silently falling through"
+    }
+  ],
+  "mutation_records": [
+    {
+      "id": "FM-PI-1-MUTATE-RUNG-SWAP",
+      "mutation": "swap the ordinary-error continuation branch for a refusal",
+      "must_fail": "FM-PI-1-CONTINUE-JSONL",
+      "failure_signal": "the session no longer completes its next prompt on the same lineage",
+      "applied_diff_summary": "packages/pi-plugin/src/read-session-pi.ts: changed the getBranch catch from return [] to throw Error('mutation FM-PI-1-MUTATE-RUNG-SWAP: JSONL outage refuses')",
+      "observed_failure": {
+        "exit_status": 1,
+        "assertion_output": "error: mutation FM-PI-1-MUTATE-RUNG-SWAP: JSONL outage refuses\n      at readPiSessionMessages (packages/pi-plugin/src/read-session-pi.ts:260:13)\n(fail) FM-PI-1: external module loss at the Pi JSONL seam > FM-PI-1-CONTINUE-JSONL continues on the same lineage after a mid-session fault\n0 pass\n2 filtered out\n1 fail\nRan 1 test across 1 file."
+      },
+      "reverted_rerun": "pass",
+      "reverted_rerun_command": "bun test --timeout 120000 tests/pi-rust-degradation-arc-1.test.ts tests/pi-rust-degradation-arc-4.test.ts"
+    },
+    {
+      "id": "FM-PI-1-MUTATE-RUNG-DELETION",
+      "mutation": "delete the explicit FailClosedBlockingError rethrow",
+      "must_fail": "FM-PI-1-REFUSE-JSONL",
+      "failure_signal": "the fail-closed assertion observes silent continuation",
+      "applied_diff_summary": "packages/pi-plugin/src/fail-closed-pi.ts: changed if (isFailClosedBlockingError(error)) throw error to return",
+      "observed_failure": {
+        "exit_status": 1,
+        "assertion_output": "error: FM-PI-1-REFUSE-JSONL: refusal must be typed\nExpected: true\nReceived: false\n(fail) FM-PI-1: external module loss at the Pi JSONL seam > FM-PI-1-REFUSE-JSONL preserves the loud refusal half\n0 pass\n2 filtered out\n1 fail\nRan 1 test across 1 file."
+      },
+      "reverted_rerun": "pass",
+      "reverted_rerun_command": "bun test --timeout 120000 tests/pi-rust-degradation-arc-1.test.ts tests/pi-rust-degradation-arc-4.test.ts"
+    }
+  ]
+}

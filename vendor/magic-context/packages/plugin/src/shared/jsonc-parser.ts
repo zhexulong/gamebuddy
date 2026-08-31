@@ -106,9 +106,61 @@ function stripTrailingCommas(content: string): string {
     return result;
 }
 
-export function parseJsonc<T = unknown>(content: string): T {
+const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+export function isPrototypePollutionKey(key: string): boolean {
+    return PROTOTYPE_POLLUTION_KEYS.has(key);
+}
+
+export interface ParsedJsonSanitizerOptions {
+    onRejectedKey?: (path: readonly (string | number)[]) => void;
+}
+
+/**
+ * Copy parsed JSON into fresh own-property-only containers while rejecting keys
+ * that can alter an object's prototype during a later merge. Rebuilding objects
+ * also removes an already-polluted prototype produced by third-party parsers.
+ */
+export function sanitizeParsedJson<T>(
+    value: T,
+    options: ParsedJsonSanitizerOptions = {},
+    path: readonly (string | number)[] = [],
+): T {
+    if (Array.isArray(value)) {
+        return value.map((entry, index) =>
+            sanitizeParsedJson(entry, options, [...path, index]),
+        ) as T;
+    }
+    if (value === null || typeof value !== "object") return value;
+
+    const source = value as Record<string, unknown>;
+    const sourcePrototype = Object.getPrototypeOf(source);
+    if (sourcePrototype !== null && sourcePrototype !== Object.prototype) {
+        options.onRejectedKey?.([...path, "__proto__"]);
+    }
+
+    const sanitized: Record<string, unknown> = {};
+    for (const key of Object.keys(source)) {
+        if (isPrototypePollutionKey(key)) {
+            options.onRejectedKey?.([...path, key]);
+            continue;
+        }
+        Object.defineProperty(sanitized, key, {
+            value: sanitizeParsedJson(source[key], options, [...path, key]),
+            enumerable: true,
+            configurable: true,
+            writable: true,
+        });
+    }
+    return sanitized as T;
+}
+
+export function parseJsonc<T = unknown>(
+    content: string,
+    options: ParsedJsonSanitizerOptions = {},
+): T {
     const normalized = stripTrailingCommas(stripJsonComments(content));
-    return JSON.parse(normalized) as T;
+    return sanitizeParsedJson(JSON.parse(normalized) as T, options);
 }
 
 export function readJsoncFile<T = unknown>(filePath: string): T | null {

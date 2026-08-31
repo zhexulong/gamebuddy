@@ -53,7 +53,7 @@ function blockCompartmentRun(sessionId: string): () => void {
 }
 
 type TestPart =
-    | { type: "text"; text: string }
+    | { type: "text"; text: string; ignored?: boolean; synthetic?: boolean }
     | {
           type: "tool";
           callID: string;
@@ -105,6 +105,20 @@ function buildSimpleMessages(sessionId: string): TestMessage[] {
         {
             info: { id: "m-assistant", role: "assistant" },
             parts: [{ type: "text", text: "world" }],
+        },
+    ];
+}
+
+function buildMessagesWithIgnoredCommandOutput(sessionId: string): TestMessage[] {
+    return [
+        ...buildSimpleMessages(sessionId),
+        {
+            info: { id: "m-command-output", role: "user", sessionID: sessionId },
+            parts: [{ type: "text", text: "## Magic Status\n\nStable output", ignored: true }],
+        },
+        {
+            info: { id: "m-next-user", role: "user", sessionID: sessionId },
+            parts: [{ type: "text", text: "continue with normal work" }],
         },
     ];
 }
@@ -505,6 +519,43 @@ describe("three-set cache-busting refactor (Oracle review 2026-04-26)", () => {
         expect(JSON.stringify(secondMessages[0])).toBe(firstWire);
         expect(deferredHistoryRefreshSessions.has(sessionId)).toBe(true);
         expect(deferredMaterializationSessions.has(sessionId)).toBe(true);
+    });
+
+    it("keeps ignored Desktop command output byte-stable across three quiet passes", async () => {
+        useTempDataHome("ctx-stripped-command-output-");
+        const sessionId = "ses-stripped-command-output";
+        const transform = createTransform({
+            tagger: createTagger(),
+            scheduler: { shouldExecute: mock(() => "defer" as const) },
+            contextUsageMap: new Map([
+                [
+                    sessionId,
+                    { usage: { percentage: 30, inputTokens: 30_000 }, updatedAt: Date.now() },
+                ],
+            ]),
+            db: openDatabase(),
+            historyRefreshSessions: new Set<string>(),
+            pendingMaterializationSessions: new Set<string>(),
+            lastHeuristicsTurnId: new Map<string, string>(),
+            clearReasoningAge: 50,
+            protectedTags: 1,
+            client: testClient,
+            directory: testDirectory,
+        });
+
+        const warm = buildMessagesWithIgnoredCommandOutput(sessionId);
+        await transform({}, { messages: warm });
+        const passA = buildMessagesWithIgnoredCommandOutput(sessionId);
+        await transform({}, { messages: passA });
+        const passAWire = JSON.stringify(passA);
+        const passB = buildMessagesWithIgnoredCommandOutput(sessionId);
+        await transform({}, { messages: passB });
+
+        expect(JSON.stringify(passB)).toBe(passAWire);
+        const ignoredOutput = passB.find((message) => message.info.id === "m-command-output")
+            ?.parts[0] as { type: string; text: string; ignored?: boolean } | undefined;
+        expect(ignoredOutput?.ignored).toBe(true);
+        expect(ignoredOutput?.text).toContain("## Magic Status\n\nStable output");
     });
 
     it("Test 12: execute pass consumes deferred history and materialization together", async () => {

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { DREAMER_MEMORY_MAPPER_AGENT } from "../../../agents/dreamer";
 import { withContentLanguageDirective } from "../../../agents/language-directive";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
 import {
@@ -11,6 +12,7 @@ import {
 import { describeError, getErrorMessage } from "../../../shared/error-message";
 import { shouldKeepSubagents } from "../../../shared/keep-subagents";
 import { log } from "../../../shared/logger";
+import type { ModelInput } from "../../../shared/model-resolution";
 import { modelBodyField } from "../../../shared/resolve-fallbacks";
 import type { Database } from "../../../shared/sqlite";
 import {
@@ -27,19 +29,27 @@ import {
 import { computeNormalizedHash } from "../memory/normalize-hash";
 import { queueMemoryMutation } from "../storage-memory-mutation-log";
 import { recordChildInvocation } from "../subagent-token-capture";
-import { runLeaseGuardedWrite, startLeaseHeartbeat } from "./lease";
-import { assertManifestCoversExactly } from "./manifest-parser";
+import { type LeaseAcquisition, runLeaseGuardedWrite, startLeaseHeartbeat } from "./lease";
+import { assertNoDuplicateManifestIds } from "./manifest-parser";
+import { isDirectiveShapedProjectRule } from "./memory-claim-safety";
 import {
     DreamerModuleFailureError,
     type DreamerModuleRoute,
     getModuleMemoryIdentities,
 } from "./module-apply";
+import {
+    DreamerProviderOutputFailureError,
+    providerOutputFailureFromInvalidManifest,
+} from "./provider-output-failure";
+import { getTaskScheduleState, writeTaskScheduleState } from "./storage-task-schedule";
 import { partitionVerifyScope } from "./verify-gate";
 import {
     buildVerifyPrompt,
+    type ParsedVerifyManifest,
     parseVerifyManifest,
     VERIFY_SYSTEM_PROMPT,
     type VerifyPromptMemory,
+    validateVerifyManifest,
 } from "./verify-prompt";
 
 /**
@@ -60,6 +70,22 @@ import {
 // Verify reads deeper than map → smaller batch keeps peak context under a 128K
 // window with margin (harness: 96 mapped → ~177K on a large-window model).
 const VERIFY_BATCH_SIZE = 50;
+// One batch already exhausts the configured model fallback chain. A second
+// identical provider-shaped completion means continuing this run only hammers
+// the same outage, so leave the remaining memories for the scheduler retry.
+const IDENTICAL_PROVIDER_FAILURE_BATCH_LIMIT = 2;
+
+export interface VerifyVerdictCounts {
+    verified: number;
+    updated: number;
+    archived: number;
+    skipped: number;
+    refused: number;
+}
+
+interface VerifyBatchResult extends VerifyVerdictCounts {
+    providerFailure?: DreamerProviderOutputFailureError;
+}
 
 export interface VerifyArgs {
     db: Database;
@@ -70,29 +96,52 @@ export interface VerifyArgs {
     holderId: string;
     leaseKey: string;
     deadline: number;
+    leaseAcquisition?: LeaseAcquisition;
     forceBroad?: boolean;
-    model?: string;
-    fallbackModels?: readonly string[];
+    model?: ModelInput;
+    fallbackModels?: readonly ModelInput[];
     language?: string;
     moduleRoute?: DreamerModuleRoute;
+    onProgress?: (processed: number, refused: number) => void;
 }
 
-export interface VerifyResult {
-    verified: number;
-    updated: number;
-    archived: number;
+export interface VerifyResult extends VerifyVerdictCounts {
     batches: number;
     inScope: number;
     remaining: number;
     complete: boolean;
     mode: string;
+    /** The open broad-cycle watermark, when this run used verify-broad. */
+    broadCycleStartAt?: number;
+}
+
+function closeBroadCycle(args: VerifyArgs, cycleStartAt: number | undefined): void {
+    if (!args.forceBroad || cycleStartAt === undefined) return;
+    // Direct runVerify tests and legacy callers may not have a scheduler row. A
+    // scheduled run always has one because the scheduler seeds it before execution.
+    if (!getTaskScheduleState(args.db, args.projectIdentity, "verify-broad")) return;
+    runLeaseGuardedWrite(args.db, args.holderId, args.leaseKey, () => {
+        const current = getTaskScheduleState(args.db, args.projectIdentity, "verify-broad");
+        // Do not clear a cycle opened by a newer run if state changed while the
+        // model was working. The domain lease normally prevents this, but the
+        // equality check keeps the close operation safe under recovery tooling.
+        if (current?.lastBroadRunAt !== cycleStartAt) return;
+        if (!current) return;
+        writeTaskScheduleState(args.db, {
+            ...current,
+            lastBroadRunAt: null,
+        });
+    });
 }
 
 export async function runVerify(args: VerifyArgs): Promise<VerifyResult> {
+    const runStartedAt = Date.now();
     const result: VerifyResult = {
         verified: 0,
         updated: 0,
         archived: 0,
+        skipped: 0,
+        refused: 0,
         batches: 0,
         inScope: 0,
         remaining: 0,
@@ -105,14 +154,21 @@ export async function runVerify(args: VerifyArgs): Promise<VerifyResult> {
         projectIdentity: args.projectIdentity,
         projectDirectory: args.sessionDirectory,
         forceBroad: args.forceBroad,
+        now: runStartedAt,
+        holderId: args.holderId,
+        leaseKey: args.leaseKey,
     });
     result.mode = gate.mode;
+    result.broadCycleStartAt = gate.broadCycleStartAt;
     result.inScope = gate.inScope.length;
     result.remaining = gate.inScope.length;
     log(
         `[dreamer] ${args.forceBroad ? "verify-broad" : "verify"} gate: mode=${gate.mode} in_scope=${gate.inScope.length} skipped=${gate.skippedIds.length} reason=${gate.reason}`,
     );
-    if (gate.inScope.length === 0) return result;
+    if (gate.inScope.length === 0) {
+        closeBroadCycle(args, gate.broadCycleStartAt);
+        return result;
+    }
 
     const batches: VerifyPromptMemory[][] = [];
     for (let i = 0; i < gate.inScope.length; i += VERIFY_BATCH_SIZE) {
@@ -120,10 +176,17 @@ export async function runVerify(args: VerifyArgs): Promise<VerifyResult> {
     }
 
     const abortController = new AbortController();
-    const heartbeat = startLeaseHeartbeat(args.db, args.holderId, args.leaseKey, () =>
-        abortController.abort(),
+    const heartbeat = startLeaseHeartbeat(
+        args.db,
+        args.holderId,
+        args.leaseKey,
+        () => abortController.abort(),
+        args.leaseAcquisition,
     );
 
+    let consecutiveProviderFailures = 0;
+    let priorProviderFailureFingerprint: string | null = null;
+    let lastProviderFailure: DreamerProviderOutputFailureError | null = null;
     try {
         for (let i = 0; i < batches.length; i += 1) {
             const remainingMs = Math.max(0, args.deadline - Date.now());
@@ -135,12 +198,53 @@ export async function runVerify(args: VerifyArgs): Promise<VerifyResult> {
             result.verified += counts.verified;
             result.updated += counts.updated;
             result.archived += counts.archived;
-            result.remaining -= counts.verified + counts.updated + counts.archived;
+            result.skipped += counts.skipped;
+            result.refused += counts.refused;
+            const batchProcessed =
+                counts.verified +
+                counts.updated +
+                counts.archived +
+                counts.skipped +
+                counts.refused;
+            result.remaining -= batchProcessed;
             result.batches += 1;
+            args.onProgress?.(
+                result.verified +
+                    result.updated +
+                    result.archived +
+                    result.skipped +
+                    result.refused,
+                result.refused,
+            );
+
+            if (counts.providerFailure) {
+                lastProviderFailure = counts.providerFailure;
+                if (counts.providerFailure.fingerprint === priorProviderFailureFingerprint) {
+                    consecutiveProviderFailures += 1;
+                } else {
+                    priorProviderFailureFingerprint = counts.providerFailure.fingerprint;
+                    consecutiveProviderFailures = 1;
+                }
+                if (consecutiveProviderFailures >= IDENTICAL_PROVIDER_FAILURE_BATCH_LIMIT) {
+                    log(
+                        `[dreamer] verify run aborting after ${consecutiveProviderFailures} identical provider-failure batches`,
+                    );
+                    throw counts.providerFailure;
+                }
+            } else {
+                priorProviderFailureFingerprint = null;
+                consecutiveProviderFailures = 0;
+            }
         }
+        // A single-batch project cannot reach the circuit-breaker threshold. Still
+        // surface its provider failure so the scheduler hot-retries instead of
+        // recording a generic incomplete-manifest result.
+        if (lastProviderFailure) throw lastProviderFailure;
+
         result.complete = result.remaining === 0;
+        if (result.complete) closeBroadCycle(args, gate.broadCycleStartAt);
         log(
-            `[dreamer] ${args.forceBroad ? "verify-broad" : "verify"}: verified=${result.verified} updated=${result.updated} archived=${result.archived} batches=${result.batches} remaining=${result.remaining} complete=${result.complete}`,
+            `[dreamer] ${args.forceBroad ? "verify-broad" : "verify"}: verified=${result.verified} updated=${result.updated} archived=${result.archived} skipped=${result.skipped} refused=${result.refused} batches=${result.batches} remaining=${result.remaining} complete=${result.complete}`,
         );
         return result;
     } finally {
@@ -153,16 +257,16 @@ async function verifyOneBatch(
     batch: VerifyPromptMemory[],
     sliceMs: number,
     signal: AbortSignal,
-): Promise<{ verified: number; updated: number; archived: number }> {
+): Promise<VerifyBatchResult> {
     let agentSessionId: string | null = null;
     const startedAt = Date.now();
     try {
-        const createResponse = await args.client.session.create({
-            body: {
-                ...(args.parentSessionId ? { parentID: args.parentSessionId } : {}),
-                title: "magic-context-dream-verify",
-            },
-            query: { directory: args.sessionDirectory },
+        const createResponse = await createChildSessionWithFence({
+            client: args.client,
+            db: args.db,
+            parentSessionId: args.parentSessionId,
+            title: "magic-context-dream-verify",
+            directory: args.sessionDirectory,
         });
         const created = shared.normalizeSDKResponse(
             createResponse,
@@ -207,23 +311,39 @@ async function verifyOneBatch(
                     }
                     const text = extractLatestAssistantText(messages);
                     if (!text) throw new Error("verify returned no output");
-                    parseVerifyManifest(text);
-                    return text;
+                    // A provider outage can arrive as a closed but tiny XML fragment.
+                    // Detect that response shape before accepting a subset, so transport
+                    // garbage cannot bank a verdict simply because its root is complete.
+                    const providerFailure = providerOutputFailureFromInvalidManifest(
+                        messages,
+                        text,
+                    );
+                    if (providerFailure) throw providerFailure;
+                    return validateVerifyManifest(text, new Set(batch.map((memory) => memory.id)));
                 },
             },
         );
 
         recordInvocation(args, startedAt, { status: "completed", messages: run.output });
-        return await applyVerifyManifest(args, batch, run.validated);
+        return await applyParsedVerifyManifest(args, batch, run.validated);
     } catch (error) {
         const desc = describeError(error);
+        const providerFailure =
+            error instanceof DreamerProviderOutputFailureError ? error : undefined;
         log(
-            `[dreamer] verify batch failed: ${desc.brief}`,
+            `[dreamer] verify batch ${providerFailure ? "provider failure" : "failed"}: ${desc.brief}`,
             desc.stackHead ? { stackHead: desc.stackHead } : undefined,
         );
         recordInvocation(args, startedAt, { status: "failed", error });
         if (error instanceof DreamerModuleFailureError || signal.aborted) throw error;
-        return { verified: 0, updated: 0, archived: 0 };
+        return {
+            verified: 0,
+            updated: 0,
+            archived: 0,
+            skipped: 0,
+            refused: 0,
+            providerFailure,
+        };
     } finally {
         // Delete the child regardless of success/failure (a FAILED child still
         // holds the memory-pool snapshot fed into the prompt — leaving it only on
@@ -245,7 +365,9 @@ async function verifyOneBatch(
 }
 
 /**
- * Apply the manifest host-side. Only ids that were IN this batch are touched.
+ * Parse a complete manifest and commit the entries that belong to this batch.
+ * A closed root proves the parser did not see a truncated prefix, so omitted ids
+ * remain silent for the per-memory gate to select next run; unknown ids are never written.
  * - verified: re-record the (normalized) backing files with verified_at = now
  *   (banks the per-memory verify progress).
  * - update: rewrite the memory content via the cache-neutral mutation log, then
@@ -254,20 +376,59 @@ async function verifyOneBatch(
  * - archive: archive + queue an archive mutation (m[1] delta). Skipped when the
  *   memory is no longer primary-mutable (already archived/superseded), so a stale
  *   manifest can't fight a concurrent change.
+ * - skip/refusal: count the verdict for progress without changing the memory.
+ * Directive-shaped PROJECT_RULES and unsafe content-loss rewrites are refused
+ * before either the local or MODULE authority write path is built.
  * All writes happen under ONE lease-guarded transaction.
  */
 export async function applyVerifyManifest(
     args: VerifyArgs,
     batch: VerifyPromptMemory[],
     manifestText: string,
-): Promise<{ verified: number; updated: number; archived: number }> {
+): Promise<VerifyVerdictCounts> {
+    return applyParsedVerifyManifest(args, batch, parseVerifyManifest(manifestText));
+}
+
+async function applyParsedVerifyManifest(
+    args: VerifyArgs,
+    batch: VerifyPromptMemory[],
+    parsed: ParsedVerifyManifest,
+): Promise<VerifyVerdictCounts> {
     const batchIds = new Set(batch.map((m) => m.id));
-    const parsed = parseVerifyManifest(manifestText);
-    assertManifestCoversExactly(
-        [...parsed.verified, ...parsed.updated, ...parsed.archived].map((entry) => entry.id),
-        batchIds,
-        "verify",
+    const batchById = new Map(batch.map((memory) => [memory.id, memory]));
+    const valid = {
+        verified: parsed.verified.filter((entry) => batchIds.has(entry.id)),
+        updated: parsed.updated.filter((entry) => batchIds.has(entry.id)),
+        archived: parsed.archived.filter((entry) => batchIds.has(entry.id)),
+        skipped: parsed.skipped.filter((entry) => batchIds.has(entry.id)),
+    };
+    const unknown = [
+        ...parsed.verified,
+        ...parsed.updated,
+        ...parsed.archived,
+        ...parsed.skipped,
+    ].filter((entry) => !batchIds.has(entry.id));
+    if (unknown.length > 0) {
+        log(
+            `[dreamer] verify warning: dropping ${unknown.length} unknown verification entr${unknown.length === 1 ? "y" : "ies"} outside the current batch (${unknown.map((entry) => entry.id).join(", ")})`,
+        );
+    }
+    const validIds = [...valid.verified, ...valid.updated, ...valid.archived, ...valid.skipped].map(
+        (entry) => entry.id,
     );
+    assertNoDuplicateManifestIds(validIds, "verify");
+
+    // A closed root rules out truncation, but fewer than half of the requested ids
+    // is more likely a confused response to another request than an ordinary tail
+    // omission. Reject before any writes so an unrelated minority cannot be banked.
+    if (validIds.length * 2 < batch.length) {
+        throw new Error(
+            `verify manifest covers ${validIds.length}/${batch.length} batch ids after filtering unknown entries; rejecting mostly-wrong manifest`,
+        );
+    }
+    if (validIds.length === 0) {
+        return { verified: 0, updated: 0, archived: 0, skipped: 0, refused: 0 };
+    }
     const now = Date.now();
 
     // Pre-normalize files OUTSIDE the transaction (git/realpath I/O). For each
@@ -277,17 +438,39 @@ export async function applyVerifyManifest(
         | { kind: "update"; id: number; files: string[]; content: string; hash: string }
         | { kind: "archive"; id: number; reason: string };
     const writes: VerifyWrite[] = [];
-    for (const v of parsed.verified) {
+    let refused = 0;
+    const skipped = valid.skipped.length;
+    for (const v of valid.verified) {
         const files = await normalizeFiles(args, v.files);
         writes.push({ kind: "verify", id: v.id, files });
     }
-    for (const u of parsed.updated) {
+    for (const u of valid.updated) {
+        const original = batchById.get(u.id);
+        if (!original) continue;
+        if (isDirectiveShapedProjectRule(original.category, original.content)) {
+            log(
+                `[dreamer] verify safety refusal: memory_id=${u.id} verdict=update reason=directive-shaped-project-rule`,
+            );
+            refused += 1;
+            continue;
+        }
         const content = u.content.trim();
         // An empty/oversized "update" is unsafe — fall back to a plain re-verify
         // (bank the progress, keep the old content) rather than wipe a memory.
         if (!content || content.length > 20_000) {
             const files = await normalizeFiles(args, u.files);
             writes.push({ kind: "verify", id: u.id, files });
+            continue;
+        }
+        const originalLength = original.content.trim().length;
+        // Losing more than half the claim is the characteristic denaturing shape.
+        // A model may cross this conservative belt only by explicitly declaring
+        // that the shorter rewrite is an intentional consolidation.
+        if (!u.consolidation && content.length * 2 < originalLength) {
+            log(
+                `[dreamer] verify safety refusal: memory_id=${u.id} verdict=update reason=content-loss original_chars=${originalLength} replacement_chars=${content.length}`,
+            );
+            refused += 1;
             continue;
         }
         const files = await normalizeFiles(args, u.files);
@@ -299,14 +482,23 @@ export async function applyVerifyManifest(
             hash: computeNormalizedHash(content),
         });
     }
-    for (const a of parsed.archived) {
+    for (const a of valid.archived) {
+        const original = batchById.get(a.id);
+        if (!original) continue;
+        if (isDirectiveShapedProjectRule(original.category, original.content)) {
+            log(
+                `[dreamer] verify safety refusal: memory_id=${a.id} verdict=archive reason=directive-shaped-project-rule`,
+            );
+            refused += 1;
+            continue;
+        }
         writes.push({ kind: "archive", id: a.id, reason: a.reason });
     }
-    if (writes.length === 0) return { verified: 0, updated: 0, archived: 0 };
 
     let verified = 0;
     let updated = 0;
     let archived = 0;
+    if (writes.length === 0) return { verified, updated, archived, skipped, refused };
     if (args.moduleRoute) {
         const identities = getModuleMemoryIdentities(
             args.db,
@@ -369,7 +561,7 @@ export async function applyVerifyManifest(
             else if (write.kind === "update") updated += 1;
             else archived += 1;
         }
-        return { verified, updated, archived };
+        return { verified, updated, archived, skipped, refused };
     }
     runLeaseGuardedWrite(args.db, args.holderId, args.leaseKey, () => {
         for (const w of writes) {
@@ -399,7 +591,7 @@ export async function applyVerifyManifest(
             }
         }
     });
-    return { verified, updated, archived };
+    return { verified, updated, archived, skipped, refused };
 }
 
 async function normalizeFiles(args: VerifyArgs, rawFiles: readonly string[]): Promise<string[]> {

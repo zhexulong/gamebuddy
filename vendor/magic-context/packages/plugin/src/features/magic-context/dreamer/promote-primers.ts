@@ -19,7 +19,12 @@ import {
     updatePrimerCandidateEmbedding,
     updatePrimerSupport,
 } from "../storage-primers";
-import { peekLeaseHolderAndExpiry, runLeaseGuardedWrite, startLeaseHeartbeat } from "./lease";
+import {
+    type LeaseAcquisition,
+    peekLeaseHolderAndExpiry,
+    runLeaseGuardedWrite,
+    startLeaseHeartbeat,
+} from "./lease";
 
 export interface PromotePrimersArgs {
     db: Database;
@@ -29,6 +34,7 @@ export interface PromotePrimersArgs {
     holderId: string;
     leaseKey: string;
     deadline: number;
+    leaseAcquisition?: LeaseAcquisition;
     promotionThreshold?: number;
     ensureProjectRegistered?: (directory: string, db: Database) => Promise<void> | void;
 }
@@ -115,10 +121,16 @@ export async function promotePrimers(args: PromotePrimersArgs): Promise<PromoteP
             throw new Error(`Dream lease lost during promote-primers ${phase}`);
         }
     };
-    const heartbeat = startLeaseHeartbeat(args.db, args.holderId, args.leaseKey, () => {
-        leaseLost = true;
-        log("[dreamer] primers: lease lost during promote-primers — aborting");
-    });
+    const heartbeat = startLeaseHeartbeat(
+        args.db,
+        args.holderId,
+        args.leaseKey,
+        () => {
+            leaseLost = true;
+            log("[dreamer] primers: lease lost during promote-primers — aborting");
+        },
+        args.leaseAcquisition,
+    );
 
     try {
         assertLeaseHeld("prune start");

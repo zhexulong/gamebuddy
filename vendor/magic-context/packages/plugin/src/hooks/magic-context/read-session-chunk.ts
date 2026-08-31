@@ -34,6 +34,7 @@ import {
     readRawSessionMessagesFromDb,
     readRawSessionTailFromDb,
 } from "./read-session-raw";
+import { buildToolArcs } from "./read-session-true-raw-tokens";
 import { isFilePart, isTextPart } from "./tag-part-guards";
 import { extractToolCallObservation } from "./tool-drop-target";
 
@@ -202,6 +203,8 @@ export interface SessionChunk {
      * fail validation and trigger a repair retry.
      */
     toolOnlyRanges: Array<{ start: number; end: number }>;
+    /** Completed call/result ranges visible in the raw snapshot, including results past this chunk. */
+    completedToolArcs: Array<{ start: number; end: number }>;
 }
 
 export function withRawSessionMessageCache<T>(fn: () => T): T {
@@ -801,6 +804,10 @@ export function readSessionChunk(
         }
     }
 
+    const completedToolArcs = buildToolArcs(messages).flatMap((arc) =>
+        arc.resOrdinal === null ? [] : [{ start: arc.invOrdinal, end: arc.resOrdinal }],
+    );
+
     return {
         startIndex: startOrdinal,
         endIndex: lastOrdinal,
@@ -817,6 +824,7 @@ export function readSessionChunk(
         lines: lineMeta,
         commitClusterCount: commitClusters,
         toolOnlyRanges,
+        completedToolArcs,
     };
 }
 

@@ -1,5 +1,11 @@
 import * as childProcess from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import {
@@ -11,14 +17,18 @@ import {
 } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { probeChildSpawnFence } from "@magic-context/core/features/magic-context/schema-fence-probe";
 import { openDatabase } from "@magic-context/core/features/magic-context/storage";
 import type { SubagentKind } from "@magic-context/core/features/magic-context/storage-subagent-invocations";
 import { recordChildInvocation } from "@magic-context/core/features/magic-context/subagent-token-capture";
 import {
+	ompModelRefToCanonical,
 	piModelRefToCanonical,
+	resolveModelRefForOmp,
 	resolveModelRefForPi,
 } from "@magic-context/core/shared/harness-provider-map";
 import { sessionLog } from "@magic-context/core/shared/logger";
+import type { ResolvedModelEntry } from "@magic-context/core/shared/model-resolution";
 import type {
 	SubagentProgressEvent,
 	SubagentRunner,
@@ -78,17 +88,20 @@ interface PiInvocation {
  * a literal `pi`), and Node's `spawn("pi")` without a shell looks for a file
  * named exactly `pi`, so it ENOENTs; and Windows ignores the `#!/usr/bin/env
  * node` shebang entirely, so spawning `dist/cli.js` "directly" only works on
- * POSIX. The reliable, cross-platform approach is to re-invoke the EXACT host
- * CLI the user is already running: `process.execPath` (the node/bun binary) plus
- * `process.argv[1]` (the absolute path to the running `cli.js`). That sidesteps
- * shim resolution completely and pins the child to the same Pi version/runtime.
+ * POSIX. When the host itself is Pi, the reliable, cross-platform approach is
+ * to re-invoke the EXACT host CLI the user is already running:
+ * `process.execPath` (the node/bun binary) plus `process.argv[1]` (the absolute
+ * path to the running `cli.js`). That sidesteps shim resolution completely and
+ * pins the child to the same Pi version/runtime. Embedded hosts such as pi-web
+ * must not reuse their unrelated `argv[1]`.
  *
- * Mirrors Pi's own `getPiInvocation` reference. MUST be evaluated in the host Pi
- * process (extensions load in-process, so `argv[1]` is the host `cli.js`).
+ * Mirrors Pi's own `getPiInvocation` reference. MUST be evaluated in the host
+ * process: a Pi host has its `cli.js` in `argv[1]`; embedded hosts fall through
+ * to bundled-Pi or PATH resolution.
  *
  * Resolution order:
- *   1. argv[1] is a real on-disk script (not a bun-compiled `/$bunfs/root/`
- *      virtual path) -> `execPath cli.js ...` (node + absolute cli.js).
+ *   1. argv[1] belongs to an on-disk Pi package (and is not a bun-compiled
+ *      `/$bunfs/root/` virtual path) -> `execPath cli.js ...`.
  *   2. execPath is a packaged binary (basename not node/bun) -> `execPath ...`
  *      (the compiled binary IS pi; no script arg).
  *   3. A bundled `@earendil-works/pi-coding-agent/dist/cli.js` resolves ->
@@ -96,25 +109,41 @@ interface PiInvocation {
  *   4. Last resort: bare `pi` on PATH.
  *
  * Everything is spawned WITHOUT a shell. The primary path (execPath + argv[1])
- * covers every real runtime because the extension loads in-process, so argv[1]
- * is the host cli.js; the bare-`pi` step is a near-unreachable backstop. We do
+ * covers every real Pi CLI runtime; embedded hosts fall through rather than
+ * accidentally re-running themselves. We do
  * NOT fall back to a shell for it (which on Windows would resolve the .cmd shim
  * but pass the prompt/task text through cmd.exe, exposing arg-escaping and
  * injection), and we don't pull in cross-spawn just for a dead path.
  */
+function isPiCliScript(scriptPath: string): boolean {
+	const normalized = scriptPath.replaceAll("\\", "/");
+	return /\/@(?:earendil-works|oh-my-pi)\/pi-coding-agent\/dist\/cli\.js$/.test(
+		normalized,
+	);
+}
+
+function isGenericRuntimeExecutable(execPath: string): boolean {
+	return /^(node(?:js)?\d*|bun)(\.exe)?$/.test(
+		basename(execPath).toLowerCase(),
+	);
+}
+
 function resolvePiInvocation(): PiInvocation {
 	const execPath = process.execPath;
 	const currentScript = process.argv[1];
 	const isBunVirtualScript =
 		currentScript?.startsWith("/$bunfs/root/") ?? false;
 
-	if (currentScript && !isBunVirtualScript && existsSync(currentScript)) {
+	if (
+		currentScript &&
+		!isBunVirtualScript &&
+		existsSync(currentScript) &&
+		isPiCliScript(currentScript)
+	) {
 		return { command: execPath, prefixArgs: [currentScript] };
 	}
 
-	const execName = basename(execPath).toLowerCase();
-	const isGenericRuntime = /^(node|bun)(\.exe)?$/.test(execName);
-	if (!isGenericRuntime) {
+	if (!isGenericRuntimeExecutable(execPath)) {
 		// A packaged single-file binary: execPath itself is pi.
 		return { command: execPath, prefixArgs: [] };
 	}
@@ -127,38 +156,24 @@ function resolvePiInvocation(): PiInvocation {
 	return { command: "pi", prefixArgs: [] };
 }
 
-/**
- * Resolve the path to the lean subagent extension entry that gets loaded
- * inside spawned Pi child processes. The bundle ships at
- * `dist/subagent-entry.js` next to `dist/index.js` (this module). We use
- * `import.meta.url` so the path resolves correctly regardless of where
- * the npm package is installed (or where it's symlinked from in dev).
- *
- * Falls back to undefined if the file isn't found at the expected
- * location — caller should treat that as a soft signal to skip the
- * `-x` flag (subagent will run without Magic Context tools, which is
- * acceptable for ctx_*-using agents in dev/test before the bundle exists).
- */
-function resolveSubagentEntryPath(): string | undefined {
+/** Resolve an optional child extension bundled beside the Pi plugin entry. */
+function resolveSiblingEntryPath(fileName: string): string | undefined {
 	try {
-		// Resolve from the current module's directory. In dev (running
-		// .ts via Bun) and in prod (running .js from dist/), this lands
-		// in the same directory as the runner itself.
+		// Source tests run before these sibling bundles exist. Production packaging
+		// emits both entries beside index.js, so missing files safely mean "skip" only
+		// in that pre-build environment.
 		const here = dirname(fileURLToPath(import.meta.url));
-		const candidate = resolvePath(here, "subagent-entry.js");
-		if (existsSync(candidate)) return candidate;
-
-		// Dev fallback: when running source from packages/pi-plugin/src/
-		// the .js bundle doesn't exist yet; skip the --extension flag so
-		// tests running pre-build don't fail. Production builds always
-		// have the bundle.
-		return undefined;
+		const candidate = resolvePath(here, fileName);
+		return existsSync(candidate) ? candidate : undefined;
 	} catch {
 		return undefined;
 	}
 }
 
-const SUBAGENT_ENTRY_PATH = resolveSubagentEntryPath();
+const SUBAGENT_ENTRY_PATH = resolveSiblingEntryPath("subagent-entry.js");
+const HISTORIAN_CALIBRATION_ENTRY_PATH = resolveSiblingEntryPath(
+	"historian-calibration-extension.js",
+);
 
 /**
  * Grace period (ms) after we detect the terminal assistant message_end
@@ -175,13 +190,82 @@ const TERMINAL_DRAIN_GRACE_MS = 2_000;
 
 export const MAGIC_CONTEXT_PI_SUBAGENT_ENV = "MAGIC_CONTEXT_PI_SUBAGENT";
 
-// Pi resolves local entries in its user settings package list from the
-// settings directory, not from the spawned child's project cwd. Keep the same
-// base for explicit --extension entries; the installed Pi package is not
-// available in every development worktree to import its resolver directly.
-// Pi's current resolver treats bare names as local paths too; npm packages
-// should use the explicit `npm:` source form.
-const PI_AGENT_SETTINGS_DIR = join(homedir(), ".pi", "agent");
+function packageRootIsOmp(packageRoot: string): boolean {
+	try {
+		const manifest = JSON.parse(
+			readFileSync(join(packageRoot, "package.json"), "utf-8"),
+		) as { name?: unknown };
+		return manifest.name === "@oh-my-pi/pi-coding-agent";
+	} catch {
+		return false;
+	}
+}
+
+function expandHomePath(value: string): string {
+	if (value === "~") return homedir();
+	if (value.startsWith("~/") || value.startsWith("~\\")) {
+		return resolvePath(homedir(), value.slice(2));
+	}
+	return resolvePath(value);
+}
+
+/**
+ * Positive OMP host identification. PI_CODING_AGENT_DIR alone is deliberately
+ * insufficient because upstream Pi supports the same variable.
+ */
+function isOmpHostProcess(): boolean {
+	const execName = basename(process.execPath).toLowerCase();
+	if (/^omp(?:\.exe)?$/.test(execName)) return true;
+
+	const packageOverride = process.env.PI_PACKAGE_DIR?.trim();
+	if (packageOverride && packageRootIsOmp(expandHomePath(packageOverride))) {
+		return true;
+	}
+
+	let current = process.argv[1] ? dirname(resolvePath(process.argv[1])) : "";
+	while (current) {
+		if (packageRootIsOmp(current)) return true;
+		const parent = dirname(current);
+		if (parent === current) break;
+		current = parent;
+	}
+	return false;
+}
+
+function normalizedOmpProfile(): string | undefined {
+	const raw = (process.env.OMP_PROFILE ?? process.env.PI_PROFILE)?.trim();
+	return raw && raw !== "default" && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(raw)
+		? raw
+		: undefined;
+}
+
+// OMP exposes a profile/custom agent directory via PI_CODING_AGENT_DIR.
+// A named profile is authoritative and deliberately ignores a stale/custom
+// override, matching OMP path resolution. Plain Pi also supports the same
+// variable, so never consume it without positive OMP host identification.
+function getHostAgentSettingsDir(): string {
+	if (!isOmpHostProcess()) return join(homedir(), ".pi", "agent");
+	const configRoot = join(
+		homedir(),
+		process.env.PI_CONFIG_DIR?.trim() || ".omp",
+	);
+	const profile = normalizedOmpProfile();
+	if (profile) return join(configRoot, "profiles", profile, "agent");
+	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
+	return configured ? resolvePath(configured) : join(configRoot, "agent");
+}
+
+function modelRefToCanonicalForHost(ref: string): string {
+	return isOmpHostProcess()
+		? ompModelRefToCanonical(ref)
+		: piModelRefToCanonical(ref);
+}
+
+function resolveModelRefForHost(ref: string): string {
+	return isOmpHostProcess()
+		? resolveModelRefForOmp(ref)
+		: resolveModelRefForPi(ref);
+}
 let configuredSubagentExtensions: readonly string[] | undefined;
 
 /** Configure the user-tier extension allowlist used by new Pi child runners. */
@@ -195,7 +279,7 @@ function resolveSubagentExtensionEntry(entry: string): string {
 	const trimmed = entry.trim();
 	const isNpmSource = trimmed.startsWith("npm:");
 	return !isNpmSource && !isAbsolute(trimmed)
-		? resolvePath(PI_AGENT_SETTINGS_DIR, trimmed)
+		? resolvePath(getHostAgentSettingsDir(), trimmed)
 		: trimmed;
 }
 
@@ -217,6 +301,12 @@ const PI_HISTORIAN_TOOLS = [...PI_READ_ONLY_BUILTINS, "aft_search"] as const;
 const DREAMER_ACTION_AGENTS: ReadonlySet<string> = new Set([
 	"dreamer",
 	"magic-context-dreamer",
+]);
+const HISTORIAN_AGENTS: ReadonlySet<string> = new Set([
+	"magic-context-historian",
+	"historian",
+	"historian-recomp",
+	"historian-editor",
 ]);
 const SEARCH_ONLY_SUBAGENT_TOOL_AGENTS: ReadonlySet<string> = new Set([
 	"sidekick",
@@ -242,6 +332,11 @@ const SEARCH_ONLY_SUBAGENT_TOOL_AGENTS: ReadonlySet<string> = new Set([
  * names that no extension registered: unknown names are absent from the registry
  * after filtering, so listing optional AFT read tools is safe when AFT is not
  * installed while still allowing them when an AFT provider extension is present.
+ *
+ * HOST CAVEAT — this is a capability boundary on Pi only. OMP applies
+ * `--tools` to built-ins and then appends discovered extension tools, so on
+ * OMP these entries describe the intended budget rather than an enforced
+ * extension-tool sandbox.
  */
 const STRICT_TOOL_ALLOWLIST_ENTRIES: readonly (readonly [
 	string,
@@ -314,6 +409,44 @@ const ZERO_TOOL_PROMPT_REQUIRED_AGENTS: ReadonlySet<string> = new Set(
 		([agent]) => agent,
 	),
 );
+
+/**
+ * OMP validates `--tools` against built-in names before extensions register.
+ * Translate Pi-only built-ins, discard extension tool names that cannot be
+ * addressed by this flag, and deduplicate aliases.
+ *
+ * This narrows OMP's built-in surface only. OMP does not set
+ * `restrictToolNames`, so discovered AFT/MCP/ctx tools remain available.
+ */
+const OMP_TOOL_ALIASES: Readonly<Record<string, string>> = {
+	find: "glob",
+	ls: "glob",
+};
+
+const OMP_ALLOWLISTABLE_TOOLS: Readonly<Record<string, true>> = {
+	read: true,
+	grep: true,
+	glob: true,
+	bash: true,
+	edit: true,
+	write: true,
+};
+
+function resolveHostToolAllowlist(
+	tools: readonly string[],
+	ompHost: boolean = isOmpHostProcess(),
+): readonly string[] {
+	if (!ompHost) return tools;
+	const resolved: string[] = [];
+	const seen = new Set<string>();
+	for (const tool of tools) {
+		const mapped = OMP_TOOL_ALIASES[tool] ?? tool;
+		if (OMP_ALLOWLISTABLE_TOOLS[mapped] !== true || seen.has(mapped)) continue;
+		seen.add(mapped);
+		resolved.push(mapped);
+	}
+	return resolved;
+}
 
 const KNOWN_PI_SUBAGENT_AGENTS = [
 	"magic-context-historian",
@@ -569,16 +702,36 @@ export class PiSubagentRunner implements SubagentRunner {
 		runMode: PiRunMode,
 		primaryModelRef?: string,
 	): Promise<SubagentRunResult> {
-		const models = [options.model, ...(options.fallbackModels ?? [])].filter(
-			(model): model is string => typeof model === "string" && model.length > 0,
-		);
-		const attempts = models.length > 0 ? models : [undefined];
+		const attempts: Array<ResolvedModelEntry | undefined> = [];
+		const seenAttempts = new Set<string>();
+		const appendAttempt = (candidate: ResolvedModelEntry): void => {
+			if (!candidate.model) return;
+			const key = `${candidate.model}\u0000${candidate.qualifier ?? ""}`;
+			if (seenAttempts.has(key)) return;
+			seenAttempts.add(key);
+			attempts.push(candidate);
+		};
+		if (options.model) {
+			appendAttempt({
+				model: options.model,
+				...(options.thinkingLevel ? { qualifier: options.thinkingLevel } : {}),
+			});
+		}
+		for (const candidate of options.fallbackModels ?? []) {
+			appendAttempt(
+				typeof candidate === "string" ? { model: candidate } : candidate,
+			);
+		}
+		if (attempts.length === 0) attempts.push(undefined);
 		let lastResult: SubagentRunResult | null = null;
 		for (let index = 0; index < attempts.length; index += 1) {
-			const model = attempts[index];
+			const attempt = attempts[index];
 			const attemptOptions = {
 				...options,
-				model,
+				model: attempt?.model,
+				// A fallback's qualifier belongs only to that fallback. A bare
+				// fallback deliberately clears the primary --thinking level.
+				thinkingLevel: attempt?.qualifier,
 				fallbackModels: undefined,
 			};
 			const result = await this.runOnce(
@@ -727,6 +880,14 @@ export class PiSubagentRunner implements SubagentRunner {
 			);
 		}
 
+		const fence = probeChildSpawnFence(openDatabase());
+		if (!fence.allowSpawn) {
+			return failBeforeSpawn(
+				"spawn_failed",
+				`Magic Context: plugin build is older than its database (database=v${fence.failure.persistedVersion}, supported_fence=v${fence.failure.supportedVersion}) — restart Pi.`,
+			);
+		}
+
 		// Large prompts (e.g. a ~50K-token historian chunk ≈ 200 KB) overflow
 		// Linux's per-argv-entry limit (MAX_ARG_STRLEN, 128 KiB) and make spawn()
 		// fail with E2BIG. Windows is stricter: CreateProcess caps the ENTIRE
@@ -827,6 +988,20 @@ export class PiSubagentRunner implements SubagentRunner {
 						env: {
 							...process.env,
 							[MAGIC_CONTEXT_PI_SUBAGENT_ENV]: "1",
+							...(options.temperature !== undefined
+								? {
+										MAGIC_CONTEXT_HISTORIAN_TEMPERATURE: String(
+											options.temperature,
+										),
+									}
+								: {}),
+							...(options.maxOutputTokens !== undefined
+								? {
+										MAGIC_CONTEXT_HISTORIAN_MAX_OUTPUT_TOKENS: String(
+											options.maxOutputTokens,
+										),
+									}
+								: {}),
 						},
 						// stdout = JSON events; stderr = diagnostics. stdin is a pipe
 						// when we deliver the user message there (always on Windows, or
@@ -1415,11 +1590,11 @@ function resolveProviderModelAttempt(
 ): ProviderModelAttempt | undefined {
 	if (typeof model !== "string" || model.length === 0) return undefined;
 
-	const canonicalRef = piModelRefToCanonical(model);
+	const canonicalRef = modelRefToCanonicalForHost(model);
 	const canonicalProvider = providerPrefix(canonicalRef);
 	if (!canonicalProvider) return undefined;
 
-	const translatedRef = resolveModelRefForPi(canonicalRef);
+	const translatedRef = resolveModelRefForHost(canonicalRef);
 	const translatedProvider = providerPrefix(translatedRef);
 	const cachedProvider = PI_PROVIDER_FORM_CACHE.get(canonicalProvider);
 	if (
@@ -1484,8 +1659,10 @@ export function buildArgs(
 		subagentEntryPath?: string;
 		systemPromptPath?: string;
 		modelRef?: string;
+		historianCalibrationEntryPath?: string | null;
 	},
 ): string[] {
+	const ompHost = isOmpHostProcess();
 	const args: string[] = [
 		"--print",
 		"--mode",
@@ -1505,14 +1682,15 @@ export function buildArgs(
 		// below and explicitly loads only its entries. Prevent recursive startup by
 		// setting MAGIC_CONTEXT_PI_SUBAGENT=1 in the child environment, which makes
 		// the main entry exit early before registering hooks, tools, or timers.
-		// Disable skills and prompt templates because subagents only need a minimal
-		// startup path.
+		// Disable skills and the project context surface because subagents only
+		// need the minimal startup path.
 		"--no-skills",
-		"--no-prompt-templates",
-		// Hidden one-shot subagents must receive EXACTLY the system prompt we built.
-		// Pi otherwise appends AGENTS.md / CLAUDE.md project context files, which
-		// pollutes the prompt and adds avoidable startup work.
-		"--no-context-files",
+		// OMP rejects Pi's --no-prompt-templates and --no-context-files flags.
+		// It folds AGENTS.md-style context into rules, so --no-rules is the
+		// equivalent way to preserve the exact child system prompt.
+		...(ompHost
+			? (["--no-rules"] as const)
+			: (["--no-prompt-templates", "--no-context-files"] as const)),
 		// --no-tools is applied below only for unknown or explicitly zero-tool agents.
 		// Every known Magic Context child gets an explicit --tools allow-list so Pi's
 		// discovered extension registry cannot leak unrelated tools into subagents.
@@ -1566,11 +1744,17 @@ export function buildArgs(
 		}
 	}
 
-	// HARD tool isolation: every Magic Context child runs under either
-	// `--tools <names>` or `--no-tools`. Pi applies this allow-list while building
-	// the registry, so it strips ALL non-listed built-ins and every non-listed
-	// extension tool. Unknown agent ids fail closed to --no-tools; discovery is on
-	// for provider/AFT extensions, but the subagent registry is still per-agent.
+	const historianCalibrationEntryPath =
+		opts?.historianCalibrationEntryPath === undefined
+			? HISTORIAN_CALIBRATION_ENTRY_PATH
+			: opts.historianCalibrationEntryPath;
+	if (HISTORIAN_AGENTS.has(options.agent) && historianCalibrationEntryPath) {
+		args.push("--extension", historianCalibrationEntryPath);
+	}
+
+	// Every child receives an explicit built-in tool gate. Pi applies this as
+	// hard registry isolation. OMP validates only built-in names and always
+	// appends discovered extension tools, so its gate is a built-in budget only.
 	const strictTools = STRICT_TOOL_ALLOWLIST.get(options.agent);
 	if (strictTools === undefined) {
 		sessionLog(
@@ -1579,8 +1763,9 @@ export function buildArgs(
 		);
 		args.push("--no-tools");
 	} else {
-		if (strictTools.length > 0) {
-			args.push("--tools", strictTools.join(","));
+		const hostTools = resolveHostToolAllowlist(strictTools, ompHost);
+		if (hostTools.length > 0) {
+			args.push("--tools", hostTools.join(","));
 		} else {
 			args.push("--no-tools");
 		}
@@ -1609,7 +1794,10 @@ export function buildArgs(
 		// google->google-antigravity). Translate to Pi's form HERE, at the only
 		// point the model reaches the spawned process, so options.model stays
 		// canonical everywhere else (accounting, logging, fallback selection).
-		args.push("--model", opts?.modelRef ?? resolveModelRefForPi(options.model));
+		args.push(
+			"--model",
+			opts?.modelRef ?? resolveModelRefForHost(options.model),
+		);
 	}
 
 	// Pass --thinking <level> only when explicitly configured.
@@ -1766,10 +1954,13 @@ function terminateChild(child: ReturnType<typeof childProcess.spawn>) {
 export const __test = {
 	buildArgs,
 	extractFinalAssistant,
+	isGenericRuntimeExecutable,
+	isPiCliScript,
 	parsePiEventLine,
 	terminateChild,
 	DREAMER_ACTION_AGENTS,
 	KNOWN_PI_SUBAGENT_AGENTS,
+	resolveHostToolAllowlist,
 	STRICT_TOOL_ALLOWLIST,
 	ZERO_TOOL_PROMPT_REQUIRED_AGENTS,
 	resetProviderFormCache: () => PI_PROVIDER_FORM_CACHE.clear(),

@@ -1,20 +1,30 @@
 /// <reference types="bun-types" />
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+
 import { replaceAllCompartmentState } from "../features/magic-context/compartment-storage";
 import { insertMemory } from "../features/magic-context/memory";
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
-import { runMigrations } from "../features/magic-context/migrations";
-import { initializeDatabase } from "../features/magic-context/storage-db";
+import { FORK_MIGRATION_VERSION_FLOOR, runMigrations } from "../features/magic-context/migrations";
+import { upsertMural } from "../features/magic-context/mural/storage-mural";
+import {
+    getPersistedSchemaVersion,
+    initializeDatabase,
+    LATEST_SUPPORTED_VERSION,
+} from "../features/magic-context/storage-db";
 import { createLiveSessionState } from "../hooks/magic-context/live-session-state";
 import { estimateTokens } from "../hooks/magic-context/read-session-formatting";
+import type { RustModeModuleClient } from "../hooks/magic-context/rust-mode-transform";
 import { clearModelsDevCache, refreshModelLimitsFromApi } from "../shared/models-dev-cache";
 import { Database } from "../shared/sqlite";
 import { closeQuietly } from "../shared/sqlite-helpers";
 import {
+    buildCompartmentCount,
     buildSidebarSnapshot,
     buildSidebarSnapshotRpcResponse,
     buildStatusDetail,
+    executeRustRecompRpc,
+    loadRustSessionStatus,
 } from "./rpc-handlers";
 import { resetSidebarSnapshotCache } from "./sidebar-snapshot-cache";
 
@@ -30,6 +40,67 @@ afterEach(() => {
     clearModelsDevCache();
 });
 
+describe("Rust maintenance RPC routing", () => {
+    test("routes recomp to the module with a replay-safe command id", async () => {
+        const call = mock(async () => ({ ok: true, disposition: "started" }));
+
+        expect(
+            await executeRustRecompRpc(
+                { call } as unknown as RustModeModuleClient,
+                "ses-rust-recomp-rpc",
+                "/fixture/project",
+            ),
+        ).toEqual({ ok: true });
+        expect(call).toHaveBeenCalledTimes(1);
+        expect(call.mock.calls[0]?.[0]).toMatchObject({
+            sessionId: "ses-rust-recomp-rpc",
+            projectRoot: "/fixture/project",
+            method: "session.recomp",
+            body: {
+                method: "session.recomp",
+                v: 1,
+                session_id: "ses-rust-recomp-rpc",
+                command_id: expect.stringMatching(/^rpc-recomp:/),
+            },
+        });
+    });
+
+    test("fails closed when the module transport is unavailable", async () => {
+        expect(
+            await executeRustRecompRpc(undefined, "ses-rust-recomp-rpc", "/fixture/project"),
+        ).toEqual({ ok: false, error: "Rust module client is unavailable" });
+    });
+});
+
+describe("Rust session status reads", () => {
+    test("coalesces overlapping reads without reusing a completed store snapshot", async () => {
+        let callCount = 0;
+        let releaseFirst!: (value: Record<string, unknown>) => void;
+        const firstResponse = new Promise<Record<string, unknown>>((resolve) => {
+            releaseFirst = resolve;
+        });
+        const client = {
+            call: () => {
+                callCount += 1;
+                return callCount === 1
+                    ? firstResponse
+                    : Promise.resolve({ ok: true, tag_count: 8_842 });
+            },
+        } as unknown as RustModeModuleClient;
+
+        const first = loadRustSessionStatus(client, "ses-status-fresh", "/project");
+        const overlapping = loadRustSessionStatus(client, "ses-status-fresh", "/project");
+        expect(callCount).toBe(1);
+        releaseFirst({ ok: true, tag_count: 1_666 });
+        expect((await first)?.tag_count).toBe(1_666);
+        expect((await overlapping)?.tag_count).toBe(1_666);
+
+        const refreshed = await loadRustSessionStatus(client, "ses-status-fresh", "/project");
+        expect(callCount).toBe(2);
+        expect(refreshed?.tag_count).toBe(8_842);
+    });
+});
+
 describe("sidebar snapshot RPC failures", () => {
     test("returns an error envelope when snapshot construction hits SQLITE_BUSY", () => {
         const busyDb = {
@@ -43,6 +114,156 @@ describe("sidebar snapshot RPC failures", () => {
         expect(buildSidebarSnapshotRpcResponse(busyDb, "ses_busy", process.cwd())).toEqual({
             error: "sidebar snapshot unavailable",
         });
+    });
+});
+
+describe("buildStatusDetail — active profile", () => {
+    test("includes the resolved profile name in the RPC status payload", () => {
+        const db = createTestDb();
+        try {
+            expect(
+                buildStatusDetail(db, "ses-profile-status", process.cwd(), undefined, {
+                    profile: "work",
+                }).activeProfile,
+            ).toBe("work");
+            expect(
+                buildStatusDetail(db, "ses-base-status", process.cwd()).activeProfile,
+            ).toBeNull();
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildStatusDetail — storage version probe", () => {
+    test("reports the upstream lane when fork rows share context.db", () => {
+        const db = createTestDb();
+        try {
+            db.prepare(
+                "INSERT INTO schema_migrations(version, description, applied_at) VALUES (?, ?, ?), (?, ?, ?)",
+            ).run(
+                FORK_MIGRATION_VERSION_FLOOR,
+                "fork migration 10000",
+                0,
+                FORK_MIGRATION_VERSION_FLOOR + 1,
+                "fork migration 10001",
+                0,
+            );
+
+            const detail = buildStatusDetail(db, "ses-storage-version", process.cwd());
+
+            expect(detail.storage_versions).toEqual({
+                context_db_schema_version: LATEST_SUPPORTED_VERSION,
+                plugin_supported_version: LATEST_SUPPORTED_VERSION,
+            });
+            expect(detail.loggerDiagnostics).toEqual({
+                swallowedWriteCount: 0,
+                lastErrorMessage: null,
+                lastErrorTime: null,
+            });
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildSidebarSnapshot — stale build error state", () => {
+    test("surfaces the persisted stale-build failure in the sidebar snapshot", () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-stale-build";
+            db.prepare(
+                "INSERT INTO session_meta (session_id, last_transform_error) VALUES (?, ?)",
+            ).run(
+                sessionId,
+                "Magic Context: plugin build is older than its database — restart OpenCode",
+            );
+
+            const snapshot = buildSidebarSnapshot(db, sessionId, process.cwd());
+
+            expect(snapshot.lastTransformError).toBe(
+                "Magic Context: plugin build is older than its database — restart OpenCode",
+            );
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildSidebarSnapshot — persisted tail hygiene", () => {
+    test("preserves zero-valued TypeScript baseline fields in the RPC payload", () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-hygiene-zero";
+            const live = createLiveSessionState();
+            live.channel1StateBySession.set(sessionId, {
+                baselineU: 0,
+                baselineT: 0,
+                turnDeltaU: 0,
+                turnDeltaT: 0,
+                usableWindow: 128_000,
+                realUserTurnCount: 0,
+                baselineGeneration: 0,
+                computedAt: 0,
+                evaluable: true,
+                generationInvalidated: false,
+                baselineParts: [],
+                contentSignature: "empty",
+                reducedSinceRefresh: false,
+                oldestReclaimableToolTags: [],
+            });
+
+            const snapshot = buildSidebarSnapshot(db, sessionId, process.cwd(), live);
+
+            expect(snapshot.tailHygiene).toEqual({
+                u: 0,
+                t: 0,
+                severity: 0,
+                evaluable: true,
+                generationInvalidated: false,
+                baselineGeneration: 0,
+                computedAt: 0,
+            });
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("prefers the durable Rust baseline when module authority is active", () => {
+        const db = createTestDb();
+        try {
+            const snapshot = buildSidebarSnapshot(
+                db,
+                "ses-hygiene-rust",
+                process.cwd(),
+                createLiveSessionState(),
+                undefined,
+                undefined,
+                {
+                    tail_hygiene: {
+                        u: 65_100,
+                        t: 100_000,
+                        severity: 0.651,
+                        evaluable: true,
+                        generation_invalidated: false,
+                        baseline_generation: 7,
+                        computed_at_ms: 123,
+                    },
+                },
+            );
+
+            expect(snapshot.tailHygiene).toEqual({
+                u: 65_100,
+                t: 100_000,
+                severity: 0.651,
+                evaluable: true,
+                generationInvalidated: false,
+                baselineGeneration: 7,
+                computedAt: 123,
+            });
+        } finally {
+            closeQuietly(db);
+        }
     });
 });
 
@@ -178,6 +399,52 @@ describe("buildSidebarSnapshot — memory tokens fallback (bug #1)", () => {
 });
 
 describe("buildSidebarSnapshot — context limit", () => {
+    test("keeps native full-window usage distinct from the reserved budget metric", async () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-sidebar-native-full-window";
+            db.prepare(
+                `INSERT INTO session_meta (
+                    session_id, last_input_tokens, last_context_percentage,
+                    system_prompt_tokens, memory_block_cache, memory_block_count
+                ) VALUES (?, 120000, 80, 0, '', 0)`,
+            ).run(sessionId);
+            await refreshModelLimitsFromApi({
+                config: {
+                    providers: async () => ({
+                        data: {
+                            providers: [
+                                {
+                                    id: "test-provider",
+                                    models: {
+                                        "reserved-model": {
+                                            limit: { context: 200_000, output: 64_000 },
+                                        },
+                                    },
+                                },
+                            ],
+                        },
+                    }),
+                },
+            });
+            const live = createLiveSessionState();
+            live.liveModelBySession.set(sessionId, {
+                providerID: "test-provider",
+                modelID: "reserved-model",
+            });
+
+            const snapshot = buildSidebarSnapshot(db, sessionId, process.cwd(), live, 4000);
+
+            // Output reserve is capped at 25%: 200K raw -> 150K safe input.
+            expect(snapshot.contextLimit).toBe(150_000);
+            expect(snapshot.usagePercentage).toBe(80);
+            expect(snapshot.native_context_usage_percentage).toBe(60);
+            expect(snapshot.native_context_usage_percentage).not.toBe(snapshot.usagePercentage);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
     test("populates contextLimit from the active session model", async () => {
         const db = createTestDb();
         try {
@@ -232,6 +499,18 @@ describe("buildSidebarSnapshot — Rust module status merge", () => {
                 ) VALUES (?, 1, 1, 5000, '', 0)`,
             ).run(sessionId);
 
+            const moduleStatus = {
+                usage: {
+                    current_total_input_tokens: 42_000,
+                    context_limit_tokens: 100_000,
+                },
+                boundary_present: true,
+                coverage_ordinal: 17,
+                compartment_count: 4,
+                compartment_tokens: 23,
+                pending_drop_count: 2,
+                tag_count: 9,
+            };
             const snapshot = buildSidebarSnapshot(
                 db,
                 sessionId,
@@ -239,17 +518,17 @@ describe("buildSidebarSnapshot — Rust module status merge", () => {
                 undefined,
                 4000,
                 undefined,
-                {
-                    usage: {
-                        current_total_input_tokens: 42_000,
-                        context_limit_tokens: 100_000,
-                    },
-                    boundary_present: true,
-                    coverage_ordinal: 17,
-                    compartment_count: 4,
-                    compartment_tokens: 23,
-                    pending_drop_count: 2,
-                },
+                moduleStatus,
+            );
+            const detail = buildStatusDetail(
+                db,
+                sessionId,
+                process.cwd(),
+                undefined,
+                undefined,
+                undefined,
+                4000,
+                moduleStatus,
             );
 
             expect(snapshot.inputTokens).toBe(42_000);
@@ -260,6 +539,89 @@ describe("buildSidebarSnapshot — Rust module status merge", () => {
             expect(snapshot.pendingOpsCount).toBe(2);
             expect(snapshot.boundaryPresent).toBe(true);
             expect(snapshot.coverageOrdinal).toBe(17);
+            expect(buildCompartmentCount(db, sessionId, moduleStatus)).toBe(4);
+            expect(detail.totalTags).toBe(9);
+            expect(detail.activeTags).toBe(0);
+            expect(detail.droppedTags).toBe(0);
+            expect(detail.tagCountsAuthoritative).toBe(false);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("compaction-off sidebar RPC data", () => {
+    test("reports the resolved mode and raw native usage independently of threshold fill", () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-native-sidebar";
+            db.prepare(
+                `INSERT INTO session_meta (
+                    session_id, last_input_tokens, last_context_percentage,
+                    system_prompt_tokens, memory_block_count
+                ) VALUES (?, 63077, 97, 0, 0)`,
+            ).run(sessionId);
+            replaceAllCompartmentState(
+                db,
+                sessionId,
+                [
+                    {
+                        sequence: 0,
+                        startMessage: 1,
+                        endMessage: 4,
+                        startMessageId: "msg-1",
+                        endMessageId: "msg-4",
+                        title: "Archived",
+                        content: "Historical context retained for later expansion.",
+                    },
+                ],
+                [],
+            );
+
+            const snapshot = buildSidebarSnapshot(
+                db,
+                sessionId,
+                process.cwd(),
+                undefined,
+                4000,
+                { execute_threshold_percentage: 65 },
+                {
+                    usage: {
+                        current_total_input_tokens: 41_000,
+                        context_limit_tokens: 100_000,
+                    },
+                },
+                false,
+            );
+            const detail = buildStatusDetail(
+                db,
+                sessionId,
+                process.cwd(),
+                undefined,
+                { execute_threshold_percentage: 65 },
+                undefined,
+                4000,
+                {
+                    usage: {
+                        current_total_input_tokens: 41_000,
+                        context_limit_tokens: 100_000,
+                    },
+                },
+                false,
+            );
+            const thresholdFillPercentage = (41_000 / (100_000 * 0.65)) * 100;
+
+            expect(snapshot.compaction_enabled).toBe(false);
+            expect(detail.compaction_enabled).toBe(false);
+            expect(snapshot.native_context_usage_percentage).toBe(41);
+            expect(detail.native_context_usage_percentage).toBe(41);
+            expect(snapshot.native_context_usage_percentage).not.toBeCloseTo(
+                thresholdFillPercentage,
+            );
+            expect(snapshot.archivedCompartmentCount).toBe(1);
+
+            const enabledDetail = buildStatusDetail(db, "ses-native-sidebar-on", process.cwd());
+            expect(enabledDetail.compaction_enabled).toBe(true);
         } finally {
             closeQuietly(db);
         }
@@ -316,6 +678,132 @@ describe("buildStatusDetail — history token reuse (council audit bg_51106601 #
             expect(detail.compartmentTokens).toBeGreaterThan(0);
             expect(detail.factTokens).toBe(0);
             expect(detail.historyBlockTokens).toBe(detail.compartmentTokens);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildStatusDetail — storage versions probe", () => {
+    test("reports the live context.db schema version and the plugin fence", () => {
+        const db = createTestDb();
+        try {
+            const detail = buildStatusDetail(db, "ses-storage-versions", process.cwd());
+
+            // The probe must carry the live MAX(schema_migrations) value, not a
+            // hardcoded one, plus this build's fence. A fully migrated test DB sits
+            // exactly at the fence.
+            expect(detail.storage_versions.context_db_schema_version).toBe(
+                getPersistedSchemaVersion(db),
+            );
+            expect(detail.storage_versions.plugin_supported_version).toBe(LATEST_SUPPORTED_VERSION);
+            expect(detail.storage_versions.context_db_schema_version).toBe(
+                LATEST_SUPPORTED_VERSION,
+            );
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("follows an older live DB version while the fence stays put", () => {
+        const db = createTestDb();
+        try {
+            // Simulate a DB migrated by an older plugin: drop the recorded versions
+            // above 50. The probe must follow the live value down.
+            db.prepare("DELETE FROM schema_migrations WHERE version > ?").run(50);
+
+            const detail = buildStatusDetail(db, "ses-storage-versions-old", process.cwd());
+
+            expect(detail.storage_versions.context_db_schema_version).toBe(50);
+            expect(detail.storage_versions.plugin_supported_version).toBe(LATEST_SUPPORTED_VERSION);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildStatusDetail — mural read surface", () => {
+    test("reads the graduated top-level mural config", () => {
+        const db = createTestDb();
+        try {
+            const directory = process.cwd();
+            const projectIdentity = resolveProjectIdentity(directory);
+            upsertMural(db, {
+                projectPath: projectIdentity,
+                image: Buffer.from("png"),
+                contentHash: "mural-content-hash",
+                renderedAt: Date.now() - 1000,
+                model: "deterministic",
+                memoryIds: [1],
+                width: 16,
+                height: 8,
+            });
+
+            const detail = buildStatusDetail(db, "ses-mural-status", directory, undefined, {
+                mural: { enabled: true },
+            });
+
+            expect(detail.mural?.present).toBe(true);
+            expect(detail.mural?.ageMs).toBeGreaterThanOrEqual(1000);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildStatusDetail — cacheNeverExpires with 'never' TTL", () => {
+    test("sets cacheNeverExpires: true when cache_ttl is 'never'", () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-status-never";
+            const directory = process.cwd();
+
+            // Force-create the session meta row so the UPDATE lands on an existing row.
+            db.prepare(`INSERT INTO session_meta (session_id) VALUES (?)`).run(sessionId);
+            // Seed last_response_time: the cacheNeverExpires branch only runs
+            // inside `if (lastResponseTime > 0)` — without this the test would
+            // pass even if Infinity leaked into cacheRemainingMs.
+            db.prepare(
+                "UPDATE session_meta SET cache_ttl = ?, last_response_time = ? WHERE session_id = ?",
+            ).run("never", Date.now() - 60_000, sessionId);
+
+            const detail = buildStatusDetail(db, sessionId, directory);
+
+            expect(detail.cacheNeverExpires).toBe(true);
+            expect(detail.cacheExpired).toBe(false);
+            // Infinity must NOT leak into the numeric RPC field — JSON.stringify
+            // converts Infinity to null, violating the StatusDetail contract.
+            // -1 is the never-expires sentinel: distinguishable from 0 (expired)
+            // by the value alone, so a consumer that never learned the flag cannot
+            // misread a warm lane as expired.
+            expect(detail.cacheRemainingMs).toBe(-1);
+            expect(detail.cacheTtlMs).toBe(-1);
+            const roundTripped = JSON.parse(JSON.stringify(detail));
+            expect(roundTripped.cacheRemainingMs).toBe(-1);
+            expect(roundTripped.cacheRemainingMs).not.toBeNull();
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildStatusDetail — Rust host paths", () => {
+    test("marks host paths module-side only for Rust mode", () => {
+        const db = createTestDb();
+        try {
+            const rustDetail = buildStatusDetail(
+                db,
+                "ses-rust-host-paths",
+                process.cwd(),
+                undefined,
+                { transform_mode: "rust" },
+            );
+            const tsDetail = buildStatusDetail(db, "ses-ts-host-paths", process.cwd(), undefined, {
+                transform_mode: "ts",
+            });
+
+            expect(rustDetail.hostBackendsModuleSide).toBe(true);
+            expect(tsDetail.hostBackendsModuleSide).toBe(false);
         } finally {
             closeQuietly(db);
         }

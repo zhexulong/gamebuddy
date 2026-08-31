@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 
-import { buildClassifyPrompt, parseClassifyManifest } from "./classify-prompt";
+import {
+    buildClassifyPrompt,
+    parseClassifyManifest,
+    validateClassifyManifest,
+} from "./classify-prompt";
 
 describe("parseClassifyManifest", () => {
     it("parses importance/scope/shareable, clamping and normalizing", () => {
@@ -26,6 +30,19 @@ describe("parseClassifyManifest", () => {
         ).toThrow(/invalid scope/);
     });
 
+    it("still accepts an empty classify body (no unrecognized children)", () => {
+        expect(parseClassifyManifest(`<classify></classify>`)).toEqual([]);
+    });
+
+    it("rejects a well-formed root with no recognized entries", () => {
+        expect(() =>
+            parseClassifyManifest(`<classify><item id="1" importance="50"/></classify>`),
+        ).toThrow(/root <item> unrecognized; expected <classify> with <memory> entries/);
+        expect(() =>
+            parseClassifyManifest(`<classify>[{ "id": 1, "importance": 50 }]</classify>`),
+        ).toThrow(/JSON array unrecognized; expected <classify> with <memory> entries/);
+    });
+
     it("rejects truncated, duplicate, and invalid entries", () => {
         expect(() => parseClassifyManifest(`<classify><memory id="5" importance="50"/>`)).toThrow(
             /closing root/,
@@ -41,6 +58,29 @@ describe("parseClassifyManifest", () => {
         expect(() => parseClassifyManifest(`<classify><memory id="9"/></classify>`)).toThrow(
             /classification fields/,
         );
+    });
+});
+
+describe("validateClassifyManifest", () => {
+    it("rejects an empty parse against a non-empty batch", () => {
+        expect(() => validateClassifyManifest(`<classify></classify>`, new Set([1]))).toThrow(
+            /parsed zero entries; expected <classify> with <memory> entries/,
+        );
+    });
+
+    it("rejects missing and extra ids at retry time", () => {
+        expect(() =>
+            validateClassifyManifest(
+                `<classify><memory id="1" importance="50"/></classify>`,
+                new Set([1, 2]),
+            ),
+        ).toThrow(/missing id 2/);
+        expect(() =>
+            validateClassifyManifest(
+                `<classify><memory id="1" importance="50"/><memory id="9" importance="20"/></classify>`,
+                new Set([1]),
+            ),
+        ).toThrow(/unknown id 9/);
     });
 });
 

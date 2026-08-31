@@ -545,7 +545,431 @@ export function injectCompactionMarker(
     }
 }
 
+// ── Foreign-marker scan (fork-orphan hygiene, #263) ─────────────
+
+/**
+ * One compaction marker row-set found in opencode.db for a session.
+ *
+ * `summaryMessageIds` lists the completed summary assistant messages
+ * (summary=true, finish="stop") parented to the boundary user message and
+ * carrying magic-context's provider identity — i.e. the summaries THIS plugin
+ * injected. OpenCode-native /compact summaries carry the real provider id and
+ * are deliberately NOT listed, so callers can never delete a native compaction.
+ */
+export interface SessionCompactionMarkerRows {
+    /** id of the `type:"compaction"` part on the boundary user message */
+    compactionPartId: string;
+    /** the user message id the compaction part is attached to */
+    boundaryMessageId: string;
+    /** magic-context-injected summary messages parented to the boundary */
+    summaryMessageIds: string[];
+}
+
+/**
+ * List every compaction marker present in opencode.db for a session.
+ *
+ * Used by the fork-orphan hygiene pass (#263): OpenCode's `/fork` copies the
+ * parent session's message rows — including this plugin's compaction marker
+ * rows — into the fork, while magic-context's durable marker state (context.db)
+ * is NOT inherited (PARITY.md gap #25). The fork then owns marker rows its
+ * state knows nothing about. This scan enumerates all markers so the caller can
+ * diff them against the persisted state and repair the ones it does not own.
+ *
+ * Errors propagate to the caller (the hygiene pass treats any failure as
+ * "skip this pass and retry later" — never as a fatal transform error).
+ */
+export function listSessionCompactionMarkers(sessionId: string): SessionCompactionMarkerRows[] {
+    const db = getWritableOpenCodeDb();
+    const partRows = db
+        .prepare(
+            `SELECT id, message_id
+             FROM part
+             WHERE session_id = ?
+               AND COALESCE(json_extract(data, '$.type'), '') = 'compaction'`,
+        )
+        .all(sessionId) as Array<{ id?: unknown; message_id?: unknown }>;
+
+    const markers: SessionCompactionMarkerRows[] = [];
+    const summaryStmt = db.prepare(
+        `SELECT id
+         FROM message
+         WHERE session_id = ?
+           AND COALESCE(json_extract(data, '$.parentID'), '') = ?
+           AND COALESCE(json_extract(data, '$.summary'), 0) = 1
+           AND COALESCE(json_extract(data, '$.finish'), '') = 'stop'
+           AND COALESCE(json_extract(data, '$.providerID'), '') = 'magic-context'`,
+    );
+    for (const row of partRows) {
+        if (typeof row.id !== "string" || typeof row.message_id !== "string") continue;
+        const summaryRows = summaryStmt.all(sessionId, row.message_id) as Array<{ id?: unknown }>;
+        const summaryMessageIds = summaryRows.flatMap((summaryRow) =>
+            typeof summaryRow.id === "string" ? [summaryRow.id] : [],
+        );
+        markers.push({
+            compactionPartId: row.id,
+            boundaryMessageId: row.message_id,
+            summaryMessageIds,
+        });
+    }
+    return markers;
+}
+
+/**
+ * Remove one foreign (not owned by this session's durable state) compaction
+ * marker from opencode.db: its compaction part, plus the magic-context summary
+ * lineage parented to its boundary message.
+ *
+ * Deleting the compaction part alone is sufficient to make `filterCompacted`
+ * stop ignoring our marker (it requires a compaction part to break), but the
+ * summary rows are removed too so no stale "[Compacted by magic-context]"
+ * message lingers in the fork's history.
+ *
+ * `protectedSummaryMessageId` is the caller's OWN summary message id; it is
+ * never deleted even if it happened to share the boundary (defensive — a
+ * foreign boundary newer than ours should always differ).
+ *
+ * Returns false (without throwing) when the DELETE transaction fails, e.g.
+ * SQLITE_BUSY; the caller retries on a later pass.
+ */
+export function removeForeignCompactionMarker(
+    sessionId: string,
+    marker: SessionCompactionMarkerRows,
+    protectedSummaryMessageId: string | null,
+): boolean {
+    try {
+        const db = getWritableOpenCodeDb();
+        db.transaction(() => {
+            const deletePartsOfMessage = db.prepare(
+                "DELETE FROM part WHERE session_id = ? AND message_id = ?",
+            );
+            const deleteMessage = db.prepare("DELETE FROM message WHERE session_id = ? AND id = ?");
+            for (const summaryMessageId of marker.summaryMessageIds) {
+                if (summaryMessageId === protectedSummaryMessageId) continue;
+                deletePartsOfMessage.run(sessionId, summaryMessageId);
+                deleteMessage.run(sessionId, summaryMessageId);
+            }
+            db.prepare("DELETE FROM part WHERE session_id = ? AND id = ?").run(
+                sessionId,
+                marker.compactionPartId,
+            );
+        })();
+        return true;
+    } catch (error) {
+        log(
+            `[magic-context] compaction-marker: foreign-marker removal failed (${sessionId}, part ${marker.compactionPartId}): ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return false;
+    }
+}
+
 // ── Removal ──────────────────────────────────────────────────────
+
+/**
+ * Result of the compaction-off flip cleanup over one session's opencode.db
+ * rows (issue #266). Counts are row-level so the transition can both gate
+ * the flip notice ("cleared something") and prove idempotence (a second run
+ * reports zero removed rows).
+ */
+export interface McOwnedMarkerCleanupResult {
+    /**
+     * True only when cleanup completed without skipping an MC-owned lineage.
+     * False keeps the mode transition retryable instead of recording a
+     * successful flip while a marker can still hide history.
+     */
+    verified: boolean;
+    /** MC-owned marker lineages fully removed (compaction part + summary rows together). */
+    removedLineages: number;
+    /** Message + part rows deleted in total. */
+    removedRows: number;
+    /**
+     * Lineages deliberately LEFT in place because a surviving compaction part
+     * (or message-level compaction field) carries a `tail_start_id` that
+     * references a row the deletion would remove. A missing tail target makes
+     * OpenCode's tailIndex resolve to -1 and silently bypass its reorder, so
+     * the contract is retarget-or-retain, never blind-delete; this cleanup
+     * retains.
+     */
+    retainedLineages: number;
+}
+
+/** True when a parsed part/message data object carries a `tail_start_id` reference. */
+function dataReferencesTailStart(data: unknown): string | null {
+    if (typeof data !== "object" || data === null) return null;
+    const record = data as Record<string, unknown>;
+    if (typeof record.tail_start_id === "string" && record.tail_start_id.length > 0) {
+        return record.tail_start_id;
+    }
+    const nested = record.compaction;
+    if (typeof nested === "object" && nested !== null) {
+        const nestedTail = (nested as Record<string, unknown>).tail_start_id;
+        if (typeof nestedTail === "string" && nestedTail.length > 0) return nestedTail;
+    }
+    return null;
+}
+
+/** Match the exact payload written by injectCompactionMarker, not a missing native field. */
+function isMcCanonicalCompactionPartData(data: unknown): boolean {
+    if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
+    const record = data as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return (
+        keys.length === 2 &&
+        keys[0] === "auto" &&
+        keys[1] === "type" &&
+        record.type === "compaction" &&
+        record.auto === true
+    );
+}
+
+/**
+ * Delete every Magic Context-owned compaction-marker lineage for a session
+ * from opencode.db. This is the flip-off transition's primary mechanism
+ * (issue #266 decision #7): with MC no longer injecting `<session-history>`,
+ * a surviving MC marker would keep `filterCompacted` hiding pre-boundary
+ * history with nothing to replace it — orphaned context. Deleting the MC
+ * pairs lets OpenCode recompute filtering live from the surviving rows, as if
+ * the MC markers never existed (peer-verified newest-completed-summary
+ * semantics; older markers inside the retained tail do not define the
+ * boundary). Native compaction rows are never matched: ownership keys on
+ * MC-specific signatures (the `magic-context` provider identity on summary
+ * messages, the exact MC marker summary text for legacy lineages, and the
+ * MC canonical compaction-part shape) plus session identity.
+ *
+ * Deletion caveats honored (both binding from the OpenCode peer verification):
+ *   1. The compaction part and its summary assistant rows are deleted TOGETHER
+ *      in one transaction (summary parts cascade first). Deleting only the
+ *      compaction part would strand the summary message in model history.
+ *      The boundary USER message row itself is real user history and is never
+ *      deleted — only the MC-injected compaction part attached to it.
+ *   2. tail_start_id PREFLIGHT: before deleting, every SURVIVING compaction
+ *      part (and message-level compaction field) is checked for a
+ *      `tail_start_id` equal to any row about to be deleted. On a hit the
+ *      lineage is RETAINED, never blind-deleted.
+ *
+ * Idempotent: absent rows delete as a no-op (second run reports zeros).
+ * Errors propagate — the transition treats them as retryable and reruns the
+ * same logical cleanup on the next pass (delete-then-record protocol).
+ */
+export function removeMcOwnedCompactionMarkers(
+    sessionId: string,
+    summaryText: string,
+): McOwnedMarkerCleanupResult {
+    const db = getWritableOpenCodeDb();
+    if (!isOpenCodeSchemaCompatible(db, getOpenCodeDbPath())) {
+        // Schema drift: we cannot prove our DELETEs match the live schema, so
+        // leave every row in place. The marker stays inert-but-present; the
+        // next process (after an OpenCode/MC update) retries.
+        return {
+            verified: false,
+            removedLineages: 0,
+            removedRows: 0,
+            retainedLineages: 0,
+        };
+    }
+
+    // MC-owned summary assistant messages: canonical lineage carries the MC
+    // provider identity; supported LEGACY lineages (older builds) are
+    // recognized the same way removeLegacyMarkerLineageRows recognizes them —
+    // a completed summary parented to the boundary whose text part is exactly
+    // the MC marker placeholder. A native summary can never match either
+    // signature (native summaries carry the real provider id and text).
+    const canonicalSummaries = db
+        .prepare(
+            `SELECT id, COALESCE(json_extract(data, '$.parentID'), '') AS parent_id
+             FROM message
+             WHERE session_id = ?
+               AND COALESCE(json_extract(data, '$.summary'), 0) = 1
+               AND COALESCE(json_extract(data, '$.finish'), '') = 'stop'
+               AND COALESCE(json_extract(data, '$.providerID'), '') = 'magic-context'`,
+        )
+        .all(sessionId) as Array<{ id?: unknown; parent_id?: unknown }>;
+    const legacySummaries = db
+        .prepare(
+            `SELECT m.id, COALESCE(json_extract(m.data, '$.parentID'), '') AS parent_id
+             FROM message m
+             WHERE m.session_id = ?
+               AND COALESCE(json_extract(m.data, '$.summary'), 0) = 1
+               AND COALESCE(json_extract(m.data, '$.finish'), '') = 'stop'
+               AND COALESCE(json_extract(m.data, '$.providerID'), '') <> 'magic-context'
+               AND EXISTS (
+                   SELECT 1
+                   FROM part p
+                   WHERE p.session_id = m.session_id
+                     AND p.message_id = m.id
+                     AND COALESCE(json_extract(p.data, '$.type'), '') = 'text'
+                     AND COALESCE(json_extract(p.data, '$.text'), '') = ?
+               )`,
+        )
+        .all(sessionId, summaryText) as Array<{ id?: unknown; parent_id?: unknown }>;
+
+    const summariesByBoundary = new Map<string, Set<string>>();
+    const orphanSummaryIds = new Set<string>();
+    for (const row of [...canonicalSummaries, ...legacySummaries]) {
+        if (typeof row.id !== "string") continue;
+        if (typeof row.parent_id === "string" && row.parent_id.length > 0) {
+            const set = summariesByBoundary.get(row.parent_id) ?? new Set<string>();
+            set.add(row.id);
+            summariesByBoundary.set(row.parent_id, set);
+        } else {
+            // A stranded MC summary whose boundary is gone is still MC-owned
+            // and still visible in model history — remove it too.
+            orphanSummaryIds.add(row.id);
+        }
+    }
+
+    // Every compaction part in the session, parsed once: the preflight must
+    // see surviving native parts, and ownership of a boundary's parts must be
+    // decided with the full picture.
+    const compactionParts = db
+        .prepare(
+            `SELECT id, message_id, data
+             FROM part
+             WHERE session_id = ?
+               AND COALESCE(json_extract(data, '$.type'), '') = 'compaction'`,
+        )
+        .all(sessionId) as Array<{ id?: unknown; message_id?: unknown; data?: unknown }>;
+    const parsedParts: Array<{
+        id: string;
+        messageId: string;
+        data: unknown;
+        tailStartId: string | null;
+    }> = [];
+    for (const part of compactionParts) {
+        if (typeof part.id !== "string" || typeof part.message_id !== "string") continue;
+        let data: unknown;
+        try {
+            data = typeof part.data === "string" ? JSON.parse(part.data) : part.data;
+        } catch {
+            data = null;
+        }
+        parsedParts.push({
+            id: part.id,
+            messageId: part.message_id,
+            data,
+            tailStartId: dataReferencesTailStart(data),
+        });
+    }
+
+    // Message-level V2 compaction fields also carry tail_start_id; collect
+    // their references for the preflight as well (conservative: any reference
+    // into the deletion set retains the lineage).
+    const messageTailRefs = db
+        .prepare(
+            `SELECT id, data
+             FROM message
+             WHERE session_id = ?
+               AND json_extract(data, '$.compaction.tail_start_id') IS NOT NULL`,
+        )
+        .all(sessionId) as Array<{ id?: unknown; data?: unknown }>;
+    const messageTailStartIds = new Set<string>();
+    for (const row of messageTailRefs) {
+        if (typeof row.id !== "string") continue;
+        let data: unknown;
+        try {
+            data = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+        } catch {
+            data = null;
+        }
+        const ref = dataReferencesTailStart(data);
+        if (ref) messageTailStartIds.add(ref);
+    }
+
+    let removedLineages = 0;
+    let removedRows = 0;
+    let retainedLineages = 0;
+
+    const deletePartsOfMessage = db.prepare(
+        "DELETE FROM part WHERE session_id = ? AND message_id = ?",
+    );
+    const deleteMessage = db.prepare("DELETE FROM message WHERE session_id = ? AND id = ?");
+    const deletePart = db.prepare("DELETE FROM part WHERE session_id = ? AND id = ?");
+
+    const deleteSummaries = (summaryIds: Set<string>): number => {
+        let rows = 0;
+        for (const summaryId of summaryIds) {
+            rows += deletePartsOfMessage.run(sessionId, summaryId).changes;
+            rows += deleteMessage.run(sessionId, summaryId).changes;
+        }
+        return rows;
+    };
+
+    for (const [boundaryMessageId, summaryIds] of summariesByBoundary) {
+        // MC-owned compaction parts on this boundary: the canonical MC shape
+        // is exactly {"type":"compaction","auto":true} — no tail_start_id.
+        // A compaction part carrying tail_start_id belongs to a native
+        // compaction and is never deleted.
+        const boundaryParts = parsedParts.filter((part) => part.messageId === boundaryMessageId);
+        const mcPartIds = boundaryParts
+            .filter((part) => isMcCanonicalCompactionPartData(part.data))
+            .map((part) => part.id);
+
+        // Preflight (deletion caveat 2): rows this lineage would delete. Parts
+        // are first-class tail targets too, so omitting them can strand a
+        // surviving native marker even when every deleted message is covered.
+        const rowsToDelete = new Set<string>([...summaryIds, ...mcPartIds]);
+        const survivingPartsReferenceDeletion = parsedParts.some(
+            (part) =>
+                !mcPartIds.includes(part.id) &&
+                part.tailStartId !== null &&
+                rowsToDelete.has(part.tailStartId),
+        );
+        const messageFieldReferencesDeletion = [...rowsToDelete].some((id) =>
+            messageTailStartIds.has(id),
+        );
+        if (survivingPartsReferenceDeletion || messageFieldReferencesDeletion) {
+            // Retarget-or-retain contract: retain rather than risk a dangling
+            // tail target (tailIndex=-1 silently bypasses OpenCode's reorder).
+            retainedLineages += 1;
+            log(
+                `[magic-context] compaction-marker: flip-off cleanup RETAINED lineage at boundary ${boundaryMessageId} — a surviving tail_start_id references a row the deletion would remove`,
+            );
+            continue;
+        }
+
+        // Caveat 1: compaction part + summary rows deleted TOGETHER.
+        const rows = db.transaction(() => {
+            let changed = deleteSummaries(summaryIds);
+            for (const partId of mcPartIds) {
+                changed += deletePart.run(sessionId, partId).changes;
+            }
+            return changed;
+        })();
+        if (rows > 0 || summaryIds.size > 0 || mcPartIds.length > 0) {
+            removedLineages += 1;
+            removedRows += rows;
+        }
+    }
+
+    if (orphanSummaryIds.size > 0) {
+        // No boundary to preflight against beyond the summaries themselves.
+        const rowsToDelete = new Set<string>(orphanSummaryIds);
+        const survivingPartsReferenceDeletion = parsedParts.some(
+            (part) => part.tailStartId !== null && rowsToDelete.has(part.tailStartId),
+        );
+        const messageFieldReferencesDeletion = [...rowsToDelete].some((id) =>
+            messageTailStartIds.has(id),
+        );
+        if (survivingPartsReferenceDeletion || messageFieldReferencesDeletion) {
+            retainedLineages += 1;
+        } else {
+            const rows = db.transaction(() => deleteSummaries(orphanSummaryIds))();
+            removedLineages += 1;
+            removedRows += rows;
+        }
+    }
+
+    if (removedLineages > 0 || retainedLineages > 0) {
+        log(
+            `[magic-context] compaction-marker: flip-off cleanup for ${sessionId} removed ${removedLineages} lineage(s) (${removedRows} rows), retained ${retainedLineages}`,
+        );
+    }
+    return {
+        verified: retainedLineages === 0,
+        removedLineages,
+        removedRows,
+        retainedLineages,
+    };
+}
 
 /**
  * Remove an existing compaction marker (all 3 rows).

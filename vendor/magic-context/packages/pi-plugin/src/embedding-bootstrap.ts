@@ -57,7 +57,11 @@ export async function ensureProjectRegisteredFromPiDirectory(
 	directory: string,
 	db: ContextDatabase,
 ): Promise<void> {
-	const projectIdentity = resolveProjectIdentityForSession(directory);
+	const detailed = loadPiConfigDetailed({ cwd: directory });
+	const projectIdentity = resolveProjectIdentityForSession(
+		directory,
+		detailed.config.allow_home_project,
+	);
 	if (!projectIdentity) return;
 	let registrationFingerprints = registrationFingerprintsByDatabase.get(db);
 	if (!registrationFingerprints) {
@@ -67,7 +71,6 @@ export async function ensureProjectRegisteredFromPiDirectory(
 	const cached = registrationFingerprints.get(projectIdentity);
 	if (cached && configFingerprint(cached.paths) === cached.fingerprint) return;
 
-	const detailed = loadPiConfigDetailed({ cwd: directory });
 	if (isConfigLoadUntrusted(detailed)) {
 		handleUntrustedLoad(db, projectIdentity, directory, detailed);
 		return;

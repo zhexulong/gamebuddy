@@ -28,7 +28,7 @@ describe("executeStatus", () => {
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
 
-        // 190K requested on a 128K model → clamped to 80% × 128K. The status must
+        // 190K requested on a 128K model → clamped to 90% × 128K. The status must
         // say so explicitly (configured value + cap) rather than silently showing
         // the reduced value, which is what confused users in issue #241.
         const status = executeStatus(
@@ -44,7 +44,7 @@ describe("executeStatus", () => {
         );
 
         expect(status).toContain("[token-mode] [clamped:");
-        expect(status).toContain("> 80% of");
+        expect(status).toContain("> 90% of");
         db.close();
     });
 
@@ -67,6 +67,90 @@ describe("executeStatus", () => {
 
         expect(status).toContain("Execute threshold:");
         expect(status).not.toContain("[clamped:");
+        db.close();
+    });
+
+    test("shows the exact nudge hygiene ratio and keeps zero values", () => {
+        const db = new Database(":memory:");
+        initializeDatabase(db);
+        getOrCreateSessionMeta(db, SESSION_ID);
+
+        const status = executeStatus(
+            db,
+            SESSION_ID,
+            20,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            {
+                u: 0,
+                t: 0,
+                severity: 0,
+                evaluable: true,
+                generationInvalidated: false,
+                baselineGeneration: 0,
+                computedAt: 0,
+            },
+        );
+
+        expect(status).toContain("### Tail Hygiene");
+        expect(status).toContain("0.0% · 0 / 0 tok");
+        expect(status).toContain("Reasoning is excluded from both terms");
+        db.close();
+    });
+
+    test("renders 'never expires' for cacheTtl 'never'", () => {
+        const db = new Database(":memory:");
+        initializeDatabase(db);
+        getOrCreateSessionMeta(db, SESSION_ID);
+        db.prepare("UPDATE session_meta SET cache_ttl = 'never' WHERE session_id = ?").run(
+            SESSION_ID,
+        );
+
+        const status = executeStatus(db, SESSION_ID, 20);
+
+        expect(status).toContain("- Configured: never");
+        expect(status).toContain(
+            "- Remaining: never (MC never assumes expiry — external cache-keep)",
+        );
+        expect(status).toContain("never (MC never assumes expiry");
+        expect(status).not.toContain("Infinity");
+        db.close();
+    });
+
+    test("shows module-routed host paths only in Rust mode", () => {
+        const db = new Database(":memory:");
+        initializeDatabase(db);
+        getOrCreateSessionMeta(db, SESSION_ID);
+
+        const tsStatus = executeStatus(db, SESSION_ID, 20);
+        const rustStatus = executeStatus(
+            db,
+            SESSION_ID,
+            20,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            true,
+        );
+
+        expect(rustStatus).toContain("### Rust Mode");
+        expect(rustStatus).toContain(
+            "Host backends → MODULE: ctx_memory, ctx_note; historian: module-side",
+        );
+        expect(tsStatus).not.toContain("Host backends → MODULE");
         db.close();
     });
 });

@@ -1,0 +1,25 @@
+{
+  "golden_family": "marker-representation",
+  "command": "cargo test -p mc-module --lib dg_goldens_match_ts_wire_surface_and_gate_labels",
+  "mutations": [
+    {
+      "name": "DG_2_ONE_BYTE_INPUT",
+      "applied_diff": {
+        "path": "crates/mc-module/testdata/differential-golden.json",
+        "before": "cases[1].input.messages[0].content[0].kind.text='kept tail'",
+        "after": "cases[1].input.messages[0].content[0].kind.text='kept tailx'",
+        "changed": true
+      },
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "   Compiling mc-module v0.1.0 (/Users/ufukaltinok/.local/share/cortexkit/alfonso/worktrees/8f93aad09f2535d0/bg_348dae31/crates/mc-module)\nwarning: unused variable: `store`\n     --> crates/mc-module/src/lib.rs:17165:23\n      |\n17165 |         let (handler, store, _dir, _project) = handler_with_store(producer, default_test_config());\n      |                       ^^^^^ help: if this is intentional, prefix it with an underscore: `_store`\n      |\n      = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `mc-module` (lib test) generated 1 warning (run `cargo fix --lib -p mc-module --tests` to apply 1 suggestion)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.00s\n     Running unittests src/lib.rs (target/debug/deps/mc_module-e11d2fd0b104e0ba)\n\nrunning 1 test\ntest differential_goldens::dg_goldens_match_ts_wire_surface_and_gate_labels ... FAILED\n\nfailures:\n\n---- differential_goldens::dg_goldens_match_ts_wire_surface_and_gate_labels stdout ----\n\nthread 'differential_goldens::dg_goldens_match_ts_wire_surface_and_gate_labels' (30324375) panicked at crates/mc-module/src/differential_goldens.rs:56:9:\nassertion `left == right` failed: wire drift in DG-2-marker-representation\n  left: [Object {\"content\": Array [Object {\"kind\": Object {\"text\": String(\"kept tailx\"), \"type\": String(\"text\")}}], \"meta\": Object {}, \"role\": String(\"assistant\")}]\n right: [Object {\"content\": Array [Object {\"kind\": Object {\"text\": String(\"kept tail\"), \"type\": String(\"text\")}}], \"meta\": Object {}, \"role\": String(\"assistant\")}]\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    differential_goldens::dg_goldens_match_ts_wire_surface_and_gate_labels\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 716 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `-p mc-module --lib`\n"
+      },
+      "reverted_rerun": {
+        "command": "cargo test -p mc-module --lib dg_goldens_match_ts_wire_surface_and_gate_labels",
+        "exit_status": 0,
+        "status": "pass",
+        "output": "ducer, default_test_config());\n      |                       ^^^^^ help: if this is intentional, prefix it with an underscore: `_store`\n      |\n      = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `mc-module` (lib test) generated 1 warning (run `cargo fix --lib -p mc-module --tests` to apply 1 suggestion)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.48s\n     Running unittests src/lib.rs (target/debug/deps/mc_module-e11d2fd0b104e0ba)\n\nrunning 1 test\ntest differential_goldens::dg_goldens_match_ts_wire_surface_and_gate_labels ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 716 filtered out; finished in 0.00s\n\n"
+      }
+    }
+  ]
+}

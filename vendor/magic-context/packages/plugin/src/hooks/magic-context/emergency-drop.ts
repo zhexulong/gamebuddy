@@ -1,22 +1,23 @@
 // Tiered target-headroom emergency tool-output drop (Phase 2).
 //
 // This is the EMERGENCY floor that replaces the old `dropAllTools` nuke at the
-// 85% force-materialize pass. It is need-aware (tier-ordered) and target-driven
+// derived force-materialize pass. It is need-aware (tier-ordered) and target-driven
 // (reclaim down to ~30% of working space) instead of need-blind ("drop all" /
 // "older than X"). Selection is PURE here; the harness applies the returned
 // plan (drop primitive + `updateTagStatus(...,"dropped")` + watermark persist),
 // so OpenCode and Pi run identical selection logic.
 //
 // CACHE CONTRACT (see .alfonso/plans/ctx-reduce-phase2-v3.md):
-//   - The caller MUST invoke this only on the ≥85% force-materialize pass (a
+//   - The caller MUST invoke this only on the ≥derived force-materialize pass (a
 //     cache-busting pass, never a defer pass).
-//   - Each tag is dropped AT MOST ONCE: candidates are gated on
-//     `tagNumber > priorWatermark` AND `status==="active"`, and the watermark
-//     advances past every dropped tag. So the number of drop-induced cache
-//     busts over a session is bounded by the tool-tag count — no oscillation.
+//   - Each tag is dropped AT MOST ONCE because dropped tags leave the active set.
+//   - One pressure episode gets one originating emergency batch. Sustained
+//     force-band residency stays latched; a lower-pressure pass or an independent
+//     bust rearms the batch so later candidates ride instead of trickling.
 //   - All accounting is in TOKENS. Tags store BYTES, so we convert with the one
 //     canonical estimator (`TOKENS_PER_BYTE`, shared with the Phase 1 nudge).
 
+import { newestCtxReduceTagNumbers } from "../../features/magic-context/reclaim-protection";
 import { TOKENS_PER_BYTE } from "./ctx-reduce-nudge";
 
 /** Reclaim target = fixedFloor + TARGET_FRACTION × (ceiling − fixedFloor). */
@@ -28,7 +29,7 @@ export const TIER_RECENCY_RESERVE = 0.2;
 /**
  * Don't bust the cache for a trivial reclaim. If the computed reclaim is at or
  * below this, the pass is a no-op (combined with the watermark, this prevents
- * 85%-94.9% oscillation).
+ * force-band-to-94.9% oscillation).
  */
 export const EMERGENCY_REARM_MIN_TOKENS = 2000;
 
@@ -115,7 +116,7 @@ export function estimateEmergencyDropReclaimTokens(tag: EmergencyDropTag): numbe
  *   non-droppable tool tags). Only their token sum matters — it makes
  *   `fixedFloor` the true irreducible prefix. Passing a narrower set (e.g.
  *   tool-only) folds real conversation/reasoning tail into the "floor",
- *   raising the target and systematically under-evicting at ≥85%.
+ *   raising the target and systematically under-evicting at the derived force band.
  * - `tags`: the evictable candidates — active tool tags whose drop target
  *   would actually reclaim bytes (caller pre-filters on `canDrop()` so no
  *   phantom tag is counted as reclaimed).
@@ -134,16 +135,14 @@ export function planEmergencyDrop(input: {
     /** ceiling = contextLimit × executeThreshold%. */
     ceilingTokens: number;
     /**
-     * last_emergency_input_sample — the `currentTotalInputTokens` reading at the
-     * previous emergency drop (0 if never dropped). The SOLE idempotence latch:
-     * see the same-sample no-op below. (There is deliberately no tag-number
-     * watermark — a scalar "dropped-through" cursor wrongly excludes still-active
-     * lower-numbered tags after a non-contiguous tier-ordered drop. Dropped tags
-     * leave the `status='active'` set, so they're never re-selected; the sample
-     * latch is what prevents over-dropping the rest of the tail on a stale pass.)
+     * `last_emergency_input_sample` is retained as the pressure-episode latch:
+     * zero means armed, non-zero means this force-band episode already had its
+     * originating batch. The caller rearms on pressure exit or an independent
+     * bust. There is deliberately no tag-number watermark because a scalar
+     * cursor would exclude still-active lower-numbered tags after tiered drops.
      */
     priorInputSample: number;
-    /** True once any emergency drop has happened (drives the latch + log). */
+    /** True while the persisted pressure-episode latch is non-zero. */
     hasPriorDrop: boolean;
 }): EmergencyDropPlan {
     const {
@@ -173,15 +172,15 @@ export function planEmergencyDrop(input: {
         return noop("unknown-usage");
     }
 
-    // Idempotence latch. After a drop the wire is reduced, but the provider
-    // hasn't re-measured it — `currentTotalInputTokens` stays at the pre-drop
-    // value until the next assistant response. A second ≥85% pass on that SAME
-    // stale reading would recompute the floor from the now-smaller active tail
-    // and over-drop the rest of the tail (busting the cache again). So once we
-    // have dropped at a given usage sample, no-op until a FRESH sample arrives
-    // (the reading changes). New measured pressure ⇒ different sample ⇒ release.
-    if (hasPriorDrop && currentTotalInputTokens === priorInputSample) {
-        return noop("same-input-sample (awaiting fresh usage after prior drop)");
+    // A force-band LEVEL is not a new application EDGE. Once an emergency batch
+    // has acted in this pressure episode, fresh provider samples must not release
+    // one newly-unprotected tag per execute pass. The caller clears the persisted
+    // latch only after pressure exits or when another mutation has already priced
+    // the pass, allowing the whole accumulated set to ride that independent bust.
+    if (hasPriorDrop) {
+        return noop(
+            `pressure-episode-latched (prior sample ${priorInputSample}; awaiting exit or independent bust)`,
+        );
     }
 
     // fixedFloor from the FULL active live-window content (floorTags — see the
@@ -225,6 +224,14 @@ export function planEmergencyDrop(input: {
         }
     }
 
+    // Protect the same newest ctx_reduce exemplars even though resolveToolTier
+    // classifies them as T3. This is safe without changing the target math:
+    // fixedFloor above derives from every active floor tag, so removing candidates
+    // changes neither the floor nor the target (panel-verified emergency interaction).
+    const protectedCtxReduceTags = newestCtxReduceTagNumbers(
+        floorTags.filter((tag) => tag.status === "active" && tag.type === "tool"),
+    );
+
     // Build evictable candidates per tier. Only active tags are eligible, so a
     // tag dropped on a prior pass (now status!=='active') is never re-selected —
     // that, plus the input-sample latch above, is the full idempotence story.
@@ -232,6 +239,7 @@ export function planEmergencyDrop(input: {
     for (const tag of tags) {
         if (tag.status !== "active" || tag.type !== "tool") continue;
         if (tag.tagNumber > protectedCutoff) continue; // global protected tail
+        if (protectedCtxReduceTags.has(tag.tagNumber)) continue;
         const tier = resolveToolTier(tag.toolName);
         if ((tier === 1 || tier === 2) && reserved.has(tag.tagNumber)) continue;
         byTier[tier].push(tag);

@@ -5,6 +5,7 @@ import { runMigrations } from "./migrations";
 import { initializeDatabase } from "./storage-db";
 import {
     __resetToolDefinitionMeasurements,
+    getCurrentToolSetHash,
     getMeasuredToolDefinitionTokens,
     getToolDefinitionSnapshot,
     loadToolDefinitionMeasurements,
@@ -31,6 +32,16 @@ describe("tool-definition-tokens", () => {
         expect(
             getMeasuredToolDefinitionTokens("anthropic", "claude-sonnet-4.7", "sisyphus"),
         ).toBeUndefined();
+    });
+
+    test("hashes observed tool names without treating schema edits as tool-set changes", () => {
+        expect(getCurrentToolSetHash("p", "m", "a")).toBe("");
+        recordToolDefinition("p", "m", "a", "bash", "schema one", { version: 1 });
+        const first = getCurrentToolSetHash("p", "m", "a");
+        recordToolDefinition("p", "m", "a", "bash", "schema two", { version: 2 });
+        expect(getCurrentToolSetHash("p", "m", "a")).toBe(first);
+        recordToolDefinition("p", "m", "a", "edit", "edit schema", {});
+        expect(getCurrentToolSetHash("p", "m", "a")).not.toBe(first);
     });
 
     test("records and retrieves tokens for a provider/model/agent key", () => {

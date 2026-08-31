@@ -1,4 +1,6 @@
 import type { Database } from "../../../shared/sqlite";
+import { hasMemoryClassifiedAtColumn } from "../memory/storage-memory";
+import { hasMuralCueColumns } from "../mural/storage-mural-cues";
 import {
     getSmartNotesNeedingCompilation,
     getStaleCompiledSmartNotes,
@@ -6,7 +8,13 @@ import {
 import { getPendingSmartNotes } from "../storage-notes";
 import { countPrimerCandidatesForProject, getActivePrimers } from "../storage-primers";
 import { getUserMemoryCandidates } from "../user-memory/storage-user-memory";
-import type { DreamTaskName } from "./task-registry";
+import { getTaskScheduleState } from "./storage-task-schedule";
+import {
+    CANONICAL_DREAM_TASKS,
+    type DreamTaskBacklog,
+    type DreamTaskBacklogMap,
+    type DreamTaskName,
+} from "./task-registry";
 
 /**
  * Per-task activity gates (Dreamer v2 A+B). A due task runs ONLY if its gate
@@ -30,7 +38,7 @@ export interface TaskGateContext {
     promotionThreshold: number;
 }
 
-function countActiveMemories(db: Database, projectPath: string): number {
+export function countActiveMemories(db: Database, projectPath: string): number {
     const row = db
         .prepare<[string], { cnt: number }>(
             "SELECT COUNT(*) AS cnt FROM memories WHERE project_path = ? AND status IN ('active','permanent')",
@@ -40,7 +48,7 @@ function countActiveMemories(db: Database, projectPath: string): number {
 }
 
 /** Active/permanent memories with NO mapping row yet — the map-memories scope. */
-function countUnmappedActiveMemories(db: Database, projectPath: string): number {
+export function countUnmappedActiveMemories(db: Database, projectPath: string): number {
     const row = db
         .prepare<[string], { cnt: number }>(
             `SELECT COUNT(*) AS cnt
@@ -55,7 +63,7 @@ function countUnmappedActiveMemories(db: Database, projectPath: string): number 
     return row?.cnt ?? 0;
 }
 
-function countCompartmentsSince(db: Database, projectPath: string, since: number): number {
+export function countCompartmentsSince(db: Database, projectPath: string, since: number): number {
     // Compartments are keyed by session_id; map to project via session_projects.
     const row = db
         .prepare<[string, number], { cnt: number }>(
@@ -68,7 +76,7 @@ function countCompartmentsSince(db: Database, projectPath: string, since: number
     return row?.cnt ?? 0;
 }
 
-function countProjectSessionsSince(
+export function countProjectSessionsSince(
     db: Database,
     projectPath: string,
     since: number | null,
@@ -86,6 +94,221 @@ function countProjectSessionsSince(
                   )
                   .get(projectPath, since);
     return row?.cnt ?? 0;
+}
+
+function countMappedMemories(db: Database, projectPath: string): number {
+    const row = db
+        .prepare<[string], { cnt: number }>(
+            `SELECT COUNT(DISTINCT m.id) AS cnt
+               FROM memories m
+               JOIN memory_verifications v ON v.memory_id = m.id
+              WHERE m.project_path = ?
+                AND m.status IN ('active','permanent')
+                AND v.file_path <> ''`,
+        )
+        .get(projectPath);
+    return row?.cnt ?? 0;
+}
+
+function countUnverifiedMappedMemories(db: Database, projectPath: string): number {
+    const row = db
+        .prepare<[string], { cnt: number }>(
+            `SELECT COUNT(DISTINCT m.id) AS cnt
+               FROM memories m
+               JOIN memory_verifications v ON v.memory_id = m.id
+              WHERE m.project_path = ?
+                AND m.status IN ('active','permanent')
+                AND v.file_path <> ''
+                AND v.verified_at = 0`,
+        )
+        .get(projectPath);
+    return row?.cnt ?? 0;
+}
+
+function countBroadCycleCandidates(
+    db: Database,
+    projectPath: string,
+    cycleStartAt: number,
+): number {
+    const row = db
+        .prepare<[string, number], { cnt: number }>(
+            `SELECT COUNT(*) AS cnt
+               FROM memories m
+              WHERE m.project_path = ?
+                AND m.status IN ('active','permanent')
+                AND (
+                    SELECT MAX(v.verified_at)
+                      FROM memory_verifications v
+                     WHERE v.memory_id = m.id
+                       AND v.file_path <> ''
+                ) < ?`,
+        )
+        .get(projectPath, cycleStartAt);
+    return row?.cnt ?? 0;
+}
+
+function countCueCandidates(db: Database, projectPath: string): number {
+    if (!hasMuralCueColumns(db)) return countActiveMemories(db, projectPath);
+    const row = db
+        .prepare<[string], { cnt: number }>(
+            `SELECT COUNT(*) AS cnt
+               FROM memories
+              WHERE project_path = ?
+                AND status IN ('active','permanent')
+                AND (mural_cue IS NULL OR mural_cue_hash IS NULL OR updated_at > mural_cue_at)`,
+        )
+        .get(projectPath);
+    return row?.cnt ?? 0;
+}
+
+function countStalePrimers(db: Database, projectPath: string): number {
+    const row = db
+        .prepare<[string], { cnt: number }>(
+            `SELECT COUNT(*) AS cnt
+               FROM primers
+              WHERE project_path = ?
+                AND status = 'active'
+                AND (answer IS NULL OR TRIM(answer) = '' OR answer_refreshed_at IS NULL
+                     OR last_observed_at > answer_refreshed_at)`,
+        )
+        .get(projectPath);
+    return row?.cnt ?? 0;
+}
+
+function countUnclassifiedActiveMemories(db: Database, projectPath: string): number {
+    if (!hasMemoryClassifiedAtColumn(db)) return countActiveMemories(db, projectPath);
+    const row = db
+        .prepare<[string], { cnt: number }>(
+            `SELECT COUNT(*) AS cnt
+               FROM memories
+              WHERE project_path = ?
+                AND status IN ('active','permanent')
+                AND classified_at IS NULL`,
+        )
+        .get(projectPath);
+    return row?.cnt ?? 0;
+}
+
+function countPendingSmartNotes(db: Database, projectPath: string): number {
+    const row = db
+        .prepare<[string], { cnt: number }>(
+            "SELECT COUNT(*) AS cnt FROM notes WHERE project_path = ? AND type = 'smart' AND status = 'pending'",
+        )
+        .get(projectPath);
+    return row?.cnt ?? 0;
+}
+
+function countUserMemoryCandidates(db: Database): number {
+    const row = db
+        .prepare<[], { cnt: number }>("SELECT COUNT(*) AS cnt FROM user_memory_candidates")
+        .get();
+    return row?.cnt ?? 0;
+}
+
+function countActivePrimers(db: Database, projectPath: string): number {
+    const row = db
+        .prepare<[string], { cnt: number }>(
+            "SELECT COUNT(*) AS cnt FROM primers WHERE project_path = ? AND status = 'active'",
+        )
+        .get(projectPath);
+    return row?.cnt ?? 0;
+}
+
+/**
+ * Read-only backlog probe for one task. These probes reuse the task selection
+ * predicates and never acquire a lease, materialize a prompt cache, or invoke a model.
+ */
+export function getDreamTaskBacklog(
+    db: Database,
+    projectPath: string,
+    task: DreamTaskName,
+    options: { lastRunAt?: number | null; retrospectiveWatermarkMs?: number | null } = {},
+): DreamTaskBacklog {
+    switch (task) {
+        case "map-memories": {
+            const total = countActiveMemories(db, projectPath);
+            return { pending: countUnmappedActiveMemories(db, projectPath), total };
+        }
+        case "verify": {
+            return {
+                pending: countUnverifiedMappedMemories(db, projectPath),
+                total: countMappedMemories(db, projectPath),
+            };
+        }
+        case "verify-broad": {
+            const total = countMappedMemories(db, projectPath);
+            const cycleStartAt = getTaskScheduleState(
+                db,
+                projectPath,
+                "verify-broad",
+            )?.lastBroadRunAt;
+            // With no open cycle, the next broad run will open one over the whole
+            // mapped pool. Once open, report only the memories not yet verified for
+            // that cycle so run telemetry reflects the resumable backlog.
+            const pending =
+                cycleStartAt == null
+                    ? total
+                    : countBroadCycleCandidates(db, projectPath, cycleStartAt);
+            return { pending, total };
+        }
+        case "curate": {
+            const total = countActiveMemories(db, projectPath);
+            return { pending: total, total };
+        }
+        case "compress-cues": {
+            const total = countActiveMemories(db, projectPath);
+            return { pending: countCueCandidates(db, projectPath), total };
+        }
+        case "classify-memories": {
+            const total = countActiveMemories(db, projectPath);
+            return { pending: countUnclassifiedActiveMemories(db, projectPath), total };
+        }
+        case "retrospective": {
+            const pending = countProjectSessionsSince(
+                db,
+                projectPath,
+                options.retrospectiveWatermarkMs ?? null,
+            );
+            return { pending, total: pending };
+        }
+        case "maintain-docs": {
+            const total = countCompartmentsSince(db, projectPath, 0);
+            const pending = countCompartmentsSince(db, projectPath, options.lastRunAt ?? 0);
+            return { pending, total };
+        }
+        case "evaluate-smart-notes": {
+            const pending = countPendingSmartNotes(db, projectPath);
+            return { pending, total: pending };
+        }
+        case "review-user-memories": {
+            const pending = countUserMemoryCandidates(db);
+            return { pending, total: pending };
+        }
+        case "promote-primers": {
+            const pending = countPrimerCandidatesForProject(db, projectPath);
+            return { pending, total: pending };
+        }
+        case "refresh-primers": {
+            const total = countActivePrimers(db, projectPath);
+            return { pending: countStalePrimers(db, projectPath), total };
+        }
+        default: {
+            const _exhaustive: never = task;
+            return _exhaustive;
+        }
+    }
+}
+
+/** Read the complete backlog breakdown in the caller's requested registry order. */
+export function getDreamTaskBacklogs(
+    db: Database,
+    projectPath: string,
+    tasks: readonly DreamTaskName[] = CANONICAL_DREAM_TASKS,
+    options: { lastRunAt?: number | null; retrospectiveWatermarkMs?: number | null } = {},
+): DreamTaskBacklogMap {
+    const result: DreamTaskBacklogMap = {};
+    for (const task of tasks) result[task] = getDreamTaskBacklog(db, projectPath, task, options);
+    return result;
 }
 
 /**
@@ -108,9 +331,13 @@ export function evaluateTaskGate(task: DreamTaskName, ctx: TaskGateContext): boo
             return countActiveMemories(db, project) > 0;
 
         case "verify-broad":
-            // Broad re-verifies the WHOLE pool (incl. file-independent memories the
-            // incremental gate skips) — only needs a non-empty pool to run.
-            return countActiveMemories(db, project) > 0;
+            // Keep an open cycle runnable even when another task removed the last
+            // active memory; the executor then closes the now-empty cycle. A closed
+            // cycle still needs an active pool before taking the memory lease.
+            return (
+                getTaskScheduleState(db, project, "verify-broad")?.lastBroadRunAt != null ||
+                countActiveMemories(db, project) > 0
+            );
 
         case "curate":
             // Curate is whole-pool hygiene, but still needs an active pool before

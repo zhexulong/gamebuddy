@@ -19,7 +19,9 @@ import {
     findBoundaryUserMessage,
     getOpenCodeMessageById,
     injectCompactionMarker,
+    listSessionCompactionMarkers,
     removeCompactionMarker,
+    removeForeignCompactionMarker,
 } from "../../features/magic-context/compaction-marker";
 import { getCompartmentsByEndMessageId } from "../../features/magic-context/compartment-storage";
 import {
@@ -38,6 +40,7 @@ import { log, sessionLog } from "../../shared/logger";
 import type { Database } from "../../shared/sqlite";
 import { Database as SqliteDb } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
+import { logSlowWriteTransaction } from "../../shared/write-transaction-timing";
 
 /** Static placeholder. The real session-history comes from transform injection. */
 export const MARKER_SUMMARY_TEXT =
@@ -54,12 +57,14 @@ function persistMarkerStateAndDropReplacedTag(
     state: PersistedCompactionMarkerState | null,
     replacedSummaryMessageId: string | null,
 ): void {
+    const transactionStartedAt = performance.now();
     db.transaction(() => {
         setPersistedCompactionMarkerState(db, sessionId, state);
         if (replacedSummaryMessageId !== null) {
             dropMarkerSummaryTag(db, sessionId, replacedSummaryMessageId);
         }
     })();
+    logSlowWriteTransaction("marker-drain", transactionStartedAt);
 }
 
 /**
@@ -493,6 +498,144 @@ export function removeCompactionMarkerForSession(db: Database, sessionId: string
                 error,
             );
         }
+    }
+}
+
+/**
+ * Result of a fork-orphan marker hygiene pass (#263).
+ *
+ * `removed` counts foreign markers deleted this pass. `failed` signals that at
+ * least one deletion was attempted but could not complete (e.g. SQLITE_BUSY);
+ * the caller treats that as "retry on the next degraded pass" and never as a
+ * fatal error.
+ */
+export interface OrphanMarkerReconcileResult {
+    removed: number;
+    failed: boolean;
+}
+
+/**
+ * Fork-orphan compaction-marker hygiene (#263).
+ *
+ * OpenCode's `/fork` copies the parent session's message rows into the fork —
+ * including the parent's magic-context compaction-marker rows — but does NOT
+ * inherit magic-context's durable state (PARITY.md gap #25: OpenCode re-mints
+ * message ids on fork, so entry-id-keyed migration is unsafe). The fork then
+ * injects its own fresh marker at its own (much older) historian boundary, and
+ * `filterCompacted` — which walks newest→oldest and stops at the FIRST marker
+ * it sees (opencode message-v2.ts `filterCompacted`) — honours the NEWER
+ * orphan instead of ours. The visible window is cut at the orphan, our boundary
+ * message falls below the cut, and inject-compartments degrades with no
+ * recovery path while context usage climbs.
+ *
+ * A marker row in opencode.db for this session that the durable state does not
+ * recognize as its own current marker is a fork-orphan. This pass scans for
+ * them and removes the ones that actively outrank ours:
+ *
+ *   - not owned: `part.id != persisted.compactionPartId`
+ *   - magic-context-shaped: carries one of OUR summary messages
+ *     (providerID="magic-context") — OpenCode-native /compact markers carry the
+ *     real provider id and are never touched
+ *   - newer than ours: its boundary message sorts AFTER ours in canonical
+ *     order, which is exactly the case where `filterCompacted` stops at the
+ *     orphan first. Older foreign markers are harmless (ours already wins) and
+ *     are left alone to keep the repair minimally invasive.
+ *
+ * Removal is idempotent (plain DELETEs) so concurrent processes racing on the
+ * same orphan converge on the same end state; the only guarded invariant is
+ * never deleting our own marker, re-checked against freshly-read persisted
+ * state below.
+ *
+ * Cost gate: callers invoke this only when degraded mode fires (never on every
+ * pass), so steady state pays nothing. Any failure is swallowed and reported
+ * via the result so the next degraded pass retries.
+ */
+export function reconcileForkOrphanedCompactionMarkers(
+    db: Database,
+    sessionId: string,
+): OrphanMarkerReconcileResult {
+    // Markers live in opencode.db; Pi writes its native marker via a separate
+    // path and has no rows here to reconcile.
+    if (getHarness() !== "opencode") {
+        return { removed: 0, failed: false };
+    }
+
+    try {
+        // Our own marker must exist in durable state; without it we have no
+        // ownership anchor to diff against (and nothing to defend).
+        const owned = getPersistedCompactionMarkerState(db, sessionId);
+        if (!owned) {
+            return { removed: 0, failed: false };
+        }
+
+        const markers = listSessionCompactionMarkers(sessionId);
+        let removed = 0;
+        let failed = false;
+
+        for (const marker of markers) {
+            if (marker.compactionPartId === owned.compactionPartId) {
+                continue; // our own marker
+            }
+            // A marker without our summary lineage is either an OpenCode-native
+            // /compact or a half-written row. filterCompacted only stops at a
+            // user message that has BOTH a compaction part and a completed
+            // summary, so a part-only row cannot outrank us; and we must never
+            // delete a native compaction. Skip it.
+            if (marker.summaryMessageIds.length === 0) {
+                continue;
+            }
+            // Only repair orphans that actively outrank ours. If ordering cannot
+            // be established (a referenced message vanished mid-pass), be
+            // conservative and leave the row for the next pass.
+            const ordering = compareOpenCodeMessagesByCanonicalOrder(
+                sessionId,
+                marker.boundaryMessageId,
+                owned.boundaryMessageId,
+            );
+            if (ordering === null || ordering <= 0) {
+                continue;
+            }
+
+            // Re-read persisted state right before mutating: if our marker
+            // advanced between the scan and now, make sure we still don't touch
+            // anything the current state owns.
+            const currentOwned = getPersistedCompactionMarkerState(db, sessionId);
+            if (!currentOwned || marker.compactionPartId === currentOwned.compactionPartId) {
+                continue;
+            }
+
+            const ok = removeForeignCompactionMarker(
+                sessionId,
+                marker,
+                currentOwned.summaryMessageId,
+            );
+            if (ok) {
+                removed += 1;
+                sessionLog(
+                    sessionId,
+                    `compaction-marker hygiene: removed fork-orphaned marker part=${marker.compactionPartId} boundary=${marker.boundaryMessageId} (outranked owned boundary ${currentOwned.boundaryMessageId})`,
+                );
+            } else {
+                failed = true;
+            }
+        }
+
+        if (removed > 0) {
+            log(
+                `[magic-context][${sessionId}] compaction-marker hygiene: removed ${removed} fork-orphaned marker(s); filterCompacted will now stop at this session's own marker`,
+            );
+        }
+        return { removed, failed };
+    } catch (error) {
+        // opencode.db missing/locked, schema drift, etc. Never fatal: degraded
+        // mode simply persists until the next retry, and layer-B re-anchor keeps
+        // injection alive in the meantime.
+        sessionLog(
+            sessionId,
+            "compaction-marker hygiene: scan failed (will retry on next degraded pass):",
+            error,
+        );
+        return { removed: 0, failed: true };
     }
 }
 

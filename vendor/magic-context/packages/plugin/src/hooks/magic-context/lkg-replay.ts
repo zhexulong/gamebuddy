@@ -1,3 +1,4 @@
+import { piModelRefToCanonical } from "../../shared/harness-provider-map";
 import {
     captureSlot,
     dropSlot,
@@ -15,6 +16,16 @@ export interface LkgModelKeys {
     providerKey: string | null;
 }
 
+function canonicalLkgModelKeys(modelKey: string | null, providerKey: string | null): LkgModelKeys {
+    const canonicalModelKey = modelKey ? piModelRefToCanonical(modelKey) : null;
+    const slash = canonicalModelKey?.indexOf("/") ?? -1;
+    return {
+        modelKey: canonicalModelKey,
+        providerKey:
+            slash > 0 && canonicalModelKey ? canonicalModelKey.slice(0, slash) : providerKey,
+    };
+}
+
 export function resolveLkgModelKeys(messages: MessageLike[]): LkgModelKeys {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
         const info = messages[index]?.info as Record<string, unknown> | undefined;
@@ -23,7 +34,7 @@ export function resolveLkgModelKeys(messages: MessageLike[]): LkgModelKeys {
             const provider = (nested as Record<string, unknown>).providerID;
             const model = (nested as Record<string, unknown>).modelID;
             if (typeof provider === "string" && typeof model === "string") {
-                return { modelKey: `${provider}/${model}`, providerKey: provider };
+                return canonicalLkgModelKeys(`${provider}/${model}`, provider);
             }
         }
         const provider = info?.providerID;
@@ -33,7 +44,7 @@ export function resolveLkgModelKeys(messages: MessageLike[]): LkgModelKeys {
             typeof provider === "string" &&
             typeof model === "string"
         ) {
-            return { modelKey: `${provider}/${model}`, providerKey: provider };
+            return canonicalLkgModelKeys(`${provider}/${model}`, provider);
         }
     }
     return { modelKey: null, providerKey: null };
@@ -294,13 +305,14 @@ export function buildLkgPrefix(
 export function captureLkgSlot(args: LkgCaptureInput): boolean {
     const built = buildLkgPrefix(args.input, args.output);
     if (!built) return false;
+    const modelKeys = canonicalLkgModelKeys(args.modelKey, args.providerKey);
     return captureSlot(args.sessionId, {
         jsonPrefix: built.jsonPrefix,
         inputIdSeq: built.inputIdSeq,
         inputContentDigests: built.inputContentDigests,
         lastInputMessageId: built.anchorMessageId,
-        modelKey: args.modelKey,
-        providerKey: args.providerKey,
+        modelKey: modelKeys.modelKey,
+        providerKey: modelKeys.providerKey,
         capturedAt: args.capturedAt ?? Date.now(),
     });
 }
@@ -363,9 +375,33 @@ function partIsAnthropicThinking(part: unknown): boolean {
     return type === "thinking" || type === "reasoning" || type === "redacted_thinking";
 }
 
+function partEndsAnthropicAssistantRun(part: unknown): boolean {
+    if (!part || typeof part !== "object") return false;
+    const value = part as Record<string, unknown>;
+    if (
+        value.type !== "tool" ||
+        value.providerExecuted === true ||
+        !value.state ||
+        typeof value.state !== "object"
+    ) {
+        return false;
+    }
+    const status = (value.state as Record<string, unknown>).status;
+    return status === "completed" || status === "error";
+}
+
+function partIsOpenCodeStepMetadata(part: unknown): boolean {
+    if (!part || typeof part !== "object") return false;
+    const type = (part as Record<string, unknown>).type;
+    return type === "step-start" || type === "step-finish";
+}
+
 /**
- * The Anthropic adapter merges adjacent assistant messages before sending them.
- * A merged run may contain only one leading thinking block; moving or retaining a
+ * The Anthropic adapter merges adjacent assistant content before sending it. A
+ * completed non-provider-executed tool result materializes as user content and
+ * starts a new assistant run, while OpenCode's step markers do not materialize
+ * on the provider wire.
+ * Each resulting assistant run may contain only one leading thinking block; a
  * later signed block would invalidate its provider signature, so recovery declines
  * the entire replay instead of attempting a rewrite.
  */
@@ -383,7 +419,10 @@ export function validateAnthropicReasoningRuns(messages: MessageLike[]): boolean
                 if (partIsAnthropicThinking(part)) {
                     thinkingBlocks += 1;
                     if (thinkingBlocks > 1 || sawOtherContent) return false;
-                } else {
+                } else if (partEndsAnthropicAssistantRun(part)) {
+                    thinkingBlocks = 0;
+                    sawOtherContent = false;
+                } else if (!partIsOpenCodeStepMetadata(part)) {
                     sawOtherContent = true;
                 }
             }
@@ -477,7 +516,12 @@ export function replayLkg(args: {
 }): { ok: true; messages: MessageLike[] } | { ok: false; reason: LkgValidationFailure } {
     const slot = getSlot(args.sessionId);
     if (!slot) return { ok: false, reason: "lkg_invalidated_reshape" };
-    if (slot.modelKey !== args.modelKey || slot.providerKey !== args.providerKey) {
+    const requestedModelKeys = canonicalLkgModelKeys(args.modelKey, args.providerKey);
+    const capturedModelKeys = canonicalLkgModelKeys(slot.modelKey, slot.providerKey);
+    if (
+        capturedModelKeys.modelKey !== requestedModelKeys.modelKey ||
+        capturedModelKeys.providerKey !== requestedModelKeys.providerKey
+    ) {
         dropSlot(args.sessionId, "lkg_model_mismatch");
         return { ok: false, reason: "lkg_model_mismatch" };
     }
@@ -508,13 +552,16 @@ export function replayLkg(args: {
             dropSlot(args.sessionId, "lkg_unsafe_seam");
             return { ok: false, reason: "lkg_unsafe_seam" };
         }
-        if (!validateLkgSeam(prefix, entry.pristineTail, args.providerKey)) {
+        if (!validateLkgSeam(prefix, entry.pristineTail, requestedModelKeys.providerKey)) {
             dropSlot(args.sessionId, "lkg_seam_invalid");
             return { ok: false, reason: "lkg_seam_invalid" };
         }
     }
     const replayed = [...prefix, ...entry.pristineTail];
-    if (args.providerKey === "anthropic" && !validateAnthropicReasoningRuns(replayed)) {
+    if (
+        requestedModelKeys.providerKey === "anthropic" &&
+        !validateAnthropicReasoningRuns(replayed)
+    ) {
         dropSlot(args.sessionId, "lkg_anthropic_reasoning_run_invalid");
         return { ok: false, reason: "lkg_anthropic_reasoning_run_invalid" };
     }

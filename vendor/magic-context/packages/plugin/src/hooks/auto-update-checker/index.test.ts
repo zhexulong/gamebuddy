@@ -1,7 +1,15 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as logger from "../../shared/logger";
+
+const PACKAGE_NAME = "@cortexkit/opencode-magic-context";
+const hasExplicitNonExactPluginVersion = (spec: string) =>
+    spec.startsWith(`${PACKAGE_NAME}@`) &&
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
+        spec.slice(PACKAGE_NAME.length + 1),
+    );
 
 const checkerMocks = {
     extractChannel: mock(() => "latest"),
@@ -10,6 +18,7 @@ const checkerMocks = {
     getCurrentRuntimePackageJsonPath: mock(() => null),
     getLatestVersion: mock(async () => null),
     getLocalDevVersion: mock(() => null),
+    hasExplicitNonExactPluginVersion: mock(hasExplicitNonExactPluginVersion),
     preparePluginUpdate: mock(async () => ({
         spec: "@cortexkit/opencode-magic-context@0.15.6",
         configPaths: ["/config/opencode.jsonc", "/config/tui.jsonc"],
@@ -88,6 +97,10 @@ describe("auto-update-checker/index", () => {
         checkerMocks.getLatestVersion.mockImplementation(async () => null);
         checkerMocks.getLocalDevVersion.mockReset();
         checkerMocks.getLocalDevVersion.mockImplementation(() => null);
+        checkerMocks.hasExplicitNonExactPluginVersion.mockReset();
+        checkerMocks.hasExplicitNonExactPluginVersion.mockImplementation(
+            hasExplicitNonExactPluginVersion,
+        );
         checkerMocks.preparePluginUpdate.mockReset();
         checkerMocks.preparePluginUpdate.mockImplementation(async () => ({
             spec: "@cortexkit/opencode-magic-context@0.15.6",
@@ -288,9 +301,9 @@ describe("auto-update-checker/index", () => {
         expect(showToast).not.toHaveBeenCalled();
     });
 
-    test("shows success toast after updating the active install root", async () => {
+    test("shows success toast after pinning a bare plugin entry", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
-            entry: "@cortexkit/opencode-magic-context@latest",
+            entry: "@cortexkit/opencode-magic-context",
             pinnedVersion: null,
             isPinned: false,
             configPath: "/config/opencode.jsonc",
@@ -309,7 +322,7 @@ describe("auto-update-checker/index", () => {
 
         expect(checkerMocks.preparePluginUpdate).toHaveBeenCalledWith(
             "/test",
-            expect.objectContaining({ entry: "@cortexkit/opencode-magic-context@latest" }),
+            expect.objectContaining({ entry: "@cortexkit/opencode-magic-context" }),
             "0.15.6",
             expect.objectContaining({ signal: expect.any(AbortSignal) }),
         );
@@ -323,9 +336,58 @@ describe("auto-update-checker/index", () => {
         });
     });
 
-    test("shows notification-only toast when auto-update is disabled", async () => {
+    test("leaves explicit @latest untouched and logs the active-package risk", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
             entry: "@cortexkit/opencode-magic-context@latest",
+            pinnedVersion: null,
+            isPinned: false,
+            configPath: "/config/opencode.jsonc",
+        }));
+        const logSpy = spyOn(logger, "log");
+        const { createAutoUpdateCheckerHook } = await freshIndexImport();
+        const { ctx, showToast } = createCtx();
+
+        createAutoUpdateCheckerHook(ctx as Parameters<typeof createAutoUpdateCheckerHook>[0], {
+            showStartupToast: false,
+            initDelayMs: 0,
+            storageDir: makeTempStorageDir(),
+        });
+        await waitForCalls(checkerMocks.findPluginEntry);
+
+        expect(logSpy).toHaveBeenCalledWith(
+            "[auto-update-checker] Explicit @latest leaves the active package unpinned; OpenCode may delete it mid-session.",
+        );
+        expect(checkerMocks.getCachedVersion).toHaveBeenCalledWith();
+        expect(checkerMocks.getLatestVersion).not.toHaveBeenCalled();
+        expect(checkerMocks.preparePluginUpdate).not.toHaveBeenCalled();
+        expect(showToast).not.toHaveBeenCalled();
+    });
+
+    test("leaves an explicit version range untouched", async () => {
+        checkerMocks.findPluginEntry.mockImplementation(() => ({
+            entry: "@cortexkit/opencode-magic-context@^0.15.0",
+            pinnedVersion: "^0.15.0",
+            isPinned: true,
+            configPath: "/config/opencode.jsonc",
+        }));
+        const { createAutoUpdateCheckerHook } = await freshIndexImport();
+        const { ctx, showToast } = createCtx();
+
+        createAutoUpdateCheckerHook(ctx as Parameters<typeof createAutoUpdateCheckerHook>[0], {
+            showStartupToast: false,
+            initDelayMs: 0,
+            storageDir: makeTempStorageDir(),
+        });
+        await waitForCalls(checkerMocks.findPluginEntry);
+
+        expect(checkerMocks.getLatestVersion).not.toHaveBeenCalled();
+        expect(checkerMocks.preparePluginUpdate).not.toHaveBeenCalled();
+        expect(showToast).not.toHaveBeenCalled();
+    });
+
+    test("shows notification-only toast when auto-update is disabled", async () => {
+        checkerMocks.findPluginEntry.mockImplementation(() => ({
+            entry: "@cortexkit/opencode-magic-context",
             pinnedVersion: null,
             isPinned: false,
             configPath: "/config/opencode.jsonc",
@@ -387,7 +449,7 @@ describe("auto-update-checker/index", () => {
 
     test("shows warning toast when latest version fetch fails", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
-            entry: "@cortexkit/opencode-magic-context@latest",
+            entry: "@cortexkit/opencode-magic-context",
             pinnedVersion: null,
             isPinned: false,
             configPath: "/config/opencode.jsonc",
@@ -417,7 +479,7 @@ describe("auto-update-checker/index", () => {
 
     test("shows install failure toast without telling users to restart", async () => {
         checkerMocks.findPluginEntry.mockImplementation(() => ({
-            entry: "@cortexkit/opencode-magic-context@latest",
+            entry: "@cortexkit/opencode-magic-context",
             pinnedVersion: null,
             isPinned: false,
             configPath: "/config/opencode.jsonc",

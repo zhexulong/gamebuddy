@@ -1,15 +1,20 @@
 import { createHash } from "node:crypto";
 
+import { sessionLog } from "../../shared/logger";
 import type { MessageLike } from "./transform-operations";
 
 export interface LkgSlot {
     jsonPrefix: string;
     inputIdSeq: string[];
     inputContentDigests: string[];
+    /** Cheap content signatures aligned with `inputIdSeq`, used to reuse digests. */
+    inputContentSignatures?: string[];
     lastInputMessageId: string;
     modelKey: string | null;
     providerKey: string | null;
     capturedAt: number;
+    rowVersion?: number;
+    captureSequence?: number;
 }
 
 export interface LkgEntryNote {
@@ -26,6 +31,25 @@ const LKG_METADATA_BYTES = 256;
 const slots = new Map<string, { slot: LkgSlot; bytes: number }>();
 let totalBytes = 0;
 
+/**
+ * Optional durable backing for slots. Registered by the hook once its database
+ * is open; drops clear the durable row and in-memory misses try to hydrate
+ * from it, so an applied pass's snapshot survives a process restart. Capture
+ * sites write the row themselves (they hold the db handle and must keep the
+ * capture path's single-stringify discipline), so the backend only needs
+ * load/clear.
+ */
+export interface LkgPersistenceBackend {
+    load(sessionId: string): LkgSlot | undefined;
+    clear(sessionId: string): void;
+}
+
+let persistenceBackend: LkgPersistenceBackend | undefined;
+
+export function registerLkgPersistence(backend: LkgPersistenceBackend | undefined): void {
+    persistenceBackend = backend;
+}
+
 function slotBytes(slot: LkgSlot): number {
     const digestBytes = slot.inputContentDigests.reduce(
         (total, digest) => total + 2 * digest.length,
@@ -34,49 +58,119 @@ function slotBytes(slot: LkgSlot): number {
     return 2 * slot.jsonPrefix.length + digestBytes + LKG_METADATA_BYTES;
 }
 
-/** Hash provider-relevant message fields only when capturing or validating a replay. */
-export function lkgContentDigest(message: MessageLike): string | null {
-    const hash = createHash("sha256");
+export type LkgContentField = string | number | boolean | symbol;
+
+export const LKG_SNAPSHOT_ARRAY = Symbol("array");
+export const LKG_SNAPSHOT_OBJECT = Symbol("object");
+export const LKG_SNAPSHOT_KEY = Symbol("key");
+export const LKG_SNAPSHOT_STRING = Symbol("string");
+export const LKG_SNAPSHOT_NUMBER = Symbol("number");
+export const LKG_SNAPSHOT_BOOLEAN = Symbol("boolean");
+export const LKG_SNAPSHOT_NULL = Symbol("null");
+export const LKG_SNAPSHOT_UNDEFINED = Symbol("undefined");
+
+/** Flatten a value into typed tokens while retaining strings without deep copies. */
+export function lkgContentFields(value: unknown): LkgContentField[] | null {
+    const fields: LkgContentField[] = [];
     const seen = new WeakSet<object>();
-    const visit = (value: unknown): void => {
-        if (value === null) {
-            hash.update("N;");
-        } else if (typeof value === "string") {
-            hash.update(`S${value.length}:`).update(value);
-        } else if (typeof value === "number") {
-            hash.update(`D${String(value)};`);
-        } else if (typeof value === "boolean") {
-            hash.update(value ? "B1;" : "B0;");
-        } else if (value === undefined) {
-            hash.update("U;");
-        } else if (Array.isArray(value)) {
-            if (seen.has(value)) throw new Error("cyclic message");
-            seen.add(value);
-            hash.update(`A${value.length}[`);
-            for (const child of value) visit(child);
-            hash.update("]");
-            seen.delete(value);
-        } else if (typeof value === "object") {
-            if (seen.has(value)) throw new Error("cyclic message");
-            seen.add(value);
-            const entries = Object.entries(value);
-            hash.update(`O${entries.length}{`);
-            for (const [key, child] of entries) {
-                hash.update(`K${key.length}:`).update(key);
-                visit(child);
+    const visit = (child: unknown): void => {
+        if (child === null) fields.push(LKG_SNAPSHOT_NULL);
+        else if (typeof child === "string") fields.push(LKG_SNAPSHOT_STRING, child);
+        else if (typeof child === "number") fields.push(LKG_SNAPSHOT_NUMBER, child);
+        else if (typeof child === "boolean") fields.push(LKG_SNAPSHOT_BOOLEAN, child);
+        else if (child === undefined || typeof child === "function" || typeof child === "symbol") {
+            fields.push(LKG_SNAPSHOT_UNDEFINED);
+        } else if (Array.isArray(child)) {
+            if (seen.has(child)) throw new Error("cyclic message");
+            seen.add(child);
+            fields.push(LKG_SNAPSHOT_ARRAY, child.length);
+            for (const item of child) visit(item);
+            seen.delete(child);
+        } else if (typeof child === "object") {
+            if (seen.has(child)) throw new Error("cyclic message");
+            seen.add(child);
+            const entries = Object.entries(child).filter(
+                ([, entry]) =>
+                    entry !== undefined && typeof entry !== "function" && typeof entry !== "symbol",
+            );
+            fields.push(LKG_SNAPSHOT_OBJECT, entries.length);
+            for (const [key, entry] of entries) {
+                fields.push(LKG_SNAPSHOT_KEY, key);
+                visit(entry);
             }
-            hash.update("}");
-            seen.delete(value);
-        } else {
-            hash.update(`X${typeof value};`);
-        }
+            seen.delete(child);
+        } else fields.push(LKG_SNAPSHOT_UNDEFINED);
     };
     try {
-        visit(message);
-        return hash.digest("base64url");
+        visit(value);
+        return fields;
     } catch {
         return null;
     }
+}
+
+export function lkgContentDigestFromFields(fields: readonly LkgContentField[]): string {
+    const hash = createHash("sha256");
+    for (const field of fields) {
+        const value = typeof field === "symbol" ? (field.description ?? "") : String(field);
+        hash.update(`${typeof field}:${value.length}:`)
+            .update(value)
+            .update("\0");
+    }
+    return hash.digest("base64url");
+}
+
+export interface LkgDigestEntry {
+    id: string;
+    signature: string;
+    fields: readonly LkgContentField[];
+}
+
+export interface LkgDigestPrior {
+    ids: readonly string[];
+    signatures: readonly string[];
+    digests: readonly string[];
+}
+
+/**
+ * Reuse prior digests for the unchanged id+signature prefix and hash only from
+ * the first changed entry. Digest values must match a full recompute.
+ */
+export function incrementalLkgContentDigests(
+    entries: readonly LkgDigestEntry[],
+    prior?: LkgDigestPrior,
+): { digests: string[]; reusedPrefix: number } {
+    const aligned =
+        prior !== undefined &&
+        prior.ids.length === prior.signatures.length &&
+        prior.signatures.length === prior.digests.length;
+    let reusedPrefix = 0;
+    if (aligned && prior) {
+        while (
+            reusedPrefix < entries.length &&
+            reusedPrefix < prior.ids.length &&
+            entries[reusedPrefix]?.id === prior.ids[reusedPrefix] &&
+            entries[reusedPrefix]?.signature === prior.signatures[reusedPrefix]
+        ) {
+            reusedPrefix += 1;
+        }
+    }
+    const digests: string[] = [];
+    if (aligned && prior) {
+        for (let index = 0; index < reusedPrefix; index += 1) {
+            digests.push(prior.digests[index] as string);
+        }
+    }
+    for (let index = reusedPrefix; index < entries.length; index += 1) {
+        digests.push(lkgContentDigestFromFields(entries[index]?.fields ?? []));
+    }
+    return { digests, reusedPrefix };
+}
+
+/** Digest the full message tree to detect input drift before an LKG replay. */
+export function lkgContentDigest(message: MessageLike): string | null {
+    const fields = lkgContentFields(message);
+    return fields ? lkgContentDigestFromFields(fields) : null;
 }
 
 function touch(sessionId: string, entry: { slot: LkgSlot; bytes: number }): void {
@@ -87,10 +181,59 @@ function touch(sessionId: string, entry: { slot: LkgSlot; bytes: number }): void
 export function captureSlot(sessionId: string, slot: LkgSlot): boolean {
     if (
         slot.inputContentDigests.length !== slot.inputIdSeq.length ||
-        slot.inputContentDigests.some((digest) => digest.length === 0)
+        slot.inputContentDigests.some((digest) => digest.length === 0) ||
+        (slot.inputContentSignatures !== undefined &&
+            (slot.inputContentSignatures.length !== slot.inputIdSeq.length ||
+                slot.inputContentSignatures.some((signature) => signature.length === 0)))
     ) {
         return false;
     }
+    const bytes = slotBytes(slot);
+    if (bytes > LKG_SINGLE_SLOT_BYTES) return false;
+    const prior = slots.get(sessionId);
+    if (
+        prior?.slot.rowVersion !== undefined &&
+        slot.rowVersion !== undefined &&
+        (slot.rowVersion < prior.slot.rowVersion ||
+            (slot.rowVersion === prior.slot.rowVersion &&
+                (slot.captureSequence ?? 0) < (prior.slot.captureSequence ?? 0)))
+    ) {
+        return false;
+    }
+    if (prior) totalBytes -= prior.bytes;
+    slots.delete(sessionId);
+    while (totalBytes + bytes > LKG_TOTAL_BYTES) {
+        const oldest = slots.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        const evicted = slots.get(oldest);
+        slots.delete(oldest);
+        if (evicted) totalBytes -= evicted.bytes;
+    }
+    if (totalBytes + bytes > LKG_TOTAL_BYTES) {
+        if (prior) {
+            slots.set(sessionId, prior);
+            totalBytes += prior.bytes;
+        }
+        return false;
+    }
+    const entry = {
+        slot: {
+            ...slot,
+            inputIdSeq: [...slot.inputIdSeq],
+            inputContentDigests: [...slot.inputContentDigests],
+            inputContentSignatures: slot.inputContentSignatures
+                ? [...slot.inputContentSignatures]
+                : undefined,
+        },
+        bytes,
+    };
+    slots.set(sessionId, entry);
+    totalBytes += bytes;
+    return true;
+}
+
+/** Install a slot loaded from durable storage, applying the same size bounds. */
+function installHydratedSlot(sessionId: string, slot: LkgSlot): boolean {
     const bytes = slotBytes(slot);
     if (bytes > LKG_SINGLE_SLOT_BYTES) return false;
     const prior = slots.get(sessionId);
@@ -115,6 +258,9 @@ export function captureSlot(sessionId: string, slot: LkgSlot): boolean {
             ...slot,
             inputIdSeq: [...slot.inputIdSeq],
             inputContentDigests: [...slot.inputContentDigests],
+            inputContentSignatures: slot.inputContentSignatures
+                ? [...slot.inputContentSignatures]
+                : undefined,
         },
         bytes,
     };
@@ -123,22 +269,60 @@ export function captureSlot(sessionId: string, slot: LkgSlot): boolean {
     return true;
 }
 
+function hydrateSlotFromPersistence(sessionId: string): LkgSlot | undefined {
+    const backend = persistenceBackend;
+    if (!backend) return undefined;
+    let loaded: LkgSlot | undefined;
+    try {
+        loaded = backend.load(sessionId);
+    } catch (error) {
+        sessionLog(sessionId, "LKG durable hydration failed:", error);
+        return undefined;
+    }
+    if (!loaded) return undefined;
+    // Hydration only restores the snapshot. Replay still runs every validity
+    // fence a live process would apply, so stale durable bytes are rejected
+    // exactly like stale in-memory bytes.
+    if (!installHydratedSlot(sessionId, loaded)) return undefined;
+    sessionLog(sessionId, "lkg_hydrated_from_disk");
+    const entry = slots.get(sessionId);
+    return entry ? copySlotForRead(entry.slot) : undefined;
+}
+
+function copySlotForRead(slot: LkgSlot): LkgSlot {
+    return {
+        ...slot,
+        inputIdSeq: [...slot.inputIdSeq],
+        inputContentDigests: [...slot.inputContentDigests],
+        inputContentSignatures: slot.inputContentSignatures
+            ? [...slot.inputContentSignatures]
+            : undefined,
+    };
+}
+
 export function getSlot(sessionId: string): LkgSlot | undefined {
     const entry = slots.get(sessionId);
-    if (!entry) return undefined;
+    if (!entry) return hydrateSlotFromPersistence(sessionId);
     touch(sessionId, entry);
-    return {
-        ...entry.slot,
-        inputIdSeq: [...entry.slot.inputIdSeq],
-        inputContentDigests: [...entry.slot.inputContentDigests],
-    };
+    return copySlotForRead(entry.slot);
 }
 
 export function dropSlot(sessionId: string, _reason?: string): void {
     const entry = slots.get(sessionId);
-    if (!entry) return;
-    slots.delete(sessionId);
-    totalBytes -= entry.bytes;
+    if (entry) {
+        slots.delete(sessionId);
+        totalBytes -= entry.bytes;
+    }
+    // The durable row must follow the drop: a slot invalidated in memory
+    // (model change, reshape, recovery arm, deletion) is equally invalid after
+    // a restart. Clear best-effort; a missed clear still meets the replay fences.
+    const backend = persistenceBackend;
+    if (!backend) return;
+    try {
+        backend.clear(sessionId);
+    } catch (error) {
+        sessionLog(sessionId, "LKG durable clear failed:", error);
+    }
 }
 
 export function noteEntry(sessionId: string, messages: MessageLike[]): LkgEntryNote | null {
@@ -166,6 +350,7 @@ export function noteEntry(sessionId: string, messages: MessageLike[]): LkgEntryN
 export function resetLkgSlotsForTest(): void {
     slots.clear();
     totalBytes = 0;
+    persistenceBackend = undefined;
 }
 
 export function getLkgSlotStatsForTest(): { totalBytes: number; count: number } {

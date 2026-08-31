@@ -1,0 +1,328 @@
+/**
+ * TUI data layer — pure RPC client, no direct SQLite access.
+ * All data is fetched from the server plugin via HTTP RPC.
+ */
+import { getMagicContextStorageDir } from "../../shared/data-path";
+import { MagicContextRpcClient } from "../../shared/rpc-client";
+import type { EmbedDetail, SidebarSnapshot, StatusDetail } from "../../shared/rpc-types";
+
+export type { EmbedDetail, SidebarSnapshot, StatusDetail };
+
+let rpcClient: MagicContextRpcClient | null = null;
+let rpcGeneration = 0;
+
+/** Initialize the RPC client. Call once on TUI startup. */
+export function initRpcClient(directory: string): void {
+    const storageDir = getMagicContextStorageDir();
+    // Bump the generation before replacing the client so late notification
+    // responses from a disposed client are ignored (the WS socket observes the
+    // new generation and abandons its in-flight connect).
+    rpcGeneration += 1;
+    rpcClient = new MagicContextRpcClient(storageDir, directory);
+}
+
+export function getRpcGeneration(): number {
+    return rpcGeneration;
+}
+
+/** The live RPC client (for the WS notification socket's endpoint discovery).
+ *  Null before init / after close. */
+export function getRpcClient(): MagicContextRpcClient | null {
+    return rpcClient;
+}
+
+/** Clean up the RPC client. */
+export function closeRpc(): void {
+    // Closing invalidates any already-issued RPC calls; their callbacks must
+    // observe the new generation and abandon (the WS socket checks it too).
+    rpcGeneration += 1;
+    rpcClient?.reset();
+    rpcClient = null;
+}
+
+const EMPTY_SNAPSHOT: SidebarSnapshot = {
+    sessionId: "",
+    usagePercentage: 0,
+    inputTokens: 0,
+    contextLimit: 0,
+    systemPromptTokens: 0,
+    compartmentCount: 0,
+    memoryCount: 0,
+    memoryBlockCount: 0,
+    pendingOpsCount: 0,
+    historianRunning: false,
+    compartmentInProgress: false,
+    sessionNoteCount: 0,
+    readySmartNoteCount: 0,
+    cacheTtl: "5m",
+    lastTransformError: null,
+    lastDreamerRunAt: null,
+    projectIdentity: null,
+    compartmentTokens: 0,
+    factTokens: 0,
+    memoryTokens: 0,
+    docsTokens: 0,
+    profileTokens: 0,
+    conversationTokens: 0,
+    toolCallTokens: 0,
+    toolDefinitionTokens: 0,
+    executeThreshold: 65,
+    newWorkTokens: null,
+    totalInputTokens: null,
+};
+
+/**
+ * Per-session client-side sticky cache. Mirrors the server-side cache in
+ * `sidebar-snapshot-cache.ts` but covers the cases the server can't:
+ *   - RPC call fails entirely (timeout, abort, parse error) → server is never reached
+ *   - RPC server is not yet up (port file missing, retries exhausted)
+ *   - Server returns an error envelope
+ *
+ * In all three cases the breakdown bar would otherwise disappear until the
+ * next successful refresh. With this cache, the client returns the most
+ * recent good snapshot for the same session so the UI stays stable through
+ * transient RPC blips. 5-minute staleness ceiling keeps it from showing
+ * obviously old data after long disconnects.
+ */
+interface CachedSnapshot {
+    snapshot: SidebarSnapshot;
+    cachedAt: number;
+}
+const STICKY_TTL_MS = 5 * 60 * 1000;
+const STICKY_MAX_ENTRIES = 100;
+const stickySidebarCache = new Map<string, CachedSnapshot>();
+
+function rememberSidebarSnapshot(snapshot: SidebarSnapshot): void {
+    if (!snapshot.sessionId) return;
+    if (snapshot.inputTokens <= 0) {
+        // A successful zero is authoritative (new/deleted/reverted session) and
+        // must prevent a later transport failure from resurrecting old values.
+        stickySidebarCache.delete(snapshot.sessionId);
+        return;
+    }
+    // LRU-style bound: drop the oldest entry once we hit the cap. With a
+    // 5-min TTL most stale entries time out naturally; this just prevents
+    // unbounded growth across many session switches in a long TUI session.
+    if (
+        stickySidebarCache.size >= STICKY_MAX_ENTRIES &&
+        !stickySidebarCache.has(snapshot.sessionId)
+    ) {
+        const firstKey = stickySidebarCache.keys().next().value;
+        if (firstKey) stickySidebarCache.delete(firstKey);
+    }
+    stickySidebarCache.set(snapshot.sessionId, {
+        snapshot,
+        cachedAt: Date.now(),
+    });
+}
+
+function recallSidebarSnapshot(sessionId: string, fallback: SidebarSnapshot): SidebarSnapshot {
+    const cached = stickySidebarCache.get(sessionId);
+    if (!cached) return fallback;
+    if (Date.now() - cached.cachedAt > STICKY_TTL_MS) {
+        stickySidebarCache.delete(sessionId);
+        return fallback;
+    }
+    return cached.snapshot;
+}
+
+/** Fetch sidebar snapshot from the server via RPC. */
+export async function loadSidebarSnapshot(
+    sessionId: string,
+    directory: string,
+): Promise<SidebarSnapshot> {
+    const empty: SidebarSnapshot = { ...EMPTY_SNAPSHOT, sessionId };
+    if (!rpcClient) return recallSidebarSnapshot(sessionId, empty);
+    try {
+        const result = await rpcClient.call<SidebarSnapshot>("sidebar-snapshot", {
+            sessionId,
+            directory,
+        });
+        if ((result as unknown as Record<string, unknown>).error) {
+            // Snapshot-build errors are explicit failure envelopes, equivalent to
+            // a transport failure: retain the last known-good client snapshot.
+            return recallSidebarSnapshot(sessionId, empty);
+        }
+        // Trust successful server responses, including authoritative zeroes. The server has its own sticky
+        // sidebar cache (`sidebar-snapshot-cache.ts`) that handles transient
+        // zero-token windows by hybriding cached breakdown values into a
+        // fresh snapshot, AND clears that cache on `session.deleted`. If the
+        // server reaches us with `inputTokens === 0`, that's its considered
+        // answer — typically because the session was deleted, reverted, or
+        // is brand-new with no responses yet.
+        //
+        // Falling back to the client cache here would resurrect old token
+        // data for a deleted session (the client never sees `session.deleted`
+        // events, so its cache TTL is the only expiry). Sticky behavior is
+        // owned exclusively by the server side.
+        rememberSidebarSnapshot(result);
+        return result;
+    } catch {
+        return recallSidebarSnapshot(sessionId, empty);
+    }
+}
+
+export type StatusDetailResult = { ok: true; detail: StatusDetail } | { ok: false; error: string };
+
+/** Fetch full status detail without presenting transport failure as an empty session. */
+export async function loadStatusDetail(
+    sessionId: string,
+    directory: string,
+    modelKey?: string,
+): Promise<StatusDetailResult> {
+    if (!rpcClient) return { ok: false, error: "RPC client is not initialized" };
+    try {
+        const result = await rpcClient.call<StatusDetail>("status-detail", {
+            sessionId,
+            directory,
+            modelKey,
+        });
+        const error = (result as unknown as Record<string, unknown>).error;
+        if (typeof error === "string") return { ok: false, error };
+        return { ok: true, detail: result };
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+const EMPTY_EMBED_DETAIL: EmbedDetail = {
+    enabled: false,
+    model: "off",
+    provider: "off",
+    session: { embedded: 0, total: 0 },
+    memories: { embedded: 0, total: 0 },
+    commits: { embedded: 0, total: 0, gitEnabled: false },
+    statusText: "Embedding is off (no provider configured).",
+};
+
+/** Fetch embedding coverage status for `/ctx-embed` via RPC. */
+export async function loadEmbedDetail(sessionId: string, directory: string): Promise<EmbedDetail> {
+    if (!rpcClient) return EMPTY_EMBED_DETAIL;
+    try {
+        const result = await rpcClient.call<EmbedDetail>("embed-detail", {
+            sessionId,
+            directory,
+        });
+        if ((result as unknown as Record<string, unknown>).error) {
+            return EMPTY_EMBED_DETAIL;
+        }
+        return result;
+    } catch {
+        return EMPTY_EMBED_DETAIL;
+    }
+}
+
+export type CompartmentCountResult = { ok: true; count: number } | { ok: false; error: string };
+
+/** Get compartment count without making transport failure look like a real zero. */
+export async function getCompartmentCount(
+    sessionId: string,
+    directory?: string,
+): Promise<CompartmentCountResult> {
+    if (!rpcClient) return { ok: false, error: "RPC client is not initialized" };
+    try {
+        const result = await rpcClient.call<{ count?: number; error?: string }>(
+            "compartment-count",
+            { sessionId, directory },
+        );
+        if (typeof result.error === "string") return { ok: false, error: result.error };
+        if (typeof result.count !== "number" || !Number.isFinite(result.count)) {
+            return { ok: false, error: "Invalid compartment count response" };
+        }
+        return { ok: true, count: result.count };
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+/** Send recomp request to server via RPC. */
+export async function requestRecomp(sessionId: string): Promise<boolean> {
+    if (!rpcClient) return false;
+    try {
+        const result = await rpcClient.call<{ ok: boolean }>("recomp", { sessionId });
+        return result.ok ?? false;
+    } catch {
+        return false;
+    }
+}
+
+/** Run `/ctx-session-upgrade` for the session (full recomp + once-per-project
+ *  memory migration). Fired from the upgrade dialog's "Run upgrade now" action. */
+export async function requestUpgrade(sessionId: string): Promise<boolean> {
+    if (!rpcClient) return false;
+    try {
+        const result = await rpcClient.call<{ ok: boolean }>("upgrade", { sessionId });
+        return result.ok ?? false;
+    } catch {
+        return false;
+    }
+}
+
+/** Mark the upgrade reminder dismissed (the user made an explicit Confirm/Cancel
+ *  choice), setting the durable stamp so the FRESH dialog won't re-show. Resume
+ *  prompts are staging-driven and unaffected. */
+export async function dismissUpgradeReminder(sessionId: string): Promise<boolean> {
+    if (!rpcClient) return false;
+    try {
+        const result = await rpcClient.call<{ ok: boolean }>("dismiss-upgrade-reminder", {
+            sessionId,
+        });
+        return result.ok ?? false;
+    } catch {
+        return false;
+    }
+}
+
+/** Resolve global toast duration from server config via RPC. */
+export async function loadToastDurationMs(): Promise<number> {
+    if (!rpcClient) return 5000;
+    try {
+        const result = await rpcClient.call<{ toastDurationMs?: number }>("toast-duration", {});
+        return typeof result.toastDurationMs === "number" ? result.toastDurationMs : 5000;
+    } catch {
+        return 5000;
+    }
+}
+
+/**
+ * Fetch the current startup announcement from the server, if any.
+ * Returns `{show: false}` when there's nothing to announce or when the
+ * configured ANNOUNCEMENT_VERSION has already been dismissed.
+ */
+export interface AnnouncementResponse {
+    show: boolean;
+    version?: string;
+    features?: string[];
+    footer?: string;
+}
+
+export async function getAnnouncement(): Promise<AnnouncementResponse> {
+    if (!rpcClient) return { show: false };
+    try {
+        const result = await rpcClient.call<{
+            show?: boolean;
+            version?: string;
+            features?: string[];
+            footer?: string;
+        }>("get-announcement", {});
+        return {
+            show: result.show === true,
+            version: result.version,
+            features: Array.isArray(result.features) ? result.features : undefined,
+            footer: typeof result.footer === "string" ? result.footer : undefined,
+        };
+    } catch {
+        return { show: false };
+    }
+}
+
+/** Mark the current ANNOUNCEMENT_VERSION as dismissed on the server. */
+export async function markAnnounced(): Promise<boolean> {
+    if (!rpcClient) return false;
+    try {
+        const result = await rpcClient.call<{ ok?: boolean }>("mark-announced", {});
+        return result.ok === true;
+    } catch {
+        return false;
+    }
+}

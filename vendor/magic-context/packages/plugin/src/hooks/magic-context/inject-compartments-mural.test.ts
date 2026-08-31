@@ -101,6 +101,109 @@ describe("m[0] mural image fold (on-demand render → wire)", () => {
         }
     });
 
+    it("folds once when mural is disabled, removes the image, then defers byte-identically", () => {
+        const db = makeDb();
+        try {
+            const state = getOrCreateSessionMeta(db, SESSION_ID) as unknown as M0M1State;
+            const firstMessages: MessageLike[] = [];
+            injectM0M1({
+                db,
+                sessionId: SESSION_ID,
+                messages: firstMessages,
+                state,
+                projectPath: PROJECT_ID,
+                isCacheBustingPass: true,
+                muralEnabled: true,
+                mural: muralOption(),
+                memoryInjectionBudgetTokens: 8_000,
+                historyBudgetTokens: 60_000,
+            });
+            expect(imageUrl(firstMessages)).toBe(FAKE_MURAL_DATA_URL);
+
+            const disabledMessages: MessageLike[] = [];
+            const disabled = injectM0M1({
+                db,
+                sessionId: SESSION_ID,
+                messages: disabledMessages,
+                state,
+                projectPath: PROJECT_ID,
+                isCacheBustingPass: false,
+                muralEnabled: false,
+                memoryInjectionBudgetTokens: 8_000,
+                historyBudgetTokens: 60_000,
+            });
+            expect(disabled.decision).toEqual({ value: true, reason: "render_config" });
+            expect(disabled.m0RematerializedThisPass).toBe(true);
+            expect(imageUrl(disabledMessages)).toBeUndefined();
+            expect(disabled.m0Bytes?.toString("utf8")).not.toContain("<memory-mural>");
+
+            const deferMessages: MessageLike[] = [];
+            const defer = injectM0M1({
+                db,
+                sessionId: SESSION_ID,
+                messages: deferMessages,
+                state,
+                projectPath: PROJECT_ID,
+                isCacheBustingPass: false,
+                muralEnabled: false,
+                memoryInjectionBudgetTokens: 8_000,
+                historyBudgetTokens: 60_000,
+            });
+            expect(defer.m0RematerializedThisPass).toBe(false);
+            expect(defer.m0Bytes).toEqual(disabled.m0Bytes);
+            expect(imageUrl(deferMessages)).toBeUndefined();
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    it("folds once when memory or history render budgets change", () => {
+        const db = makeDb();
+        try {
+            const state = getOrCreateSessionMeta(db, SESSION_ID) as unknown as M0M1State;
+            injectM0M1({
+                db,
+                sessionId: SESSION_ID,
+                messages: [],
+                state,
+                projectPath: PROJECT_ID,
+                isCacheBustingPass: true,
+                muralEnabled: false,
+                memoryInjectionBudgetTokens: 1_000,
+                historyBudgetTokens: 2_000,
+            });
+            const changed = injectM0M1({
+                db,
+                sessionId: SESSION_ID,
+                messages: [],
+                state,
+                projectPath: PROJECT_ID,
+                isCacheBustingPass: false,
+                muralEnabled: false,
+                memoryInjectionBudgetTokens: 1_001,
+                historyBudgetTokens: 2_000,
+            });
+            expect(changed.decision).toEqual({ value: true, reason: "render_config" });
+            expect(changed.m0RematerializedThisPass).toBe(true);
+
+            const unchanged = injectM0M1({
+                db,
+                sessionId: SESSION_ID,
+                messages: [],
+                state,
+                projectPath: PROJECT_ID,
+                isCacheBustingPass: false,
+                muralEnabled: false,
+                memoryInjectionBudgetTokens: 1_001,
+                historyBudgetTokens: 2_000,
+            });
+            expect(unchanged.m0RematerializedThisPass).toBe(false);
+            expect(unchanged.m0Bytes).toEqual(changed.m0Bytes);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
     it("replays the persisted frozen image after restart instead of the current project manifest", () => {
         const db = makeDb();
         try {

@@ -7,7 +7,7 @@ import { setMagicContextRecompActive } from "./status-line";
 
 /**
  * In-flight detached recomp / upgrade runs, keyed by session, so the
- * `session_shutdown` handler can await them before Pi exits — mirrors
+ * `session_shutdown` handler can await only that session's work — mirrors
  * `inFlightHistorian` in context-handler.ts.
  *
  * Why detached: Pi's command handler IS the REPL turn (single process). Awaiting
@@ -18,7 +18,12 @@ import { setMagicContextRecompActive } from "./status-line";
  * equivalent fire-and-forget so the REPL stays responsive while the historian
  * passes run in the background — the same pattern as `spawnPiHistorianRun`.
  */
-const inFlightRecomp = new Map<string, Promise<unknown>>();
+interface InFlightRecompRun {
+	promise: Promise<unknown>;
+	controller: AbortController;
+}
+
+const inFlightRecomp = new Map<string, InFlightRecompRun>();
 
 /** True when a detached recomp/upgrade is already running for this session. */
 export function isPiRecompInFlight(sessionId: string): boolean {
@@ -26,13 +31,24 @@ export function isPiRecompInFlight(sessionId: string): boolean {
 }
 
 /**
- * Await all in-flight recomp/upgrade runs. Called from `session_shutdown`
- * (bounded by a timeout there) so a background recomp can finish publishing
- * before Pi tears the session down.
+ * Await one session's in-flight recomp/upgrade run. Called from
+ * `session_shutdown` (bounded by a timeout there) so a background recomp can
+ * finish publishing before Pi tears that session down. Omitting the session id
+ * waits for all runs and remains available for process-exit callers and tests.
  */
-export async function awaitInFlightRecomps(): Promise<void> {
-	if (inFlightRecomp.size === 0) return;
-	await Promise.allSettled(Array.from(inFlightRecomp.values()));
+export async function awaitInFlightRecomps(sessionId?: string): Promise<void> {
+	const runs = sessionId
+		? [inFlightRecomp.get(sessionId)?.promise].filter(
+				(run): run is Promise<unknown> => run !== undefined,
+			)
+		: [...inFlightRecomp.values()].map((run) => run.promise);
+	if (runs.length === 0) return;
+	await Promise.allSettled(runs);
+}
+
+/** Fence and cancel one session's detached recomp/upgrade, if still running. */
+export function abortInFlightRecomps(sessionId: string): void {
+	inFlightRecomp.get(sessionId)?.controller.abort();
 }
 
 /**
@@ -54,26 +70,36 @@ export function spawnPiRecompRun(args: {
 	sessionId: string;
 	provider: RawMessageProvider;
 	onStatusChange: () => void;
-	work: () => Promise<void>;
+	work: (signal: AbortSignal) => Promise<void>;
 }): void {
 	const { sessionId, provider, onStatusChange, work } = args;
+	const controller = new AbortController();
 	const unregister = setRawMessageProvider(sessionId, provider);
 	setMagicContextRecompActive(sessionId, true);
+
+	let run: InFlightRecompRun;
+	const runPromise = Promise.resolve()
+		.then(async () => {
+			try {
+				await work(controller.signal);
+			} catch (err) {
+				if (!controller.signal.aborted) {
+					sessionLog(
+						sessionId,
+						`pi recomp run failed (detached): ${err instanceof Error ? err.message : String(err)}`,
+					);
+				}
+			}
+		})
+		.finally(() => {
+			if (inFlightRecomp.get(sessionId) === run) {
+				inFlightRecomp.delete(sessionId);
+			}
+			setMagicContextRecompActive(sessionId, false);
+			unregister();
+			if (!controller.signal.aborted) onStatusChange();
+		});
+	run = { promise: runPromise, controller };
+	inFlightRecomp.set(sessionId, run);
 	onStatusChange();
-	const runPromise = (async () => {
-		try {
-			await work();
-		} catch (err) {
-			sessionLog(
-				sessionId,
-				`pi recomp run failed (detached): ${err instanceof Error ? err.message : String(err)}`,
-			);
-		}
-	})().finally(() => {
-		inFlightRecomp.delete(sessionId);
-		setMagicContextRecompActive(sessionId, false);
-		unregister();
-		onStatusChange();
-	});
-	inFlightRecomp.set(sessionId, runPromise);
 }

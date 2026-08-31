@@ -1,4 +1,5 @@
 import type { PluginContext } from "../../plugin/types";
+import type { ModelInput } from "../../shared/model-resolution";
 import type { Database } from "../../shared/sqlite";
 import type { ParsedEvent } from "./compartment-parser";
 import type {
@@ -76,8 +77,10 @@ export interface CompartmentRunnerDeps {
     ) => ProtectedTailBoundarySnapshot | null;
     /** Current resolved main-model context limit used to reject stale boundary snapshots after model switches. */
     currentContextLimit?: number;
+    /** Active OpenCode historian entry, including its request variant. */
+    model?: ModelInput;
     /** Resolved fallback chain for historian-family calls (historian + compressor). */
-    fallbackModels?: readonly string[];
+    fallbackModels?: readonly ModelInput[];
     language?: string;
     directory: string;
     historyBudgetTokens?: number;

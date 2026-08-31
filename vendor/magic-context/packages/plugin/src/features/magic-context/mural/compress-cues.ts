@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
+
 import { DREAMER_CLASSIFIER_AGENT } from "../../../agents/dreamer";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
 import {
@@ -8,15 +11,26 @@ import {
 import { describeError, getErrorMessage } from "../../../shared/error-message";
 import { shouldKeepSubagents } from "../../../shared/keep-subagents";
 import { log } from "../../../shared/logger";
+import type { ModelInput } from "../../../shared/model-resolution";
 import { modelBodyField } from "../../../shared/resolve-fallbacks";
 import type { Database } from "../../../shared/sqlite";
-import { runLeaseGuardedWrite, startLeaseHeartbeat } from "../dreamer/lease";
+import { type LeaseAcquisition, runLeaseGuardedWrite, startLeaseHeartbeat } from "../dreamer/lease";
 import { assertManifestCoversExactly } from "../dreamer/manifest-parser";
+import {
+    DreamerModuleFailureError,
+    type DreamerModuleRoute,
+    getModuleMemoryIdentities,
+} from "../dreamer/module-apply";
+import {
+    DreamerProviderOutputFailureError,
+    providerOutputFailureFromInvalidManifest,
+} from "../dreamer/provider-output-failure";
 import { getMemoriesByProject, type Memory } from "../memory";
 import {
     buildCompressCuesPrompt,
     COMPRESS_CUES_SYSTEM_PROMPT,
     type CompressCuesPromptMemory,
+    cueBudgetFor,
     parseCuesManifest,
 } from "./compress-cues-prompt";
 import { validateCue } from "./cue-validation";
@@ -24,6 +38,7 @@ import {
     computeCueContentHash,
     getMuralCueState,
     memoryNeedsCue,
+    recordMuralCueRejection,
     setMuralCue,
 } from "./storage-mural-cues";
 
@@ -31,8 +46,9 @@ import {
  * compress-cues: a NON-agentic single-shot transform (classify-memories shape).
  * For each project memory whose cue is missing or stale, the host renders one
  * prompt per chunk, a zero-tool agent emits ONE <cues> XML manifest, and the
- * host validates each cue and applies COLUMN-ONLY writes (mural_cue). No
- * per-memory tool calls; no selection/ranking/packing (those are deterministic
+ * host validates each cue and applies COLUMN-ONLY writes (mural_cue), either locally
+ * under TS authority or through the module facade when MODULE owns memories. No per-memory
+ * tool calls; no selection/ranking/packing (those are deterministic
  * in resolveMural / renderMural).
  *
  * Gate: mural_cue IS NULL OR mural_cue_hash != sha256(content). Resumable — cues
@@ -59,6 +75,10 @@ export const COMPRESS_CUES_CHUNK_SIZE = 40;
  *  starting a chunk we already know cannot complete. */
 export const CHUNK_TIMEOUT_FLOOR_MS = 240_000;
 
+/** Three validation failures for one content hash are enough to stop spending
+ * a child session on a response that is not going to change. */
+export const CUE_REJECTION_LATCH_THRESHOLD = 3;
+
 /** How many chunks in a row may fail with a timeout-class error before the run
  *  stops early. A model that is consistently slower than its time slice will
  *  time out every chunk; continuing just burns the remaining chunks and quota.
@@ -75,8 +95,12 @@ export interface CompressCuesArgs {
     holderId: string;
     leaseKey: string;
     deadline: number;
-    model?: string;
-    fallbackModels?: readonly string[];
+    leaseAcquisition?: LeaseAcquisition;
+    model?: ModelInput;
+    fallbackModels?: readonly ModelInput[];
+    onProgress?: (processed: number) => void;
+    /** Present only when MODULE owns memories; cue columns must be written through the facade. */
+    moduleRoute?: DreamerModuleRoute;
 }
 
 /** How a chunk failed, used by the run loop to decide whether to keep going.
@@ -129,6 +153,65 @@ function toPromptMemory(candidate: CueCandidate): CompressCuesPromptMemory {
     };
 }
 
+function stripOwnIdToken(value: string, ownId: number): string {
+    return value.replace(new RegExp(`#${ownId}\\b`, "g"), "");
+}
+
+/** Truncate by codepoint budget, preferring a complete word when one exists. */
+function truncateCue(value: string, budget: number): string {
+    const trimmed = value.trim();
+    const codepoints = [...trimmed];
+    if (codepoints.length <= budget) return trimmed;
+    const prefix = codepoints.slice(0, budget).join("");
+    const boundary = prefix.search(/\s+\S*$/);
+    return (boundary > 0 ? prefix.slice(0, boundary) : prefix).trim();
+}
+
+function sanitizeCue(value: string, candidate: CueCandidate): string {
+    return truncateCue(
+        stripOwnIdToken(value, candidate.memory.id),
+        cueBudgetFor(candidate.memory.importance ?? 50),
+    );
+}
+
+/**
+ * Make a deterministic cue after the same response has failed validation three
+ * times. The model's final candidate gets first choice; source content is the
+ * second choice so a bad polarity or mechanism cannot keep the gate open.
+ */
+function deterministicFallbackCue(candidate: CueCandidate, lastCandidate: string): string {
+    const importance = candidate.memory.importance ?? 50;
+    const budget = cueBudgetFor(importance);
+    const sanitizedCandidate = sanitizeCue(lastCandidate, candidate);
+    if (validateCue(sanitizedCandidate, importance, candidate.memory.id) === null) {
+        return sanitizedCandidate;
+    }
+
+    const sourceSlice = sanitizeCue(candidate.memory.content, candidate);
+    if (validateCue(sourceSlice, importance, candidate.memory.id) === null) {
+        return sourceSlice;
+    }
+
+    // Source content can itself contain grammar markers or an unmatched
+    // parenthesis. Remove only those validator controls as a final deterministic
+    // repair; the remaining text is still a bounded slice of the memory.
+    const grammarSafe = truncateCue(
+        sourceSlice
+            .replaceAll("⊘", "")
+            .replace(/[()]/g, "")
+            .replace(/\b(?:must not|never|without|instead of|exclude|excludes)\b/gi, "")
+            .replace(/\s+/g, " "),
+        budget,
+    );
+    if (validateCue(grammarSafe, importance, candidate.memory.id) === null) {
+        return grammarSafe;
+    }
+
+    // Memory content is normally non-empty; keep this guard deterministic for
+    // malformed legacy rows while preserving the validator's non-empty rule.
+    return "memory";
+}
+
 /** Select the memories whose cue is missing or stale (content hash mismatch). */
 function selectCandidates(db: Database, projectIdentity: string): CueCandidate[] {
     const memories = getMemoriesByProject(db, projectIdentity, ["active", "permanent"]);
@@ -177,8 +260,12 @@ export async function runCompressCues(args: CompressCuesArgs): Promise<CompressC
     }
 
     const abortController = new AbortController();
-    const heartbeat = startLeaseHeartbeat(args.db, args.holderId, args.leaseKey, () =>
-        abortController.abort(),
+    const heartbeat = startLeaseHeartbeat(
+        args.db,
+        args.holderId,
+        args.leaseKey,
+        () => abortController.abort(),
+        args.leaseAcquisition,
     );
     try {
         let consecutiveTimeouts = 0;
@@ -202,16 +289,14 @@ export async function runCompressCues(args: CompressCuesArgs): Promise<CompressC
             // never hand a chunk less than the floor (a slice too small for the
             // model guarantees a timeout).
             const sliceMs = computeChunkSliceMs(remainingMs, chunks.length - i);
-            const outcome = await compressOneChunk(
-                args,
-                chunks[i]!,
-                sliceMs,
-                abortController.signal,
-            );
+            const chunk = chunks[i];
+            if (!chunk) break;
+            const outcome = await compressOneChunk(args, chunk, sliceMs, abortController.signal);
             result.compressed += outcome.compressed;
             result.skipped += outcome.skipped;
             result.remaining -= outcome.compressed;
             result.chunks += 1;
+            args.onProgress?.(result.compressed + result.skipped);
 
             if (outcome.failure?.class === "timeout") {
                 consecutiveTimeouts += 1;
@@ -267,12 +352,12 @@ async function compressOneChunk(
             memories: chunk.map(toPromptMemory),
         });
 
-        const createResponse = await args.client.session.create({
-            body: {
-                ...(args.parentSessionId ? { parentID: args.parentSessionId } : {}),
-                title: "magic-context-dream-compress-cues",
-            },
-            query: { directory: args.sessionDirectory },
+        const createResponse = await createChildSessionWithFence({
+            client: args.client,
+            db: args.db,
+            parentSessionId: args.parentSessionId,
+            title: "magic-context-dream-compress-cues",
+            directory: args.sessionDirectory,
         });
         const created = shared.normalizeSDKResponse(
             createResponse,
@@ -318,13 +403,24 @@ async function compressOneChunk(
                     if (!text) throw new Error("compress-cues returned no output");
                     // Fail-closed root parse: a missing/truncated <cues> root rejects
                     // the whole chunk here (no partial apply from a truncated reply).
-                    parseCuesManifest(text);
+                    try {
+                        parseCuesManifest(text);
+                    } catch (error) {
+                        const providerFailure = providerOutputFailureFromInvalidManifest(
+                            messages,
+                            text,
+                        );
+                        if (providerFailure) throw providerFailure;
+                        throw error;
+                    }
                     return text;
                 },
             },
         );
 
-        return applyCues(args, chunk, run.validated);
+        return args.moduleRoute
+            ? await applyCuesThroughModule(args, chunk, run.validated, signal)
+            : applyCues(args, chunk, run.validated);
     } catch (error) {
         const desc = describeError(error);
         log(
@@ -334,7 +430,7 @@ async function compressOneChunk(
         // A chunk failure is not fatal to the run: other chunks still compress,
         // and this chunk's memories stay NULL and are retried next run. Rethrow
         // only on abort (lease lost / deadline) so the scheduler records it.
-        if (signal.aborted) throw error;
+        if (signal.aborted || error instanceof DreamerProviderOutputFailureError) throw error;
         // Classify the failure so the run loop can drive the consecutive-timeout
         // circuit breaker. The measured elapsed time lets the operator compare
         // how long the model actually ran against the slice it was given.
@@ -363,9 +459,10 @@ async function compressOneChunk(
 
 /**
  * Validate each returned cue independently and write the valid ones as
- * column-only updates. A cue that fails validation is SKIPPED (its memory keeps
- * a NULL cue and is retried next run) — never rejecting the whole chunk for one
- * bad cue. The stored hash is the SELECTION-time content hash, so a memory
+ * column-only updates. The first validation failures are skipped (the memory keeps
+ * a NULL cue); after the rejection latch trips, a deterministic fallback is
+ * written instead of retrying forever. The stored hash is the SELECTION-time
+ * content hash, so a memory
  * edited mid-run doesn't adopt a cue compressed from its old content.
  */
 export function applyCues(
@@ -386,11 +483,33 @@ export function applyCues(
         for (const entry of parsed) {
             const candidate = byId.get(entry.id);
             if (!candidate) throw new Error(`cues manifest contains unknown id ${entry.id}`);
-            const failure = validateCue(entry.cue, candidate.memory.importance ?? 50);
+            const importance = candidate.memory.importance ?? 50;
+            const failure = validateCue(entry.cue, importance, candidate.memory.id);
             if (failure) {
+                const rejectionCount = recordMuralCueRejection(
+                    args.db,
+                    args.projectIdentity,
+                    entry.id,
+                    candidate.contentHash,
+                );
+                if (rejectionCount >= CUE_REJECTION_LATCH_THRESHOLD) {
+                    const fallback = deterministicFallbackCue(candidate, entry.cue);
+                    setMuralCue(
+                        args.db,
+                        args.projectIdentity,
+                        entry.id,
+                        fallback,
+                        candidate.contentHash,
+                    );
+                    compressed += 1;
+                    log(
+                        `[dreamer] compress-cues: fallback cue for memory ${entry.id} (${failure.reason}; ${rejectionCount} rejections; fallback)`,
+                    );
+                    continue;
+                }
                 skipped += 1;
                 log(
-                    `[dreamer] compress-cues: skipped cue for memory ${entry.id} (${failure.reason})`,
+                    `[dreamer] compress-cues: skipped cue for memory ${entry.id} (${failure.reason}; rejection ${rejectionCount}/${CUE_REJECTION_LATCH_THRESHOLD})`,
                 );
                 continue;
             }
@@ -405,4 +524,161 @@ export function applyCues(
         }
     });
     return { compressed, skipped };
+}
+
+interface PlannedCueUpdate {
+    contextId: number;
+    moduleId: number;
+    contentHash: string;
+    cue: string | null;
+    rejectionCount: number;
+    kind: "compressed" | "skipped";
+}
+
+/** Use the same validation and rejection-counter behavior as the local writer, but send every
+ * derived-column update to the module authority. Read only the last mirrored rejection count
+ * from the context database; the module rechecks that the content is still current and performs
+ * the durable write. */
+async function applyCuesThroughModule(
+    args: CompressCuesArgs,
+    chunk: CueCandidate[],
+    manifestText: string,
+    signal: AbortSignal,
+): Promise<{ compressed: number; skipped: number }> {
+    const route = args.moduleRoute;
+    if (!route) throw new Error("module cue apply called without a module route");
+    const byId = new Map(chunk.map((candidate) => [candidate.memory.id, candidate]));
+    const parsed = parseCuesManifest(manifestText);
+    assertManifestCoversExactly(
+        parsed.map((entry) => entry.id),
+        new Set(byId.keys()),
+        "cues",
+    );
+    const state = getMuralCueState(
+        args.db,
+        chunk.map((candidate) => candidate.memory.id),
+    );
+    const identities = getModuleMemoryIdentities(
+        args.db,
+        args.projectIdentity,
+        chunk.map((candidate) => candidate.memory.id),
+    );
+    const updates: PlannedCueUpdate[] = [];
+    for (const entry of parsed) {
+        const candidate = byId.get(entry.id);
+        if (!candidate) throw new Error(`cues manifest contains unknown id ${entry.id}`);
+        const identity = identities.get(candidate.memory.id);
+        if (!identity) {
+            throw new Error(`module mirror identity missing for memory ${candidate.memory.id}`);
+        }
+        const failure = validateCue(
+            entry.cue,
+            candidate.memory.importance ?? 50,
+            candidate.memory.id,
+        );
+        if (!failure) {
+            updates.push({
+                contextId: candidate.memory.id,
+                moduleId: identity.moduleId,
+                contentHash: candidate.contentHash,
+                cue: entry.cue.trim(),
+                rejectionCount: 0,
+                kind: "compressed",
+            });
+            continue;
+        }
+        const previous = state.get(candidate.memory.id);
+        const rejectionCount =
+            previous?.hash === candidate.contentHash ? (previous.rejectionCount ?? 0) + 1 : 1;
+        if (rejectionCount >= CUE_REJECTION_LATCH_THRESHOLD) {
+            updates.push({
+                contextId: candidate.memory.id,
+                moduleId: identity.moduleId,
+                contentHash: candidate.contentHash,
+                cue: deterministicFallbackCue(candidate, entry.cue),
+                rejectionCount: 0,
+                kind: "compressed",
+            });
+            log(
+                `[dreamer] compress-cues: fallback cue for memory ${entry.id} (${failure.reason}; ${rejectionCount} rejections; fallback)`,
+            );
+        } else {
+            updates.push({
+                contextId: candidate.memory.id,
+                moduleId: identity.moduleId,
+                contentHash: candidate.contentHash,
+                cue: null,
+                rejectionCount,
+                kind: "skipped",
+            });
+            log(
+                `[dreamer] compress-cues: skipped cue for memory ${entry.id} (${failure.reason}; rejection ${rejectionCount}/${CUE_REJECTION_LATCH_THRESHOLD})`,
+            );
+        }
+    }
+
+    const commandId = `mural-cues:${route.moduleCommandId}:${createHash("sha256")
+        .update(chunk.map((candidate) => candidate.memory.id).join(","))
+        .digest("hex")
+        .slice(0, 24)}`;
+    let response: unknown;
+    try {
+        response = await route.moduleClient.call({
+            sessionId: route.moduleSessionId,
+            projectRoot: route.moduleProjectRoot,
+            method: "memory.set_mural_cue",
+            body: {
+                name: "memory.set_mural_cue",
+                arguments: {
+                    memory_project: args.projectIdentity,
+                    context_store_uuid: route.moduleContextStoreUuid,
+                    authority_generation: route.moduleAuthorityGeneration,
+                    command_id: commandId,
+                    rows: updates.map((update) => ({
+                        memory_id: update.moduleId,
+                        content_hash_at_prompt: update.contentHash,
+                        cue: update.cue,
+                        rejection_count: update.rejectionCount,
+                    })),
+                },
+            },
+            signal,
+        });
+    } catch (error) {
+        throw new DreamerModuleFailureError("mural cue apply", error);
+    }
+    const result = (response as { result?: unknown } | null)?.result ?? response;
+    if (!result || typeof result !== "object") {
+        throw new Error("module returned invalid mural cue apply result");
+    }
+    const accepted = (result as { accepted?: unknown }).accepted;
+    if (!Array.isArray(accepted) || !accepted.every((id) => Number.isInteger(id))) {
+        throw new Error("module returned no mural cue acceptance list");
+    }
+    const acceptedIds = new Set(accepted as number[]);
+    const rejected = (result as { rejected?: unknown }).rejected;
+    const rejectedReasons = new Map<string, number>();
+    for (const row of Array.isArray(rejected) ? rejected : []) {
+        const reason =
+            row &&
+            typeof row === "object" &&
+            typeof (row as { reason?: unknown }).reason === "string"
+                ? (row as { reason: string }).reason
+                : "unknown";
+        rejectedReasons.set(reason, (rejectedReasons.get(reason) ?? 0) + 1);
+    }
+    if ([...rejectedReasons].some(([reason]) => reason !== "stale")) {
+        throw new Error(
+            `module rejected mural cues (${[...rejectedReasons]
+                .map(([reason, count]) => `${reason}=${count}`)
+                .join(", ")})`,
+        );
+    }
+    return updates.reduce(
+        (counts, update) => {
+            if (acceptedIds.has(update.moduleId)) counts[update.kind] += 1;
+            return counts;
+        },
+        { compressed: 0, skipped: 0 },
+    );
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { resolveTransformMode } from "./transform-mode";
+import { RUST_COMPACTION_OFF_WARNING, resolveTransformMode } from "./transform-mode";
 
 describe("resolveTransformMode", () => {
     it("falls back to ts and warns when rust lacks user-level subc", () => {
@@ -8,6 +8,7 @@ describe("resolveTransformMode", () => {
             resolveTransformMode({
                 configured: "rust",
                 userTierHasSubc: false,
+                compactionEnabled: true,
             }),
         ).toEqual({
             mode: "ts",
@@ -20,6 +21,7 @@ describe("resolveTransformMode", () => {
             resolveTransformMode({
                 configured: "rust",
                 userTierHasSubc: true,
+                compactionEnabled: true,
             }),
         ).toEqual({ mode: "rust", warnings: [] });
     });
@@ -29,18 +31,32 @@ describe("resolveTransformMode", () => {
             resolveTransformMode({
                 configured: "ts",
                 userTierHasSubc: false,
+                compactionEnabled: true,
             }),
         ).toEqual({ mode: "ts", warnings: [] });
     });
 
-    it("accepts caveman compression in rust mode without a warning", () => {
+    it("keeps rust in the default compaction-on mode without a warning", () => {
         const result = resolveTransformMode({
             configured: "rust",
             userTierHasSubc: true,
-            shadowTransformEnabled: false,
+            compactionEnabled: true,
         });
 
         expect(result.mode).toBe("rust");
         expect(result.warnings).toEqual([]);
+    });
+
+    it("downgrades rust to ts with one warning when compaction is off", () => {
+        expect(
+            resolveTransformMode({
+                configured: "rust",
+                userTierHasSubc: true,
+                compactionEnabled: false,
+            }),
+        ).toEqual({
+            mode: "ts",
+            warnings: [RUST_COMPACTION_OFF_WARNING],
+        });
     });
 });

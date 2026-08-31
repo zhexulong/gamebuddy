@@ -61,6 +61,7 @@ export const MEASUREMENT_CORPUS_SESSION_ROW_CAP = 2000;
 export function recordEmbeddingMeasurement(
     db: Database,
     input: EmbeddingMeasurementInput,
+    cap = MEASUREMENT_CORPUS_SESSION_ROW_CAP,
 ): boolean {
     const queryTextHash = normalizedQueryHash(input.queryText);
     const dedupKey = queryTextHash;
@@ -108,7 +109,7 @@ export function recordEmbeddingMeasurement(
                 )
                 .get(input.sessionId) as { count: number }
         ).count;
-        const overflow = rowCount - MEASUREMENT_CORPUS_SESSION_ROW_CAP;
+        const overflow = rowCount - cap;
         if (overflow > 0) {
             db.prepare(
                 `DELETE FROM embedding_measurement_corpus

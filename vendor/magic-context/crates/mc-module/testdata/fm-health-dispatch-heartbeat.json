@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "drill_id": "FM-MC-MODULE-HEALTH-DISPATCH",
+  "cache_affecting": "none",
+  "mutations": [
+    {
+      "name": "REMOVE_TRANSFORM_DISPATCH_DROP_DECREMENT",
+      "applied_diff": {
+        "path": "crates/mc-module/src/lib.rs",
+        "before": "self.health.in_flight_count.fetch_sub(1, Ordering::Relaxed)",
+        "after": "panic-path decrement omitted",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module transform_dispatch_panic_drop_guard --lib -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "assertion": "transform_dispatch_panic_drop_guard_decrements_without_completion_stamp: left in_flight_count 1, right 0"
+      },
+      "reverted_rerun": {
+        "command": "cargo test -p mc-module transform_dispatch_panic_drop_guard --lib",
+        "exit_status": 0,
+        "status": "pass"
+      }
+    },
+    {
+      "name": "STAMP_TRANSFORM_COMPLETION_AT_LOOP_ENTRY",
+      "applied_diff": {
+        "path": "crates/mc-module/src/lib.rs",
+        "before": "TransformDispatchTicket::new constructs the ticket without writing last_dispatch_completed_at_ms",
+        "after": "TransformDispatchTicket::new stores last_dispatch_completed_at_ms before acceptance",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module transform_health_refusal_does_not_advance_a_stale_completion_heartbeat --lib -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "assertion": "transform_health_refusal_does_not_advance_a_stale_completion_heartbeat: left Ok, right Degraded"
+      },
+      "reverted_rerun": {
+        "command": "cargo test -p mc-module transform_health --lib",
+        "exit_status": 0,
+        "status": "pass"
+      }
+    }
+  ]
+}

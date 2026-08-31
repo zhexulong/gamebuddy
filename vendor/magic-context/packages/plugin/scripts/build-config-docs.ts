@@ -105,13 +105,27 @@ function collectLeaves(schema: JsonSchema, prefix: string, rows: LeafRow[]): voi
 
 const SECTION_ORDER: Array<{ keys: string[]; title: string; intro: string }> = [
     {
-        keys: ["enabled", "language", "auto_update", "keep_subagents", "todowrite"],
+        keys: [
+            "enabled",
+            "allow_home_project",
+            "language",
+            "auto_update",
+            "keep_subagents",
+            "todowrite",
+            "mural",
+        ],
         title: "Top-level switches",
         intro: "Global on/off switches for the plugin and its agent-facing surface.",
     },
     {
+        keys: ["prompt_surface"],
+        title: "Prompt surface",
+        intro: "Select the full or light built-in prompt preset. Model routes use the same progressive lookup walk as `cache_ttl`, with literal case-sensitive `provider/model` keys and the `provider/*` wildcard; guidance and tool-description overrides are user-level only.",
+    },
+    {
         keys: [
             "cache_ttl",
+            "output_reserve",
             "execute_threshold_percentage",
             "execute_threshold_tokens",
             "protected_tags",
@@ -120,6 +134,11 @@ const SECTION_ORDER: Array<{ keys: string[]; title: string; intro: string }> = [
         ],
         title: "Context management",
         intro: "When and how aggressively Magic Context manages the session's context window. Per-model keys accept `provider/model` map form where noted.",
+    },
+    {
+        keys: ["profile", "profiles"],
+        title: "Model profiles",
+        intro: "Named user-owned model-selection overlays. A project may select a profile name but cannot define or alter profile contents.",
     },
     {
         keys: ["historian", "historian_timeout_ms", "commit_cluster_trigger"],
@@ -142,6 +161,7 @@ const SECTION_ORDER: Array<{ keys: string[]; title: string; intro: string }> = [
             "caveman_text_compression",
             "system_prompt_injection",
             "sqlite",
+            "storage",
         ],
         title: "Advanced",
         intro: "Behavior tuning most installs never need to touch.",
@@ -229,7 +249,7 @@ description: Every magic-context.jsonc key, with types, defaults, and where to p
     packages/plugin/src/config/schema/magic-context.ts; regenerate with
     \`bun packages/plugin/scripts/build-config-docs.ts\`. -->
 
-Magic Context reads \`magic-context.jsonc\` (or \`.json\`) from one shared CortexKit location, the same for both harnesses. Project config overrides user config, key by key.
+Magic Context reads \`magic-context.jsonc\` (or \`.json\`) from one shared CortexKit location across OpenCode, Pi, and OMP. Project config overrides user config, key by key. Prompt-surface routing is shared by all three harnesses; project config may select \`default\` and \`models\`, while \`guidance_override_path\` and \`tool_descriptions\` are stripped at the project trust boundary.
 
 - **Project** — \`<project>/.cortexkit/magic-context.jsonc\`
 - **User-wide** — \`~/.config/cortexkit/magic-context.jsonc\`
@@ -245,7 +265,7 @@ Add the schema line for editor validation and autocomplete:
 \`\`\`
 
 :::note
-Project-level configs cannot use \`{env:VAR}\` / \`{file:path}\` expansion. A cloned repository also cannot set \`sqlite.*\`, hidden-agent prompts/permissions, \`historian.model\`, or \`historian.fallback_models\`. Project \`execute_threshold_percentage\` / \`execute_threshold_tokens\` may only RAISE thresholds relative to the user's effective settings (a repo may delay compaction, not make it happen earlier). Dreamer model/schedule/task tuning and \`memory.enabled\` remain allowed project overrides.
+Project-level configs cannot use \`{env:VAR}\` / \`{file:path}\` expansion. A cloned repository also cannot set \`output_reserve\`, \`sqlite.*\`, \`storage.enforce_private_permissions\`, hidden-agent prompts/permissions, \`historian.model\`, or \`historian.fallback_models\`. Profile definitions in \`profiles\` are user-level only; a project may set only \`profile\` to choose a named user profile. Project \`execute_threshold_percentage\` / \`execute_threshold_tokens\` may only RAISE thresholds relative to the user's effective settings (a repo may delay compaction, not make it happen earlier). Dreamer model/schedule/task tuning and \`memory.enabled\` remain allowed project overrides.
 :::
 
 ${sections.join("\n\n")}

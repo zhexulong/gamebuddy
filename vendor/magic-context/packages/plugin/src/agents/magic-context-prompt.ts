@@ -1,5 +1,6 @@
 /** Generic magic context system prompt section shared by all agents. */
 
+import type { PromptSurfacePreset } from "../shared/prompt-surface";
 import { buildPrimaryLanguageDirective } from "./language-directive";
 
 /**
@@ -29,6 +30,10 @@ const PARTNER_FRAME_CLOSER_REDUCE = `\nReduction prompts are routine housekeepin
 
 /** Closer for sessions where ctx_reduce is unavailable — context is managed fully automatically. */
 const PARTNER_FRAME_CLOSER_NO_REDUCE = `\nContext is managed for you entirely automatically — there's nothing to prune and no warnings to act on. Stay reasonably concise per operation, and never let context size change *what* work you take on or *how thoroughly* you do it.`;
+
+const PARTNER_FRAME_CLOSER_REDUCE_LIGHT = `\nWhen ctx_reduce is available, use it only as routine housekeeping; never cut task scope or depth because context is large.`;
+
+const PARTNER_FRAME_CLOSER_NO_REDUCE_LIGHT = `\nWhen ctx_reduce is unavailable, context is automatic; never prune, heed reduction warnings, or cut task scope or depth because context is large.`;
 
 /**
  * Shared `ctx_note` guidance for both intro variants. Generalizes two observed
@@ -107,6 +112,23 @@ Use \`ctx_expand\` to recover the raw conversation behind a summary under a \`##
 \`ctx_search\` returns ranked results from memories, git commits, and raw message history. Use message ordinals from results with \`ctx_expand\` to retrieve surrounding conversation context.
 ${TOOL_HISTORY_GUIDANCE}`;
 
+const LIGHT_SEARCH_RECOVERY = `Use ctx_search before asking the user about prior project context; it searches memories, commits, and compacted conversation. When a session-history summary lacks exact wording, values, errors, or reasoning, call ctx_expand with its heading range instead of guessing.`;
+
+const BASE_INTRO_LIGHT = (
+    protectedTags: number,
+    memoryEnabled: boolean,
+): string => `In primary sessions with ctx_reduce, the system tags messages and tool outputs as §N§ (for example §1§ and §42§); never imitate these prefixes in replies because only injected tag numbers are valid ctx_reduce handles.
+In primary sessions, NEVER narrate ctx_reduce; call it silently after extracting a spent output because it marks content discardable and QUEUES release rather than deleting immediately. The last ${protectedTags} tags stay protected until they age out. Use drop grammar "3-5", "1,2,9", or "1-5,8,12-15".
+${CTX_NOTE_GUIDANCE}
+${memoryGuidanceBlock(memoryEnabled)}${LIGHT_SEARCH_RECOVERY}
+${TOOL_HISTORY_GUIDANCE}
+For primary ctx_reduce choices, NEVER blanket-drop a large range because mixed-value evidence may be lost: inspect every tag first. Drop only analyzed reads, searches, diagnostics, or build/test outputs after use. NEVER drop user directives or assistant prose unless exceptionally large; keep requirements, constraints, unresolved errors or decisions, exact wording, raw evidence, and active files or work. Only extracted pasted user payloads may go.
+Consider small targeted drops after acted-on reads or searches, completed logical steps, before context switches, and before the turn ends; this keeps the working set tidy without changing task scope.`;
+
+const BASE_INTRO_NO_REDUCE_LIGHT = (memoryEnabled: boolean): string => `${CTX_NOTE_GUIDANCE}
+${memoryGuidanceBlock(memoryEnabled)}${LIGHT_SEARCH_RECOVERY}
+${TOOL_HISTORY_GUIDANCE}`;
+
 const GENERIC_SECTION = `
 ### Reduction Triggers
 - After reading files or search results you already acted on — drop raw outputs.
@@ -123,6 +145,8 @@ const GENERIC_SECTION = `
 - Your current task requirements and constraints.
 - Recent errors and unresolved decisions.
 - Active work context and files being edited.`;
+
+const SMART_NOTE_GUIDANCE_LIGHT = `\nsurface_condition creates a smart note checked nightly against external signals on ctx_note write.`;
 
 const TEMPORAL_AWARENESS_GUIDANCE = `\n**Temporal awareness**: User messages may be preceded by HTML comments like \`<!-- +12m -->\`, \`<!-- +2h 15m -->\`, or \`<!-- +3d 4h -->\` indicating time elapsed since the previous message's completion. Compartments in \`<session-history>\` carry \`start-date\` and \`end-date\` attributes (YYYY-MM-DD) showing real-time boundaries. Use these when reasoning about workflow pacing, log durations, build times, or how long ago something happened.`;
 
@@ -142,6 +166,12 @@ Use \`ctx_reduce\` to drop tool outputs you have already finished with, keeping 
 Drop silently — do not narrate it. NEVER drop large ranges blindly (e.g., "1-50"); review each tag first. Do not drop user or assistant text messages — only large tool outputs are worth dropping.
 Older tool calls may show \`[dropped §N§]\` sentinels; that is normal context management, not a pattern to copy. ALWAYS make fresh real tool calls when you need data again; never fabricate or inline tool output.`;
 
+const SUBAGENT_REDUCE_INTRO_LIGHT = (
+    protectedTags: number,
+): string => `In bounded subagent sessions, the system tags messages and tool outputs as §N§; use only those IDs in ctx_reduce drop ranges such as "3-5", "1,2,9", or "1-5,8,12-15". The last ${protectedTags} tags stay protected.
+When dropping, do it silently and NEVER choose a large range before reviewing every tag; drop only finished large tool outputs, never user or assistant messages.
+If older calls show [dropped §N§], never copy that system sentinel because it is not reply syntax; make a fresh real tool call and never fabricate or inline output.`;
+
 const CAVEMAN_COMPRESSION_WARNING = `\n**BEWARE**: History compression is on; older user AND assistant text — including your own earlier responses — has been deterministically rewritten in a terse caveman style (dropped articles, missing auxiliaries, \`//\` instead of connectives like \`because\`). This is automatic context compression that runs after the fact, not your actual prior wording or the user's. **DO NOT mimic this style in new turns.** Write fresh responses in normal prose. If you notice your output drifting into caveman cadence, that drift is in-context-learning bleeding from the compressed history — consciously revert to full sentences.`;
 
 export function buildMagicContextSection(
@@ -154,6 +184,8 @@ export function buildMagicContextSection(
     subagentMode = false,
     language?: string,
     memoryEnabled = true,
+    preset: PromptSurfacePreset = "full",
+    primaryOverride?: string,
 ): string {
     // Subagent sessions: minimal §N§ + ctx_reduce mechanics only. Bypasses the
     // long-term-partner frame, memory/search/note guidance, and the reduction
@@ -162,10 +194,16 @@ export function buildMagicContextSection(
     // when ctx_reduce is off the subagent gets no §N§ prefix, so describing the
     // tag system would be noise.
     if (subagentMode) {
-        return `## Magic Context\n\n${SUBAGENT_REDUCE_INTRO(protectedTags)}`;
+        const intro =
+            preset === "light"
+                ? SUBAGENT_REDUCE_INTRO_LIGHT(protectedTags)
+                : SUBAGENT_REDUCE_INTRO(protectedTags);
+        return `## Magic Context\n\n${intro}`;
     }
     const smartNoteGuidance = dreamerEnabled
-        ? `\nWhen \`surface_condition\` is provided with \`write\`, the note becomes a project-scoped smart note.\nThe dreamer evaluates smart note conditions during nightly runs and surfaces them when conditions are met.\nExample: \`ctx_note(action="write", content="Implement X because Y", surface_condition="When PR #42 is merged in this repo")\``
+        ? preset === "light"
+            ? SMART_NOTE_GUIDANCE_LIGHT
+            : `\nWhen \`surface_condition\` is provided with \`write\`, the note becomes a project-scoped smart note.\nThe dreamer evaluates smart note conditions during nightly runs and surfaces them when conditions are met.\nExample: \`ctx_note(action="write", content="Implement X because Y", surface_condition="When PR #42 is merged in this repo")\``
         : "";
     const temporalGuidance = temporalAwarenessEnabled ? TEMPORAL_AWARENESS_GUIDANCE : "";
     // Caveman compression is independent of ctx_reduce availability. Emit the
@@ -175,8 +213,21 @@ export function buildMagicContextSection(
     const languageDirective = buildPrimaryLanguageDirective(language);
     const languageGuidance = languageDirective ? `\n\n${languageDirective}` : "";
 
+    if (primaryOverride !== undefined) {
+        // A user override owns the complete primary section. Runtime clauses stay
+        // composer-owned so an override cannot suppress temporal guidance, the
+        // warning against overly compressed prose, or the language directive.
+        return `${primaryOverride}${temporalGuidance}${cavemanWarning}${languageGuidance}`;
+    }
+
     if (!ctxReduceCallable) {
+        if (preset === "light") {
+            return `## Magic Context\n\n${LONG_TERM_PARTNER_FRAME}\n${PARTNER_FRAME_CLOSER_NO_REDUCE_LIGHT}\n\n${BASE_INTRO_NO_REDUCE_LIGHT(memoryEnabled)}${smartNoteGuidance}${temporalGuidance}${cavemanWarning}${languageGuidance}`;
+        }
         return `## Magic Context\n\n${LONG_TERM_PARTNER_FRAME}\n${PARTNER_FRAME_CLOSER_NO_REDUCE}\n\n${BASE_INTRO_NO_REDUCE(memoryEnabled)}${smartNoteGuidance}${temporalGuidance}${cavemanWarning}${languageGuidance}`;
+    }
+    if (preset === "light") {
+        return `## Magic Context\n\n${LONG_TERM_PARTNER_FRAME}\n${PARTNER_FRAME_CLOSER_REDUCE_LIGHT}\n\n${BASE_INTRO_LIGHT(protectedTags, memoryEnabled)}${smartNoteGuidance}${temporalGuidance}${cavemanWarning}${languageGuidance}`;
     }
     return `## Magic Context\n\n${LONG_TERM_PARTNER_FRAME}\n${PARTNER_FRAME_CLOSER_REDUCE}\n\n${BASE_INTRO(protectedTags, memoryEnabled)}${smartNoteGuidance}${temporalGuidance}${cavemanWarning}\n${GENERIC_SECTION}\n\nPrefer many small targeted operations over one large blanket operation, and keep the working set tidy as routine maintenance.${languageGuidance}`;
 }

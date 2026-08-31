@@ -18,8 +18,8 @@ import type { Scheduler } from "../../features/magic-context/scheduler";
 import {
     clearPendingOps,
     closeDatabase,
+    getChannel1NudgeState,
     getHistorianFailureState,
-    getLastNudgeLevel,
     getLastNudgeUndropped,
     getOrCreateSessionMeta,
     getOverflowState,
@@ -32,7 +32,7 @@ import {
     openDatabase,
     queuePendingOp,
     recordOverflowDetected,
-    setLastNudgeLevel,
+    setChannel1NudgeState,
     setLastNudgeUndropped,
     updateSessionMeta,
     updateTagStatus,
@@ -43,15 +43,25 @@ import {
 } from "../../features/magic-context/storage-meta-persisted";
 import { createTagger } from "../../features/magic-context/tagger";
 import { recordToolDefinition } from "../../features/magic-context/tool-definition-tokens";
+import {
+    scheduleOpenCodeTransformDecisionWrite,
+    __test as transformDecisionTest,
+} from "../../features/magic-context/transform-decision-log";
 import type { ContextUsage } from "../../features/magic-context/types";
+import { buildSidebarSnapshot } from "../../plugin/rpc-handlers";
 import type { PluginContext } from "../../plugin/types";
 import { clearModelsDevCache, refreshModelLimitsFromApi } from "../../shared/models-dev-cache";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
+import { getSlot, resetLkgSlotsForTest } from "./lkg-slot";
 import { createTransform } from "./transform";
 
 type TextPart = { type: "text"; text: string };
-type ToolPart = { type: "tool"; callID: string; state: { output: string } };
+type ToolPart = {
+    type: "tool";
+    callID: string;
+    state: { status?: string; output: string };
+};
 type ThinkingPart = { type: "thinking"; thinking: string };
 type MetaPart = { type: "meta"; text: string };
 type StepStartPart = { type: "step-start"; text: string };
@@ -83,6 +93,8 @@ const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
 
 afterEach(() => {
     __resetMessageIndexAsyncForTests();
+    transformDecisionTest.reset();
+    resetLkgSlotsForTest();
     closeDatabase();
     clearModelsDevCache();
     if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
@@ -130,6 +142,222 @@ function toolOutput(message: TestMessage, index: number): string {
 }
 
 describe("createTransform", () => {
+    it("keeps the raw array untouched when session metadata is unreadable", async () => {
+        useTempDataHome("context-transform-meta-fault-");
+        const db = openDatabase();
+        const transform = createTransform({
+            tagger: createTagger(),
+            scheduler: { shouldExecute: mock(() => "execute" as const) },
+            contextUsageMap: new Map<string, { usage: ContextUsage; updatedAt: number }>(),
+            db,
+            historyRefreshSessions: new Set<string>(),
+            pendingMaterializationSessions: new Set<string>(),
+            lastHeuristicsTurnId: new Map<string, string>(),
+            clearReasoningAge: 50,
+            protectedTags: 0,
+        });
+        const messages: TestMessage[] = [
+            {
+                info: { id: "meta-fault-user", role: "user", sessionID: "ses-meta-fault" },
+                parts: [{ type: "text", text: "raw must survive" }],
+            },
+        ];
+        const original = structuredClone(messages);
+        const output = { messages };
+        db.exec("DROP TABLE session_meta");
+
+        await transform({}, output);
+
+        expect(output.messages).toBe(messages);
+        expect(messages).toEqual(original);
+    });
+
+    it("persists distinct TypeScript transform decision reasons from ordinary passes", async () => {
+        useTempDataHome("context-transform-decision-fence-");
+        const sessionId = "ses-transform-decision-fence";
+        const db = openDatabase();
+        const liveModelBySession = new Map([
+            [sessionId, { providerID: "test-provider", modelID: "model-a" }],
+        ]);
+        const transform = createTransform({
+            tagger: createTagger(),
+            scheduler: { shouldExecute: mock(() => "execute" as const) },
+            contextUsageMap: new Map([
+                [
+                    sessionId,
+                    { usage: { percentage: 40, inputTokens: 40_000 }, updatedAt: Date.now() },
+                ],
+            ]),
+            db,
+            historyRefreshSessions: new Set<string>(),
+            pendingMaterializationSessions: new Set<string>(),
+            lastHeuristicsTurnId: new Map<string, string>(),
+            clearReasoningAge: 50,
+            protectedTags: 0,
+            directory: process.cwd(),
+            liveModelBySession,
+        });
+        const messages = (): TestMessage[] => [
+            {
+                info: { id: "decision-user", role: "user", sessionID: sessionId },
+                parts: [{ type: "text", text: "record this pass" }],
+            },
+        ];
+        const bindDecision = async (messageId: string): Promise<void> => {
+            expect(
+                scheduleOpenCodeTransformDecisionWrite({
+                    db,
+                    sessionId,
+                    messageId,
+                    inputTokens: 40_000,
+                }),
+            ).toBe(true);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+        };
+
+        await transform({}, { messages: messages() });
+        await bindDecision("decision-response-a");
+        liveModelBySession.set(sessionId, {
+            providerID: "test-provider",
+            modelID: "model-b",
+        });
+        await transform({}, { messages: messages() });
+        await bindDecision("decision-response-b");
+
+        const rows = db
+            .prepare(
+                `SELECT message_id, materialize_reason
+                   FROM transform_decisions
+                  WHERE session_id = ?
+                  ORDER BY rowid`,
+            )
+            .all(sessionId) as Array<{ message_id: string; materialize_reason: string | null }>;
+        expect(rows).toEqual([
+            { message_id: "decision-response-a", materialize_reason: "first_render" },
+            { message_id: "decision-response-b", materialize_reason: "model_change" },
+        ]);
+        expect(rows[0]?.materialize_reason).not.toBe(rows[1]?.materialize_reason);
+    });
+
+    it("captures distinct LKG prefixes and token telemetry consumed by sidebar snapshots", async () => {
+        useTempDataHome("context-transform-outcome-fence-");
+        const db = openDatabase();
+        const shortSession = "ses-outcome-short";
+        const longSession = "ses-outcome-long";
+        const toolSession = "ses-outcome-tool";
+        const transform = createTransform({
+            tagger: createTagger(),
+            scheduler: { shouldExecute: mock(() => "defer" as const) },
+            contextUsageMap: new Map(
+                [shortSession, longSession, toolSession].map((sessionId) => [
+                    sessionId,
+                    { usage: { percentage: 10, inputTokens: 10_000 }, updatedAt: Date.now() },
+                ]),
+            ),
+            db,
+            historyRefreshSessions: new Set<string>(),
+            pendingMaterializationSessions: new Set<string>(),
+            lastHeuristicsTurnId: new Map<string, string>(),
+            clearReasoningAge: 50,
+            protectedTags: 0,
+            directory: process.cwd(),
+        });
+        const shortMessages: TestMessage[] = [
+            {
+                info: { id: "short-user", role: "user", sessionID: shortSession },
+                parts: [{ type: "text", text: "short" }],
+            },
+        ];
+        const longMessages: TestMessage[] = [
+            {
+                info: { id: "long-user", role: "user", sessionID: longSession },
+                parts: [{ type: "text", text: "long conversation ".repeat(200) }],
+            },
+        ];
+        const toolMessages: TestMessage[] = [
+            {
+                info: { id: "tool-user", role: "user", sessionID: toolSession },
+                parts: [{ type: "text", text: "inspect the tool output" }],
+            },
+            {
+                info: { id: "tool-assistant", role: "assistant" },
+                parts: [
+                    {
+                        type: "tool",
+                        callID: "diagnostic-call",
+                        state: {
+                            status: "completed",
+                            output: "diagnostic tool output ".repeat(100),
+                        },
+                    },
+                ],
+            },
+        ];
+
+        await transform({}, { messages: shortMessages });
+        await transform({}, { messages: longMessages });
+        await transform({}, { messages: toolMessages });
+
+        expect(getSlot(shortSession)?.lastInputMessageId).toBe("short-user");
+        expect(getSlot(longSession)?.lastInputMessageId).toBe("long-user");
+        expect(getSlot(shortSession)?.jsonPrefix).not.toBe(getSlot(longSession)?.jsonPrefix);
+
+        const telemetry = db
+            .prepare(
+                `SELECT session_id, conversation_tokens, tool_call_tokens
+                   FROM session_meta
+                  WHERE session_id IN (?, ?, ?)
+                  ORDER BY session_id`,
+            )
+            .all(longSession, shortSession, toolSession) as Array<{
+            session_id: string;
+            conversation_tokens: number;
+            tool_call_tokens: number;
+        }>;
+        const bySession = new Map(telemetry.map((row) => [row.session_id, row]));
+        expect(bySession.get(shortSession)?.conversation_tokens).toBeGreaterThan(0);
+        expect(bySession.get(longSession)?.conversation_tokens).toBeGreaterThan(
+            bySession.get(shortSession)?.conversation_tokens ?? 0,
+        );
+        expect(bySession.get(shortSession)?.tool_call_tokens).toBe(0);
+        expect(bySession.get(toolSession)?.tool_call_tokens).toBeGreaterThan(0);
+
+        const moduleStatus = {
+            usage: { current_total_input_tokens: 10_000, context_limit_tokens: 100_000 },
+        };
+        const shortSnapshot = buildSidebarSnapshot(
+            db,
+            shortSession,
+            process.cwd(),
+            undefined,
+            undefined,
+            undefined,
+            moduleStatus,
+        );
+        const longSnapshot = buildSidebarSnapshot(
+            db,
+            longSession,
+            process.cwd(),
+            undefined,
+            undefined,
+            undefined,
+            moduleStatus,
+        );
+        const toolSnapshot = buildSidebarSnapshot(
+            db,
+            toolSession,
+            process.cwd(),
+            undefined,
+            undefined,
+            undefined,
+            moduleStatus,
+        );
+        expect(shortSnapshot.toolCallTokens).toBe(0);
+        expect(toolSnapshot.toolCallTokens).toBeGreaterThan(0);
+        expect(shortSnapshot.conversationTokens).not.toBe(toolSnapshot.conversationTokens);
+        expect(longSnapshot.conversationTokens).toBeGreaterThan(0);
+    });
+
     it("schedules first-touch message index reconciliation once per session", async () => {
         useTempDataHome("context-transform-index-reconcile-");
         createOpenCodeDbForTransform("ses-reconcile", [
@@ -882,9 +1110,12 @@ describe("createTransform", () => {
         //#when
         await transform({}, { messages });
 
-        //#then — main transform stripped step-start with the recovered provider,
-        // and postprocess used that same provider for the whole-message sentinel.
-        expect(messages[1].parts[1]).toEqual({ type: "text", text: "" });
+        //#then — main transform strips the step-start with the recovered provider.
+        // The raw suffix decision is `strip`, so postprocess also removes that
+        // Magic Context sentinel instead of freezing it as a provider blank.
+        expect(messages[1].parts).toHaveLength(1);
+        expect(messages[1].parts[0]).toMatchObject({ type: "text" });
+        expect(messages[1].parts[0]?.text).toContain("visible");
         expect(messages[2].parts).toEqual([{ type: "text", text: "" }]);
     });
 
@@ -893,6 +1124,10 @@ describe("createTransform", () => {
         useTempDataHome("context-transform-ops-");
         const shouldExecute = mock<Scheduler["shouldExecute"]>(() => "defer");
         const scheduler: Scheduler = { shouldExecute };
+        const channel1StateBySession = new Map<
+            string,
+            import("./ctx-reduce-nudge").Channel1State
+        >();
         const transform = createTransform({
             tagger: createTagger(),
             scheduler,
@@ -908,6 +1143,7 @@ describe("createTransform", () => {
             lastHeuristicsTurnId: new Map<string, string>(),
             clearReasoningAge: 50,
             protectedTags: 0,
+            channel1StateBySession,
         });
 
         const firstPass: TestMessage[] = [
@@ -962,6 +1198,7 @@ describe("createTransform", () => {
         expect(getTagById(db, "ses-1", 1)?.status).toBe("dropped");
         expect(getTagById(db, "ses-1", 2)?.status).toBe("dropped");
         expect(getTagById(db, "ses-1", 2)?.dropMode).toBe("full");
+        expect(channel1StateBySession.get("ses-1")?.agentDropsAppliedThisPass).toBe(true);
         expect(clearPendingOps(db, "ses-1")).toBeUndefined();
     });
 
@@ -1430,13 +1667,13 @@ describe("createTransform", () => {
         expect(channel1StateBySession.has("ses-sub-ch1")).toBe(true);
     });
 
-    it("resets the persisted Channel 1 band when baseline refresh sees a smaller tail", async () => {
+    it("preserves Channel 1 crossing state when a baseline refresh sees a smaller tail", async () => {
         useTempDataHome("context-transform-band-reset-");
         const sessionId = "ses-band-reset";
         const scheduler: Scheduler = { shouldExecute: mock(() => "defer" as const) };
         const db = openDatabase();
         setLastNudgeUndropped(db, sessionId, 80_000);
-        setLastNudgeLevel(db, sessionId, "urgent");
+        setChannel1NudgeState(db, sessionId, { level: "urgent", ordinal: 12 });
         const channel1StateBySession = new Map<
             string,
             import("./ctx-reduce-nudge").Channel1State
@@ -1471,8 +1708,15 @@ describe("createTransform", () => {
             },
         );
 
-        expect(getLastNudgeUndropped(db, sessionId)).toBe(0);
-        expect(getLastNudgeLevel(db, sessionId)).toBe("");
+        // The next tool-output decision observes a lower band and rearms it.
+        // Clearing here would turn the same post-reduce band into a full crossing.
+        expect(getLastNudgeUndropped(db, sessionId)).toBe(80_000);
+        expect(getChannel1NudgeState(db, sessionId)).toEqual({ level: "urgent", ordinal: 12 });
+        expect(
+            db
+                .prepare("SELECT last_nudge_level FROM session_meta WHERE session_id = ?")
+                .get(sessionId),
+        ).toEqual({ last_nudge_level: '{"level":"urgent","ordinal":12}' });
     });
 
     it("Unit B: primary without callable ctx_reduce gets NO Channel 1 baseline (latent-gap fix)", async () => {
@@ -2830,6 +3074,121 @@ describe("createTransform historian failure handling", () => {
 
         expect(abort).not.toHaveBeenCalled();
         expect(emergencyNotifications).toHaveLength(0);
+    });
+
+    it("escalates a latched force-pressure episode to provider-overflow fail-closed recovery", async () => {
+        useTempDataHome("transform-latched-episode-liveness-");
+        const sessionId = "ses-latched-episode-liveness";
+        createOpenCodeDbForTransform(sessionId, [
+            { id: "m-raw-1", role: "user", text: "recent protected history" },
+        ]);
+        await refreshModelLimitsFromApi({
+            config: {
+                providers: async () => ({
+                    data: {
+                        providers: [
+                            {
+                                id: "test-provider",
+                                models: { "episode-100k": { limit: { input: 100_000 } } },
+                            },
+                        ],
+                    },
+                }),
+            },
+        });
+        const db = openDatabase();
+        const abort = mock(async () => ({ data: true }));
+        const prompt = mock(async () => ({}));
+        const usage = new Map<string, { usage: ContextUsage; updatedAt: number }>();
+        const setUsage = (percentage: number, inputTokens: number) => {
+            usage.set(sessionId, {
+                usage: { percentage, inputTokens },
+                updatedAt: Date.now(),
+            });
+        };
+        const buildMessages = () => {
+            const toolParts = Array.from({ length: 30 }, (_, index) => ({
+                type: "tool" as const,
+                tool: "bash",
+                callID: `call-${index + 1}`,
+                state: {
+                    status: "completed",
+                    output: "x".repeat(12_000),
+                },
+            }));
+            return [
+                {
+                    info: {
+                        id: "m-user",
+                        role: "user",
+                        sessionID: sessionId,
+                    },
+                    parts: [{ type: "text" as const, text: "continue" }],
+                },
+                {
+                    info: {
+                        id: "m-assistant",
+                        role: "assistant",
+                        providerID: "test-provider",
+                        modelID: "episode-100k",
+                    },
+                    parts: toolParts,
+                },
+            ];
+        };
+        const transform = createTransform({
+            tagger: createTagger(),
+            scheduler: { shouldExecute: mock(() => "defer" as const) },
+            contextUsageMap: usage,
+            db,
+            historyRefreshSessions: new Set<string>(),
+            pendingMaterializationSessions: new Set<string>(),
+            lastHeuristicsTurnId: new Map<string, string>(),
+            clearReasoningAge: 50,
+            protectedTags: 0,
+            client: {
+                session: {
+                    get: mock(async () => ({ data: { directory: "/tmp", title: "Episode" } })),
+                    prompt,
+                    abort,
+                },
+            } as unknown as PluginContext["client"],
+            directory: "/tmp",
+            liveModelBySession: new Map([
+                [sessionId, { providerID: "test-provider", modelID: "episode-100k" }],
+            ]),
+            getModelKey: () => "test-provider/episode-100k",
+        });
+        const droppedToolCount = () =>
+            getTagsBySession(db, sessionId).filter(
+                (tag) => tag.type === "tool" && tag.status === "dropped",
+            ).length;
+
+        setUsage(10, 10_000);
+        await transform({}, { messages: buildMessages() });
+        setEmergencyDropSample(db, sessionId, 90_000);
+        setUsage(90, 90_000);
+        await transform({}, { messages: buildMessages() });
+        expect(droppedToolCount()).toBe(0);
+        expect(getEmergencyInputSample(db, sessionId)).toBeGreaterThan(0);
+
+        setUsage(94, 94_000);
+        await transform({}, { messages: buildMessages() });
+        expect(droppedToolCount()).toBe(0);
+        expect(abort).not.toHaveBeenCalled();
+
+        recordOverflowDetected(
+            db,
+            sessionId,
+            100_000,
+            "test-provider/episode-100k",
+            "provider_overflow",
+        );
+        setUsage(96, 96_000);
+        await transform({}, { messages: buildMessages() });
+
+        expect(abort).toHaveBeenCalledTimes(1);
+        expect(getEmergencyInputSample(db, sessionId)).toBe(0);
     });
 
     it("notifies before awaiting self-abort for provider-proven overflow", async () => {

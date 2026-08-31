@@ -15,11 +15,13 @@ export async function ensureProjectRegisteredFromOpenCodeDirectory(
     directory: string,
     db: Database,
 ): Promise<void> {
-    const projectIdentity = resolveProjectIdentityForSession(directory);
+    const detailed = loadPluginConfigDetailed(directory);
+    const projectIdentity = resolveProjectIdentityForSession(
+        directory,
+        detailed.config.allow_home_project,
+    );
     if (!projectIdentity) return;
     invalidateProject(projectIdentity);
-
-    const detailed = loadPluginConfigDetailed(directory);
     if (isConfigLoadUntrusted(detailed)) {
         handleUntrustedLoad(db, projectIdentity, directory, detailed);
         return;

@@ -1,0 +1,26 @@
+{
+    "name": "@cortexkit/retina-local-fs",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "bin": {
+        "retina-local-fs": "src/cli.ts"
+    },
+    "exports": {
+        "./provider": "./src/provider.ts",
+        "./path-fence": "./src/path-fence.ts"
+    },
+    "scripts": {
+        "test": "bun test",
+        "typecheck": "tsc --noEmit",
+        "lint": "biome check src examples",
+        "lint:fix": "biome check --write src examples",
+        "smoke": "bun examples/smoke.ts"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.5.1",
+        "@types/bun": "^1.3.10",
+        "@types/node": "^22.20.0",
+        "typescript": "^5.8.0"
+    }
+}

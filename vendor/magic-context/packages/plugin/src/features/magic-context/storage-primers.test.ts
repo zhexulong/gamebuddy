@@ -7,10 +7,12 @@ import { initializeDatabase } from "./storage-db";
 import { clearSession } from "./storage-meta-session";
 import {
     createPrimer,
+    getActivePrimers,
     getPrimerCandidatesForProject,
     insertPrimerCandidates,
     primerOccurrenceUtcDay,
     updatePrimerAnswer,
+    updatePrimerSupport,
 } from "./storage-primers";
 import { bumpProjectMemoryEpoch, getProjectState } from "./storage-project-state";
 
@@ -22,6 +24,107 @@ function freshDb(): Database {
 }
 
 describe("primer candidate storage", () => {
+    it("retains scoped candidate provenance after promotion and candidate deletion", () => {
+        const db = freshDb();
+        const [candidateId] = insertPrimerCandidates(db, [
+            {
+                projectPath: "git:abc",
+                harness: "pi",
+                sessionId: "ses_source",
+                question: "How does cache work?",
+                sourceCompartmentStart: 2,
+                sourceCompartmentEnd: 7,
+                sourceStartMessageId: "msg_2",
+                sourceEndMessageId: "msg_7",
+                sourceMessageTime: Date.UTC(2026, 0, 1),
+            },
+        ]);
+
+        db.transaction(() => {
+            createPrimer(db, {
+                projectPath: "git:abc",
+                question: "How does cache work?",
+                totalSupport: 1,
+                lastObservedAt: Date.UTC(2026, 0, 1),
+                sourceCandidateIds: [candidateId],
+            });
+            db.prepare("DELETE FROM primer_candidates WHERE id = ?").run(candidateId);
+        })();
+
+        expect(getPrimerCandidatesForProject(db, "git:abc")).toHaveLength(0);
+        expect(getActivePrimers(db, "git:abc")[0].sourceProvenance).toEqual([
+            {
+                candidateId,
+                projectPath: "git:abc",
+                harness: "pi",
+                sessionId: "ses_source",
+                sourceCompartmentStart: 2,
+                sourceCompartmentEnd: 7,
+                sourceStartMessageId: "msg_2",
+                sourceEndMessageId: "msg_7",
+            },
+        ]);
+    });
+
+    it("preserves prior provenance while adding support from a new candidate", () => {
+        const db = freshDb();
+        const firstSource = {
+            projectPath: "git:abc",
+            harness: "opencode",
+            sessionId: "ses_first",
+            question: "How does cache work?",
+            sourceStartMessageId: "msg_1",
+            sourceEndMessageId: "msg_3",
+            sourceMessageTime: Date.UTC(2026, 0, 1),
+        };
+        const [firstCandidateId] = insertPrimerCandidates(db, [firstSource]);
+        const primerId = createPrimer(db, {
+            projectPath: "git:abc",
+            question: firstSource.question,
+            totalSupport: 1,
+            lastObservedAt: firstSource.sourceMessageTime,
+            sourceCandidateIds: [firstCandidateId],
+        });
+        db.prepare("DELETE FROM primer_candidates WHERE id = ?").run(firstCandidateId);
+        const [secondCandidateId] = insertPrimerCandidates(db, [
+            {
+                ...firstSource,
+                sessionId: "ses_second",
+                sourceStartMessageId: "msg_8",
+                sourceEndMessageId: "msg_10",
+                sourceMessageTime: Date.UTC(2026, 0, 8),
+            },
+        ]);
+
+        db.transaction(() => {
+            updatePrimerSupport(db, {
+                primerId,
+                totalSupport: 2,
+                lastObservedAt: Date.UTC(2026, 0, 8),
+                sourceCandidateIds: [firstCandidateId, secondCandidateId],
+            });
+            db.prepare("DELETE FROM primer_candidates WHERE id = ?").run(secondCandidateId);
+        })();
+
+        expect(getActivePrimers(db, "git:abc")[0].sourceProvenance).toEqual([
+            expect.objectContaining({ candidateId: firstCandidateId, sessionId: "ses_first" }),
+            expect.objectContaining({ candidateId: secondCandidateId, sessionId: "ses_second" }),
+        ]);
+    });
+
+    it("reports legacy bare candidate ids as unknown provenance", () => {
+        const db = freshDb();
+        db.prepare(
+            `INSERT INTO primers
+                (project_path, question, answer, status, total_support, source_candidate_ids, created_at, updated_at)
+             VALUES (?, ?, '', 'active', 1, ?, 1, 1)`,
+        ).run("git:legacy", "How did this work?", "[73]");
+
+        const [primer] = getActivePrimers(db, "git:legacy");
+        expect(primer.sourceCandidateIds).toEqual([73]);
+        expect(primer.sourceProvenance).toBeNull();
+    });
+
     it("upserts on the stable source occurrence key, not normalized question", () => {
         const db = freshDb();
         const base = {

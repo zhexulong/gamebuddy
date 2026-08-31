@@ -6,11 +6,12 @@ import type { DreamTaskName } from "./task-registry";
 type OpencodeClient = PluginContext["client"];
 
 /**
- * Privacy backstop for dreamer children that carry raw user or project text.
+ * Age-gated backstop for internal children that carry raw user or project text.
  *
- * These child sessions normally delete themselves in `finally`, but a hard
- * SIGKILL/OOM BETWEEN session-create and that delete would leave their prompts
- * on disk. This sweep removes such crash-orphaned children.
+ * Historian children deliberately remain after prompt completion because OpenCode
+ * can still have detached writers persisting their final parts. Dreamer children
+ * normally delete themselves in `finally`, but a hard SIGKILL/OOM can orphan them.
+ * This sweep is the safe retirement path for both cases.
  *
  * CONCURRENCY: `session.delete` has no cross-process "active session" lease (OC
  * peer confirmed), so the ONLY safe filter is AGE — a child older than any
@@ -18,6 +19,7 @@ type OpencodeClient = PluginContext["client"];
  * OpenCode sets `title` + `time_created` immediately at create (not lazily), so
  * the age gate is airtight. 404 on delete = already-swept = success.
  */
+export const HISTORIAN_CHILD_TITLE = "magic-context-compartment";
 export const RETROSPECTIVE_CHILD_TITLE = "magic-context-dream-retrospective";
 export const USER_MEMORIES_CHILD_TITLE = "magic-context-dream-user-memories";
 export const CURATE_CHILD_TITLE = "magic-context-dream-curate";
@@ -51,6 +53,16 @@ export const PRIVACY_SENSITIVE_CHILD_TITLE_MATCHES: PrivacySensitiveChildTitleMa
     prefixes: [SMART_NOTE_COMPILE_CHILD_TITLE_PREFIX, SMART_NOTE_CONFIRM_CHILD_TITLE_PREFIX],
 };
 
+export const HISTORIAN_CHILD_TITLE_MATCHES: PrivacySensitiveChildTitleMatches = {
+    exact: [HISTORIAN_CHILD_TITLE],
+    prefixes: [],
+};
+
+export const INTERNAL_CHILD_TITLE_MATCHES: PrivacySensitiveChildTitleMatches = {
+    exact: [HISTORIAN_CHILD_TITLE, ...PRIVACY_SENSITIVE_CHILD_TITLE_MATCHES.exact],
+    prefixes: PRIVACY_SENSITIVE_CHILD_TITLE_MATCHES.prefixes,
+};
+
 /** Stale threshold from task timeout(s): max(60min, maxTimeout×3) — comfortably
  *  past every swept child type so a live child is never swept. */
 export function retrospectiveOrphanStaleMs(
@@ -67,14 +79,38 @@ export function retrospectiveOrphanStaleMs(
     return Math.max(60 * 60_000, timeoutMs * 3);
 }
 
+const HISTORIAN_OUTER_ATTEMPTS = 3;
+const HISTORIAN_MODEL_SUGGESTION_ATTEMPTS = 2;
+const HISTORIAN_MAX_RETRY_BACKOFF_MS = 11_000;
+const HISTORIAN_DETACHED_WRITER_GRACE_MS = 15 * 60_000;
+
+/**
+ * Keep a historian child past its worst-case prompt budget. Each outer attempt
+ * may traverse the primary plus every configured fallback, and every model can
+ * consume a second timeout while following OpenCode's model-name suggestion.
+ */
+export function historianOrphanStaleMs(timeoutMs: number, fallbackModelCount: number): number {
+    const timeout = Math.max(60_000, timeoutMs);
+    const fallbackCount = Math.max(0, Math.floor(fallbackModelCount));
+    const fullAttemptBudget =
+        timeout *
+        HISTORIAN_OUTER_ATTEMPTS *
+        HISTORIAN_MODEL_SUGGESTION_ATTEMPTS *
+        (fallbackCount + 1);
+    return Math.max(
+        60 * 60_000,
+        fullAttemptBudget + HISTORIAN_MAX_RETRY_BACKOFF_MS + HISTORIAN_DETACHED_WRITER_GRACE_MS,
+    );
+}
+
 interface OrphanRow {
     id: string;
     time_created: number;
 }
 
 /**
- * Delete crash-orphaned privacy-sensitive dreamer children for THIS project
- * directory when they are older than `staleMs`. Best-effort + fail-open: any
+ * Delete stale internal children for THIS project directory when they are older
+ * than `staleMs`. Best-effort + fail-open: any
  * DB/schema/API error is logged and skipped (never throws into the caller's
  * sweep). Returns the count deleted.
  */
@@ -85,10 +121,11 @@ export async function sweepOrphanedRetrospectiveChildren(args: {
     staleMs: number;
     titleMatches?: PrivacySensitiveChildTitleMatches;
     now?: number;
+    keepSubagents?: boolean;
 }): Promise<number> {
     const { opencodeDb, client, sessionDirectory, staleMs } = args;
-    const titleMatches = args.titleMatches ?? PRIVACY_SENSITIVE_CHILD_TITLE_MATCHES;
-    if (!opencodeDb) return 0;
+    const titleMatches = args.titleMatches ?? INTERNAL_CHILD_TITLE_MATCHES;
+    if (!opencodeDb || args.keepSubagents === true) return 0;
     const now = args.now ?? Date.now();
     const cutoff = now - staleMs;
 
@@ -118,7 +155,7 @@ export async function sweepOrphanedRetrospectiveChildren(args: {
             .all(...titleParams, sessionDirectory, cutoff) as OrphanRow[];
     } catch (error) {
         // `session` table absent / schema drift / locked → skip silently.
-        log(`[dreamer] retrospective orphan sweep: read skipped (${String(error)})`);
+        log(`[magic-context] internal child orphan sweep: read skipped (${String(error)})`);
         return 0;
     }
     if (rows.length === 0) return 0;
@@ -134,7 +171,7 @@ export async function sweepOrphanedRetrospectiveChildren(args: {
         }
     }
     if (deleted > 0) {
-        log(`[dreamer] swept ${deleted} crash-orphaned privacy-sensitive child session(s)`);
+        log(`[magic-context] swept ${deleted} stale internal child session(s)`);
     }
     return deleted;
 }

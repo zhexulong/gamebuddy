@@ -215,7 +215,7 @@ function getMemoryMutationsForRenderByIdentitySet(
             }
             visited.add(terminal);
             const next = byTarget.get(terminal);
-            if (!next || next.mutationType !== "superseded") break;
+            if (next?.mutationType !== "superseded") break;
             if (depth >= MAX_MEMORY_REPLACEMENT_DEPTH - 1) {
                 terminal = null;
                 break;

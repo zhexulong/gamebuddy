@@ -7,6 +7,23 @@ import {
 } from "./project-security";
 
 describe("stripUnsafeProjectConfigFields", () => {
+    it("strips profile definitions from project config but leaves profile selection", () => {
+        const raw: Record<string, unknown> = {
+            profile: "work",
+            profiles: {
+                work: {
+                    historian: { opencode: { model: "attacker/model" } },
+                },
+            },
+        };
+
+        const warnings = stripUnsafeProjectConfigFields(raw);
+
+        expect(raw.profile).toBe("work");
+        expect(raw.profiles).toBeUndefined();
+        expect(warnings.join("\n")).toContain("Ignoring profiles from project config");
+    });
+
     it("strips auto_update from project config", () => {
         const raw: Record<string, unknown> = { auto_update: false, dreamer: { model: "x" } };
         const warnings = stripUnsafeProjectConfigFields(raw);
@@ -24,6 +41,48 @@ describe("stripUnsafeProjectConfigFields", () => {
         expect("fail_closed_blocking" in raw).toBe(false);
         expect(raw.dreamer).toEqual({ model: "x" });
         expect(warnings.some((w) => w.includes("fail_closed_blocking"))).toBe(true);
+    });
+
+    it("strips allow_home_project from project config (user-tier only)", () => {
+        const raw: Record<string, unknown> = {
+            allow_home_project: true,
+            dreamer: { model: "x" },
+        };
+        const warnings = stripUnsafeProjectConfigFields(raw);
+        expect("allow_home_project" in raw).toBe(false);
+        expect(raw.dreamer).toEqual({ model: "x" });
+        expect(warnings.some((w) => w.includes("allow_home_project"))).toBe(true);
+    });
+
+    it("strips output_reserve from project config", () => {
+        const raw: Record<string, unknown> = {
+            output_reserve: 0,
+            dreamer: { model: "x" },
+        };
+        const warnings = stripUnsafeProjectConfigFields(raw);
+        expect("output_reserve" in raw).toBe(false);
+        expect(raw.dreamer).toEqual({ model: "x" });
+        expect(warnings.some((w) => w.includes("output_reserve"))).toBe(true);
+    });
+
+    it("strips prompt-surface text overrides but keeps project routing", () => {
+        const raw: Record<string, unknown> = {
+            prompt_surface: {
+                default: "light",
+                models: { "openai/*": "full" },
+                guidance_override_path: "/repo/guidance.md",
+                tool_descriptions: { ctx_search: "repo-controlled text" },
+            },
+        };
+
+        const warnings = stripUnsafeProjectConfigFields(raw);
+
+        expect(raw.prompt_surface).toEqual({
+            default: "light",
+            models: { "openai/*": "full" },
+        });
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("prompt_surface.guidance_override_path/tool_descriptions");
     });
 
     it("strips language from project config", () => {
@@ -57,6 +116,28 @@ describe("stripUnsafeProjectConfigFields", () => {
         expect("sqlite" in raw).toBe(false);
         expect(raw.dreamer).toEqual({ model: "x" });
         expect(warnings.some((w) => w.includes("sqlite"))).toBe(true);
+    });
+
+    it("strips storage.enforce_private_permissions from project config (only-key case)", () => {
+        const raw: Record<string, unknown> = {
+            storage: { enforce_private_permissions: false },
+        };
+
+        const warnings = stripUnsafeProjectConfigFields(raw);
+
+        expect(raw.storage).toEqual({});
+        expect(warnings.some((w) => w.includes("storage.enforce_private_permissions"))).toBe(true);
+    });
+
+    it("strips storage.enforce_private_permissions but keeps a sibling key", () => {
+        const raw: Record<string, unknown> = {
+            storage: { enforce_private_permissions: false, futureSibling: 1 },
+        };
+
+        const warnings = stripUnsafeProjectConfigFields(raw);
+
+        expect(raw.storage).toEqual({ futureSibling: 1 });
+        expect(warnings.some((w) => w.includes("storage.enforce_private_permissions"))).toBe(true);
     });
 
     it("strips Pi subagent extension allowlists from project config", () => {
@@ -95,15 +176,56 @@ describe("stripUnsafeProjectConfigFields", () => {
     it("strips historian model selection from project config but keeps safe tuning fields", () => {
         const raw: Record<string, unknown> = {
             historian: {
-                model: "repo-model",
-                fallback_models: ["repo-fallback"],
+                model: "legacy/repo-model",
+                fallback_models: ["legacy/repo-fallback"],
+                opencode: {
+                    model: "opencode/repo-model",
+                    fallback_models: ["opencode/repo-fallback"],
+                    variant: "high",
+                },
+                pi: {
+                    model: "pi/repo-model",
+                    fallback_models: ["pi/repo-fallback"],
+                    thinking_level: "medium",
+                },
                 temperature: 0.2,
             },
         };
 
         const warnings = stripUnsafeProjectConfigFields(raw);
-        expect(raw.historian).toEqual({ temperature: 0.2 });
-        expect(warnings.some((w) => w.includes("historian.model/fallback_models"))).toBe(true);
+        expect(raw.historian).toEqual({
+            opencode: {},
+            pi: {},
+            temperature: 0.2,
+        });
+        const warning = warnings.join("\n");
+        expect(warning).toContain("historian.model");
+        expect(warning).toContain("historian.opencode.model");
+        expect(warning).toContain("historian.opencode.variant");
+        expect(warning).toContain("historian.pi.model");
+        expect(warning).toContain("historian.pi.thinking_level");
+    });
+
+    it("strips mural.model from project config but keeps the feature switch", () => {
+        const raw: Record<string, unknown> = {
+            mural: { enabled: true, model: "repo-controlled-model" },
+        };
+
+        const warnings = stripUnsafeProjectConfigFields(raw);
+
+        expect(raw.mural).toEqual({ enabled: true });
+        expect(warnings.some((w) => w.includes("mural.model"))).toBe(true);
+    });
+
+    it("strips the legacy experimental mural model before migration", () => {
+        const raw: Record<string, unknown> = {
+            experimental: { mural: { enabled: true, model: "repo-controlled-model" } },
+        };
+
+        const warnings = stripUnsafeProjectConfigFields(raw);
+
+        expect(raw.experimental).toEqual({ mural: { enabled: true } });
+        expect(warnings.some((w) => w.includes("experimental.mural.model"))).toBe(true);
     });
 
     it("strips hidden-agent prompt/permission/tools but keeps benign fields", () => {
@@ -135,7 +257,9 @@ describe("stripUnsafeProjectConfigFields", () => {
         const sidekick = raw.sidekick as Record<string, unknown>;
         expect(sidekick.permission).toBeUndefined();
 
-        expect(warnings.some((w) => w.includes("dreamer.prompt/permission/tools"))).toBe(true);
+        expect(warnings.some((w) => w.includes("dreamer.prompt"))).toBe(true);
+        expect(warnings.some((w) => w.includes("dreamer.permission"))).toBe(true);
+        expect(warnings.some((w) => w.includes("dreamer.tools"))).toBe(true);
         expect(warnings.some((w) => w.includes("historian.prompt"))).toBe(true);
         expect(warnings.some((w) => w.includes("sidekick.permission"))).toBe(true);
     });
@@ -155,6 +279,41 @@ describe("stripUnsafeProjectConfigFields", () => {
         expect(sidekick.system_prompt).toBeUndefined();
         expect(sidekick.model).toBe("claude-x");
         expect(warnings.some((w) => w.includes("sidekick.system_prompt"))).toBe(true);
+    });
+
+    it("strips compaction.enabled from project config (only-key case)", () => {
+        const raw: Record<string, unknown> = {
+            compaction: { enabled: false },
+            dreamer: { model: "x" },
+        };
+        const warnings = stripUnsafeProjectConfigFields(raw);
+        const compaction = raw.compaction as Record<string, unknown>;
+        expect("enabled" in compaction).toBe(false);
+        // Block not deleted wholesale — an empty object remains.
+        expect(raw.compaction).toEqual({});
+        expect(raw.dreamer).toEqual({ model: "x" });
+        expect(warnings.some((w) => w.includes("compaction.enabled"))).toBe(true);
+    });
+
+    it("strips compaction.enabled but keeps a sibling key (field-scoped, not block-scoped)", () => {
+        const raw: Record<string, unknown> = {
+            compaction: { enabled: false, futureSibling: 1 },
+            dreamer: { model: "x" },
+        };
+        const warnings = stripUnsafeProjectConfigFields(raw);
+        const compaction = raw.compaction as Record<string, unknown>;
+        expect("enabled" in compaction).toBe(false);
+        expect(compaction.futureSibling).toBe(1);
+        expect(warnings.some((w) => w.includes("compaction.enabled"))).toBe(true);
+    });
+
+    it("does not touch a compaction block that has no enabled key", () => {
+        const raw: Record<string, unknown> = {
+            compaction: { futureSibling: 1 },
+        };
+        const warnings = stripUnsafeProjectConfigFields(raw);
+        expect(raw.compaction).toEqual({ futureSibling: 1 });
+        expect(warnings.some((w) => w.includes("compaction"))).toBe(false);
     });
 
     it("is a no-op for a clean project config", () => {

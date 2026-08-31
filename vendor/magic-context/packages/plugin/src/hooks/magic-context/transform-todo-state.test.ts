@@ -26,12 +26,14 @@ import {
     setPersistedTodoSyntheticAnchor,
     updateSessionMeta,
 } from "../../features/magic-context/storage";
+import { clearToolPermissionDenied } from "./ctx-reduce-availability";
 import { buildSyntheticTodoPart, computeSyntheticCallId, isSyntheticTodoPart } from "./todo-view";
 import {
     injectToolPartIntoAssistantById,
     injectToolPartIntoLatestAssistant,
 } from "./transform-message-helpers";
 import type { MessageLike } from "./transform-operations";
+import { applyTodoSynthesis } from "./transform-postprocess-phase";
 
 const tempDirs: string[] = [];
 
@@ -191,6 +193,116 @@ function countSyntheticParts(messages: MessageLike[]): number {
     }
     return n;
 }
+
+describe("todo state synthesis — live permission cache boundaries", () => {
+    it("clears on a denied bust, replays defer bytes, and resumes after re-enable", async () => {
+        useTempDataHome("todo-permission-flip-");
+        const db = openDatabase();
+        const sessionId = "ses-permission-flip";
+        let denied = false;
+        const client = {
+            app: {
+                agents: async () => ({
+                    data: [
+                        {
+                            name: "build",
+                            permission: {
+                                todowrite: denied ? "deny" : "allow",
+                            },
+                        },
+                    ],
+                }),
+            },
+            session: {
+                get: async () => ({ data: { agent: "build" } }),
+            },
+        } as never;
+        clearToolPermissionDenied(sessionId);
+        updateSessionMeta(db, sessionId, { lastTodoState: ACTIVE_TODOS_JSON });
+
+        const bustMessages = buildMessages();
+        await applyTodoSynthesis({
+            db,
+            sessionId,
+            messages: bustMessages,
+            fullFeatureMode: true,
+            isCacheBustingPass: true,
+            sessionMeta: getOrCreateSessionMeta(db, sessionId),
+            todowriteAvailability: { callable: true, frozen: true },
+            client,
+        });
+        expect(countSyntheticParts(bustMessages)).toBe(1);
+        const frozenBytes = JSON.stringify(bustMessages);
+
+        // A permission flip is not allowed to mutate a defer prefix. The cached
+        // allow verdict is replayed until the next cache-busting pass.
+        denied = true;
+        updateSessionMeta(db, sessionId, {
+            lastTodoState: JSON.stringify([
+                { content: "Changed after bust", status: "pending", priority: "low" },
+            ]),
+        });
+        const deferMessages = buildMessages();
+        await applyTodoSynthesis({
+            db,
+            sessionId,
+            messages: deferMessages,
+            fullFeatureMode: true,
+            isCacheBustingPass: false,
+            sessionMeta: getOrCreateSessionMeta(db, sessionId),
+            todowriteAvailability: { callable: true, frozen: true },
+            client,
+        });
+        expect(JSON.stringify(deferMessages)).toBe(frozenBytes);
+
+        const deniedBustMessages = buildMessages();
+        const priorSyntheticPart = buildSyntheticTodoPart(ACTIVE_TODOS_JSON);
+        if (!priorSyntheticPart) throw new Error("expected active synthetic part");
+        deniedBustMessages
+            .find((message) => message.info.id === "msg-asst-2")
+            ?.parts.push(priorSyntheticPart);
+        await applyTodoSynthesis({
+            db,
+            sessionId,
+            messages: deniedBustMessages,
+            fullFeatureMode: true,
+            isCacheBustingPass: true,
+            sessionMeta: getOrCreateSessionMeta(db, sessionId),
+            todowriteAvailability: { callable: true, frozen: true },
+            client,
+        });
+        expect(countSyntheticParts(deniedBustMessages)).toBe(0);
+        expect(getPersistedTodoSyntheticAnchor(db, sessionId)).toBeNull();
+        expect(
+            db
+                .prepare(
+                    "SELECT todo_synthetic_call_id, todo_synthetic_anchor_message_id, todo_synthetic_state_json FROM session_meta WHERE session_id = ?",
+                )
+                .get(sessionId),
+        ).toEqual({
+            todo_synthetic_call_id: "",
+            todo_synthetic_anchor_message_id: "",
+            todo_synthetic_state_json: "",
+        });
+
+        denied = false;
+        const reenabledMessages = buildMessages();
+        await applyTodoSynthesis({
+            db,
+            sessionId,
+            messages: reenabledMessages,
+            fullFeatureMode: true,
+            isCacheBustingPass: true,
+            sessionMeta: getOrCreateSessionMeta(db, sessionId),
+            todowriteAvailability: { callable: true, frozen: true },
+            client,
+        });
+        expect(countSyntheticParts(reenabledMessages)).toBe(1);
+        expect(getPersistedTodoSyntheticAnchor(db, sessionId)?.stateJson).toBe(
+            getOrCreateSessionMeta(db, sessionId).lastTodoState,
+        );
+    });
+});
 
 describe("todo state synthesis — cache-busting branches", () => {
     it("Branch 1: cache-bust + render null + no sticky → no-op", () => {

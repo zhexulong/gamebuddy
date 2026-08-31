@@ -66,6 +66,8 @@ import { sessionLog } from "@magic-context/core/shared/logger";
  * intentionally excluded because two identical calls may have
  * different semantics in different positions of the conversation.
  */
+export const PI_CTX_REDUCE_KEEP = 3;
+
 const DEDUP_SAFE_TOOLS = new Set([
 	"mcp_grep",
 	"mcp_read",
@@ -87,7 +89,7 @@ export interface PiHeuristicCleanupConfig {
 	staleReduceStripEnabled: boolean;
 	/**
 	 * Tiered target-headroom emergency drop (Phase 2). Provided only on the
-	 * ≥85% force-materialize (cache-busting) pass; undefined on routine execute
+	 * derived force-band materialize (cache-busting) pass; undefined on routine execute
 	 * passes (routine age-based tool drops were removed). Mirrors OpenCode's
 	 * `applyHeuristicCleanup` emergency config.
 	 */
@@ -200,18 +202,23 @@ function buildPiToolFingerprints(
  * holds the toolCall part (resolveStableId of that message), which is exactly
  * what the tag row's tool_owner_message_id records.
  *
- * Returns both a composite set (for tags carrying an owner) and a bare-callId set
- * (legacy NULL-owner rows written before composite identity, matched by callId
- * alone — same lazy-adoption fallback the rest of the tag pipeline uses).
+ * The newest ctx_reduce arcs are selected before the age cutoff is applied and
+ * remain visible as housekeeping exemplars. Returns both a composite set (for
+ * tags carrying an owner) and a bare-callId set (legacy NULL-owner rows written
+ * before composite identity, matched by callId alone — same lazy-adoption
+ * fallback the rest of the tag pipeline uses).
  */
 function collectStaleReduceCallIds(
 	messages: readonly unknown[],
 	messageIdToMaxTag: Map<string, number>,
+	ctxReduceTagNumbers: ReadonlyMap<string, number>,
 	toolAgeCutoff: number,
 	resolveStableId: (msg: unknown, index: number) => string | undefined,
 ): { composite: Set<string>; bareCallIds: Set<string> } {
-	const composite = new Set<string>();
-	const bareCallIds = new Set<string>();
+	const reduceCalls = new Map<
+		string,
+		{ composite: string; callId: string; maxTag: number; messageIndex: number }
+	>();
 	for (let i = 0; i < messages.length; i++) {
 		const raw = messages[i];
 		if (!raw || typeof raw !== "object") continue;
@@ -224,8 +231,7 @@ function collectStaleReduceCallIds(
 
 		const stableId = resolveStableId(raw, i);
 		if (!stableId) continue;
-		const maxTag = messageIdToMaxTag.get(stableId) ?? 0;
-		if (maxTag === 0 || maxTag > toolAgeCutoff) continue;
+		const ownerMaxTag = messageIdToMaxTag.get(stableId) ?? 0;
 
 		for (const part of msg.content) {
 			if (!part || typeof part !== "object") continue;
@@ -233,9 +239,35 @@ function collectStaleReduceCallIds(
 			if (p.type !== "toolCall") continue;
 			if (p.name !== "ctx_reduce") continue;
 			if (typeof p.id !== "string" || p.id.length === 0) continue;
-			composite.add(`${stableId}\x00${p.id}`);
-			bareCallIds.add(p.id);
+			const composite = `${stableId}\x00${p.id}`;
+			const maxTag = ctxReduceTagNumbers.get(composite) ?? ownerMaxTag;
+			if (maxTag === 0) continue;
+			reduceCalls.set(composite, {
+				composite,
+				callId: p.id,
+				maxTag,
+				messageIndex: i,
+			});
 		}
+	}
+
+	const newestFirst = [...reduceCalls.values()].sort((left, right) => {
+		const byPosition =
+			right.maxTag - left.maxTag || right.messageIndex - left.messageIndex;
+		if (byPosition !== 0) return byPosition;
+		if (left.composite === right.composite) return 0;
+		return left.composite < right.composite ? 1 : -1;
+	});
+	const protectedComposite = new Set(
+		newestFirst.slice(0, PI_CTX_REDUCE_KEEP).map((call) => call.composite),
+	);
+	const composite = new Set<string>();
+	const bareCallIds = new Set<string>();
+	for (const call of newestFirst) {
+		if (call.maxTag > toolAgeCutoff || protectedComposite.has(call.composite))
+			continue;
+		composite.add(call.composite);
+		bareCallIds.add(call.callId);
 	}
 	return { composite, bareCallIds };
 }
@@ -289,9 +321,8 @@ export function applyPiHeuristicCleanup(
 	// single backward index seek (O(log N)).
 	const maxTag = getMaxTagNumberBySession(db, sessionId);
 	const protectedCutoff = maxTag - config.protectedTags;
-	// Stale ctx_reduce removal now uses the protected-tail window (Phase 2
-	// removed the routine age knob); a ctx_reduce call is "stale" once it ages
-	// past the protected tail, mirroring OpenCode's protected-count model.
+	// Stale ctx_reduce removal uses the protected-tail window after first retaining
+	// the newest housekeeping exemplars; only older calls can become stale.
 	const toolAgeCutoff = protectedCutoff;
 
 	let droppedTools = 0;
@@ -302,7 +333,7 @@ export function applyPiHeuristicCleanup(
 
 	// ── Pass 1: tiered target-headroom emergency drop ─────────────────
 	// Replaces the old need-blind aged-drop + dropAllTools nuke. Runs only when
-	// the caller supplies `emergency` (≥85% cache-busting pass). Selection is
+	// the caller supplies `emergency` (derived force-band cache-busting pass). Selection is
 	// pure (`planEmergencyDrop`); we apply it and advance the persisted watermark
 	// so each tag drops once. Mirrors OpenCode `applyHeuristicCleanup`.
 	if (config.emergency) {
@@ -377,6 +408,7 @@ export function applyPiHeuristicCleanup(
 		? collectStaleReduceCallIds(
 				piMessages,
 				buildMessageIdToMaxTagFromTargets(targets),
+				buildCtxReduceTagNumbers(tags),
 				toolAgeCutoff,
 				resolveStableId,
 			)
@@ -532,6 +564,27 @@ export function applyPiHeuristicCleanup(
 		compressedTextTags,
 		mutatedTextTags,
 	};
+}
+
+function buildCtxReduceTagNumbers(
+	tags: readonly TagEntry[],
+): Map<string, number> {
+	const byComposite = new Map<string, number>();
+	for (const tag of tags) {
+		if (
+			tag.status !== "active" ||
+			tag.type !== "tool" ||
+			tag.toolName !== "ctx_reduce" ||
+			!tag.toolOwnerMessageId
+		) {
+			continue;
+		}
+		byComposite.set(
+			`${tag.toolOwnerMessageId}\x00${tag.messageId}`,
+			tag.tagNumber,
+		);
+	}
+	return byComposite;
 }
 
 function buildMessageIdToMaxTagFromTargets(

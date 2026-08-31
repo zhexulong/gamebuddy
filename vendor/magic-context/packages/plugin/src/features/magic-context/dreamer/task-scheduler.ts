@@ -1,8 +1,14 @@
 import type { PiThinkingLevel } from "../../../config/schema/magic-context";
 import { log } from "../../../shared/logger";
+import type { ModelInput } from "../../../shared/model-resolution";
 import type { Database } from "../../../shared/sqlite";
 import { nextDueAtMs } from "./cron";
-import { acquireLease, peekLeaseHolderAndExpiry, releaseLease } from "./lease";
+import {
+    acquireLeaseWithAcquisition,
+    type LeaseAcquisition,
+    leaseOwnershipMatches,
+    releaseLease,
+} from "./lease";
 import { getDreamState } from "./storage-dream-state";
 import {
     getTaskScheduleState,
@@ -10,8 +16,14 @@ import {
     seedTaskScheduleState,
     writeTaskScheduleState,
 } from "./storage-task-schedule";
-import { evaluateTaskGate } from "./task-gates";
-import { compareTaskOrder, type DreamTaskName, leaseKeyFor, leaseKindFor } from "./task-registry";
+import { evaluateTaskGate, getDreamTaskBacklogs } from "./task-gates";
+import {
+    compareTaskOrder,
+    type DreamTaskBacklogMap,
+    type DreamTaskName,
+    leaseKeyFor,
+    leaseKindFor,
+} from "./task-registry";
 
 /** Bounded retry before a transient failure stops hot-retrying and waits for the
  *  next cron occurrence. */
@@ -23,8 +35,8 @@ export interface DreamTaskRuntimeConfig {
     task: DreamTaskName;
     /** Cron string; `""` = disabled (never due). */
     schedule: string;
-    model?: string;
-    fallbackModels?: readonly string[];
+    model?: ModelInput;
+    fallbackModels?: readonly ModelInput[];
     thinkingLevel?: PiThinkingLevel;
     language?: string;
     timeoutMinutes: number;
@@ -47,9 +59,17 @@ export interface TaskExecOutcome {
 /** Runs ONE task's actual work (LLM loop). Supplied by the runner (step 4). The
  *  scheduler holds the domain lease + `holderId`; the executor must verify the
  *  lease holder under BEGIN IMMEDIATE immediately before any durable write. */
+export interface TaskExecutorContext {
+    db: Database;
+    projectIdentity: string;
+    holderId: string;
+    leaseKey: string;
+    leaseAcquisition?: LeaseAcquisition;
+}
+
 export type TaskExecutor = (
     task: DreamTaskRuntimeConfig,
-    ctx: { db: Database; projectIdentity: string; holderId: string; leaseKey: string },
+    ctx: TaskExecutorContext,
 ) => Promise<TaskExecOutcome>;
 
 export interface RunDueTasksDeps {
@@ -266,7 +286,7 @@ interface DomainGroupCallbacks {
      */
     leaseWaitMs?: number;
     onRan?: (task: DreamTaskName) => void;
-    onFailed?: (task: DreamTaskName) => void;
+    onFailed?: (task: DreamTaskName, error?: string) => void;
     onBusy?: (task: DreamTaskName) => void;
 }
 
@@ -285,20 +305,20 @@ async function runDomainGroup(
     const leaseKey = leaseKeyFor(group[0].config.task, projectIdentity);
     const holderId = crypto.randomUUID();
 
-    let acquired = acquireLease(db, holderId, leaseKey);
-    if (!acquired && cb?.leaseWaitMs) {
+    let acquisition = acquireLeaseWithAcquisition(db, holderId, leaseKey);
+    if (!acquisition && cb?.leaseWaitMs) {
         // Explicit manual run: the lease holder is usually a scheduled
         // catch-up task on the same domain finishing within seconds. Waiting
         // briefly turns a confusing "busy, try again" into the run the user
         // asked for. Scheduled ticks never wait (leaseWaitMs unset) — the next
         // tick retries anyway.
         const deadline = Date.now() + cb.leaseWaitMs;
-        while (!acquired && Date.now() < deadline) {
+        while (!acquisition && Date.now() < deadline) {
             await new Promise((resolve) => setTimeout(resolve, LEASE_WAIT_POLL_MS));
-            acquired = acquireLease(db, holderId, leaseKey);
+            acquisition = acquireLeaseWithAcquisition(db, holderId, leaseKey);
         }
     }
-    if (!acquired) {
+    if (!acquisition) {
         // Busy (a long sibling run or another process holds it). Leave next_due_at
         // unchanged so these tasks re-attempt next tick — they run the instant the
         // lease frees. No state write.
@@ -311,7 +331,7 @@ async function runDomainGroup(
         for (const due of [...group].sort((a, b) =>
             compareTaskOrder(a.config.task, b.config.task),
         )) {
-            if (!peekLeaseHolderAndExpiry(db, holderId, leaseKey)) {
+            if (!leaseOwnershipMatches(db, holderId, acquisition.generation, leaseKey)) {
                 log(`[dreamer] domain lease lost (${leaseKey}) — stopping remaining task(s)`);
                 break;
             }
@@ -339,7 +359,13 @@ async function runDomainGroup(
 
             let outcome: TaskExecOutcome;
             try {
-                outcome = await executor(due.config, { db, projectIdentity, holderId, leaseKey });
+                outcome = await executor(due.config, {
+                    db,
+                    projectIdentity,
+                    holderId,
+                    leaseKey,
+                    leaseAcquisition: acquisition,
+                });
             } catch (error) {
                 outcome = { status: "failed", transient: true, error: String(error) };
             }
@@ -358,7 +384,7 @@ async function runDomainGroup(
                 cb?.onRan?.(due.config.task);
             } else if (outcome.transient) {
                 recordTransientFailure(db, projectIdentity, due, finishedAt, outcome.error ?? null);
-                cb?.onFailed?.(due.config.task);
+                cb?.onFailed?.(due.config.task, outcome.error);
             } else {
                 advanceAfterRun(
                     db,
@@ -368,7 +394,7 @@ async function runDomainGroup(
                     "failed",
                     outcome.error ?? null,
                 );
-                cb?.onFailed?.(due.config.task);
+                cb?.onFailed?.(due.config.task, outcome.error);
             }
         }
     } finally {
@@ -385,6 +411,12 @@ export interface ManualRunResult {
     deferredBusy: string[];
     /** Tasks that ran but failed. */
     failed: string[];
+    /** User-visible error details for failed tasks, including incomplete backlogs. */
+    failureDetails?: string[];
+    /** Read-only backlog snapshot before the selected tasks started. */
+    backlogBefore: DreamTaskBacklogMap;
+    /** Read-only backlog snapshot after the selected tasks finished or were skipped. */
+    backlogAfter: DreamTaskBacklogMap;
 }
 
 /**
@@ -401,7 +433,15 @@ export async function runManualDream(
     deps: Omit<RunDueTasksDeps, "now"> & { task?: DreamTaskName },
 ): Promise<ManualRunResult> {
     const now = Date.now();
-    const result: ManualRunResult = { ran: [], skippedNoWork: [], deferredBusy: [], failed: [] };
+    const result: ManualRunResult = {
+        ran: [],
+        skippedNoWork: [],
+        deferredBusy: [],
+        failed: [],
+        failureDetails: [],
+        backlogBefore: {},
+        backlogAfter: {},
+    };
 
     let selected: readonly DreamTaskRuntimeConfig[];
     let forceGate = false;
@@ -415,6 +455,10 @@ export async function runManualDream(
         selected = deps.tasks.filter((t) => t.schedule.trim() !== "");
     }
     if (selected.length === 0) return result;
+
+    const selectedTaskNames = selected.map((config) => config.task);
+    result.backlogBefore = getDreamTaskBacklogs(deps.db, deps.projectIdentity, selectedTaskNames);
+    result.backlogAfter = { ...result.backlogBefore };
 
     // Seed rows so completion advancement has a row to update.
     for (const cfg of selected) ensureSeeded(deps.db, deps.projectIdentity, cfg, now);
@@ -443,7 +487,14 @@ export async function runManualDream(
         if (pass) gated.push(d);
         else result.skippedNoWork.push(d.config.task);
     }
-    if (gated.length === 0) return result;
+    if (gated.length === 0) {
+        result.backlogAfter = getDreamTaskBacklogs(
+            deps.db,
+            deps.projectIdentity,
+            selectedTaskNames,
+        );
+        return result;
+    }
 
     const groups = new Map<string, DueTask[]>();
     for (const d of gated) {
@@ -459,11 +510,15 @@ export async function runManualDream(
                 forceGate,
                 leaseWaitMs: MANUAL_RUN_LEASE_WAIT_MS,
                 onRan: (t) => result.ran.push(t),
-                onFailed: (t) => result.failed.push(t),
+                onFailed: (task, error) => {
+                    result.failed.push(task);
+                    if (error) result.failureDetails?.push(`${task}: ${error}`);
+                },
                 onBusy: (t) => result.deferredBusy.push(t),
             }),
         ),
     );
+    result.backlogAfter = getDreamTaskBacklogs(deps.db, deps.projectIdentity, selectedTaskNames);
     return result;
 }
 

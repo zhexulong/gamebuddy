@@ -69,6 +69,8 @@ export interface PiSidekickConfig {
 	/** Ordered fallback chain after the primary sidekick model. */
 	fallbackModels?: readonly string[];
 	language?: string;
+	/** Allow a session started exactly in the canonical home directory only when user-level configuration enables it. */
+	allowHomeProject?: boolean;
 }
 
 type ResolveSidekickConfig = (ctx: {
@@ -139,7 +141,10 @@ export function registerCtxAugCommand(
 			// session. This is what makes cross-harness memory sharing work:
 			// sidekick sees the same memories whether spawned from Pi or
 			// OpenCode at the same cwd.
-			const projectIdentity = resolveProjectIdentityForSession(ctx.cwd);
+			const projectIdentity = resolveProjectIdentityForSession(
+				ctx.cwd,
+				currentConfig.allowHomeProject,
+			);
 			if (!projectIdentity) {
 				sessionLog(
 					sessionLabel,

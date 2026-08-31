@@ -6,8 +6,20 @@ import type {
     StoredCompartmentRange,
     ValidatedHistorianPassResult,
 } from "./compartment-runner-types";
+import { completedToolArcCrossesBoundary } from "./read-session-true-raw-tokens";
 
 const MIN_RECOMP_CHUNK_TOKEN_BUDGET = 20;
+export const HISTORIAN_BOUNDARY_HEALING_SLACK = 2;
+
+export interface HistorianValidationChunk {
+    startIndex: number;
+    endIndex: number;
+    lines: Array<{ ordinal: number; messageId: string }>;
+    /** Optional — when provided, gaps inside these ranges heal at any size. */
+    toolOnlyRanges?: ReadonlyArray<{ start: number; end: number }>;
+    /** Completed invocation/result arcs visible in the raw snapshot. */
+    completedToolArcs?: ReadonlyArray<{ start: number; end: number }>;
+}
 
 /**
  * Heal gaps between adjacent compartments by expanding the previous compartment's
@@ -49,16 +61,66 @@ function healCompartmentGaps(
     }
 }
 
+function boundarySplitsCompletedToolArc(
+    boundary: number,
+    arcs: ReadonlyArray<{ start: number; end: number }> = [],
+): boolean {
+    return arcs.some((arc) => completedToolArcCrossesBoundary(arc.start, arc.end, boundary));
+}
+
+function healTerminalCompletedToolArc(
+    compartments: Array<{ endMessage: number }>,
+    unprocessedFrom: number | null,
+    arcs: ReadonlyArray<{ start: number; end: number }> = [],
+    chunkEnd: number,
+): number | null {
+    const last = compartments[compartments.length - 1];
+    if (!last) return unprocessedFrom;
+
+    const originalEnd = last.endMessage;
+    for (let pass = 0; pass <= arcs.length; pass += 1) {
+        const boundary = last.endMessage + 1;
+        let nextEnd = last.endMessage;
+        for (const arc of arcs) {
+            if (
+                arc.end <= chunkEnd &&
+                completedToolArcCrossesBoundary(arc.start, arc.end, boundary)
+            ) {
+                nextEnd = Math.max(nextEnd, arc.end);
+            }
+        }
+        if (nextEnd === last.endMessage) break;
+        last.endMessage = nextEnd;
+    }
+
+    return last.endMessage !== originalEnd && unprocessedFrom !== null
+        ? last.endMessage + 1
+        : unprocessedFrom;
+}
+
+/**
+ * Do not discard the last historian compartment when that would leave the persisted
+ * end boundary inside a completed tool invocation/result pair.
+ */
+export function shouldDiscardLastHistorianCompartment(
+    compartments: ReadonlyArray<{ endMessage: number }>,
+    chunk: Pick<HistorianValidationChunk, "endIndex" | "completedToolArcs">,
+): boolean {
+    if (compartments.length < 2) return false;
+
+    const last = compartments[compartments.length - 1];
+    const previous = compartments[compartments.length - 2];
+    const lookaheadMargin = chunk.endIndex - last.endMessage;
+    return (
+        lookaheadMargin <= HISTORIAN_BOUNDARY_HEALING_SLACK &&
+        !boundarySplitsCompletedToolArc(previous.endMessage + 1, chunk.completedToolArcs)
+    );
+}
+
 export function validateHistorianOutput(
     text: string,
     _sessionId: string,
-    chunk: {
-        startIndex: number;
-        endIndex: number;
-        lines: Array<{ ordinal: number; messageId: string }>;
-        /** Optional — when provided, gaps inside these ranges heal at any size. */
-        toolOnlyRanges?: ReadonlyArray<{ start: number; end: number }>;
-    },
+    chunk: HistorianValidationChunk,
     _priorCompartments: StoredCompartmentRange[],
     sequenceOffset: number,
     domain: MemoryDomain = "coding-project",
@@ -74,6 +136,12 @@ export function validateHistorianOutput(
     // Heal only proven tool-only gaps. Narrative gaps reject before publication, so
     // the runner keeps its prior boundary and re-reads those raw messages.
     healCompartmentGaps(parsed.compartments, chunk.toolOnlyRanges);
+    parsed.unprocessedFrom = healTerminalCompletedToolArc(
+        parsed.compartments,
+        parsed.unprocessedFrom,
+        chunk.completedToolArcs,
+        chunk.endIndex,
+    );
 
     const mapped = mapParsedCompartmentsToChunk(parsed.compartments, chunk, sequenceOffset);
     if (!mapped.ok) {
@@ -93,6 +161,14 @@ export function validateHistorianOutput(
         return {
             ok: false,
             error: `Historian returned invalid compartment output: ${parsedValidationError}`,
+        };
+    }
+
+    const last = parsed.compartments[parsed.compartments.length - 1];
+    if (last && boundarySplitsCompletedToolArc(last.endMessage + 1, chunk.completedToolArcs)) {
+        return {
+            ok: false,
+            error: "Historian terminal boundary splits a completed tool invocation/result arc",
         };
     }
 

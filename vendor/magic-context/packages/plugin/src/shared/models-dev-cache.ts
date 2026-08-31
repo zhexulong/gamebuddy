@@ -27,9 +27,18 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ContextLimitProvenance } from "./context-limit-provenance";
 import { getMagicContextStorageDir } from "./data-path";
 import { getHarness } from "./harness";
+import { modelRefLookupOrder } from "./harness-provider-map";
 import { sessionLog } from "./logger";
+import { shouldEnforcePrivateStoragePermissions } from "./storage-permissions";
+import {
+    deriveWindowGeometry,
+    getWindowOverlay,
+    resolveWindowOverlayFacts,
+    type WindowGeometryResult,
+} from "./window-geometry";
 
 interface OpencodeClientLike {
     config: {
@@ -54,13 +63,34 @@ export function isSaneLimit(limit: number | undefined): limit is number {
     return typeof limit === "number" && limit >= MIN_SANE_LIMIT && limit <= MAX_SANE_LIMIT;
 }
 
+export type OutputReserveConfig = number | { default: number; [modelKey: string]: number };
+
+export interface ModelLimit {
+    context?: number;
+    input?: number;
+    output?: number;
+}
+
 interface CachedModelMetadata {
+    /** Legacy resolved value, retained so pre-upgrade persisted caches remain readable. */
     limit?: number;
+    /** Raw combined context window. Reservation is applied only when the value is read. */
+    contextLimit?: number;
     /** Provider-enforced prompt cap. Undefined when only a combined context window is known. */
     inputLimit?: number;
+    /** Maximum generated tokens advertised by the provider/model catalog. */
+    outputLimit?: number;
     /** Provider metadata says the model accepts image input. Unknown is false. */
     vision?: boolean;
 }
+
+// Proven-separate allowlist only. Unknown providers reserve by default because
+// wasting some input capacity is safer than a shared-window hard rejection.
+const SEPARATE_OUTPUT_QUOTA_PROVIDERS = new Set(["google", "google-antigravity"]);
+const MIN_PLAUSIBLE_CONTEXT_LIMIT = 1024;
+const OUTPUT_RESERVE_CAP_RATIO = 0.25;
+let outputReserveConfig: OutputReserveConfig | undefined;
+const reserveClampLogSeen = new Set<string>();
 
 /**
  * Authoritative source (OpenCode only): populated async from the SDK
@@ -96,17 +126,28 @@ function loadPersistedApiCacheOnce(): void {
         const raw = readFileSync(persistFilePath(), "utf-8");
         const obj = JSON.parse(raw) as Record<
             string,
-            number | { limit?: number; inputLimit?: number; vision?: boolean }
+            | number
+            | {
+                  limit?: number;
+                  contextLimit?: number;
+                  inputLimit?: number;
+                  outputLimit?: number;
+                  vision?: boolean;
+              }
         >;
         const map = new Map<string, CachedModelMetadata>();
         for (const [key, persisted] of Object.entries(obj)) {
             const limit = typeof persisted === "number" ? persisted : persisted.limit;
+            const contextLimit = typeof persisted === "number" ? undefined : persisted.contextLimit;
             const inputLimit = typeof persisted === "number" ? undefined : persisted.inputLimit;
+            const outputLimit = typeof persisted === "number" ? undefined : persisted.outputLimit;
             const vision = typeof persisted === "number" ? false : persisted.vision === true;
-            if (isSaneLimit(limit)) {
+            if (isSaneLimit(contextLimit) || isSaneLimit(limit)) {
                 map.set(key, {
-                    limit,
+                    limit: isSaneLimit(limit) ? limit : undefined,
+                    contextLimit: isSaneLimit(contextLimit) ? contextLimit : undefined,
                     inputLimit: isSaneLimit(inputLimit) ? inputLimit : undefined,
+                    outputLimit: isFinitePositive(outputLimit) ? outputLimit : undefined,
                     vision,
                 });
             }
@@ -133,7 +174,9 @@ function persistApiCache(): void {
         if (isSaneLimit(value.limit)) {
             obj[key] = {
                 limit: value.limit,
+                contextLimit: isSaneLimit(value.contextLimit) ? value.contextLimit : undefined,
                 inputLimit: isSaneLimit(value.inputLimit) ? value.inputLimit : undefined,
+                outputLimit: isFinitePositive(value.outputLimit) ? value.outputLimit : undefined,
                 vision: value.vision === true,
             };
         }
@@ -143,29 +186,108 @@ function persistApiCache(): void {
         mkdirSync(dir, { recursive: true });
         const target = persistFilePath();
         const tmp = `${target}.${process.pid}.tmp`;
-        writeFileSync(tmp, JSON.stringify(obj), { encoding: "utf-8", mode: 0o600 });
+        if (shouldEnforcePrivateStoragePermissions()) {
+            writeFileSync(tmp, JSON.stringify(obj), { encoding: "utf-8", mode: 0o600 });
+        } else {
+            writeFileSync(tmp, JSON.stringify(obj), { encoding: "utf-8" });
+        }
         renameSync(tmp, target);
     } catch {
         // best-effort — a failed persist only loses cold-start warmth, not correctness
     }
 }
 
+function isFinitePositive(value: number | undefined): value is number {
+    return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function modelKeyLookupOrder(providerID: string, modelID: string): string[] {
+    const candidates = [...modelRefLookupOrder(`${providerID}/${modelID}`), modelID];
+    const colon = modelID.lastIndexOf(":");
+    if (colon > 0) {
+        const bareModel = modelID.slice(0, colon);
+        candidates.push(...modelRefLookupOrder(`${providerID}/${bareModel}`), bareModel);
+    }
+    return [...new Set(candidates)];
+}
+
+/** Resolve the user-tier output reservation for one runtime model. */
+export function resolveOutputReserve(
+    providerID: string,
+    modelID: string,
+    config: OutputReserveConfig | undefined = outputReserveConfig,
+): number | undefined {
+    if (typeof config === "number")
+        return Number.isFinite(config) && config >= 0 ? config : undefined;
+    if (!config) return undefined;
+    for (const candidate of modelKeyLookupOrder(providerID, modelID)) {
+        const value = config[candidate];
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+    }
+    return Number.isFinite(config.default) && config.default >= 0 ? config.default : undefined;
+}
+
+function logReserveClampOnce(key: string, message: string): void {
+    if (reserveClampLogSeen.has(key)) return;
+    reserveClampLogSeen.add(key);
+    sessionLog("global", `models-dev-cache: ${message}`);
+}
+
+/** Set the user-tier reservation override shared by every resolved-limit consumer. */
+export function setOutputReserveConfig(config: OutputReserveConfig | undefined): void {
+    outputReserveConfig = config;
+}
+
 /**
- * Resolve the effective pressure limit for a model's `limit` object.
+ * Resolve the usable prompt budget from raw provider metadata.
  *
- * Prefers `limit.input` (max prompt tokens the provider will accept) over
- * `limit.context` (total window including output). For GitHub Copilot and
- * several proxy providers, `context` is the marketing number (input + output
- * combined), and sending a prompt sized against `context` gets rejected.
- * OpenCode's own `session/overflow.ts` uses `input ?? context` for the same
- * reason — the denominator that drives overflow/pressure must be the number
- * the provider actually enforces on input.
+ * A genuinely smaller input cap is already pre-carved and wins unchanged. All
+ * other providers reserve generated tokens from the shared context window by
+ * default, except the small allowlist whose APIs document a separate output
+ * quota. `output_reserve` overrides that shared/separate decision, including 0
+ * to disable reservation. Reservation can never leave less than half the raw
+ * context window or the module's 1024-token plausibility floor.
  */
-function resolveLimit(limit: { context?: number; input?: number } | undefined): number | undefined {
+export function resolveLimit(
+    limit: ModelLimit | undefined,
+    providerID: string,
+    modelID: string,
+    reserveConfig: OutputReserveConfig | undefined = outputReserveConfig,
+): number | undefined {
     if (!limit) return undefined;
-    if (typeof limit.input === "number" && limit.input > 0) return limit.input;
-    if (typeof limit.context === "number" && limit.context > 0) return limit.context;
-    return undefined;
+    const context = isFinitePositive(limit.context) ? limit.context : undefined;
+    const input = isFinitePositive(limit.input) ? limit.input : undefined;
+    if (input !== undefined && (context === undefined || input < context)) return input;
+    if (context === undefined) return undefined;
+
+    const configuredReserve = resolveOutputReserve(providerID, modelID, reserveConfig);
+    let reserve: number;
+    if (configuredReserve !== undefined) {
+        reserve = configuredReserve;
+    } else if (SEPARATE_OUTPUT_QUOTA_PROVIDERS.has(providerID)) {
+        reserve = 0;
+    } else {
+        const output = isFinitePositive(limit.output) ? limit.output : 0;
+        const cap = context * OUTPUT_RESERVE_CAP_RATIO;
+        reserve = Math.min(output, cap);
+        if (output > cap) {
+            logReserveClampOnce(
+                `cap|${providerID}/${modelID}|${context}|${output}`,
+                `output reserve capped at 25% for ${providerID}/${modelID}: ${output} → ${cap}`,
+            );
+        }
+    }
+
+    const floor = Math.max(MIN_PLAUSIBLE_CONTEXT_LIMIT, context * 0.5);
+    const maxReserve = Math.max(0, context - floor);
+    if (reserve > maxReserve) {
+        logReserveClampOnce(
+            `floor|${providerID}/${modelID}|${context}|${reserve}`,
+            `output reserve clamped for ${providerID}/${modelID}: ${reserve} → ${maxReserve} (usable floor ${floor})`,
+        );
+        reserve = maxReserve;
+    }
+    return Math.floor(context - reserve);
 }
 
 function setCachedModelMetadata(
@@ -173,7 +295,7 @@ function setCachedModelMetadata(
     key: string,
     model:
         | {
-              limit?: { context?: number; input?: number };
+              limit?: ModelLimit;
               experimental?: { modes?: Record<string, unknown> };
               capabilities?: unknown;
               modalities?: unknown;
@@ -182,15 +304,19 @@ function setCachedModelMetadata(
           }
         | undefined,
 ): void {
-    const limit = resolveLimit(model?.limit);
+    const contextLimit = model?.limit?.context;
     const inputLimit = model?.limit?.input;
+    const outputLimit = model?.limit?.output;
+    const rawLimit = isSaneLimit(contextLimit)
+        ? contextLimit
+        : isSaneLimit(inputLimit)
+          ? inputLimit
+          : undefined;
 
-    // Only cache plausible limits. A value outside [20k, 3M] is garbage (torn
-    // read / unconfigured default) and must never enter the cache or get
-    // persisted — see isSaneLimit.
-    if (!isSaneLimit(limit)) {
-        return;
-    }
+    // Validate the raw provider metadata before reservation. A legitimate 20K
+    // context may resolve below MIN_SANE_LIMIT after carving output, but it must
+    // still remain cached; the 50%/1024 usable floor protects the result.
+    if (rawLimit === undefined) return;
 
     const values = [model?.capabilities, model?.modalities, model?.input, model?.attachment];
     const vision = values.some(
@@ -203,8 +329,12 @@ function setCachedModelMetadata(
                 .includes("vision"),
     );
     const value: CachedModelMetadata = {
-        limit,
+        // Keep a sane raw fallback for old persisted-cache readers. Runtime
+        // resolution below uses context/input/output so user overrides stay live.
+        limit: rawLimit,
+        contextLimit: isSaneLimit(contextLimit) ? contextLimit : undefined,
         inputLimit: isSaneLimit(inputLimit) ? inputLimit : undefined,
+        outputLimit: isFinitePositive(outputLimit) ? outputLimit : undefined,
         vision,
     };
     cache.set(key, value);
@@ -307,7 +437,7 @@ async function refreshModelLimitsOnce(client: OpencodeClientLike): Promise<boole
                 models?: Record<
                     string,
                     {
-                        limit?: { context?: number; input?: number };
+                        limit?: ModelLimit;
                         experimental?: { modes?: Record<string, unknown> };
                     }
                 >;
@@ -359,18 +489,100 @@ async function refreshModelLimitsOnce(client: OpencodeClientLike): Promise<boole
  *
  * Resolution:
  *   1. Seed `apiCache` from the persisted last-known-good file once (cold start).
- *   2. Return the SDK value (sane by construction — only [20k,3M] is cached).
+ *   2. Resolve the sane raw SDK metadata into its output-reserved usable value.
  *   3. `undefined` when the SDK hasn't reported this model yet → the caller
  *      defaults / retries (the startup warm retries when OpenCode isn't ready).
  *
  * OpenCode-only: Pi never warms `apiCache` (it resolves from its own
- * `ctx.getModel().contextWindow`), so for Pi this returns `undefined` and Pi's
+ * `ctx.model.contextWindow`), so for Pi this returns `undefined` and Pi's
  * own resolution path is used.
  */
-export function getSdkContextLimit(providerID: string, modelID: string): number | undefined {
+export function getSdkWindowGeometry(
+    providerID: string,
+    modelID: string,
+    detectedContextLimit?: number,
+    options?: {
+        detectedLimitProvenance?: ContextLimitProvenance;
+        harness?: "opencode" | "pi";
+    },
+): WindowGeometryResult | undefined {
     loadPersistedApiCacheOnce();
-    const fromApi = lookupLimitWithTagFallback(apiCache, providerID, modelID);
-    return isSaneLimit(fromApi) ? fromApi : undefined;
+    const metadata = lookupMetadataWithTagFallback(apiCache, providerID, modelID);
+    if (!metadata) return undefined;
+    const rawContext = metadata.contextLimit ?? metadata.limit;
+    const promptOnlyDetected =
+        options?.detectedLimitProvenance === "prompt_only" && isFinitePositive(detectedContextLimit)
+            ? detectedContextLimit
+            : undefined;
+    const result = deriveWindowGeometry(
+        providerID,
+        modelID,
+        {
+            context: rawContext,
+            input: metadata.inputLimit,
+            output: metadata.outputLimit,
+        },
+        {
+            overlay: resolveWindowOverlayFacts(providerID, modelID, getWindowOverlay()),
+            outputReserveOverride: resolveOutputReserve(providerID, modelID),
+            harness: options?.harness ?? "opencode",
+            contextCap:
+                promptOnlyDetected === undefined && isFinitePositive(detectedContextLimit)
+                    ? detectedContextLimit
+                    : undefined,
+        },
+    );
+    if (!result || promptOnlyDetected === undefined) return result;
+    const usableSoft = promptOnlyDetected;
+    return {
+        ...result,
+        usableSoft,
+        usableHard: Math.max(usableSoft, Math.min(result.usableHard, promptOnlyDetected)),
+    };
+}
+
+export function getSdkContextLimit(
+    providerID: string,
+    modelID: string,
+    detectedContextLimit?: number,
+    options?: {
+        reservation?: "default" | "none";
+        detectedLimitProvenance?: ContextLimitProvenance;
+    },
+): number | undefined {
+    if (options?.reservation !== "none") {
+        return getSdkWindowGeometry(providerID, modelID, detectedContextLimit, {
+            detectedLimitProvenance: options?.detectedLimitProvenance,
+        })?.usableSoft;
+    }
+    loadPersistedApiCacheOnce();
+    const metadata = lookupMetadataWithTagFallback(apiCache, providerID, modelID);
+    if (!metadata) return undefined;
+    const rawContext = metadata.contextLimit ?? metadata.limit;
+    const promptOnlyDetected =
+        options?.detectedLimitProvenance === "prompt_only" && isFinitePositive(detectedContextLimit)
+            ? detectedContextLimit
+            : undefined;
+    const context =
+        promptOnlyDetected === undefined &&
+        isFinitePositive(detectedContextLimit) &&
+        isFinitePositive(rawContext)
+            ? Math.min(rawContext, detectedContextLimit)
+            : promptOnlyDetected === undefined && isFinitePositive(detectedContextLimit)
+              ? detectedContextLimit
+              : rawContext;
+    const inputCandidates = [metadata.inputLimit, promptOnlyDetected].filter(isFinitePositive);
+    const input = inputCandidates.length > 0 ? Math.min(...inputCandidates) : undefined;
+    return resolveLimit(
+        {
+            context,
+            input,
+            output: metadata.outputLimit,
+        },
+        providerID,
+        modelID,
+        options?.reservation === "none" ? 0 : undefined,
+    );
 }
 
 /**
@@ -411,20 +623,18 @@ export function getSdkInputLimit(providerID: string, modelID: string): number | 
  * Strategy: exact match first (never collapses a legitimately-tagged model),
  * then retry once with the last `:tag` segment stripped.
  */
-function lookupLimitWithTagFallback(
+function lookupMetadataWithTagFallback(
     cache: Map<string, CachedModelMetadata> | null,
     providerID: string,
     modelID: string,
-): number | undefined {
+): CachedModelMetadata | undefined {
     if (!cache) return undefined;
-    const exact = cache.get(`${providerID}/${modelID}`)?.limit;
-    if (typeof exact === "number") return exact;
+    const exact = cache.get(`${providerID}/${modelID}`);
+    if (exact) return exact;
 
     const colonIdx = modelID.lastIndexOf(":");
     if (colonIdx > 0) {
-        const baseModel = modelID.slice(0, colonIdx);
-        const fallback = cache.get(`${providerID}/${baseModel}`)?.limit;
-        if (typeof fallback === "number") return fallback;
+        return cache.get(`${providerID}/${modelID.slice(0, colonIdx)}`);
     }
     return undefined;
 }

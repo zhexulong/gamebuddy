@@ -1,0 +1,782 @@
+{
+  "constants": {
+    "default_execute_threshold_percentage": 65,
+    "max_execute_threshold_percentage": 90,
+    "force_materialize_percentage": 85,
+    "emergency_percentage": 95,
+    "default_cache_ttl_ms": 300000,
+    "one_second_ms": 1000,
+    "one_minute_ms": 60000,
+    "one_hour_ms": 3600000,
+    "bare_numeric_ms": 1234,
+    "emergency_drain_enter_percentage": 85,
+    "emergency_drain_exit_margin": 10,
+    "emergency_drain_fallback_exit_percentage": 55,
+    "emergency_drain_failure_backoff_ms": 60000,
+    "emergency_drain_max_latch_ms": 1800000,
+    "min_plausible_context_limit": 1024,
+    "max_plausible_context_limit": 10000000,
+    "overflow_pattern_sources": [
+      "prompt is too long",
+      "input is too long for requested model",
+      "exceeds the context window",
+      "input token count.*exceeds the maximum",
+      "maximum prompt length is \\d+",
+      "reduce the length of the messages",
+      "maximum context length is \\d+ tokens",
+      "maximum model length is \\d+",
+      "exceeds the limit of \\d+",
+      "exceeds the available context size",
+      "greater than the context length",
+      "context window exceeds limit",
+      "exceeded model token limit",
+      "context[_ ]length[_ ]exceeded",
+      "request entity too large",
+      "context length is only \\d+ tokens",
+      "input length.*exceeds.*context length",
+      "prompt too long; exceeded (?:max )?context length",
+      "too large for model with \\d+ maximum context length",
+      "model_context_window_exceeded",
+      "context size has been exceeded"
+    ]
+  },
+  "parse_ttl_cases": [
+    {
+      "label": "5m",
+      "ttl": "5m",
+      "expected_ms": 300000
+    },
+    {
+      "label": "30s",
+      "ttl": "30s",
+      "expected_ms": 30000
+    },
+    {
+      "label": "2h",
+      "ttl": "2h",
+      "expected_ms": 7200000
+    },
+    {
+      "label": "1500",
+      "ttl": "1500",
+      "expected_ms": 1500
+    },
+    {
+      "label": " 5m ",
+      "ttl": " 5m ",
+      "expected_ms": 300000
+    },
+    {
+      "label": "garbage",
+      "ttl": "garbage"
+    }
+  ],
+  "threshold_cases": [
+    {
+      "label": "percentage numeric below cap",
+      "percentage_config": 65,
+      "fallback": 65,
+      "expected": 65
+    },
+    {
+      "label": "percentage cap at 90",
+      "percentage_config": 95,
+      "fallback": 65,
+      "expected": 90
+    },
+    {
+      "model_key": "anthropic/claude-sonnet-4-20250514",
+      "label": "per-model exact match",
+      "percentage_config": {
+        "default": 65,
+        "anthropic/claude-sonnet-4-20250514": 72
+      },
+      "fallback": 65,
+      "expected": 72
+    },
+    {
+      "model_key": "openai/gpt-5.4-fast",
+      "label": "per-model derived bare model fallback",
+      "percentage_config": {
+        "default": 65,
+        "gpt-5.4": 58
+      },
+      "fallback": 65,
+      "expected": 58
+    },
+    {
+      "tokens_config": {
+        "default": 32000
+      },
+      "context_limit": 50000,
+      "label": "tokens config with explicit context limit",
+      "percentage_config": 65,
+      "fallback": 65,
+      "expected": 64
+    },
+    {
+      "tokens_config": {
+        "default": 90000
+      },
+      "context_limit": 100000,
+      "label": "tokens config cap at 80 percent",
+      "percentage_config": 65,
+      "fallback": 65,
+      "expected": 90
+    },
+    {
+      "tokens_config": {
+        "default": 30000,
+        "openai/gpt-5.4-fast": 20000
+      },
+      "model_key": "openai/gpt-5.4-fast",
+      "context_limit": 100000,
+      "label": "tokens model key wins over default",
+      "percentage_config": {
+        "default": 60
+      },
+      "fallback": 65,
+      "expected": 20
+    },
+    {
+      "tokens_config": {
+        "default": 30000
+      },
+      "label": "tokens config without context limit falls back to percentage",
+      "percentage_config": {
+        "default": 62
+      },
+      "fallback": 65,
+      "expected": 62
+    }
+  ],
+  "should_execute_cases": [
+    {
+      "label": "fresh session guard defers",
+      "config": {
+        "execute_threshold_percentage": 65
+      },
+      "session": {
+        "last_response_time_ms": 0,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 0,
+        "input_tokens": 0
+      },
+      "now_ms": 300001,
+      "expected": "defer",
+      "expected_threshold": 65
+    },
+    {
+      "label": "percentage below threshold defers",
+      "config": {
+        "execute_threshold_percentage": 65
+      },
+      "session": {
+        "last_response_time_ms": 1000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 64.9,
+        "input_tokens": 64900
+      },
+      "now_ms": 2000,
+      "expected": "defer",
+      "expected_threshold": 65
+    },
+    {
+      "label": "percentage exactly threshold executes",
+      "config": {
+        "execute_threshold_percentage": 65
+      },
+      "session": {
+        "last_response_time_ms": 1000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 65,
+        "input_tokens": 65000
+      },
+      "now_ms": 2000,
+      "expected": "execute",
+      "expected_threshold": 65
+    },
+    {
+      "label": "percentage above threshold executes",
+      "config": {
+        "execute_threshold_percentage": 65
+      },
+      "session": {
+        "last_response_time_ms": 1000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 65.1,
+        "input_tokens": 65100
+      },
+      "now_ms": 2000,
+      "expected": "execute",
+      "expected_threshold": 65
+    },
+    {
+      "label": "tokens threshold explicit context limit defers below tokens",
+      "config": {
+        "execute_threshold_percentage": 65,
+        "execute_threshold_tokens": {
+          "default": 32000
+        }
+      },
+      "session": {
+        "last_response_time_ms": 1000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 31.9,
+        "input_tokens": 31900
+      },
+      "now_ms": 2000,
+      "context_limit": 100000,
+      "expected": "defer",
+      "expected_threshold": 32
+    },
+    {
+      "label": "tokens threshold explicit context limit executes at tokens",
+      "config": {
+        "execute_threshold_percentage": 65,
+        "execute_threshold_tokens": {
+          "default": 32000
+        }
+      },
+      "session": {
+        "last_response_time_ms": 1000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 32,
+        "input_tokens": 32000
+      },
+      "now_ms": 2000,
+      "context_limit": 100000,
+      "expected": "execute",
+      "expected_threshold": 32
+    },
+    {
+      "label": "tokens threshold derived context limit executes",
+      "config": {
+        "execute_threshold_percentage": 65,
+        "execute_threshold_tokens": {
+          "default": 50000
+        }
+      },
+      "session": {
+        "last_response_time_ms": 1000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 50,
+        "input_tokens": 50000
+      },
+      "now_ms": 2000,
+      "expected": "execute",
+      "expected_threshold": 50
+    },
+    {
+      "label": "per-model percentage map executes",
+      "config": {
+        "execute_threshold_percentage": {
+          "default": 65,
+          "openai/gpt-5.4": 58
+        }
+      },
+      "session": {
+        "last_response_time_ms": 1000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 58,
+        "input_tokens": 58000
+      },
+      "now_ms": 2000,
+      "model_key": "openai/gpt-5.4-fast",
+      "expected": "execute",
+      "expected_threshold": 58
+    },
+    {
+      "label": "80 percent cap executes at cap",
+      "config": {
+        "execute_threshold_percentage": 95
+      },
+      "session": {
+        "last_response_time_ms": 1000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 80,
+        "input_tokens": 80000
+      },
+      "now_ms": 2000,
+      "expected": "defer",
+      "expected_threshold": 90
+    },
+    {
+      "label": "scheduler ttl boundary defers on equality",
+      "config": {
+        "execute_threshold_percentage": 65
+      },
+      "session": {
+        "last_response_time_ms": 10000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 10,
+        "input_tokens": 10000
+      },
+      "now_ms": 310000,
+      "expected": "defer",
+      "expected_threshold": 65
+    },
+    {
+      "label": "scheduler ttl fires after equality",
+      "config": {
+        "execute_threshold_percentage": 65
+      },
+      "session": {
+        "last_response_time_ms": 10000,
+        "cache_ttl": "5m"
+      },
+      "usage": {
+        "percentage": 10,
+        "input_tokens": 10000
+      },
+      "now_ms": 310001,
+      "expected": "execute",
+      "expected_threshold": 65
+    },
+    {
+      "label": "invalid ttl falls back to default 5m",
+      "config": {
+        "execute_threshold_percentage": 65
+      },
+      "session": {
+        "last_response_time_ms": 10000,
+        "cache_ttl": "nonsense"
+      },
+      "usage": {
+        "percentage": 10,
+        "input_tokens": 10000
+      },
+      "now_ms": 310001,
+      "expected": "execute",
+      "expected_threshold": 65
+    },
+    {
+      "label": "bare numeric ttl is milliseconds",
+      "config": {
+        "execute_threshold_percentage": 65
+      },
+      "session": {
+        "last_response_time_ms": 10000,
+        "cache_ttl": "1000"
+      },
+      "usage": {
+        "percentage": 10,
+        "input_tokens": 10000
+      },
+      "now_ms": 11001,
+      "expected": "execute",
+      "expected_threshold": 65
+    }
+  ],
+  "ttl_predicate_cases": [
+    {
+      "label": "elapsed equals ttl",
+      "now_ms": 310000,
+      "last_response_time_ms": 10000,
+      "ttl_ms": 300000,
+      "expected_execute_fired": false,
+      "expected_hard_expired": false
+    },
+    {
+      "label": "elapsed ttl plus one",
+      "now_ms": 310001,
+      "last_response_time_ms": 10000,
+      "ttl_ms": 300000,
+      "expected_execute_fired": true,
+      "expected_hard_expired": true
+    },
+    {
+      "label": "last response zero never hard expires",
+      "now_ms": 300001,
+      "last_response_time_ms": 0,
+      "ttl_ms": 300000,
+      "expected_execute_fired": true,
+      "expected_hard_expired": false
+    }
+  ],
+  "overflow_cases": [
+    {
+      "label": "anthropic",
+      "input": "prompt is too long: 210000 tokens > 200000 maximum",
+      "expected_message": "prompt is too long: 210000 tokens > 200000 maximum",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 200000,
+        "reported_limit_provenance": "prompt_only",
+        "matched_pattern": "prompt is too long"
+      }
+    },
+    {
+      "label": "bedrock",
+      "input": "Input is too long for requested model.",
+      "expected_message": "Input is too long for requested model.",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "input is too long for requested model"
+      }
+    },
+    {
+      "label": "openai",
+      "input": "This model's maximum context length is 128000 tokens",
+      "expected_message": "This model's maximum context length is 128000 tokens",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 128000,
+        "reported_limit_provenance": "combined",
+        "matched_pattern": "maximum context length is \\d+ tokens"
+      }
+    },
+    {
+      "label": "gemini",
+      "input": "Input token count 1234567 exceeds the maximum number of tokens allowed",
+      "expected_message": "Input token count 1234567 exceeds the maximum number of tokens allowed",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "input token count.*exceeds the maximum"
+      }
+    },
+    {
+      "label": "xai",
+      "input": "the maximum prompt length is 256000 tokens but the prompt was 300000",
+      "expected_message": "the maximum prompt length is 256000 tokens but the prompt was 300000",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 256000,
+        "reported_limit_provenance": "prompt_only",
+        "matched_pattern": "maximum prompt length is \\d+"
+      }
+    },
+    {
+      "label": "groq",
+      "input": "Please reduce the length of the messages or completion",
+      "expected_message": "Please reduce the length of the messages or completion",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "reduce the length of the messages"
+      }
+    },
+    {
+      "label": "openrouter",
+      "input": "the maximum context length is 32768 tokens",
+      "expected_message": "the maximum context length is 32768 tokens",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 32768,
+        "reported_limit_provenance": "combined",
+        "matched_pattern": "maximum context length is \\d+ tokens"
+      }
+    },
+    {
+      "label": "vllm-model",
+      "input": "maximum model length is 8192 tokens",
+      "expected_message": "maximum model length is 8192 tokens",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 8192,
+        "reported_limit_provenance": "combined",
+        "matched_pattern": "maximum model length is \\d+"
+      }
+    },
+    {
+      "label": "copilot",
+      "input": "Prompt exceeds the limit of 64000 tokens",
+      "expected_message": "Prompt exceeds the limit of 64000 tokens",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 64000,
+        "reported_limit_provenance": "unknown",
+        "matched_pattern": "exceeds the limit of \\d+"
+      }
+    },
+    {
+      "label": "llamacpp",
+      "input": "Prompt exceeds the available context size",
+      "expected_message": "Prompt exceeds the available context size",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "exceeds the available context size"
+      }
+    },
+    {
+      "label": "lmstudio",
+      "input": "Prompt greater than the context length of the model",
+      "expected_message": "Prompt greater than the context length of the model",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "greater than the context length"
+      }
+    },
+    {
+      "label": "minimax",
+      "input": "context window exceeds limit",
+      "expected_message": "context window exceeds limit",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "context window exceeds limit"
+      }
+    },
+    {
+      "label": "moonshot",
+      "input": "exceeded model token limit of 131072",
+      "expected_message": "exceeded model token limit of 131072",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "exceeded model token limit"
+      }
+    },
+    {
+      "label": "generic",
+      "input": "context_length_exceeded",
+      "expected_message": "context_length_exceeded",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "context[_ ]length[_ ]exceeded"
+      }
+    },
+    {
+      "label": "http413",
+      "input": "413 request entity too large",
+      "expected_message": "413 request entity too large",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "request entity too large"
+      }
+    },
+    {
+      "label": "vllm",
+      "input": "context length is only 4096 tokens, prompt was 5000",
+      "expected_message": "context length is only 4096 tokens, prompt was 5000",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 4096,
+        "reported_limit_provenance": "combined",
+        "matched_pattern": "context length is only \\d+ tokens"
+      }
+    },
+    {
+      "label": "vllm2",
+      "input": "input length 10000 exceeds the context length of 8000",
+      "expected_message": "input length 10000 exceeds the context length of 8000",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 8000,
+        "reported_limit_provenance": "combined",
+        "matched_pattern": "input length.*exceeds.*context length"
+      }
+    },
+    {
+      "label": "ollama",
+      "input": "prompt too long; exceeded max context length",
+      "expected_message": "prompt too long; exceeded max context length",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "prompt too long; exceeded (?:max )?context length"
+      }
+    },
+    {
+      "label": "mistral",
+      "input": "Prompt too large for model with 32768 maximum context length",
+      "expected_message": "Prompt too large for model with 32768 maximum context length",
+      "expected": {
+        "is_overflow": true,
+        "reported_limit": 32768,
+        "reported_limit_provenance": "combined",
+        "matched_pattern": "too large for model with \\d+ maximum context length"
+      }
+    },
+    {
+      "label": "zai",
+      "input": "model_context_window_exceeded",
+      "expected_message": "model_context_window_exceeded",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "model_context_window_exceeded"
+      }
+    },
+    {
+      "label": "lemonade",
+      "input": "Context size has been exceeded",
+      "expected_message": "Context size has been exceeded",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "context size has been exceeded"
+      }
+    },
+    {
+      "label": "nested-provider-error",
+      "input": {
+        "error": {
+          "message": "Input token count 200000 exceeds the maximum of 128000"
+        }
+      },
+      "expected_message": "Input token count 200000 exceeds the maximum of 128000",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "input token count.*exceeds the maximum"
+      }
+    },
+    {
+      "label": "top-level-message",
+      "input": {
+        "message": "prompt is too long"
+      },
+      "expected_message": "prompt is too long",
+      "expected": {
+        "is_overflow": true,
+        "matched_pattern": "prompt is too long"
+      }
+    },
+    {
+      "label": "response-body",
+      "input": {
+        "responseBody": "413 payload too large"
+      },
+      "expected_message": "413 payload too large",
+      "expected": {
+        "is_overflow": true
+      }
+    },
+    {
+      "label": "non-overflow",
+      "input": "Network error",
+      "expected_message": "Network error",
+      "expected": {
+        "is_overflow": false
+      }
+    },
+    {
+      "label": "null",
+      "input": null,
+      "expected_message": "",
+      "expected": {
+        "is_overflow": false
+      }
+    }
+  ],
+  "limit_cases": [
+    {
+      "label": "maximum prompt length",
+      "message": "the maximum prompt length is 256000 tokens",
+      "expected": {
+        "value": 256000,
+        "provenance": "prompt_only"
+      }
+    },
+    {
+      "label": "maximum context length",
+      "message": "maximum context length is 32768 tokens",
+      "expected": {
+        "value": 32768,
+        "provenance": "combined"
+      }
+    },
+    {
+      "label": "maximum model length",
+      "message": "maximum model length is 8192 tokens",
+      "expected": {
+        "value": 8192,
+        "provenance": "combined"
+      }
+    },
+    {
+      "label": "context length is only",
+      "message": "context length is only 4096 tokens",
+      "expected": {
+        "value": 4096,
+        "provenance": "combined"
+      }
+    },
+    {
+      "label": "exceeds limit",
+      "message": "Prompt exceeds the limit of 64000 tokens",
+      "expected": {
+        "value": 64000,
+        "provenance": "unknown"
+      }
+    },
+    {
+      "label": "anthropic maximum",
+      "message": "prompt is too long: 210000 tokens > 200000 maximum",
+      "expected": {
+        "value": 200000,
+        "provenance": "prompt_only"
+      }
+    },
+    {
+      "label": "anthropic max",
+      "message": "prompt is too long: 210000 tokens > 200000 max",
+      "expected": {
+        "value": 200000,
+        "provenance": "prompt_only"
+      }
+    },
+    {
+      "label": "anthropic limit",
+      "message": "prompt is too long: 210000 tokens > 200000 limit",
+      "expected": {
+        "value": 200000,
+        "provenance": "prompt_only"
+      }
+    },
+    {
+      "label": "mistral",
+      "message": "Too large for model with 32768 maximum context length",
+      "expected": {
+        "value": 32768,
+        "provenance": "combined"
+      }
+    },
+    {
+      "label": "plausible floor accepted",
+      "message": "maximum context length is 1024 tokens",
+      "expected": {
+        "value": 1024,
+        "provenance": "combined"
+      }
+    },
+    {
+      "label": "below plausible floor rejected",
+      "message": "maximum context length is 1023 tokens"
+    },
+    {
+      "label": "plausible ceiling accepted",
+      "message": "maximum context length is 10000000 tokens",
+      "expected": {
+        "value": 10000000,
+        "provenance": "combined"
+      }
+    },
+    {
+      "label": "above plausible ceiling rejected",
+      "message": "maximum context length is 10000001 tokens"
+    },
+    {
+      "label": "no match",
+      "message": "Random error message"
+    },
+    {
+      "label": "empty",
+      "message": ""
+    }
+  ]
+}

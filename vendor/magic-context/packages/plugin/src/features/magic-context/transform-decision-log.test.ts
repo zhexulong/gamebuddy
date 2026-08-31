@@ -35,7 +35,11 @@ function baseRow(messageId: string, tsMs: number) {
         tsMs,
         decision: "execute" as const,
         materialized: true,
-        materializeReason: "model_change" as const,
+        materializeReason: "system_hash" as const,
+        systemHashPrev: "system-hash-before",
+        systemHashNew: "system-hash-after",
+        m0ModelKeyPrev: null,
+        m0ModelKeyNew: null,
         emergency: false,
         droppedTokens: 0,
         droppedCount: 0,
@@ -82,6 +86,99 @@ describe("transform_decisions retention cap", () => {
             .get();
         expect(oldest ?? null).toBeNull();
         expect(newest ?? null).not.toBeNull();
+    });
+
+    it("records the compared system hashes for a system_hash fold", () => {
+        __test.writeRow(dbPath, baseRow("system-hash-fold", 1));
+
+        expect(
+            db
+                .prepare(
+                    `SELECT materialize_reason, system_hash_prev, system_hash_new,
+                            m0_model_key_prev, m0_model_key_new
+                     FROM transform_decisions WHERE message_id = 'system-hash-fold'`,
+                )
+                .get(),
+        ).toEqual({
+            materialize_reason: "system_hash",
+            system_hash_prev: "system-hash-before",
+            system_hash_new: "system-hash-after",
+            m0_model_key_prev: null,
+            m0_model_key_new: null,
+        });
+    });
+
+    it("records no comparisons for a first_render fold", () => {
+        __test.writeRow(dbPath, {
+            ...baseRow("first-render-fold", 1),
+            materializeReason: "first_render",
+            systemHashPrev: null,
+            systemHashNew: null,
+        });
+
+        expect(
+            db
+                .prepare(
+                    `SELECT materialize_reason, system_hash_prev, system_hash_new,
+                            m0_model_key_prev, m0_model_key_new,
+                            m0_tool_set_hash_prev, m0_tool_set_hash_new
+                     FROM transform_decisions WHERE message_id = 'first-render-fold'`,
+                )
+                .get(),
+        ).toEqual({
+            materialize_reason: "first_render",
+            system_hash_prev: null,
+            system_hash_new: null,
+            m0_model_key_prev: null,
+            m0_model_key_new: null,
+            m0_tool_set_hash_prev: null,
+            m0_tool_set_hash_new: null,
+        });
+    });
+
+    it("does not attach comparison values when materialization did not land", () => {
+        __test.writeRow(dbPath, {
+            ...baseRow("unmaterialized-fold", 1),
+            materialized: false,
+        });
+
+        expect(
+            db
+                .prepare(
+                    `SELECT system_hash_prev, system_hash_new,
+                            m0_model_key_prev, m0_model_key_new
+                     FROM transform_decisions WHERE message_id = 'unmaterialized-fold'`,
+                )
+                .get(),
+        ).toEqual({
+            system_hash_prev: null,
+            system_hash_new: null,
+            m0_model_key_prev: null,
+            m0_model_key_new: null,
+        });
+    });
+
+    it("records observed tool-set operands even when the pass did not materialize m[0]", () => {
+        __test.writeRow(dbPath, {
+            ...baseRow("tool-set-observation", 1),
+            materialized: false,
+            materializeReason: null,
+            m0ToolSetHashPrev: "tools-before",
+            m0ToolSetHashNew: "tools-after",
+        });
+
+        expect(
+            db
+                .prepare(
+                    `SELECT materialized, m0_tool_set_hash_prev, m0_tool_set_hash_new
+                     FROM transform_decisions WHERE message_id = 'tool-set-observation'`,
+                )
+                .get(),
+        ).toEqual({
+            materialized: 0,
+            m0_tool_set_hash_prev: "tools-before",
+            m0_tool_set_hash_new: "tools-after",
+        });
     });
 
     it("does not prune below the cap", () => {

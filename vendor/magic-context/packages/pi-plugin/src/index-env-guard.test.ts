@@ -3,8 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-import magicContextPiExtension from "./index";
+import magicContextPiExtension, { __test } from "./index";
 import { MAGIC_CONTEXT_PI_SUBAGENT_ENV } from "./subagent-runner";
 
 const originalEnv = {
@@ -33,6 +32,7 @@ function createCountingPi() {
 	const commands: string[] = [];
 	const entryRenderers: string[] = [];
 	const pi = {
+		events: { on: mock(() => () => undefined) },
 		on: mock((event: string) => {
 			events.push(event);
 		}),
@@ -57,6 +57,9 @@ function createCountingPi() {
 
 afterEach(() => {
 	restoreEnv();
+	// Clear the process-global marker context so one test's full init does not
+	// leak into the next (the holder lives on globalThis, not module state).
+	__test.clearPiInProcessSubagentInitContext();
 });
 
 describe("Pi full extension subagent env guard", () => {

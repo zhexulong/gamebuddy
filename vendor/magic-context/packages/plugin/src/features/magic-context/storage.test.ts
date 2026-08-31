@@ -388,6 +388,40 @@ describe("magic-context storage", () => {
         closeQuietly(db);
     });
 
+    it("round-trips authoring-time provider compilation columns", () => {
+        const db = makeMemoryDatabase();
+        const compiledConfig = JSON.stringify({
+            kind: "path_exists",
+            path: "/workspace/future.json",
+            resolved_path_exists: false,
+        });
+
+        const note = addNote(db, "smart", {
+            content: "Surface the generated artifact.",
+            projectPath: "git:test-project",
+            sessionId: "ses-compiled-note",
+            surfaceCondition: "when path /workspace/future.json exists",
+            compiledProvider: "local-fs",
+            compiledConfig,
+            compiledAt: 1_786_320_000_000,
+            compileStatus: "compiled",
+        });
+
+        expect(note).toMatchObject({
+            compiledProvider: "local-fs",
+            compiledConfig,
+            compiledAt: 1_786_320_000_000,
+            compileStatus: "compiled",
+        });
+        expect(getPendingSmartNotes(db, "git:test-project")[0]).toMatchObject({
+            compiledProvider: "local-fs",
+            compiledConfig,
+            compiledAt: 1_786_320_000_000,
+            compileStatus: "compiled",
+        });
+        closeQuietly(db);
+    });
+
     it("resets smart-note readiness when the surface condition changes", () => {
         //#given
         const db = makeMemoryDatabase();

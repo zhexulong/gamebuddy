@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { acquireCompartmentLease } from "@magic-context/core/features/magic-context/compartment-lease";
 import {
 	appendCompartments,
@@ -19,6 +19,8 @@ import {
 } from "@magic-context/core/features/magic-context/storage";
 import { getUserMemoryCandidates } from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
 import type { ProtectedTailBoundarySnapshot } from "@magic-context/core/hooks/magic-context/protected-tail-boundary";
+import type { RawMessage } from "@magic-context/core/hooks/magic-context/read-session-raw";
+import * as loggerModule from "@magic-context/core/shared/logger";
 import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
 import type {
 	SubagentRunner,
@@ -63,7 +65,7 @@ describe("buildPiCompactionSummary", () => {
 	});
 });
 
-function rawMessages(count = 12) {
+function rawMessages(count = 12): RawMessage[] {
 	return Array.from({ length: count }, (_, index) => {
 		const ordinal = index + 1;
 		const isUser = ordinal % 2 === 1;
@@ -81,6 +83,55 @@ function rawMessages(count = 12) {
 			],
 		};
 	});
+}
+
+function completedArcMessages(): RawMessage[] {
+	return [
+		{
+			ordinal: 1,
+			id: "m1",
+			role: "user",
+			parts: [{ type: "text", text: "Inspect the failing flow." }],
+		},
+		{
+			ordinal: 2,
+			id: "m2",
+			role: "assistant",
+			parts: [
+				{
+					type: "tool",
+					tool: "read",
+					callID: "pi-call",
+					state: { input: { path: "src/flow.ts" } },
+				},
+			],
+		},
+		{
+			ordinal: 3,
+			id: "m3",
+			role: "user",
+			parts: [
+				{
+					type: "tool",
+					tool: "read",
+					callID: "pi-call",
+					state: { output: "flow contents" },
+				},
+			],
+		},
+		{
+			ordinal: 4,
+			id: "m4",
+			role: "assistant",
+			parts: [{ type: "text", text: "Applied the fix." }],
+		},
+		{
+			ordinal: 5,
+			id: "m5",
+			role: "user",
+			parts: [{ type: "text", text: "Keep this live tail." }],
+		},
+	];
 }
 
 function successXml(fact = "Pi historian facts can promote to memory.") {
@@ -206,8 +257,9 @@ async function runHistorianWith(args: {
 	outputs?: string[];
 	runner?: SubagentRunner;
 	historianModel?: string;
-	fallbackModels?: readonly string[];
+	fallbackModels?: Parameters<typeof runPiHistorian>[0]["fallbackModels"];
 	fallbackModelId?: string;
+	thinkingLevel?: string;
 	memoryEnabled?: boolean;
 	autoPromote?: boolean;
 	memoryDomain?: "coding-project" | "ongoing-interaction";
@@ -221,7 +273,7 @@ async function runHistorianWith(args: {
 	readBranchEntries?: () => unknown[];
 	boundarySnapshot?: ProtectedTailBoundarySnapshot;
 	refreshBoundarySnapshot?: () => ProtectedTailBoundarySnapshot;
-	providerMessages?: ReturnType<typeof rawMessages>;
+	providerMessages?: RawMessage[];
 	forceKeepLastCompartment?: boolean;
 	historianChunkTokens?: number;
 	beforeRun?: (db: ReturnType<typeof createTestDb>) => void;
@@ -247,6 +299,7 @@ async function runHistorianWith(args: {
 		signal: args.signal,
 		retryBackoffMs: args.retryBackoffMs,
 		twoPass: args.twoPass,
+		thinkingLevel: args.thinkingLevel,
 		memoryEnabled: args.memoryEnabled,
 		autoPromote: args.autoPromote,
 		memoryDomain: args.memoryDomain,
@@ -368,10 +421,13 @@ describe("runPiHistorian", () => {
 		}
 	});
 
-	it("skips when the protected-tail drain quota is exhausted", async () => {
+	it("logs internal budget state when the protected-tail drain budget is spent", async () => {
 		const boundary = makeBoundarySnapshot();
 		const usable = Math.round(
 			(boundary.contextLimit * boundary.executeThresholdPercentage) / 100,
+		);
+		const logSpy = spyOn(loggerModule, "sessionLog").mockImplementation(
+			() => {},
 		);
 		const { db, runner } = await runHistorianWith({
 			outputs: [successXml()],
@@ -397,7 +453,12 @@ describe("runPiHistorian", () => {
 			expect(
 				loadProtectedTailMeta(db, "ses-historian").protectedTailDrainTokens,
 			).toBe(9000);
+			expect(logSpy).toHaveBeenCalledWith(
+				"ses-historian",
+				"historian skip: internal drain budget spent (9000/9000 tokens; resets in 10m)",
+			);
 		} finally {
+			logSpy.mockRestore();
 			closeQuietly(db);
 		}
 	});
@@ -702,6 +763,31 @@ describe("runPiHistorian", () => {
 		}
 	});
 
+	it("uses only each Pi fallback's own thinking level", async () => {
+		const { db, runner } = await runHistorianWith({
+			outputs: ["", "", successXml("Qualified fallback recovered Pi history.")],
+			thinkingLevel: "high",
+			fallbackModels: [
+				{ model: "qualified/model", qualifier: "low" },
+				"bare/model",
+			],
+		});
+		try {
+			const options = (
+				runner.run as unknown as {
+					mock: { calls: Array<[Parameters<SubagentRunner["run"]>[0]]> };
+				}
+			).mock.calls.map(([options]) => options);
+			expect(options.map((option) => option.thinkingLevel)).toEqual([
+				"high",
+				"low",
+				undefined,
+			]);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
 	it("does not duplicate the session model when it is already the historian model", async () => {
 		const { db, runner } = await runHistorianWith({
 			outputs: [""],
@@ -901,6 +987,30 @@ describe("runPiHistorian", () => {
 					summary: expect.stringContaining("Initial Pi slice"),
 				}),
 			);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("does not let Pi discard-last reopen a completed invocation/result arc", async () => {
+		const { db } = await runHistorianWith({
+			outputs: [twoCompartmentSuccessXml()],
+			providerMessages: completedArcMessages(),
+			boundarySnapshot: makeBoundarySnapshot({
+				protectedTailStart: 5,
+				protectedTailStartMessageId: "m5",
+				eligibleEndOrdinal: 5,
+				eligibleEndMessageId: "m4",
+				rawMessageCountAtTrigger: 5,
+				rawLastMessageIdAtTrigger: "m5",
+			}),
+		});
+		try {
+			expect(
+				getCompartments(db, "ses-historian").map(
+					(compartment) => compartment.endMessage,
+				),
+			).toEqual([2, 4]);
 		} finally {
 			closeQuietly(db);
 		}

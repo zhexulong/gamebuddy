@@ -5,12 +5,17 @@ import {
     buildHiddenAgentRegistrations,
 } from "./agents/hidden-agent-registrations";
 import { withContentLanguageDirective } from "./agents/language-directive";
-import { loadPluginConfig } from "./config";
-import { isDreamerRunnable } from "./config/agent-disable";
+import { denyTaskRoutingToCallerAgents } from "./agents/permissions";
+import { loadPluginConfigDetailed } from "./config";
+import { isCompactionEnabled, isDreamerRunnable } from "./config/agent-disable";
 import { migrateMagicContextConfigLocations } from "./config/migrate-config-location";
 import { getMagicContextBuiltinCommands } from "./features/builtin-commands/commands";
 import { openOpenCodeDb } from "./features/magic-context/dreamer/open-opencode-db";
 import { DREAMER_SYSTEM_PROMPT } from "./features/magic-context/dreamer/task-prompts";
+import type {
+    DreamTaskName,
+    DreamTaskProgress,
+} from "./features/magic-context/dreamer/task-registry";
 import {
     createFailClosedController,
     getLastHookInitFailure,
@@ -35,6 +40,7 @@ import {
 } from "./hooks/magic-context/compartment-prompt";
 import { createLiveSessionState } from "./hooks/magic-context/live-session-state";
 import { SubcModuleTransport } from "./hooks/magic-context/module-transport";
+import { preloadTokenizer } from "./hooks/magic-context/read-session-formatting";
 import type { RustModeModuleClient } from "./hooks/magic-context/rust-mode-transform";
 import { beginBootQuietPeriod, scheduleAfterBootQuiet } from "./plugin/boot-quiet";
 import { cleanupConflictWarnings, sendConflictWarning } from "./plugin/conflict-warning-hook";
@@ -47,14 +53,25 @@ import { isDisposedInstanceDirectory } from "./plugin/instance-disposal";
 import { createMessagesTransformHandler } from "./plugin/messages-transform";
 import { registerRpcHandlers } from "./plugin/rpc-handlers";
 import { createToolRegistry } from "./plugin/tool-registry";
-import { type ConflictResult, detectConflicts } from "./shared/conflict-detector";
+import {
+    type ConflictResult,
+    detectConflicts,
+    resolveCompactionForBoot,
+} from "./shared/conflict-detector";
 import { getMagicContextStorageDir } from "./shared/data-path";
 import { registerExitAbort, unregisterExitAbort } from "./shared/exit-abort-registry";
 import { setKeepSubagents } from "./shared/keep-subagents";
 import { log } from "./shared/logger";
+import {
+    resolveHistorianAgentOverrides,
+    resolveHistorianModel,
+    resolveOpenCodeAgentOverrides,
+} from "./shared/model-resolution";
 import { refreshModelLimitsFromApi } from "./shared/models-dev-cache";
+import { createPromptSurfaceRuntime } from "./shared/prompt-surface-runtime";
 import { MagicContextRpcServer } from "./shared/rpc-server";
 import { closeQuietly } from "./shared/sqlite-helpers";
+import { setStoragePrivatePermissionEnforcement } from "./shared/storage-permissions";
 
 const server: Plugin = async (ctx) => {
     beginBootQuietPeriod();
@@ -66,14 +83,23 @@ const server: Plugin = async (ctx) => {
         warn: (m) => log(`[magic-context] ${m}`),
         info: (m) => log(`[magic-context] ${m}`),
     });
-    const pluginConfig = loadPluginConfig(ctx.directory);
+    const loadedPluginConfig = loadPluginConfigDetailed(ctx.directory);
+    const pluginConfig = loadedPluginConfig.config;
+    const promptSurfaceRuntime = createPromptSurfaceRuntime({
+        harness: "opencode",
+        directory: ctx.directory,
+        warn: (message) => log(`[magic-context] config warning: ${message}`),
+    });
     if (configMigrationWarnings.length > 0) {
         pluginConfig.configWarnings = [
             ...configMigrationWarnings,
             ...(pluginConfig.configWarnings ?? []),
         ];
     }
-    // Apply SQLite connection tuning before the first openDatabase() below.
+    // Apply process-wide storage policy and SQLite tuning before the first
+    // openDatabase() below. Storage is user-tier only, so it is shared safely by
+    // every project handled by this plugin process.
+    setStoragePrivatePermissionEnforcement(pluginConfig.storage.enforce_private_permissions);
     setSqlitePragmaConfig({
         cacheSizeMb: pluginConfig.sqlite.cache_size_mb,
         mmapSizeMb: pluginConfig.sqlite.mmap_size_mb,
@@ -142,10 +168,31 @@ const server: Plugin = async (ctx) => {
         }, 3000);
     }
 
-    // Detect conflicts that prevent magic-context from operating correctly
+    // Detect conflicts that prevent magic-context from operating correctly.
+    // The resolved MC compaction mode is threaded in explicitly — the detector
+    // never re-derives it from the config path. In compaction-off mode,
+    // native compaction.auto=true is NOT a conflict (native compaction is the
+    // user's chosen window manager), so the plugin stays enabled.
+    //
+    // The native compaction state comes from the host's RESOLVED config
+    // (ctx.client.config.get() — the same object `opencode debug config`
+    // prints), NOT from re-reading config files ourselves (issue #309: the
+    // file-based re-derivation defaults to auto=true when no file resolves,
+    // wrongly disabling the plugin for users whose auto=false lives in a layer
+    // we cannot see). If the resolved fetch fails or times out, we fall back to
+    // the file-based check unchanged and log one line naming the fallback.
     let conflictResult: ConflictResult | null = null;
     if (pluginConfig.enabled) {
-        conflictResult = detectConflicts(ctx.directory);
+        const resolvedCompaction = await resolveCompactionForBoot(ctx.client);
+        if (resolvedCompaction === null) {
+            log(
+                "[magic-context] resolved-config fetch failed; using file-based compaction detection (the running server's resolved config may differ — `opencode debug config` is authoritative)",
+            );
+        }
+        conflictResult = detectConflicts(ctx.directory, {
+            compactionEnabled: isCompactionEnabled(pluginConfig),
+            resolvedCompaction: resolvedCompaction ?? undefined,
+        });
         if (conflictResult.hasConflict) {
             pluginConfig.enabled = false;
             log(`[magic-context] disabled due to conflicts: ${conflictResult.reasons.join("; ")}`);
@@ -156,13 +203,16 @@ const server: Plugin = async (ctx) => {
 
     const liveSessionState = createLiveSessionState();
     const rustModeModuleClient: RustModeModuleClient | undefined =
-        pluginConfig.transform_mode === "rust" ? new SubcModuleTransport() : undefined;
+        pluginConfig.transform_mode === "rust"
+            ? new SubcModuleTransport(pluginConfig.subc?.connection_file)
+            : undefined;
 
     const hooks = await createSessionHooksAsync({
         ctx,
         pluginConfig,
         liveSessionState,
         rustModeModuleClient,
+        promptSurfaceRuntime,
     });
 
     // Mutable holder so a healed storage reopen can install real hooks without
@@ -202,6 +252,7 @@ const server: Plugin = async (ctx) => {
                 pluginConfig,
                 liveSessionState,
                 rustModeModuleClient,
+                promptSurfaceRuntime,
             });
             if (!reopened.magicContext) return false;
             magicContextRuntime.magicContext = reopened.magicContext;
@@ -219,6 +270,8 @@ const server: Plugin = async (ctx) => {
         ctx,
         pluginConfig,
         rustToolBackends: magicContextRuntime.rustToolBackends,
+        promptSurfaceRuntime,
+        registrationPromptSurface: loadedPluginConfig.registrationPromptSurface,
     });
 
     // v22 deferred legacy-memory identity backfill. createSessionHooks() opens
@@ -307,13 +360,19 @@ const server: Plugin = async (ctx) => {
     if (pluginConfig.enabled) {
         const dreamerRunnable = isDreamerRunnable(pluginConfig);
         const classifyModuleClient = createDreamTimerModuleClient(rustModeModuleClient);
-        const timerProjectIdentity = resolveProjectIdentityForSession(ctx.directory);
+        const timerProjectIdentity = resolveProjectIdentityForSession(
+            ctx.directory,
+            pluginConfig.allow_home_project,
+        );
         if (!timerProjectIdentity) {
-            log("[magic-context] dream timer skipped: cwd is the user's home directory");
+            log(
+                "[magic-context] dream timer skipped: no project identity is bound for this directory",
+            );
         } else {
             const timerRegistration = {
                 directory: ctx.directory,
                 projectIdentity: timerProjectIdentity,
+                harness: "opencode" as const,
                 client: ctx.client,
                 dreamerConfig: dreamerRunnable ? pluginConfig.dreamer : undefined,
                 language: pluginConfig.language,
@@ -321,7 +380,14 @@ const server: Plugin = async (ctx) => {
                 embeddingConfig: pluginConfig.embedding,
                 memoryEnabled: pluginConfig.memory?.enabled === true,
                 memoryInjectionBudgetTokens: pluginConfig.memory?.injection_budget_tokens,
-                experimentalMural: pluginConfig.experimental?.mural,
+                historianChildSweep: {
+                    timeoutMs: pluginConfig.historian_timeout_ms,
+                    fallbackModelCount: resolveHistorianModel(pluginConfig, "opencode").fallbacks
+                        .length,
+                    keepSubagents: pluginConfig.keep_subagents === true,
+                },
+                mural: pluginConfig.mural,
+                retinaHandoff: pluginConfig.smart_notes.retina_handoff,
                 gitCommitIndexing: pluginConfig.memory.git_commit_indexing?.enabled
                     ? {
                           enabled: true,
@@ -330,6 +396,22 @@ const server: Plugin = async (ctx) => {
                       }
                     : undefined,
                 ensureRegistered: ensureProjectRegisteredFromOpenCodeDirectory,
+                onDreamerProgress: (
+                    progress: DreamTaskProgress | null,
+                    completedTask: DreamTaskName | undefined,
+                ) => {
+                    if (progress) {
+                        liveSessionState.dreamerProgressByProject.set(
+                            timerProjectIdentity,
+                            progress,
+                        );
+                    } else if (
+                        liveSessionState.dreamerProgressByProject.get(timerProjectIdentity)
+                            ?.task === completedTask
+                    ) {
+                        liveSessionState.dreamerProgressByProject.delete(timerProjectIdentity);
+                    }
+                },
                 moduleClient: classifyModuleClient,
             };
             // Fail OPEN: the dream timer is best-effort background maintenance and must
@@ -540,6 +622,10 @@ const server: Plugin = async (ctx) => {
             getMagicContext: () => magicContextRuntime.magicContext,
             failClosed,
             failClosedBlockingEnabled,
+            // Compaction-off mode (issue #266): fail_closed_blocking is inert
+            // BY DESIGN in this mode — a failed transform degrades to
+            // passthrough of the input messages instead of blocking the turn.
+            compactionOff: !isCompactionEnabled(pluginConfig),
             internalChildSessions: liveSessionState.internalChildSessions,
             tryReopenStorage,
         }) as unknown as NonNullable<Hooks["experimental.chat.messages.transform"]>,
@@ -552,7 +638,11 @@ const server: Plugin = async (ctx) => {
         "command.execute.before": async (input, output) => {
             await magicContextRuntime.magicContext?.["command.execute.before"]?.(input, output);
         },
-        "chat.message": async (input, _output) => {
+        "chat.message": async (input, output) => {
+            // The first real prompt is the lazy-load boundary. Awaiting here keeps
+            // the tokenizer out of cold start while ensuring synchronous token
+            // estimates later in this prompt use the installed package.
+            await preloadTokenizer();
             // Update tool-def measurement latch before delegating to magic-context
             // hooks. `registry.tools()` is invoked right after chat.message inside
             // OpenCode's prompt flow (see session/prompt.ts), so by the time
@@ -567,7 +657,7 @@ const server: Plugin = async (ctx) => {
             if (provId && modId && agent) {
                 lastChatContext = { providerID: provId, modelID: modId, agentName: agent };
             }
-            await magicContextRuntime.magicContext?.["chat.message"]?.(input);
+            await magicContextRuntime.magicContext?.["chat.message"]?.(input, output);
         },
         "tool.definition": async (input, output) => {
             // Attribute tool schema tokens to the most recent chat-message context.
@@ -608,7 +698,7 @@ const server: Plugin = async (ctx) => {
                 // for permission precedence and hard `steps`/`maxSteps` cap semantics.
                 const commandConfig = {
                     ...(config.command ?? {}),
-                    ...getMagicContextBuiltinCommands(),
+                    ...getMagicContextBuiltinCommands(isCompactionEnabled(pluginConfig)),
                     ...(pluginConfig.command ?? {}),
                 };
 
@@ -623,9 +713,8 @@ const server: Plugin = async (ctx) => {
                           const {
                               tasks: _tasks,
                               inject_docs: _injectDocs,
-                              thinking_level: _thinkingLevel,
                               ...agentOverrides
-                          } = pluginConfig.dreamer;
+                          } = resolveOpenCodeAgentOverrides(pluginConfig.dreamer);
                           return agentOverrides;
                       })()
                     : undefined;
@@ -647,17 +736,14 @@ const server: Plugin = async (ctx) => {
                 // agent config field, so leaking them in would put unknown keys on the
                 // OpenCode agent config. Both historian and historian-editor agents use
                 // the remaining overrides (same model, fallbacks, etc.).
-                const historianAgentOverrides = pluginConfig.historian
-                    ? (() => {
-                          const {
-                              two_pass: _twoPass,
-                              disallowed_tools: _disallowedTools,
-                              thinking_level: _thinkingLevel,
-                              ...agentOverrides
-                          } = pluginConfig.historian;
-                          return agentOverrides;
-                      })()
-                    : undefined;
+                const historianAgentOverrides = (() => {
+                    const {
+                        two_pass: _twoPass,
+                        disallowed_tools: _disallowedTools,
+                        ...agentOverrides
+                    } = resolveHistorianAgentOverrides(pluginConfig.historian);
+                    return agentOverrides;
+                })();
                 // Build hidden-agent registrations from a helper in a NON-entry
                 // module (see hidden-agent-registrations.ts: exporting it from the
                 // entry would make OpenCode's legacy loader invoke it as a plugin
@@ -667,11 +753,10 @@ const server: Plugin = async (ctx) => {
                 const registrations = buildHiddenAgentRegistrations({
                     dreamerPrompt: DREAMER_SYSTEM_PROMPT,
                     smartNoteCompilerPrompt: SMART_NOTE_COMPILER_SYSTEM_PROMPT,
-                    // v2: the v8.7.3 historian prompt always describes the
-                    // <user_observations> output; observations are simply not
-                    // promoted to user-profile when user_memories is disabled
-                    // (gated in the runner). Keeping the system prompt constant
-                    // preserves prompt-cache byte stability.
+                    // The historian prompt always describes <user_observations>, even when
+                    // user memories are disabled. The runner only prevents those observations
+                    // from reaching the user profile. Keeping one system prompt preserves
+                    // prompt-cache byte stability.
                     historianPrompt: withContentLanguageDirective(
                         COMPARTMENT_AGENT_SYSTEM_PROMPT,
                         pluginConfig.language,
@@ -695,6 +780,8 @@ const server: Plugin = async (ctx) => {
                 });
 
                 const agentConfig = { ...(config.agent ?? {}) } as NonNullable<typeof config.agent>;
+                const agentConfigRecord = agentConfig as Record<string, Record<string, unknown>>;
+                const internalAgentIds = registrations.map((registration) => registration.id);
                 for (const reg of registrations) {
                     if (typeof reg.prompt !== "string" || reg.prompt.length === 0) {
                         log(
@@ -702,16 +789,21 @@ const server: Plugin = async (ctx) => {
                         );
                         continue;
                     }
-                    agentConfig[reg.id] = buildHiddenAgentConfig(
+                    agentConfigRecord[reg.id] = buildHiddenAgentConfig(
                         reg.prompt,
                         reg.allowedTools,
                         reg.maxSteps,
                         reg.overrides,
                         reg.id,
                         reg.lockPermissions === true,
+                        reg.description,
                     );
                 }
-                config.agent = agentConfig;
+                const callerAgentConfig = denyTaskRoutingToCallerAgents(
+                    agentConfigRecord,
+                    internalAgentIds,
+                );
+                config.agent = callerAgentConfig as NonNullable<typeof config.agent>;
             } catch (error) {
                 // A failure registering commands/agents must NEVER fail the whole
                 // plugin load — that would also disable the transform/compaction

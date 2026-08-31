@@ -1,0 +1,128 @@
+{
+  "session_id": "ses_redacted_native",
+  "messages": [
+    {
+      "info": {
+        "id": "msg_redacted_user",
+        "sessionID": "ses_redacted_native",
+        "role": "user",
+        "time": {
+          "created": 1772558878300
+        },
+        "parentID": "msg_redacted_parent"
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "[redacted:text]",
+          "time": {
+            "start": 1772558878301,
+            "end": 1772558878302
+          },
+          "metadata": {
+            "redacted": true
+          }
+        },
+        {
+          "type": "compaction",
+          "auto": true,
+          "redaction": "[redacted:compaction]"
+        }
+      ]
+    },
+    {
+      "info": {
+        "id": "msg_redacted_assistant",
+        "sessionID": "ses_redacted_native",
+        "role": "assistant",
+        "time": {
+          "created": 1772558878400,
+          "completed": 1772558878500
+        },
+        "modelID": "claude-opus-4-6",
+        "providerID": "anthropic"
+      },
+      "parts": [
+        {
+          "type": "reasoning",
+          "text": "[redacted:reasoning]",
+          "metadata": {
+            "signature": "[redacted:signature]"
+          }
+        },
+        {
+          "type": "text",
+          "text": "[redacted:text]"
+        }
+      ]
+    }
+  ],
+  "m0": {
+    "info": {
+      "role": "user",
+      "sessionID": "ses_redacted_native"
+    },
+    "parts": [
+      {
+        "type": "text",
+        "text": "<session-history>\nP1\n</session-history>",
+        "synthetic": true
+      }
+    ]
+  },
+  "m1": {
+    "info": {
+      "role": "user",
+      "sessionID": "ses_redacted_native"
+    },
+    "parts": [
+      {
+        "type": "text",
+        "text": "session delta",
+        "synthetic": true
+      }
+    ]
+  },
+  "synthetic_todo": {
+    "info": {
+      "role": "assistant",
+      "sessionID": "ses_redacted_native"
+    },
+    "parts": [
+      {
+        "type": "tool",
+        "callID": "mc_synthetic_todo_db7b7e09f56ed69c",
+        "tool": "todowrite",
+        "state": {
+          "status": "completed",
+          "input": {
+            "todos": [
+              {
+                "content": "Ship it",
+                "status": "in_progress",
+                "priority": "high"
+              }
+            ]
+          },
+          "output": "[\n  {\n    \"content\": \"Ship it\",\n    \"status\": \"in_progress\",\n    \"priority\": \"high\"\n  }\n]",
+          "title": "1 todos",
+          "metadata": {
+            "todos": [
+              {
+                "content": "Ship it",
+                "status": "in_progress",
+                "priority": "high"
+              }
+            ],
+            "truncated": false
+          },
+          "time": {
+            "start": 0,
+            "end": 0
+          }
+        },
+        "syntheticTodoMarker": true
+      }
+    ]
+  }
+}

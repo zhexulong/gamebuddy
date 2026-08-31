@@ -87,6 +87,7 @@ function createCloneFilter(
 		rawMessages.map((message) => [message.id, message.ordinal]),
 	);
 	const validStateIds = new Set<string>(rawOrdinalById.keys());
+	const validOrdinals = new Set<number>(rawOrdinalById.values());
 	for (const entry of entries) {
 		const id = entryId(entry);
 		if (id) validStateIds.add(id);
@@ -96,6 +97,8 @@ function createCloneFilter(
 	return {
 		resolveBoundaryOrdinal: (id) => rawOrdinalById.get(id),
 		includeMessageId,
+		copySessionNotesAndFacts: true,
+		mapOrdinal: (ordinal) => (validOrdinals.has(ordinal) ? ordinal : undefined),
 		includeTag: (tag: CloneTagRow) => {
 			if (tag.type === "tool") {
 				return (
@@ -212,7 +215,7 @@ export async function handlePiCloneSessionStart(
 			deps.signalPendingMarker(destinationSessionId);
 		}
 		writeLog(
-			`[magic-context][pi] clone-inheritance: migrated compartments=${result.compartmentsCopied} tags=${result.tagsCopied} source=${sourceSessionId} dest=${destinationSessionId} reason=fork`,
+			`[magic-context][pi] clone-inheritance: migrated compartments=${result.compartmentsCopied} tags=${result.tagsCopied} notes=${result.notesCopied} facts=${result.factsCopied} source=${sourceSessionId} dest=${destinationSessionId} reason=fork`,
 		);
 		return result;
 	} catch (error) {

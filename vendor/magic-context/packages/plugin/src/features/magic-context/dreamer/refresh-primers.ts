@@ -1,5 +1,6 @@
 import { DREAMER_PRIMER_INVESTIGATOR_AGENT } from "../../../agents/dreamer";
 import { withContentLanguageDirective } from "../../../agents/language-directive";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import {
     type RawMessageProvider,
     setRawMessageProvider,
@@ -11,6 +12,7 @@ import * as shared from "../../../shared";
 import { extractLatestAssistantText } from "../../../shared/assistant-message-extractor";
 import { describeError, getErrorMessage } from "../../../shared/error-message";
 import { log } from "../../../shared/logger";
+import type { ModelInput } from "../../../shared/model-resolution";
 import { modelBodyField } from "../../../shared/resolve-fallbacks";
 import type { Database } from "../../../shared/sqlite";
 import {
@@ -20,7 +22,7 @@ import {
     updatePrimerAnswer,
 } from "../storage-primers";
 import { recordChildInvocation } from "../subagent-token-capture";
-import { runLeaseGuardedWrite, startLeaseHeartbeat } from "./lease";
+import { type LeaseAcquisition, runLeaseGuardedWrite, startLeaseHeartbeat } from "./lease";
 import { buildPrimerSeed } from "./primer-seed";
 import { PRIMER_INVESTIGATOR_SYSTEM_PROMPT } from "./task-prompts";
 
@@ -35,9 +37,11 @@ export interface RefreshPrimersArgs {
     holderId: string;
     leaseKey: string;
     deadline: number;
-    model?: string;
-    fallbackModels?: readonly string[];
+    leaseAcquisition?: LeaseAcquisition;
+    model?: ModelInput;
+    fallbackModels?: readonly ModelInput[];
     language?: string;
+    onProgress?: (processed: number) => void;
     /**
      * Pi only: builds a RawMessageProvider for an arbitrary historical session id
      * (JSONL), so the orientation seed read works on Pi-only installs where there
@@ -166,8 +170,12 @@ export async function refreshPrimers(args: RefreshPrimersArgs): Promise<RefreshP
     if (primers.length === 0) return result;
 
     const abortController = new AbortController();
-    const heartbeat = startLeaseHeartbeat(args.db, args.holderId, args.leaseKey, () =>
-        abortController.abort(),
+    const heartbeat = startLeaseHeartbeat(
+        args.db,
+        args.holderId,
+        args.leaseKey,
+        () => abortController.abort(),
+        args.leaseAcquisition,
     );
 
     try {
@@ -182,6 +190,7 @@ export async function refreshPrimers(args: RefreshPrimersArgs): Promise<RefreshP
             const refreshed = await refreshOnePrimer(args, primer, sliceMs, abortController.signal);
             if (refreshed) result.refreshed += 1;
             else result.skipped += 1;
+            args.onProgress?.(result.refreshed + result.skipped);
         }
         log(`[dreamer] refresh-primers: refreshed=${result.refreshed} skipped=${result.skipped}`);
         return result;
@@ -227,12 +236,12 @@ async function refreshOnePrimer(
     let agentSessionId: string | null = null;
     const startedAt = Date.now();
     try {
-        const createResponse = await args.client.session.create({
-            body: {
-                ...(args.parentSessionId ? { parentID: args.parentSessionId } : {}),
-                title: "magic-context-dream-refresh-primers",
-            },
-            query: { directory: args.sessionDirectory },
+        const createResponse = await createChildSessionWithFence({
+            client: args.client,
+            db: args.db,
+            parentSessionId: args.parentSessionId,
+            title: "magic-context-dream-refresh-primers",
+            directory: args.sessionDirectory,
         });
         const created = shared.normalizeSDKResponse(
             createResponse,

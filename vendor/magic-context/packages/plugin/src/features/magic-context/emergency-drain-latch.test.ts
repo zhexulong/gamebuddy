@@ -72,7 +72,7 @@ describe("emergency drain catch-up latch", () => {
         });
     });
 
-    it("below 95% with an exhausted budget skips (no latch)", () => {
+    it("below the derived force band with an exhausted budget skips (no latch)", () => {
         const t = 1_000_000;
         exhaustWindowBudget(db, SID, 83, t);
         // 4th reserve in the same window, still 83% → no bypass → skip.
@@ -81,14 +81,14 @@ describe("emergency drain catch-up latch", () => {
         expect(loadProtectedTailMeta(db, SID).emergencyDrainActive).toBe(0);
     });
 
-    it("enters the latch at >=95% and bypasses the exhausted budget every pass", () => {
+    it("enters the latch at the derived force band and bypasses the exhausted budget every pass", () => {
         const t = 2_000_000;
-        exhaustWindowBudget(db, SID, 96, t);
+        exhaustWindowBudget(db, SID, 85, t);
         const meta = loadProtectedTailMeta(db, SID);
         expect(meta.emergencyDrainActive).toBeGreaterThan(0); // latch armed on entry
         // Budget is spent, but the latch bypasses it — repeatedly.
-        const r1 = reserve(db, SID, 96, t + 10);
-        const r2 = reserve(db, SID, 96, t + 20);
+        const r1 = reserve(db, SID, 85, t + 10);
+        const r2 = reserve(db, SID, 85, t + 20);
         expect(r1.ok).toBe(true);
         expect(r1.overQuotaBypass).toBe(true);
         expect(r2.ok).toBe(true);
@@ -100,7 +100,7 @@ describe("emergency drain catch-up latch", () => {
         // Spike to 96% arms the latch.
         exhaustWindowBudget(db, SID, 96, t);
         expect(loadProtectedTailMeta(db, SID).emergencyDrainActive).toBeGreaterThan(0);
-        // Now at 83% (below 95 enter, above 70 exit for execThreshold=80) the latch
+        // Now at 83% (below the force-band entry, above 70 exit for execThreshold=80) the latch
         // stays armed and keeps draining — this is the band that previously stalled.
         const r = reserve(db, SID, 83, t + 10, { executeThreshold: 80 });
         expect(r.ok).toBe(true);
@@ -123,16 +123,26 @@ describe("emergency drain catch-up latch", () => {
         const t = 5_000_000;
         exhaustWindowBudget(db, SID, 96, t);
         expect(loadProtectedTailMeta(db, SID).emergencyDrainActive).toBeGreaterThan(0);
-        // Still at 90% (above exit) but past the self-expiry backstop → clear.
+        // Still at 84% (above exit but below re-entry) and past the backstop → clear.
         // (MAX_LATCH 30min > DRAIN_WINDOW 10min, so the per-window budget has also
         // reset by now; the reserve succeeds within the fresh budget WITHOUT bypass,
         // and the latch is cleared.)
-        const r = reserve(db, SID, 90, t + EMERGENCY_DRAIN_MAX_LATCH_MS + 1, {
+        const r = reserve(db, SID, 84, t + EMERGENCY_DRAIN_MAX_LATCH_MS + 1, {
             executeThreshold: 80,
         });
         expect(loadProtectedTailMeta(db, SID).emergencyDrainActive).toBe(0);
         expect(r.ok).toBe(true);
         expect(r.overQuotaBypass).toBe(false);
+    });
+
+    it("keeps a 90% execute threshold below its 92% drain-entry band", () => {
+        const t = 5_500_000;
+        for (let i = 0; i < 3; i++) {
+            expect(reserve(db, SID, 91, t + i, { executeThreshold: 90 }).ok).toBe(true);
+        }
+        expect(loadProtectedTailMeta(db, SID).emergencyDrainActive).toBe(0);
+        reserve(db, SID, 92, t + 10, { executeThreshold: 90 });
+        expect(loadProtectedTailMeta(db, SID).emergencyDrainActive).toBeGreaterThan(0);
     });
 
     it("suppresses the bypass during the historian-failure backoff window", () => {
@@ -146,6 +156,16 @@ describe("emergency drain catch-up latch", () => {
         expect(blocked.ok).toBe(false);
         // After the backoff window: bypass resumes.
         const allowed = reserve(db, SID, 96, t + EMERGENCY_DRAIN_FAILURE_BACKOFF_MS + 20);
+        expect(allowed.ok).toBe(true);
+        expect(allowed.overQuotaBypass).toBe(true);
+    });
+
+    it("does not let a future failure timestamp suppress catch-up indefinitely", () => {
+        const t = 6_500_000;
+        exhaustWindowBudget(db, SID, 96, t);
+        recordHistorianDrainFailure(db, SID, t + 7 * 24 * 60 * 60_000);
+
+        const allowed = reserve(db, SID, 96, t + 20);
         expect(allowed.ok).toBe(true);
         expect(allowed.overQuotaBypass).toBe(true);
     });

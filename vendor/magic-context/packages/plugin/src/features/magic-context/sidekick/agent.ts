@@ -1,6 +1,7 @@
 import { withContentLanguageDirective } from "../../../agents/language-directive";
 import { SIDEKICK_AGENT } from "../../../agents/sidekick";
 import type { SidekickConfig } from "../../../config/schema/magic-context";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
 import { extractLatestAssistantText } from "../../../shared/assistant-message-extractor";
@@ -53,12 +54,12 @@ export async function runSidekick(deps: {
     };
 
     try {
-        const createResponse = await deps.client.session.create({
-            body: {
-                ...(deps.sessionId ? { parentID: deps.sessionId } : {}),
-                title: "magic-context-sidekick",
-            },
-            query: { directory: deps.sessionDirectory ?? deps.projectPath },
+        const createResponse = await createChildSessionWithFence({
+            client: deps.client,
+            db: openDatabase(),
+            parentSessionId: deps.sessionId,
+            title: "magic-context-sidekick",
+            directory: deps.sessionDirectory ?? deps.projectPath,
         });
         const createdSession = shared.normalizeSDKResponse(
             createResponse,

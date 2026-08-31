@@ -3,6 +3,8 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+import { resolvePiWindowGeometry } from "./pi-context-limit";
+import { resolvePiPressureSnapshot } from "./pi-pressure";
 
 const STATUS_KEY = "magic-context";
 const RECENT_FAILURE_MS = 60_000;
@@ -25,6 +27,9 @@ type SessionMetaStatus = {
 	compartment_in_progress: number | null;
 	historian_failure_count: number | null;
 	historian_last_failure_at: number | null;
+	last_input_tokens: number | null;
+	last_context_percentage: number | null;
+	detected_context_limit: number | null;
 };
 
 const lastRenderedBySession = new Map<string, string>();
@@ -75,16 +80,48 @@ export function updateStatusLine(
 	ctx.ui.setStatus(STATUS_KEY, text);
 }
 
-function renderStatusText(
+export function renderStatusText(
 	ctx: ExtensionContext,
 	db: ContextDatabase,
 	sessionId: string,
 ): string {
 	const usage = ctx.getContextUsage?.();
-	const inputTokens =
-		typeof usage?.tokens === "number" ? usage.tokens : undefined;
-	const pct = typeof usage?.percent === "number" ? usage.percent : undefined;
 	const meta = readSessionMetaStatus(db, sessionId);
+	const liveInputTokens =
+		typeof usage?.tokens === "number" && Number.isFinite(usage.tokens)
+			? usage.tokens
+			: undefined;
+	const persistedInputTokens =
+		typeof meta?.last_input_tokens === "number" &&
+		Number.isFinite(meta.last_input_tokens) &&
+		meta.last_input_tokens >= 0
+			? meta.last_input_tokens
+			: undefined;
+	const windowGeometry = resolvePiWindowGeometry({
+		rawContextWindow: usage?.contextWindow ?? ctx.model?.contextWindow,
+		model: ctx.model,
+		detectedContextLimit:
+			typeof meta?.detected_context_limit === "number" &&
+			meta.detected_context_limit > 0
+				? meta.detected_context_limit
+				: undefined,
+		persistedInputTokens,
+		persistedPercentage:
+			typeof meta?.last_context_percentage === "number"
+				? meta.last_context_percentage
+				: undefined,
+	});
+	const pressure =
+		liveInputTokens !== undefined || persistedInputTokens !== undefined
+			? resolvePiPressureSnapshot({
+					persistedPercentage: meta?.last_context_percentage ?? 0,
+					persistedInputTokens: persistedInputTokens ?? 0,
+					liveInputTokens,
+					usableContextLimit: windowGeometry?.usableSoft,
+				})
+			: undefined;
+	const inputTokens = pressure?.inputTokens;
+	const pct = pressure?.percentage;
 	const state = renderHistorianState(meta, recompSessions.has(sessionId));
 	return `mc: ${inputTokens === undefined ? "--" : fmt(inputTokens)} (${pct === undefined ? "--" : `${Math.round(pct)}%`}) · ${state}`;
 }
@@ -111,7 +148,10 @@ function readSessionMetaStatus(
 	try {
 		return db
 			.prepare<[string], SessionMetaStatus>(
-				"SELECT compartment_in_progress, historian_failure_count, historian_last_failure_at FROM session_meta WHERE session_id = ?",
+				`SELECT compartment_in_progress, historian_failure_count,
+				        historian_last_failure_at, last_input_tokens,
+				        last_context_percentage, detected_context_limit
+				 FROM session_meta WHERE session_id = ?`,
 			)
 			.get(sessionId);
 	} catch {

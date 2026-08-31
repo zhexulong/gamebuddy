@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 
 import { DREAMER_CLASSIFIER_AGENT } from "../../../agents/dreamer";
+import { withContentLanguageDirective } from "../../../agents/language-directive";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import { isRustAuthorityDrainingError } from "../../../plugin/rust-tool-backends";
 import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
@@ -11,8 +13,9 @@ import {
 import { describeError, getErrorMessage } from "../../../shared/error-message";
 import { shouldKeepSubagents } from "../../../shared/keep-subagents";
 import { log } from "../../../shared/logger";
+import type { ModelInput } from "../../../shared/model-resolution";
 import { hasShareabilitySensitiveText } from "../../../shared/redaction";
-import { modelBodyField } from "../../../shared/resolve-fallbacks";
+import { modelBodyField, toModelEntry } from "../../../shared/resolve-fallbacks";
 import type { Database } from "../../../shared/sqlite";
 import {
     getMemoriesByProject,
@@ -27,10 +30,15 @@ import {
     type ClassifyAnchorMemory,
     type ClassifyPromptMemory,
     parseClassifyManifest,
+    validateClassifyManifest,
 } from "./classify-prompt";
-import { runLeaseGuardedWrite, startLeaseHeartbeat } from "./lease";
+import { type LeaseAcquisition, runLeaseGuardedWrite, startLeaseHeartbeat } from "./lease";
 import { assertManifestCoversExactly } from "./manifest-parser";
 import { getModuleMemoryIdentities } from "./module-apply";
+import {
+    DreamerProviderOutputFailureError,
+    providerOutputFailureFromInvalidManifest,
+} from "./provider-output-failure";
 
 /**
  * classify-memories: a NON-agentic single-shot transform. Scores each project
@@ -99,8 +107,10 @@ export interface ClassifyArgs {
     holderId: string;
     leaseKey: string;
     deadline: number;
-    model?: string;
-    fallbackModels?: readonly string[];
+    leaseAcquisition?: LeaseAcquisition;
+    model?: ModelInput;
+    fallbackModels?: readonly ModelInput[];
+    language?: string;
     /** Present only for rust-mode projects whose memories authority is MODULE. */
     moduleClient?: ClassifyModuleClient;
     moduleSessionId?: string;
@@ -108,6 +118,7 @@ export interface ClassifyArgs {
     moduleContextStoreUuid?: string;
     moduleAuthorityGeneration?: number;
     moduleCommandId?: string;
+    onProgress?: (processed: number) => void;
 }
 
 export interface ClassifyResult {
@@ -274,8 +285,12 @@ export async function runClassify(args: ClassifyArgs): Promise<ClassifyResult> {
     }
 
     const abortController = new AbortController();
-    const heartbeat = startLeaseHeartbeat(args.db, args.holderId, args.leaseKey, () =>
-        abortController.abort(),
+    const heartbeat = startLeaseHeartbeat(
+        args.db,
+        args.holderId,
+        args.leaseKey,
+        () => abortController.abort(),
+        args.leaseAcquisition,
     );
 
     try {
@@ -296,6 +311,7 @@ export async function runClassify(args: ClassifyArgs): Promise<ClassifyResult> {
             result.changed += counts.changed;
             result.remaining -= counts.classified;
             result.chunks += 1;
+            args.onProgress?.(result.classified);
         }
         result.complete = result.remaining === 0;
         log(
@@ -329,12 +345,12 @@ async function classifyOneChunk(
             return run;
         }
 
-        const createResponse = await args.client.session.create({
-            body: {
-                ...(args.parentSessionId ? { parentID: args.parentSessionId } : {}),
-                title: "magic-context-dream-classify",
-            },
-            query: { directory: args.sessionDirectory },
+        const createResponse = await createChildSessionWithFence({
+            client: args.client,
+            db: args.db,
+            parentSessionId: args.parentSessionId,
+            title: "magic-context-dream-classify",
+            directory: args.sessionDirectory,
         });
         const created = shared.normalizeSDKResponse(
             createResponse,
@@ -353,7 +369,7 @@ async function classifyOneChunk(
                 query: { directory: args.sessionDirectory },
                 body: {
                     agent: DREAMER_CLASSIFIER_AGENT,
-                    system: CLASSIFY_SYSTEM_PROMPT,
+                    system: withContentLanguageDirective(CLASSIFY_SYSTEM_PROMPT, args.language),
                     ...modelBodyField(args.model),
                     parts: [{ type: "text", text: prompt, synthetic: true }],
                 },
@@ -378,7 +394,19 @@ async function classifyOneChunk(
                     }
                     const text = extractLatestAssistantText(messages);
                     if (!text) throw new Error("classify returned no output");
-                    parseClassifyManifest(text);
+                    try {
+                        validateClassifyManifest(
+                            text,
+                            new Set(chunk.map((candidate) => candidate.id)),
+                        );
+                    } catch (error) {
+                        const providerFailure = providerOutputFailureFromInvalidManifest(
+                            messages,
+                            text,
+                        );
+                        if (providerFailure) throw providerFailure;
+                        throw error;
+                    }
                     return text;
                 },
             },
@@ -401,7 +429,8 @@ async function classifyOneChunk(
         // A MODULE-authority failure is not safe to downgrade to the guarded
         // TypeScript child path. Surface it so the scheduler records a
         // transient failure and retries the same task instead.
-        if (moduleRoute || signal.aborted) throw failure;
+        if (moduleRoute || signal.aborted || failure instanceof DreamerProviderOutputFailureError)
+            throw failure;
         return { classified: 0, changed: 0 };
     } finally {
         // Delete on success AND failure (the failed child still holds the
@@ -434,6 +463,11 @@ async function runClassifyThroughModule(
         memories: chunk.map(toPromptMemory),
         anchors,
     });
+    const modelChain = [args.model, ...(args.fallbackModels ?? [])]
+        .map(toModelEntry)
+        .filter((entry) => entry !== undefined)
+        .map((entry) => entry.model);
+    const resolvedModelChain = [...new Set(modelChain)];
     const response = await args.moduleClient?.call({
         sessionId: args.moduleSessionId as string,
         projectRoot: args.moduleProjectRoot as string,
@@ -451,6 +485,7 @@ async function runClassifyThroughModule(
                 .digest("hex")
                 .slice(0, 24)}`,
             authority_generation: args.moduleAuthorityGeneration,
+            ...(resolvedModelChain.length > 0 ? { model_chain: resolvedModelChain } : {}),
             payload: {
                 prompt_body: prompt,
                 items: chunk.map((candidate) => ({
@@ -472,11 +507,9 @@ async function runClassifyThroughModule(
     if ((result as { truncated?: unknown }).truncated === true) {
         throw new Error("classify returned length-capped output");
     }
-    const parsed = parseClassifyManifest(manifestText);
-    assertManifestCoversExactly(
-        parsed.map((entry) => entry.id),
+    const parsed = validateClassifyManifest(
+        manifestText,
         new Set(chunk.map((candidate) => candidate.id)),
-        "classify",
     );
     const rows = parsed.map((entry) => {
         const candidate = chunk.find((item) => item.id === entry.id);

@@ -2,11 +2,11 @@ import { cueBudgetFor } from "./compress-cues-prompt";
 
 /**
  * Per-cue validation, applied ON WRITE (not at parse time). The compress-cues
- * host validates each cue independently and SKIPS the invalid ones — the memory
- * keeps a NULL cue and is retried next run — rather than rejecting the whole
- * chunk for one bad cue. This is the per-cue half of the retired
- * validateMuralManifest; the manifest-level arms (duplicate ids, room/merge
- * targets, source-membership) are gone with the author flow.
+ * host validates each cue independently; an initial failure leaves a NULL cue for
+ * the next run, while the durable rejection latch eventually writes a fallback
+ * rather than rejecting the whole chunk for one bad cue. This is the per-cue half
+ * of the retired validateMuralManifest; manifest-level checks for duplicate ids and
+ * room/merge targets are gone with the author flow.
  */
 
 export interface CueValidationFailure {
@@ -31,12 +31,16 @@ function hasBalancedParentheses(cue: string): boolean {
  * Rules enforced (all independent of other cues):
  *  - non-empty after trim
  *  - within the per-importance character budget
- *  - no leaked source id (#123)
+ *  - no leaked source id matching this memory's own id (#123)
  *  - balanced parentheses (prohibition mechanisms use them)
  *  - a prohibition trigger word requires a ⊘ polarity marker
  *  - every ⊘ marker needs a parenthesized mechanism
  */
-export function validateCue(cue: string, importance: number): CueValidationFailure | null {
+export function validateCue(
+    cue: string,
+    importance: number,
+    ownId?: number,
+): CueValidationFailure | null {
     const trimmed = cue.trim();
     if (trimmed.length === 0) return { reason: "empty" };
 
@@ -44,7 +48,12 @@ export function validateCue(cue: string, importance: number): CueValidationFailu
     const length = [...trimmed].length;
     if (length > budget) return { reason: `over-budget ${length}>${budget}` };
 
-    if (/#\d+/.test(trimmed)) return { reason: "leaked-id" };
+    // Other numeric references are legitimate memory content (for example, PR and
+    // issue numbers). Only the id shown beside this memory in the prompt is a
+    // leak, and the word boundary prevents #12 from matching #123.
+    if (ownId !== undefined && new RegExp(`#${ownId}\\b`).test(trimmed)) {
+        return { reason: "leaked-id" };
+    }
 
     if (!hasBalancedParentheses(trimmed)) return { reason: "unbalanced-parens" };
 

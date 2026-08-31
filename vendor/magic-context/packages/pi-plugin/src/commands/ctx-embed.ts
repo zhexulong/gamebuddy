@@ -10,9 +10,10 @@ import {
 	embedPauseBySession,
 	embedRunStateBySession,
 } from "@magic-context/core/hooks/magic-context/embed-session-state";
+import { formatEmbedFailureSummary } from "@magic-context/core/hooks/magic-context/format-embed-failure";
 import { formatEmbedStatusText } from "@magic-context/core/hooks/magic-context/format-embed-status";
 import { ensureProjectRegisteredFromPiDirectory } from "../embedding-bootstrap";
-import { resolveSessionId, sendCtxStatusMessage } from "./pi-command-utils";
+import { createCtxStatusSender, resolveSessionId } from "./pi-command-utils";
 
 const EMBED_PROGRESS_COMPARTMENT_STEP = 8;
 const EMBED_PROGRESS_MIN_INTERVAL_MS = 10_000;
@@ -130,7 +131,11 @@ export async function runEmbedDrain(
 		}
 		case "stalled":
 			return {
-				text: `## /ctx-embed\n\nEmbedded ${outcome.embedded} compartment${outcome.embedded === 1 ? "" : "s"}; ${outcome.remaining} could not be embedded (the provider returned no result). Run /ctx-embed start again to retry them.`,
+				text: `## /ctx-embed\n\n${formatEmbedFailureSummary(
+					outcome.embedded,
+					outcome.remaining,
+					outcome.failure,
+				)}`,
 				level: "info",
 			};
 		default:
@@ -159,9 +164,10 @@ export function registerCtxEmbedCommand(
 		description:
 			"Embedding status, or start/pause history compartment embedding (start | pause)",
 		handler: async (args, ctx) => {
+			const sendStatus = createCtxStatusSender(pi, ctx);
 			const sessionId = resolveSessionId(ctx);
 			if (!sessionId) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-embed",
 					text: "## /ctx-embed\n\nNo active Pi session is available.",
 					level: "error",
@@ -185,7 +191,7 @@ export function registerCtxEmbedCommand(
 					project.projectIdentity,
 					sessionId,
 				);
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-embed",
 					text: `## /ctx-embed\n\nPaused at ${cov.session.embedded}/${cov.session.total} compartments embedded.`,
 					level: "info",
@@ -194,7 +200,7 @@ export function registerCtxEmbedCommand(
 			}
 
 			if (memoryEnabled === false) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-embed",
 					text: "## /ctx-embed\n\nMemory is disabled for this project, so there is no semantic embedding to backfill.",
 					level: "info",
@@ -211,18 +217,18 @@ export function registerCtxEmbedCommand(
 					sessionId,
 					{
 						onStatus: (status) =>
-							sendCtxStatusMessage(pi, {
+							sendStatus({
 								title: "/ctx-embed",
 								...status,
 							}),
 					},
 				);
-				sendCtxStatusMessage(pi, { title: "/ctx-embed", text, level });
+				sendStatus({ title: "/ctx-embed", text, level });
 				return;
 			}
 
 			if (sub !== "") {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-embed",
 					text: "## /ctx-embed\n\nUsage: `/ctx-embed` (status), `/ctx-embed start`, or `/ctx-embed pause`.",
 					level: "info",
@@ -236,10 +242,11 @@ export function registerCtxEmbedCommand(
 				sessionId,
 			);
 			const statusText = formatEmbedStatusText(coverage, { status: "idle" });
-			sendCtxStatusMessage(pi, {
+			sendStatus({
 				title: "/ctx-embed",
 				text: `## Embedding Status\n\n${statusText}`,
 				level: "info",
+				rpcDisplay: "dialog",
 			});
 		},
 	});
@@ -263,6 +270,7 @@ export function maybeAutoEmbedPiSession(
 	if (deps.memoryEnabled === false) return;
 	autoEmbedAttemptedBySession.add(sessionId);
 	void (async () => {
+		let completedDrainWithWork = false;
 		try {
 			// Defer off the context-handler thread before any DB/config work:
 			// ensureProjectRegisteredFromPiDirectory does its config load + stale
@@ -280,10 +288,18 @@ export function maybeAutoEmbedPiSession(
 			notify(
 				`Embedding ${remaining} compartment${remaining === 1 ? "" : "s"} of history in the background…`,
 			);
-			const { text } = await runEmbedDrain(deps.db, projectIdentity, sessionId);
+			const { text, level } = await runEmbedDrain(
+				deps.db,
+				projectIdentity,
+				sessionId,
+			);
+			completedDrainWithWork = level === "success";
 			notify(text.replace(/^## \/ctx-embed\n\n/, ""));
 		} catch {
 			// best-effort background drain
+		} finally {
+			if (!completedDrainWithWork)
+				autoEmbedAttemptedBySession.delete(sessionId);
 		}
 	})();
 }

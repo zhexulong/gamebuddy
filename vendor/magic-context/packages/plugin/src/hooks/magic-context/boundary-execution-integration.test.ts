@@ -60,6 +60,7 @@ function applyGate(input: {
     percentage?: number;
     historyRefresh?: boolean;
     isSubagent?: boolean;
+    effectiveExecuteThresholdPercentage?: number;
 }): { effective: "execute" | "defer"; sideEffect: "set-flag" | "none"; bypass: BypassReason } {
     const historyRefreshSessions = new Set<string>();
     if (input.historyRefresh) historyRefreshSessions.add(input.sessionId);
@@ -68,6 +69,7 @@ function applyGate(input: {
         sessionMeta: { isSubagent: input.isSubagent ?? false },
         historyRefreshSessions,
         sessionId: input.sessionId,
+        effectiveExecuteThresholdPercentage: input.effectiveExecuteThresholdPercentage ?? 65,
     });
     const { midTurnAdjustedSchedulerDecision, sideEffect } = applyMidTurnDeferral({
         base: input.base,

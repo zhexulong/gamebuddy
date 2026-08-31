@@ -26,6 +26,22 @@ export type MemoryCategory =
 export type MemoryStatus = "active" | "permanent" | "archived";
 export type MemoryScope = "project" | "ecosystem" | "universe";
 export type VerificationStatus = "unverified" | "verified" | "stale" | "flagged";
+/**
+ * Provenance of a memory row.
+ *
+ * `"user"` is intentionally RESERVED, not dead: it exists for FUTURE manual
+ * memory entries authored through the dashboard (user-typed rows), which were
+ * designed but never implemented. It must NEVER be written by the agent
+ * (historian/dreamer/tool) write paths — origin provenance matters to the
+ * agent, historian dedup, and dreamer curation, so agent-originated memories
+ * must never carry `"user"`. `insertMemory` enforces this at the write
+ * boundary.
+ *
+ * Note: "was this addition user-ignited" is a SEPARATE future concern from
+ * `sourceType`. A prompt-driven agent write made at the user's request is
+ * still `sourceType: "agent"` (or `"tool"`); user-ignition would be carried
+ * by a distinct field if it is ever needed.
+ */
 export type MemorySourceType = "historian" | "agent" | "dreamer" | "user";
 
 export interface Memory {

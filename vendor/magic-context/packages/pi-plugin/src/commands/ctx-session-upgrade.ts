@@ -16,7 +16,9 @@ import {
 } from "@magic-context/core/hooks/magic-context/recomp-orchestrator";
 import { describeError } from "@magic-context/core/shared/error-message";
 import { sessionLog } from "@magic-context/core/shared/logger";
+import type { ModelInput } from "@magic-context/core/shared/model-resolution";
 import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
+import { COMPACTION_OFF_COMMAND_UNAVAILABLE } from "../compaction-off-pi";
 import {
 	signalPiDeferredHistoryRefresh,
 	signalPiDeferredMaterialization,
@@ -26,22 +28,25 @@ import { runPiMemoryMigration } from "../pi-memory-migration";
 import { createPiHistorianClient } from "../pi-recomp-client-shared";
 import { stagePiRecompMarker } from "../pi-recomp-marker";
 import { isPiRecompInFlight, spawnPiRecompRun } from "../pi-recomp-runner";
-import { readPiSessionMessages } from "../read-session-pi";
+import { readPiSessionSnapshot } from "../read-session-pi";
 import { updateStatusLine } from "../status-line";
-import { resolveSessionId, sendCtxStatusMessage } from "./pi-command-utils";
+import { createCtxStatusSender, resolveSessionId } from "./pi-command-utils";
 
 export interface CtxSessionUpgradeRuntimeDeps {
 	db: ContextDatabase;
 	runner: SubagentRunner;
 	historianModel: string | undefined;
 	historianChunkTokens: number;
-	historianFallbacks?: readonly string[];
+	historianFallbacks?: readonly ModelInput[];
 	historianTimeoutMs?: number;
 	historianThinkingLevel?: string;
 	language?: string;
 	memoryEnabled: boolean;
+	/** Allow a session started exactly in the canonical home directory only when user-level configuration enables it. */
+	allowHomeProject?: boolean;
 	autoPromote: boolean;
 	userMemoriesEnabled?: boolean;
+	compactionOff?: boolean;
 }
 
 export interface RegisterCtxSessionUpgradeDeps
@@ -69,9 +74,10 @@ export function registerCtxSessionUpgradeCommand(
 		description:
 			"Upgrade this session to the current Magic Context history format and re-organize project memories",
 		handler: async (_args, ctx) => {
+			const sendStatus = createCtxStatusSender(pi, ctx);
 			const sessionId = resolveSessionId(ctx);
 			if (!sessionId) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-session-upgrade",
 					text: "## Session Upgrade\n\nNo active Pi session is available.",
 					level: "error",
@@ -79,8 +85,16 @@ export function registerCtxSessionUpgradeCommand(
 				return;
 			}
 			const currentDeps = deps.resolveRuntimeDeps?.(ctx) ?? deps;
+			if (currentDeps.compactionOff) {
+				sendStatus({
+					title: "/ctx-session-upgrade",
+					text: COMPACTION_OFF_COMMAND_UNAVAILABLE,
+					level: "warning",
+				});
+				return;
+			}
 			if (!currentDeps.historianModel) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-session-upgrade",
 					text: "## Session Upgrade\n\nUnavailable because `historian.model` is not configured.",
 					level: "error",
@@ -89,7 +103,7 @@ export function registerCtxSessionUpgradeCommand(
 			}
 
 			if (isWrapupInProgress(currentDeps.db, sessionId)) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-session-upgrade",
 					text: "## Session Upgrade\n\n/ctx-wrapup is already compacting this session. Wait for it to finish, then try again.",
 					level: "warning",
@@ -98,7 +112,7 @@ export function registerCtxSessionUpgradeCommand(
 			}
 
 			if (isPiRecompInFlight(sessionId)) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-session-upgrade",
 					text: "## Session Upgrade\n\nAn upgrade or recomp is already running for this session in the background. Wait for it to finish, then try again.",
 					level: "warning",
@@ -120,6 +134,7 @@ export function registerCtxSessionUpgradeCommand(
 			// OpenCode's primaryModelId): a quality-sensitive consolidation should
 			// run on the user's working model, not the (possibly misconfigured)
 			// historian model. Historian model + fallbacks remain the safety net.
+			const cwd = ctx.cwd;
 			const sessionMainModel = ctx.model
 				? `${ctx.model.provider}/${ctx.model.id}`
 				: undefined;
@@ -132,7 +147,7 @@ export function registerCtxSessionUpgradeCommand(
 			// could touch a pool the user opted out of at worst.
 			const migrationEnabled = currentDeps.memoryEnabled;
 
-			const runMigration = async (): Promise<string> => {
+			const runMigration = async (signal: AbortSignal): Promise<string> => {
 				if (!migrationEnabled) {
 					return "Memory migration skipped (memory disabled).";
 				}
@@ -147,13 +162,16 @@ export function registerCtxSessionUpgradeCommand(
 						fallbackModels: currentDeps.historianFallbacks,
 						timeoutMs: currentDeps.historianTimeoutMs,
 						thinkingLevel: currentDeps.historianThinkingLevel,
-						directory: ctx.cwd,
+						directory: cwd,
+						allowHomeProject: currentDeps.allowHomeProject,
 						sessionId,
 						userMemoriesEnabled: currentDeps.userMemoriesEnabled,
 						language: currentDeps.language,
+						signal,
 					});
 					return outcome.summary;
 				} catch (error) {
+					if (signal.aborted) return "Memory migration cancelled.";
 					return `Memory migration skipped (error): ${describeError(error).brief}`;
 				}
 			};
@@ -163,7 +181,10 @@ export function registerCtxSessionUpgradeCommand(
 			//   • none + migration already done → no-op "already upgraded"
 			//   • none + migration still pending → migration only (skip recomp)
 			if (upgradableCount === 0) {
-				const projectPath = resolveProjectIdentityForSession(ctx.cwd);
+				const projectPath = resolveProjectIdentityForSession(
+					cwd,
+					currentDeps.allowHomeProject,
+				);
 				if (!projectPath) return;
 				// migrationPending mirrors OpenCode: only pending when memory is
 				// enabled AND the project hasn't been migrated yet.
@@ -171,7 +192,7 @@ export function registerCtxSessionUpgradeCommand(
 					migrationEnabled &&
 					!isMemoryMigrationDone(currentDeps.db, projectPath);
 				if (!migrationPending) {
-					sendCtxStatusMessage(pi, {
+					sendStatus({
 						title: "/ctx-session-upgrade",
 						text: [
 							"## Session Upgrade — Already Up To Date",
@@ -181,47 +202,53 @@ export function registerCtxSessionUpgradeCommand(
 								: "This session's compartments are already in the current format.",
 						].join("\n"),
 						level: "info",
+						rpcDisplay: "dialog",
 					});
 					return;
 				}
 				// Compartments current but project memories never migrated — run
 				// migration only. Detached so the single migration LLM call doesn't
 				// block the Pi REPL either (parity with the full-recomp path below).
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-session-upgrade",
 					text: "## Session Upgrade\n\nCompartments are already current. Re-organizing project memories. This may take a while.",
 					level: "info",
 				});
+				const snapshot = readPiSessionSnapshot(ctx);
 				spawnPiRecompRun({
 					sessionId,
 					provider: {
-						readMessages: () => readPiSessionMessages(ctx),
+						readMessages: () => snapshot.rawMessages,
 					} satisfies RawMessageProvider,
 					onStatusChange: () =>
 						updateStatusLine(ctx, {
 							db: currentDeps.db,
-							projectIdentity: ctx.cwd,
+							projectIdentity: cwd,
 						}),
-					work: async () => {
-						const summary = await runMigration();
-						sendCtxStatusMessage(pi, {
+					work: async (signal) => {
+						const detachedSendStatus = createCtxStatusSender(pi, ctx, signal);
+						const summary = await runMigration(signal);
+						if (signal.aborted) return;
+						detachedSendStatus({
 							title: "/ctx-session-upgrade",
 							text: ["## Session Upgrade — Complete", "", summary].join("\n"),
 							level: "info",
+							rpcDisplay: "dialog",
 						});
 					},
 				});
 				return;
 			}
 
-			sendCtxStatusMessage(pi, {
+			sendStatus({
 				title: "/ctx-session-upgrade",
 				text: "## Session Upgrade\n\nRebuilding compartments into the v2 format and re-organizing project memories. This may take a while.",
 				level: "info",
 			});
 
+			const snapshot = readPiSessionSnapshot(ctx);
 			const provider = {
-				readMessages: () => readPiSessionMessages(ctx),
+				readMessages: () => snapshot.rawMessages,
 			} satisfies RawMessageProvider;
 
 			// Detached: the upgrade (multi-pass recomp + memory migration) runs in
@@ -236,9 +263,10 @@ export function registerCtxSessionUpgradeCommand(
 				onStatusChange: () =>
 					updateStatusLine(ctx, {
 						db: currentDeps.db,
-						projectIdentity: ctx.cwd,
+						projectIdentity: cwd,
 					}),
-				work: async () => {
+				work: async (signal) => {
+					const detachedSendStatus = createCtxStatusSender(pi, ctx, signal);
 					// Step 1 — compartment upgrade via full recomp.
 					const recompResult = await executeContextRecompWithResult(
 						{
@@ -248,15 +276,16 @@ export function registerCtxSessionUpgradeCommand(
 								fallbackModels: currentDeps.historianFallbacks,
 								timeoutMs: currentDeps.historianTimeoutMs,
 								thinkingLevel: currentDeps.historianThinkingLevel,
-								directory: ctx.cwd,
+								directory: cwd,
 								accountingSessionId: sessionId,
+								signal,
 								systemPrompt: withContentLanguageDirective(
 									COMPARTMENT_STRUCTURAL_SYSTEM_PROMPT,
 									currentDeps.language,
 									{ preserveUserQuotes: true },
 								),
 								notify: (text) =>
-									sendCtxStatusMessage(pi, {
+									detachedSendStatus({
 										title: "/ctx-session-upgrade",
 										text,
 										level: "info",
@@ -265,7 +294,7 @@ export function registerCtxSessionUpgradeCommand(
 							db: currentDeps.db,
 							sessionId,
 							historianChunkTokens: currentDeps.historianChunkTokens,
-							directory: ctx.cwd,
+							directory: cwd,
 							historianTimeoutMs: currentDeps.historianTimeoutMs,
 							memoryEnabled: currentDeps.memoryEnabled,
 							autoPromote: currentDeps.autoPromote,
@@ -283,6 +312,7 @@ export function registerCtxSessionUpgradeCommand(
 						},
 						{},
 					);
+					if (signal.aborted) return;
 
 					// Gate migration + "Complete" on `published` — the GROUND TRUTH
 					// that recomp actually rebuilt compartments (parity with OpenCode
@@ -307,7 +337,7 @@ export function registerCtxSessionUpgradeCommand(
 								? extractRecompReason(recompResult.message)
 								: `Compartments were not fully rebuilt: ${extractRecompReason(recompResult.message)}`,
 						);
-						sendCtxStatusMessage(pi, {
+						detachedSendStatus({
 							title: "/ctx-session-upgrade",
 							text: `## Session Upgrade — Incomplete\n\n${reason}`,
 							level: "error",
@@ -331,7 +361,11 @@ export function registerCtxSessionUpgradeCommand(
 					// migration, or the "Complete" message below — recomp already
 					// published.
 					try {
-						stagePiRecompMarker({ db: currentDeps.db, sessionId, ctx });
+						stagePiRecompMarker({
+							db: currentDeps.db,
+							sessionId,
+							branchEntries: snapshot.branchEntries,
+						});
 					} catch (markerError) {
 						sessionLog(
 							sessionId,
@@ -343,9 +377,10 @@ export function registerCtxSessionUpgradeCommand(
 					signalPiDeferredMaterialization(sessionId);
 
 					// Step 2 — memory migration (once per project, idempotent).
-					const migrationSummary = await runMigration();
+					const migrationSummary = await runMigration(signal);
+					if (signal.aborted) return;
 
-					sendCtxStatusMessage(pi, {
+					detachedSendStatus({
 						title: "/ctx-session-upgrade",
 						text: [
 							"## Session Upgrade — Complete",
@@ -358,6 +393,7 @@ export function registerCtxSessionUpgradeCommand(
 							recompResult.message,
 						].join("\n"),
 						level: "info",
+						rpcDisplay: "dialog",
 					});
 				},
 			});

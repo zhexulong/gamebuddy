@@ -31,7 +31,7 @@ export function formatThresholdPercent(value: number | undefined | null): string
  * Build a terse "clamped" annotation for execute-threshold display, or "" when the
  * configured value was not clamped. Status surfaces (/ctx-status text, pi status
  * dialog) append this so a user who configured e.g. 190000 tokens on a 128K model
- * sees that it was reduced to the 80% safety cap, instead of the value being
+ * sees that it was reduced to the 90% safety cap, instead of the value being
  * silently ignored (issue #241). The note includes the configured value and the cap
  * so the user can see the math.
  *

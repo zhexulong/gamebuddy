@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "drill_id": "FM-BOUNDARY-DIVERGENCE-RECUT",
+  "cache_affecting": "#4975",
+  "mutations": [
+    {
+      "name": "DELETE_INITIALIZED_DIVERGENCE_DETECTOR",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "let boundary_divergence_recut = detect_boundary_divergence(...)",
+        "after": "let boundary_divergence_recut = None",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module astro_shape_boundary_divergence_recuts_full_compartment_set_on_first_pass -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "assertion": "expected HARD, observed SOFT+"
+      },
+      "reverted_rerun": {
+        "command": "cargo test -p mc-module boundary_divergence -- --nocapture",
+        "exit_status": 0,
+        "status": "pass"
+      }
+    },
+    {
+      "name": "INVERT_DIVERGENCE_GAP_COMPARISON",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "coverage_gap <= live_tail_allowance",
+        "after": "coverage_gap > live_tail_allowance",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module new_compartment_extends_coverage_on_soft_advancing_the_anchor -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "assertion": "expected healthy SOFT+, observed HARD boundary_divergence_recut"
+      },
+      "reverted_rerun": {
+        "command": "cargo test -p mc-module new_compartment_extends_coverage_on_soft_advancing_the_anchor -- --nocapture",
+        "exit_status": 0,
+        "status": "pass"
+      }
+    }
+  ]
+}

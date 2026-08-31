@@ -1,6 +1,5 @@
 import type { ParsedCompartment } from "./compartment-parser";
 import type { CandidateCompartment } from "./compartment-runner-types";
-import { getRawSessionMessageIdsThrough } from "./read-session-chunk";
 
 /** Tier/metadata fields a parsed compartment may carry, threaded to storage. */
 type ParsedTierFields = Pick<

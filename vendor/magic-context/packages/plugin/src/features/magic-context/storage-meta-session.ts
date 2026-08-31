@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
 import { getHarness } from "../../shared/harness";
+import { piModelRefToCanonical } from "../../shared/harness-provider-map";
 import type { Database } from "../../shared/sqlite";
-import { clearCompressionDepth } from "./compression-depth-storage";
-import { clearIndexedMessages } from "./message-index";
+import { logSlowWriteTransaction } from "../../shared/write-transaction-timing";
 import { resolveIsSubagentFromOpenCodeDb } from "./resolve-subagent-fallback";
 import {
     BOOLEAN_META_KEYS,
@@ -14,6 +14,7 @@ import {
     SESSION_META_SELECT_COLUMNS,
     toSessionMeta,
 } from "./storage-meta-shared";
+import { deleteSessionScopedRows } from "./storage-session-tables";
 import type { SessionMeta } from "./types";
 
 const SESSION_META_FALLBACK_SELECTS: Partial<
@@ -135,7 +136,11 @@ export function updateSessionMeta(
             values.push(value ? 1 : 0);
         } else if (typeof value === "string" || typeof value === "number") {
             setClauses.push(`${column} = ?`);
-            values.push(value);
+            values.push(
+                key === "lastObservedModelKey" && typeof value === "string"
+                    ? piModelRefToCanonical(value)
+                    : value,
+            );
         }
     }
 
@@ -208,37 +213,9 @@ export function retryPendingSessionCleanups(
 }
 
 export function clearSession(db: Database, sessionId: string): void {
-    // Every session-scoped table must be cleared here; the structural storage-db
-    // test discovers tables with session_id and seeds each one to enforce this list.
+    const transactionStartedAt = performance.now();
     db.transaction(() => {
-        db.prepare("DELETE FROM pending_ops WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM source_contents WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM tool_owner_backfill_state WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM tags WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM session_meta WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM session_projects WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM compartment_chunk_embeddings WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM compartments WHERE session_id = ?").run(sessionId);
-        clearCompressionDepth(db, sessionId);
-        db.prepare("DELETE FROM session_facts WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM compartment_state_lease WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM notes WHERE session_id = ? AND type = 'session'").run(sessionId);
-        db.prepare("DELETE FROM recomp_compartments WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM recomp_facts WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM user_memory_candidates WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM primer_candidates WHERE session_id = ?").run(sessionId);
-        // v2: m[0]/m[1] delta log + historian-extracted events are session-scoped
-        // and must be cleared on session deletion (both have session_id). Without
-        // this they leak orphaned rows when a session is deleted.
-        db.prepare("DELETE FROM m0_mutation_log WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM compartment_events WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM subagent_invocations WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM historian_runs WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM plugin_messages WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM transform_decisions WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM synapse_batch_ledger WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM embedding_measurement_corpus WHERE session_id = ?").run(sessionId);
-        db.prepare("DELETE FROM pending_session_cleanup WHERE session_id = ?").run(sessionId);
-        clearIndexedMessages(db, sessionId);
+        deleteSessionScopedRows(db, [sessionId]);
     })();
+    logSlowWriteTransaction("clear-session", transactionStartedAt);
 }

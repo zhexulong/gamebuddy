@@ -1,9 +1,32 @@
-import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
 import { PassThrough } from "node:stream";
+import {
+	closeDatabase,
+	openDatabase,
+} from "@magic-context/core/features/magic-context/storage";
+import {
+	__resetSchemaFenceStateForTests,
+	LATEST_SUPPORTED_VERSION,
+} from "@magic-context/core/features/magic-context/storage-db";
 import * as loggerModule from "@magic-context/core/shared/logger";
 import type { SubagentRunOptions } from "@magic-context/core/shared/subagent-runner";
 
@@ -23,9 +46,22 @@ const ISOLATED_RETRY_MODEL_UNAVAILABLE_LOG_MESSAGE =
 	"model unavailable in isolated retry: it is provided by a disabled extension; configure it through models.json or add a built-in/provider-configured fallback";
 const ISOLATED_RETRY_SILENT_LOG_MESSAGE =
 	"pi subagent: child exited successfully but emitted no protocol output (no agent_end, zero stdout); a loaded Pi extension likely broke print mode; retrying with an isolated extension set (user extensions disabled for this run)";
+const OMP_ALLOWLISTABLE_TOOLS: Readonly<Record<string, true>> = {
+	read: true,
+	grep: true,
+	glob: true,
+	bash: true,
+	edit: true,
+	write: true,
+};
 
 beforeEach(() => {
 	__test.resetProviderFormCache();
+});
+
+afterEach(() => {
+	closeDatabase();
+	__resetSchemaFenceStateForTests();
 });
 
 type MockChild = ReturnType<typeof createMockChild>;
@@ -150,6 +186,7 @@ function buildArgsForTest(
 ) {
 	return __test.buildArgs(options, {
 		systemPromptPath: TEST_SYSTEM_PROMPT_PATH,
+		historianCalibrationEntryPath: null,
 		...opts,
 	});
 }
@@ -166,6 +203,9 @@ function agentEnd(messages: unknown[]) {
 function nextTick() {
 	return new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+const originalTestDataDir = process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
+const originalXdgDataHome = process.env.XDG_DATA_HOME;
 
 describe("subagent-runner pure helpers", () => {
 	it("extracts the last assistant text and status from mixed messages", () => {
@@ -197,6 +237,15 @@ describe("subagent-runner pure helpers", () => {
 		).toEqual({ text: null, stopReason: null, errorMessage: null });
 	});
 
+	it("distinguishes Pi from embedded Node hosts", () => {
+		expect(__test.isGenericRuntimeExecutable("/usr/bin/node24")).toBe(true);
+		expect(__test.isPiCliScript("/app/node_modules/.bin/next")).toBe(false);
+		expect(
+			__test.isPiCliScript(
+				"/app/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
+			),
+		).toBe(true);
+	});
 	it("builds argv with system prompt, primary model, and prompt last", () => {
 		expect(
 			buildArgsForTest({
@@ -225,6 +274,37 @@ describe("subagent-runner pure helpers", () => {
 			// so Pi's own resolution handles it (correct for Anthropic).
 			// Users on providers like GitHub Copilot should set
 			// historian.thinking_level in their Pi magic-context.jsonc.
+			"summarize this session",
+		]);
+	});
+
+	it("loads the provider calibration extension only for historian requests", () => {
+		const historian = buildArgsForTest(
+			{ ...baseOptions, agent: "magic-context-historian" },
+			{ historianCalibrationEntryPath: "/tmp/historian-calibration.js" },
+		);
+		expect(historian).toEqual(
+			expect.arrayContaining(["--extension", "/tmp/historian-calibration.js"]),
+		);
+		const sidekick = buildArgsForTest(
+			{ ...baseOptions, agent: "sidekick" },
+			{ historianCalibrationEntryPath: "/tmp/historian-calibration.js" },
+		);
+		expect(sidekick).not.toContain("/tmp/historian-calibration.js");
+	});
+
+	it("passes the active entry thinking level through Pi's --thinking flag", () => {
+		const args = buildArgsForTest({
+			...baseOptions,
+			model: "github-copilot/gpt-5",
+			thinkingLevel: "high",
+		});
+
+		expect(args.slice(-5)).toEqual([
+			"--model",
+			"github-copilot/gpt-5",
+			"--thinking",
+			"high",
 			"summarize this session",
 		]);
 	});
@@ -286,6 +366,141 @@ describe("subagent-runner pure helpers", () => {
 		expect(args).toContain("--no-extensions");
 	});
 
+	it("keeps plain Pi relative allowlist entries rooted at the stock agent dir", () => {
+		const previous = process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_CODING_AGENT_DIR = "/tmp/plain-pi-custom-agent";
+		try {
+			const args = buildArgsForTest(
+				{ ...baseOptions, model: "anthropic/claude-sonnet" },
+				{ subagentExtensions: ["provider-package"] },
+			);
+			const firstExtension = args.indexOf("--extension");
+			expect(args.slice(firstExtension, firstExtension + 2)).toEqual([
+				"--extension",
+				join(homedir(), ".pi/agent/provider-package"),
+			]);
+		} finally {
+			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previous;
+		}
+	});
+
+	it("uses PI_CODING_AGENT_DIR only for a positively identified OMP host", () => {
+		const root = mkdtempSync(join(homedir(), ".mc-omp-host-test-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const previousPackageDir = process.env.PI_PACKAGE_DIR;
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ name: "@oh-my-pi/pi-coding-agent" }),
+		);
+		process.env.PI_PACKAGE_DIR = root;
+		process.env.PI_CODING_AGENT_DIR = "/tmp/omp-profile/agent";
+		try {
+			const args = buildArgsForTest(
+				{ ...baseOptions, model: "anthropic/claude-sonnet" },
+				{ subagentExtensions: ["provider-package"] },
+			);
+			const firstExtension = args.indexOf("--extension");
+			expect(args.slice(firstExtension, firstExtension + 2)).toEqual([
+				"--extension",
+				"/tmp/omp-profile/agent/provider-package",
+			]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			if (previousAgentDir === undefined)
+				delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			if (previousPackageDir === undefined) delete process.env.PI_PACKAGE_DIR;
+			else process.env.PI_PACKAGE_DIR = previousPackageDir;
+		}
+	});
+
+	it("uses the OMP default agent dir when PI_CODING_AGENT_DIR is unset", () => {
+		const root = mkdtempSync(join(homedir(), ".mc-omp-default-host-test-"));
+		const previous = {
+			agentDir: process.env.PI_CODING_AGENT_DIR,
+			packageDir: process.env.PI_PACKAGE_DIR,
+			configDir: process.env.PI_CONFIG_DIR,
+			ompProfile: process.env.OMP_PROFILE,
+			piProfile: process.env.PI_PROFILE,
+		};
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ name: "@oh-my-pi/pi-coding-agent" }),
+		);
+		process.env.PI_PACKAGE_DIR = root;
+		delete process.env.PI_CODING_AGENT_DIR;
+		delete process.env.PI_CONFIG_DIR;
+		delete process.env.OMP_PROFILE;
+		delete process.env.PI_PROFILE;
+		try {
+			const args = buildArgsForTest(
+				{ ...baseOptions, model: "anthropic/claude-sonnet" },
+				{ subagentExtensions: ["provider-package"] },
+			);
+			const firstExtension = args.indexOf("--extension");
+			expect(args.slice(firstExtension, firstExtension + 2)).toEqual([
+				"--extension",
+				join(homedir(), ".omp/agent/provider-package"),
+			]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			for (const [key, value] of [
+				["PI_CODING_AGENT_DIR", previous.agentDir],
+				["PI_PACKAGE_DIR", previous.packageDir],
+				["PI_CONFIG_DIR", previous.configDir],
+				["OMP_PROFILE", previous.ompProfile],
+				["PI_PROFILE", previous.piProfile],
+			] as const) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
+	it("gives a named OMP profile precedence over a stale agent-dir override", () => {
+		const root = mkdtempSync(join(homedir(), ".mc-omp-profile-host-test-"));
+		const previous = {
+			agentDir: process.env.PI_CODING_AGENT_DIR,
+			packageDir: process.env.PI_PACKAGE_DIR,
+			configDir: process.env.PI_CONFIG_DIR,
+			ompProfile: process.env.OMP_PROFILE,
+			piProfile: process.env.PI_PROFILE,
+		};
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ name: "@oh-my-pi/pi-coding-agent" }),
+		);
+		process.env.PI_PACKAGE_DIR = root;
+		process.env.PI_CODING_AGENT_DIR = "/tmp/stale-omp-agent";
+		process.env.PI_CONFIG_DIR = ".omp-test";
+		process.env.OMP_PROFILE = "work";
+		delete process.env.PI_PROFILE;
+		try {
+			const args = buildArgsForTest(
+				{ ...baseOptions, model: "anthropic/claude-sonnet" },
+				{ subagentExtensions: ["provider-package"] },
+			);
+			const firstExtension = args.indexOf("--extension");
+			expect(args.slice(firstExtension, firstExtension + 2)).toEqual([
+				"--extension",
+				join(homedir(), ".omp-test/profiles/work/agent/provider-package"),
+			]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			for (const [key, value] of [
+				["PI_CODING_AGENT_DIR", previous.agentDir],
+				["PI_PACKAGE_DIR", previous.packageDir],
+				["PI_CONFIG_DIR", previous.configDir],
+				["OMP_PROFILE", previous.ompProfile],
+				["PI_PROFILE", previous.piProfile],
+			] as const) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
 	it("keeps the current all-extension argv shape when no allowlist is configured", () => {
 		const args = buildArgsForTest({
 			...baseOptions,
@@ -306,6 +521,39 @@ describe("subagent-runner pure helpers", () => {
 		expect(args.indexOf("--no-context-files")).toBeLessThan(
 			args.indexOf("--tools"),
 		);
+	});
+
+	it("emits only OMP-supported startup flags and tool names on an OMP host", () => {
+		const root = mkdtempSync(join(homedir(), ".mc-omp-argv-test-"));
+		const previousPackageDir = process.env.PI_PACKAGE_DIR;
+		writeFileSync(
+			join(root, "package.json"),
+			JSON.stringify({ name: "@oh-my-pi/pi-coding-agent" }),
+		);
+		process.env.PI_PACKAGE_DIR = `~/${basename(root)}`;
+		try {
+			const historianArgs = buildArgsForTest({
+				...baseOptions,
+				agent: "historian",
+			});
+			expect(historianArgs).toContain("--no-rules");
+			expect(historianArgs).not.toContain("--no-prompt-templates");
+			expect(historianArgs).not.toContain("--no-context-files");
+			expect(historianArgs).toEqual(
+				expect.arrayContaining(["--tools", "read,grep,glob"]),
+			);
+
+			const dreamerArgs = buildArgsForTest({
+				...baseOptions,
+				agent: "dreamer",
+			});
+			expect(dreamerArgs).toContain("--no-tools");
+			expect(dreamerArgs).not.toContain("--tools");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+			if (previousPackageDir === undefined) delete process.env.PI_PACKAGE_DIR;
+			else process.env.PI_PACKAGE_DIR = previousPackageDir;
+		}
 	});
 
 	it("always includes --no-session so child sessions don't appear in pi resume", () => {
@@ -401,6 +649,32 @@ describe("subagent-runner pure helpers", () => {
 		expect(sidekickArgs).toEqual(
 			expect.arrayContaining(["--tools", "read,grep,find,ls,ctx_search"]),
 		);
+	});
+
+	it("translates every strict Pi allow-list into valid OMP built-ins", () => {
+		expect(
+			__test.resolveHostToolAllowlist(["read", "grep", "find", "ls"], true),
+		).toEqual(["read", "grep", "glob"]);
+		expect(
+			__test.resolveHostToolAllowlist(
+				["read", "aft_search", "ctx_search"],
+				true,
+			),
+		).toEqual(["read"]);
+		expect(
+			__test.resolveHostToolAllowlist(
+				["read", "find", "ls", "aft_search"],
+				false,
+			),
+		).toEqual(["read", "find", "ls", "aft_search"]);
+
+		for (const [agent, tools] of __test.STRICT_TOOL_ALLOWLIST) {
+			const resolved = __test.resolveHostToolAllowlist(tools, true);
+			for (const tool of resolved) {
+				expect(OMP_ALLOWLISTABLE_TOOLS[tool] === true, agent).toBe(true);
+			}
+			expect(new Set(resolved).size, agent).toBe(resolved.length);
+		}
 	});
 
 	it("locks base dreamer (curate) to --tools ctx_memory, stripping all built-ins", () => {
@@ -773,6 +1047,8 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			...baseOptions,
 			model: "anthropic/claude-sonnet",
 			cwd: "/tmp/project",
+			temperature: 0.1,
+			maxOutputTokens: 32_000,
 		});
 		child.writeStderr("warning from pi");
 		child.writeStdoutLine({ type: "session", id: "s1" });
@@ -789,14 +1065,18 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 
 		const result = await resultPromise;
 
-		const [spawnCommand, spawnArgs, spawnOptions] = spawnImpl.mock.calls[0] ?? [];
-		expect(spawnCommand).toBe("custom-pi");
-		expect(spawnArgs).toEqual(expect.arrayContaining(["--model", "anthropic/claude-sonnet"]));
-		expect(spawnOptions).toEqual(expect.objectContaining({
-			cwd: "/tmp/project",
-			env: expect.objectContaining({
-				MAGIC_CONTEXT_PI_SUBAGENT: "1",
-				PATH: process.env.PATH,
+		expect(spawnImpl).toHaveBeenCalledWith(
+			"custom-pi",
+			expect.arrayContaining(["--model", "anthropic/claude-sonnet"]),
+			expect.objectContaining({
+				cwd: "/tmp/project",
+				env: expect.objectContaining({
+					MAGIC_CONTEXT_PI_SUBAGENT: "1",
+					MAGIC_CONTEXT_HISTORIAN_TEMPERATURE: "0.1",
+					MAGIC_CONTEXT_HISTORIAN_MAX_OUTPUT_TOKENS: "32000",
+					PATH: process.env.PATH,
+				}),
+				stdio: ["ignore", "pipe", "pipe"],
 			}),
 			// All win32 runs deliver the message through stdin to stay below
 			// CreateProcess's command-line cap; POSIX can keep argv delivery.
@@ -817,6 +1097,55 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 		// Default resolution must NOT spawn a bare "pi" (which ENOENTs on Windows
 		// because npm installs a pi.cmd shim, not a literal pi). It re-invokes the
 		// exact host CLI: process.execPath + process.argv[1], with no shell.
+		const root = mkdtempSync(join(tmpdir(), "mc-pi-cli-"));
+		const distDir = join(
+			root,
+			"node_modules",
+			"@earendil-works",
+			"pi-coding-agent",
+			"dist",
+		);
+		const cliPath = join(distDir, "cli.js");
+		mkdirSync(distDir, { recursive: true });
+		writeFileSync(cliPath, "");
+		const previousScript = process.argv[1];
+		process.argv[1] = cliPath;
+		try {
+			const child = createMockChild();
+			const spawnImpl = mock(() => child as never);
+			const runner = new PiSubagentRunner({ spawnImpl: spawnImpl as never });
+
+			const resultPromise = runner.run(baseOptions);
+			child.writeStdoutLine({ type: "session", id: "s1" });
+			child.writeStdoutLine(
+				agentEnd([
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "ok" }],
+						stopReason: "stop",
+					},
+				]),
+			);
+			child.emitClose(0);
+			await resultPromise;
+
+			const [command, spawnArgs, opts] = (
+				spawnImpl.mock.calls as unknown[][]
+			)[0] as [string, string[], { shell?: boolean }];
+			expect(command).toBe(process.execPath);
+			expect(spawnArgs[0]).toBe(cliPath);
+			// Crucially, never a bare "pi".
+			expect(command).not.toBe("pi");
+			expect(opts.shell).toBeFalsy();
+		} finally {
+			if (previousScript === undefined) delete process.argv[1];
+			else process.argv[1] = previousScript;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("with no piBinary override, does not re-run an embedded host", async () => {
+		// The Bun test file stands in for pi-web's Next.js argv[1].
 		const child = createMockChild();
 		const spawnImpl = mock(() => child as never);
 		const { PiSubagentRunner } = await import("./subagent-runner");
@@ -840,17 +1169,12 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 		const [command, spawnArgs, opts] = (
 			spawnImpl.mock.calls as unknown[][]
 		)[0] as [string, string[], { shell?: boolean }];
-		// In this test runner argv[1] is a real on-disk script (bun/node test
-		// file), so the host-CLI branch fires: command is the runtime, the first
-		// arg is the running script, and the child is spawned without a shell.
-		expect(command).toBe(process.execPath);
-		expect(spawnArgs[0]).toBe(process.argv[1]);
+		expect(spawnArgs[0]).not.toBe(process.argv[1]);
 		expect(spawnArgs).toContain("--no-session");
+		expect(command.length).toBeGreaterThan(0);
 		// Never spawned through a shell (no cmd.exe in the path = no arg-escaping
 		// or injection on the untrusted prompt/task text).
 		expect(opts.shell).toBeFalsy();
-		// Crucially, never a bare "pi".
-		expect(command).not.toBe("pi");
 	});
 
 	it("returns model_failed promptly for live terminal error stopReason", async () => {
@@ -2228,5 +2552,46 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 		await new Promise((resolve) => setTimeout(resolve, 2100));
 
 		expect(child.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+	});
+});
+
+describe("Pi subagent schema-fence probe", () => {
+	it("does not spawn a Pi child when the shared database is newer than this build", async () => {
+		const dataHome = mkdtempSync(join(tmpdir(), "mc-pi-fence-probe-"));
+		try {
+			process.env.MAGIC_CONTEXT_TEST_DATA_DIR = dataHome;
+			process.env.XDG_DATA_HOME = dataHome;
+			closeDatabase();
+			__resetSchemaFenceStateForTests();
+			const db = openDatabase();
+			if (!db) throw new Error("expected a fresh test database");
+			db.prepare(
+				"INSERT INTO schema_migrations(version, description, applied_at) VALUES (?, ?, ?)",
+			).run(LATEST_SUPPORTED_VERSION + 1, "future schema", Date.now());
+
+			const { runner, spawnImpl } = runnerWith(createMockChild());
+			const result = await runner.run(baseOptions);
+
+			// Removing the pre-spawn probe makes this fake process launch, so the
+			// assertion proves Pi shares the stale-build fence rather than merely
+			// returning a matching failure from a later path.
+			expect(spawnImpl).not.toHaveBeenCalled();
+			expect(result).toMatchObject({
+				ok: false,
+				reason: "spawn_failed",
+				error: expect.stringContaining(
+					"plugin build is older than its database",
+				),
+			});
+		} finally {
+			closeDatabase();
+			__resetSchemaFenceStateForTests();
+			if (originalTestDataDir === undefined)
+				delete process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
+			else process.env.MAGIC_CONTEXT_TEST_DATA_DIR = originalTestDataDir;
+			if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+			else process.env.XDG_DATA_HOME = originalXdgDataHome;
+			rmSync(dataHome, { recursive: true, force: true });
+		}
 	});
 });

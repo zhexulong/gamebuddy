@@ -267,6 +267,74 @@ describe("Pi clone state inheritance", () => {
 		).toEqual({ start_message: 1, end_message: 2 });
 	});
 
+	it("inherits session notes and facts with fork-prefix anchors remapped", () => {
+		const database = db();
+		database
+			.prepare(
+				`INSERT INTO notes
+				 (type, status, content, session_id, created_at, updated_at, harness,
+				  anchor_ordinal, anchor_block_id)
+				 VALUES ('session', 'active', ?, ?, ?, ?, 'pi', ?, ?)`,
+			)
+			.run("kept note", "source", 10, 10, 2, "a1#0");
+		database
+			.prepare(
+				`INSERT INTO notes
+				 (type, status, content, session_id, created_at, updated_at, harness,
+				  anchor_ordinal, anchor_block_id)
+				 VALUES ('session', 'active', ?, ?, ?, ?, 'pi', ?, ?)`,
+			)
+			.run("future note", "source", 11, 11, 3, "u3#0");
+		database
+			.prepare(
+				"INSERT INTO session_facts (session_id, category, content, created_at, updated_at, harness) VALUES (?, ?, ?, ?, ?, ?)",
+			)
+			.run("source", "decision", "keep the invariant", 12, 12, "pi");
+		const sourceNoteId = (
+			database
+				.prepare(
+					"SELECT id FROM notes WHERE session_id = ? ORDER BY id LIMIT 1",
+				)
+				.get("source") as { id: number }
+		).id;
+		const sourceFactId = (
+			database
+				.prepare("SELECT id FROM session_facts WHERE session_id = ?")
+				.get("source") as { id: number }
+		).id;
+
+		const result = copyWithEntries(database, [user("u1"), assistant("a1")]);
+
+		expect(result).toMatchObject({ notesCopied: 1, factsCopied: 1 });
+		const note = database
+			.prepare(
+				"SELECT id, content, anchor_ordinal, anchor_block_id FROM notes WHERE session_id = ?",
+			)
+			.get("clone") as {
+			id: number;
+			content: string;
+			anchor_ordinal: number;
+			anchor_block_id: string;
+		};
+		expect(note).toEqual({
+			id: expect.any(Number),
+			content: "kept note",
+			anchor_ordinal: 2,
+			anchor_block_id: "a1#0",
+		});
+		expect(note.id).not.toBe(sourceNoteId);
+		const fact = database
+			.prepare(
+				"SELECT id, category, content FROM session_facts WHERE session_id = ?",
+			)
+			.get("clone") as { id: number; category: string; content: string };
+		expect(fact).toMatchObject({
+			category: "decision",
+			content: "keep the invariant",
+		});
+		expect(fact.id).not.toBe(sourceFactId);
+	});
+
 	it("does not migrate a pending marker already represented by the copied compaction", () => {
 		const database = db();
 		seedCompartment(database, {
@@ -560,9 +628,10 @@ describe("Pi clone state inheritance", () => {
 		});
 	});
 
-	it("inherits processed-image frozen ids that remain on the clone path", () => {
+	it("inherits frozen ids that remain on the clone path", () => {
 		const database = db();
 		seedMeta(database, {
+			stripped_placeholder_ids: JSON.stringify(["a1", "a3"]),
 			processed_image_stripped_ids: JSON.stringify(["u1", "u3"]),
 		});
 
@@ -570,10 +639,13 @@ describe("Pi clone state inheritance", () => {
 
 		const row = database
 			.prepare(
-				"SELECT processed_image_stripped_ids AS ids FROM session_meta WHERE session_id = ?",
+				`SELECT stripped_placeholder_ids AS placeholders,
+				        processed_image_stripped_ids AS images
+				   FROM session_meta WHERE session_id = ?`,
 			)
-			.get("clone") as { ids: string };
-		expect(JSON.parse(row.ids)).toEqual(["u1"]);
+			.get("clone") as { placeholders: string; images: string };
+		expect(JSON.parse(row.placeholders)).toEqual(["a1"]);
+		expect(JSON.parse(row.images)).toEqual(["u1"]);
 	});
 
 	it("leaves every m0/m1 cache field fresh so the first pass hard-materializes", () => {

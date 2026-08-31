@@ -1,12 +1,21 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
 import { insertUserMemory } from "@magic-context/core/features/magic-context/user-memory/storage-user-memory";
+import {
+	createPromptSurfaceGuidanceEpochCache,
+	createPromptSurfaceRuntime,
+} from "@magic-context/core/shared/prompt-surface-runtime";
 import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
 import {
 	buildMagicContextBlock,
+	clearPiSystemPromptSession,
+	composeMagicContextSystemPrompt,
 	MAGIC_CONTEXT_GUIDANCE_MARKER,
+	processSystemPromptForCache,
 	SYSTEM_PROMPT_DATA_MARKERS,
 } from "./system-prompt";
 import { createTestDb } from "./test-utils.test";
@@ -14,6 +23,37 @@ import { createTestDb } from "./test-utils.test";
 function tempDir(prefix: string): string {
 	return mkdtempSync(join(tmpdir(), prefix));
 }
+
+describe("Pi single system-prompt serialization parity", () => {
+	it("keeps host identity and Magic Context guidance in one OpenAI-compatible wire message", () => {
+		const basePrompt = "You are a helpful coding assistant.";
+		const guidance = "## Magic Context\nUse ctx_search when needed.";
+		const composedPrompt = composeMagicContextSystemPrompt(
+			basePrompt,
+			guidance,
+		);
+
+		expect(composedPrompt).toBe(`${basePrompt}\n\n${guidance}`);
+		const wireMessages = convertMessages(
+			{
+				provider: "test",
+				reasoning: false,
+				input: ["text"],
+			} as unknown as Parameters<typeof convertMessages>[0],
+			{ systemPrompt: composedPrompt, messages: [] } as Parameters<
+				typeof convertMessages
+			>[1],
+			{ supportsDeveloperRole: false } as unknown as Parameters<
+				typeof convertMessages
+			>[2],
+		);
+		const systemMessages = wireMessages.filter(
+			(message) => message.role === "system",
+		);
+		expect(systemMessages).toHaveLength(1);
+		expect(systemMessages[0]?.content).toBe(composedPrompt);
+	});
+});
 
 describe("buildMagicContextBlock v2 system-prompt parity", () => {
 	it("keeps Magic Context guidance in the system prompt", () => {
@@ -154,6 +194,196 @@ describe("buildMagicContextBlock v2 system-prompt parity", () => {
 				"Use Spanish (Español) for your natural-language replies",
 			);
 		} finally {
+			closeQuietly(db);
+		}
+	});
+});
+
+function readA1PrimaryGuidance(): { guidance: string; hash: string } {
+	const document = readFileSync(
+		join(
+			import.meta.dir,
+			"../../plugin/src/shared/prompt-surface-a1-golden.md",
+		),
+		"utf8",
+	);
+	const guidance = document.match(
+		/### PRIMARY full \(reduce=on, memory=on, dreamer=on, temporal=on\)[\s\S]*?```markdown\n([\s\S]*?)\n```/,
+	)?.[1];
+	const hash = document.match(
+		/\| PRIMARY full \| \d+ \| `([0-9a-f]{32})` \|/,
+	)?.[1];
+	if (!guidance || !hash)
+		throw new Error("Malformed A1 primary guidance golden");
+	return { guidance, hash };
+}
+
+describe("Pi prompt-surface guidance epochs", () => {
+	it("matches the A1 guidance and hash for no config and explicit full", () => {
+		const db = createTestDb();
+		try {
+			const golden = readA1PrimaryGuidance();
+			const common = {
+				db,
+				cwd: tempDir("pi-a1-guidance-"),
+				sessionId: "ses-a1-guidance",
+				memoryEnabled: true,
+				includeGuidance: true,
+				protectedTags: 20,
+				ctxReduceCallable: true,
+				dreamerEnabled: true,
+				temporalAwarenessEnabled: true,
+				cavemanTextCompressionEnabled: false,
+			};
+			const implicit = buildMagicContextBlock(common);
+			const explicit = buildMagicContextBlock({
+				...common,
+				promptSurfacePreset: "full",
+			});
+
+			expect(implicit).toBe(golden.guidance);
+			expect(explicit).toBe(golden.guidance);
+			expect(
+				createHash("md5")
+					.update(implicit ?? "")
+					.digest("hex"),
+			).toBe(golden.hash);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("folds once when a preset/model epoch selects authored light", () => {
+		const db = createTestDb();
+		const directory = tempDir("pi-prompt-epoch-");
+		const sessionId = "ses-prompt-surface-epoch";
+		const warnings: string[] = [];
+		const runtime = createPromptSurfaceRuntime({
+			userConfigDirectory: directory,
+			warn: (warning) => warnings.push(warning),
+		});
+		const epochs = createPromptSurfaceGuidanceEpochCache(runtime);
+		const config = {
+			default: "full" as const,
+			models: { "provider/light": "light" as const },
+		};
+		const render = (selection: ReturnType<typeof epochs.resolve>) =>
+			buildMagicContextBlock({
+				db,
+				cwd: directory,
+				sessionId,
+				memoryEnabled: true,
+				promptSurfacePreset: selection.preset,
+				primaryGuidanceOverride: selection.primaryOverride,
+			}) ?? "";
+
+		try {
+			const firstSelection = epochs.resolve(sessionId, config, "provider/full");
+			const firstPrompt = render(firstSelection);
+			const first = processSystemPromptForCache({
+				db,
+				sessionId,
+				systemPrompt: firstPrompt,
+				isCacheBusting: false,
+				promptSurfacePreset: firstSelection.preset,
+			});
+			expect(first.hashChanged).toBe(false);
+
+			for (let pass = 0; pass < 5; pass++) {
+				const frozenSelection = epochs.resolve(
+					sessionId,
+					config,
+					"provider/full",
+				);
+				expect(frozenSelection.primaryOverride).toBeUndefined();
+				const frozen = processSystemPromptForCache({
+					db,
+					sessionId,
+					systemPrompt: render(frozenSelection),
+					isCacheBusting: false,
+					promptSurfacePreset: frozenSelection.preset,
+				});
+				expect(frozen.hashChanged).toBe(false);
+				expect(frozen.currentHash).toBe(first.currentHash);
+			}
+
+			const changedSelection = epochs.resolve(
+				sessionId,
+				config,
+				"provider/light",
+			);
+			expect(changedSelection.preset).toBe("light");
+			expect(changedSelection.primaryOverride).toBeUndefined();
+			expect(render(changedSelection)).not.toBe(firstPrompt);
+			const changed = processSystemPromptForCache({
+				db,
+				sessionId,
+				systemPrompt: render(changedSelection),
+				isCacheBusting: false,
+				promptSurfacePreset: changedSelection.preset,
+			});
+			expect(changed.hashChanged).toBe(true);
+			expect(changed.currentHash).not.toBe(first.currentHash);
+
+			expect(warnings).toEqual([]);
+
+			for (let pass = 0; pass < 5; pass++) {
+				const stableSelection = epochs.resolve(
+					sessionId,
+					config,
+					"provider/light",
+				);
+				const stable = processSystemPromptForCache({
+					db,
+					sessionId,
+					systemPrompt: render(stableSelection),
+					isCacheBusting: false,
+					promptSurfacePreset: stableSelection.preset,
+				});
+				expect(stable.hashChanged).toBe(false);
+				expect(stable.currentHash).toBe(changed.currentHash);
+			}
+		} finally {
+			clearPiSystemPromptSession(sessionId);
+			closeQuietly(db);
+		}
+	});
+
+	it("coalesces a midnight date and preset flip into one hash change", () => {
+		const db = createTestDb();
+		const sessionId = "ses-midnight-preset";
+		try {
+			const first = processSystemPromptForCache({
+				db,
+				sessionId,
+				systemPrompt: "Base prompt\nToday's date: Mon Jan 01 2024",
+				isCacheBusting: false,
+				promptSurfacePreset: "full",
+			});
+			expect(first.hashChanged).toBe(false);
+
+			const changed = processSystemPromptForCache({
+				db,
+				sessionId,
+				systemPrompt: "Base prompt\nToday's date: Tue Jan 02 2024",
+				isCacheBusting: false,
+				promptSurfacePreset: "light",
+			});
+			expect(changed.hashChanged).toBe(true);
+			expect(changed.currentHash).not.toBe(first.currentHash);
+			expect(changed.systemPrompt).toContain("Today's date: Tue Jan 02 2024");
+
+			const stable = processSystemPromptForCache({
+				db,
+				sessionId,
+				systemPrompt: "Base prompt\nToday's date: Tue Jan 02 2024",
+				isCacheBusting: false,
+				promptSurfacePreset: "light",
+			});
+			expect(stable.hashChanged).toBe(false);
+			expect(stable.currentHash).toBe(changed.currentHash);
+		} finally {
+			clearPiSystemPromptSession(sessionId);
 			closeQuietly(db);
 		}
 	});

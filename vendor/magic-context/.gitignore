@@ -41,12 +41,15 @@ packages/plugin/docs/animation[0-9]*/
 
 .pi/
 
-# Local agent task outputs / scratch state.
-# Selectively expose .alfonso/release-notes/ — CI reads it for release body
-# + Discord announcement. Must use `.alfonso/*` rather than `.alfonso/` so
+# Local agent task outputs, scratch state, and MC's own dogfooding runtime
+# artifacts (historian dumps, fenced .gitignore) — local state, never source.
+# Selectively expose .cortexkit/alfonso/release-notes/ — CI reads it for the
+# release body + Discord announcement. Must use `dir/*` rather than `dir/` so
 # git descends into the directory and can re-include nested paths.
-.alfonso/*
-!.alfonso/release-notes/
+.cortexkit/*
+!.cortexkit/alfonso/
+.cortexkit/alfonso/*
+!.cortexkit/alfonso/release-notes/
 
 # Prompt/model experiment harnesses (model-dispatch, replay, migration validation).
 # Kept on disk for reuse but excluded from git + CI typecheck: they intentionally
@@ -67,11 +70,6 @@ packages/plugin/scripts/test-historian-prompt.ts
 
 # Local scratch directories — checkouts dropped here for one-off lookups
 .tmp-*/
-
-# Dogfooding: Magic Context runs on its own repo and writes runtime
-# artifacts (historian dumps) + a fenced .gitignore under .cortexkit/.
-# This is local runtime state, never source.
-.cortexkit/
 
 # Internal SUBC-migration design docs / specs (not public)
 docs/cache-policy/
@@ -118,3 +116,6 @@ packages/plugin/scripts/experiments/issue-195-repro.mjs
 packages/plugin/scripts/experiments/visual-memory/render-trimmed-memories.ts
 packages/plugin/scripts/experiments/visual-memory/trials/REPORT.md
 packages/plugin/scripts/mural-test-output/
+AgentLogs/
+.agent-logs/
+tests/docker/.generated/

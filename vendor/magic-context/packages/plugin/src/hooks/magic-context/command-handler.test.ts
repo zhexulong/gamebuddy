@@ -1,8 +1,15 @@
 /// <reference types="bun-types" />
 
-import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+    __resetNotificationStateForTests,
+    drainNotifications,
+    registerNotificationSink,
+} from "../../shared/rpc-notifications";
+import type { StatusDetail } from "../../shared/rpc-types";
 import { Database } from "../../shared/sqlite";
 import { createMagicContextCommandHandler } from "./command-handler";
+import { MAX_WRAPUP_REQUEST_BUDGET_MS } from "./module-transport";
 
 function createTestDb(): Database {
     const db = new Database(":memory:");
@@ -257,7 +264,12 @@ describe("createMagicContextCommandHandler", () => {
     let db: Database;
 
     beforeEach(() => {
+        __resetNotificationStateForTests();
         db = createTestDb();
+    });
+
+    afterEach(() => {
+        __resetNotificationStateForTests();
     });
 
     it("ignores unrelated commands", async () => {
@@ -304,6 +316,200 @@ describe("createMagicContextCommandHandler", () => {
             expect.stringContaining("only available in primary sessions"),
             {},
         );
+    });
+
+    for (const command of ["ctx-wrapup", "ctx-recomp", "ctx-flush"] as const) {
+        it(`refuses /${command} without side effects when compaction is off`, async () => {
+            insertTag(db, "ses-compaction-off", 1, 500);
+            insertPendingOp(db, "ses-compaction-off", 1);
+            const sendNotification = mock(async () => {});
+            const executeWrapup = mock(async () => "should not run");
+            const executeRecomp = mock(async () => "should not run");
+            const onFlush = mock(() => {});
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                compactionOff: true,
+                executeWrapup,
+                executeRecomp,
+                onFlush,
+                sendNotification,
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    { command, sessionID: "ses-compaction-off", arguments: "" },
+                    makeOutput(""),
+                    {},
+                ),
+                `__CONTEXT_MANAGEMENT_${command.toUpperCase()}_HANDLED__`,
+            );
+
+            expect(sendNotification).toHaveBeenCalledWith(
+                "ses-compaction-off",
+                `Magic Context compaction is disabled (compaction.enabled: false) — /${command} manages compacted history and has no effect in this mode.`,
+                {},
+            );
+            expect(executeWrapup).not.toHaveBeenCalled();
+            expect(executeRecomp).not.toHaveBeenCalled();
+            expect(onFlush).not.toHaveBeenCalled();
+            expect(getPendingOpsCount(db, "ses-compaction-off")).toBe(1);
+            expect(getTagStatus(db, "ses-compaction-off", 1)).toBe("active");
+        });
+    }
+
+    it("keeps compaction commands functional when compaction is on", async () => {
+        for (const command of ["ctx-wrapup", "ctx-recomp", "ctx-flush"] as const) {
+            const sendNotification = mock(async () => {});
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                compactionOff: false,
+                executeWrapup: async () => "wrapup ran",
+                executeRecomp: async () => "recomp ran",
+                sendNotification,
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    { command, sessionID: `ses-compaction-on-${command}`, arguments: "" },
+                    makeOutput(""),
+                    {},
+                ),
+                `__CONTEXT_MANAGEMENT_${command.toUpperCase()}_HANDLED__`,
+            );
+
+            const notifications = (sendNotification.mock.calls as Array<[string, string]>).map(
+                ([, text]) => text,
+            );
+            expect(notifications.join("\n")).not.toContain("Magic Context compaction is disabled");
+        }
+    });
+
+    describe("knowledge-layer commands in compaction-off mode", () => {
+        it("keeps /ctx-status functional and labels the mode", async () => {
+            const sendNotification = mock(async () => {});
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                compactionOff: true,
+                sendNotification,
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    { command: "ctx-status", sessionID: "ses-status-off", arguments: "" },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-STATUS_HANDLED__",
+            );
+
+            expect(sendNotification).toHaveBeenCalledWith(
+                "ses-status-off",
+                expect.stringContaining(
+                    "**Compaction:** disabled (compaction.enabled: false) — native compaction owns the context window.",
+                ),
+                {},
+            );
+        });
+
+        it("keeps /ctx-embed functional", async () => {
+            const sendNotification = mock(async () => {});
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                compactionOff: true,
+                getEmbedStatusText: () => "embedding is ready",
+                sendNotification,
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    { command: "ctx-embed", sessionID: "ses-embed-off", arguments: "" },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-EMBED_HANDLED__",
+            );
+
+            expect(sendNotification).toHaveBeenCalledWith(
+                "ses-embed-off",
+                "## Embedding Status\n\nembedding is ready",
+                {},
+            );
+        });
+
+        it("keeps /ctx-dream functional", async () => {
+            const sendNotification = mock(async () => {});
+            const runManual = mock(async () => ({
+                ran: ["verify"],
+                skippedNoWork: [],
+                deferredBusy: [],
+                failed: [],
+            }));
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                compactionOff: true,
+                sendNotification,
+                dreamer: { config: {} as never, projectPath: "/repo", runManual },
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    { command: "ctx-dream", sessionID: "ses-dream-off", arguments: "" },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-DREAM_HANDLED__",
+            );
+
+            expect(runManual).toHaveBeenCalledWith(undefined);
+        });
+
+        it("keeps /ctx-aug functional", async () => {
+            const sendNotification = mock(async () => {});
+            const client = {
+                session: {
+                    create: mock(async () => ({ data: { id: "sidekick-child" } })),
+                    promptAsync: mock(async () => undefined),
+                    messages: mock(async () => ({
+                        data: [
+                            {
+                                info: { role: "assistant", time: { created: Date.now() } },
+                                parts: [{ type: "text", text: "Use Bun" }],
+                            },
+                        ],
+                    })),
+                    delete: mock(async () => ({ data: undefined })),
+                },
+            };
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                compactionOff: true,
+                sendNotification,
+                sidekick: {
+                    config: { timeout_ms: 5_000 },
+                    projectPath: "/repo",
+                    sessionDirectory: "/repo",
+                    client: client as never,
+                },
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    { command: "ctx-aug", sessionID: "ses-aug-off", arguments: "Check this" },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-AUG_HANDLED__",
+            );
+
+            expect(client.session.create).toHaveBeenCalledTimes(1);
+            expect(client.session.promptAsync).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe("ctx-flush", () => {
@@ -429,6 +635,7 @@ describe("createMagicContextCommandHandler", () => {
             expect(text).toContain("- Dropped: 1");
             expect(text).toContain("- Drops: 1");
             expect(text).toContain("**Protected tags:** 5");
+            expect(text).not.toContain("Host backends → MODULE");
         });
 
         it("lists queued drop operations", async () => {
@@ -484,6 +691,148 @@ describe("createMagicContextCommandHandler", () => {
             expect(text).toContain("- Dropped: 0");
             expect(text).toContain("- Total queued: 0");
             expect(text).toContain("**Protected tags:** 2");
+        });
+    });
+
+    describe("TUI dialog routing", () => {
+        const statusDetail = (sessionId: string): StatusDetail =>
+            ({
+                sessionId,
+                usagePercentage: 75,
+                inputTokens: 96_000,
+                contextLimit: 128_000,
+                cacheTtl: "5m",
+                cacheRemainingMs: 42_000,
+                cacheExpired: false,
+                cacheNeverExpires: false,
+                historianRunning: false,
+                boundaryPresent: undefined,
+                coverageOrdinal: undefined,
+                memoryCount: 8,
+                memoryBlockCount: 3,
+                activeTags: 4,
+                droppedTags: 1,
+                pendingOpsCount: 2,
+                executeThreshold: 65,
+                executeThresholdClamped: false,
+                compaction_enabled: true,
+                recompProgress: null,
+                lastTransformError: null,
+            }) as StatusDetail;
+
+        it("renders shared status markdown through the normal response path without a live TUI sink", async () => {
+            const sendNotification = mock(async () => {});
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                getStatusDetail: statusDetail,
+                sendNotification,
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    { command: "ctx-status", sessionID: "ses-sinkless", arguments: "" },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-STATUS_HANDLED__",
+            );
+
+            expect(sendNotification).toHaveBeenCalledWith(
+                "ses-sinkless",
+                expect.stringContaining("**Usage:** 75.0% (96,000 / 128,000 usable tokens)"),
+                {},
+            );
+            expect(drainNotifications()).toEqual([]);
+        });
+
+        it("uses the live TUI dialog instead of duplicating a Desktop response", async () => {
+            const received: Array<Record<string, unknown>> = [];
+            const unregister = registerNotificationSink({
+                sessionId: "ses-live",
+                protocol: 2,
+                send: (notification) => received.push(notification.payload),
+            });
+            const sendNotification = mock(async () => {});
+            const getStatusDetail = mock(statusDetail);
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                getStatusDetail,
+                sendNotification,
+            });
+
+            try {
+                await expectSentinel(
+                    handler["command.execute.before"](
+                        { command: "ctx-status", sessionID: "ses-live", arguments: "" },
+                        makeOutput(""),
+                        {},
+                    ),
+                    "__CONTEXT_MANAGEMENT_CTX-STATUS_HANDLED__",
+                );
+
+                expect(received).toEqual([{ action: "show-status-dialog" }]);
+                expect(getStatusDetail).not.toHaveBeenCalled();
+                expect(sendNotification).not.toHaveBeenCalled();
+            } finally {
+                unregister();
+            }
+        });
+
+        it("routes recomp confirmation to text when sinkless and to a dialog when live", async () => {
+            const sinklessNotification = mock(async () => {});
+            const sinklessHandler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                executeRecomp: async () => "should not run",
+                sendNotification: sinklessNotification,
+            });
+
+            await expectSentinel(
+                sinklessHandler["command.execute.before"](
+                    { command: "ctx-recomp", sessionID: "ses-recomp-sinkless", arguments: "" },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-RECOMP_HANDLED__",
+            );
+            expect(sinklessNotification).toHaveBeenCalledWith(
+                "ses-recomp-sinkless",
+                expect.stringContaining("Recomp Confirmation Required"),
+                {},
+            );
+            expect(drainNotifications()).toEqual([]);
+
+            const received: Array<Record<string, unknown>> = [];
+            const unregister = registerNotificationSink({
+                sessionId: "ses-recomp-live",
+                protocol: 2,
+                send: (notification) => received.push(notification.payload),
+            });
+            const liveNotification = mock(async () => {});
+            const liveHandler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                executeRecomp: async () => "should not run",
+                sendNotification: liveNotification,
+            });
+
+            try {
+                await expectSentinel(
+                    liveHandler["command.execute.before"](
+                        { command: "ctx-recomp", sessionID: "ses-recomp-live", arguments: "" },
+                        makeOutput(""),
+                        {},
+                    ),
+                    "__CONTEXT_MANAGEMENT_CTX-RECOMP_HANDLED__",
+                );
+
+                expect(received).toEqual([{ action: "show-recomp-dialog" }]);
+                expect(liveNotification).not.toHaveBeenCalled();
+            } finally {
+                unregister();
+            }
         });
     });
 
@@ -610,6 +959,48 @@ describe("createMagicContextCommandHandler", () => {
     });
 
     describe("Rust-mode command operations", () => {
+        it("omits context.db mirrors when canonical status is unavailable", async () => {
+            insertTag(db, "ses-rust-status-unavailable", 1, 1024);
+            const sendNotification = mock(async () => {});
+            const getStatusDetail = mock(() => {
+                throw new Error("host mirror must not be formatted");
+            });
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                transformMode: "rust",
+                rustModeModuleClient: {
+                    call: async () => {
+                        throw new Error("module offline");
+                    },
+                },
+                getStatusDetail,
+                sendNotification,
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    {
+                        command: "ctx-status",
+                        sessionID: "ses-rust-status-unavailable",
+                        arguments: "",
+                    },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-STATUS_HANDLED__",
+            );
+
+            expect(getStatusDetail).not.toHaveBeenCalled();
+            expect(sendNotification).toHaveBeenCalledWith(
+                "ses-rust-status-unavailable",
+                expect.stringContaining("Rust module status could not be read"),
+                {},
+            );
+            const text = String(sendNotification.mock.calls[0]?.[1]);
+            expect(text).not.toContain("- Active: 1");
+        });
+
         it("routes flush to the module while retaining flush wording", async () => {
             const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
             const sendNotification = mock(async () => {});
@@ -655,7 +1046,11 @@ describe("createMagicContextCommandHandler", () => {
         it("maps Rust wrapup and recomp dispositions while minting command ids", async () => {
             const sendNotification = mock(async () => {});
             const moduleCall = mock(
-                async (args: { method: string; body: Record<string, unknown> }) => {
+                async (args: {
+                    method: string;
+                    body: Record<string, unknown>;
+                    timeoutMs?: number;
+                }) => {
                     if (args.method === "session.wrapup") {
                         return { disposition: "completed", rounds: 2, summary: "Wrapped up." };
                     }
@@ -688,11 +1083,14 @@ describe("createMagicContextCommandHandler", () => {
             );
 
             const calls = moduleCall.mock.calls as unknown as Array<
-                [{ method: string; body: Record<string, unknown> }]
+                [{ method: string; body: Record<string, unknown>; timeoutMs?: number }]
             >;
             expect(calls[0]?.[0].method).toBe("session.wrapup");
-            expect(calls[0]?.[0].body.keep).toBe(100);
+            // The requested keep watermark is forwarded unchanged (no 5/100 clamp):
+            // the module honors it as given, matching the TypeScript orchestrator.
+            expect(calls[0]?.[0].body.keep).toBe(250);
             expect(calls[0]?.[0].body.command_id).toEqual(expect.any(String));
+            expect(calls[0]?.[0].timeoutMs).toBe(MAX_WRAPUP_REQUEST_BUDGET_MS);
             expect(calls[1]?.[0].method).toBe("session.recomp");
             expect(calls[1]?.[0].body.command_id).toEqual(expect.any(String));
             expect(sendNotification).toHaveBeenCalledWith(
@@ -700,6 +1098,163 @@ describe("createMagicContextCommandHandler", () => {
                 expect.stringContaining("Wrapped up."),
                 {},
             );
+        });
+
+        it("refuses Rust partial recomp and session upgrade without touching either authority store", async () => {
+            const sendNotification = mock(async () => {});
+            const moduleCall = mock(async () => ({ disposition: "started" }));
+            const runUpgrade = mock(async () => "TS upgrade ran");
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                transformMode: "rust",
+                rustModeModuleClient: { call: moduleCall },
+                runUpgrade,
+                sendNotification,
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    {
+                        command: "ctx-recomp",
+                        sessionID: "ses-rust-maintenance",
+                        arguments: "10-20",
+                    },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-RECOMP_HANDLED__",
+            );
+            await expectSentinel(
+                handler["command.execute.before"](
+                    {
+                        command: "ctx-session-upgrade",
+                        sessionID: "ses-rust-maintenance",
+                        arguments: "",
+                    },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-SESSION-UPGRADE_HANDLED__",
+            );
+
+            expect(moduleCall).not.toHaveBeenCalled();
+            expect(runUpgrade).not.toHaveBeenCalled();
+            const text = (sendNotification.mock.calls as unknown as Array<[string, string]>)
+                .map(([, notification]) => notification)
+                .join("\n");
+            expect(text).toContain("module supports only a full-session recomp");
+            expect(text).toContain("switch authority through the documented drain flow");
+        });
+
+        it("maps every shared wrapup state cell to the TypeScript outcome contract", async () => {
+            const matrix = [
+                {
+                    cell: "empty",
+                    disposition: "nothing_to_compact",
+                    expectedHeading: "## Magic Wrapup",
+                    forbiddenHeading: "— Partial",
+                },
+                {
+                    cell: "active",
+                    disposition: "already_in_progress",
+                    expectedHeading: "## Magic Wrapup — Skipped",
+                },
+                ...[
+                    "lease_timeout",
+                    "zero_progress",
+                    "partial_progress",
+                    "producer_failure",
+                    "ownership_loss",
+                ].map((cell) => ({
+                    cell,
+                    disposition: "retryable",
+                    expectedHeading: "## Magic Wrapup — Partial",
+                })),
+                {
+                    cell: "success",
+                    disposition: "completed",
+                    expectedHeading: "## Magic Wrapup",
+                    forbiddenHeading: "— Partial",
+                },
+            ];
+
+            for (const row of matrix) {
+                const sendNotification = mock(async () => {});
+                const moduleCall = mock(async () => ({
+                    ok: true,
+                    disposition: row.disposition,
+                    rounds: row.cell === "success" ? 2 : 0,
+                    summary: `matrix:${row.cell}`,
+                }));
+                const handler = createMagicContextCommandHandler({
+                    db,
+                    protectedTags: 3,
+                    transformMode: "rust",
+                    rustModeModuleClient: { call: moduleCall },
+                    sendNotification,
+                });
+                const sessionId = `ses-rust-wrapup-matrix-${row.cell}`;
+
+                await expectSentinel(
+                    handler["command.execute.before"](
+                        { command: "ctx-wrapup", sessionID: sessionId, arguments: "" },
+                        makeOutput(""),
+                        {},
+                    ),
+                    "__CONTEXT_MANAGEMENT_CTX-WRAPUP_HANDLED__",
+                );
+
+                const text = (sendNotification.mock.calls as unknown as Array<[string, string]>)
+                    .filter(([notifiedSession]) => notifiedSession === sessionId)
+                    .map(([, notification]) => notification)
+                    .join("\n");
+                expect(text, row.cell).toContain(row.expectedHeading);
+                if (row.disposition !== "already_in_progress") {
+                    expect(text, row.cell).toContain(`matrix:${row.cell}`);
+                }
+                if (row.forbiddenHeading)
+                    expect(text, row.cell).not.toContain(row.forbiddenHeading);
+                if (row.disposition === "retryable") {
+                    expect(text, row.cell).toContain("Run /ctx-wrapup again to continue.");
+                    expect(text, row.cell).not.toContain("— Failed");
+                }
+            }
+        });
+
+        it("presents a retryable Rust wrapup as Partial with a continuation, not Failed", async () => {
+            const sendNotification = mock(async () => {});
+            const moduleCall = mock(async () => ({
+                ok: false,
+                disposition: "retryable",
+                reason: "budget_exhausted",
+                summary:
+                    "compacted 3 messages into 1 compartments; wrapup request budget expired; takes effect on your next message",
+            }));
+            const handler = createMagicContextCommandHandler({
+                db,
+                protectedTags: 3,
+                transformMode: "rust",
+                rustModeModuleClient: { call: moduleCall },
+                sendNotification,
+            });
+
+            await expectSentinel(
+                handler["command.execute.before"](
+                    { command: "ctx-wrapup", sessionID: "ses-rust-wrapup-retry", arguments: "" },
+                    makeOutput(""),
+                    {},
+                ),
+                "__CONTEXT_MANAGEMENT_CTX-WRAPUP_HANDLED__",
+            );
+
+            const texts = (sendNotification.mock.calls as unknown as Array<[string, string]>)
+                .filter(([sessionId]) => sessionId === "ses-rust-wrapup-retry")
+                .map(([, text]) => text)
+                .join("\n");
+            expect(texts).toContain("## Magic Wrapup — Partial");
+            expect(texts).toContain("Run /ctx-wrapup again to continue.");
+            expect(texts).not.toContain("— Failed");
         });
 
         it("keeps /ctx-embed on the TypeScript subsystem in Rust mode", async () => {
@@ -766,9 +1321,12 @@ describe("createMagicContextCommandHandler", () => {
                 expect.stringContaining("- Coverage ordinal: 17"),
                 {},
             );
+            expect(String(sendNotification.mock.calls[0]?.[1])).toContain(
+                "Host backends → MODULE: ctx_memory, ctx_note; historian: module-side",
+            );
         });
 
-        it("routes wrapup and recomp with bounded keep and command ids", async () => {
+        it("routes wrapup and recomp forwarding the requested keep and command ids", async () => {
             const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
             const sendNotification = mock(async () => {});
             const handler = createMagicContextCommandHandler({
@@ -807,7 +1365,9 @@ describe("createMagicContextCommandHandler", () => {
             );
 
             expect(calls.map((call) => call.method)).toEqual(["session.wrapup", "session.recomp"]);
-            expect(calls[0]?.body.keep).toBe(100);
+            // The requested keep watermark is forwarded unchanged; the module honors
+            // it as given (no 5/100 clamp), matching the TypeScript orchestrator.
+            expect(calls[0]?.body.keep).toBe(999);
             expect(typeof calls[0]?.body.command_id).toBe("string");
             expect(typeof calls[1]?.body.command_id).toBe("string");
             expect(sendNotification).toHaveBeenCalledWith(
@@ -951,12 +1511,8 @@ describe("createMagicContextCommandHandler", () => {
 
             // No arg → run all enabled tasks (task is undefined).
             expect(runManual).toHaveBeenCalledWith(undefined);
-            expect(sendNotification).toHaveBeenNthCalledWith(
-                1,
-                "ses-dream",
-                "Starting dream run...",
-                { toastDurationMs: 5000 },
-            );
+            expect(sendNotification.mock.calls[0]?.[1]).toContain("Backlog before starting:");
+            expect(sendNotification.mock.calls[0]?.[1]).toContain("Starting dream run...");
             expect(sendNotification).toHaveBeenNthCalledWith(
                 2,
                 "ses-dream",
@@ -994,12 +1550,8 @@ describe("createMagicContextCommandHandler", () => {
             );
 
             expect(runManual).toHaveBeenCalledWith("verify");
-            expect(sendNotification).toHaveBeenNthCalledWith(
-                1,
-                "ses-dream",
-                'Running dream task "verify"...',
-                { toastDurationMs: 5000 },
-            );
+            expect(sendNotification.mock.calls[0]?.[1]).toContain('Running dream task "verify"...');
+            expect(sendNotification.mock.calls[0]?.[1]).toContain("Backlog before starting:");
         });
 
         it("rejects an unknown task name without running", async () => {

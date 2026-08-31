@@ -18,6 +18,7 @@ import {
 	type ContextDatabase,
 	clearEmergencyRecovery,
 	getOrCreateSessionMeta,
+	getOverflowState,
 	getWrapupInProgressState,
 	releaseWrapupInProgress,
 	updateWrapupInProgress,
@@ -28,24 +29,27 @@ import {
 	resolveWrapupProtectedTailBoundary,
 } from "@magic-context/core/hooks/magic-context/protected-tail-boundary";
 import { setRawMessageProvider } from "@magic-context/core/hooks/magic-context/read-session-chunk";
+import type { ModelInput } from "@magic-context/core/shared/model-resolution";
 import type { SubagentRunner } from "@magic-context/core/shared/subagent-runner";
+import { COMPACTION_OFF_COMMAND_UNAVAILABLE } from "../compaction-off-pi";
 import {
 	signalPiDeferredHistoryRefresh,
 	signalPiDeferredMaterialization,
 } from "../context-handler";
 import { ensureProjectRegisteredFromPiDirectory } from "../embedding-bootstrap";
+import { resolvePiUsableContextLimit } from "../pi-context-limit";
 import { runPiHistorian } from "../pi-historian-runner";
 import { isPiRecompInFlight } from "../pi-recomp-runner";
 import { readPiSessionMessages } from "../read-session-pi";
 import { updateStatusLine } from "../status-line";
-import { resolveSessionId, sendCtxStatusMessage } from "./pi-command-utils";
+import { createCtxStatusSender, resolveSessionId } from "./pi-command-utils";
 
 export interface RegisterCtxWrapupDeps {
 	db: ContextDatabase;
 	runner: SubagentRunner;
 	historianModel: string | undefined;
 	historianChunkTokens: number;
-	historianFallbacks?: readonly string[];
+	historianFallbacks?: readonly ModelInput[];
 	historianTimeoutMs?: number;
 	historianThinkingLevel?: string;
 	language?: string;
@@ -62,6 +66,7 @@ export interface RegisterCtxWrapupDeps {
 	runPiHistorianForWrapup?: typeof runPiHistorian;
 	wrapupLeaseWaitTimeoutMs?: number;
 	resolveRuntimeDeps?: (ctx: { cwd: string }) => CtxWrapupRuntimeDeps;
+	compactionOff?: boolean;
 }
 
 export type CtxWrapupRuntimeDeps = Omit<
@@ -115,9 +120,10 @@ export function registerCtxWrapupCommand(
 		description:
 			"Compact older Magic Context history while keeping the newest messages raw",
 		handler: async (args, ctx) => {
+			const sendStatus = createCtxStatusSender(pi, ctx);
 			const sessionId = resolveSessionId(ctx);
 			if (!sessionId) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-wrapup",
 					text: "## Magic Wrapup\n\nNo active Pi session is available.",
 					level: "error",
@@ -125,10 +131,18 @@ export function registerCtxWrapupCommand(
 				return;
 			}
 			const currentDeps = deps.resolveRuntimeDeps?.(ctx) ?? deps;
+			if (currentDeps.compactionOff) {
+				sendStatus({
+					title: "/ctx-wrapup",
+					text: COMPACTION_OFF_COMMAND_UNAVAILABLE,
+					level: "warning",
+				});
+				return;
+			}
 
 			const sessionMeta = getOrCreateSessionMeta(currentDeps.db, sessionId);
 			if (sessionMeta.isSubagent) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-wrapup",
 					text: "## Magic Wrapup — Skipped\n\n/ctx-wrapup is only available in primary sessions.",
 					level: "warning",
@@ -137,7 +151,7 @@ export function registerCtxWrapupCommand(
 			}
 
 			if (!currentDeps.historianModel) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-wrapup",
 					text: "## Magic Wrapup\n\n/ctx-wrapup is unavailable because `historian.model` is not configured.",
 					level: "error",
@@ -147,7 +161,7 @@ export function registerCtxWrapupCommand(
 
 			const parsed = parseWrapupArgs(args);
 			if (!parsed.ok) {
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-wrapup",
 					text: `## Magic Wrapup — Invalid Arguments\n\n${parsed.message}`,
 					level: "error",
@@ -162,7 +176,7 @@ export function registerCtxWrapupCommand(
 				sessionId,
 				parsed.messagesToKeep,
 			);
-			sendCtxStatusMessage(pi, {
+			sendStatus({
 				title: "/ctx-wrapup",
 				text: result,
 				level:
@@ -181,6 +195,7 @@ export async function runPiWrapup(
 	sessionId: string,
 	messagesToKeep: number,
 ): Promise<string> {
+	const sendStatus = createCtxStatusSender(pi, ctx);
 	if (getOrCreateSessionMeta(deps.db, sessionId).isSubagent) {
 		return "## Magic Wrapup — Skipped\n\n/ctx-wrapup is only available in primary sessions.";
 	}
@@ -192,7 +207,7 @@ export async function runPiWrapup(
 	const unregister = setRawMessageProvider(sessionId, provider);
 	let holderId = "";
 	try {
-		const contextLimit = resolvePiContextLimit(ctx);
+		const contextLimit = resolvePiContextLimit(ctx, deps.db, sessionId);
 		const modelKey = ctx.model
 			? `${ctx.model.provider}/${ctx.model.id}`
 			: undefined;
@@ -279,7 +294,7 @@ export async function runPiWrapup(
 			}
 		}, 60_000);
 		try {
-			sendCtxStatusMessage(pi, {
+			sendStatus({
 				title: "/ctx-wrapup",
 				text: `## Magic Wrapup\n\nEligible history is about ${initialPlan.snapshot.trueRawEligibleTokens.toLocaleString()} tokens across approximately ${estimateChunks(initialPlan.snapshot.trueRawEligibleTokens, deps.historianChunkTokens)} historian chunk(s).`,
 				level: "info",
@@ -352,7 +367,7 @@ export async function runPiWrapup(
 					failure = `${ownershipLostReason}; wrapped up through message ${lastEnd}. Run /ctx-wrapup again to continue.`;
 					break;
 				}
-				sendCtxStatusMessage(pi, {
+				sendStatus({
 					title: "/ctx-wrapup",
 					text: `## Magic Wrapup\n\nChunk ${chunkIndex}: wrapping messages ${plan.snapshot.offset}-${plan.snapshot.eligibleEndOrdinal - 1} (~${plan.snapshot.trueRawEligibleTokens.toLocaleString()} eligible tokens remain).`,
 					level: "info",
@@ -420,7 +435,7 @@ export async function runPiWrapup(
 						compartmentLeaseHolderId: leaseHolder,
 						readBranchEntries: () => readBranchEntries(ctx),
 						notifyIssue: (text) =>
-							sendCtxStatusMessage(pi, {
+							sendStatus({
 								title: "/ctx-wrapup",
 								text,
 								level: "warning",
@@ -477,18 +492,26 @@ export async function runPiWrapup(
 	}
 }
 
-function resolvePiContextLimit(ctx: ExtensionCommandContext): number {
+function resolvePiContextLimit(
+	ctx: ExtensionCommandContext,
+	db: ContextDatabase,
+	sessionId: string,
+): number {
 	const usage = ctx.getContextUsage?.();
-	if (typeof usage?.contextWindow === "number" && usage.contextWindow > 0) {
-		return usage.contextWindow;
+	let detectedContextLimit: number | undefined;
+	try {
+		const detected = getOverflowState(db, sessionId).detectedContextLimit;
+		if (detected > 0) detectedContextLimit = detected;
+	} catch {
+		// Wrap-up can continue with the runtime model window.
 	}
-	if (
-		typeof ctx.model?.contextWindow === "number" &&
-		ctx.model.contextWindow > 0
-	) {
-		return ctx.model.contextWindow;
-	}
-	return 128_000;
+	return (
+		resolvePiUsableContextLimit({
+			rawContextWindow: usage?.contextWindow ?? ctx.model?.contextWindow,
+			model: ctx.model,
+			detectedContextLimit,
+		}) ?? 128_000
+	);
 }
 
 async function acquireCompartmentLeaseEventually(

@@ -77,7 +77,7 @@ export function extractChannel(version: string | null): string {
     return "latest";
 }
 
-type ConfigSurface = "server" | "tui";
+export type ConfigSurface = "server" | "tui";
 
 function getSurfaceConfigPaths(directory: string, surface: ConfigSurface): string[] {
     const name = surface === "server" ? "opencode" : "tui";
@@ -224,8 +224,16 @@ export function getCurrentRuntimePackageJsonPath(
     }
 }
 
-export function findPluginEntry(directory: string): PluginEntryInfo | null {
-    const winner = getWinningConfig(directory, "server");
+/**
+ * Resolve the plugin entry that OpenCode will use for one runtime surface.
+ * Config paths are ordered by OpenCode precedence so diagnostics and the
+ * auto-updater agree about the artifact that actually runs.
+ */
+export function findPluginEntry(
+    directory: string,
+    surface: ConfigSurface = "server",
+): PluginEntryInfo | null {
+    const winner = getWinningConfig(directory, surface);
     if (!winner) return null;
     const entry = winner.entries.find(
         (value) => value === PACKAGE_NAME || value.startsWith(`${PACKAGE_NAME}@`),
@@ -249,6 +257,18 @@ export interface PreparedConfigUpdate {
     configPaths: [string, string];
 }
 
+export function hasExplicitNonExactPluginVersion(spec: string): boolean {
+    if (!spec.startsWith(`${PACKAGE_NAME}@`)) return false;
+    return !isValidSemver(spec.slice(PACKAGE_NAME.length + 1));
+}
+
+function isExactOrBarePluginSpec(spec: string): boolean {
+    return (
+        spec === PACKAGE_NAME ||
+        (spec.startsWith(`${PACKAGE_NAME}@`) && !hasExplicitNonExactPluginVersion(spec))
+    );
+}
+
 function configUpdateContent(content: string, version: string): string | null {
     const parsed = parseJsonConfig(content);
     if (!parsed) return null;
@@ -256,7 +276,7 @@ function configUpdateContent(content: string, version: string): string | null {
     const current = entries.find(
         (entry) => entry === PACKAGE_NAME || entry.startsWith(`${PACKAGE_NAME}@`),
     );
-    if (!current) return null;
+    if (!current || !isExactOrBarePluginSpec(current)) return null;
 
     const escaped = current.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const entryRegex = new RegExp(`(["'])${escaped}\\1`);

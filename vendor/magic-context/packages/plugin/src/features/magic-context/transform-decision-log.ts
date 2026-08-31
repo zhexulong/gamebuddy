@@ -44,6 +44,39 @@ export interface PendingTransformDecision {
     decision: TransformSchedulerDecision;
     materialized: boolean;
     materializeReason: CanonicalMaterializeReason | null;
+    /**
+     * `transform_decisions.system_hash_prev`: cached operand from a system-hash
+     * comparison. NULL means this pass made no system-hash comparison; an empty
+     * string is a real compared cached value and must remain distinct from NULL.
+     */
+    systemHashPrev: string | null;
+    /**
+     * `transform_decisions.system_hash_new`: live operand from a system-hash
+     * comparison. NULL means this pass made no system-hash comparison.
+     */
+    systemHashNew: string | null;
+    /**
+     * `transform_decisions.m0_model_key_prev`: cached canonical model-key operand.
+     * NULL means this pass made no model-key comparison; an empty string is a real
+     * compared cached value and must remain distinct from NULL.
+     */
+    m0ModelKeyPrev: string | null;
+    /**
+     * `transform_decisions.m0_model_key_new`: live canonical model-key operand.
+     * NULL means this pass made no model-key comparison.
+     */
+    m0ModelKeyNew: string | null;
+    /**
+     * `transform_decisions.m0_tool_set_hash_prev`: cached tool-set operand from
+     * an observed comparison. NULL means this pass made no tool-set comparison;
+     * an empty string is a real compared cached value.
+     */
+    m0ToolSetHashPrev?: string | null;
+    /**
+     * `transform_decisions.m0_tool_set_hash_new`: live tool-set operand from an
+     * observed comparison. NULL means this pass made no tool-set comparison.
+     */
+    m0ToolSetHashNew?: string | null;
     emergency: boolean;
     droppedTokens: number;
     droppedCount: number;
@@ -164,6 +197,12 @@ export function writeRustTransformDecision(args: {
         decision: mapped.decision,
         materialized: mapped.materialized,
         materializeReason: args.materializeReason as CanonicalMaterializeReason | null,
+        systemHashPrev: null,
+        systemHashNew: null,
+        m0ModelKeyPrev: null,
+        m0ModelKeyNew: null,
+        m0ToolSetHashPrev: null,
+        m0ToolSetHashNew: null,
         emergency: false,
         droppedTokens: 0,
         droppedCount: 0,
@@ -395,11 +434,23 @@ function writeTransformDecisionRowOnDatabase(
     configureBusyTimeout: boolean,
 ): void {
     if (configureBusyTimeout) db.exec("PRAGMA busy_timeout=0");
+    // Trigger operands only describe a materialized baseline. Tool-set
+    // comparison is different: it is deliberately observational rather than a
+    // fold trigger, so its evidence must survive a non-materialized bust.
+    const systemHashPrev = row.materialized ? row.systemHashPrev : null;
+    const systemHashNew = row.materialized ? row.systemHashNew : null;
+    const m0ModelKeyPrev = row.materialized ? row.m0ModelKeyPrev : null;
+    const m0ModelKeyNew = row.materialized ? row.m0ModelKeyNew : null;
+    const m0ToolSetHashPrev = row.m0ToolSetHashPrev ?? null;
+    const m0ToolSetHashNew = row.m0ToolSetHashNew ?? null;
     db.prepare(
         `INSERT OR REPLACE INTO transform_decisions (
                 session_id, harness, message_id, ts_ms, decision, materialized,
-                materialize_reason, emergency, dropped_tokens, dropped_count, input_tokens
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                materialize_reason, system_hash_prev, system_hash_new,
+                m0_tool_set_hash_prev, m0_tool_set_hash_new,
+                m0_model_key_prev, m0_model_key_new, emergency, dropped_tokens,
+                dropped_count, input_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
         row.sessionId,
         row.harness,
@@ -408,6 +459,12 @@ function writeTransformDecisionRowOnDatabase(
         row.decision,
         row.materialized ? 1 : 0,
         row.materializeReason,
+        systemHashPrev,
+        systemHashNew,
+        m0ToolSetHashPrev,
+        m0ToolSetHashNew,
+        m0ModelKeyPrev,
+        m0ModelKeyNew,
         row.emergency ? 1 : 0,
         Math.max(0, Math.floor(row.droppedTokens)),
         Math.max(0, Math.floor(row.droppedCount)),

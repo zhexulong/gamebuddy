@@ -4,7 +4,7 @@ import type {
 	ExtensionCommandContext,
 	Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Box, type Component, Text } from "@earendil-works/pi-tui";
+import { Box, type Component, matchesKey, Text } from "@earendil-works/pi-tui";
 import { sessionLog } from "@magic-context/core/shared/logger";
 
 export const CTX_STATUS_CUSTOM_TYPE = "ctx-status";
@@ -15,6 +15,7 @@ export interface CtxStatusEntryData {
 	title: string;
 	text: string;
 	level?: CtxStatusLevel;
+	rpcDisplay?: "notification" | "dialog";
 	details?: unknown;
 }
 
@@ -40,8 +41,28 @@ type PiEntryRendererRegistration = {
 export type PiMessageSender = Pick<ExtensionAPI, "appendEntry"> &
 	PiEntryRendererRegistration;
 
+const statusLifecycleSignals = new WeakMap<PiMessageSender, AbortSignal>();
+
+export function registerCtxStatusLifecycleSignal(
+	pi: PiMessageSender,
+	signal: AbortSignal,
+): void {
+	statusLifecycleSignals.set(pi, signal);
+}
+
+export function shouldShowCtxStatusDialog(
+	content: CtxStatusMessageContent,
+): boolean {
+	return (
+		content.rpcDisplay === "dialog" ||
+		(content.rpcDisplay !== "notification" &&
+			content.level !== undefined &&
+			content.level !== "info")
+	);
+}
+
 export function resolveSessionId(
-	ctx: ExtensionCommandContext,
+	ctx: Pick<ExtensionCommandContext, "sessionManager">,
 ): string | undefined {
 	const sm = ctx.sessionManager;
 	const getSessionId = (sm as { getSessionId?: () => string | undefined })
@@ -52,6 +73,56 @@ export function resolveSessionId(
 		return typeof id === "string" && id.length > 0 ? id : undefined;
 	} catch {
 		return undefined;
+	}
+}
+
+export async function showCtxStatusDialog(
+	ctx: Pick<ExtensionCommandContext, "ui">,
+	content: CtxStatusMessageContent,
+): Promise<boolean> {
+	let factoryInvoked = false;
+	await ctx.ui.custom<undefined>(
+		(_tui, theme, _keybindings, done) => {
+			factoryInvoked = true;
+			return new CtxStatusDialog(content, theme, done);
+		},
+		{ overlay: true, overlayOptions: { anchor: "center", width: 92 } },
+	);
+	return factoryInvoked;
+}
+
+class CtxStatusDialog implements Component {
+	constructor(
+		private readonly content: CtxStatusMessageContent,
+		private readonly theme: Theme,
+		private readonly done: (value: undefined) => void,
+	) {}
+
+	handleInput(data: string): void {
+		if (
+			matchesKey(data, "escape") ||
+			matchesKey(data, "ctrl+c") ||
+			matchesKey(data, "return")
+		) {
+			this.done(undefined);
+		}
+	}
+
+	invalidate(): void {}
+
+	render(_width: number): string[] {
+		return [
+			this.theme.bold(
+				this.theme.fg(
+					statusTitleColor(this.content.level),
+					`[${this.content.title}]`,
+				),
+			),
+			"",
+			...this.content.text.split("\n"),
+			"",
+			this.theme.fg("dim", "Press Enter or Escape to close"),
+		];
 	}
 }
 
@@ -110,11 +181,57 @@ export function registerCtxStatusEntryRenderer(pi: PiMessageSender): boolean {
 	}
 }
 
+async function presentCtxStatusMessage(
+	ctx: Pick<ExtensionCommandContext, "mode" | "ui">,
+	content: CtxStatusMessageContent,
+	signal?: AbortSignal,
+): Promise<void> {
+	if (ctx.mode !== "rpc" || signal?.aborted) return;
+	const type =
+		content.level === "error" || content.level === "warning"
+			? content.level
+			: "info";
+	if (!shouldShowCtxStatusDialog(content)) {
+		if (!signal?.aborted) ctx.ui.notify(content.text, type);
+		return;
+	}
+	try {
+		const shown = await showCtxStatusDialog(ctx, content);
+		if (!shown && !signal?.aborted) ctx.ui.notify(content.text, type);
+	} catch (err) {
+		if (signal?.aborted) return;
+		sessionLog(
+			"pi-status",
+			`ctx status dialog failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+		ctx.ui.notify(content.text, type);
+	}
+}
+
+export function createCtxStatusSender(
+	pi: PiMessageSender,
+	ctx: ExtensionCommandContext,
+	signal?: AbortSignal,
+): (content: CtxStatusMessageContent, details?: unknown) => void {
+	const lifecycleSignal = statusLifecycleSignals.get(pi);
+	const effectiveSignal =
+		signal && lifecycleSignal
+			? AbortSignal.any([signal, lifecycleSignal])
+			: (signal ?? lifecycleSignal);
+	return (content, details) => {
+		if (!effectiveSignal?.aborted)
+			sendCtxStatusMessage(pi, content, details, ctx, effectiveSignal);
+	};
+}
+
 export function sendCtxStatusMessage(
 	pi: PiMessageSender,
 	content: CtxStatusMessageContent,
 	details?: unknown,
+	ctx?: ExtensionCommandContext,
+	signal?: AbortSignal,
 ): void {
+	if (signal?.aborted) return;
 	const data: CtxStatusEntryData = {
 		...content,
 		details: details ?? content.details,
@@ -125,6 +242,8 @@ export function sendCtxStatusMessage(
 	if (typeof pi.appendEntry === "function") {
 		pi.appendEntry<CtxStatusEntryData>(CTX_STATUS_CUSTOM_TYPE, data);
 	}
+	if (ctx) void presentCtxStatusMessage(ctx, data, signal);
+
 	// Minimal non-interactive API shims may omit appendEntry; logging remains the
 	// safe fallback and status text must never be routed through sendMessage.
 	sessionLog("pi-status", `${content.title}: ${content.text}`);

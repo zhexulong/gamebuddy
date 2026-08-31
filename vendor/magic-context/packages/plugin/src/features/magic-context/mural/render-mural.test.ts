@@ -36,8 +36,8 @@ describe("deterministic mural renderer", () => {
     });
 
     test("preserves case and leaves a blank column between consecutive M glyphs", () => {
-        const upper = MURAL_FONT_GLYPHS["M"]!;
-        const lower = MURAL_FONT_GLYPHS["a"]!;
+        const upper = MURAL_FONT_GLYPHS.M!;
+        const lower = MURAL_FONT_GLYPHS.a!;
         expect(lower.rows).not.toEqual(upper.rows);
 
         const pairColumns = Array.from({ length: upper.advance * 2 }, (_, column) =>

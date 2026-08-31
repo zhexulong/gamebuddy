@@ -31,10 +31,10 @@ export interface TaskScheduleStateRow {
      *  avoid a DROP-COLUMN migration; field kept for a faithful round-trip. Do
      *  NOT read it for new logic. */
     lastCheckedCommit?: string | null;
-    /** LEGACY/INERT: the old internal broad-pass cadence watermark. Broad is now
-     *  its own scheduled task (`verify-broad`); nothing writes a meaningful value.
-     *  Column kept (v43) to avoid a DROP-COLUMN migration; field kept so the
-     *  COALESCE round-trip is faithful. Do NOT read it for new logic. */
+    /** Start of the currently open verify-broad cycle, or null when the cycle
+     *  is closed. This field reuses an existing database column from schema
+     *  version 43 as the cycle watermark, allowing a broad pool to drain across
+     *  scheduled runs without a migration. */
     lastBroadRunAt?: number | null;
     /** retrospective CONTENT watermark: max message ts actually scanned. Distinct
      *  from lastRunAt (schedule-completion time) — lastRunAt as a content cutoff
@@ -178,8 +178,16 @@ export function seedTaskScheduleState(
 /** Full upsert of a row's schedule fields (used on run completion / gate-skip /
  *  retry advancement / schedule reconciliation). Callers that read-then-write
  *  should wrap in BEGIN IMMEDIATE; run-completion writes are already
- *  single-writer under the domain lease. */
+ *  single-writer under the domain lease.
+ *
+ *  Optional watermark fields preserve the existing value when omitted. Passing
+ *  `lastBroadRunAt: null` explicitly closes a broad cycle; this distinction is
+ *  needed because a closed cycle is durable state, not an absent patch. */
 export function writeTaskScheduleState(db: Database, row: TaskScheduleStateRow): void {
+    const broadCycleUpdate =
+        row.lastBroadRunAt === undefined
+            ? "last_broad_run_at = task_schedule_state.last_broad_run_at"
+            : "last_broad_run_at = excluded.last_broad_run_at";
     db.prepare(
         `INSERT INTO task_schedule_state
            (project_path, task, last_run_at, next_due_at, schedule, last_status, last_error, retry_count, last_checked_commit, last_broad_run_at, retrospective_watermark_ms)
@@ -192,7 +200,7 @@ export function writeTaskScheduleState(db: Database, row: TaskScheduleStateRow):
            last_error           = excluded.last_error,
            retry_count          = excluded.retry_count,
            last_checked_commit  = COALESCE(excluded.last_checked_commit, task_schedule_state.last_checked_commit),
-           last_broad_run_at    = COALESCE(excluded.last_broad_run_at, task_schedule_state.last_broad_run_at),
+           ${broadCycleUpdate},
            retrospective_watermark_ms = COALESCE(excluded.retrospective_watermark_ms, task_schedule_state.retrospective_watermark_ms)`,
     ).run(
         row.projectPath,

@@ -15,6 +15,8 @@ import { unwrapImitatedReducedArgs } from "../unwrap-imitated-reduced-args";
 import { CTX_REDUCE_DESCRIPTION } from "./constants";
 import type { CtxReduceArgs } from "./types";
 
+export { CTX_REDUCE_LIGHT_DESCRIPTION } from "../light-descriptions";
+
 export interface CtxReduceToolDeps {
     db: Database;
     protectedTags: number;

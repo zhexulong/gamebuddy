@@ -453,6 +453,337 @@ const REASONING_IGNORED_PART_TYPES = new Set([
 // Anthropic block ends with thinking at position 0 and at most one present.
 const REASONING_PART_TYPES = new Set(["reasoning", "thinking", "redacted_thinking"]);
 
+function hasReasoningReplayContent(message: MessageLike): boolean {
+    return message.parts.some((part) => {
+        if (!isRecord(part) || part.ignored === true) return false;
+        const type = typeof part.type === "string" ? part.type : "";
+        if (REASONING_IGNORED_PART_TYPES.has(type)) return false;
+        return type !== "text" || typeof part.text !== "string" || part.text.trim().length > 0;
+    });
+}
+
+/**
+ * Return the newest assistant that is visible in the provider replay. OpenCode may append a
+ * metadata-only request shell; the adapter drops that shell, so it cannot own the exemption for
+ * the completed assistant whose signed reasoning is actually replayed last.
+ */
+export function findLatestAssistantReasoningMutationExemptMessage(
+    messages: MessageLike[],
+): MessageLike | undefined {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message.info.role === "assistant" && hasReasoningReplayContent(message)) return message;
+    }
+    return undefined;
+}
+
+interface MergedReasoningStripPlan {
+    message: MessageLike;
+    stripIndices: number[];
+}
+
+function planMergedAssistantReasoningStrip(
+    messages: MessageLike[],
+    mutationExemptMessage?: MessageLike,
+): MergedReasoningStripPlan[] {
+    const plan: MergedReasoningStripPlan[] = [];
+    let prevRole: string | undefined;
+    let keptReasoningInRun = false;
+
+    for (const message of messages) {
+        const role = message.info.role;
+
+        if (role !== "assistant") {
+            prevRole = role;
+            keptReasoningInRun = false;
+            continue;
+        }
+
+        const firstInRun = prevRole !== "assistant";
+        if (firstInRun) keptReasoningInRun = false;
+
+        if (message === mutationExemptMessage) {
+            prevRole = role;
+            continue;
+        }
+
+        // Determine which reasoning/thinking part (if any) to KEEP for this
+        // run. Only eligible: the first assistant in a run, no reasoning
+        // kept yet, AND the first non-metadata content part is a
+        // reasoning/thinking/redacted_thinking part.
+        //
+        // Sentinels (from stripStructuralNoise and other in-place strips) are
+        // `{type:"text", text:""}` and occupy positions previously held by
+        // structural-noise parts. They are invisible on the wire (OpenCode's
+        // provider transform drops empty text) so the "first non-metadata" rule
+        // must treat them as equivalent to the structural parts they replaced
+        // — otherwise a reasoning part that would have been first-after-strip
+        // is wrongly considered non-first and gets neutralized, stripping the
+        // last thinking from a run that has one eligible to keep.
+        let keepIndex = -1;
+        if (firstInRun && !keptReasoningInRun) {
+            for (let i = 0; i < message.parts.length; i++) {
+                const part = message.parts[i];
+                if (!isRecord(part)) continue;
+                const partType = part.type as string;
+                if (REASONING_IGNORED_PART_TYPES.has(partType)) continue;
+                if (part.ignored === true) continue;
+                if (isSentinel(part)) continue;
+                // Anthropic has already accepted newest assistants with a leading
+                // whitespace block before thinking. Treat that wire-invisible text
+                // like a sentinel so losing newest status does not change the rule.
+                if (
+                    partType === "text" &&
+                    typeof part.text === "string" &&
+                    part.text.trim() === ""
+                ) {
+                    continue;
+                }
+                if (REASONING_PART_TYPES.has(partType)) {
+                    keepIndex = i;
+                }
+                break;
+            }
+        }
+
+        const stripIndices: number[] = [];
+        for (let i = 0; i < message.parts.length; i++) {
+            const part = message.parts[i];
+            if (!isRecord(part)) continue;
+            if (!REASONING_PART_TYPES.has(part.type as string)) continue;
+            if (part.cache_control !== undefined) continue;
+            if (i === keepIndex) {
+                keptReasoningInRun = true;
+                continue;
+            }
+            stripIndices.push(i);
+        }
+        if (stripIndices.length > 0) plan.push({ message, stripIndices });
+
+        prevRole = role;
+    }
+
+    return plan;
+}
+
+export type TrailingBlankDecision = "keep" | `keep:${number}` | "strip";
+export type TrailingBlankSourceDecisions = ReadonlyMap<string, TrailingBlankDecision>;
+
+const MAX_FROZEN_TRAILING_BLANKS = 10_000;
+const CANONICAL_BLANK_PART = { type: "text", text: "" } as const;
+
+function isSentinelInvisibleTextPart(part: unknown): boolean {
+    return (
+        isRecord(part) &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        part.text.trim() === ""
+    );
+}
+
+function isCanonicalBlankPart(part: unknown): boolean {
+    return (
+        isRecord(part) && Object.keys(part).length === 2 && part.type === "text" && part.text === ""
+    );
+}
+
+function trailingBlankKeepCount(decision: TrailingBlankDecision): number | undefined {
+    if (decision === "keep") return 1;
+    if (!decision.startsWith("keep:")) return undefined;
+    const countText = decision.slice("keep:".length);
+    if (!/^[1-9]\d*$/.test(countText)) return undefined;
+    const count = Number(countText);
+    return Number.isSafeInteger(count) && count > 0 && count <= MAX_FROZEN_TRAILING_BLANKS
+        ? count
+        : undefined;
+}
+
+function trailingBlankDecisionForMessage(
+    message: MessageLike,
+): readonly [string, TrailingBlankDecision] | undefined {
+    const id = message.info.id;
+    if (message.info.role !== "assistant" || typeof id !== "string" || id.length === 0) {
+        return undefined;
+    }
+    let trailingCount = 0;
+    while (
+        trailingCount < message.parts.length &&
+        isSentinelInvisibleTextPart(message.parts[message.parts.length - trailingCount - 1])
+    ) {
+        trailingCount += 1;
+    }
+    if (trailingCount > MAX_FROZEN_TRAILING_BLANKS && trailingCount < message.parts.length) {
+        return undefined;
+    }
+    const decision: TrailingBlankDecision =
+        message.parts.length === 0 || trailingCount === message.parts.length
+            ? "keep"
+            : trailingCount === 0
+              ? "strip"
+              : trailingCount === 1
+                ? "keep"
+                : `keep:${trailingCount}`;
+    return [id, decision];
+}
+
+/** Capture trailing-blank shapes before Magic Context can insert synthetic parts. */
+export function snapshotTrailingBlankSourceDecisions(
+    messages: readonly MessageLike[],
+): Map<string, TrailingBlankDecision> {
+    const decisions = new Map<string, TrailingBlankDecision>();
+    for (const message of messages) {
+        const observed = trailingBlankDecisionForMessage(message);
+        if (observed) decisions.set(...observed);
+    }
+    return decisions;
+}
+
+/**
+ * Capture the representation served for each assistant before a provider can append
+ * a late blank. The newest assistant may be refreshed while it remains live; once a
+ * later assistant appears, its last served choice becomes an immutable replay rule.
+ *
+ * Production callers supply sourceDecisions captured from the unmodified harness
+ * input. That prevents sentinels, canonical blanks, and synthetic messages added by
+ * Magic Context from becoming self-replaying observations.
+ */
+export function findTrailingBlankDecisionCandidates(
+    messages: MessageLike[],
+    frozenDecisions: ReadonlyMap<string, TrailingBlankDecision>,
+    options?: {
+        refreshMessageId?: string;
+        sourceDecisions?: TrailingBlankSourceDecisions;
+    },
+): Array<readonly [string, TrailingBlankDecision]> {
+    const observedDecisions =
+        options?.sourceDecisions ?? snapshotTrailingBlankSourceDecisions(messages);
+    const visibleIds = new Set(
+        messages.flatMap((message) =>
+            typeof message.info.id === "string" ? [message.info.id] : [],
+        ),
+    );
+    const decisions: Array<readonly [string, TrailingBlankDecision]> = [];
+    for (const [id, decision] of observedDecisions) {
+        if (!visibleIds.has(id)) continue;
+        const frozen = frozenDecisions.get(id);
+        if (frozen !== undefined && (id !== options?.refreshMessageId || frozen === decision)) {
+            continue;
+        }
+        decisions.push([id, decision]);
+    }
+    return decisions;
+}
+
+/**
+ * Replay persisted choices after all other message mutations. Keep decisions
+ * preserve the canonical blank suffix first served for that message; strip decisions
+ * remove a later blank suffix unless that would expose terminal reasoning. Never
+ * delete the newest assistant's suffix in either message representation.
+ */
+export function applyFrozenTrailingBlankDecisions(
+    messages: MessageLike[],
+    newestAssistantId: string | undefined,
+    frozenDecisions: ReadonlyMap<string, TrailingBlankDecision>,
+): number {
+    let mutations = 0;
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+        let message = messages[messageIndex];
+        const id = message.info.id;
+        if (message.info.role !== "assistant" || typeof id !== "string") continue;
+        const decision = frozenDecisions.get(id);
+        if (!decision) continue;
+
+        let lastMeaningfulIndex = message.parts.length - 1;
+        while (
+            lastMeaningfulIndex >= 0 &&
+            isSentinelInvisibleTextPart(message.parts[lastMeaningfulIndex])
+        ) {
+            lastMeaningfulIndex -= 1;
+        }
+
+        const replaceParts = (start: number, deleteCount: number, insertBlankCount: number) => {
+            // OpenCode owns the hook's message objects. Copy the message and parts
+            // array before a length-changing splice so normalization cannot delete
+            // parts from another observer of the live request object graph.
+            message = { ...message, parts: [...message.parts] };
+            messages[messageIndex] = message;
+            message.parts.splice(
+                start,
+                deleteCount,
+                ...Array.from({ length: insertBlankCount }, () => ({ ...CANONICAL_BLANK_PART })),
+            );
+        };
+
+        if (lastMeaningfulIndex < 0) {
+            if (message.parts.length === 0) continue;
+            if (message.parts.length !== 1 || !isCanonicalBlankPart(message.parts[0])) {
+                mutations += Math.max(1, message.parts.length);
+                replaceParts(0, message.parts.length, 1);
+            }
+            continue;
+        }
+
+        const trailingCount = message.parts.length - lastMeaningfulIndex - 1;
+        const keepCount = trailingBlankKeepCount(decision);
+        if (keepCount !== undefined) {
+            // A keep decision may stabilize a blank suffix that the harness supplied,
+            // but it must never recreate missing bytes. If a formerly present blank is
+            // absent now, accepting this pass's cache bust prevents an insert-observe-
+            // keep loop from manufacturing that blank forever.
+            if (trailingCount === 0) continue;
+            const blankIndex = lastMeaningfulIndex + 1;
+            const suffixIsCanonical =
+                trailingCount === keepCount &&
+                message.parts.slice(blankIndex).every(isCanonicalBlankPart);
+            if (!suffixIsCanonical) {
+                mutations += Math.max(1, trailingCount, keepCount);
+                replaceParts(blankIndex, trailingCount, keepCount);
+            }
+            continue;
+        }
+
+        if (id === newestAssistantId || trailingCount === 0) continue;
+        const lastMeaningfulPart = message.parts[lastMeaningfulIndex];
+        if (
+            isRecord(lastMeaningfulPart) &&
+            REASONING_PART_TYPES.has(lastMeaningfulPart.type as string)
+        ) {
+            const blankIndex = lastMeaningfulIndex + 1;
+            if (trailingCount !== 1 || !isCanonicalBlankPart(message.parts[blankIndex])) {
+                mutations += Math.max(1, trailingCount);
+                replaceParts(blankIndex, trailingCount, 1);
+            }
+            continue;
+        }
+        mutations += trailingCount;
+        replaceParts(lastMeaningfulIndex + 1, trailingCount, 0);
+    }
+    return mutations;
+}
+
+/**
+ * Find the stable assistant message ids whose reasoning the current merge rule
+ * would neutralize. The caller freezes these ids only on a cache-busting pass;
+ * replay uses the persisted set instead of rerunning membership detection.
+ */
+export function findMergedReasoningStripCandidateIds(
+    messages: MessageLike[],
+    providerID?: string,
+    options?: { mutationExemptMessage?: MessageLike },
+): string[] {
+    if (providerID !== "anthropic") return [];
+
+    const ids = new Set<string>();
+    for (const entry of planMergedAssistantReasoningStrip(
+        messages,
+        options?.mutationExemptMessage,
+    )) {
+        const id = entry.message.info.id;
+        if (typeof id === "string" && id.length > 0) ids.add(id);
+    }
+    return [...ids];
+}
+
 /**
  * Work around @ai-sdk/anthropic's groupIntoBlocks behavior plus opus-4.7's
  * strict thinking-block position validation.
@@ -483,6 +814,11 @@ const REASONING_PART_TYPES = new Set(["reasoning", "thinking", "redacted_thinkin
  *   - That reasoning part must be the first non-metadata content part of
  *     the first assistant in the run. Otherwise strip all reasoning from
  *     the run.
+ *   - Leave a supplied mutation-exempt assistant byte-identical. OpenCode
+ *     uses this for the newest assistant because Anthropic requires its signed
+ *     thinking and redacted-thinking blocks to be replayed unchanged.
+ *   - When frozenMessageIds is supplied, mutate only those persisted ids. An
+ *     empty set therefore performs replay without first-applying new candidates.
  *
  * Trade-off: the model loses visibility into its own intermediate-step
  * reasoning for multi-step turns. The first step's reasoning is preserved
@@ -496,6 +832,10 @@ const REASONING_PART_TYPES = new Set(["reasoning", "thinking", "redacted_thinkin
 export function stripReasoningFromMergedAssistants(
     messages: MessageLike[],
     providerID?: string,
+    options?: {
+        mutationExemptMessage?: MessageLike;
+        frozenMessageIds?: ReadonlySet<string>;
+    },
 ): number {
     // Anthropic-only workaround for @ai-sdk/anthropic's groupIntoBlocks
     // index-0-thinking rule. openai-compatible providers like Kimi/
@@ -506,74 +846,20 @@ export function stripReasoningFromMergedAssistants(
     if (providerID !== "anthropic") return 0;
 
     let stripped = 0;
-    let prevRole: string | undefined;
-    let keptReasoningInRun = false;
-
-    for (const message of messages) {
-        const role = message.info.role;
-
-        if (role !== "assistant") {
-            prevRole = role;
-            keptReasoningInRun = false;
-            continue;
+    for (const entry of planMergedAssistantReasoningStrip(
+        messages,
+        options?.mutationExemptMessage,
+    )) {
+        if (options?.frozenMessageIds) {
+            const id = entry.message.info.id;
+            if (typeof id !== "string" || !options.frozenMessageIds.has(id)) continue;
         }
-
-        const firstInRun = prevRole !== "assistant";
-        if (firstInRun) keptReasoningInRun = false;
-
-        // Determine which reasoning/thinking part (if any) to KEEP for this
-        // run. Only eligible: the first assistant in a run, no reasoning
-        // kept yet, AND the first non-metadata content part is a
-        // reasoning/thinking/redacted_thinking part.
-        //
-        // Sentinels (from stripStructuralNoise and other in-place strips) are
-        // `{type:"text", text:""}` and occupy positions previously held by
-        // structural-noise parts. They are invisible on the wire (OpenCode's
-        // provider transform drops empty text) so the "first non-metadata" rule
-        // must treat them as equivalent to the structural parts they replaced
-        // — otherwise a reasoning part that would have been first-after-strip
-        // is wrongly considered non-first and gets neutralized, stripping the
-        // last thinking from a run that has one eligible to keep.
-        let keepIndex = -1;
-        if (firstInRun && !keptReasoningInRun) {
-            for (let i = 0; i < message.parts.length; i++) {
-                const part = message.parts[i];
-                if (!isRecord(part)) continue;
-                const partType = part.type as string;
-                if (REASONING_IGNORED_PART_TYPES.has(partType)) continue;
-                if (part.ignored === true) continue;
-                // Skip sentinels — see comment above.
-                if (isSentinel(part)) continue;
-                // First non-metadata part found — is it reasoning-like?
-                if (REASONING_PART_TYPES.has(partType)) {
-                    keepIndex = i;
-                }
-                break;
-            }
-        }
-
-        // Forward pass: neutralize all reasoning/thinking/redacted_thinking
-        // parts except the one we decided to keep (if any). Replace in place
-        // with empty-text sentinels so message.parts length stays constant
-        // across passes — preserving cache-prefix stability for proxy
-        // providers that hash the message array. For Anthropic, OpenCode's
-        // provider/transform.ts:65 drops empty text parts before the wire,
-        // so the "thinking-block must be at index 0" rule the AI SDK cares
-        // about is still satisfied (the kept reasoning part is the only
-        // non-empty content at its position, empty sentinels vanish).
-        for (let i = 0; i < message.parts.length; i++) {
-            const part = message.parts[i];
-            if (!isRecord(part)) continue;
-            if (!REASONING_PART_TYPES.has(part.type as string)) continue;
-            if (i === keepIndex) {
-                keptReasoningInRun = true;
-                continue;
-            }
-            message.parts[i] = makeSentinel(part);
+        // Replace in place with empty-text sentinels so message.parts length
+        // stays stable. OpenCode filters these sentinels from Anthropic's wire.
+        for (const index of entry.stripIndices) {
+            entry.message.parts[index] = makeSentinel(entry.message.parts[index]);
             stripped++;
         }
-
-        prevRole = role;
     }
 
     return stripped;

@@ -3,10 +3,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "../../../shared/sqlite";
 import { closeQuietly } from "../../../shared/sqlite-helpers";
-import { insertMemory } from "../memory";
+import { insertMemory, recordMemoryVerifications, setMemoryClassification } from "../memory";
 import { runMigrations } from "../migrations";
 import { initializeDatabase } from "../storage-db";
-import { evaluateTaskGate } from "./task-gates";
+import { evaluateTaskGate, getDreamTaskBacklog } from "./task-gates";
+import { processedDreamTaskItems } from "./task-registry";
 
 let db: Database | null = null;
 
@@ -21,6 +22,70 @@ function freshDb(): Database {
     runMigrations(database);
     return database;
 }
+
+describe("dream task backlog probes", () => {
+    test("map and classify probes match seeded candidate counts", () => {
+        db = freshDb();
+        const projectIdentity = "/repo/project";
+        const first = insertMemory(db, {
+            projectPath: projectIdentity,
+            category: "PROJECT_RULES",
+            content: "Keep the first memory mapped.",
+        });
+        insertMemory(db, {
+            projectPath: projectIdentity,
+            category: "ARCHITECTURE",
+            content: "The second memory still needs mapping and classification.",
+        });
+        recordMemoryVerifications(db, first.id, ["src/first.ts"], Date.now());
+
+        expect(getDreamTaskBacklog(db, projectIdentity, "map-memories")).toEqual({
+            pending: 1,
+            total: 2,
+        });
+        expect(getDreamTaskBacklog(db, projectIdentity, "classify-memories")).toEqual({
+            pending: 2,
+            total: 2,
+        });
+
+        setMemoryClassification(db, first.id, { importance: 80 });
+        expect(getDreamTaskBacklog(db, projectIdentity, "classify-memories")).toEqual({
+            pending: 1,
+            total: 2,
+        });
+    });
+
+    test("verify probe counts only mapped memories that are still unverified", () => {
+        db = freshDb();
+        const projectIdentity = "/repo/project";
+        const pending = insertMemory(db, {
+            projectPath: projectIdentity,
+            category: "PROJECT_RULES",
+            content: "This mapped memory still needs verification.",
+        });
+        const verified = insertMemory(db, {
+            projectPath: projectIdentity,
+            category: "ARCHITECTURE",
+            content: "This mapped memory has already been verified.",
+        });
+        recordMemoryVerifications(db, pending.id, ["src/pending.ts"], Date.now());
+        recordMemoryVerifications(db, verified.id, ["src/verified.ts"], Date.now());
+        db.prepare("UPDATE memory_verifications SET verified_at = ? WHERE memory_id = ?").run(
+            0,
+            pending.id,
+        );
+
+        expect(getDreamTaskBacklog(db, projectIdentity, "verify")).toEqual({
+            pending: 1,
+            total: 2,
+        });
+    });
+
+    test("processed count is the start-to-end backlog reduction", () => {
+        expect(processedDreamTaskItems(17, 5)).toBe(12);
+        expect(processedDreamTaskItems(5, 7)).toBe(0);
+    });
+});
 
 describe("evaluateTaskGate", () => {
     test("classify-memories runs when active memories exist", () => {
