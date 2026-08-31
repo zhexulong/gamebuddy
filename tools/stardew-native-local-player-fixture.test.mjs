@@ -326,7 +326,7 @@ test("navigation mutation fixture publishes the frozen action set without creati
   );
 });
 
-test("native-local lifecycle owner binds staged release and separate private action/cleanup results", async () => {
+test("native-local lifecycle owner binds staged release and one terminal lifecycle result", async () => {
   const launcher = await readFile(
     new URL("./run-stardew-native-local-player-move-fixture.ps1", import.meta.url),
     "utf8",
@@ -334,13 +334,12 @@ test("native-local lifecycle owner binds staged release and separate private act
   assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$ReleaseDir/);
   assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$ResultFile/);
   assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$LifecycleResultFile/);
-  assert.match(launcher, /\[Parameter\(Mandatory = \$true\)\]\[string\]\$LifecyclePhaseResultFile/);
+  assert.doesNotMatch(launcher, /LifecyclePhaseResultFile|\$phaseResultPath/);
   assert.doesNotMatch(launcher, /integrations\/stardew\/bin\/Release|\$projectRoot/);
   assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$ReleaseDir\)/);
   assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$ResultFile\)/);
   assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$LifecycleResultFile\)/);
-  assert.match(launcher, /\[IO\.Path\]::IsPathFullyQualified\(\$LifecyclePhaseResultFile\)/);
-  assert.match(launcher, /\$actionResultPath -eq \$lifecycleResultPath -or \$actionResultPath -eq \$phaseResultPath -or \$lifecycleResultPath -eq \$phaseResultPath/);
+  assert.match(launcher, /\$actionResultPath -eq \$lifecycleResultPath/);
   assert.match(launcher, /equip-tool-live-child\.mjs/);
   assert.match(launcher, /write-lifecycle-result\.mjs/);
 
@@ -352,16 +351,16 @@ test("native-local lifecycle owner binds staged release and separate private act
   const stop = launcher.indexOf("Stop-Process", child);
   const restore = launcher.indexOf("restore-stardew-native-local-player-fixture.mjs", stop);
   const cleanup = launcher.indexOf("-Cleanup", restore);
-  const lifecycleResult = launcher.indexOf("node $lifecycleResultWriter", cleanup);
-  const phaseReceipt = launcher.indexOf("Publish-FailurePhaseReceipt", child);
+  const lifecycleResult = launcher.indexOf("node $lifecycleResultWriter --result-file $lifecycleResultPath --state completed", cleanup);
+  const failureReceipt = launcher.indexOf("Publish-FailureLifecycleResult", child);
   const inputValidation = launcher.indexOf('$phase = "input_validation"');
-  const resultPathValidation = launcher.indexOf("Action, lifecycle, and phase result files must be separate.");
+  const resultPathValidation = launcher.indexOf("Action and lifecycle result files must be separate.");
   const runnerResolution = launcher.indexOf('$phase = "runner_resolution"', resultPathValidation);
   assert.ok(prepare >= 0 && prepare < launch, "fixture prepare must precede process launch");
   assert.ok(launch < ready && ready < identity && identity < child, "child must follow readiness and exact identity");
   assert.ok(child < stop && stop < restore && restore < cleanup, "stop must precede fixture restore and save cleanup");
-  assert.ok(cleanup < lifecycleResult, "cleanup result must be written only after all cleanup");
-  assert.ok(phaseReceipt >= 0, "failed lifecycle must publish a bounded phase receipt");
+  assert.ok(cleanup < lifecycleResult, "completed lifecycle result must be written only after all cleanup");
+  assert.ok(failureReceipt >= 0, "failed lifecycle must publish one bounded terminal result");
   assert.ok(inputValidation >= 0 && inputValidation < resultPathValidation, "private result input failures must be classified as input validation");
   assert.ok(resultPathValidation < runnerResolution, "result file validation must precede runner resolution");
   assert.match(launcher, /--state failed --phase \$Phase --code failed/);

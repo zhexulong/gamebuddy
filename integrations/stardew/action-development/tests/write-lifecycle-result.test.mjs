@@ -4,54 +4,61 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
-  LIFECYCLE_PHASE_RESULT_SCHEMA,
-  serializeLifecycleCleanupResult,
-  serializeLifecyclePhaseResult,
-  writeLifecycleCleanupResult,
-  writeLifecyclePhaseResult,
+  STARDEW_CLOSURE_BACKEND_RESULT_SCHEMA,
+  serializeStardewClosureBackendResult,
+  writeStardewClosureBackendResult,
 } from "../src/write-lifecycle-result.mjs";
 
-test("lifecycle cleanup result is bounded and content-free", () => {
+test("completed lifecycle result is exact and content-free", () => {
   assert.equal(
-    serializeLifecycleCleanupResult({ completed: true }),
-    '{"schema":"gamebuddy-stardew-lifecycle-cleanup-result/v1","completed":true}',
+    serializeStardewClosureBackendResult({ state: "completed" }),
+    '{"schema":"gamebuddy-stardew-closure-backend-result/v1","state":"completed"}',
   );
-  assert.throws(() => serializeLifecycleCleanupResult({ completed: "yes" }), /completed_invalid/);
 });
 
-test("lifecycle phase result is bounded and content-free", () => {
-  assert.deepEqual(JSON.parse(serializeLifecyclePhaseResult({ phase: "fixture_prepare", code: "failed" })), {
-    schema: LIFECYCLE_PHASE_RESULT_SCHEMA,
-    phase: "fixture_prepare",
-    code: "failed",
-  });
-  assert.throws(() => serializeLifecyclePhaseResult({ phase: "private_path", code: "failed" }), /phase_result_invalid/);
-  assert.throws(() => serializeLifecyclePhaseResult({ phase: "fixture_prepare", code: "raw_detail" }), /phase_result_invalid/);
+test("failed lifecycle result carries exactly phase and bounded code", () => {
+  assert.deepEqual(
+    JSON.parse(serializeStardewClosureBackendResult({ state: "failed", phase: "fixture_prepare", code: "failed" })),
+    { schema: STARDEW_CLOSURE_BACKEND_RESULT_SCHEMA, state: "failed", phase: "fixture_prepare", code: "failed" },
+  );
 });
 
-test("lifecycle cleanup result requires a fresh absolute private file", async () => {
+test("serializer rejects completed with phase/code and failed with invalid phase/code", () => {
+  assert.throws(
+    () => serializeStardewClosureBackendResult({ state: "completed", phase: "fixture_prepare" }),
+    /stardew_closure_backend_result_invalid/,
+  );
+  assert.throws(
+    () => serializeStardewClosureBackendResult({ state: "completed", code: "failed" }),
+    /stardew_closure_backend_result_invalid/,
+  );
+  assert.throws(
+    () => serializeStardewClosureBackendResult({ state: "failed", phase: "private_path", code: "failed" }),
+    /stardew_closure_backend_result_invalid/,
+  );
+  assert.throws(
+    () => serializeStardewClosureBackendResult({ state: "failed", phase: "fixture_prepare", code: "raw_detail" }),
+    /stardew_closure_backend_result_invalid/,
+  );
+  assert.throws(() => serializeStardewClosureBackendResult({ state: "unknown" }), /stardew_closure_backend_result_invalid/);
+});
+
+test("writer requires a fresh absolute private file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "equip-lifecycle-result-"));
   try {
-    const resultFile = path.join(root, "cleanup.json");
-    await writeLifecycleCleanupResult(resultFile, { completed: true });
+    const resultFile = path.join(root, "result.json");
+    await writeStardewClosureBackendResult(resultFile, { state: "completed" });
     assert.deepEqual(JSON.parse(await readFile(resultFile, "utf8")), {
-      schema: "gamebuddy-stardew-lifecycle-cleanup-result/v1",
-      completed: true,
+      schema: "gamebuddy-stardew-closure-backend-result/v1",
+      state: "completed",
     });
-    await assert.rejects(writeLifecycleCleanupResult(resultFile, { completed: true }), /EEXIST/);
-    const phaseFile = path.join(root, "phase.json");
-    await writeLifecyclePhaseResult(phaseFile, { phase: "live_child", code: "failed" });
-    assert.deepEqual(JSON.parse(await readFile(phaseFile, "utf8")), {
-      schema: LIFECYCLE_PHASE_RESULT_SCHEMA,
-      phase: "live_child",
-      code: "failed",
-    });
-    await assert.rejects(writeLifecycleCleanupResult("relative.json", { completed: true }), /path_not_absolute/);
+    await assert.rejects(writeStardewClosureBackendResult(resultFile, { state: "completed" }), /EEXIST/);
+    await assert.rejects(writeStardewClosureBackendResult("relative.json", { state: "completed" }), /path_not_absolute/);
     const occupied = path.join(root, "occupied");
     await writeFile(occupied, "not a directory");
-    await assert.rejects(writeLifecycleCleanupResult(path.join(occupied, "result.json"), { completed: true }));
+    await assert.rejects(writeStardewClosureBackendResult(path.join(occupied, "result.json"), { state: "completed" }));
   } finally {
-    for (const leaf of ["cleanup.json", "phase.json", "occupied"]) {
+    for (const leaf of ["result.json", "occupied"]) {
       await unlink(path.join(root, leaf)).catch((error) => {
         if (error?.code !== "ENOENT") throw error;
       });

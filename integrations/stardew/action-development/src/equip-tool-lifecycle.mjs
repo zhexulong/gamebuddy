@@ -1,91 +1,41 @@
 import path from "node:path";
-import {
-  beginPrivateResultFile,
-  cleanupPrivateResultFile,
-  readPrivateResultFile,
-  runBoundedChild,
-} from "@gamebuddy/game-action-devkit";
+import { beginPrivateResultFile, cleanupPrivateResultFile, readPrivateResultFile } from "@gamebuddy/game-action-devkit";
+import { runStardewClosureBackend, TEARDOWN_RECEIPT_GRACE_MS } from "./stardew-closure-backend.mjs";
 import { parseScenarioResultText } from "./scenario-result.mjs";
 import { validateEquipToolScenarioProof } from "./equip-tool-scenario-result.mjs";
-import { parseJsonWithoutDuplicateKeys } from "./json-text.mjs";
-import { LIFECYCLE_FAILURE_PHASES, LIFECYCLE_PHASE_RESULT_SCHEMA } from "./write-lifecycle-result.mjs";
 
-const CLEANUP_SCHEMA = "gamebuddy-stardew-lifecycle-cleanup-result/v1";
-const FAILURE_PHASE_SET = new Set(LIFECYCLE_FAILURE_PHASES);
-const CLAIM_SCOPE = "native-local-equip-tool-v1";
-// The PowerShell launcher runs the game against its own internal lifecycle
-// deadline derived from profile.timeoutMs (see -TimeoutSeconds). The outer
-// bounded-child deadline must not expire in the same instant: reserve an
-// explicit bounded grace budget so the launcher can finish process teardown,
-// fixture restore, save cleanup, and phase/action receipt publication before
-// the supervisor terminates it. A hung teardown still fails closed because the
-// supervisor keeps a hard outer deadline.
-export const TEARDOWN_RECEIPT_GRACE_MS = 30_000;
+const BACKEND_FAILURE_PREFIX = "stardew_closure_backend_";
+const BACKEND_FAILURE_CODE_PATTERN = /^(?:child_(?:timeout|spawn_failed)|lifecycle_result_(?:missing|invalid|contradicts_child|not_completed)|phase_(?:runner_resolution|input_validation|fixture_prepare|working_save_restore|smapi_launch|pipe_readiness|launch_identity|live_child|process_teardown|fixture_restore|working_save_cleanup|lifecycle_result_publication)_(?:failed|child_nonzero))$/;
 
 function fail(code) {
   throw new Error(`stardew_equip_tool_lifecycle_${code}`);
 }
 
-function parseCleanup(text) {
-  const value = parseJsonWithoutDuplicateKeys(text, "stardew_equip_tool_lifecycle_cleanup");
-  if (!value || typeof value !== "object" || Array.isArray(value)
-    || Object.keys(value).length !== 2
-    || value.schema !== CLEANUP_SCHEMA
-    || typeof value.completed !== "boolean") fail("cleanup_result_invalid");
-  if (value.completed !== true) fail("cleanup_not_completed");
-  return Object.freeze({ schema: CLEANUP_SCHEMA, completed: true });
-}
-
-function isMissingResult(error) {
-  return error?.code === "ENOENT" || error?.message === "game_action_private_result_missing";
-}
-
-function parsePhaseResult(text) {
-  const value = parseJsonWithoutDuplicateKeys(text, "stardew_equip_tool_lifecycle_phase");
-  if (!value || typeof value !== "object" || Array.isArray(value)
-    || Object.keys(value).length !== 3
-    || value.schema !== LIFECYCLE_PHASE_RESULT_SCHEMA
-    || !FAILURE_PHASE_SET.has(value.phase)
-    || (value.code !== "failed" && value.code !== "child_nonzero")) {
-    fail("phase_result_invalid");
-  }
-  return Object.freeze({ phase: value.phase, code: value.code });
-}
-
-function childFailureCode(error) {
-  // Real Devkit runBoundedChild failure prefixes; never forward raw detail/cause.
+function boundedBackendCode(error) {
   const message = typeof error?.message === "string" ? error.message : "";
-  if (message.startsWith("test_supervisor_timeout")) return "child_timeout";
-  if (message.startsWith("test_runner_failed:spawn")) return "child_spawn_failed";
-  return "child_failed";
+  if (!message.startsWith(BACKEND_FAILURE_PREFIX)) return "backend_unknown";
+  const code = message.slice(BACKEND_FAILURE_PREFIX.length);
+  return BACKEND_FAILURE_CODE_PATTERN.test(code) ? `backend_${code}` : "backend_unknown";
 }
 
-function lifecycleTimeoutMs(timeoutMs) {
-  return Math.ceil(timeoutMs / 1_000) * 1_000;
-}
-
-function scenarioIdentity({ runId, profileIdentity }) {
-  return JSON.stringify({
-    gameId: "stardew",
-    actionId: "equip_tool",
-    runId,
-    stage: "run-live",
-    profileIdentity,
-    claimScope: CLAIM_SCOPE,
-  });
-}
-
+/**
+ * Adapter-owned orchestrator. Owns the two private action and lifecycle
+ * claims, delegates the closed PowerShell transaction to
+ * `runStardewClosureBackend`, then verifies the exact action proof and
+ * finalizes a complete bundle only after cleanup. Bounded lifecycle/backend
+ * failures are mapped to `stardew_equip_tool_lifecycle_backend_<suffix>` and
+ * never forward `cause`, `errors`, paths, PIDs, or raw child detail.
+ */
 export async function runEquipToolLifecycle({
   projectRoot,
   profile,
   runId,
   releaseDir,
   resultRoot,
-  runChild = runBoundedChild,
   beginResult = beginPrivateResultFile,
   readResult = readPrivateResultFile,
   cleanupResult = cleanupPrivateResultFile,
-  resolvePowerShell = () => "powershell.exe",
+  runBackend = runStardewClosureBackend,
 } = {}) {
   if (!path.isAbsolute(projectRoot ?? "") || !path.isAbsolute(releaseDir ?? "")
     || !path.isAbsolute(resultRoot ?? "")
@@ -95,73 +45,47 @@ export async function runEquipToolLifecycle({
       (field) => typeof profile[field] === "string" && profile[field].length > 0,
     )
     || !Number.isSafeInteger(profile.timeoutMs)
-    || profile.timeoutMs < 30_000) fail("invalid_input");
-  const timeoutMs = lifecycleTimeoutMs(profile.timeoutMs);
-  if (!Number.isSafeInteger(timeoutMs + TEARDOWN_RECEIPT_GRACE_MS)) fail("invalid_input");
-  const script = path.resolve(projectRoot, "../../../tools/run-stardew-native-local-player-move-fixture.ps1");
+    || profile.timeoutMs < 30_000
+    || !Number.isSafeInteger(Math.ceil(profile.timeoutMs / 1_000) * 1_000 + TEARDOWN_RECEIPT_GRACE_MS)) fail("invalid_input");
+  if (typeof beginResult !== "function" || typeof readResult !== "function" || typeof cleanupResult !== "function"
+    || typeof runBackend !== "function") fail("invalid_input");
+
   let actionClaim;
   let lifecycleClaim;
-  let phaseClaim;
   try {
     try {
       actionClaim = await beginResult({ root: resultRoot });
       lifecycleClaim = await beginResult({ root: resultRoot });
-      phaseClaim = await beginResult({ root: resultRoot });
-    } catch {
+    } catch (error) {
       const cleanupFailures = [];
-      for (const claim of [actionClaim, lifecycleClaim, phaseClaim]) {
+      for (const claim of [actionClaim, lifecycleClaim]) {
         if (!claim) continue;
-        try { await cleanupResult(claim); } catch (error) { cleanupFailures.push(error); }
+        try { await cleanupResult(claim); } catch (cleanupError) { cleanupFailures.push(cleanupError); }
       }
       actionClaim = undefined;
       lifecycleClaim = undefined;
-      phaseClaim = undefined;
       if (cleanupFailures.length) fail("result_cleanup_failed");
       fail("result_claim_failed");
     }
-    const args = [
-      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
-      "-GamePath", profile.gameInstallPath,
-      "-ModsPath", profile.modsPath,
-      "-FixtureRoot", profile.nativeFixtureRoot,
-      "-SaveName", profile.saveIdentity,
-      "-TemplateName", profile.templateIdentity,
-      "-ReleaseDir", releaseDir,
-      "-ResultFile", actionClaim.resultFile,
-       "-LifecycleResultFile", lifecycleClaim.resultFile,
-       "-LifecyclePhaseResultFile", phaseClaim.resultFile,
-       "-ScenarioIdentity", scenarioIdentity({ runId, profileIdentity: profile.profileIdentity }),
-      "-Action", "equip_tool",
-       "-TimeoutSeconds", String(timeoutMs / 1_000),
-    ];
-    let child;
+    let backendResult;
     try {
-      child = await runChild({
-        command: resolvePowerShell(),
-        args,
-        cwd: projectRoot,
-        timeoutMs: timeoutMs + TEARDOWN_RECEIPT_GRACE_MS,
-        stdio: "pipe",
-        terminationPolicy: "immediate",
+      backendResult = await runBackend({
+        projectRoot,
+        profile,
+        runId,
+        releaseDir,
+        actionResultFile: actionClaim.resultFile,
+        lifecycleResultFile: lifecycleClaim.resultFile,
       });
     } catch (error) {
-      try {
-        const phase = parsePhaseResult(await readResult(phaseClaim));
-        fail(`child_${phase.phase}_${phase.code}`);
-      } catch (phaseError) {
-        if (typeof phaseError?.message === "string" && phaseError.message.startsWith("stardew_equip_tool_lifecycle_child_")) throw phaseError;
-        fail(childFailureCode(error));
+      const message = typeof error?.message === "string" ? error.message : "";
+      if (message.startsWith("stardew_closure_backend_")) {
+        // Bounded redacted backend failure; no `cause`/`errors`/raw detail may leak.
+        fail(boundedBackendCode(error));
       }
+      fail("backend_unknown");
     }
-    if (child?.signal || child?.code !== 0) {
-      try {
-        const phase = parsePhaseResult(await readResult(phaseClaim));
-        fail(`child_${phase.phase}_${phase.code}`);
-      } catch (phaseError) {
-        if (typeof phaseError?.message === "string" && phaseError.message.startsWith("stardew_equip_tool_lifecycle_child_")) throw phaseError;
-        fail(child?.signal ? "child_signal" : "child_nonzero");
-      }
-    }
+    if (!backendResult || backendResult.state !== "completed") fail("backend_not_completed");
     let proof;
     try {
       proof = validateEquipToolScenarioProof(parseScenarioResultText(await readResult(actionClaim), {
@@ -170,19 +94,16 @@ export async function runEquipToolLifecycle({
         runId,
         stage: "run-live",
         profileIdentity: profile.profileIdentity,
-        claimScope: CLAIM_SCOPE,
+        claimScope: "native-local-equip-tool-v1",
       }));
     } catch (error) {
-      fail(isMissingResult(error) ? "action_result_missing" : "action_result_invalid");
+      const message = typeof error?.message === "string" ? error.message : "";
+      if (message.includes("stardew_action_scenario_result_invalid_size")
+        || error?.code === "ENOENT"
+        || message === "game_action_private_result_missing") fail("action_result_missing");
+      fail("action_result_invalid");
     }
-    let cleanup;
-    try { cleanup = parseCleanup(await readResult(lifecycleClaim)); }
-    catch (error) {
-      if (isMissingResult(error)) fail("cleanup_result_missing");
-      if (error?.message === "stardew_equip_tool_lifecycle_cleanup_not_completed") fail("cleanup_not_completed");
-      fail("cleanup_result_invalid");
-    }
-    return Object.freeze({ operationResult: proof, cleanupResult: cleanup });
+    return Object.freeze({ operationResult: proof, cleanupResult: Object.freeze({ schema: "gamebuddy-stardew-lifecycle-cleanup-result/v1", completed: true }) });
   } finally {
     const failures = [];
     if (actionClaim) {
@@ -191,9 +112,8 @@ export async function runEquipToolLifecycle({
     if (lifecycleClaim) {
       try { await cleanupResult(lifecycleClaim); } catch (error) { failures.push(error); }
     }
-    if (phaseClaim) {
-      try { await cleanupResult(phaseClaim); } catch (error) { failures.push(error); }
-    }
     if (failures.length) fail("result_cleanup_failed");
   }
 }
+
+export { TEARDOWN_RECEIPT_GRACE_MS };

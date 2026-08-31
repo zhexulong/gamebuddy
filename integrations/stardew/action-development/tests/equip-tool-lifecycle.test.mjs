@@ -1,19 +1,18 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
-  MAX_PRIVATE_RESULT_BYTES,
   beginPrivateResultFile,
   cleanupPrivateResultFile,
   readPrivateResultFile,
   writePrivateResultFile,
 } from "@gamebuddy/game-action-devkit";
-import { runEquipToolLifecycle, TEARDOWN_RECEIPT_GRACE_MS } from "../src/equip-tool-lifecycle.mjs";
+import { runEquipToolLifecycle } from "../src/equip-tool-lifecycle.mjs";
 import { createImmutableReleaseBundleBinding, IMMUTABLE_RELEASE_BUNDLE_FILES } from "../src/immutable-release-bundle.mjs";
-import { writeLifecycleCleanupResult, writeLifecyclePhaseResult } from "../src/write-lifecycle-result.mjs";
+import { writeStardewClosureBackendResult } from "../src/write-lifecycle-result.mjs";
 
 const proof = Object.freeze({
   schema: "gamebuddy-action-scenario-result/v1",
@@ -36,7 +35,7 @@ const proof = Object.freeze({
   verdict: "passed",
   reasonCode: "tool_selected",
 });
-const cleanup = Object.freeze({ schema: "gamebuddy-stardew-lifecycle-cleanup-result/v1", completed: true });
+
 const BUNDLE_CONTENTS = Object.freeze({
   "GameBuddy.Stardew.dll": "mod",
   "GameBuddy.Stardew.Core.dll": "core",
@@ -53,7 +52,6 @@ function bundleDigest() {
 }
 
 async function removeFixtureTree(directory) {
-  const { lstat, readdir } = await import("node:fs/promises");
   const pending = [{ path: directory, visited: false }];
   let steps = 0;
   while (pending.length > 0) {
@@ -98,25 +96,7 @@ function profile(root) {
   });
 }
 
-function claims(root, texts = [JSON.stringify(proof), JSON.stringify(cleanup), ""]) {
-  let index = 0;
-  const entries = new Map();
-  return {
-    entries,
-    beginResult: async () => {
-      const current = index++;
-      const resultFile = path.join(root, `result-${current}.json`);
-      await writeFile(resultFile, texts[current] ?? "");
-      const claim = Object.freeze({ resultFile, current });
-      entries.set(claim, { text: texts[current], cleaned: false });
-      return claim;
-    },
-    readResult: async (claim) => entries.get(claim).text,
-    cleanupResult: async (claim) => { entries.get(claim).cleaned = true; await unlink(claim.resultFile); },
-  };
-}
-
-function productionClaims(root) {
+function recordingClaims(root) {
   const claims = [];
   return {
     claims,
@@ -130,35 +110,81 @@ function productionClaims(root) {
   };
 }
 
-test("real writer and Devkit claims flow through lifecycle parser and immutable binding", async () => fixture(async ({ root, projectRoot, releaseDir, modsPath, runRoot }) => {
-  const c = productionClaims(root);
+function scriptedClaims(root, actionText) {
+  let index = 0;
+  const entries = new Map();
+  async function removeClaimDirectory(directory) {
+    const pending = [{ path: directory, visited: false }];
+    let steps = 0;
+    while (pending.length > 0) {
+      if (++steps > 10_000) throw new Error("equip_lifecycle_claim_cleanup_unbounded");
+      const current = pending.pop();
+      const stats = await lstat(current.path).catch((error) => {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      });
+      if (!stats) continue;
+      if (!stats.isDirectory() || stats.isSymbolicLink()) {
+        await unlink(current.path);
+        continue;
+      }
+      if (!current.visited) {
+        pending.push({ path: current.path, visited: true });
+        const entriesList = await readdir(current.path);
+        for (const entry of entriesList) pending.push({ path: path.join(current.path, entry), visited: false });
+        continue;
+      }
+      await rmdir(current.path);
+    }
+  }
+  return {
+    entries,
+    beginResult: async () => {
+      const directory = await mkdtemp(path.join(root, `claim-${index++}-`));
+      const resultFile = path.join(directory, "scenario-result.json");
+      await writeFile(resultFile, actionText);
+      const claim = Object.freeze({ directory, resultFile });
+      entries.set(claim, { cleaned: false });
+      return claim;
+    },
+    readResult: async (claim) => readFile(claim.resultFile, "utf8"),
+    cleanupResult: async (claim) => {
+      if (entries.has(claim)) entries.get(claim).cleaned = true;
+      await removeClaimDirectory(claim.directory);
+    },
+  };
+}
+
+test("real writer and Devkit claims flow through lifecycle adapter via injected backend", async () => fixture(async ({ root, projectRoot, releaseDir, modsPath, runRoot }) => {
+  const c = recordingClaims(root);
   const binding = await createImmutableReleaseBundleBinding({
     releaseDir, modsPath, runRoot, runIdentity: "ar1_test", expectedDigest: bundleDigest(),
   });
-  const result = await binding.runLifecycle(async ({ releaseDir: stagedReleaseDir }) => runEquipToolLifecycle({
-    projectRoot,
-    profile: profile(root),
-    runId: "ar1_test",
-    releaseDir: stagedReleaseDir,
-    resultRoot: root,
-    ...c,
-    resolvePowerShell: () => "fake-powershell",
-    runChild: async ({ args }) => {
-      const value = (flag) => args[args.indexOf(flag) + 1];
-      await writePrivateResultFile(value("-ResultFile"), JSON.stringify(proof));
-      await writeLifecycleCleanupResult(value("-LifecycleResultFile"), { completed: true });
-      return { code: 0, signal: null };
-    },
-  }));
+  const runBackend = async ({ actionResultFile, lifecycleResultFile }) => {
+    await writePrivateResultFile(actionResultFile, JSON.stringify(proof));
+    await writeStardewClosureBackendResult(lifecycleResultFile, { state: "completed" });
+    return Object.freeze({ state: "completed" });
+  };
+  const result = await binding.runLifecycle(
+    async ({ releaseDir: stagedReleaseDir }) => runEquipToolLifecycle({
+      projectRoot,
+      profile: profile(root),
+      runId: "ar1_test",
+      releaseDir: stagedReleaseDir,
+      resultRoot: root,
+      ...c,
+      runBackend,
+    }),
+  );
   assert.equal(result.receipt.evidence.expected, "Axe");
   assert.equal(result.postcondition.currentTool, "Axe");
   assert.equal(binding.inspect().restored, true);
-  assert.equal(c.claims.length, 3);
+  assert.equal(c.claims.length, 2);
   for (const claim of c.claims) await assert.rejects(readFile(claim.resultFile), /ENOENT/);
   await binding.close();
 }));
 
-test("lifecycle adapter rejects malformed public input without opening private result claims", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+test("adapter rejects malformed public input without opening private result claims", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
   let claimsOpened = 0;
   await assert.rejects(
     () => runEquipToolLifecycle({
@@ -167,7 +193,9 @@ test("lifecycle adapter rejects malformed public input without opening private r
       runId: "ar1_test",
       releaseDir,
       resultRoot: root,
-      beginResult: async () => { claimsOpened += 1; return Object.freeze({ resultFile: path.join(root, "unexpected.json") }); },
+      beginResult: async () => { claimsOpened += 1; return Object.freeze({ resultFile: path.join(root, "unexpected.json"), directory: root }); },
+      readResult: async () => "",
+      cleanupResult: async () => {},
     }),
     (error) => error.message === "stardew_equip_tool_lifecycle_invalid_input"
       && error.cause === undefined && error.errors === undefined,
@@ -175,71 +203,101 @@ test("lifecycle adapter rejects malformed public input without opening private r
   assert.equal(claimsOpened, 0);
 }));
 
-test("lifecycle adapter passes exact fixed arguments and validates separate action and cleanup results", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
-  const c = claims(root);
-  let call;
+test("adapter passes exact backend inputs and cleans exactly two claims", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+  const c = scriptedClaims(root, JSON.stringify(proof));
+  let backendInput;
   const result = await runEquipToolLifecycle({
     projectRoot, profile: profile(root), runId: "ar1_test", releaseDir, resultRoot: root,
-    ...c,
-    resolvePowerShell: () => "fake-powershell",
-    runChild: async (input) => { call = input; return { code: 0, signal: null }; },
+    beginResult: c.beginResult,
+    readResult: c.readResult,
+    cleanupResult: c.cleanupResult,
+    runBackend: async (input) => {
+      backendInput = input;
+      return Object.freeze({ state: "completed" });
+    },
   });
-  assert.equal(result.cleanupResult.completed, true);
   assert.equal(result.operationResult.receipt.evidence.expected, "Axe");
-  assert.equal(call.command, "fake-powershell");
-  assert.equal(call.cwd, projectRoot);
-  assert.equal(call.stdio, "pipe");
-  assert.equal(call.terminationPolicy, "immediate");
-  const value = (flag) => call.args[call.args.indexOf(flag) + 1];
-  assert.equal(value("-GamePath"), path.join(root, "game"));
-  assert.equal(value("-ModsPath"), path.join(root, "game", "Mods"));
-  assert.equal(value("-FixtureRoot"), path.join(root, "native-fixture"));
-  assert.equal(value("-SaveName"), "GameBuddyFixtureEquipTool_123");
-  assert.equal(value("-TemplateName"), "GameBuddyFixtureEquipTool_123");
-  assert.equal(value("-ReleaseDir"), releaseDir);
-  assert.equal(value("-Action"), "equip_tool");
-  assert.equal(value("-TimeoutSeconds"), "30");
-  assert.notEqual(value("-ResultFile"), value("-LifecycleResultFile"));
-  assert.notEqual(value("-ResultFile"), value("-LifecyclePhaseResultFile"));
-  assert.notEqual(value("-LifecycleResultFile"), value("-LifecyclePhaseResultFile"));
-  assert.match(value("-ScenarioIdentity"), /"runId":"ar1_test"/);
+  assert.equal(backendInput.projectRoot, projectRoot);
+  assert.equal(backendInput.runId, "ar1_test");
+  assert.deepEqual(backendInput.profile, profile(root));
+  assert.notEqual(backendInput.actionResultFile, backendInput.lifecycleResultFile);
+  assert.equal(c.entries.size, 2);
   assert.ok([...c.entries.values()].every((entry) => entry.cleaned));
 }));
 
-test("lifecycle adapter fails closed for child, proof, cleanup receipt, and cleanup errors", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
-  const base = { projectRoot, profile: profile(root), runId: "ar1_test", releaseDir, resultRoot: root, resolvePowerShell: () => "fake" };
-  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root), runChild: async () => ({ code: 2, signal: null }) }), /child_nonzero/);
-  const phaseClaims = claims(root, [JSON.stringify(proof), JSON.stringify(cleanup), JSON.stringify({ schema: "gamebuddy-stardew-lifecycle-phase-result/v1", phase: "fixture_prepare", code: "failed" })]);
+test("adapter fails closed for backend failures, missing action proof, and claim cleanup errors", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
+  const base = { projectRoot, profile: profile(root), runId: "ar1_test", releaseDir, resultRoot: root };
+
   await assert.rejects(
     () => runEquipToolLifecycle({
       ...base,
-      ...phaseClaims,
-      runChild: async () => ({ code: 2, signal: null }),
+      ...scriptedClaims(root, JSON.stringify(proof)),
+      runBackend: async () => { throw new Error("stardew_closure_backend_phase_fixture_prepare_failed"); },
     }),
-    (error) => error.message === "stardew_equip_tool_lifecycle_child_fixture_prepare_failed"
+    (error) => error.message === "stardew_equip_tool_lifecycle_backend_phase_fixture_prepare_failed"
       && error.cause === undefined && error.errors === undefined,
   );
-  assert.equal(phaseClaims.entries.size, 3);
-  assert.ok([...phaseClaims.entries.values()].every((entry) => entry.cleaned));
+
+  for (const backendError of [
+    "raw_backend_detail C:\\private",
+    "stardew_closure_backend_raw_C:\\private",
+  ]) {
+    await assert.rejects(
+      () => runEquipToolLifecycle({
+        ...base,
+        ...scriptedClaims(root, JSON.stringify(proof)),
+        runBackend: async () => { throw new Error(backendError); },
+      }),
+      (error) => error.message === "stardew_equip_tool_lifecycle_backend_unknown"
+        && error.cause === undefined && error.errors === undefined
+        && !error.message.includes("raw") && !error.message.includes("C:\\"),
+    );
+  }
+
   await assert.rejects(
     () => runEquipToolLifecycle({
       ...base,
-      ...claims(root, [JSON.stringify(proof), JSON.stringify(cleanup), "{}"]),
-      runChild: async () => ({ code: 2, signal: null }),
+      ...scriptedClaims(root, JSON.stringify(proof)),
+      runBackend: async () => Object.freeze({ state: "failed" }),
     }),
-    /child_nonzero/,
+    (error) => error.message === "stardew_equip_tool_lifecycle_backend_not_completed"
+      && error.cause === undefined && error.errors === undefined,
   );
-  const wrongProof = { ...proof, runId: "other" };
-  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root, [JSON.stringify(wrongProof), JSON.stringify(cleanup)]), runChild: async () => ({ code: 0, signal: null }) }), /action_result_invalid/);
-  await assert.rejects(() => runEquipToolLifecycle({ ...base, ...claims(root, [JSON.stringify(proof), JSON.stringify({ ...cleanup, completed: false })]), runChild: async () => ({ code: 0, signal: null }) }), /cleanup_not_completed/);
-  const c = claims(root);
+
   await assert.rejects(
-    () => runEquipToolLifecycle({ ...base, ...c, cleanupResult: async () => { throw new Error("raw_cleanup_detail"); }, runChild: async () => ({ code: 0, signal: null }) }),
-    (error) => error.message === "stardew_equip_tool_lifecycle_result_cleanup_failed"
-      && error.cause === undefined
-      && error.errors === undefined,
+    () => runEquipToolLifecycle({
+      ...base,
+      ...scriptedClaims(root, ""),
+      runBackend: async () => Object.freeze({ state: "completed" }),
+    }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_action_result_missing"
+      && error.cause === undefined && error.errors === undefined,
   );
-  for (const entry of c.entries.keys()) await unlink(entry.resultFile).catch(() => {});
+
+  await assert.rejects(
+    () => runEquipToolLifecycle({
+      ...base,
+      ...scriptedClaims(root, JSON.stringify({ ...proof, runId: "other_run" })),
+      runBackend: async () => Object.freeze({ state: "completed" }),
+    }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_action_result_invalid"
+      && error.cause === undefined && error.errors === undefined,
+  );
+
+  const cleanupOnlyClaims = scriptedClaims(root, JSON.stringify(proof));
+  await cleanupOnlyClaims.beginResult({ root });
+  await cleanupOnlyClaims.beginResult({ root });
+  await assert.rejects(
+    () => runEquipToolLifecycle({
+      ...base,
+      beginResult: cleanupOnlyClaims.beginResult,
+      readResult: cleanupOnlyClaims.readResult,
+      cleanupResult: async (claim) => { throw new Error("raw_cleanup_detail"); },
+      runBackend: async () => Object.freeze({ state: "completed" }),
+    }),
+    (error) => error.message === "stardew_equip_tool_lifecycle_result_cleanup_failed"
+      && error.cause === undefined && error.errors === undefined,
+  );
 }));
 
 test("private-result claim creation failures are bounded and clean an earlier claim", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
@@ -249,20 +307,20 @@ test("private-result claim creation failures are bounded and clean an earlier cl
     runId: "ar1_test",
     releaseDir,
     resultRoot: root,
-    resolvePowerShell: () => "fake",
+    runBackend: async () => Object.freeze({ state: "completed" }),
   };
   await assert.rejects(
     () => runEquipToolLifecycle({
       ...base,
       beginResult: async () => { throw new Error("raw_first_claim_detail"); },
+      readResult: async () => "",
+      cleanupResult: async () => {},
     }),
     (error) => error.message === "stardew_equip_tool_lifecycle_result_claim_failed"
       && error.cause === undefined
       && error.errors === undefined,
   );
 
-  const firstClaim = Object.freeze({ resultFile: path.join(root, "first-claim.json") });
-  await writeFile(firstClaim.resultFile, "claim");
   let attempts = 0;
   const cleaned = [];
   await assert.rejects(
@@ -270,18 +328,18 @@ test("private-result claim creation failures are bounded and clean an earlier cl
       ...base,
       beginResult: async () => {
         attempts += 1;
-        if (attempts === 1) return firstClaim;
+        if (attempts === 1) return await beginPrivateResultFile({ root });
         throw new Error("raw_second_claim_detail");
       },
-      cleanupResult: async (claim) => { cleaned.push(claim); await unlink(claim.resultFile); },
+      readResult: async (claim) => readFile(claim.resultFile, "utf8"),
+      cleanupResult: async (claim) => { cleaned.push(claim); await cleanupPrivateResultFile(claim); },
     }),
     (error) => error.message === "stardew_equip_tool_lifecycle_result_claim_failed"
       && error.cause === undefined
       && error.errors === undefined,
   );
-  assert.deepEqual(cleaned, [firstClaim]);
-  await assert.rejects(readFile(firstClaim.resultFile), /ENOENT/);
-  }));
+  assert.equal(cleaned.length, 1);
+}));
 
 test("second claim creation failure with failing cleanup of an earlier claim returns bounded cleanup error", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
   const base = {
@@ -290,10 +348,8 @@ test("second claim creation failure with failing cleanup of an earlier claim ret
     runId: "ar1_test",
     releaseDir,
     resultRoot: root,
-    resolvePowerShell: () => "fake",
+    runBackend: async () => Object.freeze({ state: "completed" }),
   };
-  const firstClaim = Object.freeze({ resultFile: path.join(root, "first-claim.json") });
-  await writeFile(firstClaim.resultFile, "claim");
   let attempts = 0;
   const cleaned = [];
   await assert.rejects(
@@ -301,117 +357,17 @@ test("second claim creation failure with failing cleanup of an earlier claim ret
       ...base,
       beginResult: async () => {
         attempts += 1;
-        if (attempts === 1) return firstClaim;
+        if (attempts === 1) return await beginPrivateResultFile({ root });
         throw new Error("raw_second_claim_detail");
       },
+      readResult: async (claim) => readFile(claim.resultFile, "utf8"),
       cleanupResult: async (claim) => { cleaned.push(claim); throw new Error("raw_cleanup_failure"); },
     }),
     (error) => error.message === "stardew_equip_tool_lifecycle_result_cleanup_failed"
       && error.cause === undefined
       && error.errors === undefined,
   );
-  assert.deepEqual(cleaned, [firstClaim]);
-}))
-
-test("production two-claim protocol rejects missing, malformed, oversized, wrong-identity, and incomplete results", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
-  const base = {
-    projectRoot,
-    profile: profile(root),
-    runId: "ar1_test",
-    releaseDir,
-    resultRoot: root,
-    resolvePowerShell: () => "fake",
-  };
-  const run = (writeClaims) => runEquipToolLifecycle({
-    ...base,
-    runChild: async ({ args }) => {
-      const value = (flag) => args[args.indexOf(flag) + 1];
-      await writeClaims({
-        actionFile: value("-ResultFile"),
-        lifecycleFile: value("-LifecycleResultFile"),
-      });
-      return { code: 0, signal: null };
-    },
-  });
-  const writeAction = (file, value = proof) => writePrivateResultFile(file, JSON.stringify(value));
-  const writeCleanup = (file, completed = true) => writeLifecycleCleanupResult(file, { completed });
-
-  await assert.rejects(run(async ({ lifecycleFile }) => writeCleanup(lifecycleFile)), /action_result_missing/);
-  await assert.rejects(run(async ({ actionFile }) => writeAction(actionFile)), /cleanup_result_missing/);
-  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
-    await writePrivateResultFile(actionFile, "{");
-    await writeCleanup(lifecycleFile);
-  }), /action_result_invalid/);
-  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
-    await writeFile(actionFile, "x".repeat(MAX_PRIVATE_RESULT_BYTES + 1), { flag: "wx" });
-    await writeCleanup(lifecycleFile);
-  }), /action_result_invalid/);
-  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
-    await writeAction(actionFile, { ...proof, runId: "ar1_wrong" });
-    await writeCleanup(lifecycleFile);
-  }), /action_result_invalid/);
-  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
-    await writeAction(actionFile);
-    await writePrivateResultFile(lifecycleFile, "{}");
-  }), /cleanup_result_invalid/);
-  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
-    await writeAction(actionFile);
-    await writeCleanup(lifecycleFile, false);
-  }), /cleanup_not_completed/);
-  await assert.rejects(run(async ({ actionFile, lifecycleFile }) => {
-    await writeAction(actionFile);
-    await writeCleanup(lifecycleFile);
-    await writePrivateResultFile(actionFile, JSON.stringify(proof));
-  }), /child_failed/);
-
-  await assert.rejects(
-    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("raw_child_detail"); } }),
-    (error) => error.message === "stardew_equip_tool_lifecycle_child_failed"
-      && error.cause === undefined
-      && error.errors === undefined,
-  );
-  await assert.rejects(
-    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("test_supervisor_timeout:pid=4242:timeout_ms=30000\nraw child output detail"); } }),
-    (error) => error.message === "stardew_equip_tool_lifecycle_child_timeout"
-      && error.cause === undefined && error.errors === undefined
-      && !error.message.includes("4242") && !error.message.includes("raw"),
-  );
-  await assert.rejects(
-    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("test_runner_failed:spawn:ENOENT raw spawn detail"); } }),
-    (error) => error.message === "stardew_equip_tool_lifecycle_child_spawn_failed"
-      && error.cause === undefined && error.errors === undefined
-      && !error.message.includes("ENOENT") && !error.message.includes("raw"),
-  );
-  await assert.rejects(
-    () => runEquipToolLifecycle({ ...base, runChild: async () => { throw new Error("test_runner_failed:code=7:signal=none\nraw runner output detail"); } }),
-    (error) => error.message === "stardew_equip_tool_lifecycle_child_failed"
-      && error.cause === undefined && error.errors === undefined
-      && !error.message.includes("code=7") && !error.message.includes("raw"),
-  );
-}));
-
-test("lifecycle adapter forwards an explicit teardown-receipt grace on the outer child timeout", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
-  const calls = [];
-  const run = async (timeoutMs) => runEquipToolLifecycle({
-    projectRoot,
-    profile: { ...profile(root), timeoutMs },
-    runId: "ar1_test",
-    releaseDir,
-    resultRoot: root,
-    ...claims(root),
-    resolvePowerShell: () => "fake-powershell",
-    runChild: async (input) => { calls.push(input); return { code: 0, signal: null }; },
-  });
-  await run(30_000);
-  await run(120_000);
-  await run(30_001);
-  const value = (call, flag) => call.args[call.args.indexOf(flag) + 1];
-  assert.equal(calls[0].timeoutMs, 30_000 + TEARDOWN_RECEIPT_GRACE_MS);
-  assert.equal(calls[1].timeoutMs, 120_000 + TEARDOWN_RECEIPT_GRACE_MS);
-  assert.equal(calls[2].timeoutMs, 31_000 + TEARDOWN_RECEIPT_GRACE_MS);
-  assert.equal(value(calls[0], "-TimeoutSeconds"), "30");
-  assert.equal(value(calls[1], "-TimeoutSeconds"), "120");
-  assert.equal(value(calls[2], "-TimeoutSeconds"), "31");
+  assert.equal(cleaned.length, 1);
 }));
 
 test("lifecycle adapter rejects invalid outer timeouts before opening private result claims", async () => fixture(async ({ root, projectRoot, releaseDir }) => {
@@ -424,7 +380,10 @@ test("lifecycle adapter rejects invalid outer timeouts before opening private re
         runId: "ar1_test",
         releaseDir,
         resultRoot: root,
-        beginResult: async () => { claimsOpened += 1; return Object.freeze({ resultFile: path.join(root, "unexpected.json") }); },
+        beginResult: async () => { claimsOpened += 1; return Object.freeze({ resultFile: path.join(root, "unexpected.json"), directory: root }); },
+        readResult: async () => "",
+        cleanupResult: async () => {},
+        runBackend: async () => Object.freeze({ state: "completed" }),
       }),
       (error) => error.message === "stardew_equip_tool_lifecycle_invalid_input"
         && error.cause === undefined && error.errors === undefined,
