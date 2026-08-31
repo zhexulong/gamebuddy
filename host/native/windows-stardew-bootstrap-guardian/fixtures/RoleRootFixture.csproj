@@ -1,14 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>GameBuddy.WindowsStardewBootstrapGuardian</AssemblyName>
-    <RootNamespace>GameBuddy.WindowsStardewBootstrapGuardian</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <AssemblyName>RoleRootFixture</AssemblyName>
   </PropertyGroup>
-  <ItemGroup>
-    <Compile Remove="fixtures/**/*.cs" />
-  </ItemGroup>
 </Project>

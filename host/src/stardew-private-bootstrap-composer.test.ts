@@ -84,7 +84,7 @@ type _ProductionInternalCompositionRetainsPublicComposition = Assert<
 
 const EXE = process.platform === "win32" ? "C:\\GameBuddy\\ai-client.exe" : "/gamebuddy/ai-client";
 const CREATION = "20250102030405.000000+000";
-const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v2";
+const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v3";
 const OWNER_FILE = "owner.json";
 
 function signedAttachmentSession(sessionToken: string, launchGeneration = "player-generation-1") {
@@ -299,6 +299,10 @@ function createHarness(input: Readonly<{
   bootstrapIds?: readonly string[];
   launchGenerations?: readonly string[];
   playerHostLaunchGenerations?: readonly string[];
+  guardianRevisions?: readonly string[];
+  guardianLeaseNames?: readonly string[];
+  guardianPlayerJobNames?: readonly string[];
+  guardianAiJobNames?: readonly string[];
   probe?: StardewAiClientProcessProbe;
   spawn?: StardewAiClientProcessSpawn;
   playerHostProbe?: StardewAiClientProcessProbe;
@@ -309,6 +313,10 @@ function createHarness(input: Readonly<{
   let bootstrapIndex = 0;
   let generationIndex = 0;
   let playerHostGenerationIndex = 0;
+  let guardianRevisionIndex = 0;
+  let guardianLeaseNameIndex = 0;
+  let guardianPlayerJobNameIndex = 0;
+  let guardianAiJobNameIndex = 0;
   const spawnCalls: SpawnCall[] = [];
   const playerHostSpawnCalls: SpawnCall[] = [];
   const killCalls: number[] = [];
@@ -343,16 +351,20 @@ function createHarness(input: Readonly<{
       },
     });
   };
-  const baseDependencies = {
-    rawSpawn: input.spawn ?? defaultSpawn,
+   const baseDependencies = {
+     rawSpawn: input.spawn ?? defaultSpawn,
     rawProbe: input.probe ?? ((pid: number) => ({ pid, creationDate: CREATION })),
     rawPlayerHostSpawn: input.playerHostSpawn ?? defaultPlayerHostSpawn,
     rawPlayerHostProbe: input.playerHostProbe ?? ((pid: number) => ({ pid, creationDate: CREATION })),
-    createBootstrapIdentity: () => {
-      const index = bootstrapIndex++;
+     createBootstrapIdentity: () => {
+       const index = bootstrapIndex++;
       return input.bootstrapIds?.[index] ?? `bootstrap-${index + 1}`;
     },
-    createLaunchGeneration: () => {
+     createGuardianRevision: () => input.guardianRevisions?.[guardianRevisionIndex++] ?? "revision-1",
+     createGuardianLeaseName: () => input.guardianLeaseNames?.[guardianLeaseNameIndex++] ?? "Local\\GameBuddy-Test-Lease-1",
+     createGuardianPlayerJobName: () => input.guardianPlayerJobNames?.[guardianPlayerJobNameIndex++] ?? "Local\\GameBuddy-Test-PlayerJob-1",
+     createGuardianAiJobName: () => input.guardianAiJobNames?.[guardianAiJobNameIndex++] ?? "Local\\GameBuddy-Test-AiJob-1",
+     createLaunchGeneration: () => {
       const index = generationIndex++;
       return input.launchGenerations?.[index] ?? `generation-${index + 1}`;
     },
@@ -499,6 +511,15 @@ function ownerPath(root: string, bootstrapId = "bootstrap-1"): string {
   return join(root, "stardew-private-bootstrap", bootstrapId, OWNER_FILE);
 }
 
+function expectedGuardianBinding(input: Readonly<{ revision?: string; leaseName?: string; playerJobName?: string; aiJobName?: string }> = {}) {
+  return {
+    revision: input.revision ?? "revision-1",
+    leaseName: input.leaseName ?? "Local\\GameBuddy-Test-Lease-1",
+    playerJobName: input.playerJobName ?? "Local\\GameBuddy-Test-PlayerJob-1",
+    aiJobName: input.aiJobName ?? "Local\\GameBuddy-Test-AiJob-1",
+  };
+}
+
 function expectedOwnedRecord(input: Readonly<{
   bootstrapId?: string;
   playerId?: string;
@@ -514,7 +535,8 @@ function expectedOwnedRecord(input: Readonly<{
     bootstrapId: input.bootstrapId ?? "bootstrap-1",
     playerId: input.playerId ?? "player-1",
     companionId: input.companionId ?? "companion-1",
-    playerHost: {
+    guardian: expectedGuardianBinding(),
+     playerHost: {
       kind: "launch_reserved",
       launchGeneration: input.playerHostGeneration ?? "player-generation-1",
     },
@@ -543,7 +565,8 @@ function expectedRecord(input: Readonly<{
     bootstrapId: input.bootstrapId ?? "bootstrap-1",
     playerId: input.playerId ?? "player-1",
     companionId: input.companionId ?? "companion-1",
-    playerHost: { kind: "external_unattested" },
+    guardian: expectedGuardianBinding(),
+     playerHost: { kind: "external_unattested" },
     aiClient: {
       kind: "launch_reserved",
       launchGeneration: input.generation ?? "generation-1",
@@ -746,8 +769,12 @@ test("test-support accepts only raw OS, identity, and clock dependencies", () =>
     rawProbe: (() => null) as StardewAiClientProcessProbe,
     rawPlayerHostSpawn: (() => { throw new Error("unused"); }) as StardewAiClientProcessSpawn,
     rawPlayerHostProbe: (() => null) as StardewAiClientProcessProbe,
-    createBootstrapIdentity: () => "bootstrap-1",
-    createLaunchGeneration: () => "generation-1",
+     createBootstrapIdentity: () => "bootstrap-1",
+     createGuardianRevision: () => "revision-1",
+     createGuardianLeaseName: () => "Local\\GameBuddy-Test-Lease-1",
+     createGuardianPlayerJobName: () => "Local\\GameBuddy-Test-PlayerJob-1",
+     createGuardianAiJobName: () => "Local\\GameBuddy-Test-AiJob-1",
+     createLaunchGeneration: () => "generation-1",
     createPlayerHostLaunchGeneration: () => "player-generation-1",
     nowMs: () => 1_000,
   };
@@ -783,7 +810,7 @@ test("test-support accepts only raw OS, identity, and clock dependencies", () =>
   ]);
 });
 
-test("exact internal claim/reservation pair writes only the v2 external-player/manager-generation record", async () => {
+test("exact internal claim/reservation pair writes only the v3 external-player/manager-generation record", async () => {
   const harness = createHarness();
   const root = await createRoot();
   const owner = await reserveFresh(harness, root);
@@ -791,6 +818,7 @@ test("exact internal claim/reservation pair writes only the v2 external-player/m
   assert.deepEqual(owner.record, expectedRecord());
   assert.equal(Object.isFrozen(owner), true);
   assert.equal(Object.isFrozen(owner.record), true);
+  assert.equal(Object.isFrozen(owner.record.guardian), true);
   assert.equal(Object.isFrozen(owner.record.playerHost), true);
   assert.equal(Object.isFrozen(owner.record.aiClient), true);
   assert.equal(Object.isFrozen(owner.record.managedPaths), true);
@@ -798,6 +826,38 @@ test("exact internal claim/reservation pair writes only the v2 external-player/m
   const serialized = JSON.stringify(owner.record);
   for (const forbidden of ["browserSessionId", "pid", "creationDate", "executable", "args", "connected", "attached"]) {
     assert.equal(serialized.includes(forbidden), false);
+  }
+});
+
+test("owner persistence generates exact single-separator Local guardian names before its durable reread", async () => {
+  const harness = createHarness({
+    guardianRevisions: ["guardian-revision-1"],
+    guardianLeaseNames: ["Local\\lease_name"],
+    guardianPlayerJobNames: ["Local\\player_job_name"],
+    guardianAiJobNames: ["Local\\ai_job_name"],
+  });
+  const root = await createRoot();
+  const owner = await reserveFresh(harness, root);
+
+  assert.deepEqual(owner.record.guardian, {
+    revision: "guardian-revision-1",
+    leaseName: "Local\\lease_name",
+    playerJobName: "Local\\player_job_name",
+    aiJobName: "Local\\ai_job_name",
+  });
+  assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")).guardian, owner.record.guardian);
+});
+
+test("owner persistence rejects invalid or non-distinct Guardian identities before writing owner.json", async () => {
+  for (const input of [
+    { guardianLeaseNames: ["Local\\\\double_separator"] },
+    { guardianPlayerJobNames: ["Global\\wrong_namespace"] },
+    { guardianAiJobNames: ["Local\\lease_name"], guardianLeaseNames: ["Local\\lease_name"] },
+  ]) {
+    const harness = createHarness(input);
+    const root = await createRoot();
+    await assert.rejects(reserveFresh(harness, root), /invalid_stardew_guardian_binding/);
+    await assert.rejects(readFile(ownerPath(root), "utf8"), /ENOENT/);
   }
 });
 
