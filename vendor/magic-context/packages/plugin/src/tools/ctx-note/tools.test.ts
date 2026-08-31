@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it } from "bun:test";
+
+import {
+    __wakePlaneTest,
+    WAKE_PLANE_CAPABILITY,
+} from "../../features/magic-context/smart-notes/wake-plane";
 import { Database } from "../../shared/sqlite";
 import { createCtxNoteTools } from "./tools";
 
@@ -23,6 +28,10 @@ function createTestDb(): Database {
       last_checked_at INTEGER,
       ready_at INTEGER,
       ready_reason TEXT,
+      compiled_provider TEXT,
+      compiled_config TEXT,
+      compiled_at INTEGER,
+      compile_status TEXT,
       harness TEXT NOT NULL DEFAULT 'opencode',
       anchor_ordinal INTEGER
     );
@@ -45,6 +54,7 @@ describe("createCtxNoteTools", () => {
     let tools: ReturnType<typeof createCtxNoteTools>;
 
     beforeEach(() => {
+        __wakePlaneTest.reset();
         db = createTestDb();
         tools = createCtxNoteTools({
             db,
@@ -110,10 +120,30 @@ describe("createCtxNoteTools", () => {
             { action: "write", content: "retry me" },
             toolContext(),
         );
-        expect(result).toBe(
-            "Error: Rust notes authority is not ready; TypeScript fallback is disabled.",
-        );
+        expect(result).toContain("Write REFUSED and NOT saved");
+        expect(result).toContain("RESEND");
+        expect(result).toContain("Content to resend:\nretry me");
         expect(db.prepare("SELECT COUNT(*) AS count FROM notes").get()).toEqual({ count: 0 });
+    });
+
+    it("does not echo content attached to a read-only module refusal", async () => {
+        tools = createCtxNoteTools({
+            db,
+            resolveProjectPath: () => "git:project-a",
+            rustToolBackends: {
+                authorityState: async () => "MODULE",
+                note: async () => ({
+                    error: { code: "authority_draining", message: "authority is draining" },
+                }),
+            },
+        });
+        const result = await tools.ctx_note.execute(
+            { action: "read", content: "read-only content must not echo" },
+            toolContext(),
+        );
+        expect(result).toContain("REFUSED and NOT applied");
+        expect(result).toContain("RESEND");
+        expect(result).not.toContain("read-only content must not echo");
     });
 
     it("keeps TS note handling when the notes domain reports TS authority", async () => {
@@ -135,6 +165,205 @@ describe("createCtxNoteTools", () => {
         );
         expect(result).toContain("Saved session note");
         expect(routed).toBe(false);
+    });
+
+    it("stores compiled, plain, and refused smart notes with the required reply shapes", async () => {
+        tools = createCtxNoteTools({
+            db,
+            dreamerEnabled: true,
+            resolveProjectPath: () => "git:project-a",
+        });
+
+        const plain = await tools.ctx_note.execute(
+            {
+                action: "write",
+                content: "Follow up on the pull request.",
+                surface_condition: "When PR #42 is merged",
+            },
+            toolContext(),
+        );
+        const compiled = await tools.ctx_note.execute(
+            {
+                action: "write",
+                content: "Read the generated artifact.",
+                surface_condition: "when path /tmp/ctx-note-future-artifact exists",
+            },
+            toolContext(),
+        );
+        const refused = await tools.ctx_note.execute(
+            {
+                action: "write",
+                content: "Never inspect key material.",
+                surface_condition: "when path /tmp/project-binding-key exists",
+            },
+            toolContext(),
+        );
+
+        expect(plain).toBe(
+            "Created smart note #1. Dreamer will evaluate the condition during nightly runs:\n- Content: Follow up on the pull request.\n- Condition: When PR #42 is merged",
+        );
+        expect(compiled).toContain("- Retina provider: local-fs");
+        expect(refused).toContain("- Retina compile refused: fenced path");
+        expect(
+            db
+                .prepare(
+                    "SELECT compile_status, compiled_provider, compiled_config FROM notes ORDER BY id",
+                )
+                .all(),
+        ).toEqual([
+            { compile_status: "plain", compiled_provider: null, compiled_config: null },
+            {
+                compile_status: "compiled",
+                compiled_provider: "local-fs",
+                compiled_config: expect.stringContaining('"kind":"path_exists"'),
+            },
+            { compile_status: "refused", compiled_provider: null, compiled_config: null },
+        ]);
+    });
+
+    it("stores surface_condition as a regular note only when the wake plane is present", async () => {
+        tools = createCtxNoteTools({
+            db,
+            dreamerEnabled: true,
+            resolveProjectPath: () => "git:project-a",
+        });
+        for (const status of ["present", "absent", "unknown"] as const) {
+            __wakePlaneTest.reset();
+            __wakePlaneTest.setCatalogProbe(async () => {
+                if (status === "unknown") throw new Error("daemon unavailable");
+                return status === "present"
+                    ? [
+                          {
+                              module_id: "scheduled-wakes",
+                              roles: [],
+                              control_ops: [WAKE_PLANE_CAPABILITY],
+                          },
+                      ]
+                    : [{ module_id: "other-module", roles: [], control_ops: [] }];
+            });
+            const result = await tools.ctx_note.execute(
+                {
+                    action: "write",
+                    content: `Wake-plane ${status}`,
+                    surface_condition: "When the scheduled operation completes",
+                },
+                toolContext(),
+            );
+
+            if (status === "present") {
+                expect(result).toContain(
+                    "wake plane active — create a scheduled wake instead; stored as a plain note.",
+                );
+                expect(
+                    db
+                        .prepare("SELECT type FROM notes WHERE content = ?")
+                        .get(`Wake-plane ${status}`),
+                ).toEqual({ type: "session" });
+            } else {
+                expect(result).toContain("Created smart note");
+                expect(
+                    db
+                        .prepare("SELECT type FROM notes WHERE content = ?")
+                        .get(`Wake-plane ${status}`),
+                ).toEqual({ type: "smart" });
+            }
+        }
+    });
+
+    it("downgrades module-authority smart authoring to a regular note when wake plane is present", async () => {
+        __wakePlaneTest.setCatalogProbe(async () => [
+            { module_id: "scheduled-wakes", roles: [], control_ops: [WAKE_PLANE_CAPABILITY] },
+        ]);
+        let receivedSurfaceCondition: string | undefined;
+        tools = createCtxNoteTools({
+            db,
+            dreamerEnabled: true,
+            resolveProjectPath: () => "git:project-a",
+            rustToolBackends: {
+                authorityState: async () => "MODULE",
+                note: async (request) => {
+                    receivedSurfaceCondition = request.surfaceCondition;
+                    db.prepare(
+                        `INSERT INTO notes (type, status, content, session_id, created_at, updated_at)
+                         VALUES ('session', 'active', ?, ?, 1, 1)`,
+                    ).run(request.content, request.sessionId);
+                    return "Saved session note #1.";
+                },
+            },
+        });
+
+        const result = await tools.ctx_note.execute(
+            {
+                action: "write",
+                content: "Wake-plane module note",
+                surface_condition: "When the scheduled operation completes",
+            },
+            toolContext(),
+        );
+
+        expect(receivedSurfaceCondition).toBeUndefined();
+        expect(result).toContain(
+            "wake plane active — create a scheduled wake instead; stored as a plain note.",
+        );
+        expect(db.prepare("SELECT type FROM notes WHERE id = 1").get()).toEqual({
+            type: "session",
+        });
+    });
+
+    it("compiles a fenced MODULE-authority smart note before the facade write", async () => {
+        tools = createCtxNoteTools({
+            db,
+            dreamerEnabled: true,
+            resolveProjectPath: () => "git:project-a",
+            rustToolBackends: {
+                authorityState: async () => "MODULE",
+                noteEvaluationAvailable: () => true,
+                note: async (request) => {
+                    db.prepare(
+                        `INSERT INTO notes (
+                            type, status, content, session_id, project_path, surface_condition,
+                            compiled_provider, compiled_config, compiled_at, compile_status,
+                            created_at, updated_at
+                        ) VALUES ('smart', 'pending', ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+                    ).run(
+                        request.content,
+                        request.sessionId,
+                        request.memoryProject,
+                        request.surfaceCondition,
+                        request.compiledProvider,
+                        request.compiledConfig,
+                        request.compiledAt,
+                        request.compileStatus,
+                    );
+                    return {
+                        content: [{ type: "text", text: "Created smart note #1." }],
+                    };
+                },
+            },
+        });
+
+        const result = await tools.ctx_note.execute(
+            {
+                action: "write",
+                content: "Never inspect key material.",
+                surface_condition: "when path /tmp/project-binding-key exists",
+            },
+            toolContext(),
+        );
+
+        expect(result).toContain("Created smart note #1");
+        expect(result).toContain("Retina compile refused: fenced path");
+        expect(
+            db
+                .prepare(
+                    "SELECT compile_status, compiled_provider, compiled_config FROM notes WHERE id = 1",
+                )
+                .get(),
+        ).toEqual({
+            compile_status: "refused",
+            compiled_provider: null,
+            compiled_config: null,
+        });
     });
 
     it("rejects module smart-note writes when evaluation is unavailable", async () => {

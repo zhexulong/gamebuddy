@@ -81,11 +81,11 @@ describe("storage-meta", () => {
             clearSession(toDatabase(db), "session-1");
 
             //#then
-            // 2 transactions: outer clearSession + nested clearIndexedMessages
-            expect(db.transaction).toHaveBeenCalledTimes(2);
-            // Includes every session-scoped table plus the nested message-index,
-            // source-version, and compression-depth cleanup statements.
-            expect(db.prepare).toHaveBeenCalledTimes(28);
+            // The shared deleter prepares and executes every table inside one
+            // encompassing transaction; message-index rows no longer need a
+            // separate nested cleanup transaction.
+            expect(db.transaction).toHaveBeenCalledTimes(1);
+            expect(db.prepare).toHaveBeenCalledTimes(29);
         });
     });
 });

@@ -7,6 +7,7 @@ import { createTagger } from "../../features/magic-context/tagger";
 import { createMagicContextHook, createMagicContextHookAsync } from "../../hooks/magic-context";
 import type { LiveSessionState } from "../../hooks/magic-context/live-session-state";
 import type { RustModeModuleClient } from "../../hooks/magic-context/rust-mode-transform";
+import type { PromptSurfaceRuntime } from "../../shared/prompt-surface-runtime";
 import type { PluginContext } from "../types";
 /**
  * Map the full plugin config down to the per-session hook config. Pure and
@@ -37,6 +38,7 @@ export function createSessionHooks(args: {
     pluginConfig: MagicContextPluginConfig;
     liveSessionState: LiveSessionState;
     rustModeModuleClient?: RustModeModuleClient;
+    promptSurfaceRuntime?: PromptSurfaceRuntime;
 }) {
     const { ctx, pluginConfig, liveSessionState } = args;
 
@@ -59,6 +61,7 @@ export function createSessionHooks(args: {
         compactionHandler,
         liveSessionState,
         rustModeModuleClient: args.rustModeModuleClient,
+        promptSurfaceRuntime: args.promptSurfaceRuntime,
         config: buildMagicContextHookConfig(pluginConfig),
     });
 
@@ -73,6 +76,7 @@ export async function createSessionHooksAsync(args: {
     pluginConfig: MagicContextPluginConfig;
     liveSessionState: LiveSessionState;
     rustModeModuleClient?: RustModeModuleClient;
+    promptSurfaceRuntime?: PromptSurfaceRuntime;
 }) {
     const { ctx, pluginConfig, liveSessionState } = args;
 
@@ -95,6 +99,7 @@ export async function createSessionHooksAsync(args: {
         compactionHandler,
         liveSessionState,
         rustModeModuleClient: args.rustModeModuleClient,
+        promptSurfaceRuntime: args.promptSurfaceRuntime,
         config: buildMagicContextHookConfig(pluginConfig),
     });
 

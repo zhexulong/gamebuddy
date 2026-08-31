@@ -10,6 +10,8 @@ import {
     resolveGitTopLevel,
     verificationFileExists,
 } from "../memory";
+import { runLeaseGuardedWrite } from "./lease";
+import { getTaskScheduleState, writeTaskScheduleState } from "./storage-task-schedule";
 import type { VerifyPromptMemory } from "./verify-prompt";
 
 /**
@@ -34,8 +36,10 @@ import type { VerifyPromptMemory } from "./verify-prompt";
  *    content-verified (verified_at = 0) OR any mapped file changed since THAT
  *    memory's verified_at (committed change-time newer, an uncommitted edit, or
  *    the file was deleted).
- *  - `verify-broad` (`forceBroad`): every candidate, regardless of change time —
- *    full-pool drift catching over the file-mapped memories.
+ *  - `verify-broad` (`forceBroad`): candidates whose `verified_at` predates the
+ *    currently open broad cycle. The cycle start is persisted in the existing
+ *    `last_broad_run_at` schedule-state column, so a large pool drains oldest-first
+ *    across scheduled runs instead of being selected afresh every week.
  */
 
 export interface VerifyGateResult {
@@ -45,11 +49,47 @@ export interface VerifyGateResult {
     inScopeIds: number[];
     skippedIds: number[];
     reason: string;
+    /** The persisted broad-cycle watermark used for this run, when broad. */
+    broadCycleStartAt?: number;
 }
 
 /** Min of a numeric list without spread (avoids RangeError on large pools). */
 function minOf(values: readonly number[]): number {
     return values.reduce((acc, v) => (v < acc ? v : acc), Number.POSITIVE_INFINITY);
+}
+
+function ensureBroadCycleStart(args: {
+    db: Database;
+    projectIdentity: string;
+    holderId?: string;
+    leaseKey?: string;
+    runStartedAt: number;
+}): number {
+    const current = getTaskScheduleState(args.db, args.projectIdentity, "verify-broad");
+    if (current?.lastBroadRunAt != null && current.lastBroadRunAt > 0) {
+        return current.lastBroadRunAt;
+    }
+    // Direct gate callers without a scheduler row have no schedule state to
+    // persist. Production runs are seeded by the scheduler and take the guarded
+    // path below; retaining this fallback keeps the gate useful in isolated tests
+    // and for old callers that do not use Dreamer v2 scheduling.
+    if (!current) return args.runStartedAt;
+    if (!args.holderId || !args.leaseKey) {
+        throw new Error("verify-broad cycle opening requires the task lease");
+    }
+
+    return runLeaseGuardedWrite(args.db, args.holderId, args.leaseKey, () => {
+        const latest = getTaskScheduleState(args.db, args.projectIdentity, "verify-broad");
+        if (!latest) return args.runStartedAt;
+        if (latest.lastBroadRunAt != null && latest.lastBroadRunAt > 0) {
+            return latest.lastBroadRunAt;
+        }
+        writeTaskScheduleState(args.db, {
+            ...latest,
+            lastBroadRunAt: args.runStartedAt,
+        });
+        return args.runStartedAt;
+    });
 }
 
 export async function partitionVerifyScope(args: {
@@ -58,6 +98,8 @@ export async function partitionVerifyScope(args: {
     projectDirectory: string;
     forceBroad?: boolean;
     now?: number;
+    holderId?: string;
+    leaseKey?: string;
 }): Promise<VerifyGateResult> {
     const runStartedAt = args.now ?? Date.now();
     const active = getMemoriesByProject(args.db, args.projectIdentity);
@@ -78,6 +120,34 @@ export async function partitionVerifyScope(args: {
         mappedFiles: verById.get(m.id)?.files ?? [],
     });
 
+    if (args.forceBroad) {
+        const broadCycleStartAt = ensureBroadCycleStart({
+            db: args.db,
+            projectIdentity: args.projectIdentity,
+            holderId: args.holderId,
+            leaseKey: args.leaseKey,
+            runStartedAt,
+        });
+        const broadCandidates = candidates
+            .filter((m) => (verById.get(m.id)?.verifiedAt ?? 0) < broadCycleStartAt)
+            .sort((a, b) => {
+                const verifiedAtA = verById.get(a.id)?.verifiedAt ?? 0;
+                const verifiedAtB = verById.get(b.id)?.verifiedAt ?? 0;
+                return verifiedAtA - verifiedAtB || a.id - b.id;
+            });
+        return {
+            runStartedAt,
+            mode: "broad",
+            inScope: broadCandidates.map(toPrompt),
+            inScopeIds: broadCandidates.map((m) => m.id),
+            skippedIds: candidates
+                .filter((m) => !broadCandidates.some((candidate) => candidate.id === m.id))
+                .map((m) => m.id),
+            broadCycleStartAt,
+            reason: `broad cycle (${broadCandidates.length} remain; started ${broadCycleStartAt})`,
+        };
+    }
+
     if (candidates.length === 0) {
         return {
             runStartedAt,
@@ -86,18 +156,6 @@ export async function partitionVerifyScope(args: {
             inScopeIds: [],
             skippedIds: [],
             reason: "no file-mapped memories in scope",
-        };
-    }
-
-    // verify-broad: the whole file-mapped pool, regardless of change time.
-    if (args.forceBroad) {
-        return {
-            runStartedAt,
-            mode: "broad",
-            inScope: candidates.map(toPrompt),
-            inScopeIds: candidates.map((m) => m.id),
-            skippedIds: [],
-            reason: "broad full-pool verification of file-mapped memories",
         };
     }
 

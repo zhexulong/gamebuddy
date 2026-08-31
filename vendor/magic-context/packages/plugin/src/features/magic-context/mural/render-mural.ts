@@ -169,7 +169,8 @@ function naturalLineLengths(entries: readonly MuralRenderEntry[], roomWidth: num
     const lengths: number[] = [];
     let currentCategory: string | null = null;
     for (let index = 0; index < entries.length; index++) {
-        const entry = entries[index]!;
+        const entry = entries[index];
+        if (!entry) continue;
         if (entry.category !== currentCategory) {
             currentCategory = entry.category;
             lengths.push(codepoints(` <${entry.category}> `));
@@ -210,7 +211,8 @@ function planLines(entries: readonly MuralRenderEntry[], roomWidth: number): Pla
     const lines: PlannedLine[] = [];
     let currentCategory: string | null = null;
     for (let index = 0; index < entries.length; index++) {
-        const entry = entries[index]!;
+        const entry = entries[index];
+        if (!entry) continue;
         if (entry.category !== currentCategory) {
             currentCategory = entry.category;
             lines.push({
@@ -308,8 +310,10 @@ function renderLayout(
     let filledLineCount = 0;
 
     for (const [column, columnPlan] of splitPlan(plan, columnCount).entries()) {
+        const columnGrid = grid[column];
+        if (!columnGrid) continue;
         for (const [row, line] of columnPlan.entries()) {
-            grid[column]![row] = line.text;
+            columnGrid[row] = line.text;
             filledLineCount += 1;
             usage[line.category] = (usage[line.category] ?? 0) + 1;
             const placementLine = row + 1;
@@ -439,6 +443,7 @@ function drawGlyph(
     color: readonly [number, number, number],
 ): void {
     const glyphData = glyph(character);
+    const [red, green, blue] = color;
     for (let row = 0; row < MURAL_CELL_HEIGHT; row++) {
         const pattern = glyphData.rows[row] ?? 0;
         for (let column = 0; column < glyphData.width; column++) {
@@ -447,9 +452,9 @@ function drawGlyph(
             const py = y + row;
             if (px < 0 || py < 0 || px >= width || py >= height) continue;
             const offset = (py * width + px) * 3;
-            pixels[offset] = color[0]!;
-            pixels[offset + 1] = color[1]!;
-            pixels[offset + 2] = color[2]!;
+            pixels[offset] = red;
+            pixels[offset + 1] = green;
+            pixels[offset + 2] = blue;
         }
     }
 }
@@ -480,6 +485,7 @@ function fillRect(
     height: number,
     color: readonly [number, number, number],
 ): void {
+    const [red, green, blue] = color;
     const left = Math.max(0, x);
     const top = Math.max(0, y);
     const right = Math.min(canvasWidth, x + width);
@@ -487,9 +493,9 @@ function fillRect(
     for (let py = top; py < bottom; py++) {
         for (let px = left; px < right; px++) {
             const offset = (py * canvasWidth + px) * 3;
-            pixels[offset] = color[0]!;
-            pixels[offset + 1] = color[1]!;
-            pixels[offset + 2] = color[2]!;
+            pixels[offset] = red;
+            pixels[offset + 1] = green;
+            pixels[offset + 2] = blue;
         }
     }
 }
@@ -541,6 +547,8 @@ export function renderMural(entries: readonly MuralRenderEntry[]): MuralRenderRe
         (candidate) => candidate.layout.droppedIds.length === 0,
     );
     const candidatesToCompare = fittingCandidates.length > 0 ? fittingCandidates : candidates;
+    const firstCandidate = candidatesToCompare[0];
+    if (!firstCandidate) throw new Error("mural layout candidate list is empty");
     const selected = candidatesToCompare.reduce((best, candidate) => {
         if (!best) return candidate;
         if (
@@ -555,7 +563,7 @@ export function renderMural(entries: readonly MuralRenderEntry[]): MuralRenderRe
             return candidate.tileArea < best.tileArea ? candidate : best;
         }
         return candidate.requestedColumnCount < best.requestedColumnCount ? candidate : best;
-    }, candidatesToCompare[0]!);
+    }, firstCandidate);
 
     const { layout, width, height } = selected;
     const pixels = new Uint8Array(width * height * 3).fill(255);

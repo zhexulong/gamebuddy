@@ -216,7 +216,7 @@ test("Pi historian runner uses the trigger boundary snapshot when the trigger re
 		mode: "trigger",
 		protectedTailStart: 20,
 		emergencyTailScale: 0.5,
-		boundaryReason: "force_80_scaled",
+		boundaryReason: "force_band_scaled",
 	} satisfies ProtectedTailBoundarySnapshot;
 
 	expect(

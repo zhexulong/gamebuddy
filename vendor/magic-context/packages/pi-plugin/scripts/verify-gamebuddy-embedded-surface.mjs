@@ -5,11 +5,11 @@ const sourceRoot = resolve(import.meta.dirname, "..", "src");
 const indexSource = await readFile(resolve(sourceRoot, "index.ts"), "utf8");
 
 const required = [
-  'embeddedRuntime ? undefined : new PiSubagentRunner()',
-  'embeddedRuntime ? undefined : new PiSubagentRunner()',
-  'embeddedRuntime ? undefined : new PiSubagentRunner()',
+  'const cliAuthoringDisabled = embeddedRuntime || embeddedRuntimeDisablesCliAuthoringCommands()',
+  'cliAuthoringDisabled ? undefined : new PiSubagentRunner()',
   'new EmbeddedPiHistorianRunner()',
-  'forbidExternalPiCli: process.env.GAMEBUDDY_EMBEDDED_RUNTIME === "1"',
+  'getEmbeddedHistorianRuntimeBinding',
+  'forbidExternalPiCli: embeddedRuntime',
 ];
 for (const fragment of required) {
   if (!indexSource.includes(fragment)) {

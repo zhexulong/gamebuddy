@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 
+import { DREAMER_REVIEWER_AGENT } from "../../../agents/dreamer";
 import { Database } from "../../../shared/sqlite";
 import { runMigrations } from "../migrations";
 import { initializeDatabase } from "../storage-db";
@@ -20,12 +21,13 @@ describe("reviewUserMemories", () => {
             { content: "User prefers concise updates", sessionId: "s1" },
         ]);
         const deleted: string[] = [];
+        const prompt = mock(async () => {
+            throw new Error("model unavailable");
+        });
         const client = {
             session: {
                 create: mock(async () => ({ id: "child-user-memories" })),
-                prompt: mock(async () => {
-                    throw new Error("model unavailable");
-                }),
+                prompt,
                 delete: mock(async ({ path }: { path: { id: string } }) => {
                     deleted.push(path.id);
                     return {};
@@ -46,6 +48,12 @@ describe("reviewUserMemories", () => {
             }),
         ).rejects.toThrow("model unavailable");
 
+        expect(
+            prompt.mock.calls.some(([input]) => {
+                const body = (input as { body?: { agent?: string } }).body;
+                return body?.agent === DREAMER_REVIEWER_AGENT;
+            }),
+        ).toBe(true);
         expect(deleted).toEqual(["child-user-memories"]);
         db.close();
     });

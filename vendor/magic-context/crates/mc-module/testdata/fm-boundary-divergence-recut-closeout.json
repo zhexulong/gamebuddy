@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "drill_id": "FM-BOUNDARY-DIVERGENCE-RECUT-CLOSEOUT",
+  "cache_affecting": "#4975",
+  "mutations": [
+    {
+      "name": "REMOVE_LEGITIMATE_PUBLICATION_WINDOW_DISCRIMINATOR",
+      "fix": "wrapup-mid-loop provider-cache-bust exclusion",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "let active_legitimate_publication_window = ctx.historian_active || ctx.wrapup_active;",
+        "after": "let active_legitimate_publication_window = false;",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module active_wrapup_retains_divergence_count_until_the_window_closes -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "assertion `left == right` failed: an active wrapup retains rather than increments or resets the counter; left: 2; right: 1"
+      }
+    },
+    {
+      "name": "REVERT_POST_END_SEQUENCE_CHECK_TO_DIGEST_ONLY",
+      "fix": "structural digest-to-sequence revalidation",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "before.max_compartment_seq != after.max_compartment_seq || before.revision != after.revision",
+        "after": "before.revision != after.revision",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module post_end_revalidation_detects_a_sequence_move_even_when_the_digest_collides -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "the structural sequence watermark must not be hidden by a digest collision"
+      }
+    }
+  ],
+  "reverted_rerun": {
+    "command": "cargo test -p mc-module --lib",
+    "exit_status": 0,
+    "status": "pass",
+    "output": "724 passed; 0 failed; 3 ignored"
+  }
+}

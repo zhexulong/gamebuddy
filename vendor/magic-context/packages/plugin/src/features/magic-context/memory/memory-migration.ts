@@ -1,5 +1,6 @@
 import { HISTORIAN_AGENT } from "../../../agents/historian";
 import { withMigrationLanguageDirective } from "../../../agents/language-directive";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import { normalizeSDKResponse, promptSyncWithModelSuggestionRetry } from "../../../shared";
 import { extractLatestAssistantText } from "../../../shared/assistant-message-extractor";
 import { shouldKeepSubagents } from "../../../shared/keep-subagents";
@@ -363,9 +364,12 @@ export async function runMemoryMigration(
             await cleanupChildSession(agentSessionId);
             agentSessionId = null;
 
-            const createResponse = await client.session.create({
-                body: { parentID: parentSessionId, title: "magic-context-memory-migration" },
-                query: { directory },
+            const createResponse = await createChildSessionWithFence({
+                client,
+                db,
+                parentSessionId,
+                title: "magic-context-memory-migration",
+                directory,
             });
             const created = normalizeSDKResponse(createResponse, null as { id?: string } | null, {
                 preferResponseOnMissingData: true,

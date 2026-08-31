@@ -46,6 +46,42 @@ function getAsyncModule(): Promise<QuickJSAsyncWASMModule> {
 }
 
 /**
+ * Await the shared module, giving up promptly if the caller is cancelled first.
+ *
+ * Instantiation is one-time process infrastructure, not an asyncify-suspended
+ * eval, so it must not hold the serialization chain (below): unrelated queued
+ * runs would otherwise wait behind a compile that has nothing to do with them,
+ * and a cancelled sweep would burn its entire budget waiting for the compile
+ * instead of reporting cancellation. Acquisition therefore happens OUTSIDE
+ * withSandboxLock, and a caller with an aborted signal returns immediately.
+ */
+function acquireSandboxModule(signal?: AbortSignal): Promise<QuickJSAsyncWASMModule> {
+    const modulePromise = getAsyncModule();
+    if (!signal) return modulePromise;
+    if (signal.aborted) {
+        return Promise.reject(signal.reason ?? new Error("smart-note check aborted"));
+    }
+    return new Promise((resolve, reject) => {
+        const cleanup = () => signal.removeEventListener("abort", onAbort);
+        const onAbort = () => {
+            cleanup();
+            reject(signal.reason ?? new Error("smart-note check aborted"));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        void modulePromise.then(
+            (module) => {
+                cleanup();
+                resolve(module);
+            },
+            (error) => {
+                cleanup();
+                reject(error);
+            },
+        );
+    });
+}
+
+/**
  * Process-wide serialization for sandbox runs.
  *
  * The asyncify variant has ONE suspension stack per WASM module instance, and we
@@ -64,13 +100,51 @@ function getAsyncModule(): Promise<QuickJSAsyncWASMModule> {
  * chain for the next caller, so we continue the chain on both settle paths.
  */
 let sandboxRunChain: Promise<unknown> = Promise.resolve();
-function withSandboxLock<T>(fn: () => Promise<T>): Promise<T> {
-    const run = sandboxRunChain.then(fn, fn);
+function withSandboxLock<T>(
+    fn: () => Promise<T>,
+    signal?: AbortSignal,
+    cancelled?: () => T,
+): Promise<T> {
+    const start = () => (signal?.aborted && cancelled ? cancelled() : fn());
+    const run = sandboxRunChain.then(start, start);
     sandboxRunChain = run.then(
         () => undefined,
         () => undefined,
     );
-    return run;
+    return resolveBeforeAbort(run, signal, cancelled);
+}
+
+/**
+ * A sweep's deadline includes waiting for an earlier sandbox run. The lock entry
+ * remains in the chain after its caller gives up, but the caller must not wait
+ * for an unrelated suspended check before it can report cancellation.
+ */
+function resolveBeforeAbort<T>(
+    run: Promise<T>,
+    signal: AbortSignal | undefined,
+    cancelled: (() => T) | undefined,
+): Promise<T> {
+    if (!signal || !cancelled) return run;
+    if (signal.aborted) return Promise.resolve(cancelled());
+
+    return new Promise((resolve, reject) => {
+        const cleanup = () => signal.removeEventListener("abort", abort);
+        const abort = () => {
+            cleanup();
+            resolve(cancelled());
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        void run.then(
+            (result) => {
+                cleanup();
+                resolve(result);
+            },
+            (error) => {
+                cleanup();
+                reject(error);
+            },
+        );
+    });
 }
 
 export interface RunCompiledSmartNoteCheckOptions {
@@ -143,15 +217,31 @@ export async function runCompiledSmartNoteCheck(
     if (Buffer.byteLength(options.compiledCheck, "utf8") > MAX_COMPILED_CHECK_BYTES) {
         return failureResult("compiled check exceeds 64 KiB", false);
     }
+    // Acquire the shared module BEFORE taking the serialization slot (see
+    // acquireSandboxModule): the one-time compile must not wedge the chain for
+    // unrelated runs, and a cancelled caller must be able to give up while the
+    // compile is still in flight.
+    let quickjs: QuickJSAsyncWASMModule;
+    try {
+        quickjs = await acquireSandboxModule(options.signal);
+    } catch (error) {
+        if (options.signal?.aborted) return cancelledResult(options.signal.reason);
+        return failureResult(formatSandboxError(error), false);
+    }
     // Serialize the actual sandbox work (see withSandboxLock): only one
     // asyncify-suspended eval may exist at a time on the shared module. The
     // per-check timeout and host-capability controller start INSIDE the lock so
     // a check queued behind another doesn't burn its own budget waiting.
-    return withSandboxLock(() => runCompiledSmartNoteCheckLocked(options));
+    return withSandboxLock(
+        () => runCompiledSmartNoteCheckLocked(options, quickjs),
+        options.signal,
+        () => cancelledResult(options.signal?.reason),
+    );
 }
 
 async function runCompiledSmartNoteCheckLocked(
     options: RunCompiledSmartNoteCheckOptions,
+    quickjs: QuickJSAsyncWASMModule,
 ): Promise<RunCompiledSmartNoteCheckResult> {
     if (options.signal?.aborted) return cancelledResult(options.signal.reason);
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -171,8 +261,6 @@ async function runCompiledSmartNoteCheckLocked(
         throwIfRunAborted(controller.signal);
         const capabilities = resolveCapabilitiesForRun(options, controller.signal);
         const deadline = Date.now() + timeoutMs;
-        const quickjs = await getAsyncModule();
-        throwIfRunAborted(controller.signal);
         const context = quickjs.newContext();
         try {
             context.runtime.setMemoryLimit(options.heapLimitBytes ?? DEFAULT_HEAP_LIMIT_BYTES);

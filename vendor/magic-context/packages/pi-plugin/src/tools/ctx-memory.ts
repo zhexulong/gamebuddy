@@ -337,6 +337,8 @@ export interface CtxMemoryToolDeps {
 	) => Promise<void>;
 	memoryEnabled?: boolean;
 	embeddingEnabled?: boolean;
+	/** Resolve a directory's project identity, allowing home only when user-level configuration enables it. */
+	resolveProjectIdentity?: (directory: string) => string | undefined;
 	/** When true, the dreamer-only `list` action is exposed. Set by the subagent
 	 *  extension entry when the parent passes `--magic-context-dreamer-actions`.
 	 *  Default: false (primary set only: write/archive/update/merge). */
@@ -347,6 +349,8 @@ export function createCtxMemoryTool(
 	deps: CtxMemoryToolDeps,
 ): ToolDefinition<typeof ParamsSchema> {
 	const dreamerAllowed = deps.allowDreamerActions === true;
+	const resolveProject =
+		deps.resolveProjectIdentity ?? resolveProjectIdentityForSession;
 	const description = dreamerAllowed
 		? `${CTX_MEMORY_DESCRIPTION}\n- list: enumerate stored memories (maintenance sessions).`
 		: CTX_MEMORY_DESCRIPTION;
@@ -382,7 +386,7 @@ export function createCtxMemoryTool(
 				);
 			}
 
-			const projectIdentity = resolveProjectIdentityForSession(ctx.cwd);
+			const projectIdentity = resolveProject(ctx.cwd);
 			if (!projectIdentity) {
 				return err(
 					"Error: Could not resolve project identity for memory action.",

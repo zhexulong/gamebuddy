@@ -6,6 +6,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    type BindIdentity,
     buildFlags,
     buildFrame,
     CLIENT_AUTH_DOMAIN,
@@ -18,6 +19,7 @@ import {
     PROTOCOL_VERSION,
     Priority,
     type RouteHandle,
+    type RouteTarget,
     SERVER_PROOF_DOMAIN,
     StaleRouteHandleError,
     type SubcClient,
@@ -93,8 +95,22 @@ async function listen(server: Server): Promise<number> {
     return address.port;
 }
 
+function deferred<T = void>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+    reject: (error: unknown) => void;
+} {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
+        resolve = promiseResolve;
+        reject = promiseReject;
+    });
+    return { promise, resolve, reject };
+}
+
 describe("SubcModuleTransport", () => {
-    it("uses the shared v2 client while preserving route identity and flat request bytes", async () => {
+    it("omits an ambient supervised identity while preserving route identity and flat request bytes", async () => {
         const tempDir = mkdtempSync(join(tmpdir(), "module-subc-v2-"));
         const key = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
         const daemonId = Uint8Array.from({ length: 16 }, (_, index) => 100 + index);
@@ -111,6 +127,10 @@ describe("SubcModuleTransport", () => {
             resolveServer = resolve;
             rejectServer = reject;
         });
+        const previousModuleId = process.env.SUBC_MODULE_ID;
+        const previousLaunchNonce = process.env.SUBC_LAUNCH_NONCE;
+        process.env.SUBC_MODULE_ID = "other-supervised-module";
+        process.env.SUBC_LAUNCH_NONCE = "a".repeat(64);
         const server = createServer((socket) => {
             acceptedSocket = socket;
             void (async () => {
@@ -188,15 +208,6 @@ describe("SubcModuleTransport", () => {
             transport.closeSession("session-1");
             await serverWork;
 
-            const consumerIdentity =
-                process.env.SUBC_MODULE_ID && process.env.SUBC_LAUNCH_NONCE
-                    ? {
-                          consumer_identity: {
-                              module_id: process.env.SUBC_MODULE_ID,
-                              launch_nonce: process.env.SUBC_LAUNCH_NONCE,
-                          },
-                      }
-                    : {};
             expect(routeOpenBody).toEqual({
                 op: "route.open",
                 target: { kind: "tool_provider", module_id: "magic-context" },
@@ -205,7 +216,6 @@ describe("SubcModuleTransport", () => {
                     harness: "opencode",
                     session: "session-1",
                 },
-                ...consumerIdentity,
             });
             expect(requestBody).toEqual(flatBody);
             expect(routeHeader).toEqual(
@@ -236,6 +246,10 @@ describe("SubcModuleTransport", () => {
             acceptedSocket?.destroy();
             await new Promise<void>((resolve) => server.close(() => resolve()));
             rmSync(tempDir, { recursive: true, force: true });
+            if (previousModuleId === undefined) delete process.env.SUBC_MODULE_ID;
+            else process.env.SUBC_MODULE_ID = previousModuleId;
+            if (previousLaunchNonce === undefined) delete process.env.SUBC_LAUNCH_NONCE;
+            else process.env.SUBC_LAUNCH_NONCE = previousLaunchNonce;
         }
     });
 
@@ -247,6 +261,278 @@ describe("SubcModuleTransport", () => {
 
         expect(foreignStaleRouteError).not.toBeInstanceOf(StaleRouteHandleError);
         expect(__moduleTransportTest.isConnectionFailure(foreignStaleRouteError)).toBe(true);
+    });
+
+    it("reconnects once when a cached client reports that it closed", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file", "magic-context", 100);
+        const route = { channel: 7, epoch: 77 } as RouteHandle;
+        let connectionCount = 0;
+        let firstCloseCount = 0;
+        const clients = [
+            {
+                routeOpen: async () => route,
+                request: async () => {
+                    throw new Error("client closed");
+                },
+                close: () => {
+                    firstCloseCount += 1;
+                },
+            },
+            {
+                routeOpen: async () => route,
+                request: async () => ({ result: { reconnected: true } }),
+                close: () => undefined,
+            },
+        ] as unknown as SubcClient[];
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureConnected(): Promise<SubcClient>;
+        };
+        internals.ensureConnected = async () => {
+            const client = clients[connectionCount++];
+            if (!client) throw new Error("unexpected third connection attempt");
+            internals.client = client;
+            return client;
+        };
+
+        await expect(
+            transport.call({
+                sessionId: "session-client-closed",
+                projectRoot: "/workspace/project",
+                method: "transform",
+                body: { method: "transform", v: 1 },
+            }),
+        ).resolves.toEqual({ result: { reconnected: true } });
+        expect(connectionCount).toBe(2);
+        expect(firstCloseCount).toBe(1);
+    });
+
+    it("returns a typed generation change instead of retrying a sensitive body", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file", "magic-context", 100);
+        const route = { channel: 7, epoch: 77 } as RouteHandle;
+        let connectionCount = 0;
+        const client = {
+            routeOpen: async () => route,
+            request: async () => {
+                throw new Error("client closed");
+            },
+            close: () => undefined,
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureConnected(): Promise<SubcClient>;
+        };
+        internals.ensureConnected = async () => {
+            connectionCount += 1;
+            internals.client = client;
+            return client;
+        };
+
+        await expect(
+            transport.call({
+                sessionId: "session-generation-sensitive",
+                projectRoot: "/workspace/project",
+                method: "state_sync",
+                body: { method: "state_sync", v: 1 },
+                generationSensitive: true,
+            }),
+        ).resolves.toEqual({
+            transport_status: "connection_generation_changed",
+            previous_generation: 0,
+            current_generation: 1,
+        });
+        expect(connectionCount).toBe(1);
+    });
+
+    it("bounds a half-open route and stops after one fresh-connection retry", async () => {
+        const timeoutMs = 30;
+        const transport = new SubcModuleTransport(
+            "unused-connection-file",
+            "magic-context",
+            timeoutMs,
+        );
+        let connectionCount = 0;
+        let routeOpenCount = 0;
+        const clients = [0, 1].map(
+            () =>
+                ({
+                    routeOpen: () => {
+                        routeOpenCount += 1;
+                        return new Promise<never>(() => undefined);
+                    },
+                    close: () => undefined,
+                }) as unknown as SubcClient,
+        );
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureConnected(): Promise<SubcClient>;
+        };
+        internals.ensureConnected = async () => {
+            const client = clients[connectionCount++];
+            if (!client) throw new Error("unexpected third connection attempt");
+            internals.client = client;
+            return client;
+        };
+        const startedAt = performance.now();
+
+        const failure = transport.call({
+            sessionId: "session-half-open-client",
+            projectRoot: "/workspace/project",
+            method: "transform",
+            body: { method: "transform", v: 1 },
+        });
+
+        await expect(failure).rejects.toMatchObject({ code: "ETIMEDOUT" });
+        expect(performance.now() - startedAt).toBeLessThan(1_000);
+        expect(connectionCount).toBe(2);
+        expect(routeOpenCount).toBe(2);
+    });
+
+    it("bounds hung transform attempts and stops after one fresh-connection retry", async () => {
+        const timeoutMs = 30;
+        const transport = new SubcModuleTransport(
+            "unused-connection-file",
+            "magic-context",
+            timeoutMs,
+        );
+        const route = { channel: 8, epoch: 88 } as RouteHandle;
+        let connectionCount = 0;
+        let requestCount = 0;
+        const clients = [0, 1].map(
+            () =>
+                ({
+                    routeOpen: async () => route,
+                    request: () => {
+                        requestCount += 1;
+                        return new Promise<never>(() => undefined);
+                    },
+                    close: () => undefined,
+                }) as unknown as SubcClient,
+        );
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureConnected(): Promise<SubcClient>;
+        };
+        internals.ensureConnected = async () => {
+            const client = clients[connectionCount++];
+            if (!client) throw new Error("unexpected third connection attempt");
+            internals.client = client;
+            return client;
+        };
+        const startedAt = performance.now();
+
+        const failure = transport.call({
+            sessionId: "session-hung-client",
+            projectRoot: "/workspace/project",
+            method: "transform",
+            body: { method: "transform", v: 1 },
+        });
+
+        await expect(failure).rejects.toMatchObject({ code: "ETIMEDOUT" });
+        expect(performance.now() - startedAt).toBeLessThan(1_000);
+        expect(connectionCount).toBe(2);
+        expect(requestCount).toBe(2);
+    });
+
+    it("uses a cold-start deadline only for a completed transform page series", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file");
+        const route = { channel: 8, epoch: 88 } as RouteHandle;
+        const observedTimeouts: number[] = [];
+        const client = {
+            request: async (
+                _route: RouteHandle,
+                _body: unknown,
+                options: { timeoutMs: number },
+            ) => {
+                observedTimeouts.push(options.timeoutMs);
+                return { result: { ok: true } };
+            },
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureRoute: () => Promise<{
+                client: SubcClient;
+                route: RouteHandle;
+                routeKey: string;
+                generation: number;
+            }>;
+        };
+        internals.client = client;
+        internals.ensureRoute = async () => ({
+            client,
+            route,
+            routeKey: "session-attempt-class\0/workspace/project",
+            generation: 0,
+        });
+        const base = {
+            sessionId: "session-attempt-class",
+            projectRoot: "/workspace/project",
+            method: "transform" as const,
+        };
+
+        await transport.call({
+            ...base,
+            body: { method: "transform", transform_page_complete: false },
+            attemptClass: "transform_page_upload",
+        });
+        await transport.call({
+            ...base,
+            body: { method: "transform", transform_page_complete: true },
+            attemptClass: "transform_series_execute",
+        });
+
+        expect(observedTimeouts).toHaveLength(2);
+        expect(observedTimeouts[0]).toBeGreaterThan(4_500);
+        expect(observedTimeouts[0]).toBeLessThanOrEqual(5_000);
+        expect(observedTimeouts[1]).toBeGreaterThan(29_000);
+        expect(observedTimeouts[1]).toBeLessThanOrEqual(30_000);
+    });
+
+    it("fails a completed-series deadline without reconnecting or retrying", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file", "magic-context", 1_000);
+        const route = { channel: 8, epoch: 88 } as RouteHandle;
+        let requestCount = 0;
+        let closeCount = 0;
+        const client = {
+            request: () => {
+                requestCount += 1;
+                return new Promise<never>(() => undefined);
+            },
+            close: () => {
+                closeCount += 1;
+            },
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureRoute: () => Promise<{
+                client: SubcClient;
+                route: RouteHandle;
+                routeKey: string;
+                generation: number;
+            }>;
+        };
+        internals.client = client;
+        internals.ensureRoute = async () => ({
+            client,
+            route,
+            routeKey: "session-execute-timeout\0/workspace/project",
+            generation: 0,
+        });
+
+        await expect(
+            transport.call({
+                sessionId: "session-execute-timeout",
+                projectRoot: "/workspace/project",
+                method: "transform",
+                body: { method: "transform", transform_page_complete: true },
+                generationSensitive: true,
+                attemptClass: "transform_series_execute",
+                timeoutMs: 25,
+            }),
+        ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+        expect(requestCount).toBe(1);
+        expect(closeCount).toBe(0);
+        expect(internals.client).toBe(client);
     });
 
     it("reopens a route and retries when a restarted module leaves a stale route token", async () => {
@@ -362,6 +648,398 @@ describe("SubcModuleTransport", () => {
         expect(internals.canonicalRootCache.has("/missing-canonical-root-1")).toBe(false);
     });
 
+    it("does not expose state-sync capabilities from an earlier connection generation", () => {
+        const transport = new SubcModuleTransport("unused-connection-file");
+        const internals = transport as unknown as {
+            connectionGeneration: number;
+            stateSyncCapabilityCache: {
+                generation: number;
+                capabilities: { state_sync_deltas?: boolean };
+            } | null;
+        };
+        internals.connectionGeneration = 1;
+        internals.stateSyncCapabilityCache = {
+            generation: 1,
+            capabilities: { state_sync_deltas: true },
+        };
+
+        expect(transport.getCachedStateSyncCapabilities()).toEqual({ state_sync_deltas: true });
+        internals.connectionGeneration = 2;
+        expect(transport.getCachedStateSyncCapabilities()).toBeUndefined();
+    });
+
+    it("allows another session to start while a long wrapup is still in flight", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file");
+        const route = { channel: 7, epoch: 77 } as RouteHandle;
+        const wrapupStarted = deferred();
+        const statusStarted = deferred();
+        const releaseWrapup = deferred();
+        let wrapupSettled = false;
+        const client = {
+            request: async (_route: RouteHandle, body: unknown) => {
+                const method = (body as { method: string }).method;
+                if (method === "session.wrapup") {
+                    wrapupStarted.resolve();
+                    await releaseWrapup.promise;
+                } else {
+                    statusStarted.resolve();
+                }
+                return { result: { ok: true } };
+            },
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureRoute: (sessionId: string) => Promise<{
+                client: SubcClient;
+                route: RouteHandle;
+                routeKey: string;
+                generation: number;
+            }>;
+        };
+        internals.client = client;
+        internals.ensureRoute = async (sessionId) => ({
+            client,
+            route,
+            routeKey: `${sessionId}\0/workspace/project`,
+            generation: 0,
+        });
+
+        const wrapup = transport
+            .call({
+                sessionId: "session-a",
+                projectRoot: "/workspace/project",
+                method: "session.wrapup",
+                body: { method: "session.wrapup", v: 1 },
+            })
+            .finally(() => {
+                wrapupSettled = true;
+            });
+        await wrapupStarted.promise;
+        const status = transport.call({
+            sessionId: "session-b",
+            projectRoot: "/workspace/project",
+            method: "session.status",
+            body: { method: "session.status", v: 1 },
+        });
+
+        await statusStarted.promise;
+        expect(wrapupSettled).toBe(false);
+        await expect(status).resolves.toEqual({ result: { ok: true } });
+        releaseWrapup.resolve();
+        await expect(wrapup).resolves.toEqual({ result: { ok: true } });
+    });
+
+    it("executes one session's state sync, transform, and status strictly in submission order", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file");
+        const route = { channel: 7, epoch: 77 } as RouteHandle;
+        const stateSyncStarted = deferred();
+        const transformStarted = deferred();
+        const releaseStateSync = deferred();
+        const releaseTransform = deferred();
+        const starts: string[] = [];
+        const client = {
+            request: async (_route: RouteHandle, body: unknown) => {
+                const method = (body as { method: string }).method;
+                starts.push(method);
+                if (method === "state_sync") {
+                    stateSyncStarted.resolve();
+                    await releaseStateSync.promise;
+                } else if (method === "transform") {
+                    transformStarted.resolve();
+                    await releaseTransform.promise;
+                }
+                return { result: { method } };
+            },
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureRoute: () => Promise<{
+                client: SubcClient;
+                route: RouteHandle;
+                routeKey: string;
+                generation: number;
+            }>;
+        };
+        internals.client = client;
+        internals.ensureRoute = async () => ({
+            client,
+            route,
+            routeKey: "ordered-session\0/workspace/project",
+            generation: 0,
+        });
+        const base = { sessionId: "ordered-session", projectRoot: "/workspace/project" };
+
+        const stateSync = transport.call({
+            ...base,
+            method: "state_sync",
+            body: { method: "state_sync" },
+        });
+        const transform = transport.call({
+            ...base,
+            method: "transform",
+            body: { method: "transform" },
+        });
+        const status = transport.call({
+            ...base,
+            method: "session.status",
+            body: { method: "session.status" },
+        });
+
+        await stateSyncStarted.promise;
+        expect(starts).toEqual(["state_sync"]);
+        releaseStateSync.resolve();
+        await transformStarted.promise;
+        expect(starts).toEqual(["state_sync", "transform"]);
+        releaseTransform.resolve();
+        await Promise.all([stateSync, transform, status]);
+        expect(starts).toEqual(["state_sync", "transform", "session.status"]);
+    });
+
+    it("coalesces concurrent connection recovery and retries two sessions on one fresh generation", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file", "magic-context", 1_000);
+        const oldRouteA = { channel: 7, epoch: 70 } as RouteHandle;
+        const oldRouteB = { channel: 8, epoch: 80 } as RouteHandle;
+        const oldRequestsStarted = deferred();
+        let oldRequestCount = 0;
+        let oldCloseCount = 0;
+        const oldClient = {
+            request: async () => {
+                oldRequestCount += 1;
+                if (oldRequestCount === 2) oldRequestsStarted.resolve();
+                await oldRequestsStarted.promise;
+                throw new Error("client closed");
+            },
+            close: () => {
+                oldCloseCount += 1;
+            },
+        } as unknown as SubcClient;
+        let routeOpenCount = 0;
+        const freshRequestSessions: string[] = [];
+        const freshClient = {
+            routeOpen: async (_target: RouteTarget, identity: BindIdentity) => {
+                routeOpenCount += 1;
+                return {
+                    channel: 20 + routeOpenCount,
+                    epoch: 100,
+                    session: identity.session,
+                } as unknown as RouteHandle;
+            },
+            request: async (_route: RouteHandle, body: unknown) => {
+                const sessionId = (body as { session_id: string }).session_id;
+                freshRequestSessions.push(sessionId);
+                return { result: { sessionId } };
+            },
+            close: () => undefined,
+        } as unknown as SubcClient;
+        let connectCount = 0;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            connectionGeneration: number;
+            routes: Map<string, { route: RouteHandle; generation: number }>;
+            connectClient(): Promise<SubcClient>;
+        };
+        internals.client = oldClient;
+        internals.routes.set("session-a\0/invalidation-a", { route: oldRouteA, generation: 0 });
+        internals.routes.set("session-b\0/invalidation-b", { route: oldRouteB, generation: 0 });
+        internals.connectClient = async () => {
+            connectCount += 1;
+            await Bun.sleep(10);
+            return freshClient;
+        };
+
+        const [responseA, responseB] = await Promise.all([
+            transport.call({
+                sessionId: "session-a",
+                projectRoot: "/invalidation-a",
+                method: "transform",
+                body: { method: "transform", session_id: "session-a" },
+            }),
+            transport.call({
+                sessionId: "session-b",
+                projectRoot: "/invalidation-b",
+                method: "transform",
+                body: { method: "transform", session_id: "session-b" },
+            }),
+        ]);
+
+        expect(responseA).toEqual({ result: { sessionId: "session-a" } });
+        expect(responseB).toEqual({ result: { sessionId: "session-b" } });
+        expect(oldCloseCount).toBe(1);
+        expect(connectCount).toBe(1);
+        expect(internals.connectionGeneration).toBe(1);
+        expect(routeOpenCount).toBe(2);
+        expect(freshRequestSessions.sort()).toEqual(["session-a", "session-b"]);
+    });
+
+    it("coalesces concurrent route opens for the same session and project", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file");
+        const route = { channel: 7, epoch: 77 } as RouteHandle;
+        const routeOpenStarted = deferred();
+        const releaseRouteOpen = deferred();
+        let routeOpenCount = 0;
+        const client = {
+            routeOpen: async () => {
+                routeOpenCount += 1;
+                routeOpenStarted.resolve();
+                await releaseRouteOpen.promise;
+                return route;
+            },
+            closeRoute: async () => undefined,
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureRoute: (
+                sessionId: string,
+                projectRoot: string,
+            ) => Promise<{ route: RouteHandle }>;
+        };
+        internals.client = client;
+
+        const first = internals.ensureRoute("route-session", "/route-project");
+        const second = internals.ensureRoute("route-session", "/route-project");
+        await routeOpenStarted.promise;
+        expect(routeOpenCount).toBe(1);
+        releaseRouteOpen.resolve();
+
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        expect(firstResult.route).toBe(route);
+        expect(secondResult.route).toBe(route);
+        expect(routeOpenCount).toBe(1);
+    });
+
+    it("keeps the aggregate queued-call ceiling across independent session lanes", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file");
+        const route = { channel: 7, epoch: 77 } as RouteHandle;
+        const releaseActiveCalls = deferred();
+        const allActiveCallsStarted = deferred();
+        let activeCallsStarted = 0;
+        const client = {
+            request: async (_route: RouteHandle, body: unknown) => {
+                if ((body as { active?: boolean }).active) {
+                    activeCallsStarted += 1;
+                    if (activeCallsStarted === 4) allActiveCallsStarted.resolve();
+                    await releaseActiveCalls.promise;
+                }
+                return { result: { ok: true } };
+            },
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureRoute: (sessionId: string) => Promise<{
+                client: SubcClient;
+                route: RouteHandle;
+                routeKey: string;
+                generation: number;
+            }>;
+        };
+        internals.client = client;
+        internals.ensureRoute = async (sessionId) => ({
+            client,
+            route,
+            routeKey: `${sessionId}\0/workspace/project`,
+            generation: 0,
+        });
+        const sessions = ["cap-a", "cap-b", "cap-c", "cap-d"];
+        const activeCalls = sessions.map((sessionId) =>
+            transport.call({
+                sessionId,
+                projectRoot: "/workspace/project",
+                method: "session.status",
+                body: { method: "session.status", active: true },
+            }),
+        );
+        await allActiveCallsStarted.promise;
+        const queuedCalls = sessions.flatMap((sessionId) =>
+            Array.from({ length: 4 }, (_, index) =>
+                transport.call({
+                    sessionId,
+                    projectRoot: "/workspace/project",
+                    method: "session.status",
+                    body: { method: "session.status", index },
+                }),
+            ),
+        );
+
+        await expect(
+            transport.call({
+                sessionId: sessions[0],
+                projectRoot: "/workspace/project",
+                method: "session.status",
+                body: { method: "session.status", overflow: true },
+            }),
+        ).rejects.toMatchObject({ code: "EBUSY" });
+
+        releaseActiveCalls.resolve();
+        await Promise.all([...activeCalls, ...queuedCalls]);
+    });
+
+    it("keeps wrapup and live status calls beyond a 20-second round without raising the generic deadline", async () => {
+        const transport = new SubcModuleTransport("unused-connection-file");
+        const route = { channel: 7, epoch: 77 } as RouteHandle;
+        let releaseWrapup: (() => void) | undefined;
+        let markWrapupStarted: (() => void) | undefined;
+        const wrapupStarted = new Promise<void>((resolve) => {
+            markWrapupStarted = resolve;
+        });
+        const observedTimeouts = new Map<string, number>();
+        const client = {
+            request: async (_route: RouteHandle, body: unknown, options: { timeoutMs: number }) => {
+                const method = (body as { method: string }).method;
+                observedTimeouts.set(method, options.timeoutMs);
+                if (method === "session.wrapup") {
+                    markWrapupStarted?.();
+                    await new Promise<void>((resolve) => {
+                        releaseWrapup = resolve;
+                    });
+                }
+                return { result: { ok: true } };
+            },
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            client: SubcClient | null;
+            ensureRoute: () => Promise<{
+                client: SubcClient;
+                route: RouteHandle;
+                routeKey: string;
+                generation: number;
+            }>;
+        };
+        internals.client = client;
+        internals.ensureRoute = async () => ({
+            client,
+            route,
+            routeKey: "session-wrapup\0/workspace/project",
+            generation: 0,
+        });
+
+        const wrapup = transport.call({
+            sessionId: "session-wrapup",
+            projectRoot: "/workspace/project",
+            method: "session.wrapup",
+            body: { method: "session.wrapup", v: 1 },
+        });
+        await wrapupStarted;
+        const status = transport.call({
+            sessionId: "session-wrapup",
+            projectRoot: "/workspace/project",
+            method: "session.status",
+            body: { method: "session.status", v: 1 },
+        });
+        releaseWrapup?.();
+        await expect(wrapup).resolves.toEqual({ result: { ok: true } });
+        await expect(status).resolves.toEqual({ result: { ok: true } });
+        await transport.call({
+            sessionId: "session-generic",
+            projectRoot: "/workspace/project",
+            method: "session.flush",
+            body: { method: "session.flush", v: 1 },
+        });
+
+        expect(observedTimeouts.get("session.wrapup")).toBeGreaterThan(20_000);
+        expect(observedTimeouts.get("session.status")).toBeGreaterThan(20_000);
+        expect(observedTimeouts.get("session.flush")).toBeLessThanOrEqual(15_000);
+    });
+
     it("does not reuse a route cached under an earlier connection generation", async () => {
         const transport = new SubcModuleTransport("unused-connection-file");
         const oldRoute = { channel: 7, epoch: 77 } as RouteHandle;
@@ -394,5 +1072,163 @@ describe("SubcModuleTransport", () => {
         expect(ensured.route).toBe(newRoute);
         expect(ensured.generation).toBe(1);
         expect(internals.routes.get(routeKey)).toEqual({ route: newRoute, generation: 1 });
+    });
+});
+
+describe("connection backoff in-pass wait", () => {
+    function makeBackoffTransport(): {
+        transport: SubcModuleTransport;
+        internals: {
+            nextProbeMs: number;
+            connectClient(): Promise<SubcClient>;
+        };
+        client: SubcClient;
+        connectCount: () => number;
+    } {
+        const transport = new SubcModuleTransport("unused-connection-file", "magic-context", 1_000);
+        const route = { channel: 7, epoch: 77 } as RouteHandle;
+        let connects = 0;
+        const client = {
+            routeOpen: async () => route,
+            request: async (_route: RouteHandle, body: unknown) => ({
+                result: { sessionId: (body as { session_id?: string }).session_id ?? "ok" },
+            }),
+            close: () => undefined,
+        } as unknown as SubcClient;
+        const internals = transport as unknown as {
+            nextProbeMs: number;
+            connectClient(): Promise<SubcClient>;
+        };
+        internals.connectClient = async () => {
+            connects += 1;
+            return client;
+        };
+        return { transport, internals, client, connectCount: () => connects };
+    }
+
+    it("waits out an under-budget backoff remainder and serves the pass", async () => {
+        const { transport, internals, connectCount } = makeBackoffTransport();
+        // A latch armed by an earlier failure with only 300ms left — far under
+        // the wait budget. The pass must wait and connect, not fail.
+        internals.nextProbeMs = Date.now() + 300;
+        const startedAt = performance.now();
+
+        await expect(
+            transport.call({
+                sessionId: "session-backoff-wait",
+                projectRoot: "/workspace/project",
+                method: "transform",
+                body: { method: "transform", v: 1, session_id: "session-backoff-wait" },
+            }),
+        ).resolves.toEqual({ result: { sessionId: "session-backoff-wait" } });
+
+        const elapsedMs = performance.now() - startedAt;
+        expect(elapsedMs).toBeGreaterThanOrEqual(280);
+        // Remainder plus jitter only — no retry ladder, no budget overrun.
+        expect(elapsedMs).toBeLessThan(1_000);
+        expect(connectCount()).toBe(1);
+    });
+
+    it("fails fast when the backoff remainder exceeds the wait budget", async () => {
+        const { transport, internals, connectCount } = makeBackoffTransport();
+        internals.nextProbeMs = Date.now() + 20_000;
+        const startedAt = performance.now();
+
+        await expect(
+            transport.call({
+                sessionId: "session-backoff-over-budget",
+                projectRoot: "/workspace/project",
+                method: "transform",
+                body: { method: "transform", v: 1 },
+            }),
+        ).rejects.toMatchObject({ code: "SUBC_CONNECTION_BACKOFF" });
+
+        expect(performance.now() - startedAt).toBeLessThan(1_000);
+        expect(connectCount()).toBe(0);
+    });
+
+    it("does not serialize sibling sessions behind one session's backoff wait", async () => {
+        const { transport, internals, connectCount } = makeBackoffTransport();
+        internals.nextProbeMs = Date.now() + 500;
+        const startedAt = performance.now();
+
+        const [responseA, responseB] = await Promise.all([
+            transport.call({
+                sessionId: "session-backoff-a",
+                projectRoot: "/workspace/project",
+                method: "transform",
+                body: { method: "transform", v: 1, session_id: "session-backoff-a" },
+            }),
+            transport.call({
+                sessionId: "session-backoff-b",
+                projectRoot: "/workspace/project",
+                method: "transform",
+                body: { method: "transform", v: 1, session_id: "session-backoff-b" },
+            }),
+        ]);
+
+        const wallMs = performance.now() - startedAt;
+        expect(responseA).toEqual({ result: { sessionId: "session-backoff-a" } });
+        expect(responseB).toEqual({ result: { sessionId: "session-backoff-b" } });
+        // Each pass waits on its own timer; a serialized (global) wait would pay
+        // the ~500ms remainder twice. The connection itself coalesces once.
+        expect(wallMs).toBeGreaterThanOrEqual(450);
+        expect(wallMs).toBeLessThan(900);
+        expect(connectCount()).toBe(1);
+    });
+
+    it("stops waiting when the pass is aborted mid-backoff", async () => {
+        const { transport, internals, connectCount } = makeBackoffTransport();
+        internals.nextProbeMs = Date.now() + 2_000;
+        const controller = new AbortController();
+        const startedAt = performance.now();
+        const call = transport.call({
+            sessionId: "session-backoff-abort",
+            projectRoot: "/workspace/project",
+            method: "transform",
+            body: { method: "transform", v: 1 },
+            signal: controller.signal,
+        });
+        setTimeout(() => controller.abort(new Error("turn cancelled")), 50);
+
+        await expect(call).rejects.toThrow("turn cancelled");
+        expect(performance.now() - startedAt).toBeLessThan(1_000);
+        expect(connectCount()).toBe(0);
+    });
+});
+
+describe("beforeDeadline orphan safety", () => {
+    it("a request rejecting after the deadline lost the race never raises an unhandled rejection", async () => {
+        const transport = new SubcModuleTransport("/nonexistent-connection-file");
+        const unhandled: unknown[] = [];
+        const onUnhandled = (error: unknown) => {
+            unhandled.push(error);
+        };
+        process.on("unhandledRejection", onUnhandled);
+        try {
+            let rejectLater: ((error: Error) => void) | undefined;
+            const operation = new Promise<never>((_resolve, reject) => {
+                rejectLater = reject;
+            });
+            const beforeDeadline = (
+                transport as unknown as {
+                    beforeDeadline(
+                        op: Promise<never>,
+                        deadline: number,
+                        detail: string,
+                    ): Promise<never>;
+                }
+            ).beforeDeadline.bind(transport);
+            // Deadline already passed relative to the operation: the race loses immediately.
+            await expect(beforeDeadline(operation, Date.now() + 5, "test")).rejects.toThrow();
+            // The abandoned operation now rejects — exactly what close() does to
+            // every pending request when a connection is invalidated.
+            rejectLater?.(new Error("client closed"));
+            // Give the runtime a macrotask to surface an unhandled rejection if any.
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(unhandled).toHaveLength(0);
+        } finally {
+            process.off("unhandledRejection", onUnhandled);
+        }
     });
 });

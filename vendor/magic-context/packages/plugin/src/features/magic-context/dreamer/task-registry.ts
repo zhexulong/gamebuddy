@@ -27,6 +27,55 @@ export const CANONICAL_DREAM_TASKS = [
 
 export type DreamTaskName = (typeof CANONICAL_DREAM_TASKS)[number];
 
+/** Cheap, read-only work counts for one Dreamer task. */
+export interface DreamTaskBacklog {
+    /** Items selected by the task's current backlog predicate. */
+    pending: number;
+    /** Total items in the task's candidate pool. */
+    total: number;
+}
+
+/** Backlog counts keyed by canonical task name. */
+export type DreamTaskBacklogMap = Partial<Record<DreamTaskName, DreamTaskBacklog>>;
+
+/** Stable human-readable rendering shared by /ctx-dream and status surfaces. */
+export function formatDreamTaskBacklogs(
+    backlogs: DreamTaskBacklogMap,
+    tasks: readonly DreamTaskName[] = CANONICAL_DREAM_TASKS,
+): string {
+    return tasks
+        .filter((task) => backlogs[task] !== undefined)
+        .map((task) => {
+            const backlog = backlogs[task];
+            return `- ${task}: ${backlog?.pending ?? 0} pending / ${backlog?.total ?? 0} total`;
+        })
+        .join("\n");
+}
+
+/** Process-local progress for the task currently applying a run chunk. */
+export interface DreamTaskProgress {
+    task: DreamTaskName;
+    processed: number;
+    total: number;
+    startedAt: number;
+    /** Update/archive verdicts refused by host-side verification safety gates during the current run. */
+    refused?: number;
+}
+
+/** Persisted per-task run counts used by dream-run history and summaries. */
+export interface DreamTaskRunBacklog {
+    pendingAtStart: number;
+    totalAtStart: number;
+    pendingAtEnd: number;
+    totalAtEnd: number;
+    processed: number;
+}
+
+/** Use the decrease in the persisted backlog between the start and end snapshots as the per-run progress count, clamped to zero when the backlog does not decrease. */
+export function processedDreamTaskItems(startPending: number, endPending: number): number {
+    return Math.max(0, startPending - endPending);
+}
+
 /**
  * The agentic tasks — those run as a generic dreamer agent session driven by
  * `buildDreamTaskPrompt`. The other canonical tasks (map-memories, verify,

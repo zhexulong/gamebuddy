@@ -89,6 +89,24 @@ describe("auto-update-checker/checker", () => {
             readSpy.mockRestore();
         });
 
+        test("resolves the winning TUI entry with the same config precedence", async () => {
+            const root = makeProjectFixture();
+            const override = join(root, "override");
+            mkdirSync(override, { recursive: true });
+            writePluginConfig(join(root, "tui.json"), `${PACKAGE_NAME}@0.36.1`);
+            writePluginConfig(join(override, "tui.jsonc"), `${PACKAGE_NAME}@0.37.0`);
+            process.env.OPENCODE_CONFIG_DIR = override;
+
+            const { findPluginEntry } = await freshCheckerImport();
+
+            expect(findPluginEntry(root, "tui")).toEqual({
+                entry: `${PACKAGE_NAME}@0.37.0`,
+                isPinned: true,
+                pinnedVersion: "0.37.0",
+                configPath: join(override, "tui.jsonc"),
+            });
+        });
+
         test("detects pinned tuple entries and ignores other scoped packages", async () => {
             const existsSpy = spyOn(fs, "existsSync").mockImplementation((p: fs.PathLike) =>
                 String(p).includes("opencode.json"),
@@ -260,7 +278,7 @@ describe("auto-update-checker/checker", () => {
             expect(readFileSync(globalServer, "utf-8")).toBe(globalServerBefore);
         });
 
-        test("uses OPENCODE_CONFIG_DIR as the highest-precedence winner", async () => {
+        test("leaves an explicit @latest winner unpinned", async () => {
             const root = makeProjectFixture();
             const override = join(root, "override");
             mkdirSync(override, { recursive: true });
@@ -286,12 +304,13 @@ describe("auto-update-checker/checker", () => {
                 "0.15.6",
             );
 
-            expect(result?.configPaths).toEqual([overrideServer, overrideTui]);
-            expect(readFileSync(overrideServer, "utf-8")).toContain(`${PACKAGE_NAME}@0.15.6`);
+            expect(result).toBeNull();
+            expect(readFileSync(overrideServer, "utf-8")).toContain(`${PACKAGE_NAME}@latest`);
+            expect(readFileSync(overrideTui, "utf-8")).toContain(`${PACKAGE_NAME}@latest`);
             expect(readFileSync(projectServer, "utf-8")).toContain(`"plugin": ["${PACKAGE_NAME}"]`);
         });
 
-        test("updates only the winning origin and leaves shadowed entries unchanged", async () => {
+        test("repins an exact winning version and leaves shadowed entries unchanged", async () => {
             const root = makeProjectFixture();
             const projectServer = join(root, "opencode.json");
             const projectTui = join(root, "tui.json");
@@ -299,27 +318,53 @@ describe("auto-update-checker/checker", () => {
             const shadowedTui = join(root, ".opencode", "tui.json");
             writePluginConfig(projectServer, `${PACKAGE_NAME}@latest`);
             writePluginConfig(projectTui, `${PACKAGE_NAME}@latest`);
-            writePluginConfig(shadowedServer, `${PACKAGE_NAME}@latest`);
-            writePluginConfig(shadowedTui, `${PACKAGE_NAME}@latest`);
-            const shadowedBefore = readFileSync(shadowedServer, "utf-8");
+            writePluginConfig(shadowedServer, `${PACKAGE_NAME}@0.15.5`);
+            writePluginConfig(shadowedTui, `${PACKAGE_NAME}@0.15.5`);
+            const projectBefore = readFileSync(projectServer, "utf-8");
             const logSpy = spyOn(logger, "log");
 
             const { preparePluginUpdate } = await freshCheckerImport();
             const result = await preparePluginUpdate(
                 root,
                 {
-                    entry: PACKAGE_NAME,
-                    isPinned: false,
-                    pinnedVersion: null,
-                    configPath: projectServer,
+                    entry: `${PACKAGE_NAME}@0.15.5`,
+                    isPinned: true,
+                    pinnedVersion: "0.15.5",
+                    configPath: shadowedServer,
                 },
                 "0.15.6",
             );
 
             expect(result?.configPaths).toEqual([shadowedServer, shadowedTui]);
             expect(readFileSync(shadowedServer, "utf-8")).toContain(`${PACKAGE_NAME}@0.15.6`);
-            expect(readFileSync(projectServer, "utf-8")).toBe(shadowedBefore);
+            expect(readFileSync(projectServer, "utf-8")).toBe(projectBefore);
             expect(logSpy).toHaveBeenCalledWith(expect.stringContaining(shadowedServer));
+        });
+
+        test("leaves an explicit version range unpinned", async () => {
+            const root = makeProjectFixture();
+            const server = join(root, "opencode.json");
+            const tui = join(root, "tui.json");
+            writePluginConfig(server, `${PACKAGE_NAME}@^0.15.0`);
+            writePluginConfig(tui, `${PACKAGE_NAME}@^0.15.0`);
+            const serverBefore = readFileSync(server, "utf-8");
+            const tuiBefore = readFileSync(tui, "utf-8");
+
+            const { preparePluginUpdate } = await freshCheckerImport();
+            const result = await preparePluginUpdate(
+                root,
+                {
+                    entry: `${PACKAGE_NAME}@^0.15.0`,
+                    isPinned: true,
+                    pinnedVersion: "^0.15.0",
+                    configPath: server,
+                },
+                "0.15.6",
+            );
+
+            expect(result).toBeNull();
+            expect(readFileSync(server, "utf-8")).toBe(serverBefore);
+            expect(readFileSync(tui, "utf-8")).toBe(tuiBefore);
         });
 
         test("restores both files when the second config write fails", async () => {

@@ -83,6 +83,26 @@ function fingerprintFor(description: string, parameters: unknown): string {
 }
 
 /**
+ * Hash the observed names in the provider tool set for one model/agent route.
+ *
+ * Tool names alone identify the prefix change this marker explains. Schema
+ * fingerprints remain necessary for measurement de-duplication, but including
+ * them here would add cost without improving cache-bust attribution. An empty
+ * string means the route has not reported any tool definitions, not an empty
+ * provider `tools` array.
+ */
+export function getCurrentToolSetHash(
+    providerID: string,
+    modelID: string,
+    agentName: string | undefined,
+): string {
+    if (!providerID || !modelID) return "";
+    const toolIds = measurements.get(keyFor(providerID, modelID, agentName));
+    if (!toolIds || toolIds.size === 0) return "";
+    return createHash("sha256").update(Array.from(toolIds.keys()).sort().join("\0")).digest("hex");
+}
+
+/**
  * Register the database used to persist measurements. Called by
  * openDatabase() after runMigrations() has ensured the
  * `tool_definition_measurements` table exists. Subsequent

@@ -1,0 +1,117 @@
+{
+  "memory_block_cases": [
+    {
+      "memories": [],
+      "block": ""
+    },
+    {
+      "memories": [
+        {
+          "id": 1,
+          "category": "ARCHITECTURE",
+          "content": "the spine holds the frozen set",
+          "importance": 80
+        }
+      ],
+      "block": "<project-memory>\n<ARCHITECTURE>\n#1: the spine holds the frozen set\n</ARCHITECTURE>\n</project-memory>"
+    },
+    {
+      "memories": [
+        {
+          "id": 3,
+          "category": "NAMING",
+          "content": "use ctx_* prefix",
+          "importance": 40
+        },
+        {
+          "id": 5,
+          "category": "Z_LEGACY",
+          "content": "last unknown",
+          "importance": 1
+        },
+        {
+          "id": 1,
+          "category": "PROJECT_RULES",
+          "content": "alpha",
+          "importance": 90
+        },
+        {
+          "id": 2,
+          "category": "CONSTRAINTS",
+          "content": "x < y & \"z\"",
+          "importance": null,
+          "source_name": "svc<&"
+        },
+        {
+          "id": 4,
+          "category": "A_LEGACY",
+          "content": "first unknown",
+          "importance": 100
+        }
+      ],
+      "block": "<project-memory>\n<PROJECT_RULES>\n#1: alpha\n</PROJECT_RULES>\n<CONSTRAINTS>\n#2 [svc&lt;&amp;]: x &lt; y &amp; \"z\"\n</CONSTRAINTS>\n<NAMING>\n#3: use ctx_* prefix\n</NAMING>\n<A_LEGACY>\n#4: first unknown\n</A_LEGACY>\n<Z_LEGACY>\n#5: last unknown\n</Z_LEGACY>\n</project-memory>"
+    }
+  ],
+  "memory_updates_cases": [
+    {
+      "mutations": [],
+      "rendered_ids": [
+        1
+      ],
+      "block": ""
+    },
+    {
+      "mutations": [
+        {
+          "id": 1,
+          "type": "update",
+          "target": 1,
+          "content": "new < content",
+          "by": null
+        }
+      ],
+      "rendered_ids": [
+        1
+      ],
+      "block": "<memory-updates>\nThese memories changed since the snapshot below — trust these:\n  <updated id=\"1\">new &lt; content</updated>\n</memory-updates>"
+    },
+    {
+      "mutations": [
+        {
+          "id": 2,
+          "type": "update",
+          "target": 1,
+          "content": "u",
+          "by": null
+        },
+        {
+          "id": 3,
+          "type": "superseded",
+          "target": 2,
+          "content": "",
+          "by": 9
+        },
+        {
+          "id": 4,
+          "type": "superseded",
+          "target": 3,
+          "content": "",
+          "by": 99
+        },
+        {
+          "id": 5,
+          "type": "archive",
+          "target": 4,
+          "content": "",
+          "by": null
+        }
+      ],
+      "rendered_ids": [
+        1,
+        2,
+        9
+      ],
+      "block": "<memory-updates>\nThese memories changed since the snapshot below — trust these:\n  <updated id=\"1\">u</updated>\n  <superseded id=\"2\" by=\"9\"/>\n  <removed id=\"3\"/>\n  <removed id=\"4\"/>\n</memory-updates>"
+    }
+  ]
+}

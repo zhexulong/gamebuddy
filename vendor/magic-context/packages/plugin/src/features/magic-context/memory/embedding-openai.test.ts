@@ -66,6 +66,31 @@ describe("embeddingModelsMatch token-boundary semantics", () => {
             embeddingModelsMatch("text-embedding-3-small", "openai/text-embedding-3-small"),
         ).toBe(true);
     });
+    test("matches OpenRouter's canonicalized prefix and variant removal (#306)", () => {
+        expect(
+            embeddingModelsMatch(
+                "private/openrouter/nvidia/llama-nemotron-embed-vl-1b-v2",
+                "nvidia/llama-nemotron-embed-vl-1b-v2:free",
+            ),
+        ).toBe(true);
+    });
+    test("matches a single-sided variant tag", () => {
+        expect(embeddingModelsMatch("X:latest", "X")).toBe(true);
+    });
+    test("matches equal tags", () => {
+        expect(embeddingModelsMatch("X:free", "X:free")).toBe(true);
+    });
+    test("rejects different model-size tags", () => {
+        expect(embeddingModelsMatch("mxbai-embed-large:335m", "mxbai-embed-large:137m")).toBe(
+            false,
+        );
+        expect(embeddingModelsMatch("nomic-embed-text:v1", "nomic-embed-text:v1.5")).toBe(false);
+    });
+    test("still rejects a genuine substitution with a variant tag", () => {
+        expect(
+            embeddingModelsMatch("all-minilm-l6-v2", "nvidia/llama-nemotron-embed-vl-1b-v2:free"),
+        ).toBe(false);
+    });
     test("REJECTS a broad configured name contained as an interior token (corruption hole)", () => {
         // The bug: served `…-qwen3-embedding-0.6b` contains configured `qwen3-embedding`
         // but `0.6b` is a distinct model token, not a version suffix.
@@ -503,5 +528,68 @@ describe("OpenAICompatibleEmbeddingProvider model-substitution guard", () => {
         const result = await provider.embed("text");
         expect(result).not.toBeNull();
         expect(provider._getFailureCount()).toBe(0);
+    });
+});
+
+describe("OpenAICompatibleEmbeddingProvider classified failures", () => {
+    let fetchSpy: ReturnType<typeof spyOn<typeof globalThis, "fetch">>;
+
+    beforeEach(() => {
+        fetchSpy = spyOn(globalThis, "fetch");
+    });
+    afterEach(() => {
+        fetchSpy.mockRestore();
+    });
+
+    test.each([
+        {
+            name: "router namespace rewrite is a substitution rejection",
+            model: "baai/bge-m3-embedding",
+            response: new Response(
+                JSON.stringify({ model: "bge-m3", data: [{ embedding: [0.1, 0.2] }] }),
+                { status: 200 },
+            ),
+            failureClass: "substitution_rejected",
+            reason: "served model 'bge-m3' does not match requested 'baai/bge-m3-embedding' (substitution guard)",
+        },
+        {
+            name: "HTTP failure includes a redacted body excerpt",
+            model: "test-model",
+            response: new Response(
+                '{"error":"quota exhausted","api_key":"sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEF"}',
+                { status: 402 },
+            ),
+            failureClass: "http_error",
+            reason: 'HTTP 402 from endpoint: {"error":"quota exhausted","api_key":"<REDACTED:api_key>"}',
+        },
+        {
+            name: "empty data is a genuine empty result",
+            model: "test-model",
+            response: new Response(JSON.stringify({ object: "list", data: [] }), { status: 200 }),
+            failureClass: "empty_result",
+            reason: "response data[] was empty",
+        },
+        {
+            name: "wrong envelope reports the available keys",
+            model: "test-model",
+            response: new Response(JSON.stringify({ object: "list", results: [] }), {
+                status: 200,
+            }),
+            failureClass: "invalid_envelope",
+            reason: "response had keys [object, results] but data[] was absent",
+        },
+    ])("$name", async ({ model, response, failureClass, reason }) => {
+        fetchSpy.mockImplementation((async () => response) as FetchLike);
+        const provider = new OpenAICompatibleEmbeddingProvider({
+            endpoint: "http://127.0.0.1:65535",
+            model,
+        });
+
+        expect(await provider.embed("text")).toBeNull();
+        expect(provider.getLastFailureReason()).toEqual({
+            class: failureClass,
+            reason,
+            retryable: failureClass === "empty_result",
+        });
     });
 });

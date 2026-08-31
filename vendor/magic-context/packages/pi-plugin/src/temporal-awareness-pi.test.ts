@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { injectPiTemporalMarkers } from "./temporal-awareness-pi";
+import {
+	injectPiTemporalMarkers,
+	stripPiLeadingTemporalMarker,
+	withoutPiLeadingTemporalMarker,
+} from "./temporal-awareness-pi";
 
 describe("injectPiTemporalMarkers", () => {
 	it("injects a +12m marker when user message arrives 12 minutes after previous", () => {
@@ -125,5 +129,30 @@ describe("injectPiTemporalMarkers", () => {
 			},
 		];
 		expect(injectPiTemporalMarkers(messages)).toBe(0);
+	});
+});
+
+describe("temporal marker projection normalization", () => {
+	it("removes a derived marker without disturbing its tag prefix", () => {
+		expect(
+			withoutPiLeadingTemporalMarker("§42§ <!-- +10m -->\nTagged user message"),
+		).toBe("§42§ Tagged user message");
+	});
+
+	it("normalizes array-shaped user content in place", () => {
+		const message = {
+			role: "user",
+			content: [
+				{ type: "image", data: "abc", mimeType: "image/png" },
+				{ type: "text", text: "§7§ <!-- +2h -->\nBack" },
+			],
+		};
+
+		expect(stripPiLeadingTemporalMarker(message)).toBe(true);
+		expect(message.content[1]).toEqual({
+			type: "text",
+			text: "§7§ Back",
+		});
+		expect(stripPiLeadingTemporalMarker(message)).toBe(false);
 	});
 });

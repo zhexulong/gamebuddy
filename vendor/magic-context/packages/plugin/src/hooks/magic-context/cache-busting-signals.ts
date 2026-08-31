@@ -1,4 +1,4 @@
-import { FORCE_MATERIALIZE_PERCENTAGE } from "./compartment-trigger";
+import { escalationBands } from "../../shared/escalation-bands";
 
 export interface DeferredConsumptionArgs {
     schedulerDecision: "execute" | "defer";
@@ -7,6 +7,7 @@ export interface DeferredConsumptionArgs {
     justAwaitedPublication: boolean;
     /** True when an active run would block materialization below the emergency bypass. */
     activeRunBlocksMaterialization: boolean;
+    forceMaterializationPercentage?: number;
 }
 
 export function canConsumeDeferredOnThisPass(args: DeferredConsumptionArgs): boolean {
@@ -15,7 +16,9 @@ export function canConsumeDeferredOnThisPass(args: DeferredConsumptionArgs): boo
 
     return (
         args.schedulerDecision === "execute" ||
-        args.contextPercentage >= FORCE_MATERIALIZE_PERCENTAGE
+        args.contextPercentage >=
+            (args.forceMaterializationPercentage ??
+                escalationBands(65).forceMaterializationPercentage)
     );
 }
 

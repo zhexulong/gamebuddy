@@ -11,17 +11,26 @@
  *   5. Smart-note writes rejected when dreamer is disabled
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { resolveProjectIdentity } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { indexMessagesAfterOrdinal } from "@magic-context/core/features/magic-context/message-index";
+import {
+	__wakePlaneTest,
+	WAKE_PLANE_CAPABILITY,
+} from "@magic-context/core/features/magic-context/smart-notes/wake-plane";
 import {
 	addNote,
 	getNotes,
 	updateNote,
 } from "@magic-context/core/features/magic-context/storage";
+
 import { createTestDb, fakeContext } from "../test-utils.test";
 import { createCtxNoteTool } from "./ctx-note";
 import { createCtxSearchTool } from "./ctx-search";
+
+afterEach(() => {
+	__wakePlaneTest.reset();
+});
 
 async function callNote(args: {
 	db: ReturnType<typeof createTestDb>;
@@ -108,6 +117,101 @@ describe("Pi ctx_note smart notes", () => {
 			"When PR #42 is merged in this repo",
 		);
 		expect(notes[0].content).toBe("Revisit caching after PR #42 merges");
+	});
+
+	it("stores surface_condition as a regular note only when the wake plane is present", async () => {
+		const db = createTestDb();
+		for (const status of ["present", "absent", "unknown"] as const) {
+			__wakePlaneTest.reset();
+			__wakePlaneTest.setCatalogProbe(async () => {
+				if (status === "unknown") throw new Error("daemon unavailable");
+				return status === "present"
+					? [
+							{
+								module_id: "scheduled-wakes",
+								roles: [],
+								control_ops: [WAKE_PLANE_CAPABILITY],
+							},
+						]
+					: [{ module_id: "other-module", roles: [], control_ops: [] }];
+			});
+			const content = `Wake-plane ${status}`;
+			const { text } = await callNote({
+				db,
+				dreamerEnabled: true,
+				params: {
+					action: "write",
+					content,
+					surface_condition: "When the scheduled operation completes",
+				},
+			});
+
+			if (status === "present") {
+				expect(text).toContain(
+					"wake plane active — create a scheduled wake instead; stored as a plain note.",
+				);
+				expect(
+					getNotes(db, { sessionId: "ses-note-1", type: "session" }),
+				).toContainEqual(expect.objectContaining({ content }));
+			} else {
+				expect(text).toContain("Created smart note");
+				expect(
+					getNotes(db, {
+						projectPath: resolveProjectIdentity(process.cwd()),
+						type: "smart",
+					}),
+				).toContainEqual(expect.objectContaining({ content }));
+			}
+		}
+	});
+
+	it("matches OpenCode compilation statuses and reply suffixes", async () => {
+		const db = createTestDb();
+		const common = { db, dreamerEnabled: true, cwd: process.cwd() };
+
+		const plain = await callNote({
+			...common,
+			params: {
+				action: "write",
+				content: "Follow up on the pull request.",
+				surface_condition: "When PR #42 is merged",
+			},
+		});
+		const compiled = await callNote({
+			...common,
+			params: {
+				action: "write",
+				content: "Read the generated artifact.",
+				surface_condition: "when path /tmp/pi-ctx-note-future-artifact exists",
+			},
+		});
+		const refused = await callNote({
+			...common,
+			params: {
+				action: "write",
+				content: "Never inspect key material.",
+				surface_condition: "when path /tmp/project-binding-key exists",
+			},
+		});
+
+		expect(plain.text).toBe(
+			"Created smart note #1. Dreamer will evaluate the condition during nightly runs:\n- Content: Follow up on the pull request.\n- Condition: When PR #42 is merged",
+		);
+		expect(compiled.text).toContain("- Retina provider: local-fs");
+		expect(refused.text).toContain("- Retina compile refused: fenced path");
+		const projectIdentity = resolveProjectIdentity(process.cwd());
+		expect(
+			getNotes(db, { projectPath: projectIdentity, type: "smart" }).map(
+				(note) => ({
+					status: note.compileStatus,
+					provider: note.compiledProvider,
+				}),
+			),
+		).toEqual([
+			{ status: "plain", provider: null },
+			{ status: "compiled", provider: "local-fs" },
+			{ status: "refused", provider: null },
+		]);
 	});
 
 	it("resolves smart-note enablement from the invocation cwd", async () => {

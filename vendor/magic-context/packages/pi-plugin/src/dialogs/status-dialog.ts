@@ -12,9 +12,13 @@ import {
 } from "@earendil-works/pi-tui";
 import { getCompartments } from "@magic-context/core/features/magic-context/compartment-storage";
 import { getMemoryCount } from "@magic-context/core/features/magic-context/memory/storage-memory";
+import { parseCacheTtl } from "@magic-context/core/features/magic-context/scheduler";
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
 import { getOrCreateSessionMeta } from "@magic-context/core/features/magic-context/storage-meta";
-import { getSessionWorkMetrics } from "@magic-context/core/features/magic-context/storage-meta-persisted";
+import {
+	getOverflowState,
+	getSessionWorkMetrics,
+} from "@magic-context/core/features/magic-context/storage-meta-persisted";
 import { getNotes } from "@magic-context/core/features/magic-context/storage-notes";
 import { getTagsBySession } from "@magic-context/core/features/magic-context/storage-tags";
 import {
@@ -29,9 +33,20 @@ import {
 	formatThresholdClampNote,
 	formatThresholdPercent,
 } from "@magic-context/core/shared/format-threshold";
-
+import type { TailHygieneStatus } from "@magic-context/core/shared/rpc-types";
+import {
+	formatTailHygiene,
+	resolveTailHygieneStatus,
+} from "@magic-context/core/shared/tail-hygiene-status";
+import {
+	formatWindowDerivationLine,
+	type WindowGeometryResult,
+} from "@magic-context/core/shared/window-geometry";
 import packageJson from "../../package.json";
 import { resolveSessionId } from "../commands/pi-command-utils";
+import { getPiChannel1Baseline } from "../ctx-reduce-nudge-pi";
+import { resolvePiWindowGeometry } from "../pi-context-limit";
+import { resolvePiPressureSnapshot } from "../pi-pressure";
 import { isPiRecompInFlight } from "../pi-recomp-runner";
 
 // Mirror packages/plugin/src/tui/slots/sidebar-content.tsx COLORS so the Pi
@@ -59,6 +74,8 @@ export interface StatusDialogDeps {
 		| { default: number; [modelKey: string]: number };
 	historyBudgetPercentage?: number;
 	injectionBudgetTokens?: number;
+	/** User-owned profile selected for the project, after config resolution. */
+	activeProfile?: string;
 	executeThresholdTokens?: {
 		default?: number;
 		[modelKey: string]: number | undefined;
@@ -67,6 +84,7 @@ export interface StatusDialogDeps {
 
 interface StatusDialogDetail {
 	sessionId: string;
+	activeProfile: string | null;
 	usagePercentage: number;
 	inputTokens: number;
 	systemPromptTokens: number;
@@ -89,6 +107,7 @@ interface StatusDialogDetail {
 	lastTransformError: string | null;
 	isSubagent: boolean;
 	contextLimit: number;
+	windowGeometry?: WindowGeometryResult;
 	executeThreshold: number;
 	/** Which config source produced `executeThreshold` (tokens vs percentage). */
 	executeThresholdMode: "percentage" | "tokens";
@@ -112,6 +131,7 @@ interface StatusDialogDetail {
 	conversationTokens: number;
 	toolCallTokens: number;
 	toolDefinitionTokens: number;
+	tailHygiene?: TailHygieneStatus;
 	newWorkTokens: number;
 	totalInputTokens: number;
 	/** Compartments still needing a v2 upgrade (legacy or tierless). */
@@ -264,9 +284,20 @@ function renderInner(
 			theme.bold(`${s.usagePercentage.toFixed(1)}%`),
 		)} · ${fmt(s.inputTokens)} / ${s.contextLimit > 0 ? fmt(s.contextLimit) : "?"} tokens`,
 	);
+	if (s.windowGeometry) {
+		lines.push(
+			formatWindowDerivationLine(s.inputTokens, s.windowGeometry).replace(
+				/^Context:.* — window /,
+				"Window ",
+			),
+		);
+	}
 	lines.push(
 		`Work tokens ${fmt(s.newWorkTokens)} new · ${fmt(s.totalInputTokens)} total input`,
 	);
+	if (s.tailHygiene !== undefined) {
+		lines.push(`Hygiene ${formatTailHygiene(s.tailHygiene)}`);
+	}
 
 	// Segmented bar (fills the full inner content width)
 	lines.push(renderBar(s, innerWidth));
@@ -281,6 +312,7 @@ function renderInner(
 		const right = theme.fg("muted", `${fmt(seg.tokens)} (${pct}%)`);
 		lines.push(`${left}   ${right}`);
 	}
+	lines.push("* Conversation includes model Reasoning; hygiene excludes it.");
 	lines.push("");
 
 	// Quick counts + historian. v2: facts retired (promoted to memories), so the
@@ -290,6 +322,7 @@ function renderInner(
 			s.sessionNoteCount + s.readySmartNoteCount
 		} notes`,
 	);
+	lines.push(`Active profile: ${s.activeProfile ?? "none"}`);
 	lines.push(
 		`Historian: ${
 			s.historianRunning
@@ -322,7 +355,9 @@ function renderInner(
 		} · ${
 			s.cacheExpired
 				? theme.fg("warning", "expired")
-				: `${Math.round(s.cacheRemainingMs / 1000)}s remaining`
+				: s.cacheRemainingMs === Number.POSITIVE_INFINITY
+					? "never (MC never assumes expiry — external cache-keep)"
+					: `${Math.round(s.cacheRemainingMs / 1000)}s remaining`
 		}`,
 	);
 	lines.push("");
@@ -396,18 +431,29 @@ export function buildPiStatusDetail(
 ): StatusDialogDetail {
 	const usage = ctx.getContextUsage?.();
 	const meta = getOrCreateSessionMeta(deps.db, sessionId);
-	const inputTokens =
-		typeof usage?.tokens === "number" ? usage.tokens : meta.lastInputTokens;
-	const usagePercentage =
-		typeof usage?.percent === "number"
-			? usage.percent
-			: meta.lastContextPercentage;
-	const contextLimit =
-		typeof usage?.contextWindow === "number" && usage.contextWindow > 0
-			? usage.contextWindow
-			: usagePercentage > 0
-				? Math.round(inputTokens / (usagePercentage / 100))
-				: 0;
+	let detectedContextLimit: number | undefined;
+	try {
+		const detected = getOverflowState(deps.db, sessionId).detectedContextLimit;
+		if (detected > 0) detectedContextLimit = detected;
+	} catch {
+		// Status remains available when overflow metadata cannot be read.
+	}
+	const windowGeometry = resolvePiWindowGeometry({
+		rawContextWindow: usage?.contextWindow ?? ctx.model?.contextWindow,
+		model: ctx.model,
+		detectedContextLimit,
+		persistedInputTokens: meta.lastInputTokens,
+		persistedPercentage: meta.lastContextPercentage,
+	});
+	const pressure = resolvePiPressureSnapshot({
+		persistedPercentage: meta.lastContextPercentage,
+		persistedInputTokens: meta.lastInputTokens,
+		liveInputTokens: usage?.tokens,
+		usableContextLimit: windowGeometry?.usableSoft,
+	});
+	const inputTokens = pressure.inputTokens;
+	const contextLimit = pressure.contextLimit ?? 0;
+	const usagePercentage = pressure.percentage;
 
 	const compartments = getCompartments(deps.db, sessionId);
 	const metaRow = readSessionMetaRow(deps.db, sessionId);
@@ -504,6 +550,9 @@ export function buildPiStatusDetail(
 			toolDefinitionTokens,
 	);
 	const workMetrics = getSessionWorkMetrics(deps.db, sessionId);
+	const tailHygiene = resolveTailHygieneStatus(
+		getPiChannel1Baseline(sessionId),
+	);
 
 	const modelKey = ctx.model
 		? `${ctx.model.provider}/${ctx.model.id}`
@@ -519,11 +568,20 @@ export function buildPiStatusDetail(
 		},
 	);
 	const cacheTtl = meta.cacheTtl || "5m";
-	const cacheTtlMs = parseTtlString(cacheTtl);
+	let cacheTtlMs: number;
+	try {
+		cacheTtlMs = parseCacheTtl(cacheTtl);
+	} catch {
+		cacheTtlMs = 5 * 60 * 1000;
+	}
+	const neverExpires = cacheTtlMs === Number.POSITIVE_INFINITY;
 	const elapsed =
 		meta.lastResponseTime > 0 ? Date.now() - meta.lastResponseTime : 0;
-	const cacheRemainingMs =
-		meta.lastResponseTime > 0 ? Math.max(0, cacheTtlMs - elapsed) : cacheTtlMs;
+	const cacheRemainingMs = neverExpires
+		? Number.POSITIVE_INFINITY
+		: meta.lastResponseTime > 0
+			? Math.max(0, cacheTtlMs - elapsed)
+			: cacheTtlMs;
 	const cacheExpired = meta.lastResponseTime > 0 && cacheRemainingMs === 0;
 	const historyBlockTokens = compartmentTokens + factTokens;
 	const historyBudgetPercentage = deps.historyBudgetPercentage ?? 0.15;
@@ -538,6 +596,7 @@ export function buildPiStatusDetail(
 
 	return {
 		sessionId,
+		activeProfile: deps.activeProfile ?? null,
 		usagePercentage,
 		inputTokens,
 		systemPromptTokens,
@@ -582,6 +641,7 @@ export function buildPiStatusDetail(
 		lastTransformError: meta.lastTransformError,
 		isSubagent: meta.isSubagent,
 		contextLimit,
+		windowGeometry,
 		executeThreshold: threshold.percentage,
 		executeThresholdMode: threshold.mode,
 		executeThresholdClamped: threshold.clamped,
@@ -605,6 +665,7 @@ export function buildPiStatusDetail(
 		conversationTokens,
 		toolCallTokens,
 		toolDefinitionTokens,
+		...(tailHygiene === undefined ? {} : { tailHygiene }),
 		newWorkTokens: workMetrics.newWorkTokens,
 		totalInputTokens: workMetrics.totalInputTokens,
 		upgradeNeededCount: safeRead(
@@ -670,7 +731,7 @@ function breakdownSegments(s: StatusDialogDetail): Array<{
 		});
 	if (s.conversationTokens > 0)
 		segs.push({
-			label: "Conversation",
+			label: "Conversation*",
 			tokens: s.conversationTokens,
 			color: COLORS.conversation,
 		});
@@ -745,22 +806,6 @@ function readPendingOpsCount(db: ContextDatabase, sessionId: string): number {
 		return row?.count ?? 0;
 	} catch {
 		return 0;
-	}
-}
-
-function parseTtlString(ttl: string): number {
-	const match = ttl.match(/^(\d+)(s|m|h)$/);
-	if (!match) return 5 * 60 * 1000;
-	const val = Number.parseInt(match[1] ?? "5", 10);
-	switch (match[2]) {
-		case "s":
-			return val * 1000;
-		case "m":
-			return val * 60 * 1000;
-		case "h":
-			return val * 3600 * 1000;
-		default:
-			return 5 * 60 * 1000;
 	}
 }
 

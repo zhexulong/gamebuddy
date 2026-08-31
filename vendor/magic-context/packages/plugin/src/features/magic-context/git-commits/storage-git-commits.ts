@@ -22,20 +22,9 @@ export interface StoredGitCommit extends GitCommit {
     indexedAtMs: number;
 }
 
-interface GitCommitRow {
-    sha: string;
-    project_path: string;
-    short_sha: string;
-    message: string;
-    author: string | null;
-    committed_at: number;
-    indexed_at: number;
-}
-
 const insertStatements = new WeakMap<Database, PreparedStatement>();
 const existingShasStatements = new WeakMap<Database, PreparedStatement>();
 const projectCountStatements = new WeakMap<Database, PreparedStatement>();
-const evictStatements = new WeakMap<Database, PreparedStatement>();
 const evictOverflowStatements = new WeakMap<Database, PreparedStatement>();
 const latestCommitTimeStatements = new WeakMap<Database, PreparedStatement>();
 
@@ -84,23 +73,6 @@ function getLatestCommitTimeStatement(db: Database): PreparedStatement {
             "SELECT MAX(committed_at) AS latest FROM git_commits WHERE project_path = ?",
         );
         latestCommitTimeStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getEvictStatement(db: Database): PreparedStatement {
-    let stmt = evictStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare(
-            `DELETE FROM git_commits
-             WHERE rowid IN (
-                 SELECT rowid FROM git_commits
-                 WHERE project_path = ?
-                 ORDER BY committed_at ASC, sha ASC
-                 LIMIT ?
-             )`,
-        );
-        evictStatements.set(db, stmt);
     }
     return stmt;
 }
@@ -200,16 +172,4 @@ export function enforceProjectCap(db: Database, projectPath: string, maxCommits:
         );
     }
     return evicted;
-}
-
-function rowToStoredCommit(row: GitCommitRow): StoredGitCommit {
-    return {
-        sha: row.sha,
-        projectPath: row.project_path,
-        shortSha: row.short_sha,
-        message: row.message,
-        author: row.author,
-        committedAtMs: row.committed_at,
-        indexedAtMs: row.indexed_at,
-    };
 }

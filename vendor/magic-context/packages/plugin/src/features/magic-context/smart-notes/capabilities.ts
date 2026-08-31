@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { guardedSmartNoteHttpGet, type SmartNoteResolver } from "./ssrf-guard";
-import { SmartNoteNetworkError, SmartNoteSecurityError } from "./types";
+import { SmartNoteNetworkError } from "./types";
 
 const execFileAsync = promisify(execFile);
 

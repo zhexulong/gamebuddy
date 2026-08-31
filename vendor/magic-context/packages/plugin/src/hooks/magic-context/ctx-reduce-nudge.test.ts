@@ -1,320 +1,489 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
     buildChannel1Reminder,
     buildChannel2Reminder,
-    CHANNEL1_SENTINEL,
-    CHANNEL2_MIN_RECLAIMABLE,
-    CHANNEL2_USABLE_FRACTION,
+    CHANNEL1_FLOOR_TOKENS,
+    CHANNEL1_MIN_TOKENS,
+    CHANNEL2_FLOOR_TOKENS,
+    CHANNEL2_SEVERITY_THRESHOLD,
+    type Channel1Level,
     channel1RefireTokens,
-    computePressure,
-    computeTailTokenEstimate,
-    computeTailToolTokens,
     decideChannel1,
-    shouldTriggerChannel2,
+    evaluateChannel2,
+    shouldUseStickyChannel1Reminder,
 } from "./ctx-reduce-nudge";
-import type { MessageLike } from "./tag-messages";
 
-function toolMsg(output: string): MessageLike {
-    return {
-        info: { id: "m", role: "assistant" },
-        parts: [{ type: "tool", state: { output } }],
-    } as unknown as MessageLike;
-}
-
-const BUDGET = 100_000;
-
-describe("computeTailToolTokens", () => {
-    it("sums non-dropped tool output, excludes sentinels", () => {
-        const big = "x".repeat(40_000); // ~10k tokens
-        const msgs = [toolMsg(big), toolMsg("[dropped §5§]"), toolMsg("[truncated]")];
-        const tokens = computeTailToolTokens(msgs);
-        expect(tokens).toBeGreaterThan(9_000);
-        expect(tokens).toBeLessThan(11_000);
-    });
-    it("ignores non-tool parts", () => {
-        const msg = {
-            info: { id: "m", role: "user" },
-            parts: [{ type: "text", text: "x".repeat(40_000) }],
-        } as unknown as MessageLike;
-        expect(computeTailToolTokens([msg])).toBe(0);
-    });
-});
-
-describe("computeTailTokenEstimate", () => {
-    it("estimates reclaimable tool output separately from the full live tail", () => {
-        const msg = {
-            info: { id: "m", role: "assistant" },
-            parts: [
-                { type: "text", text: "conversation ".repeat(1000) },
-                {
-                    type: "tool",
-                    state: { input: { cmd: "echo hi" }, output: "tool output ".repeat(1000) },
-                },
-            ],
-        } as unknown as MessageLike;
-
-        const estimate = computeTailTokenEstimate([msg]);
-
-        expect(estimate.tailToolTokens).toBeGreaterThan(0);
-        expect(estimate.liveTailTokens).toBeGreaterThan(estimate.tailToolTokens);
-    });
-});
-
-describe("decideChannel1 — trajectories", () => {
-    // severity = undroppedTokens / estimatedInputTokens (the reclaimable share of
-    // the live input). pressure is a separate clamped GATE (>= 0.8). Default
-    // estimatedInput=200k so undropped maps directly to a share: 40k→0.20,
-    // 80k→0.40, 130k→0.65.
+describe("decideChannel1 — agent-tail hygiene ratio", () => {
     const base = {
-        workingWindowTokens: BUDGET,
-        estimatedInputTokens: 200_000,
+        baselineU: 0,
+        baselineT: 100_000,
+        turnDeltaU: 0,
+        turnDeltaT: 0,
         lastNudgeUndropped: 0,
         lastNudgeLevel: "" as const,
         hasRecentReduce: false,
+        evaluable: true,
     };
 
-    it("pressure gate: below the floor → silent even with an urgent reclaimable share", () => {
-        // share = 150k/200k = 0.75 (would be urgent), but pressure 0.6 < 0.8 gate.
-        const d = decideChannel1({ ...base, undroppedTokens: 150_000, pressure: 0.6 });
-        expect(d.fire).toBe(false);
+    it("uses the four owner-set bands without wall-pressure input", () => {
+        expect(decideChannel1({ ...base, baselineU: 20_000 }).level).toBe("gentle");
+        expect(decideChannel1({ ...base, baselineU: 40_000 }).level).toBe("firm");
+        expect(decideChannel1({ ...base, baselineU: 55_000 }).level).toBe("firm");
+        expect(decideChannel1({ ...base, baselineU: 60_000 }).level).toBe("urgent");
     });
-    it("below the absolute token floor → silent", () => {
-        const d = decideChannel1({
+
+    it("is window-size invariant for proportional tail states", () => {
+        const sol = decideChannel1({ ...base, baselineU: 39_600, baselineT: 72_000 });
+        const fable = decideChannel1({ ...base, baselineU: 119_900, baselineT: 218_000 });
+        expect(sol.fire).toBe(true);
+        expect(fable.fire).toBe(true);
+        expect(sol.level).toBe("firm");
+        expect(fable.level).toBe(sol.level);
+    });
+
+    it("fires for the flagship 162k/249k rendered-tail incident", () => {
+        const decision = decideChannel1({ ...base, baselineU: 162_000, baselineT: 249_000 });
+        expect(decision.fire).toBe(true);
+        expect(decision.level).toBe("urgent");
+    });
+
+    it("fires at low total-window usage because the pressure gate is deleted", () => {
+        const decision = decideChannel1({ ...base, baselineU: 140_000, baselineT: 200_000 });
+        expect(decision.fire).toBe(true);
+        expect(decision.level).toBe("urgent");
+    });
+
+    it("holds a generation-invalidated baseline", () => {
+        const decision = decideChannel1({
             ...base,
-            undroppedTokens: 9_000,
-            estimatedInputTokens: 12_000,
-            pressure: 1.0,
+            baselineU: 70_000,
+            generationInvalidated: true,
+            evaluable: false,
         });
-        expect(d.fire).toBe(false); // below CHANNEL1_FLOOR_TOKENS
+        expect(decision.fire).toBe(false);
     });
-    it("low reclaimable share at high pressure → silent", () => {
-        // share = 20k/200k = 0.10 < gentle; pressure passes the gate but share is low.
-        const d = decideChannel1({ ...base, undroppedTokens: 20_000, pressure: 1.0 });
-        expect(d.fire).toBe(false);
+
+    it("guards T=0 and U=0", () => {
+        expect(decideChannel1({ ...base, baselineU: 0, baselineT: 0 }).fire).toBe(false);
+        expect(decideChannel1({ ...base, baselineU: 0 }).fire).toBe(false);
     });
-    it("gentle band: ~25% reclaimable share, gate passed", () => {
-        const d = decideChannel1({ ...base, undroppedTokens: 50_000, pressure: 0.9 });
-        // share = 0.25 → gentle [0.2,0.4)
-        expect(d.fire).toBe(true);
-        expect(d.level).toBe("gentle");
-    });
-    it("firm band: ~45% reclaimable share", () => {
-        const d = decideChannel1({ ...base, undroppedTokens: 90_000, pressure: 0.9 });
-        // share = 0.45 → firm [0.4,0.65)
-        expect(d.fire).toBe(true);
-        expect(d.level).toBe("firm");
-    });
-    it("urgent band: ~70% reclaimable share", () => {
-        const d = decideChannel1({ ...base, undroppedTokens: 140_000, pressure: 0.9 });
-        // share = 0.70 ≥ 0.65 → urgent
-        expect(d.fire).toBe(true);
-        expect(d.level).toBe("urgent");
-    });
-    // The core defect fix: over-threshold pressure (>1) must NOT inflate the band.
-    // Previously severity = share × pressure² so this would have read urgent.
-    it("pressure clamp: over-threshold pressure does not inflate the band", () => {
-        const d = decideChannel1({ ...base, undroppedTokens: 60_000, pressure: 1.5 });
-        // share = 0.30 → gentle; pressure clamps to 1.0 (gate passes), stays gentle.
-        expect(d.fire).toBe(true);
-        expect(d.level).toBe("gentle");
-    });
-    it("post-ctx_reduce suppression: never fire on a reduce turn", () => {
-        const d = decideChannel1({
+
+    it("uses max(T,1) and clamps a defensive U>T ratio", () => {
+        const decision = decideChannel1({
             ...base,
-            undroppedTokens: 140_000,
-            pressure: 0.9,
-            hasRecentReduce: true,
+            baselineU: 100_000,
+            baselineT: 60_000,
         });
-        expect(d.fire).toBe(false);
+        expect(decision.fire).toBe(true);
+        expect(decision.level).toBe("urgent");
+        expect(decision.severity).toBe(1);
     });
-    it("budget-scaled cadence uses a 5% interval with a 10k floor", () => {
-        expect(channel1RefireTokens(100_000)).toBe(10_000);
-        expect(channel1RefireTokens(1_000_000)).toBe(50_000);
+
+    it("MIN_T keeps a 59k tail quiet and allows a 61k tail", () => {
+        const under = decideChannel1({ ...base, baselineU: 55_000, baselineT: 59_000 });
+        const over = decideChannel1({ ...base, baselineU: 55_000, baselineT: 61_000 });
+        expect(CHANNEL1_MIN_TOKENS).toBe(60_000);
+        expect(under.fire).toBe(false);
+        expect(over.fire).toBe(true);
+        expect(over.level).toBe("urgent");
     });
-    it("cadence: the initial fire waits for the budget-scaled interval", () => {
-        const d = decideChannel1({
+
+    it("prevents a post-fold first-read spike", () => {
+        const decision = decideChannel1({ ...base, baselineU: 30_000, baselineT: 35_000 });
+        expect(decision.fire).toBe(false);
+    });
+
+    it("uses the 25k U floor", () => {
+        expect(CHANNEL1_FLOOR_TOKENS).toBe(25_000);
+        expect(decideChannel1({ ...base, baselineU: 24_000 }).fire).toBe(false);
+        expect(decideChannel1({ ...base, baselineU: 26_000 }).fire).toBe(true);
+    });
+
+    it("combines persisted baseline and typed turn deltas", () => {
+        const decision = decideChannel1({
             ...base,
-            workingWindowTokens: 1_000_000,
-            undroppedTokens: 40_000,
-            estimatedInputTokens: 100_000, // share 0.4 (firm), band would fire
-            pressure: 0.9,
+            baselineU: 20_000,
+            baselineT: 55_000,
+            turnDeltaU: 10_000,
+            turnDeltaT: 10_000,
         });
-        // 5% of a 1M working window is 50k, so a 40k pile is below cadence → quiet.
-        expect(d.fire).toBe(false);
+        expect(decision.undroppedTokens).toBe(30_000);
+        expect(decision.tailTokens).toBe(65_000);
+        expect(decision.fire).toBe(true);
+        expect(decision.level).toBe("firm");
     });
-    it("band suppression: does not repeat the same level on cadence alone", () => {
-        const d = decideChannel1({
+
+    it("suppresses same-band noise until the rebased cadence interval", () => {
+        const quiet = decideChannel1({
             ...base,
-            undroppedTokens: 60_000, // share 0.30, still gentle
-            pressure: 0.9,
+            baselineU: 48_000,
+            baselineT: 120_000,
             lastNudgeUndropped: 40_000,
-            lastNudgeLevel: "gentle",
+            lastNudgeLevel: "firm",
         });
-        // grew 20k but same-band repetition is noise.
-        expect(d.fire).toBe(false);
-    });
-    it("band suppression: fires immediately when severity escalates", () => {
-        const d = decideChannel1({
+        const refire = decideChannel1({
             ...base,
-            undroppedTokens: 90_000, // share 0.45 → firm
-            pressure: 0.9,
-            lastNudgeUndropped: 85_000,
-            lastNudgeLevel: "gentle",
+            baselineU: 65_000,
+            baselineT: 140_000,
+            lastNudgeUndropped: 40_000,
+            lastNudgeLevel: "firm",
         });
-        // an escalation (gentle→firm) even though cadence grew only 5k.
-        expect(d.fire).toBe(true);
-        expect(d.level).toBe("firm");
-        expect(d.nextLastNudgeLevel).toBe("firm");
+        expect(quiet.fire).toBe(false);
+        expect(refire.fire).toBe(true);
+        expect(refire.level).toBe("firm");
     });
-    it("post-ctx_reduce reset clears the persisted level", () => {
-        const d = decideChannel1({
+
+    it("fires an escalation before cadence is reached", () => {
+        const decision = decideChannel1({
             ...base,
-            undroppedTokens: 140_000,
-            pressure: 0.9,
-            lastNudgeUndropped: 120_000,
+            baselineU: 60_000,
+            baselineT: 100_000,
+            lastNudgeUndropped: 50_000,
+            lastNudgeLevel: "firm",
+        });
+        expect(decision.fire).toBe(true);
+        expect(decision.level).toBe("urgent");
+    });
+
+    it("uses max(25k, 0.08 × T) cadence", () => {
+        expect(channel1RefireTokens(60_000)).toBe(25_000);
+        expect(channel1RefireTokens(100_000)).toBe(25_000);
+        expect(channel1RefireTokens(1_000_000)).toBe(80_000);
+    });
+
+    it("holds dirty post-reduce input without resetting the observed band", () => {
+        const decision = decideChannel1({
+            ...base,
+            baselineU: 70_000,
+            lastNudgeUndropped: 60_000,
             lastNudgeLevel: "urgent",
             hasRecentReduce: true,
         });
-        expect(d.fire).toBe(false);
-        expect(d.nextLastNudge).toBe(0);
-        expect(d.nextLastNudgeLevel).toBe("");
+        expect(decision.fire).toBe(false);
+        expect(decision.nextLastNudge).toBe(60_000);
+        expect(decision.nextLastNudgeLevel).toBe("urgent");
     });
-    it("cadence re-arms after a reduce drops undropped below last mark", () => {
-        const d = decideChannel1({
+
+    it("records a measured U collapse quietly and re-arms an upward crossing", () => {
+        const collapse = decideChannel1({
             ...base,
-            undroppedTokens: 50_000, // share 0.25 → gentle
-            pressure: 0.9,
-            lastNudgeUndropped: 120_000,
+            baselineU: 30_000,
+            baselineT: 100_000,
+            lastNudgeUndropped: 80_000,
             lastNudgeLevel: "urgent",
         });
-        // undropped fell below last mark → reset to 0/none → 50k ≥ 0+10k cadence.
-        expect(d.fire).toBe(true);
-        expect(d.nextLastNudge).toBe(50_000);
-        expect(d.nextLastNudgeLevel).toBe("gentle");
+        expect(collapse.fire).toBe(false);
+        expect(collapse.nextLastNudge).toBe(30_000);
+        expect(collapse.nextLastNudgeLevel).toBe("gentle");
+        const recrossing = decideChannel1({
+            ...base,
+            baselineU: 45_000,
+            baselineT: 100_000,
+            lastNudgeUndropped: collapse.nextLastNudge,
+            lastNudgeLevel: collapse.nextLastNudgeLevel,
+        });
+        expect(recrossing.fire).toBe(true);
+        expect(recrossing.level).toBe("firm");
+        expect(recrossing.sticky).toBe(false);
     });
 
-    // Regression for the reported symptom: a tool-dominant tail near/over the
-    // execute threshold no longer auto-escalates to URGENT. Old metric:
-    // severity = share × pressure²; with share 0.40 and pressure 1.2 it read
-    // 0.40 × 1.44 = 0.576 (near-urgent) and any higher pressure pushed it over.
-    // New metric: pressure clamps to a gate, severity = the plain 0.40 share → firm.
-    it("regression: tool-heavy tail over the threshold reads firm, not urgent", () => {
-        const d = decideChannel1({
+    it("pins post-reduce grace to post-drop U until full regrowth", () => {
+        const specimen = {
             ...base,
-            undroppedTokens: 80_000, // share = 0.40
-            pressure: 1.2, // over threshold; clamps to 1.0 (gate passes)
-            lastNudgeUndropped: 0,
-            lastNudgeLevel: "",
-        });
-        expect(d.fire).toBe(true);
-        expect(d.level).toBe("firm");
+            baselineU: 60_000,
+            baselineT: 150_000,
+            lastNudgeUndropped: 30_000,
+            lastNudgeLevel: "firm" as const,
+            lastFireOrdinal: 0,
+            currentRealUserTurnCount: 5,
+            postReduceGraceBaselineU: 60_000,
+            postReduceGracePreLevel: "firm" as const,
+        };
+        const immediate = decideChannel1(specimen);
+        expect(immediate.fire).toBe(false);
+        expect(immediate.clearPostReduceGrace).toBe(false);
+        const almost = decideChannel1({ ...specimen, baselineU: 84_999 });
+        expect(almost.fire).toBe(false);
+        const regrown = decideChannel1({ ...specimen, baselineU: 85_000 });
+        expect(regrown.fire).toBe(true);
+        expect(regrown.sticky).toBe(true);
+        expect(regrown.clearPostReduceGrace).toBe(true);
+
+        // Mutation control: removing grace makes the immediate same-band cadence fire.
+        expect(
+            decideChannel1({
+                ...specimen,
+                postReduceGraceBaselineU: undefined,
+                postReduceGracePreLevel: undefined,
+            }).fire,
+        ).toBe(true);
     });
 
-    // A small reclaimable pile near the threshold stays quiet (the numerator
-    // reclaimable share is small regardless of how close to compaction we are).
-    it("small reclaimable share stays quiet even at full pressure", () => {
-        const d = decideChannel1({
+    it("breaks grace on a band escalation while Channel 2 remains independent", () => {
+        const escalation = decideChannel1({
             ...base,
-            undroppedTokens: 25_000, // share = 0.125 < gentle
-            pressure: 1.0,
-            lastNudgeUndropped: 0,
-            lastNudgeLevel: "",
+            baselineU: 61_000,
+            baselineT: 100_000,
+            lastNudgeUndropped: 60_000,
+            lastNudgeLevel: "firm",
+            lastFireOrdinal: 8,
+            currentRealUserTurnCount: 8,
+            postReduceGraceBaselineU: 60_000,
+            postReduceGracePreLevel: "firm",
         });
-        expect(d.fire).toBe(false);
+        expect(escalation.fire).toBe(true);
+        expect(escalation.level).toBe("urgent");
+        expect(escalation.sticky).toBe(false);
+        expect(escalation.clearPostReduceGrace).toBe(true);
+
+        const channel1Held = decideChannel1({
+            ...base,
+            baselineU: 75_000,
+            baselineT: 100_000,
+            lastNudgeUndropped: 74_000,
+            lastNudgeLevel: "urgent",
+            postReduceGraceBaselineU: 74_000,
+            postReduceGracePreLevel: "urgent",
+        });
+        expect(channel1Held.fire).toBe(false);
+        expect(
+            evaluateChannel2({
+                ...base,
+                baselineU: 75_000,
+                baselineT: 100_000,
+            }).shouldTrigger,
+        ).toBe(true);
     });
 });
 
-describe("computePressure", () => {
-    it("derives pressure from prospective input + turn tokens", () => {
-        const p = computePressure({
-            lastInputTokens: 120_000,
-            turnToolTokens: 10_000,
-            contextLimit: 200_000,
-            executeThresholdPercentage: 65,
-        });
-        // usage% = 130000/200000*100 = 65; pressure = 65/65 = 1.0
-        expect(p).toBeCloseTo(1.0, 2);
+type ReminderCopyGolden = {
+    schema: number;
+    cases: Array<{
+        id: string;
+        channel: "channel1" | "channel2";
+        level?: Channel1Level;
+        reclaimable_tool_outputs: number;
+        reclaimable_tokens: number;
+        sticky?: boolean;
+        hint: Array<{ tag_number: number; tool_name: string | null }>;
+        expected: string;
+    }>;
+};
+
+const reminderCopyGolden = JSON.parse(
+    readFileSync(
+        new URL(
+            "../../../../../crates/mc-module/testdata/ctx-reduce-nudge-copy-golden.json",
+            import.meta.url,
+        ),
+        "utf8",
+    ),
+) as ReminderCopyGolden;
+
+function renderReminderGoldenCase(reminder: ReminderCopyGolden["cases"][number]): string {
+    const hint = reminder.hint.map(({ tag_number, tool_name }) => ({
+        tagNumber: tag_number,
+        toolName: tool_name,
+    }));
+    if (reminder.channel === "channel2") {
+        return buildChannel2Reminder(
+            reminder.reclaimable_tokens,
+            reminder.reclaimable_tool_outputs,
+            hint,
+        );
+    }
+    if (!reminder.level) throw new Error(`${reminder.id} needs a Channel-1 level`);
+    return buildChannel1Reminder(
+        reminder.level,
+        reminder.reclaimable_tokens,
+        reminder.reclaimable_tool_outputs,
+        hint,
+        reminder.sticky,
+    );
+}
+
+describe("reminder rendering", () => {
+    it("matches the TypeScript copy golden for every rendered band", () => {
+        expect(reminderCopyGolden.schema).toBe(1);
+        for (const reminder of reminderCopyGolden.cases) {
+            expect(renderReminderGoldenCase(reminder), reminder.id).toBe(reminder.expected);
+        }
     });
-    it("returns 0 on unknown limit (cold start)", () => {
+
+    it("never exposes a context-capacity gauge in any rendered band", () => {
+        for (const reminder of reminderCopyGolden.cases) {
+            const rendered = renderReminderGoldenCase(reminder);
+            expect(rendered, `${reminder.id} must not expose a denominator`).not.toContain("of ~");
+            expect(rendered, `${reminder.id} must not expose session capacity`).not.toContain(
+                "of this session",
+            );
+            expect(
+                rendered.match(/~\d+(?:\.\d+)?k\b/g) ?? [],
+                `${reminder.id} must expose only the reclaimable token mass`,
+            ).toHaveLength(1);
+            expect(rendered, `${reminder.id} must not expose a percentage`).not.toMatch(
+                /\b\d+(?:\.\d+)?\s*%/,
+            );
+            expect(rendered, `${reminder.id} must not expose context capacity`).not.toMatch(
+                /\bwindow\b/i,
+            );
+        }
+    });
+
+    it("dampens re-fires in a window with zero real user turns (pure tool stream)", () => {
+        // Regression: never-fired is signaled by an empty lastLevel, not by
+        // ordinal zero. A conversation whose window is all tool traffic fires
+        // at real-user count 0; its same-level re-fire must still collapse.
         expect(
-            computePressure({
-                lastInputTokens: 0,
-                turnToolTokens: 0,
-                contextLimit: 0,
-                executeThresholdPercentage: 65,
+            shouldUseStickyChannel1Reminder({
+                lastLevel: "urgent",
+                lastOrdinal: 0,
+                level: "urgent",
+                currentRealUserTurnCount: 0,
             }),
-        ).toBe(0);
-    });
-});
-
-describe("buildChannel1Reminder", () => {
-    it("wraps in the versioned sentinel and reports the amount", () => {
-        const r = buildChannel1Reminder("firm", 42_000);
-        expect(r).toContain(CHANNEL1_SENTINEL);
-        expect(r).toContain("</system-reminder>");
-        expect(r).toContain("~42k");
-    });
-
-    it("renders oldest reclaimable hints from stored tool names", () => {
-        const r = buildChannel1Reminder("firm", 42_000, [
-            { tagNumber: 123, toolName: "read" },
-            { tagNumber: 145, toolName: "grep" },
-            { tagNumber: 150, toolName: null },
-        ]);
-        expect(r).toContain("oldest reclaimable: §123§ read · §145§ grep · §150§ tool.");
-    });
-});
-
-describe("buildChannel2Reminder", () => {
-    it("includes optional oldest reclaimable hints", () => {
-        const r = buildChannel2Reminder(30_000, [{ tagNumber: 7, toolName: "bash" }]);
-        expect(r).toContain("oldest reclaimable: §7§ bash.");
-    });
-});
-
-describe("shouldTriggerChannel2 — ceiling (reclaimable ≥ usable/3)", () => {
-    it("fires when reclaimable is at least a third of the usable working range", () => {
-        // usable=90k → third=30k; reclaimable=30k ⇒ fire
-        expect(shouldTriggerChannel2({ reclaimableTokens: 30_000, usableTokens: 90_000 })).toBe(
-            true,
-        );
-    });
-    it("the AFT regression: 54k reclaimable on a wide 1M session does NOT fire", () => {
-        // Big-context session: usable is large (lots of working room), so 54k is
-        // well under a third — the old absolute-40k gate wrongly fired here.
-        expect(shouldTriggerChannel2({ reclaimableTokens: 54_000, usableTokens: 300_000 })).toBe(
-            false,
-        );
-    });
-    it("the SAME 54k on a tight 120k usable session DOES fire (size-relative)", () => {
-        // usable=120k → third=40k; 54k ≥ 40k ⇒ fire. One rule, both contexts.
-        expect(shouldTriggerChannel2({ reclaimableTokens: 54_000, usableTokens: 120_000 })).toBe(
-            true,
-        );
-    });
-    it("stays quiet below the absolute reclaimable floor regardless of ratio", () => {
-        // usable tiny (near threshold) → ratio satisfied, but pile is trivial.
+        ).toBe(true);
         expect(
-            shouldTriggerChannel2({
-                reclaimableTokens: CHANNEL2_MIN_RECLAIMABLE - 1,
-                usableTokens: 1_000,
+            shouldUseStickyChannel1Reminder({
+                lastLevel: "",
+                lastOrdinal: 0,
+                level: "urgent",
+                currentRealUserTurnCount: 0,
             }),
         ).toBe(false);
     });
-    it("escalates when at/over threshold (usable ≤ 0) with a real pile", () => {
-        expect(shouldTriggerChannel2({ reclaimableTokens: 50_000, usableTokens: 0 })).toBe(true);
-    });
-    it("uses the 1/3 fraction constant", () => {
-        expect(CHANNEL2_USABLE_FRACTION).toBeCloseTo(1 / 3, 5);
+
+    it("keeps every same-band re-fire sticky while escalations stay full", () => {
+        expect(
+            shouldUseStickyChannel1Reminder({
+                lastLevel: "firm",
+                lastOrdinal: 10,
+                level: "firm",
+                currentRealUserTurnCount: 12,
+            }),
+        ).toBe(true);
+        expect(
+            shouldUseStickyChannel1Reminder({
+                lastLevel: "firm",
+                lastOrdinal: 10,
+                level: "firm",
+                currentRealUserTurnCount: 15,
+            }),
+        ).toBe(true);
+        expect(
+            shouldUseStickyChannel1Reminder({
+                lastLevel: "firm",
+                lastOrdinal: 10,
+                level: "urgent",
+                currentRealUserTurnCount: 11,
+            }),
+        ).toBe(false);
+
+        expect(
+            shouldUseStickyChannel1Reminder({
+                lastLevel: "firm",
+                lastOrdinal: 160_750,
+                level: "firm",
+                currentRealUserTurnCount: 12,
+            }),
+        ).toBe(true);
+
+        const sticky = buildChannel1Reminder("firm", 70_000, 16, undefined, true);
+        expect(sticky).toContain(
+            "Reminder: 16 spent tool outputs (~70k tokens) are still reclaimable",
+        );
+        const escalation = buildChannel1Reminder("urgent", 80_000, 16, undefined, false);
+        expect(escalation).toContain("Housekeeping backlog: 16 spent tool outputs (~80k tokens)");
+        expect(escalation).toContain("a ctx_reduce pass is due");
+        expect(sticky).not.toContain("a ctx_reduce pass is due");
     });
 });
 
-describe("buildChannel2Reminder", () => {
-    it("is a plain system-reminder and reports the amount", () => {
-        const r = buildChannel2Reminder(55_000);
-        expect(r).toContain("<system-reminder>");
-        expect(r).toContain("</system-reminder>");
-        expect(r).toContain("~55k");
-        expect(r).toContain("ctx_reduce");
+describe("evaluateChannel2 — fourth hygiene band", () => {
+    const baseline = {
+        baselineU: 0,
+        baselineT: 100_000,
+        turnDeltaU: 0,
+        turnDeltaT: 0,
+        usableWindow: 128_000,
+        evaluable: true,
+        generationInvalidated: false,
+    };
+
+    it("arms only at severity >= 0.75 with at least 50k reclaimable tokens", () => {
+        expect(CHANNEL2_FLOOR_TOKENS).toBe(50_000);
+        expect(CHANNEL2_SEVERITY_THRESHOLD).toBe(0.75);
+        expect(
+            evaluateChannel2({
+                ...baseline,
+                baselineU: 65_000,
+                turnDeltaU: 10_000,
+            }).shouldTrigger,
+        ).toBe(true);
+        expect(
+            evaluateChannel2({
+                ...baseline,
+                baselineU: 49_999,
+                baselineT: 80_000,
+            }).shouldTrigger,
+        ).toBe(false);
+        expect(
+            evaluateChannel2({
+                ...baseline,
+                baselineU: 59_999,
+            }).shouldTrigger,
+        ).toBe(false);
+        expect(
+            evaluateChannel2({
+                ...baseline,
+                baselineU: 59_000,
+                baselineT: 59_000,
+            }).shouldTrigger,
+        ).toBe(false);
+    });
+
+    it("keeps the 162k/249k flagship incident in the urgent band", () => {
+        const evaluation = evaluateChannel2({
+            ...baseline,
+            baselineU: 162_000,
+            baselineT: 249_000,
+        });
+        expect(evaluation.shouldTrigger).toBe(false);
+        expect(evaluation.severity).toBeCloseTo(0.651, 3);
+
+        const decision = decideChannel1({
+            ...baseline,
+            baselineU: 162_000,
+            baselineT: 249_000,
+            lastNudgeUndropped: 0,
+            lastNudgeLevel: "",
+            hasRecentReduce: false,
+        });
+        expect(decision.fire).toBe(true);
+        expect(decision.level).toBe("urgent");
+    });
+
+    it("cannot arm below the Channel-1 urgent band", () => {
+        for (let tailTokens = 60_000; tailTokens <= 500_000; tailTokens += 10_000) {
+            const belowUrgent = Math.floor(tailTokens * 0.59999);
+            expect(
+                evaluateChannel2({
+                    ...baseline,
+                    baselineU: belowUrgent,
+                    baselineT: tailTokens,
+                }).shouldTrigger,
+            ).toBe(false);
+        }
+    });
+
+    it("holds generation-invalidated and unknown baselines", () => {
+        expect(evaluateChannel2(undefined).evaluable).toBe(false);
+        const invalidated = evaluateChannel2({
+            ...baseline,
+            baselineU: 70_000,
+            generationInvalidated: true,
+        });
+        expect(invalidated.evaluable).toBe(false);
+        expect(invalidated.shouldTrigger).toBe(false);
     });
 });

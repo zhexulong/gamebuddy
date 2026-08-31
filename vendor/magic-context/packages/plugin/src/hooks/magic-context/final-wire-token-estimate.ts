@@ -9,6 +9,40 @@ export interface MessageTokenEstimate {
     toolCall: number;
 }
 
+function compactWireLabel(value: unknown, fallback: string): string {
+    if (typeof value !== "string" || value.length === 0) return fallback;
+    return value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 32) || fallback;
+}
+
+function wirePartKind(part: unknown, role: string): string {
+    const rawType =
+        part !== null &&
+        typeof part === "object" &&
+        typeof (part as { type?: unknown }).type === "string"
+            ? (part as { type: string }).type
+            : "unknown";
+    if (rawType === "tool_result" || rawType === "tool-result") return "toolresult";
+    if (rawType === "tool_use" || rawType === "tool-use" || rawType === "tool-invocation") {
+        return "tool";
+    }
+    // OpenCode's native `tool` part carries the result on user-role messages
+    // and the call on assistant-role messages.
+    if (role === "user" && rawType === "tool") return "toolresult";
+    return compactWireLabel(rawType, "unknown");
+}
+
+/** Describe the final three post-transform messages without serializing content. */
+export function describeFinalWireTail(messages: readonly MessageLike[]): string {
+    return `[${messages
+        .slice(-3)
+        .map((message) => {
+            const role = compactWireLabel(message.info.role, "unknown");
+            const kinds = message.parts.map((part) => wirePartKind(part, role)).join("+") || "none";
+            return `${role}:${kinds}`;
+        })
+        .join(", ")}]`;
+}
+
 function serializedTokens(value: unknown): number {
     if (value === undefined) return 0;
     const serialized = typeof value === "string" ? value : JSON.stringify(value);

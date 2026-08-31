@@ -2,7 +2,8 @@ import type { createOpencodeClient } from "@opencode-ai/sdk";
 
 import { detectOverflow } from "../features/magic-context/overflow-detection";
 import { log } from "./logger";
-import { parseProviderModel } from "./resolve-fallbacks";
+import type { ModelInput } from "./model-resolution";
+import { parseProviderModel, toModelEntry } from "./resolve-fallbacks";
 
 type Client = ReturnType<typeof createOpencodeClient>;
 
@@ -13,6 +14,8 @@ const ABORT_CALL_TIMEOUT_MS = 3000;
 
 export type PromptBody = {
     model?: { providerID: string; modelID: string };
+    /** OpenCode variant; Pi's facade also uses it as the active thinking level. */
+    variant?: string;
     [key: string]: unknown;
 };
 
@@ -64,7 +67,7 @@ export interface PromptRetryOptions {
      *   - On all-failed, the LAST error is thrown (matches legacy behavior when
      *     `fallbackModels` is empty).
      */
-    fallbackModels?: readonly string[];
+    fallbackModels?: readonly ModelInput[];
     /**
      * Identifier for structured logging (e.g. "dreamer:consolidate",
      * "historian", "compressor", "sidekick"). Helps correlate fallback
@@ -394,16 +397,19 @@ export async function promptSyncWithModelSuggestionRetry(
 
     // Iterate fallbacks.
     for (let i = 0; i < fallbacks.length; i += 1) {
-        const parsed = parseProviderModel(fallbacks[i]);
+        const fallback = toModelEntry(fallbacks[i]);
+        const parsed = fallback ? parseProviderModel(fallback.model) : null;
         if (!parsed) {
-            log(`[${callContext}] skipping invalid fallback spec: ${fallbacks[i]}`);
+            log(`[${callContext}] skipping invalid fallback spec: ${String(fallbacks[i])}`);
             continue;
         }
 
         const label = `${parsed.providerID}/${parsed.modelID}`;
+        const { variant: _primaryVariant, ...bodyWithoutPrimaryVariant } = baseBody;
         const attemptArgs = copyPromptArgs(baseArgs, {
-            ...baseBody,
+            ...bodyWithoutPrimaryVariant,
             model: parsed,
+            ...(fallback?.qualifier ? { variant: fallback.qualifier } : {}),
         });
 
         try {
@@ -429,7 +435,7 @@ export async function promptSyncWithModelSuggestionRetry(
     // caller's report (e.g. /ctx-dream tasks_json) still surfaces a real
     // diagnostic.
     log(
-        `[${callContext}] all models exhausted; tried: ${[explicitPrimaryLabel, ...fallbacks].join(", ")}; last error: ${shortErr(lastError)}`,
+        `[${callContext}] all models exhausted; tried: ${[explicitPrimaryLabel, ...fallbacks.map((fallback) => toModelEntry(fallback)?.model ?? String(fallback))].join(", ")}; last error: ${shortErr(lastError)}`,
     );
     throw lastError ?? new Error("All fallback models failed");
 }
@@ -515,16 +521,19 @@ export async function promptSyncWithValidatedOutputRetry<TOutput, TValidated = T
     }
 
     for (let i = 0; i < fallbacks.length; i += 1) {
-        const parsed = parseProviderModel(fallbacks[i]);
+        const fallback = toModelEntry(fallbacks[i]);
+        const parsed = fallback ? parseProviderModel(fallback.model) : null;
         if (!parsed) {
-            log(`[${callContext}] skipping invalid fallback spec: ${fallbacks[i]}`);
+            log(`[${callContext}] skipping invalid fallback spec: ${String(fallbacks[i])}`);
             continue;
         }
 
         const label = `${parsed.providerID}/${parsed.modelID}`;
+        const { variant: _primaryVariant, ...bodyWithoutPrimaryVariant } = baseBody;
         const attemptArgs = copyPromptArgs(baseArgs, {
-            ...baseBody,
+            ...bodyWithoutPrimaryVariant,
             model: parsed,
+            ...(fallback?.qualifier ? { variant: fallback.qualifier } : {}),
         });
         const attempt: PromptAttemptInfo = {
             label,
@@ -563,7 +572,7 @@ export async function promptSyncWithValidatedOutputRetry<TOutput, TValidated = T
     }
 
     log(
-        `[${callContext}] all models exhausted; tried: ${[explicitPrimaryLabel, ...fallbacks].join(", ")}; original error: ${shortErr(firstError)}; last error: ${shortErr(lastError)}`,
+        `[${callContext}] all models exhausted; tried: ${[explicitPrimaryLabel, ...fallbacks.map((fallback) => toModelEntry(fallback)?.model ?? String(fallback))].join(", ")}; original error: ${shortErr(firstError)}; last error: ${shortErr(lastError)}`,
     );
     throw firstError ?? lastError ?? new Error("All fallback models failed validation");
 }

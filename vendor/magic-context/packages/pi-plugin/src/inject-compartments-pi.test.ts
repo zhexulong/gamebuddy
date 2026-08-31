@@ -461,18 +461,43 @@ describe("injectM0M1Pi memory feature gate", () => {
 			insertMemory(db, {
 				projectPath: base.projectIdentity,
 				category: "ARCHITECTURE",
-				content: "SECRET project memory must not leak when disabled",
+				content: "project memory must not leak when disabled",
 				sourceType: "historian",
 			});
+			insertUserMemory(db, "profile baseline must not leak", []);
+			setProjectState(db, "__global__", { projectUserProfileVersion: 1 });
 
-			// memoryEnabled=false → memory suppressed, compartments retained.
-			const disabledState = { ...base, memoryEnabled: false };
+			// memoryEnabled=false suppresses every memory-derived surface while
+			// retaining compartment history.
+			const disabledState = {
+				...base,
+				memoryEnabled: false,
+				mural: {
+					enabled: true,
+					supportsVision: true,
+					dataUrl: "data:image/png;base64,cHJvZmlsZS1tdXJhbA==",
+				},
+			};
 			const off = [userMessage("hello", 10)];
 			injectM0M1Pi(disabledState, db, off as never, undefined, true);
 			const offM0 = textOf(off[0] as never);
-			expect(offM0).not.toContain("SECRET project memory");
+			expect(offM0).not.toContain("project memory must not leak when disabled");
 			expect(offM0).not.toContain("<project-memory");
+			expect(offM0).not.toContain("<user-profile>");
+			expect(offM0).not.toContain("profile baseline must not leak");
+			expect(offM0).not.toContain("<memory-mural>");
+			expect((off[0] as { content: unknown[] }).content).toHaveLength(1);
 			expect(offM0).toContain("compartment body present");
+
+			// A fresh global profile version can request m[1] work, but its delta
+			// must remain absent while the memory surface is disabled.
+			insertUserMemory(db, "profile delta must not leak", []);
+			setProjectState(db, "__global__", { projectUserProfileVersion: 2 });
+			const refreshed = [userMessage("again", 11)];
+			injectM0M1Pi(disabledState, db, refreshed as never, undefined, true);
+			const offM1 = textOf(refreshed[1] as never);
+			expect(offM1).not.toContain("<new-user-profile>");
+			expect(offM1).not.toContain("profile delta must not leak");
 
 			// Control: a fresh session with memoryEnabled left on DOES render it,
 			// proving the gate (not some other filter) is responsible.
@@ -490,8 +515,99 @@ describe("injectM0M1Pi memory feature gate", () => {
 			]);
 			const on = [userMessage("hello", 10)];
 			injectM0M1Pi(onState, db, on as never, undefined, true);
-			expect(textOf(on[0] as never)).toContain("SECRET project memory");
+			expect(textOf(on[0] as never)).toContain(
+				"project memory must not leak when disabled",
+			);
 		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("uses the system-hash HARD path for a memory-on to memory-off transition", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m0m1-memory-off-transition-"));
+		try {
+			const state = piState("ses-pi-memgate-transition", cwd);
+			insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "ARCHITECTURE",
+				content: "transition project fact",
+			});
+			insertUserMemory(db, "transition profile fact", []);
+			setProjectState(db, "__global__", { projectUserProfileVersion: 1 });
+
+			const on = [userMessage("before", 10)];
+			injectM0M1Pi(
+				{
+					...state,
+					memoryEnabled: true,
+					hardSignals: {
+						systemHash: "memory-guidance-on",
+						modelKey: "test/model",
+					},
+				},
+				db,
+				on as never,
+				undefined,
+				true,
+			);
+			expect(textOf(on[0] as never)).toContain("transition profile fact");
+
+			const offState = {
+				...state,
+				memoryEnabled: false,
+				hardSignals: {
+					systemHash: "memory-guidance-off",
+					modelKey: "test/model",
+				},
+			};
+			const off = [userMessage("after", 11)];
+			const transition = injectM0M1Pi(
+				offState,
+				db,
+				off as never,
+				undefined,
+				true,
+			);
+			expect(transition.m0Materialized).toBe(true);
+			expect(textOf(off[0] as never)).not.toContain("transition profile fact");
+
+			const defer = [userMessage("still off", 12)];
+			const replay = injectM0M1Pi(offState, db, defer as never);
+			expect(replay.m0Materialized).toBe(false);
+			expect(textOf(defer[0] as never)).not.toContain(
+				"transition profile fact",
+			);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+			closeQuietly(db);
+		}
+	});
+
+	it("keeps the memory-on m[0]/m[1] shape byte-identical", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m0m1-memory-on-shape-"));
+		try {
+			const state = piState("ses-pi-memgate-shape", cwd);
+			insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "ARCHITECTURE",
+				content: "memory-on project fact",
+			});
+			insertUserMemory(db, "memory-on profile fact", []);
+			setProjectState(db, "__global__", { projectUserProfileVersion: 1 });
+
+			const defaultRender = materializeM0Pi(state, db);
+			const explicitlyEnabledRender = materializeM0Pi(
+				{ ...state, memoryEnabled: true },
+				db,
+			);
+			expect(explicitlyEnabledRender.m0).toBe(defaultRender.m0);
+			expect(explicitlyEnabledRender.m1).toBe(defaultRender.m1);
+			expect(defaultRender.m0).toContain("memory-on profile fact");
+			expect(defaultRender.m0).toContain("memory-on project fact");
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
 			closeQuietly(db);
 		}
 	});
@@ -515,7 +631,7 @@ describe("ongoing-interaction read-only injection", () => {
 				projectPath: own.projectIdentity,
 				category: "INTERACTION_EPISODE",
 				content: "The player and Companion agreed to revisit the named topic later.",
-				sourceType: "user",
+				sourceType: "agent",
 			});
 			insertMemory(db, {
 				projectPath: own.projectIdentity,
@@ -559,6 +675,55 @@ describe("ongoing-interaction read-only injection", () => {
 });
 
 describe("injectM0M1Pi", () => {
+	it("keeps project memory but removes compartment rendering and trim in compaction-off mode", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m0m1-compaction-off-"));
+		try {
+			const offState = {
+				...piState("ses-pi-compaction-off", cwd),
+				compactionOff: true,
+			};
+			appendCompartments(db, offState.sessionId, [
+				{
+					sequence: 1,
+					startMessage: 1,
+					endMessage: 1,
+					startMessageId: "old-entry",
+					endMessageId: "old-entry",
+					title: "old history",
+					content: "compartment-only history must stay off the wire",
+				},
+			]);
+			insertMemory(db, {
+				projectPath: offState.projectIdentity,
+				category: "ARCHITECTURE",
+				content: "compaction-off memory survives",
+				sourceType: "historian",
+			});
+			const messages = [
+				userMessage("raw history stays visible", 10),
+				userMessage("live tail", 11),
+			];
+			const result = injectM0M1Pi(offState, db, messages as never, [
+				"old-entry",
+				"live-entry",
+			]);
+
+			expect(textOf(messages[0] as never)).toContain(
+				"compaction-off memory survives",
+			);
+			expect(textOf(messages[0] as never)).not.toContain("<session-history>");
+			expect(textOf(messages[0] as never)).not.toContain(
+				"compartment-only history must stay off the wire",
+			);
+			expect(result.skippedVisibleMessages).toBe(0);
+			expect(textOf(messages.at(-1) as never)).toBe("live tail");
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+			closeQuietly(db);
+		}
+	});
+
 	it("renders first-pass m[0] with no inner content and m[1] placeholder", () => {
 		const db = createTestDb();
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m0m1-empty-"));
@@ -675,7 +840,7 @@ describe("injectM0M1Pi", () => {
 				state.sessionId,
 			);
 
-			expect(mustMaterializePi(state, db)).toEqual({
+			expect(mustMaterializePi(state, db)).toMatchObject({
 				value: true,
 				reason: "compartment_render_epoch",
 			});
@@ -1256,7 +1421,7 @@ describe("injectM0M1Pi", () => {
 				projectPath: state.projectIdentity,
 				category: "SEMANTIC_MEMORY",
 				content: "Player-managed Memory arrives before this turn.",
-				sourceType: "user",
+				sourceType: "agent",
 			});
 			const provider = [userMessage("provider", 20)];
 			injectM0M1Pi(state, db, provider as never, undefined, false, true);
@@ -1307,7 +1472,7 @@ describe("injectM0M1Pi", () => {
 				projectPath: chat.projectIdentity,
 				category: "SEMANTIC_MEMORY",
 				content: "The player prefers calm options before consequential decisions.",
-				sourceType: "user",
+				sourceType: "agent",
 			});
 
 			const gameNextInvocation = [userMessage("Game next", 20)];
@@ -1387,6 +1552,65 @@ describe("injectM0M1Pi", () => {
 			injectM0M1Pi(state, db, deferAfterBust as never, undefined, false);
 			expect(textOf(deferAfterBust[1] as never)).toBe(m1);
 		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("force-renders an eligible supersede replacement that predates the m0 marker", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-forced-supersede-"));
+		try {
+			const state = piState("ses-pi-m1-forced-supersede", cwd);
+			const replacement = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "ARCHITECTURE",
+				content: "Replacement content must render in the delta.",
+			});
+			const source = insertMemory(db, {
+				projectPath: state.projectIdentity,
+				category: "ARCHITECTURE",
+				content: "Baseline source memory.",
+			});
+			const markers = {
+				maxCompartmentSeq: -1,
+				maxMemoryId: source.id,
+				maxMutationId: 0,
+				maxMemoryMutationId: 0,
+				projectMemoryEpoch: 0,
+				workspaceFingerprint: null,
+				projectUserProfileVersion: 0,
+				projectDocsHash: "",
+				sessionFactsVersion: 0,
+				materializedAt: Date.now(),
+				upgradeState: "",
+				compartmentRenderEpoch: null,
+				lastBaselineEndMessageId: null,
+				systemHash: "",
+				modelKey: "",
+				projectIdentity: state.projectIdentity,
+				muralEnabled: false,
+				renderBudgetIdentity: "",
+			};
+
+			db.prepare(
+				"UPDATE memories SET status = 'archived', superseded_by_memory_id = ? WHERE id = ?",
+			).run(replacement.id, source.id);
+			queueMemoryMutation(db, {
+				projectPath: state.projectIdentity,
+				mutationType: "superseded",
+				targetMemoryId: source.id,
+				supersededById: replacement.id,
+				queuedAt: markers.materializedAt + 1,
+			});
+
+			const m1 = renderM1Pi(state, db, markers, [source.id]);
+			expect(m1).toContain(
+				`<superseded id="${source.id}" by="${replacement.id}"/>`,
+			);
+			expect(m1).toContain("Replacement content must render in the delta.");
+			expect(m1).not.toContain(`<removed id="${source.id}"/>`);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
 			closeQuietly(db);
 		}
 	});
@@ -1809,9 +2033,14 @@ describe("mustMaterializePi — SOFT/HARD taxonomy (parity with OpenCode)", () =
 				...state,
 				hardSignals: { ...baseHard, modelKey: "anthropic/sonnet" },
 			};
-			expect(mustMaterializePi(switched, db)).toEqual({
+			expect(mustMaterializePi(switched, db)).toMatchObject({
 				value: true,
 				reason: "model_change",
+				mismatch: {
+					signal: "modelKey",
+					cached: "anthropic/opus",
+					current: "anthropic/sonnet",
+				},
 			});
 		} finally {
 			closeQuietly(db);
@@ -1833,9 +2062,14 @@ describe("mustMaterializePi — SOFT/HARD taxonomy (parity with OpenCode)", () =
 				...state,
 				hardSignals: { ...baseHard, systemHash: "sys-v2" },
 			};
-			expect(mustMaterializePi(changed, db)).toEqual({
+			expect(mustMaterializePi(changed, db)).toMatchObject({
 				value: true,
 				reason: "system_hash",
+				mismatch: {
+					signal: "systemHash",
+					cached: "sys-v1",
+					current: "sys-v2",
+				},
 			});
 		} finally {
 			closeQuietly(db);
@@ -1885,7 +2119,7 @@ describe("mustMaterializePi — SOFT/HARD taxonomy (parity with OpenCode)", () =
 				...piState(state.sessionId, cwdB),
 				hardSignals: baseHard,
 			};
-			expect(mustMaterializePi(switched, db)).toEqual({
+			expect(mustMaterializePi(switched, db)).toMatchObject({
 				value: true,
 				reason: "project_change",
 			});
@@ -2091,6 +2325,212 @@ describe("mustMaterializePi — SOFT/HARD taxonomy (parity with OpenCode)", () =
 			);
 			expect(textOf(second[0] as never)).not.toContain("Old Pi architecture");
 		} finally {
+			closeQuietly(db);
+		}
+	});
+	it("reproduces the copied live marker tuple and keeps three canonical-alias replays byte-identical", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-live-marker-repro-"));
+		try {
+			const state = {
+				...piState("019de471-4fdc-762d-9286-624dfad0b5fe", cwd),
+				projectIdentity: "git:f78f6db52b23c81d58dae3879c9383f550ec180e",
+				injectionBudgetTokens: 15_000,
+				historyBudgetTokens: 27_540,
+				muralEnabled: true,
+				hardSignals: {
+					...baseHard,
+					systemHash: "38b2cc92af20c9236054057c7da1a3df",
+					modelKey: "openai-codex/gpt-5.6-sol",
+				},
+			};
+			appendCompartments(db, state.sessionId, [
+				{
+					sequence: 417,
+					startMessage: 417,
+					endMessage: 417,
+					startMessageId: "entry-417",
+					endMessageId: "entry-417",
+					title: "Cached production boundary",
+					content: "cached production compartment",
+					p1: "cached production compartment",
+				},
+			]);
+			db.prepare(
+				"INSERT INTO m0_mutation_log (id, session_id, mutation_type, target_id, queued_at) VALUES (15, ?, 'compartment_upgrade', NULL, 1)",
+			).run(state.sessionId);
+			const firstMessages = [userMessage("same quiet tail", 10)];
+			injectM0M1Pi(state, db, firstMessages as never, ["entry-0"]);
+			appendCompartments(db, state.sessionId, [
+				{
+					sequence: 425,
+					startMessage: 425,
+					endMessage: 425,
+					startMessageId: "entry-425",
+					endMessageId: "entry-425",
+					title: "Live additive compartment",
+					content: "new m1-only content after the cached boundary",
+					p1: "new m1-only content after the cached boundary",
+				},
+			]);
+			const firstM0 = textOf(firstMessages[0] as never);
+			const firstM1 = textOf(firstMessages[1] as never);
+			const meta = getOrCreateSessionMeta(db, state.sessionId);
+			expect(meta.cachedM0ModelKey).toBe("openai/gpt-5.6-sol");
+			expect(meta.cachedM0MaxCompartmentSeq).toBe(417);
+			expect(meta.cachedM0MaxMutationId).toBe(15);
+			expect(meta.cachedM0UpgradeState).toContain("mural-enabled:1");
+			expect(meta.cachedM0UpgradeState).toContain(
+				"render-budgets:m15000-h27540",
+			);
+
+			for (let pass = 0; pass < 3; pass += 1) {
+				const messages = [userMessage("same quiet tail", 10)];
+				const result = injectM0M1Pi(
+					state,
+					db,
+					messages as never,
+					["entry-0"],
+					false,
+				);
+				expect(result.m0Materialized).toBe(false);
+				expect(result.m0Reason).toBeNull();
+				expect(textOf(messages[0] as never)).toBe(firstM0);
+				expect(textOf(messages[1] as never)).toBe(firstM1);
+			}
+
+			expect(mustMaterializePi(state, db)).toEqual({
+				value: false,
+				reason: null,
+			});
+			expect(
+				mustMaterializePi({ ...state, muralEnabled: undefined }, db),
+			).toEqual({
+				value: true,
+				reason: "render_config",
+				mismatch: { signal: "muralEnabled", cached: true, current: false },
+			});
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+			closeQuietly(db);
+		}
+	});
+
+	it("does not hard-fold when the current model switches from canonical to Pi alias spelling", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-tax-model-alias-forward-"));
+		try {
+			const state = {
+				...piState("ses-pi-tax-model-alias-forward", cwd),
+				hardSignals: { ...baseHard, modelKey: "openai/gpt-5.6-sol" },
+			};
+			injectM0M1Pi(state, db, [userMessage("hi", 10)] as never, ["entry-0"]);
+
+			const aliasOnly = {
+				...state,
+				hardSignals: { ...baseHard, modelKey: "openai-codex/gpt-5.6-sol" },
+			};
+			expect(mustMaterializePi(aliasOnly, db)).toEqual({
+				value: false,
+				reason: null,
+			});
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+			closeQuietly(db);
+		}
+	});
+
+	it("persists a Pi-native baseline canonically, then accepts the reverse spelling flip", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-tax-model-alias-reverse-"));
+		try {
+			const state = {
+				...piState("ses-pi-tax-model-alias-reverse", cwd),
+				hardSignals: { ...baseHard, modelKey: "openai-codex/gpt-5.6-sol" },
+			};
+			injectM0M1Pi(state, db, [userMessage("hi", 10)] as never, ["entry-0"]);
+			expect(getOrCreateSessionMeta(db, state.sessionId).cachedM0ModelKey).toBe(
+				"openai/gpt-5.6-sol",
+			);
+
+			const aliasOnly = {
+				...state,
+				hardSignals: { ...baseHard, modelKey: "openai/gpt-5.6-sol" },
+			};
+			expect(mustMaterializePi(aliasOnly, db)).toEqual({
+				value: false,
+				reason: null,
+			});
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+			closeQuietly(db);
+		}
+	});
+
+	it("does not hard-fold when an existing cached baseline stores a native alias", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-tax-model-alias-upgrade-"));
+		try {
+			const state = {
+				...piState("ses-pi-tax-model-alias-upgrade", cwd),
+				hardSignals: { ...baseHard, modelKey: "openai/gpt-5.6-sol" },
+			};
+			injectM0M1Pi(state, db, [userMessage("hi", 10)] as never, ["entry-0"]);
+			db.prepare(
+				"UPDATE session_meta SET cached_m0_model_key = ? WHERE session_id = ?",
+			).run("openai-codex/gpt-5.6-sol", state.sessionId);
+
+			expect(mustMaterializePi(state, db)).toEqual({
+				value: false,
+				reason: null,
+			});
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+			closeQuietly(db);
+		}
+	});
+
+	it("folds exactly once for a genuinely different model in the same alias family", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-tax-model-alias-real-switch-"));
+		try {
+			const state = {
+				...piState("ses-pi-tax-model-alias-real-switch", cwd),
+				hardSignals: { ...baseHard, modelKey: "openai-codex/gpt-5.6-sol" },
+			};
+			injectM0M1Pi(state, db, [userMessage("hi", 10)] as never, ["entry-0"]);
+
+			const realSwitch = {
+				...state,
+				hardSignals: { ...baseHard, modelKey: "openai/gpt-5.6-codex" },
+			};
+			expect(mustMaterializePi(realSwitch, db)).toMatchObject({
+				value: true,
+				reason: "model_change",
+				mismatch: {
+					signal: "modelKey",
+					cached: "openai/gpt-5.6-sol",
+					current: "openai/gpt-5.6-codex",
+				},
+			});
+			const folded = injectM0M1Pi(
+				realSwitch,
+				db,
+				[userMessage("switch", 11)] as never,
+				["entry-1"],
+			);
+			const replay = injectM0M1Pi(
+				realSwitch,
+				db,
+				[userMessage("switch", 11)] as never,
+				["entry-1"],
+			);
+			expect(folded.m0Materialized).toBe(true);
+			expect(folded.m0Reason).toBe("model_change");
+			expect(replay.m0Materialized).toBe(false);
+			expect(replay.m0Reason).toBeNull();
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
 			closeQuietly(db);
 		}
 	});

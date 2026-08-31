@@ -1,0 +1,38 @@
+# Magic Context Rust workspace — the harness-agnostic MC module (CK-in / CK-out)
+# that runs under the subc daemon. Lives in-repo alongside the bun `packages/`
+# (the session/tooling is cwd-bound, and the build needs this repo's cache-stability
+# context); the dashboard's Tauri crate is its own standalone build, excluded here.
+[workspace]
+resolver = "2"
+members = ["crates/mc-core", "crates/mc-store", "crates/mc-module", "crates/mc-tokenizer"]
+exclude = ["packages/dashboard/src-tauri"]
+
+[workspace.dependencies]
+# CortexKit cache-stability core + storage substrate. Sibling path-deps for local
+# co-dev (not yet published); pin a published version at first release. magic-context
+# is a sibling of commons/ and subconscious/, so these resolve identically to the
+# alfonso-core arrangement.
+cortexkit-cache-core = { path = "../commons/crates/cortexkit-cache-core" }
+cortexkit-store = { path = "../commons/crates/cortexkit-store" }
+cortexkit-store-types = { path = "../commons/crates/cortexkit-store-types" }
+cortexkit-lease = { path = "../commons/crates/cortexkit-lease" }
+
+# subc wire contract + module SDK. Path-deps to the same sibling source so
+# subc-protocol/transport unify with subc-client-rs's transitive use (no [patch]).
+subc-protocol = { path = "../subconscious/crates/subc-protocol" }
+subc-control = { path = "../subconscious/crates/subc-control" }
+subc-transport = { path = "../subconscious/crates/subc-transport" }
+subc-client-rs = { path = "../subconscious/crates/subc-client-rs" }
+subc-core = { path = "../subconscious/crates/subc-core" }
+
+# Internal crates.
+mc-core = { path = "crates/mc-core" }
+mc-store = { path = "crates/mc-store" }
+
+# Third-party. rusqlite pinned to the same version+features cortexkit-store uses so
+# the Connection/Transaction types unify across the with_conn boundary.
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"

@@ -9,6 +9,7 @@ import {
     getLegacyOpenCodeMagicContextStorageDir,
     getMagicContextLogPath,
     getMagicContextStorageDir,
+    getMagicContextStorageResolution,
     getOpenCodeCacheDir,
     getOpenCodeStorageDir,
     getProjectMagicContextDir,
@@ -18,32 +19,38 @@ import {
 const savedEnv = {
     XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
     XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+    MAGIC_CONTEXT_STORAGE_DIR: process.env.MAGIC_CONTEXT_STORAGE_DIR,
     LOCALAPPDATA: process.env.LOCALAPPDATA,
     MAGIC_CONTEXT_LOG_PATH: process.env.MAGIC_CONTEXT_LOG_PATH,
+    MAGIC_CONTEXT_TEST_DATA_DIR: process.env.MAGIC_CONTEXT_TEST_DATA_DIR,
+    NODE_ENV: process.env.NODE_ENV,
 };
 
 describe("data-path", () => {
     beforeEach(() => {
         process.env.XDG_CACHE_HOME = undefined;
         process.env.XDG_DATA_HOME = undefined;
+        delete process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
+        delete process.env.NODE_ENV;
         process.env.LOCALAPPDATA = undefined;
         process.env.MAGIC_CONTEXT_LOG_PATH = undefined;
         // Bun's env handling: explicit delete for unset
         delete process.env.XDG_CACHE_HOME;
         delete process.env.XDG_DATA_HOME;
+        delete process.env.MAGIC_CONTEXT_STORAGE_DIR;
         delete process.env.LOCALAPPDATA;
         delete process.env.MAGIC_CONTEXT_LOG_PATH;
     });
 
     afterEach(() => {
-        if (savedEnv.XDG_CACHE_HOME !== undefined)
-            process.env.XDG_CACHE_HOME = savedEnv.XDG_CACHE_HOME;
-        if (savedEnv.XDG_DATA_HOME !== undefined)
-            process.env.XDG_DATA_HOME = savedEnv.XDG_DATA_HOME;
-        if (savedEnv.LOCALAPPDATA !== undefined) process.env.LOCALAPPDATA = savedEnv.LOCALAPPDATA;
-        if (savedEnv.MAGIC_CONTEXT_LOG_PATH !== undefined)
-            process.env.MAGIC_CONTEXT_LOG_PATH = savedEnv.MAGIC_CONTEXT_LOG_PATH;
-        else delete process.env.MAGIC_CONTEXT_LOG_PATH;
+        // Restore-or-delete every var this suite touches. Several tests lift a
+        // guard (NODE_ENV, MAGIC_CONTEXT_TEST_DATA_DIR) to assert production
+        // shape, so a restore that skips the unset case would leak state into
+        // the next test and make results order-dependent.
+        for (const [key, value] of Object.entries(savedEnv)) {
+            if (value !== undefined) process.env[key] = value;
+            else delete process.env[key];
+        }
     });
 
     test("getCacheDir falls back to <homedir>/.cache when XDG_CACHE_HOME is unset (all platforms)", () => {
@@ -89,12 +96,101 @@ describe("data-path", () => {
         // Cross-harness shared path: both OpenCode and Pi plugins read/write here,
         // unlike the legacy opencode/storage/plugin/magic-context location which
         // was OpenCode-specific. See ARCHITECTURE_DECISIONS memory for rationale.
+        // Production shape, so both test-isolation guards (the preload's data
+        // dir and the NODE_ENV backstop bun sets for every `bun test`) are
+        // lifted for the duration of this assertion.
+        const savedTestDir = process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
+        const savedNodeEnv = process.env.NODE_ENV;
+        delete process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
+        delete process.env.NODE_ENV;
+        try {
+            expect(getMagicContextStorageDir()).toBe(
+                path.join(os.homedir(), ".local", "share", "cortexkit", "magic-context"),
+            );
+        } finally {
+            if (savedTestDir !== undefined) process.env.MAGIC_CONTEXT_TEST_DATA_DIR = savedTestDir;
+            if (savedNodeEnv !== undefined) process.env.NODE_ENV = savedNodeEnv;
+        }
+    });
+
+    test("getMagicContextStorageDir backstops to a temp dir under NODE_ENV=test with no guard set", () => {
+        // CWD-independent backstop: a `bun test` from a dir whose bunfig has no
+        // `[test] preload` runs every suite with neither guard env var set. The
+        // DB resolver used to own this branch, so direct callers of this helper
+        // (the CLI doctors' own PRAGMA integrity_check) still reached the real
+        // shared DB. Memoized, so repeated calls must agree — openDatabase()
+        // caches by path.
+        const savedTestDir = process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
+        delete process.env.MAGIC_CONTEXT_TEST_DATA_DIR;
+        process.env.NODE_ENV = "test";
+        try {
+            const resolved = getMagicContextStorageDir();
+            expect(resolved).not.toContain(path.join(os.homedir(), ".local", "share"));
+            expect(resolved.endsWith(path.join("cortexkit", "magic-context"))).toBe(true);
+            expect(getMagicContextStorageDir()).toBe(resolved);
+        } finally {
+            if (savedTestDir !== undefined) process.env.MAGIC_CONTEXT_TEST_DATA_DIR = savedTestDir;
+        }
+    });
+
+    test("getMagicContextStorageDir honors MAGIC_CONTEXT_TEST_DATA_DIR when XDG_DATA_HOME is unset", () => {
+        // The hole this closes: a test that deletes XDG_DATA_HOME to exercise
+        // path fallbacks used to resolve to the user's REAL shared storage,
+        // because bun caches os.homedir() and a mutated process.env.HOME cannot
+        // move getDataDir(). Callers that build their own context.db path (the
+        // CLI doctors) then ran integrity checks against production data.
+        process.env.MAGIC_CONTEXT_TEST_DATA_DIR = "/tmp/mc-test-isolation";
         expect(getMagicContextStorageDir()).toBe(
-            path.join(os.homedir(), ".local", "share", "cortexkit", "magic-context"),
+            path.join("/tmp/mc-test-isolation", "cortexkit", "magic-context"),
         );
     });
 
+    test("test storage isolation takes precedence over MAGIC_CONTEXT_STORAGE_DIR", () => {
+        process.env.MAGIC_CONTEXT_TEST_DATA_DIR = "/tmp/mc-test-isolation";
+        process.env.MAGIC_CONTEXT_STORAGE_DIR = "/tmp/production-shared-data";
+        expect(getMagicContextStorageDir()).toBe(
+            path.join("/tmp/mc-test-isolation", "cortexkit", "magic-context"),
+        );
+    });
+
+    test("a per-test XDG_DATA_HOME overrides the preload root without escaping test isolation", () => {
+        process.env.MAGIC_CONTEXT_TEST_DATA_DIR = "/tmp/mc-test-isolation";
+        process.env.XDG_DATA_HOME = "/tmp/custom-test-data";
+        process.env.MAGIC_CONTEXT_STORAGE_DIR = "/tmp/production-shared-data";
+        expect(getMagicContextStorageResolution()).toEqual({
+            path: path.join("/tmp/custom-test-data", "cortexkit", "magic-context"),
+            source: "test isolation",
+        });
+    });
+
     test("getMagicContextStorageDir honors XDG_DATA_HOME", () => {
+        process.env.XDG_DATA_HOME = "/tmp/custom-data";
+        expect(getMagicContextStorageDir()).toBe(
+            path.join("/tmp/custom-data", "cortexkit", "magic-context"),
+        );
+    });
+
+    test("getMagicContextStorageDir honors MAGIC_CONTEXT_STORAGE_DIR", () => {
+        process.env.XDG_DATA_HOME = "/tmp/private-agent-data";
+        process.env.MAGIC_CONTEXT_STORAGE_DIR = "/tmp/shared-magic-context";
+        expect(getMagicContextStorageDir()).toBe("/tmp/shared-magic-context");
+    });
+
+    test("MAGIC_CONTEXT_STORAGE_DIR takes precedence over XDG_DATA_HOME", () => {
+        process.env.XDG_DATA_HOME = "/tmp/private-agent-data";
+        process.env.MAGIC_CONTEXT_STORAGE_DIR = "/tmp/shared-magic-context";
+        expect(getMagicContextStorageDir()).toBe("/tmp/shared-magic-context");
+    });
+
+    test("relative MAGIC_CONTEXT_STORAGE_DIR is rejected", () => {
+        process.env.MAGIC_CONTEXT_STORAGE_DIR = "./shared-magic-context";
+        expect(() => getMagicContextStorageDir()).toThrow(
+            "MAGIC_CONTEXT_STORAGE_DIR must be an absolute path",
+        );
+    });
+
+    test("blank MAGIC_CONTEXT_STORAGE_DIR falls back to XDG_DATA_HOME", () => {
+        process.env.MAGIC_CONTEXT_STORAGE_DIR = "   ";
         process.env.XDG_DATA_HOME = "/tmp/custom-data";
         expect(getMagicContextStorageDir()).toBe(
             path.join("/tmp/custom-data", "cortexkit", "magic-context"),

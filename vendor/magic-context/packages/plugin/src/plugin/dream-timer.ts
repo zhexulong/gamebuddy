@@ -5,6 +5,8 @@ import type { ClassifyModuleClient } from "../features/magic-context/dreamer/cla
 import { acquireLease, releaseLease } from "../features/magic-context/dreamer/lease";
 import { openOpenCodeDb } from "../features/magic-context/dreamer/open-opencode-db";
 import {
+    HISTORIAN_CHILD_TITLE_MATCHES,
+    historianOrphanStaleMs,
     PRIVACY_SENSITIVE_CHILD_TASKS,
     PRIVACY_SENSITIVE_CHILD_TITLE_MATCHES,
     retrospectiveOrphanStaleMs,
@@ -20,6 +22,10 @@ import {
     userMemoryCollectionEnabled,
 } from "../features/magic-context/dreamer/task-config";
 import { createDreamTaskExecutor } from "../features/magic-context/dreamer/task-executor";
+import type {
+    DreamTaskName,
+    DreamTaskProgress,
+} from "../features/magic-context/dreamer/task-registry";
 import { leaseKeyFor } from "../features/magic-context/dreamer/task-registry";
 import { runDueTasksForProject } from "../features/magic-context/dreamer/task-scheduler";
 import {
@@ -50,6 +56,7 @@ import {
 import type { RawMessageProvider } from "../hooks/magic-context/read-session-chunk";
 import { getErrorMessage } from "../shared/error-message";
 import { log } from "../shared/logger";
+import type { ModelHarness } from "../shared/model-resolution";
 import type { Database } from "../shared/sqlite";
 import { closeQuietly } from "../shared/sqlite-helpers";
 import { beginBootQuietPeriod, scheduleAfterBootQuiet } from "./boot-quiet";
@@ -66,11 +73,13 @@ const BOOT_PROJECT_JITTER_SLOT_MS = 1_000;
  * Per-project work registered with the timer. The timer is a process-wide
  * singleton, but Desktop OpenCode can load the same plugin once per project
  * within one process — every load needs its directory's git commits indexed,
- * its dream schedule checked, and its experimental config respected.
+ * its dream schedule checked, and its config respected.
  */
 interface ProjectRegistration {
     directory: string;
     projectIdentity: string;
+    /** The runtime selecting models for this registration. */
+    harness: ModelHarness;
     client: PluginContext["client"];
     dreamerConfig?: DreamerConfig;
     language?: string;
@@ -81,7 +90,13 @@ interface ProjectRegistration {
     };
     memoryEnabled?: boolean;
     memoryInjectionBudgetTokens?: number;
-    experimentalMural?: { enabled: boolean; model?: string };
+    historianChildSweep?: {
+        timeoutMs: number;
+        fallbackModelCount: number;
+        keepSubagents: boolean;
+    };
+    mural?: { enabled: boolean; model?: string };
+    retinaHandoff?: boolean;
     embeddingConfig?: { provider?: string };
     ensureRegistered: (directory: string, db: Database) => Promise<void>;
     /**
@@ -105,6 +120,7 @@ interface ProjectRegistration {
         sessionId: string,
     ) => Promise<RawMessageProvider | null> | RawMessageProvider | null;
     transformMode?: "ts" | "rust";
+    onDreamerProgress?: (progress: DreamTaskProgress | null, completedTask?: DreamTaskName) => void;
     moduleClient?: ClassifyModuleClient & {
         authorityStatus?: (args: {
             context_store_uuid: string;
@@ -117,6 +133,7 @@ interface ProjectRegistration {
 
 /** Singleton timer state. */
 let activeTimer: ReturnType<typeof setInterval> | null = null;
+let startupTickTimer: ReturnType<typeof setTimeout> | null = null;
 const startupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const startupJitters = new Map<string, number>();
 let nextStartupJitterSlot = 0;
@@ -162,6 +179,22 @@ function openTimerDatabaseOrNull(context: string): Database | null {
 /** All projects that have called startDreamScheduleTimer in this process,
  *  keyed by directory so re-registration of the same directory is idempotent. */
 const registeredProjects = new Map<string, ProjectRegistration>();
+
+function stopDreamScheduleTimerIfIdle(): void {
+    if (registeredProjects.size !== 0) return;
+    const stopped = activeTimer !== null || startupTickTimer !== null;
+    if (activeTimer) {
+        clearInterval(activeTimer);
+        activeTimer = null;
+    }
+    if (startupTickTimer) {
+        clearTimeout(startupTickTimer);
+        startupTickTimer = null;
+    }
+    startupJitters.clear();
+    nextStartupJitterSlot = 0;
+    if (stopped) log("[dreamer] stopped dream schedule timer (no projects left)");
+}
 
 /**
  * Register the calling project with the process-wide dream + maintenance
@@ -215,7 +248,10 @@ export async function startDreamScheduleTimer(
             `[dreamer] started independent schedule timer (every ${DREAM_TIMER_INTERVAL_MS / 60_000}m)`,
         );
 
-        scheduleAfterBootQuiet(() => runTick("startup"));
+        startupTickTimer = scheduleAfterBootQuiet(() => {
+            startupTickTimer = null;
+            runTick("startup");
+        });
 
         const timer = setInterval(() => runTick("interval"), DREAM_TIMER_INTERVAL_MS);
         if (typeof timer === "object" && "unref" in timer) {
@@ -227,6 +263,13 @@ export async function startDreamScheduleTimer(
     }
 
     return () => {
+        // A newer registration may have replaced this directory before an async
+        // caller receives and invokes its cleanup. Never let stale cleanup remove
+        // the replacement's registry entry, startup work, or singleton timer.
+        if (registeredProjects.get(args.directory) !== args) {
+            stopDreamScheduleTimerIfIdle();
+            return;
+        }
         registeredProjects.delete(args.directory);
         const startupTimer = startupTimers.get(args.directory);
         if (startupTimer) {
@@ -236,13 +279,7 @@ export async function startDreamScheduleTimer(
         log(
             `[dreamer] unregistered project ${args.projectIdentity} (remaining=${registeredProjects.size})`,
         );
-        if (registeredProjects.size === 0 && activeTimer) {
-            clearInterval(activeTimer);
-            activeTimer = null;
-            startupJitters.clear();
-            nextStartupJitterSlot = 0;
-            log("[dreamer] stopped dream schedule timer (no projects left)");
-        }
+        stopDreamScheduleTimerIfIdle();
     };
 }
 
@@ -327,7 +364,8 @@ async function runProjectMaintenance(
     const projectMaintenanceEnabled =
         Boolean(reg.dreamerConfig && reg.dreamerConfig.disable !== true) ||
         reg.memoryEnabled === true ||
-        reg.gitCommitIndexing?.enabled === true;
+        reg.gitCommitIndexing?.enabled === true ||
+        reg.historianChildSweep !== undefined;
     if (!projectMaintenanceEnabled) return;
 
     await reg.ensureRegistered(reg.directory, db);
@@ -382,7 +420,15 @@ async function sweepProject(
                 log(`[dreamer] orphan schedule GC failed for ${reg.projectIdentity}:`, error);
             }
         }
-        registeredProjects.delete(reg.directory);
+        if (registeredProjects.get(reg.directory) === reg) {
+            registeredProjects.delete(reg.directory);
+            const startupTimer = startupTimers.get(reg.directory);
+            if (startupTimer) {
+                clearTimeout(startupTimer);
+                startupTimers.delete(reg.directory);
+            }
+        }
+        stopDreamScheduleTimerIfIdle();
         return;
     }
 
@@ -397,6 +443,8 @@ async function sweepProject(
                 `(memory=${gc.memoryRowsDeleted} commit=${gc.commitRowsDeleted} chunk=${gc.chunkRowsDeleted})`,
         );
     }
+
+    await sweepOrphanedHistorianChildren(reg);
 
     const dreamerConfig = reg.dreamerConfig;
     const dreamingEnabled = Boolean(dreamerConfig && dreamerConfig.disable !== true);
@@ -421,7 +469,12 @@ async function sweepProject(
         // runs due tasks grouped by conflict-domain under keyed leases. The
         // executor runs in THIS registration's own checkout (not a sibling
         // worktree the shared git:<sha> identity might resolve to).
-        const runtimeConfigs = buildDreamTaskRuntimeConfigs(dreamerConfig, reg.language);
+        const runtimeConfigs = buildDreamTaskRuntimeConfigs(
+            dreamerConfig,
+            "opencode",
+            reg.language,
+            reg.mural?.model,
+        );
         const executor = createDreamTaskExecutor({
             client: reg.client,
             sessionDirectory: reg.directory,
@@ -439,11 +492,13 @@ async function sweepProject(
             userMemoryCollectionEnabled: userMemoryCollectionEnabled(dreamerConfig),
             ensureProjectRegistered: reg.ensureRegistered,
             language: reg.language,
-            dreamerModel: dreamerConfig.model,
-            experimentalMural: reg.experimentalMural,
+            mural: reg.mural,
             memoryInjectionBudgetTokens: reg.memoryInjectionBudgetTokens,
+            retinaHandoff: reg.retinaHandoff,
             transformMode: reg.transformMode,
             moduleClient: reg.moduleClient,
+            onProgress: (progress, completedTask) =>
+                reg.onDreamerProgress?.(progress, completedTask),
         });
         const ran = await runDueTasksForProject({
             db,
@@ -486,6 +541,30 @@ async function sweepProject(
     }
 }
 
+async function sweepOrphanedHistorianChildren(reg: ProjectRegistration): Promise<void> {
+    const config = reg.historianChildSweep;
+    if (!config || config.keepSubagents) return;
+
+    const ocDb = openOpenCodeDb();
+    if (!ocDb) return;
+    try {
+        await sweepOrphanedRetrospectiveChildren({
+            opencodeDb: ocDb,
+            client: reg.client,
+            sessionDirectory: reg.directory,
+            staleMs: historianOrphanStaleMs(config.timeoutMs, config.fallbackModelCount),
+            titleMatches: HISTORIAN_CHILD_TITLE_MATCHES,
+        });
+    } catch (error) {
+        log(
+            `[magic-context] historian child orphan sweep failed for ${reg.projectIdentity}:`,
+            error,
+        );
+    } finally {
+        closeQuietly(ocDb);
+    }
+}
+
 async function runCompiledSmartNoteSweep(reg: ProjectRegistration, db: Database): Promise<void> {
     const leaseKey = leaseKeyFor("evaluate-smart-notes", reg.projectIdentity);
     const holderId = crypto.randomUUID();
@@ -495,6 +574,7 @@ async function runCompiledSmartNoteSweep(reg: ProjectRegistration, db: Database)
             db,
             projectIdentity: reg.projectIdentity,
             projectRoot: reg.directory,
+            retinaHandoff: reg.retinaHandoff,
         });
         if (result.ran > 0) {
             log(

@@ -6,6 +6,8 @@ import {
 	type PiMessageSender,
 	registerCtxStatusEntryRenderer,
 	sendCtxStatusMessage,
+	shouldShowCtxStatusDialog,
+	showCtxStatusDialog,
 } from "./pi-command-utils";
 
 describe("ctx-status entries", () => {
@@ -90,5 +92,218 @@ describe("ctx-status entries", () => {
 			},
 		]);
 		expect(sent).toBe(0);
+	});
+
+	it("keeps progress notifications short and routes detailed results to a dialog", () => {
+		expect(
+			shouldShowCtxStatusDialog({
+				title: "/ctx-dream",
+				text: "Starting…",
+				level: "info",
+			}),
+		).toBe(false);
+		expect(
+			shouldShowCtxStatusDialog({
+				title: "/ctx-flush",
+				text: "Complete",
+				level: "success",
+			}),
+		).toBe(true);
+		expect(
+			shouldShowCtxStatusDialog({
+				title: "/ctx-status",
+				text: "Detailed status",
+				level: "info",
+				rpcDisplay: "dialog",
+			}),
+		).toBe(true);
+	});
+
+	it("renders RPC detail output through Pi custom UI", async () => {
+		let rendered: string[] = [];
+		let closed = false;
+		let options: unknown;
+		const ctx = {
+			ui: {
+				async custom(factory: unknown, customOptions: unknown) {
+					options = customOptions;
+					const create = factory as (...args: unknown[]) => {
+						render: (width: number) => string[];
+						handleInput: (data: string) => void;
+					};
+					const component = create(
+						{},
+						{
+							fg: (_name: string, text: string) => text,
+							bold: (text: string) => text,
+						},
+						{},
+						() => {
+							closed = true;
+						},
+					);
+					rendered = component.render(92);
+					component.handleInput("\r");
+				},
+			},
+		};
+
+		const shown = await showCtxStatusDialog(ctx as never, {
+			title: "/ctx-flush",
+			text: "## /ctx-flush\n\nDetailed result",
+			level: "success",
+		});
+		expect(shown).toBe(true);
+
+		expect(rendered.join("\n")).toContain("Detailed result");
+		expect(closed).toBe(true);
+		expect(options).toEqual({
+			overlay: true,
+			overlayOptions: { anchor: "center", width: 92 },
+		});
+	});
+
+	it("falls back when Pi RPC resolves custom without invoking its factory", async () => {
+		const notifications: string[] = [];
+		const ctx = {
+			mode: "rpc",
+			ui: {
+				custom: async () => undefined,
+				notify: (text: string) => notifications.push(text),
+			},
+		};
+		expect(
+			await showCtxStatusDialog(ctx as never, {
+				title: "/ctx-status",
+				text: "Detailed status",
+				rpcDisplay: "dialog",
+			}),
+		).toBe(false);
+
+		sendCtxStatusMessage(
+			{ appendEntry() {} } as never,
+			{
+				title: "/ctx-status",
+				text: "Detailed status",
+				rpcDisplay: "dialog",
+			},
+			undefined,
+			ctx as never,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(notifications).toEqual(["Detailed status"]);
+	});
+
+	it("does not duplicate a dialog as a notification on a custom-capable host", async () => {
+		let factories = 0;
+		let notifications = 0;
+		const ctx = {
+			mode: "rpc",
+			ui: {
+				custom: async (factory: (...args: unknown[]) => unknown) => {
+					factories += 1;
+					factory(
+						{},
+						{
+							fg: (_name: string, text: string) => text,
+							bold: (text: string) => text,
+						},
+						{},
+						() => {},
+					);
+				},
+				notify: () => {
+					notifications += 1;
+				},
+			},
+		};
+		sendCtxStatusMessage(
+			{ appendEntry() {} } as never,
+			{ title: "/ctx-status", text: "Detailed", rpcDisplay: "dialog" },
+			undefined,
+			ctx as never,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(factories).toBe(1);
+		expect(notifications).toBe(0);
+	});
+
+	it("falls back to a notification when custom rejects", async () => {
+		const notifications: string[] = [];
+		const ctx = {
+			mode: "rpc",
+			ui: {
+				custom: async () => {
+					throw new Error("unsupported");
+				},
+				notify: (text: string) => notifications.push(text),
+			},
+		};
+		sendCtxStatusMessage(
+			{ appendEntry() {} } as never,
+			{ title: "/ctx-status", text: "Detailed", rpcDisplay: "dialog" },
+			undefined,
+			ctx as never,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(notifications).toEqual(["Detailed"]);
+	});
+
+	it("suppresses a late custom failure fallback after lifecycle abort", async () => {
+		let rejectCustom!: (error: Error) => void;
+		let notifications = 0;
+		const controller = new AbortController();
+		const ctx = {
+			mode: "rpc",
+			ui: {
+				custom: () =>
+					new Promise<undefined>((_resolve, reject) => {
+						rejectCustom = reject;
+					}),
+				notify: () => {
+					notifications += 1;
+				},
+			},
+		};
+		sendCtxStatusMessage(
+			{ appendEntry() {} } as never,
+			{ title: "/ctx-status", text: "Detailed", rpcDisplay: "dialog" },
+			undefined,
+			ctx as never,
+			controller.signal,
+		);
+		controller.abort();
+		rejectCustom(new Error("host disposed"));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(notifications).toBe(0);
+	});
+
+	it("suppresses a late no-op custom fallback after lifecycle abort", async () => {
+		let resolveCustom!: (value: undefined) => void;
+		let notifications = 0;
+		const controller = new AbortController();
+		const ctx = {
+			mode: "rpc",
+			ui: {
+				custom: () =>
+					new Promise<undefined>((resolve) => {
+						resolveCustom = resolve;
+					}),
+				notify: () => {
+					notifications += 1;
+				},
+			},
+		};
+		sendCtxStatusMessage(
+			{ appendEntry() {} } as never,
+			{ title: "/ctx-status", text: "Detailed", rpcDisplay: "dialog" },
+			undefined,
+			ctx as never,
+			controller.signal,
+		);
+		controller.abort();
+		resolveCustom(undefined);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(notifications).toBe(0);
 	});
 });

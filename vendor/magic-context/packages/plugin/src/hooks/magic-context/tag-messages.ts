@@ -26,6 +26,7 @@ import {
 import {
     createToolDropTarget,
     extractToolCallObservation,
+    partHasCompletedResult,
     type ToolCallIndex,
     type ToolDropResult,
     ToolMutationBatch,
@@ -371,6 +372,27 @@ export interface TagMessagesOptions {
     onToolOwnerFallbackLookup?: (lookup: ToolOwnerFallbackLookup) => void;
 }
 
+const COMMIT_LOOKBACK = 5;
+
+/**
+ * Detect commit announcements in the same recent assistant window used by tagging.
+ * Rust authority skips the host tag walk, so this pure scan lets both authorities
+ * drive the shared durable note-nudge trigger without mirror-writing tag state.
+ */
+export function hasRecentAssistantCommit(messages: readonly MessageLike[]): boolean {
+    const firstRecentIndex = Math.max(0, messages.length - COMMIT_LOOKBACK);
+    for (let messageIndex = firstRecentIndex; messageIndex < messages.length; messageIndex += 1) {
+        const message = messages[messageIndex];
+        if (message?.info.role !== "assistant") continue;
+        for (const part of message.parts) {
+            if (isTextPart(part) && textMentionsRecentCommit((part as { text: string }).text)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 export function tagMessages(
     sessionId: string,
     messages: MessageLike[],
@@ -416,8 +438,7 @@ export function tagMessages(
     let precedingThinkingParts: ThinkingLikePart[] = [];
     let lastReduceMessageIndex = -1;
     const RECENT_REDUCE_LOOKBACK = 10;
-    const COMMIT_LOOKBACK = 5;
-    let commitDetected = false;
+    const commitDetected = hasRecentAssistantCommit(messages);
 
     // Intentional: we deliberately do NOT wrap this walk in db.transaction(...).
     // Each tagger.assignTag() owns its own atomic SAVEPOINT (insert + counter
@@ -488,7 +509,13 @@ export function tagMessages(
                     hasResult: false,
                 };
                 entry.occurrences.push({ message, part, kind: toolObservation.kind });
-                if (toolObservation.kind === "result") entry.hasResult = true;
+                // An OpenCode `{ type: "tool" }` part is observed as a "result" by
+                // its TYPE even while the call is still pending/running, so gate
+                // hasResult on an ACTUAL completed result (state.output present).
+                // This keeps open arcs out of every drop/clamp selector — a live
+                // task part's input must never become a reclaim target.
+                if (toolObservation.kind === "result" && partHasCompletedResult(part))
+                    entry.hasResult = true;
                 toolCallIndex.set(compositeKey, entry);
 
                 const _tGetTool = performance.now();
@@ -797,23 +824,6 @@ export function tagMessages(
 
         if (message.info.role === "assistant" && !messageHasTextPart) {
             precedingThinkingParts = messageThinkingParts;
-        }
-
-        // Detect commit hashes in recent assistant text (last COMMIT_LOOKBACK messages)
-        if (
-            !commitDetected &&
-            message.info.role === "assistant" &&
-            messages.length - msgIndex <= COMMIT_LOOKBACK
-        ) {
-            for (const part of message.parts) {
-                if (isTextPart(part)) {
-                    const text = (part as { text: string }).text;
-                    if (textMentionsRecentCommit(text)) {
-                        commitDetected = true;
-                        break;
-                    }
-                }
-            }
         }
     }
 

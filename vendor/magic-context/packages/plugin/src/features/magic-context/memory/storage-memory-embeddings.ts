@@ -22,7 +22,6 @@ const deleteEmbeddingStatements = new WeakMap<Database, PreparedStatement>();
 const getStoredModelIdStatements = new WeakMap<Database, PreparedStatement>();
 const clearAllEmbeddingsStatements = new WeakMap<Database, PreparedStatement>();
 const clearModelEmbeddingsStatements = new WeakMap<Database, PreparedStatement>();
-const getDistinctStoredModelIdsStatements = new WeakMap<Database, PreparedStatement>();
 
 function isEmbeddingBlob(value: unknown): value is Uint8Array | ArrayBuffer {
     return value instanceof Uint8Array || value instanceof ArrayBuffer;
@@ -118,17 +117,6 @@ function getClearModelEmbeddingsStatement(db: Database): PreparedStatement {
             "DELETE FROM memory_embeddings WHERE model_id = ? AND memory_id IN (SELECT id FROM memories WHERE project_path = ?)",
         );
         clearModelEmbeddingsStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getDistinctStoredModelIdsStatement(db: Database): PreparedStatement {
-    let stmt = getDistinctStoredModelIdsStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare(
-            "SELECT DISTINCT memory_embeddings.model_id AS modelId FROM memory_embeddings INNER JOIN memories ON memories.id = memory_embeddings.memory_id WHERE memories.project_path = ?",
-        );
-        getDistinctStoredModelIdsStatements.set(db, stmt);
     }
     return stmt;
 }

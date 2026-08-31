@@ -24,6 +24,8 @@ export interface PiDreamerOptions {
 	db: ContextDatabase;
 	projectDir: string;
 	projectIdentity: string;
+	/** One stable token per full Pi extension instance. */
+	registrationOwner: object;
 	/** Resolved runnable DreamerConfig from loadPiConfig(). When disable=true, the caller does not register. */
 	config: DreamerConfig;
 	/**
@@ -41,6 +43,8 @@ export interface PiDreamerOptions {
 	 * previously made dreamer's memory tasks a no-op.
 	 */
 	memoryEnabled: boolean;
+	retinaHandoff?: boolean;
+	mural?: { enabled: boolean; model?: string };
 	language?: string;
 	gitCommitIndexing: {
 		enabled: boolean;
@@ -80,11 +84,19 @@ interface SessionPromptArgs extends SessionMessagesArgs {
 type SessionDeleteArgs = SessionMessagesArgs;
 
 interface ProjectRegistration {
+	/** Unique per timer build. Optional only for registrations retained across reload from older code. */
+	generation?: object;
 	cleanup: () => void;
+	activeOwner: object;
+	owners: Map<object, PiDreamerOptions>;
 	/** Run dream tasks for this project IMMEDIATELY (Dreamer v2 manual path).
-	 *  `task` forces one task ignoring its gate; omitted runs all enabled. The
-	 *  registered dreamer timer also runs due tasks on its own schedule. */
-	runManual: (task?: DreamTaskName) => Promise<ManualRunResult>;
+	 *  `task` forces one task ignoring its gate; `undefined` runs all enabled. The
+	 *  registered dreamer timer also runs due tasks on its own schedule.
+	 *  Keep this parameter order stable: registrations are shared across reloads. */
+	runManual: (
+		task: DreamTaskName | undefined,
+		registrationOwner: object,
+	) => Promise<ManualRunResult>;
 	/** The directory this registration was built for. `resolveProjectIdentity`
 	 *  is intentionally identical across worktrees/clones of one repo, so a
 	 *  `/cd` into a different checkout of the SAME repo keeps the same identity
@@ -103,9 +115,34 @@ interface PiDreamerSession {
 	messages: unknown[];
 }
 
-const registeredProjects = new Map<string, ProjectRegistration>();
+const PI_DREAMER_PROJECTS = Symbol.for(
+	"magic-context.pi.dreamer-registered-projects",
+);
+
+function getRegisteredProjects(): Map<string, ProjectRegistration> {
+	const globals = globalThis as Record<symbol, unknown>;
+	const existing = globals[PI_DREAMER_PROJECTS];
+	if (existing instanceof Map) {
+		return existing as Map<string, ProjectRegistration>;
+	}
+	const projects = new Map<string, ProjectRegistration>();
+	globals[PI_DREAMER_PROJECTS] = projects;
+	return projects;
+}
+
+const registeredProjects = getRegisteredProjects();
 const sessionsById = new Map<string, PiDreamerSession>();
-const inFlightDreams = new Set<Promise<unknown>>();
+const PI_DREAMER_IN_FLIGHT = Symbol.for("magic-context.pi.dreamer-in-flight");
+const inFlightDreams = (() => {
+	const globals = globalThis as Record<symbol, unknown>;
+	const existing = globals[PI_DREAMER_IN_FLIGHT];
+	if (existing instanceof Map) {
+		return existing as Map<Promise<unknown>, object>;
+	}
+	const dreams = new Map<Promise<unknown>, object>();
+	globals[PI_DREAMER_IN_FLIGHT] = dreams;
+	return dreams;
+})();
 let sessionCounter = 0;
 let piSubagentRunnerFactory: PiSubagentRunnerFactory = () =>
 	new PiSubagentRunner();
@@ -120,36 +157,58 @@ export function registerPiDreamerProject(opts: PiDreamerOptions): void {
 	}
 
 	const existing = registeredProjects.get(opts.projectIdentity);
+	const owners = existing?.owners ?? new Map<object, PiDreamerOptions>();
+	owners.delete(opts.registrationOwner);
+	owners.set(opts.registrationOwner, opts);
+	const notifyOwnersOfAdjunctRefresh = (projectIdentity: string): void => {
+		const callbacks = new Set(
+			[...owners.values()]
+				.map((owner) => owner.onAdjunctsRefreshNeeded)
+				.filter((callback) => callback !== undefined),
+		);
+		for (const callback of callbacks) callback(projectIdentity);
+	};
 	if (existing) {
-		// Same identity, same directory → genuinely already registered, no-op.
-		if (existing.projectDir === opts.projectDir) {
+		// Same identity and directory genuinely reuses the timer. Registrations
+		// retained by an older module have no generation and must rebuild once.
+		if (existing.generation && existing.projectDir === opts.projectDir) {
 			return;
 		}
-		// Same identity, DIFFERENT directory: a worktree/clone switch in the same
-		// process. The existing registration's timer + client closure are pinned
-		// to the OLD checkout and its boot-time dreamerConfig. Tear it down and
-		// rebuild against the new directory + freshly-resolved config below, so
-		// the dreamer runs in the right checkout (and honors a `dreamer.disable`
-		// that may differ between checkouts — handled by the disable early-return
-		// above, which fires before this).
+		// A different checkout or legacy registration has a timer + client closure
+		// pinned to stale options. Tear it down before rebuilding below.
 		existing.cleanup();
 		registeredProjects.delete(opts.projectIdentity);
 	}
 
-	// Build the dreamer client ONCE so both the timer and the immediate
-	// /ctx-dream path share the same `inFlightDreams` accounting + the
+	const generation = {};
+	// Build the scheduled client once. Manual runs build owner-bound clients
+	// below; both paths share the same `inFlightDreams` accounting and the
 	// same module-private `sessionsById` table.
-	const client = createPiDreamerClient(opts);
+	const client = createPiDreamerClient(
+		opts,
+		notifyOwnersOfAdjunctRefresh,
+		() => {
+			const current = registeredProjects.get(opts.projectIdentity);
+			return (
+				current?.generation === generation &&
+				current.owners.get(opts.registrationOwner)?.projectDir ===
+					opts.projectDir
+			);
+		},
+	);
 
 	let cleanup: (() => void) | undefined;
 	let cancelled = false;
 	void startDreamScheduleTimerFn({
 		directory: opts.projectDir,
 		projectIdentity: opts.projectIdentity,
+		harness: "pi",
 		client,
 		dreamerConfig: opts.config,
 		language: opts.language,
 		gitCommitIndexing: opts.gitCommitIndexing,
+		retinaHandoff: opts.retinaHandoff,
+		mural: opts.mural,
 		ensureRegistered: ensureProjectRegisteredFromPiDirectory,
 		// SCHEDULED Pi retrospective must read Pi JSONL sessions, not opencode.db.
 		// Supply the Pi provider factory (db arg ignored — Pi reads JSONL by cwd),
@@ -163,40 +222,84 @@ export function registerPiDreamerProject(opts: PiDreamerOptions): void {
 		primerRawProviderFactory: createPiPrimerRawProviderFactory(),
 	}).then((timerCleanup) => {
 		if (cancelled) {
-			// Registration was cancelled before timer setup completed —
-			// immediately invoke cleanup to prevent leaked timer registration.
-			timerCleanup?.();
+			// A stale registration must release its timer resource even when a newer
+			// A→B→A registration uses the same directory. The shared timer cleanup
+			// is registration-identity-aware, so this cannot remove the replacement.
+			if (
+				registeredProjects.get(opts.projectIdentity)?.generation !== generation
+			) {
+				timerCleanup?.();
+			}
 			return;
 		}
 		cleanup = timerCleanup;
 	});
 
 	// Manual /ctx-dream (Dreamer v2): run dream tasks NOW via the per-task
-	// scheduler, using the same DreamTimerClient facade the timer uses (cast at
-	// the boundary — it implements the session.{create,prompt,messages,delete}
+	// scheduler, using an owner-bound DreamTimerClient facade (cast at the
+	// boundary — it implements the session.{create,prompt,messages,delete}
 	// surface the executor consumes; TS can't see structural compatibility
 	// through the wrapper). Project-scoped: only this project's tasks run.
-	const runManual = async (task?: DreamTaskName): Promise<ManualRunResult> =>
-		runManualDream({
-			db: opts.db,
-			projectIdentity: opts.projectIdentity,
-			tasks: buildDreamTaskRuntimeConfigs(opts.config, opts.language),
+	// Scheduled runs keep using the timer's client above; binding manual runs
+	// to their owner lets session_shutdown wait only for that instance's work.
+	const runManual = async (
+		task: DreamTaskName | undefined,
+		registrationOwner: object,
+	): Promise<ManualRunResult> => {
+		const manualOpts = owners.get(registrationOwner);
+		if (!manualOpts) {
+			throw new Error(
+				`Pi dreamer registration owner is no longer active for project ${opts.projectIdentity}`,
+			);
+		}
+		const manualClient = createPiDreamerClient(
+			manualOpts,
+			notifyOwnersOfAdjunctRefresh,
+			() =>
+				owners.get(manualOpts.registrationOwner)?.projectDir ===
+				manualOpts.projectDir,
+		);
+		const manualRun = runManualDream({
+			db: manualOpts.db,
+			projectIdentity: manualOpts.projectIdentity,
+			tasks: buildDreamTaskRuntimeConfigs(
+				manualOpts.config,
+				"pi",
+				manualOpts.language,
+				manualOpts.mural?.model,
+			),
 			executor: createDreamTaskExecutor({
-				client: client as never,
-				sessionDirectory: opts.projectDir,
+				client: manualClient as never,
+				sessionDirectory: manualOpts.projectDir,
 				openOpenCodeDb,
 				retrospectiveRawProvider: new PiRetrospectiveRawProvider({
-					projectCwd: opts.projectDir,
+					projectCwd: manualOpts.projectDir,
 				}),
 				primerRawProviderFactory: createPiPrimerRawProviderFactory(),
-				userMemoryCollectionEnabled: userMemoryCollectionEnabled(opts.config),
+				userMemoryCollectionEnabled: userMemoryCollectionEnabled(
+					manualOpts.config,
+				),
 				ensureProjectRegistered: ensureProjectRegisteredFromPiDirectory,
-				language: opts.language,
+				language: manualOpts.language,
+				retinaHandoff: manualOpts.retinaHandoff,
+				mural: manualOpts.mural,
 			}),
 			task,
 		});
+		// Track the whole manual run, including lease waits before its first
+		// subagent prompt, so owner-scoped shutdown cannot miss it.
+		inFlightDreams.set(manualRun, manualOpts.registrationOwner);
+		try {
+			return await manualRun;
+		} finally {
+			inFlightDreams.delete(manualRun);
+		}
+	};
 
 	registeredProjects.set(opts.projectIdentity, {
+		generation,
+		activeOwner: opts.registrationOwner,
+		owners,
 		cleanup: () => {
 			cancelled = true;
 			cleanup?.();
@@ -210,18 +313,20 @@ export function registerPiDreamerProject(opts: PiDreamerOptions): void {
  * Run one dream cycle IMMEDIATELY for the given project, mirroring
  * OpenCode's `/ctx-dream` behavior. Returns the run result, or `null`
  * if there's nothing to dequeue (queue empty or another worker holds
- * the lease — see `processDreamQueue` semantics). Throws if the project
- * isn't registered (call `registerPiDreamerProject` first).
+ * the lease — see `processDreamQueue` semantics). Throws if the project or
+ * owner isn't registered (call `registerPiDreamerProject` first).
  *
  * The user-visible reason this exists: without it, the user types
  * `/ctx-dream` and gets "queued, the timer will run it eventually" —
  * which makes the command feel broken even though the queue entry is
  * really there. Mirroring OpenCode's behavior lets us actually drain
- * it on the same turn.
+ * it on the same turn. The owner is required so same-directory
+ * re-registration always resolves the current owner options.
  */
 export async function runPiDreamForProject(
 	projectIdentity: string,
-	task?: DreamTaskName,
+	task: DreamTaskName | undefined,
+	registrationOwner: object,
 ): Promise<ManualRunResult> {
 	const registration = registeredProjects.get(projectIdentity);
 	if (!registration) {
@@ -229,15 +334,40 @@ export async function runPiDreamForProject(
 			`Pi dreamer not registered for project ${projectIdentity}; call registerPiDreamerProject() first`,
 		);
 	}
-	return registration.runManual(task);
+	return registration.runManual(task, registrationOwner);
 }
 
-/** Cleanup hook — call from session_shutdown to deregister this project. */
+/** Cleanup hook — call from session_shutdown to release this session's ownership. */
 export function unregisterPiDreamerProject(opts: {
 	projectIdentity: string;
+	registrationOwner: object;
 }): void {
 	const registration = registeredProjects.get(opts.projectIdentity);
-	if (!registration) {
+	if (!registration?.owners.delete(opts.registrationOwner)) {
+		return;
+	}
+
+	if (registration.owners.size > 0) {
+		if (registration.activeOwner !== opts.registrationOwner) return;
+		// The active worktree owner left while sibling sessions still use this
+		// project. Rebuild once from the most recently registered remaining owner
+		// so the shared timer follows a live session, then retain every sibling
+		// owner without repeatedly replacing the timer.
+		const remaining = [...registration.owners.values()];
+		const replacementOptions = remaining[remaining.length - 1];
+		if (!replacementOptions) return;
+		registration.cleanup();
+		registeredProjects.delete(opts.projectIdentity);
+		registerPiDreamerProject(replacementOptions);
+		const replacement = registeredProjects.get(opts.projectIdentity);
+		if (replacement) {
+			for (const remainingOptions of remaining) {
+				replacement.owners.set(
+					remainingOptions.registrationOwner,
+					remainingOptions,
+				);
+			}
+		}
 		return;
 	}
 
@@ -245,23 +375,40 @@ export function unregisterPiDreamerProject(opts: {
 	registeredProjects.delete(opts.projectIdentity);
 }
 
-/** Wait for any currently-running dreamer task to finish gracefully. Used
- *  in agent_end / session_shutdown so Pi doesn't kill an in-flight dream
- *  in `--print` mode. Same pattern as `awaitInFlightHistorians()`. */
-export async function awaitInFlightDreamers(): Promise<void> {
-	if (inFlightDreams.size === 0) {
-		return;
-	}
-
-	await Promise.allSettled(Array.from(inFlightDreams));
+/** Wait for any currently-running dreamer task owned by this extension
+ * instance to finish gracefully. Used in `session_shutdown`; omitting the owner
+ * waits for all tasks and remains available for process-exit callers and tests.
+ * Same pattern as `awaitInFlightHistorians()`. */
+export async function awaitInFlightDreamers(
+	registrationOwner?: object,
+): Promise<void> {
+	const runs =
+		registrationOwner === undefined
+			? [...inFlightDreams.keys()]
+			: [...inFlightDreams.entries()]
+					.filter(([, owner]) => owner === registrationOwner)
+					.map(([run]) => run);
+	if (runs.length === 0) return;
+	await Promise.allSettled(runs);
 }
 
-function createPiDreamerClient(opts: PiDreamerOptions): DreamTimerClient {
+function createPiDreamerClient(
+	opts: PiDreamerOptions,
+	onAdjunctsRefreshNeeded = opts.onAdjunctsRefreshNeeded,
+	isRegistrationOwnerActive: () => boolean = () => true,
+): DreamTimerClient {
 	const runner = piSubagentRunnerFactory();
-	const model = opts.config.model;
+	const assertRegistrationOwnerActive = (): void => {
+		if (!isRegistrationOwnerActive()) {
+			throw new Error(
+				`Pi dreamer registration is no longer active for project ${opts.projectIdentity}`,
+			);
+		}
+	};
 
 	const session = {
 		create: async (args: SessionCreateArgs) => {
+			assertRegistrationOwnerActive();
 			const sessionId = `magic-context-pi-dream-${++sessionCounter}`;
 			sessionsById.set(sessionId, {
 				id: sessionId,
@@ -279,6 +426,8 @@ function createPiDreamerClient(opts: PiDreamerOptions): DreamTimerClient {
 				throw new Error(`Pi dreamer session not found: ${sessionId}`);
 			}
 
+			assertRegistrationOwnerActive();
+
 			const userMessage = extractUserMessage(args);
 			const systemPrompt = extractSystemPrompt(args);
 			// Per-task model override (Dreamer v2): the SHARED executor
@@ -288,7 +437,7 @@ function createPiDreamerClient(opts: PiDreamerOptions): DreamTimerClient {
 			// we use body.model as the current attempt's model and pass
 			// fallbackModels: undefined; passing the dreamer-level chain here would
 			// double-iterate and override a task's own (possibly empty) chain.
-			const perTaskModel = extractBodyModel(args) ?? model;
+			const perTaskModel = extractBodyModel(args);
 			const requestedAgent = extractBodyAgent(args) ?? "magic-context-dreamer";
 			const runPromise = runner.run({
 				agent: requestedAgent,
@@ -302,11 +451,15 @@ function createPiDreamerClient(opts: PiDreamerOptions): DreamTimerClient {
 				timeoutMs: 30 * 60 * 1000,
 				cwd: dreamSession.directory,
 				signal: args.signal ?? undefined,
-				thinkingLevel: opts.config.thinking_level,
+				// modelBodyField writes the active entry qualifier as OpenCode's
+				// `variant`; the Pi facade translates that same wire field into
+				// `--thinking` without letting a primary level leak to fallbacks.
+				thinkingLevel: extractBodyVariant(args),
 			});
-			inFlightDreams.add(runPromise);
+			inFlightDreams.set(runPromise, opts.registrationOwner);
 			try {
 				const result = await runPromise;
+				assertRegistrationOwnerActive();
 				if (!result.ok) {
 					const error = new Error(
 						`Pi dreamer subagent failed (${result.reason}): ${result.error}`,
@@ -332,12 +485,13 @@ function createPiDreamerClient(opts: PiDreamerOptions): DreamTimerClient {
 				// can update <project-docs>, <user-profile>, or <key-files>. The cost
 				// of one extra disk read per session next turn is tiny compared to
 				// stale adjuncts surviving until restart.
-				opts.onAdjunctsRefreshNeeded?.(opts.projectIdentity);
+				onAdjunctsRefreshNeeded?.(opts.projectIdentity);
 			} finally {
 				inFlightDreams.delete(runPromise);
 			}
 		},
 		messages: async (args: SessionMessagesArgs) => {
+			assertRegistrationOwnerActive();
 			const dreamSession = sessionsById.get(args.path.id);
 			return { data: dreamSession?.messages ?? [] };
 		},
@@ -420,6 +574,15 @@ function extractBodyModel(args: { body?: unknown }): string | undefined {
 	return undefined;
 }
 
+function extractBodyVariant(args: { body?: unknown }): string | undefined {
+	const body = args.body;
+	if (typeof body !== "object" || body === null) return undefined;
+	const variant = (body as { variant?: unknown }).variant;
+	return typeof variant === "string" && variant.length > 0
+		? variant
+		: undefined;
+}
+
 function extractBodyAgent(args: { body?: unknown }): string | undefined {
 	const body = args.body;
 	if (typeof body !== "object" || body === null) return undefined;
@@ -462,6 +625,10 @@ function makeMessage(
 
 export const __test = {
 	registeredProjectCount: () => registeredProjects.size,
+	clearRegistrationGeneration: (projectIdentity: string) => {
+		const registration = registeredProjects.get(projectIdentity);
+		if (registration) delete registration.generation;
+	},
 	setPiSubagentRunnerFactory: (factory: PiSubagentRunnerFactory) => {
 		piSubagentRunnerFactory = factory;
 	},

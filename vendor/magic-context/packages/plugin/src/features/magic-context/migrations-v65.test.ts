@@ -119,3 +119,51 @@ describe("migration v66: bounded upgrade reminders", () => {
         }
     });
 });
+
+describe("migration v75: mural cue rejection latches", () => {
+    test("fresh DB carries the durable rejection counter", () => {
+        const db = new Database(":memory:");
+        try {
+            initializeDatabase(db);
+            runMigrations(db);
+            expect(columnNames(db, "memories")).toContain("mural_cue_rejection_count");
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("upgrades an existing memories table without changing cue state", () => {
+        const db = new Database(":memory:");
+        try {
+            db.exec(`
+                CREATE TABLE memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mural_cue TEXT,
+                    mural_cue_hash TEXT,
+                    mural_cue_at INTEGER
+                );
+                INSERT INTO memories (mural_cue, mural_cue_hash, mural_cue_at)
+                VALUES ('existing cue', 'existing hash', 123);
+            `);
+            seedAppliedVersion(db, 74);
+
+            runMigrations(db);
+
+            expect(columnNames(db, "memories")).toContain("mural_cue_rejection_count");
+            expect(
+                db
+                    .prepare(
+                        "SELECT mural_cue, mural_cue_hash, mural_cue_at, mural_cue_rejection_count FROM memories",
+                    )
+                    .get(),
+            ).toEqual({
+                mural_cue: "existing cue",
+                mural_cue_hash: "existing hash",
+                mural_cue_at: 123,
+                mural_cue_rejection_count: 0,
+            });
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});

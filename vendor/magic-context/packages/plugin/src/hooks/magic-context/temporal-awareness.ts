@@ -17,6 +17,7 @@
  * so injection is stable across transform passes and cache-safe.
  */
 
+import { hasMeaningfulUserText } from "./read-session-formatting";
 import { peelLeadingMcTagNotation } from "./tag-content-primitives";
 
 /** User message gaps below this threshold get no marker. 5 minutes. */
@@ -136,7 +137,7 @@ function findFirstVisibleTextPart(parts: unknown[]): MutableTextPart | null {
 }
 
 /**
- * Inject HTML-comment gap markers into user-message text parts when
+ * Inject HTML-comment gap markers into authored user-message text parts when
  * temporal awareness is enabled and the gap since the previous message's
  * effective end time exceeds TEMPORAL_AWARENESS_THRESHOLD_SECONDS.
  *
@@ -158,7 +159,9 @@ export function injectTemporalMarkers(messages: unknown[]): number {
         const msg = raw as MessageLikeWithTime;
         const role = msg.info?.role;
 
-        if (prev !== null && role === "user") {
+        const authoredUser =
+            role === "user" && Array.isArray(msg.parts) && hasMeaningfulUserText(msg.parts);
+        if (prev !== null && authoredUser) {
             const prevTime = prev.info?.time;
             const currTime = msg.info?.time;
             if (prevTime?.created !== undefined && currTime?.created !== undefined) {

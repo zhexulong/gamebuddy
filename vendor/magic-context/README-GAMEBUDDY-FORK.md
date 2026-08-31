@@ -1,9 +1,10 @@
 # GameBuddy Magic Context Fork
 
-This directory is a project-maintained fork of upstream Magic Context commit
-`113f3e4824e0ea03a73f2c1e8a57a5ab0bbf7a09` (MIT). It is intentionally ignored
-by the parent repository's normal Git index; the GameBuddy dependency must be
-packed/installed from this exact working tree before any production enablement.
+This directory is a parent-repository-tracked, project-maintained fork of upstream
+Magic Context `v0.41.0` commit `bcd2f705af70bfd055e974a47c958640e2484b7f`
+(MIT). GameBuddy applies its product-specific delta directly in this vendored tree;
+the dependency, lockfiles, generated `dist`, SBOM, and third-party license inventory
+must be regenerated and verified from this exact tracked source before release.
 
 ## GameBuddy delta: `memory.domain`
 
@@ -38,8 +39,8 @@ its opaque runtime directory.
 ## Deliberate rollout state
 
 GameBuddy currently selects `ongoing-interaction`, enables same-scope read-only
-Semantic Memory injection, and enables Magic Context's native embedded
-Historian/`auto_promote` lifecycle:
+Semantic Memory injection, and enables the native embedded Historian while
+keeping automatic promotion disabled pending its separate release gate:
 
 ```json
 {
@@ -47,7 +48,7 @@ Historian/`auto_promote` lifecycle:
   "memory": {
     "domain": "ongoing-interaction",
     "enabled": true,
-    "auto_promote": true,
+    "auto_promote": false,
     "auto_search": { "enabled": false }
   },
   "embedding": { "provider": "off" },
@@ -57,21 +58,19 @@ Historian/`auto_promote` lifecycle:
 ```
 
 The fork's native m[0]/m[1] renderer injects only active/permanent
-`SEMANTIC_MEMORY` for the exact opaque project identity. Under Magic Context's
-own context-pressure scheduler, the embedded no-tool Historian may publish
-Episodic compartments and, when its domain-validated output contains
-`SEMANTIC_MEMORY`, transactionally promote it through Magic Context's existing
-lifecycle. The generic coding-agent system guidance is explicitly disabled, and
+`SEMANTIC_MEMORY` for the exact opaque project identity. Under Magic Context's own context-pressure scheduler, the embedded no-tool
+Historian may publish Episodic compartments. Domain-valid `SEMANTIC_MEMORY`
+promotion remains gated off in production until `auto_promote` receives its
+separate controlled live acceptance. The generic coding-agent system guidance is explicitly disabled, and
 GameBuddy's Pi allowlist still excludes all Magic Context `ctx_*` tools. Thus
 Host has no Memory writer, reader, recall adapter, SQLite API, handoff, ledger,
 or promotion logic.
 
 Magic Context's native ongoing-interaction promotion path has controlled
-provider-backed verification: a one-off Episodic fixture publishes no Semantic
+provider-backed gate coverage (not production enablement): a one-off Episodic fixture publishes no Semantic
 Memory, while an explicit confirmed durable preference publishes one scoped
-`SEMANTIC_MEMORY` when `auto_promote=true`. This verifies the same embedded
-pipeline selected by production without manufacturing production-scale context
-pressure.
+`SEMANTIC_MEMORY` when `auto_promote=true`. This exercises the same embedded pipeline selected by production without
+manufacturing production-scale context pressure or enabling the production gate.
 
 This fork is not evidence that cross-session Chat/Game recall, embeddings,
 Dreamer, or Sidekick are enabled or accepted. They each need independent

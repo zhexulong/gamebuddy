@@ -36,6 +36,17 @@ export interface PrimerCandidate {
     createdAt: number;
 }
 
+export interface PrimerSourceProvenance {
+    candidateId: number;
+    projectPath: string;
+    harness: string;
+    sessionId: string;
+    sourceCompartmentStart: number | null;
+    sourceCompartmentEnd: number | null;
+    sourceStartMessageId: string;
+    sourceEndMessageId: string;
+}
+
 export interface Primer {
     id: number;
     projectPath: string;
@@ -48,6 +59,7 @@ export interface Primer {
     lastObservedAt: number | null;
     answerRefreshedAt: number | null;
     sourceCandidateIds: number[];
+    sourceProvenance: PrimerSourceProvenance[] | null;
     createdAt: number;
     updatedAt: number;
 }
@@ -81,6 +93,7 @@ interface PrimerRow {
     last_observed_at: number | null;
     answer_refreshed_at: number | null;
     source_candidate_ids: string | null;
+    source_candidate_provenance: string | null;
     created_at: number;
     updated_at: number;
 }
@@ -142,6 +155,108 @@ function parseCandidateIds(raw: string | null): number[] {
     }
 }
 
+function parsePrimerSourceProvenance(raw: string | null): PrimerSourceProvenance[] | null {
+    if (raw === null) return null;
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        const provenance: PrimerSourceProvenance[] = [];
+        for (const value of parsed) {
+            if (!value || typeof value !== "object") return null;
+            const source = value as Record<string, unknown>;
+            if (
+                typeof source.candidate_id !== "number" ||
+                !Number.isFinite(source.candidate_id) ||
+                typeof source.project_path !== "string" ||
+                typeof source.harness !== "string" ||
+                typeof source.session_id !== "string" ||
+                (source.source_compartment_start !== null &&
+                    typeof source.source_compartment_start !== "number") ||
+                (source.source_compartment_end !== null &&
+                    typeof source.source_compartment_end !== "number") ||
+                typeof source.source_start_message_id !== "string" ||
+                typeof source.source_end_message_id !== "string"
+            ) {
+                return null;
+            }
+            provenance.push({
+                candidateId: source.candidate_id,
+                projectPath: source.project_path,
+                harness: source.harness,
+                sessionId: source.session_id,
+                sourceCompartmentStart: source.source_compartment_start as number | null,
+                sourceCompartmentEnd: source.source_compartment_end as number | null,
+                sourceStartMessageId: source.source_start_message_id,
+                sourceEndMessageId: source.source_end_message_id,
+            });
+        }
+        return provenance;
+    } catch {
+        return null;
+    }
+}
+
+function loadPrimerSourceProvenance(
+    db: Database,
+    candidateIds: number[],
+): PrimerSourceProvenance[] {
+    const ids = [...new Set(candidateIds)].sort((a, b) => a - b);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db
+        .prepare(
+            `SELECT id, project_path, harness, session_id,
+                    source_compartment_start, source_compartment_end,
+                    source_start_message_id, source_end_message_id
+               FROM primer_candidates
+              WHERE id IN (${placeholders})
+              ORDER BY id ASC`,
+        )
+        .all(...ids) as Array<{
+        id: number;
+        project_path: string;
+        harness: string;
+        session_id: string;
+        source_compartment_start: number | null;
+        source_compartment_end: number | null;
+        source_start_message_id: string;
+        source_end_message_id: string;
+    }>;
+    return rows.map((row) => ({
+        candidateId: row.id,
+        projectPath: row.project_path,
+        harness: row.harness,
+        sessionId: row.session_id,
+        sourceCompartmentStart: row.source_compartment_start,
+        sourceCompartmentEnd: row.source_compartment_end,
+        sourceStartMessageId: row.source_start_message_id,
+        sourceEndMessageId: row.source_end_message_id,
+    }));
+}
+
+function serializePrimerSourceProvenance(
+    provenance: PrimerSourceProvenance[],
+    sourceCandidateIds: number[],
+): string | null {
+    if (provenance.length === 0 && sourceCandidateIds.length > 0) return null;
+    return JSON.stringify(
+        provenance.map((source) => ({
+            candidate_id: source.candidateId,
+            project_path: source.projectPath,
+            harness: source.harness,
+            session_id: source.sessionId,
+            source_compartment_start: source.sourceCompartmentStart,
+            source_compartment_end: source.sourceCompartmentEnd,
+            source_start_message_id: source.sourceStartMessageId,
+            source_end_message_id: source.sourceEndMessageId,
+        })),
+    );
+}
+
+function normalizedCandidateIds(candidateIds: number[]): number[] {
+    return [...new Set(candidateIds)].sort((a, b) => a - b);
+}
+
 function toCandidate(row: CandidateRow): PrimerCandidate {
     return {
         id: row.id,
@@ -175,6 +290,7 @@ function toPrimer(row: PrimerRow): Primer {
         lastObservedAt: row.last_observed_at,
         answerRefreshedAt: row.answer_refreshed_at,
         sourceCandidateIds: parseCandidateIds(row.source_candidate_ids),
+        sourceProvenance: parsePrimerSourceProvenance(row.source_candidate_provenance),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
@@ -331,28 +447,33 @@ export function createPrimer(
         now?: number;
     },
 ): number {
-    const now = input.now ?? Date.now();
-    const info = db
-        .prepare(
-            `INSERT INTO primers (
-                project_path, question, question_embedding, question_embedding_model_id, answer,
-                status, total_support, last_observed_at, answer_refreshed_at,
-                source_candidate_ids, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?, ?, ?)`,
-        )
-        .run(
-            input.projectPath,
-            input.question,
-            vectorBlob(input.questionEmbedding),
-            input.questionEmbeddingModelId ?? null,
-            input.answer ?? "",
-            input.totalSupport,
-            input.lastObservedAt,
-            JSON.stringify([...new Set(input.sourceCandidateIds)].sort((a, b) => a - b)),
-            now,
-            now,
-        );
-    return Number(info.lastInsertRowid);
+    return db.transaction(() => {
+        const now = input.now ?? Date.now();
+        const sourceCandidateIds = normalizedCandidateIds(input.sourceCandidateIds);
+        const sourceProvenance = loadPrimerSourceProvenance(db, sourceCandidateIds);
+        const info = db
+            .prepare(
+                `INSERT INTO primers (
+                    project_path, question, question_embedding, question_embedding_model_id, answer,
+                    status, total_support, last_observed_at, answer_refreshed_at,
+                    source_candidate_ids, source_candidate_provenance, created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?, ?, ?, ?)`,
+            )
+            .run(
+                input.projectPath,
+                input.question,
+                vectorBlob(input.questionEmbedding),
+                input.questionEmbeddingModelId ?? null,
+                input.answer ?? "",
+                input.totalSupport,
+                input.lastObservedAt,
+                JSON.stringify(sourceCandidateIds),
+                serializePrimerSourceProvenance(sourceProvenance, sourceCandidateIds),
+                now,
+                now,
+            );
+        return Number(info.lastInsertRowid);
+    })();
 }
 
 export function updatePrimerSupport(
@@ -367,24 +488,48 @@ export function updatePrimerSupport(
         now?: number;
     },
 ): void {
-    db.prepare(
-        `UPDATE primers
-         SET question_embedding = COALESCE(?, question_embedding),
-             question_embedding_model_id = COALESCE(?, question_embedding_model_id),
-             total_support = ?,
-             last_observed_at = ?,
-             source_candidate_ids = ?,
-             updated_at = ?
-         WHERE id = ?`,
-    ).run(
-        vectorBlob(input.questionEmbedding),
-        input.questionEmbeddingModelId ?? null,
-        input.totalSupport,
-        input.lastObservedAt,
-        JSON.stringify([...new Set(input.sourceCandidateIds)].sort((a, b) => a - b)),
-        input.now ?? Date.now(),
-        input.primerId,
-    );
+    db.transaction(() => {
+        const sourceCandidateIds = normalizedCandidateIds(input.sourceCandidateIds);
+        const allowedIds = new Set(sourceCandidateIds);
+        const existingRow = db
+            .prepare("SELECT source_candidate_provenance FROM primers WHERE id = ?")
+            .get(input.primerId) as { source_candidate_provenance: string | null } | undefined;
+        const provenanceByCandidateId = new Map<number, PrimerSourceProvenance>();
+        for (const source of parsePrimerSourceProvenance(
+            existingRow?.source_candidate_provenance ?? null,
+        ) ?? []) {
+            if (allowedIds.has(source.candidateId)) {
+                provenanceByCandidateId.set(source.candidateId, source);
+            }
+        }
+        for (const source of loadPrimerSourceProvenance(db, sourceCandidateIds)) {
+            provenanceByCandidateId.set(source.candidateId, source);
+        }
+        const sourceProvenance = [...provenanceByCandidateId.values()].sort(
+            (a, b) => a.candidateId - b.candidateId,
+        );
+
+        db.prepare(
+            `UPDATE primers
+             SET question_embedding = COALESCE(?, question_embedding),
+                 question_embedding_model_id = COALESCE(?, question_embedding_model_id),
+                 total_support = ?,
+                 last_observed_at = ?,
+                 source_candidate_ids = ?,
+                 source_candidate_provenance = ?,
+                 updated_at = ?
+             WHERE id = ?`,
+        ).run(
+            vectorBlob(input.questionEmbedding),
+            input.questionEmbeddingModelId ?? null,
+            input.totalSupport,
+            input.lastObservedAt,
+            JSON.stringify(sourceCandidateIds),
+            serializePrimerSourceProvenance(sourceProvenance, sourceCandidateIds),
+            input.now ?? Date.now(),
+            input.primerId,
+        );
+    })();
 }
 
 export function updatePrimerAnswer(

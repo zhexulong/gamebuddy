@@ -54,8 +54,18 @@ function clampHiddenAgentStepLimit(value: unknown, cap: number): number {
  * byte-identical to the canonical exported constants so they can't silently
  * diverge.
  */
+export const HIDDEN_AGENT_DESCRIPTION_MARKER = "Internal Magic Context";
+const HIDDEN_AGENT_DESCRIPTION =
+    "Internal Magic Context maintenance agent. Not for general tasks — do not select for user work.";
+
 export interface HiddenAgentRegistration {
     id: string;
+    /** OpenCode's task registry excludes primary agents from general subagent routing. */
+    mode: "primary";
+    /** Hidden agents stay out of the UI picker while remaining directly resolvable. */
+    hidden: true;
+    /** Description used by OpenCode's automatic name/description-based task router; keep it generic so this hidden agent is not selected for unrelated tasks. */
+    description: string;
     prompt: string | undefined;
     allowedTools: readonly string[];
     maxSteps: number;
@@ -90,6 +100,9 @@ export function buildHiddenAgentRegistrations(args: {
     return [
         {
             id: "dreamer",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.dreamerPrompt,
             // CURATE-ONLY now. Curate edits the memory store via ctx_memory and
             // never reads code (a separate verify task owns memory-vs-code
@@ -111,6 +124,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "dreamer-docs",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.dreamerPrompt,
             // maintain-docs: explore code + write/edit ARCHITECTURE.md/STRUCTURE.md
             // + bash (git log, find). NO ctx_memory/ctx_search/ctx_note — it edits
@@ -136,6 +152,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "dreamer-reviewer",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.dreamerPrompt,
             // review-user-memories: a pure JSON reviewer of behavioral observations.
             // It calls NO tools — the host applies its verdict — so zero tools,
@@ -147,6 +166,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "dreamer-retrospective",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.dreamerPrompt,
             allowedTools: ["ctx_search"],
             maxSteps: 40,
@@ -158,6 +180,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "dreamer-primer-investigator",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.dreamerPrompt,
             // Read-only code investigation: read/navigate/search the CURRENT
             // source to answer a primer. Deliberately NO write/edit/bash (could
@@ -184,6 +209,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "dreamer-memory-mapper",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.dreamerPrompt,
             // Read-only local-source reader for map-memories / verify: open and
             // check the CURRENT source. NO write/edit/bash (could corrupt user
@@ -203,6 +231,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "dreamer-classifier",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.dreamerPrompt,
             // ZERO tools: classify scores importance/scope/shareable from the
             // memory text alone (no code inspection), emits ONE XML manifest, and
@@ -215,6 +246,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "smart-note-compiler",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.smartNoteCompilerPrompt,
             allowedTools: [],
             maxSteps: 8,
@@ -225,6 +259,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "historian",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.historianPrompt,
             allowedTools: historianAllowedTools,
             maxSteps: 40,
@@ -232,6 +269,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "historian-recomp",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.historianRecompPrompt ?? args.historianPrompt,
             allowedTools: historianAllowedTools,
             maxSteps: 40,
@@ -239,6 +279,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "historian-editor",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.historianEditorPrompt,
             allowedTools: historianAllowedTools,
             maxSteps: 40,
@@ -246,6 +289,9 @@ export function buildHiddenAgentRegistrations(args: {
         },
         {
             id: "sidekick",
+            mode: "primary",
+            hidden: true,
+            description: HIDDEN_AGENT_DESCRIPTION,
             prompt: args.sidekickPrompt,
             allowedTools: ["ctx_search", "aft_outline", "aft_zoom"],
             maxSteps: 40,
@@ -266,6 +312,7 @@ export function buildHiddenAgentConfig(
     overrides?: Record<string, unknown>,
     agentLabel?: string,
     lockPermissions = false,
+    description?: string,
 ) {
     const {
         permission: overridePermission,
@@ -325,7 +372,8 @@ export function buildHiddenAgentConfig(
             ...basePermission,
             ...(lockPermissions ? {} : (overridePermission ?? {})),
         },
-        mode: "subagent" as const,
+        mode: "primary" as const,
         hidden: true,
+        ...(description !== undefined ? { description } : {}),
     };
 }

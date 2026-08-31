@@ -6,6 +6,8 @@ import { Database } from "../../../shared/sqlite";
 import { closeQuietly } from "../../../shared/sqlite-helpers";
 import {
     CURATE_CHILD_TITLE,
+    HISTORIAN_CHILD_TITLE,
+    historianOrphanStaleMs,
     MAINTAIN_DOCS_CHILD_TITLE,
     REFRESH_PRIMERS_CHILD_TITLE,
     RETROSPECTIVE_CHILD_TITLE,
@@ -50,6 +52,18 @@ describe("retrospectiveOrphanStaleMs", () => {
     });
 });
 
+describe("historianOrphanStaleMs", () => {
+    test("covers every outer, model-suggestion, and fallback attempt plus grace", () => {
+        const timeoutMs = 10 * 60_000;
+        const fallbackModelCount = 2;
+        const fullAttemptBudget = timeoutMs * 3 * 2 * (fallbackModelCount + 1);
+
+        expect(historianOrphanStaleMs(timeoutMs, fallbackModelCount)).toBeGreaterThan(
+            fullAttemptBudget,
+        );
+    });
+});
+
 describe("sweepOrphanedRetrospectiveChildren", () => {
     const DIR = "/repo/project";
     const now = 10_000_000;
@@ -71,6 +85,7 @@ describe("sweepOrphanedRetrospectiveChildren", () => {
     test("deletes old privacy-sensitive children in this directory", async () => {
         db = makeOpencodeDb();
         // old orphans in this dir → swept
+        insert(db, "old-historian", HISTORIAN_CHILD_TITLE, DIR, now - staleMs - 8);
         insert(db, "old-user-memories", USER_MEMORIES_CHILD_TITLE, DIR, now - staleMs - 7);
         insert(db, "old", RETROSPECTIVE_CHILD_TITLE, DIR, now - staleMs - 6);
         insert(db, "old-curate", CURATE_CHILD_TITLE, DIR, now - staleMs - 5);
@@ -90,8 +105,9 @@ describe("sweepOrphanedRetrospectiveChildren", () => {
             DIR,
             now - staleMs - 1,
         );
-        // recent child (live run) → NOT swept
+        // recent children (live or still draining detached writes) → NOT swept
         insert(db, "fresh", RETROSPECTIVE_CHILD_TITLE, DIR, now - 1000);
+        insert(db, "fresh-historian", HISTORIAN_CHILD_TITLE, DIR, now - 1000);
         // old but a different title → NOT swept
         insert(db, "other-title", "magic-context-dream-verify", DIR, now - staleMs - 1);
         // old retrospective but ANOTHER directory → NOT swept
@@ -107,6 +123,7 @@ describe("sweepOrphanedRetrospectiveChildren", () => {
         });
 
         expect(deleted).toEqual([
+            "old-historian",
             "old-user-memories",
             "old",
             "old-curate",
@@ -115,7 +132,57 @@ describe("sweepOrphanedRetrospectiveChildren", () => {
             "old-compile",
             "old-confirm",
         ]);
-        expect(count).toBe(7);
+        expect(count).toBe(8);
+    });
+
+    test("keeps a recent historian child and sweeps it after the full attempt budget", async () => {
+        db = makeOpencodeDb();
+        const configuredStaleMs = historianOrphanStaleMs(10 * 60_000, 2);
+        const historianNow = configuredStaleMs + 1_000_000;
+        insert(
+            db,
+            "historian-still-draining",
+            HISTORIAN_CHILD_TITLE,
+            DIR,
+            historianNow - configuredStaleMs + 1,
+        );
+        insert(
+            db,
+            "historian-budget-expired",
+            HISTORIAN_CHILD_TITLE,
+            DIR,
+            historianNow - configuredStaleMs - 1,
+        );
+        const { client, deleted } = deleteClient();
+
+        const count = await sweepOrphanedRetrospectiveChildren({
+            opencodeDb: db,
+            client,
+            sessionDirectory: DIR,
+            staleMs: configuredStaleMs,
+            now: historianNow,
+        });
+
+        expect(count).toBe(1);
+        expect(deleted).toEqual(["historian-budget-expired"]);
+    });
+
+    test("preserves stale children when keep_subagents is enabled", async () => {
+        db = makeOpencodeDb();
+        insert(db, "kept-historian", HISTORIAN_CHILD_TITLE, DIR, now - staleMs - 1);
+        const { client, deleted } = deleteClient();
+
+        const count = await sweepOrphanedRetrospectiveChildren({
+            opencodeDb: db,
+            client,
+            sessionDirectory: DIR,
+            staleMs,
+            now,
+            keepSubagents: true,
+        });
+
+        expect(count).toBe(0);
+        expect(deleted).toEqual([]);
     });
 
     test("treats a delete error (404 / already removed) as success", async () => {

@@ -21,7 +21,16 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { getLastIndexedOrdinal } from "@magic-context/core/features/magic-context/message-index";
-import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+import {
+	compileSurfaceCondition,
+	conditionCompileReplySuffix,
+	conditionCompileStorageFields,
+} from "@magic-context/core/features/magic-context/smart-notes/condition-compiler";
+import { wakePlaneStatus } from "@magic-context/core/features/magic-context/smart-notes/wake-plane";
+import type {
+	ContextDatabase,
+	UpdateNoteOptions,
+} from "@magic-context/core/features/magic-context/storage";
 import {
 	addNote,
 	dismissNote,
@@ -187,11 +196,15 @@ export interface CtxNoteToolDeps {
 	 *  registers tools once, but `/cd` can switch to a project with different
 	 *  smart-note support. */
 	resolveDreamerEnabled?: (ctx: { cwd: string }) => boolean | undefined;
+	/** Resolve a directory's project identity, allowing home only when user-level configuration enables it. */
+	resolveProjectIdentity?: (directory: string) => string | undefined;
 }
 
 export function createCtxNoteTool(
 	deps: CtxNoteToolDeps,
 ): ToolDefinition<typeof ParamsSchema> {
+	const resolveProject =
+		deps.resolveProjectIdentity ?? resolveProjectIdentityForSession;
 	return {
 		name: "ctx_note",
 		label: "Magic Context: Notes",
@@ -231,26 +244,40 @@ export function createCtxNoteTool(
 
 				const surfaceCondition = params.surface_condition?.trim();
 				if (surfaceCondition) {
+					if ((await wakePlaneStatus()) === "present") {
+						const note = addNote(deps.db, "session", {
+							sessionId,
+							content,
+							anchorOrdinal,
+						});
+						return ok(
+							`Saved session note #${note.id}.\nwake plane active — create a scheduled wake instead; stored as a plain note.`,
+						);
+					}
 					if (dreamerEnabled !== true) {
 						return err(
 							"Error: Smart notes require dreamer to be enabled. Enable dreamer in magic-context.jsonc to use surface_condition.",
 						);
 					}
-					const projectIdentity = resolveProjectIdentityForSession(ctx.cwd);
+					const projectIdentity = resolveProject(ctx.cwd);
 					if (!projectIdentity) {
 						return err(
 							"Error: Could not resolve project identity for smart note.",
 						);
 					}
+					const compilation = await compileSurfaceCondition(surfaceCondition, {
+						projectPath: ctx.cwd,
+					});
 					const note = addNote(deps.db, "smart", {
 						content,
 						sessionId,
 						projectPath: projectIdentity,
 						surfaceCondition,
 						anchorOrdinal,
+						...conditionCompileStorageFields(compilation),
 					});
 					return ok(
-						`Created smart note #${note.id}. Dreamer will evaluate the condition during nightly runs:\n- Content: ${content}\n- Condition: ${surfaceCondition}`,
+						`Created smart note #${note.id}. Dreamer will evaluate the condition during nightly runs:\n- Content: ${content}\n- Condition: ${surfaceCondition}${conditionCompileReplySuffix(compilation)}`,
 					);
 				}
 
@@ -266,7 +293,7 @@ export function createCtxNoteTool(
 				if (typeof params.note_id !== "number") {
 					return err("Error: 'note_id' is required when action is 'dismiss'.");
 				}
-				const projectIdentity = resolveProjectIdentityForSession(ctx.cwd);
+				const projectIdentity = resolveProject(ctx.cwd);
 				if (!projectIdentity) {
 					return err(
 						"Error: Could not resolve project identity for note dismiss.",
@@ -287,16 +314,25 @@ export function createCtxNoteTool(
 				if (typeof params.note_id !== "number") {
 					return err("Error: 'note_id' is required when action is 'update'.");
 				}
-				const updates: { content?: string; surfaceCondition?: string } = {};
+				const updates: UpdateNoteOptions = {};
 				if (params.content?.trim()) updates.content = params.content.trim();
-				if (params.surface_condition?.trim())
-					updates.surfaceCondition = params.surface_condition.trim();
+				let compilation:
+					| Awaited<ReturnType<typeof compileSurfaceCondition>>
+					| undefined;
+				if (params.surface_condition?.trim()) {
+					const surfaceCondition = params.surface_condition.trim();
+					updates.surfaceCondition = surfaceCondition;
+					compilation = await compileSurfaceCondition(surfaceCondition, {
+						projectPath: ctx.cwd,
+					});
+					Object.assign(updates, conditionCompileStorageFields(compilation));
+				}
 				if (!updates.content && !updates.surfaceCondition) {
 					return err(
 						"Error: Provide 'content' and/or 'surface_condition' to update.",
 					);
 				}
-				const projectIdentity = resolveProjectIdentityForSession(ctx.cwd);
+				const projectIdentity = resolveProject(ctx.cwd);
 				if (!projectIdentity) {
 					return err(
 						"Error: Could not resolve project identity for note update.",
@@ -315,7 +351,9 @@ export function createCtxNoteTool(
 				if (updates.content) parts.push(`content: ${updates.content}`);
 				if (updates.surfaceCondition)
 					parts.push(`condition: ${updates.surfaceCondition}`);
-				return ok(`Updated note #${params.note_id}\n- ${parts.join("\n- ")}`);
+				return ok(
+					`Updated note #${params.note_id}\n- ${parts.join("\n- ")}${compilation ? conditionCompileReplySuffix(compilation) : ""}`,
+				);
 			}
 
 			// read — IMPORTANT: pass through `undefined` as the default
@@ -338,6 +376,7 @@ export function createCtxNoteTool(
 				db: deps.db,
 				sessionId,
 				cwd: ctx.cwd,
+				resolveProjectIdentity: resolveProject,
 				filter: params.filter,
 				limit,
 				offset,
@@ -382,11 +421,12 @@ function readNotes(args: {
 	db: ContextDatabase;
 	sessionId: string;
 	cwd: string;
+	resolveProjectIdentity: (directory: string) => string | undefined;
 	filter: CtxNoteReadFilter | undefined;
 	limit: number;
 	offset: number;
 }): string[] {
-	const projectIdentity = resolveProjectIdentityForSession(args.cwd);
+	const projectIdentity = args.resolveProjectIdentity(args.cwd);
 
 	if (args.filter === undefined) {
 		// Default mixed view: active session notes + READY smart notes.

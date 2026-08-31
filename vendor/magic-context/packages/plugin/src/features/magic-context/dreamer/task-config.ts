@@ -1,5 +1,5 @@
-import type { DreamerConfig, DreamTaskConfig } from "../../../config/schema/magic-context";
-import { resolveFallbackChain } from "../../../shared/resolve-fallbacks";
+import type { DreamerConfig } from "../../../config/schema/magic-context";
+import { type ModelHarness, resolveDreamerTaskModel } from "../../../shared/model-resolution";
 import { CANONICAL_DREAM_TASKS, type DreamTaskName } from "./task-registry";
 import type { DreamTaskRuntimeConfig } from "./task-scheduler";
 
@@ -10,36 +10,32 @@ import type { DreamTaskRuntimeConfig } from "./task-scheduler";
  * task-specific params. One place owns the inheritance rule.
  */
 export function buildDreamTaskRuntimeConfigs(
-    dreamer: DreamerConfig,
+    dreamer: unknown,
+    harness: ModelHarness,
     language?: string,
+    muralModel?: unknown,
 ): DreamTaskRuntimeConfig[] {
-    // Defensive: `tasks` is always the v2 record after config load (Zod default),
-    // but background/test callers can hand a partially-shaped object; treat a
-    // missing entry as a disabled task with defaults rather than crashing.
-    const tasks = (dreamer.tasks ?? {}) as Partial<DreamerConfig["tasks"]>;
     return CANONICAL_DREAM_TASKS.map((task) => {
-        const t = (tasks[task] ?? {
-            schedule: "",
-            timeout_minutes: 20,
-        }) as DreamTaskConfig;
-        // Per-task model override falls back to the dreamer-level model. Fallback
-        // chain: per-task list if set, else the dreamer-level list (resolved/deduped).
-        // compress-cues has a separate experimental.mural.model fallback. Leave its
-        // primary model empty here so the executor can apply task override →
-        // experimental.mural.model → dreamer model in that order (same ladder as
-        // the retired render-mural task used for its author model).
-        const model = task === "compress-cues" ? t.model : (t.model ?? dreamer.model);
-        const fallbackModels = resolveFallbackChain(t.fallback_models ?? dreamer.fallback_models);
-        const thinkingLevel = t.thinking_level ?? dreamer.thinking_level;
+        const resolved = resolveDreamerTaskModel({
+            config: { dreamer },
+            harness,
+            task,
+            muralModel,
+        });
         return {
             task,
-            schedule: t.schedule,
-            model,
-            fallbackModels,
-            thinkingLevel,
+            // Scheduling is intentionally outside the harness block. An omitted
+            // schedule stays disabled until the schema supplies its default.
+            schedule: resolved.schedule ?? "",
+            model: resolved.primary,
+            fallbackModels: resolved.fallbacks,
+            thinkingLevel:
+                harness === "pi"
+                    ? (resolved.primary?.qualifier as DreamTaskRuntimeConfig["thinkingLevel"])
+                    : undefined,
             language,
-            timeoutMinutes: t.timeout_minutes ?? 20,
-            promotionThreshold: t.promotion_threshold,
+            timeoutMinutes: resolved.timeoutMinutes ?? 20,
+            promotionThreshold: resolved.promotionThreshold,
         };
     });
 }

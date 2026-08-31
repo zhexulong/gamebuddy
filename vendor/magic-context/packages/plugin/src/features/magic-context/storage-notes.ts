@@ -4,6 +4,7 @@ import type { Database } from "../../shared/sqlite";
 export type NoteType = "session" | "smart";
 export type NoteStatus = "active" | "pending" | "ready" | "dismissed";
 export type NoteCheckStatus = "uncompiled" | "compiled" | "failing" | "fallback";
+export type ConditionCompileStatus = "compiled" | "plain" | "refused";
 
 export interface Note {
     id: number;
@@ -13,6 +14,10 @@ export interface Note {
     sessionId: string | null;
     projectPath: string | null;
     surfaceCondition: string | null;
+    compiledProvider: string | null;
+    compiledConfig: string | null;
+    compiledAt: number | null;
+    compileStatus: ConditionCompileStatus | null;
     createdAt: number;
     updatedAt: number;
     lastCheckedAt: number | null;
@@ -61,6 +66,10 @@ export interface UpdateNoteOptions {
     lastCheckedAt?: number | null;
     readyAt?: number | null;
     readyReason?: string | null;
+    compiledProvider?: string | null;
+    compiledConfig?: string | null;
+    compiledAt?: number | null;
+    compileStatus?: ConditionCompileStatus | null;
 }
 
 interface NoteRow {
@@ -71,6 +80,10 @@ interface NoteRow {
     session_id: string | null;
     project_path: string | null;
     surface_condition: string | null;
+    compiled_provider?: string | null;
+    compiled_config?: string | null;
+    compiled_at?: number | null;
+    compile_status?: string | null;
     created_at: number;
     updated_at: number;
     last_checked_at: number | null;
@@ -105,6 +118,10 @@ interface SmartNoteInput {
     projectPath: string;
     surfaceCondition: string;
     anchorOrdinal?: number | null;
+    compiledProvider?: string | null;
+    compiledConfig?: string | null;
+    compiledAt?: number | null;
+    compileStatus?: ConditionCompileStatus | null;
 }
 
 const NOTE_TYPES = new Set<NoteType>(["session", "smart"]);
@@ -114,6 +131,11 @@ const NOTE_CHECK_STATUSES = new Set<NoteCheckStatus>([
     "compiled",
     "failing",
     "fallback",
+]);
+const CONDITION_COMPILE_STATUSES = new Set<ConditionCompileStatus>([
+    "compiled",
+    "plain",
+    "refused",
 ]);
 const DEFAULT_SMART_STATUSES: NoteStatus[] = ["pending", "ready"];
 
@@ -155,6 +177,14 @@ function toNote(row: NoteRow): Note {
         sessionId: toNullableString(row.session_id),
         projectPath: toNullableString(row.project_path),
         surfaceCondition: toNullableString(row.surface_condition),
+        compiledProvider: toNullableString(row.compiled_provider),
+        compiledConfig: toNullableString(row.compiled_config),
+        compiledAt: toNullableNumber(row.compiled_at),
+        compileStatus:
+            typeof row.compile_status === "string" &&
+            CONDITION_COMPILE_STATUSES.has(row.compile_status as ConditionCompileStatus)
+                ? (row.compile_status as ConditionCompileStatus)
+                : null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         lastCheckedAt: toNullableNumber(row.last_checked_at),
@@ -279,13 +309,17 @@ export function addNote(
                   )
             : db
                   .prepare(
-                      "INSERT INTO notes (type, status, content, session_id, project_path, surface_condition, created_at, updated_at, harness, anchor_ordinal) VALUES ('smart', 'pending', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                      "INSERT INTO notes (type, status, content, session_id, project_path, surface_condition, compiled_provider, compiled_config, compiled_at, compile_status, created_at, updated_at, harness, anchor_ordinal) VALUES ('smart', 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
                   )
                   .get(
                       options.content,
                       (options as SmartNoteInput).sessionId ?? null,
                       (options as SmartNoteInput).projectPath,
                       (options as SmartNoteInput).surfaceCondition,
+                      (options as SmartNoteInput).compiledProvider ?? null,
+                      (options as SmartNoteInput).compiledConfig ?? null,
+                      (options as SmartNoteInput).compiledAt ?? null,
+                      (options as SmartNoteInput).compileStatus ?? null,
                       now,
                       now,
                       getHarness(),
@@ -369,6 +403,18 @@ export function updateNote(
                 "last_checked_at = NULL",
                 "ready_at = NULL",
                 "ready_reason = NULL",
+            );
+            sets.push(
+                "compiled_provider = ?",
+                "compiled_config = ?",
+                "compiled_at = ?",
+                "compile_status = ?",
+            );
+            params.push(
+                updates.compiledProvider ?? null,
+                updates.compiledConfig ?? null,
+                updates.compiledAt ?? null,
+                updates.compileStatus ?? null,
             );
             if (noteCheckColumnsExist(db)) {
                 sets.push(

@@ -271,7 +271,7 @@ function makeFixture(): { opencodePath: string; contextPath: string; sourceSessi
         CREATE TABLE session_projects (session_id TEXT NOT NULL, harness TEXT NOT NULL, project_path TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(session_id, harness));
         CREATE TABLE compression_depth (session_id TEXT NOT NULL, message_ordinal INTEGER NOT NULL, depth INTEGER NOT NULL, harness TEXT NOT NULL, PRIMARY KEY(session_id, message_ordinal));
         CREATE TABLE session_facts (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, category TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, harness TEXT NOT NULL);
-        CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, status TEXT NOT NULL, content TEXT NOT NULL, session_id TEXT, project_path TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+        CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, status TEXT NOT NULL, content TEXT NOT NULL, session_id TEXT, project_path TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, anchor_block_id TEXT);
         CREATE TABLE transform_decisions (session_id TEXT NOT NULL, harness TEXT NOT NULL, message_id TEXT NOT NULL, ts_ms INTEGER NOT NULL, decision TEXT NOT NULL, PRIMARY KEY(session_id, harness, message_id));
     `);
     context
@@ -333,8 +333,10 @@ function makeFixture(): { opencodePath: string; contextPath: string; sourceSessi
         .prepare("INSERT INTO session_facts (session_id, category, content, created_at, updated_at, harness) VALUES (?, ?, ?, ?, ?, ?)")
         .run(sourceSessionId, "fact", "durable", 10, 10, "opencode");
     context
-        .prepare("INSERT INTO notes (type, status, content, session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .run("session", "active", "note", sourceSessionId, 10, 10);
+        .prepare(
+            "INSERT INTO notes (type, status, content, session_id, created_at, updated_at, anchor_block_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run("session", "active", "note", sourceSessionId, 10, 10, "msg_source_1#0");
     context
         .prepare("INSERT INTO transform_decisions (session_id, harness, message_id, ts_ms, decision) VALUES (?, ?, ?, ?, ?)")
         .run(sourceSessionId, "opencode", "msg_source_2", 10, "defer");
@@ -473,6 +475,10 @@ describe("clone-session", () => {
         expect(
             (context.prepare("SELECT COUNT(*) AS count FROM session_projects WHERE session_id = ?").get(destinationSessionId) as { count: number }).count,
         ).toBe(1);
+        const clonedNote = context
+            .prepare("SELECT anchor_block_id FROM notes WHERE session_id = ?")
+            .get(destinationSessionId) as { anchor_block_id: string };
+        expect(clonedNote.anchor_block_id).toBe(`${clonedMessages[0].id}#0`);
         context.close();
 
         const mutable = new Database(fixture.opencodePath);
@@ -481,6 +487,43 @@ describe("clone-session", () => {
             (mutable.prepare("SELECT data FROM message WHERE id = ?").get("msg_source_1") as { data: string }).data,
         ).toContain("msg_source_1");
         mutable.close();
+    });
+
+    it("clones notes before project authority is attached and leaves the guard active", () => {
+        const fixture = makeFixture();
+        const context = new Database(fixture.contextPath);
+        context.exec(`
+            CREATE TABLE authority_managed (project_path TEXT PRIMARY KEY);
+            INSERT INTO authority_managed(project_path) VALUES ('/tmp/drive-project');
+            CREATE TRIGGER notes_authority_guard_insert
+            BEFORE INSERT ON notes
+            WHEN EXISTS (
+                SELECT 1 FROM session_projects sp
+                JOIN authority_managed am ON am.project_path = sp.project_path
+                WHERE sp.session_id = NEW.session_id
+            )
+            BEGIN SELECT RAISE(ABORT, 'context.db note writes are managed by the Rust module'); END;
+        `);
+        context.close();
+
+        const result = cloneSession({
+            sessionId: fixture.sourceSessionId,
+            opencodeDbPath: fixture.opencodePath,
+            contextDbPath: fixture.contextPath,
+        });
+        const destination = result.plan.destinationSessionId;
+        const cloned = new Database(fixture.contextPath);
+        expect(
+            cloned.prepare("SELECT content FROM notes WHERE session_id = ?").get(destination),
+        ).toMatchObject({ content: "note" });
+        expect(() =>
+            cloned
+                .prepare(
+                    "INSERT INTO notes (type, status, content, session_id, created_at, updated_at) VALUES ('session', 'active', 'bare', ?, 1, 1)",
+                )
+                .run(destination),
+        ).toThrow("context.db note writes are managed by the Rust module");
+        cloned.close();
     });
 
     it("trims an unfinished trailing assistant before reminting", () => {

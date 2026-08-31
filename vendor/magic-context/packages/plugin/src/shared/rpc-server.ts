@@ -19,6 +19,7 @@ import {
     registerNotificationSink,
 } from "./rpc-notifications";
 import { isPidAlive, parseRpcPortFile, rpcPortDir, rpcPortFilePath } from "./rpc-utils";
+import { shouldEnforcePrivateStoragePermissions } from "./storage-permissions";
 
 type RpcHandler = (params: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
@@ -152,16 +153,20 @@ export class MagicContextRpcServer {
         try {
             this.warnIfOtherLiveInstance();
             const dir = dirname(this.portFilePath);
-            // The port file holds the per-process bearer token that gates
-            // side-effecting RPC endpoints and the push channel. Under the default
-            // umask 0o022 a plain write lands at 0o644 in a 0o755 dir —
-            // world-readable, so any local UID could read the token. Restrict both:
-            // dir 0o700, file 0o600.
-            mkdirSync(dir, { recursive: true, mode: 0o700 });
-            try {
-                chmodSync(dir, 0o700);
-            } catch {
-                // best-effort
+            // The port file carries the RPC bearer token. The normal policy keeps
+            // it owner-only; a trusted-group deployment explicitly delegates every
+            // storage mode to its operator, so this path must not chmod or supply a
+            // restrictive creation mode in that case.
+            const enforcePrivatePermissions = shouldEnforcePrivateStoragePermissions();
+            if (enforcePrivatePermissions) {
+                mkdirSync(dir, { recursive: true, mode: 0o700 });
+                try {
+                    chmodSync(dir, 0o700);
+                } catch {
+                    // Continue RPC startup when directory tightening is rejected.
+                }
+            } else {
+                mkdirSync(dir, { recursive: true });
             }
             const tmpPath = `${this.portFilePath}.tmp`;
             // A stale tmp from a crashed write could exist with loose perms;
@@ -171,25 +176,30 @@ export class MagicContextRpcServer {
             } catch {
                 // best-effort
             }
-            // Synchronous write so the renameSync below sees a fully-written file
-            // (a 0o600 mode keeps the bearer token out of world-readable reach;
-            // renameSync preserves the tmp's mode for the final path).
+            // Synchronous write so the renameSync below sees a fully-written file.
+            // The private mode keeps the bearer token out of other local accounts;
+            // externally managed storage intentionally leaves its mode to the umask.
             writeFileSync(
                 tmpPath,
                 JSON.stringify({
                     port: this.port,
                     pid: process.pid,
                     started_at: this.startedAt,
+                    kind: "OpenCode server",
                     token: this.token,
                     instance_id: this.instanceId,
                 }),
-                { encoding: "utf-8", mode: 0o600 },
+                enforcePrivatePermissions
+                    ? { encoding: "utf-8", mode: 0o600 }
+                    : { encoding: "utf-8" },
             );
             renameSync(tmpPath, this.portFilePath);
-            try {
-                chmodSync(this.portFilePath, 0o600);
-            } catch {
-                // best-effort
+            if (enforcePrivatePermissions) {
+                try {
+                    chmodSync(this.portFilePath, 0o600);
+                } catch {
+                    // Continue RPC startup when port-file tightening is rejected.
+                }
             }
             log(`[rpc] server listening on 127.0.0.1:${this.port}`);
         } catch (err) {

@@ -20,6 +20,8 @@ import {
 } from "../memory";
 import { runMigrations } from "../migrations";
 import { initializeDatabase } from "../storage-db";
+import { acquireLease } from "./lease";
+import { getTaskScheduleState, seedTaskScheduleState } from "./storage-task-schedule";
 import { partitionVerifyScope } from "./verify-gate";
 
 const PROJECT = "git:test";
@@ -85,7 +87,7 @@ afterEach(() => {
 });
 
 describe("partitionVerifyScope (per-memory verified_at gate)", () => {
-    test("excludes file-independent (sentinel) and unmapped memories", async () => {
+    test("excludes both no-file sentinel origins and unmapped memories", async () => {
         const db = freshDb();
         const dir = makeGitMetadataDirectory("mc-verify-gate-scope-");
         installGitScript(
@@ -99,9 +101,11 @@ describe("partitionVerifyScope (per-memory verified_at gate)", () => {
         try {
             const mapped = mem(db, PROJECT, "A in a.ts");
             const independent = mem(db, PROJECT, "Anthropic returns 400 on empty content");
+            const hostFallback = mem(db, PROJECT, "The host rejected every mapped path");
             mem(db, PROJECT, "unmapped fact");
             recordMemoryMapping(db, mapped, ["a.ts"], 1);
             recordMemoryMapping(db, independent, [], 1);
+            recordMemoryMapping(db, hostFallback, [], 1, "host_rejected_fallback");
 
             const gate = await partitionVerifyScope({
                 db,
@@ -470,23 +474,44 @@ describe("partitionVerifyScope (per-memory verified_at gate)", () => {
         expect(laterTimes?.has("a.ts")).toBe(false);
     });
 
-    test("verify-broad includes every file-mapped memory regardless of change time", async () => {
+    test("verify-broad opens a cycle and selects oldest verified memories first", async () => {
         const db = freshDb();
         const dir = makeGitMetadataDirectory("mc-verify-gate-broad-");
         try {
             const a = mem(db, PROJECT, "A in a.ts");
             const b = mem(db, PROJECT, "B in b.ts");
-            recordMemoryVerifications(db, a, ["a.ts"], Date.now() + 60_000);
-            recordMemoryVerifications(db, b, ["b.ts"], Date.now() + 60_000);
+            recordMemoryVerifications(db, a, ["a.ts"], 10);
+            recordMemoryVerifications(db, b, ["b.ts"], 20);
+            seedTaskScheduleState(db, PROJECT, "verify-broad", null, null, "0 3 * * 0");
+            const holderId = "verify-broad-holder";
+            const leaseKey = "verify-broad-test-lease";
+            expect(acquireLease(db, holderId, leaseKey)).toBe(true);
             const gate = await partitionVerifyScope({
                 db,
                 projectIdentity: PROJECT,
                 projectDirectory: dir,
                 forceBroad: true,
-                now: Date.now(),
+                now: 100,
+                holderId,
+                leaseKey,
             });
             expect(gate.mode).toBe("broad");
-            expect(gate.inScopeIds.sort()).toEqual([a, b].sort());
+            expect(gate.inScopeIds).toEqual([a, b]);
+            expect(gate.broadCycleStartAt).toBe(100);
+            expect(getTaskScheduleState(db, PROJECT, "verify-broad")?.lastBroadRunAt).toBe(100);
+
+            recordMemoryVerifications(db, a, ["a.ts"], 200);
+            const continuation = await partitionVerifyScope({
+                db,
+                projectIdentity: PROJECT,
+                projectDirectory: dir,
+                forceBroad: true,
+                now: 300,
+                holderId,
+                leaseKey,
+            });
+            expect(continuation.inScopeIds).toEqual([b]);
+            expect(continuation.broadCycleStartAt).toBe(100);
         } finally {
             closeQuietly(db);
         }

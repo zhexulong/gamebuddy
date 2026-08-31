@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "drill_id": "FM-BOUNDARY-DIVERGENCE-RECUT-REMEDIATION",
+  "cache_affecting": "#4975",
+  "mutations": [
+    {
+      "name": "REMOVE_POST_END_REVISION_REVALIDATION",
+      "fix": "torn-read ordering",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "if divergence_candidate.is_some() && !boundary_divergence_retry",
+        "after": "if false && divergence_candidate.is_some() && !boundary_divergence_retry",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module publication_between_revision_and_compartment_end_reads_does_not_detect_divergence -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "assertion `left == right` failed; left: HARD; right: SOFT+"
+      }
+    },
+    {
+      "name": "REMOVE_PENDING_REVISION_ESCALATION",
+      "fix": "unbounded pending-m1 exclusion",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "boundary_divergence_pending_count >= BOUNDARY_DIVERGENCE_PENDING_PASS_LIMIT",
+        "after": "false",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module permanently_unequal_compartment_revision_escalates_on_third_pass -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "assertion `left == right` failed; left: SOFT+; right: HARD"
+      }
+    },
+    {
+      "name": "RESTORE_FULL_RAW_TAIL_FALLBACK",
+      "fix": "floor-fallback allowance",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "publication_floor_ordinal.map_or(fallback_tail_allowance, ...)",
+        "after": "publication_floor_ordinal.map_or(newest_live - (old_coverage + 1) + 1, ...)",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module missing_publication_floor_uses_token_floor_and_detects_astro_gap -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "assertion `left == right` failed; left: SOFT+; right: HARD"
+      }
+    },
+    {
+      "name": "ALLOW_STALE_STATE_SYNC_TO_OVERWRITE_FOLDED_SEQUENCES",
+      "fix": "recut to forced-state-sync regression",
+      "applied_diff": {
+        "path": "crates/mc-store/src/lib.rs",
+        "before": "sequence <= retained_sequence || write_seed_compartment_tx(..., false)",
+        "after": "write_seed_compartment_tx(..., true)",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module stale_full_state_sync_cannot_rewind_a_committed_divergence_recut -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "assertion `left == right` failed; stored sequences 0 and 1 contained STALE-TS-0/STALE-TS-1 instead of ASTRO-C0/ASTRO-C1"
+      }
+    },
+    {
+      "name": "DISABLE_HARD_MINT_ABSENT_GUARD",
+      "fix": "absent-new-anchor residual",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "if minted.is_empty() || !boundary_available(...) { return BoundaryNotPresent }",
+        "after": "if false && (minted.is_empty() || !boundary_available(...))",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module fired_divergence_with_absent_new_anchor_fails_loud_without_commit -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "called `Result::unwrap_err()` on an `Ok` value: action HARD, committed true, boundary_id m2400#0"
+      }
+    }
+  ],
+  "reverted_rerun": {
+    "command": "cargo test -p mc-module --lib",
+    "exit_status": 0,
+    "status": "pass"
+  }
+}

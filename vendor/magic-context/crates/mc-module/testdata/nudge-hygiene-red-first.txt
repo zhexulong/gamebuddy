@@ -1,0 +1,27 @@
+Nudge hygiene formula mutation record
+Generated during the Rust S4 implementation; every mutation was restored before commit.
+
+1. Cadence mutant: 0.08*T -> 0.05*T
+   cargo test -p mc-module channel1_minimum_tail_floor_bands_and_cadence_match_reference --lib
+   FAILED transform::nudge_formula_tests::channel1_minimum_tail_floor_bands_and_cadence_match_reference
+   assertion failed: left 25000, right 32000
+
+2. Channel-1 urgent-band mutant: 0.55 -> 0.65
+   cargo test -p mc-module channel1_minimum_tail_floor_bands_and_cadence_match_reference --lib
+   FAILED transform::nudge_formula_tests::channel1_minimum_tail_floor_bands_and_cadence_match_reference
+   assertion failed: left Firm, right Urgent
+
+3. Channel-2 aggregate mutant: tool-only U instead of every tagged class
+   cargo test -p mc-module parity_golden_matches_ts_reference_across_starter_corpus --lib
+   FAILED tail_hygiene::tests::parity_golden_matches_ts_reference_across_starter_corpus
+   live-incident-mixed-tail U drifted: Rust=81006, TS=139008, tolerance=4171
+
+4. Defer baseline mutant: remove protected-boundary advance from delta U
+   cargo test -p mc-module defer_delta_and_boundary_advance_are_additive --lib
+   FAILED tail_hygiene::tests::defer_delta_and_boundary_advance_are_additive
+   old protected mass should advance into U
+
+5. Reasoning mutant: add reasoning bytes to T
+   cargo test -p mc-module reasoning_mutant_changes_neither_term_but_tagged_text_mutant_reddens --lib
+   FAILED tail_hygiene::tests::reasoning_mutant_changes_neither_term_but_tagged_text_mutant_reddens
+   assertion failed: left (2, 84014), right (2, 11016)

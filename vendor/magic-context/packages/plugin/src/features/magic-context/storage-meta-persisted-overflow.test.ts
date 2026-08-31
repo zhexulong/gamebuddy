@@ -39,6 +39,7 @@ function createTestDb(): Database {
             cleared_reasoning_through_tag INTEGER NOT NULL DEFAULT 0,
             detected_context_limit INTEGER NOT NULL DEFAULT 0,
             detected_context_limit_model_key TEXT,
+            detected_context_limit_provenance TEXT NOT NULL DEFAULT 'unknown',
             needs_emergency_recovery INTEGER NOT NULL DEFAULT 0,
             emergency_recovery_origin TEXT NOT NULL DEFAULT '',
             harness TEXT NOT NULL DEFAULT 'opencode'
@@ -56,10 +57,11 @@ describe("recordDetectedContextLimit", () => {
 
     it("records the detected limit WITHOUT arming recovery", () => {
         ensureSessionMetaRow(db, "ses_subagent_1");
-        recordDetectedContextLimit(db, "ses_subagent_1", 120_000);
+        recordDetectedContextLimit(db, "ses_subagent_1", 120_000, undefined, "prompt_only");
 
         const state = getOverflowState(db, "ses_subagent_1");
         expect(state.detectedContextLimit).toBe(120_000);
+        expect(state.detectedContextLimitProvenance).toBe("prompt_only");
         expect(state.needsEmergencyRecovery).toBe(false);
         expect(state.emergencyRecoveryOrigin).toBeNull();
     });
@@ -85,12 +87,20 @@ describe("recordDetectedContextLimit", () => {
 
     it("does NOT overwrite an existing recovery flag set by primary path", () => {
         ensureSessionMetaRow(db, "ses_mixed");
-        recordOverflowDetected(db, "ses_mixed", 100_000); // primary: sets both
+        recordOverflowDetected(
+            db,
+            "ses_mixed",
+            100_000,
+            undefined,
+            "provider_overflow",
+            "combined",
+        ); // Primary write records both the detected limit and its accounting provenance.
 
-        recordDetectedContextLimit(db, "ses_mixed", 80_000); // subagent-style write
+        recordDetectedContextLimit(db, "ses_mixed", 80_000, undefined, "prompt_only"); // Prompt-only write records an accepted-input ceiling without reserving output again.
 
         const state = getOverflowState(db, "ses_mixed");
         expect(state.detectedContextLimit).toBe(80_000); // updated
+        expect(state.detectedContextLimitProvenance).toBe("prompt_only");
         expect(state.needsEmergencyRecovery).toBe(true); // preserved
         expect(state.emergencyRecoveryOrigin).toBe("provider_overflow");
     });

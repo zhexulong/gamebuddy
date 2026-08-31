@@ -48,7 +48,7 @@ export function deriveTriggerBudget(
         return TRIGGER_BUDGET_MIN;
     }
     // Callers resolve executeThresholdPercentage through resolveExecuteThreshold(),
-    // which caps at MAX_EXECUTE_THRESHOLD (80). We still guard against negative
+    // which caps at MAX_EXECUTE_THRESHOLD (90). We still guard against negative
     // inputs so derived budgets never go upside-down, but the upper clamp is
     // not needed and was dead defensively.
     const thresholdFraction = Math.max(0, executeThresholdPercentage) / 100;

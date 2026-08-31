@@ -1,36 +1,69 @@
 export const COMPARTMENT_RENDER_EPOCH = "cre2";
 
 const EPOCH_COMPONENT_PREFIX = "|compartment-render:";
+const MURAL_COMPONENT_PREFIX = "|mural-enabled:";
+const BUDGET_COMPONENT_PREFIX = "|render-budgets:";
 
 export interface CachedM0UpgradeIdentity {
     upgradeState: string | null;
     compartmentRenderEpoch: string | null;
+    muralEnabled: boolean | null;
+    renderBudgetIdentity: string | null;
 }
 
 /**
- * Store the compartment renderer epoch in the existing cached upgrade-state marker.
- * Renderer byte changes must change this identity so each cached m[0] folds exactly once.
+ * Store renderer and render-config identity in the existing cached upgrade-state marker.
+ * Provider-visible byte changes must change this identity so each cached m[0] folds exactly once.
  */
 export function encodeCachedM0UpgradeIdentity(
     upgradeState: string | null,
     compartmentRenderEpoch: string | null = COMPARTMENT_RENDER_EPOCH,
+    muralEnabled: boolean | null = null,
+    renderBudgetIdentity: string | null = null,
 ): string | null {
-    if (compartmentRenderEpoch === null) return upgradeState;
-    return `${upgradeState ?? ""}${EPOCH_COMPONENT_PREFIX}${compartmentRenderEpoch}`;
+    let encoded = upgradeState ?? "";
+    if (compartmentRenderEpoch !== null) {
+        encoded += `${EPOCH_COMPONENT_PREFIX}${compartmentRenderEpoch}`;
+    }
+    if (muralEnabled !== null) {
+        encoded += `${MURAL_COMPONENT_PREFIX}${muralEnabled ? "1" : "0"}`;
+    }
+    if (renderBudgetIdentity !== null) {
+        encoded += `${BUDGET_COMPONENT_PREFIX}${renderBudgetIdentity}`;
+    }
+    return encoded.length > 0 ? encoded : null;
+}
+
+function component(value: string, prefix: string): string | null {
+    const start = value.lastIndexOf(prefix);
+    if (start < 0) return null;
+    const valueStart = start + prefix.length;
+    const end = value.indexOf("|", valueStart);
+    const result = value.slice(valueStart, end < 0 ? value.length : end);
+    return result.length > 0 ? result : null;
 }
 
 export function decodeCachedM0UpgradeIdentity(value: string | null): CachedM0UpgradeIdentity {
     if (value === null) {
-        return { upgradeState: null, compartmentRenderEpoch: null };
+        return {
+            upgradeState: null,
+            compartmentRenderEpoch: null,
+            muralEnabled: null,
+            renderBudgetIdentity: null,
+        };
     }
-    const componentIndex = value.lastIndexOf(EPOCH_COMPONENT_PREFIX);
-    if (componentIndex < 0) {
-        return { upgradeState: value, compartmentRenderEpoch: null };
-    }
-    const upgradeState = value.slice(0, componentIndex);
-    const compartmentRenderEpoch = value.slice(componentIndex + EPOCH_COMPONENT_PREFIX.length);
+    const componentIndexes = [
+        value.indexOf(EPOCH_COMPONENT_PREFIX),
+        value.indexOf(MURAL_COMPONENT_PREFIX),
+        value.indexOf(BUDGET_COMPONENT_PREFIX),
+    ].filter((index) => index >= 0);
+    const identityEnd = componentIndexes.length > 0 ? Math.min(...componentIndexes) : value.length;
+    const upgradeState = value.slice(0, identityEnd);
+    const muralComponent = component(value, MURAL_COMPONENT_PREFIX);
     return {
         upgradeState: upgradeState.length > 0 ? upgradeState : null,
-        compartmentRenderEpoch: compartmentRenderEpoch.length > 0 ? compartmentRenderEpoch : null,
+        compartmentRenderEpoch: component(value, EPOCH_COMPONENT_PREFIX),
+        muralEnabled: muralComponent === "1" ? true : muralComponent === "0" ? false : null,
+        renderBudgetIdentity: component(value, BUDGET_COMPONENT_PREFIX),
     };
 }

@@ -6,6 +6,7 @@ import { type ContextDatabase, updateSessionMeta } from "../../features/magic-co
 import type { ContextUsage } from "../../features/magic-context/types";
 import type { PluginContext } from "../../plugin/types";
 import { sessionLog } from "../../shared/logger";
+import type { ModelInput } from "../../shared/model-resolution";
 import {
     type ActiveCompartmentRun,
     getActiveCompartmentRun,
@@ -29,6 +30,9 @@ import type { MessageLike } from "./transform-operations";
 interface RunCompartmentPhaseArgs {
     canRunCompartments: boolean;
     fullFeatureMode: boolean;
+    /** Compaction-off mode (issue #266): no historian start, no 95% block,
+     *  no boundary resolution — the phase degrades to a stale-flag cleanup. */
+    compactionOff?: boolean;
     /** False when historian.disable=true, blocking historian-backed child agents. */
     historianRunnable?: boolean;
     sessionMeta: { compartmentInProgress: boolean };
@@ -44,7 +48,8 @@ interface RunCompartmentPhaseArgs {
     historianChunkTokens: number;
     historyBudgetTokens?: number;
     historianTimeoutMs?: number;
-    fallbackModels?: readonly string[];
+    historianModel?: ModelInput;
+    fallbackModels?: readonly ModelInput[];
     compartmentDirectory: string;
     messages: MessageLike[];
     pendingCompartmentInjection: PreparedCompartmentInjection | null;
@@ -129,6 +134,7 @@ export function runCompartmentPhase(
     const historianRunnable = args.historianRunnable !== false;
     const willReadRawHistory =
         historianRunnable &&
+        !args.compactionOff &&
         args.canRunCompartments &&
         getActiveCompartmentRun(args.sessionId) === undefined &&
         (args.sessionMeta.compartmentInProgress ||
@@ -170,6 +176,29 @@ async function runCompartmentPhaseImpl(args: RunCompartmentPhaseArgs): Promise<{
     let justAwaitedPublication = false;
     let rebuiltHistoryThisPass = false;
     const historianRunnable = args.historianRunnable !== false;
+
+    // Compaction-off mode (issue #266): the historian/compartment phase is
+    // fully gated off — no fires, no boundary resolution, no await. A stale
+    // compartmentInProgress flag (a run interrupted before the flip) is
+    // cleared so the session state is honest and flip-back starts clean.
+    if (args.compactionOff) {
+        if (args.sessionMeta.compartmentInProgress) {
+            sessionLog(
+                args.sessionId,
+                "transform: compaction off; clearing stale compartmentInProgress flag",
+            );
+            updateSessionMeta(args.db, args.sessionId, { compartmentInProgress: false });
+            compartmentInProgress = false;
+        }
+        return {
+            pendingCompartmentInjection,
+            awaitedCompartmentRun: false,
+            compartmentInProgress,
+            published,
+            justAwaitedPublication,
+            rebuiltHistoryThisPass,
+        };
+    }
     let rawEligibility: ReturnType<typeof getRawHistoryEligibility> | null = null;
     let lastObservedCompartmentEnd = -1;
     let cachedBoundarySnapshot: ProtectedTailBoundarySnapshot | null = null;
@@ -298,6 +327,7 @@ async function runCompartmentPhaseImpl(args: RunCompartmentPhaseArgs): Promise<{
                 currentContextLimit: args.boundaryContextLimit,
                 historyBudgetTokens: args.historyBudgetTokens,
                 historianTimeoutMs: args.historianTimeoutMs,
+                model: args.historianModel,
                 fallbackModels: args.fallbackModels,
                 directory: args.compartmentDirectory,
                 fallbackModelId: args.fallbackModelId,
@@ -316,7 +346,7 @@ async function runCompartmentPhaseImpl(args: RunCompartmentPhaseArgs): Promise<{
 
     let awaitedCompartmentRun = false;
 
-    // At 85%, run aggressive heuristic cleanup (dropAllTools) but do NOT block
+    // At the derived force band, run aggressive heuristic cleanup (dropAllTools) but do NOT block
     // the transform waiting for historian. Historian runs in the background.
     // Blocking here freezes the session UI at "Thinking" with no LLM call.
     // Only 95% (BLOCK_UNTIL_DONE_PERCENTAGE) should block.
@@ -342,6 +372,7 @@ async function runCompartmentPhaseImpl(args: RunCompartmentPhaseArgs): Promise<{
                 currentContextLimit: args.boundaryContextLimit,
                 historyBudgetTokens: args.historyBudgetTokens,
                 historianTimeoutMs: args.historianTimeoutMs,
+                model: args.historianModel,
                 fallbackModels: args.fallbackModels,
                 directory: args.compartmentDirectory,
                 fallbackModelId: args.fallbackModelId,
@@ -371,7 +402,7 @@ async function runCompartmentPhaseImpl(args: RunCompartmentPhaseArgs): Promise<{
             // runLoop break condition checks `lastUser.id < lastAssistant.id`, and
             // a fresh notification-user-message every transform pass makes that
             // condition stay false → runLoop keeps iterating → mock returns text
-            // with >85% usage → transform fires again → notification fires again
+            // above-force-band usage → transform fires again → notification fires again
             // → INFINITE LOOP. We've observed this on CI with >1700 requests per turn.
             //
             // Guard: only send the notification ONCE per active compartment run.

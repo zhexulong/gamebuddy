@@ -79,6 +79,13 @@ const incrementalTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingIncrementalKeys = new Set<string>();
 const completedIncrementalKeys = new Set<string>();
 
+function clearCompletedIncrementalKeys(sessionId: string): void {
+    const prefix = `${sessionId}\u0000`;
+    for (const key of completedIncrementalKeys) {
+        if (key.startsWith(prefix)) completedIncrementalKeys.delete(key);
+    }
+}
+
 type ReadMessages = ((sessionId: string) => RawMessage[]) & {
     readPage?: (
         sessionId: string,
@@ -271,14 +278,16 @@ export function scheduleClearAndReindex(
 ): void {
     reconciledSessions.delete(sessionId);
     reconciliationScheduledSessions.delete(sessionId);
-    const prefix = `${sessionId}\u0000`;
-    for (const key of completedIncrementalKeys) {
-        if (key.startsWith(prefix)) completedIncrementalKeys.delete(key);
-    }
+    clearCompletedIncrementalKeys(sessionId);
 
     scheduleAfterBootQuiet(() => {
         defer(() => {
             void runWithSessionLock(sessionId, () => {
+                // An older boot-quiet reconciliation can finish after this clear was
+                // scheduled, so invalidate process state under the same session lock
+                // that clears the durable index.
+                reconciledSessions.delete(sessionId);
+                clearCompletedIncrementalKeys(sessionId);
                 clearIndexedMessages(db, sessionId);
             })
                 .then(() => reconcileSessionIndex(db, sessionId, readMessages))

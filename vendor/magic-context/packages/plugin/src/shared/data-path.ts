@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getHarness, type HarnessId } from "./harness";
@@ -166,10 +166,118 @@ export function getOpenCodeStorageDir(): string {
  *   - Shared Dreamer runs (one per project per machine)
  *   - Future cross-harness session migration
  *
- * Layout: <XDG_DATA_HOME>/cortexkit/magic-context/
+ * Resolution precedence: test isolation, MAGIC_CONTEXT_STORAGE_DIR, XDG data
+ * home, then the platform default. The explicit override is a complete storage
+ * directory and must be absolute so every process on a host selects one store.
+ *
+ * TEST-ISOLATION GUARD. `openDatabase()` has been guarded in
+ * `resolveDatabasePath()` since the 2026-06-01 (v26) and 2026-06-19 (v41)
+ * incidents, in which unisolated tests migrated the user's REAL shared DB.
+ * Every OTHER caller bypassed that guard — notably the CLI doctors, which
+ * build `join(getMagicContextStorageDir(), "context.db")` themselves and run
+ * `PRAGMA integrity_check` against it. A test that deletes XDG_DATA_HOME to
+ * exercise path fallbacks cannot restore isolation by setting
+ * `process.env.HOME`: bun caches `os.homedir()` at startup, so `getDataDir()`
+ * still resolves to the real home. MAGIC_CONTEXT_TEST_DATA_DIR — set by
+ * `packages/plugin/test-preload.ts`, and restored by any test that touches it
+ * — is honored here, so the preload's "cannot be defeated" guarantee holds for
+ * every caller, not just `openDatabase()`. It is never set in production.
+ *
+ * CWD-INDEPENDENT BACKSTOP. The preload only runs when `bun test`'s CWD has a
+ * bunfig wiring `[test] preload`. A run from a dir WITHOUT that wiring (a
+ * package missing its bunfig, or a brand-new one) executes every *.test.ts with
+ * NO preload, and this resolver would hand back the REAL shared path — which is
+ * how the live DB reached v41. Bun sets NODE_ENV=test for EVERY `bun test`
+ * regardless of CWD, and production never sets it, so that window redirects to
+ * a memoized throwaway dir instead. It lives here rather than in
+ * `resolveDatabasePath()` so direct callers (the CLI doctors' own
+ * `PRAGMA integrity_check`, announcements, the models.dev cache) are covered
+ * too — they never go through the DB resolver.
+ *
+ * In production, MAGIC_CONTEXT_STORAGE_DIR takes precedence over XDG_DATA_HOME.
+ * Test isolation remains authoritative so an ambient override cannot redirect
+ * a test into a user's real shared database.
  */
+export type MagicContextStorageSource =
+    | "test isolation"
+    | "environment override"
+    | "XDG_DATA_HOME"
+    | "platform default";
+
+export interface MagicContextStorageResolution {
+    path: string;
+    source: MagicContextStorageSource;
+}
+
+export function getMagicContextStorageResolution(): MagicContextStorageResolution {
+    const testDataDir = process.env.MAGIC_CONTEXT_TEST_DATA_DIR?.trim();
+    if (testDataDir) {
+        const perTestDataHome = process.env.XDG_DATA_HOME?.trim();
+        if (perTestDataHome && path.resolve(perTestDataHome) !== path.resolve(testDataDir)) {
+            return {
+                path: path.join(perTestDataHome, "cortexkit", "magic-context"),
+                source: "test isolation",
+            };
+        }
+        return {
+            path: path.join(testDataDir, "cortexkit", "magic-context"),
+            source: "test isolation",
+        };
+    }
+    if (process.env.NODE_ENV === "test") {
+        return { path: getTestBackstopStorageDir(), source: "test isolation" };
+    }
+    const explicitStorageDir = process.env.MAGIC_CONTEXT_STORAGE_DIR?.trim();
+    if (explicitStorageDir) {
+        if (!path.isAbsolute(explicitStorageDir)) {
+            throw new Error("MAGIC_CONTEXT_STORAGE_DIR must be an absolute path");
+        }
+        return { path: explicitStorageDir, source: "environment override" };
+    }
+    const xdgDataHome = process.env.XDG_DATA_HOME?.trim();
+    if (xdgDataHome) {
+        return {
+            path: path.join(xdgDataHome, "cortexkit", "magic-context"),
+            source: "XDG_DATA_HOME",
+        };
+    }
+    return {
+        path: path.join(os.homedir(), ".local", "share", "cortexkit", "magic-context"),
+        source: "platform default",
+    };
+}
+
 export function getMagicContextStorageDir(): string {
-    return path.join(getDataDir(), "cortexkit", "magic-context");
+    return getMagicContextStorageResolution().path;
+}
+
+let testBackstopStorageDir: string | null = null;
+let testBackstopWarned = false;
+
+/**
+ * Memoized per process so repeated calls in the same unisolated test resolve to
+ * the SAME path — `openDatabase()` caches by path, and a fresh temp dir per call
+ * would defeat that cache and hand back different DB handles.
+ */
+function getTestBackstopStorageDir(): string {
+    if (!testBackstopStorageDir) {
+        testBackstopStorageDir = path.join(
+            mkdtempSync(path.join(os.tmpdir(), "mc-test-db-backstop-")),
+            "cortexkit",
+            "magic-context",
+        );
+    }
+    if (!testBackstopWarned) {
+        testBackstopWarned = true;
+        // Deliberately console, not the logger: logger.ts imports this module.
+        console.warn(
+            "[magic-context] TEST BACKSTOP: NODE_ENV=test with no MAGIC_CONTEXT_TEST_DATA_DIR " +
+                `— redirecting storage to a throwaway temp dir (${testBackstopStorageDir}) so no ` +
+                "test can touch the user's real shared database. Wire `[test] preload` in this " +
+                "package's bunfig.toml.",
+        );
+    }
+    return testBackstopStorageDir;
 }
 
 /**

@@ -184,12 +184,16 @@ export class MemoryCommandFacade {
     createWithCommitReceipt(input: MemoryCommandCreateInput): MemoryCommandCommitResult<MemoryCommandResult> {
         requireProjectPath(input.projectPath);
         return runMutation(this.db, () => {
+            const { actor, ...memoryInput } = input;
             const { memory } = insertMemoryIdempotent(this.db, {
-                ...input,
+                ...memoryInput,
+                // Player-directed CRUD is an explicit governed product command,
+                // not the unimplemented dashboard-manual-entry provenance path.
+                sourceType: actor.principal === "player_direct" ? "agent" : memoryInput.sourceType,
                 metadataJson:
-                    input.actor.principal === "player_direct"
-                        ? playerGovernedMetadata(input.metadataJson ?? null)
-                        : (input.metadataJson ?? null),
+                    actor.principal === "player_direct"
+                        ? playerGovernedMetadata(memoryInput.metadataJson ?? null)
+                        : (memoryInput.metadataJson ?? null),
             });
             const mutation = queueMemoryMutation(this.db, {
                 projectPath: memory.projectPath, mutationType: "update", targetMemoryId: memory.id,

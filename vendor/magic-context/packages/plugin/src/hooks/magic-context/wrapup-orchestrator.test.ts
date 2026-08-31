@@ -328,4 +328,34 @@ describe("runManagedWrapup", () => {
             closeQuietly(db);
         }
     });
+
+    it("forwards the user-memory collection gate to every wrapup chunk", async () => {
+        for (const userMemoriesEnabled of [true, false]) {
+            const db = createDb();
+            try {
+                const sessionId = `ses-wrapup-user-memories-${userMemoriesEnabled}`;
+                const seen: Array<boolean | undefined> = [];
+                const ctx = baseCtx(db);
+                ctx.userMemoriesEnabled = userMemoriesEnabled;
+                ctx.runCompartmentAgentForWrapup = mock(async (deps) => {
+                    seen.push(deps.experimentalUserMemories);
+                    const before = Math.max(1, getLastCompartmentEndMessage(db, sessionId) + 1);
+                    const end = Math.min(deps.boundarySnapshot.eligibleEndOrdinal - 1, before + 2);
+                    appendRange(db, sessionId, before, end);
+                    deps.onCompartmentStatePublished?.(sessionId);
+                });
+
+                await withProvider(sessionId, 10, () =>
+                    runManagedWrapup(ctx, sessionId, { messagesToKeep: 2 }),
+                );
+
+                expect(seen.length).toBeGreaterThan(0);
+                for (const flag of seen) {
+                    expect(flag).toBe(userMemoriesEnabled);
+                }
+            } finally {
+                closeQuietly(db);
+            }
+        }
+    });
 });

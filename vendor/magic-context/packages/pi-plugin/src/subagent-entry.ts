@@ -41,9 +41,10 @@
  *     [other flags...]
  *
  * Discovery remains enabled. The full Magic Context entry no-ops under the env
- * guard; this explicit lean entry supplies the scoped Magic Context tools; and
- * the per-agent `--tools` allow-list strips every built-in or extension tool not
- * named for that child agent.
+ * guard and this explicit lean entry supplies scoped Magic Context tools. Pi
+ * applies the per-agent `--tools` list to the complete registry. OMP applies it
+ * to built-ins only and appends discovered extension tools afterward, so its
+ * list is an intended budget rather than an enforced extension-tool sandbox.
  *
  * Tool/action allowlists via Pi flags:
  *   --magic-context-dreamer-actions  Register ctx_memory with the dreamer
@@ -52,10 +53,12 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
 import { openDatabase } from "@magic-context/core/features/magic-context/storage-db";
 import { setHarness } from "@magic-context/core/shared/harness";
 import { log } from "@magic-context/core/shared/logger";
+import { setStoragePrivatePermissionEnforcement } from "@magic-context/core/shared/storage-permissions";
 import { loadPiConfig } from "./config";
 import { ensureProjectRegisteredFromPiDirectory } from "./embedding-bootstrap";
 import { registerMagicContextTools } from "./tools";
@@ -81,6 +84,15 @@ export default function magicContextSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async () => {
 		try {
+			// Load shared config before opening storage so a trusted-group deployment
+			// never has its externally managed permissions re-tightened by a child.
+			const directory = process.cwd();
+			const { config: cfg, registrationPromptSurface } = loadPiConfig({
+				cwd: directory,
+			});
+			setStoragePrivatePermissionEnforcement(
+				cfg.storage.enforce_private_permissions,
+			);
 			const db = openDatabase();
 			if (!db) {
 				throw new Error(
@@ -88,13 +100,6 @@ export default function magicContextSubagentExtension(pi: ExtensionAPI): void {
 				);
 			}
 			openedDb = db;
-
-			// Load shared config so embedding settings + memory enabled
-			// flag match the parent's runtime. Subagent doesn't honor
-			// historian/dreamer/sidekick blocks at all (those are
-			// parent-only concerns).
-			const directory = process.cwd();
-			const { config: cfg } = loadPiConfig({ cwd: directory });
 			await ensureProjectRegisteredFromPiDirectory(directory, db);
 			const dreamerActionsEnabled =
 				pi.getFlag(SUBAGENT_DREAMER_ACTIONS_FLAG) === true;
@@ -102,6 +107,8 @@ export default function magicContextSubagentExtension(pi: ExtensionAPI): void {
 			registerMagicContextTools(pi, {
 				db,
 				ensureProjectRegistered: ensureProjectRegisteredFromPiDirectory,
+				resolveProjectIdentity: (ctx) =>
+					resolveProjectIdentityForSession(ctx.cwd, cfg.allow_home_project),
 				// Sidekick is retrieval-only and consumes untrusted /ctx-aug prompt text,
 				// so only dreamer subagents register ctx_memory in child processes.
 				memoryToolEnabled: dreamerActionsEnabled,
@@ -112,6 +119,7 @@ export default function magicContextSubagentExtension(pi: ExtensionAPI): void {
 				sessionScopedToolsDisabled: true,
 				todowriteEnabled: cfg.todowrite.enabled !== false,
 				todowriteCommandEnabled: false,
+				promptSurface: registrationPromptSurface,
 			});
 
 			log(

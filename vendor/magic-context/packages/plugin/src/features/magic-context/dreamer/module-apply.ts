@@ -2,6 +2,17 @@ import type { Database } from "../../../shared/sqlite";
 import { getContextStoreUuid } from "../context-authority";
 import type { ClassifyModuleClient } from "./classify";
 
+export class DreamerModuleBusyError extends Error {
+    readonly transient = true;
+
+    constructor(readonly state: string) {
+        super(
+            `Rust memory authority is ${state}; dreamer mutation deferred until authority settles.`,
+        );
+        this.name = "DreamerModuleBusyError";
+    }
+}
+
 export class DreamerModuleFailureError extends Error {
     readonly transient = true;
     constructor(operation: string, cause: unknown) {
@@ -49,8 +60,10 @@ export async function resolveDreamerModuleRoute(args: {
         projectRoot: args.projectRoot,
         domain: "memories",
     });
-    if (result.authority?.state !== "MODULE") return undefined;
-    const generation = result.authority.generation;
+    const authority = result.authority;
+    if (authority?.state === "DRAINING") throw new DreamerModuleBusyError(authority.state);
+    if (authority?.state !== "MODULE") return undefined;
+    const generation = authority.generation;
     if (typeof generation !== "number") throw new Error("Rust authority status omitted generation");
     return {
         moduleClient: transport,

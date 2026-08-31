@@ -2,20 +2,12 @@ import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promi
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runtimeModuleId, TUI_RUNTIME_SPECIFIERS } from "../src/shared/tui-runtime-specifiers";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = join(pluginRoot, "src/tui");
 const outputRoot = join(pluginRoot, "src/tui-compiled");
-const runtimeSpecifiers = new Set([
-    "@opentui/core",
-    "@opentui/core/testing",
-    "@opentui/solid",
-    "@opentui/solid/components",
-    "@opentui/solid/jsx-runtime",
-    "@opentui/solid/jsx-dev-runtime",
-    "solid-js",
-    "solid-js/store",
-]);
+const runtimeSpecifiers: Set<string> = new Set(TUI_RUNTIME_SPECIFIERS);
 
 type TransformSolidSource = (
     code: string,
@@ -30,8 +22,82 @@ type SolidTransformModule = {
     transformSolidSource?: TransformSolidSource;
 };
 
-function runtimeModuleId(specifier: string): string {
-    return `opentui:runtime-module:${encodeURIComponent(specifier)}`;
+
+/**
+ * The Solid transform emits every runtime helper AND every control-flow builtin
+ * (`For`, `Show`, `Index`, `Switch`, `Match`, `ErrorBoundary`, `Suspense`, ...)
+ * as an import from a single `moduleName`, which we set to `@opentui/solid`.
+ * But `@opentui/solid` only re-exports its own renderer helpers: the builtins
+ * live in `solid-js`. An emitted `import { For } from "@opentui/solid"` therefore
+ * resolves against the host's registry and throws
+ *
+ *     Export named 'For' not found in module 'opentui:runtime-module:@opentui/solid'
+ *
+ * which the host swallows, leaving no sidebar and no /ctx-* commands.
+ *
+ * Rather than hardcode the split (it moves between OpenTUI versions), read the
+ * real export sets at build time and redirect only the names the OpenTUI runtime
+ * genuinely lacks. A name missing from BOTH modules fails the build instead of
+ * shipping a bundle that silently breaks the TUI.
+ */
+async function loadRuntimeExportSets(): Promise<{
+    openTui: Set<string>;
+    solid: Set<string>;
+}> {
+    const [openTuiModule, solidModule] = await Promise.all([
+        import("@opentui/solid"),
+        import("solid-js"),
+    ]);
+    return {
+        openTui: new Set(Object.keys(openTuiModule)),
+        solid: new Set(Object.keys(solidModule)),
+    };
+}
+
+const OPENTUI_SOLID_RUNTIME_ID = runtimeModuleId("@opentui/solid");
+const SOLID_JS_RUNTIME_ID = runtimeModuleId("solid-js");
+
+// The transform emits one specifier per import statement, e.g.
+//   import { For as _$For } from "opentui:runtime-module:%40opentui%2Fsolid";
+const SINGLE_SPECIFIER_IMPORT =
+    /^import \{\s*([A-Za-z_$][\w$]*)(\s+as\s+[A-Za-z_$][\w$]*)?\s*\} from "([^"]+)";$/;
+
+function redirectBuiltinImports(
+    code: string,
+    exportSets: { openTui: Set<string>; solid: Set<string> },
+    sourceFile: string,
+): string {
+    const unresolved: string[] = [];
+
+    const rewritten = code
+        .split("\n")
+        .map((line) => {
+            const match = SINGLE_SPECIFIER_IMPORT.exec(line);
+            if (!match) return line;
+
+            const [, importedName, alias, moduleId] = match;
+            if (moduleId !== OPENTUI_SOLID_RUNTIME_ID) return line;
+            if (exportSets.openTui.has(importedName)) return line;
+
+            if (!exportSets.solid.has(importedName)) {
+                unresolved.push(importedName);
+                return line;
+            }
+
+            return `import {${alias ? ` ${importedName}${alias} ` : ` ${importedName} `}} from "${SOLID_JS_RUNTIME_ID}";`;
+        })
+        .join("\n");
+
+    if (unresolved.length > 0) {
+        throw new Error(
+            `${sourceFile}: compiled TUI imports ${unresolved
+                .map((name) => `'${name}'`)
+                .join(", ")} which neither @opentui/solid nor solid-js exports. ` +
+                "Shipping this bundle would make the host drop the sidebar silently.",
+        );
+    }
+
+    return rewritten;
 }
 
 function asTransformSolidSource(mod: SolidTransformModule, from: string): TransformSolidSource {
@@ -113,6 +179,7 @@ async function compileTsx(
     transformSolidSource: TransformSolidSource,
     sourceFile: string,
     outputFile: string,
+    exportSets: { openTui: Set<string>; solid: Set<string> },
 ): Promise<void> {
     const code = await readFile(sourceFile, "utf8");
     const compiled = await transformSolidSource(code, {
@@ -123,10 +190,11 @@ async function compileTsx(
     });
 
     await mkdir(dirname(outputFile), { recursive: true });
-    await writeFile(outputFile, compiled);
+    await writeFile(outputFile, redirectBuiltinImports(compiled, exportSets, sourceFile));
 }
 
 const transformSolidSource = await loadTransformSolidSource();
+const runtimeExportSets = await loadRuntimeExportSets();
 const files = await listSourceFiles(sourceRoot);
 
 await rm(outputRoot, { recursive: true, force: true });
@@ -142,7 +210,7 @@ for (const sourceFile of files) {
         // the sidebar freezes on its first paint. The virtual ids are required so
         // the compiled package binds the host process's single OpenTUI/Solid
         // runtime instead of loading a second copy from the plugin package.
-        await compileTsx(transformSolidSource, sourceFile, outputFile);
+        await compileTsx(transformSolidSource, sourceFile, outputFile, runtimeExportSets);
     } else {
         await copyPlainTypeScript(sourceFile, outputFile);
     }

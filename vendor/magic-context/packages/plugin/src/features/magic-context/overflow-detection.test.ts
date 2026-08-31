@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ContextLimitProvenance } from "../../shared/context-limit-provenance";
 import { detectOverflow, extractErrorMessage, parseReportedLimit } from "./overflow-detection";
 
 describe("overflow-detection / extractErrorMessage", () => {
@@ -37,37 +38,48 @@ describe("overflow-detection / detectOverflow", () => {
     // Each sample is a real-world error message from the provider listed.
     // These assertions lock in coverage across the full OpenCode pattern set so
     // future regex edits can't silently regress provider support.
-    test.each<[string, string, number | undefined]>([
-        ["anthropic", "prompt is too long: 210000 tokens > 200000 maximum", 200000],
-        ["bedrock", "Input is too long for requested model.", undefined],
-        ["openai", "This model's maximum context length is 128000 tokens", 128000],
+    test.each<[string, string, number | undefined, ContextLimitProvenance | undefined]>([
+        ["anthropic", "prompt is too long: 210000 tokens > 200000 maximum", 200000, "prompt_only"],
+        ["bedrock", "Input is too long for requested model.", undefined, undefined],
+        ["openai", "This model's maximum context length is 128000 tokens", 128000, "combined"],
         [
             "gemini",
             "Input token count 1234567 exceeds the maximum number of tokens allowed",
             undefined,
+            undefined,
         ],
-        ["xai", "the maximum prompt length is 256000 tokens but the prompt was 300000", 256000],
-        ["groq", "Please reduce the length of the messages or completion", undefined],
-        ["openrouter", "the maximum context length is 32768 tokens", 32768],
-        ["copilot", "Prompt exceeds the limit of 64000 tokens", 64000],
-        ["llamacpp", "Prompt exceeds the available context size", undefined],
-        ["lmstudio", "Prompt greater than the context length of the model", undefined],
-        ["minimax", "context window exceeds limit", undefined],
-        ["moonshot", "exceeded model token limit of 131072", undefined],
-        ["generic", "context_length_exceeded", undefined],
-        ["http413", "413 request entity too large", undefined],
-        ["vllm", "context length is only 4096 tokens, prompt was 5000", 4096],
-        ["vllm2", "input length 10000 exceeds the context length of 8000", 8000],
-        ["ollama", "prompt too long; exceeded max context length", undefined],
-        ["mistral", "Prompt too large for model with 32768 maximum context length", 32768],
-        ["zai", "model_context_window_exceeded", undefined],
-        ["lemonade", "Context size has been exceeded", undefined],
-    ])("%s pattern matches overflow", (_provider, message, expectedLimit) => {
+        [
+            "xai",
+            "the maximum prompt length is 256000 tokens but the prompt was 300000",
+            256000,
+            "prompt_only",
+        ],
+        ["groq", "Please reduce the length of the messages or completion", undefined, undefined],
+        ["openrouter", "the maximum context length is 32768 tokens", 32768, "combined"],
+        ["copilot", "Prompt exceeds the limit of 64000 tokens", 64000, "unknown"],
+        ["llamacpp", "Prompt exceeds the available context size", undefined, undefined],
+        ["lmstudio", "Prompt greater than the context length of the model", undefined, undefined],
+        ["minimax", "context window exceeds limit", undefined, undefined],
+        ["moonshot", "exceeded model token limit of 131072", undefined, undefined],
+        ["generic", "context_length_exceeded", undefined, undefined],
+        ["http413", "413 request entity too large", undefined, undefined],
+        ["vllm", "context length is only 4096 tokens, prompt was 5000", 4096, "combined"],
+        ["vllm-model", "maximum model length is 8192 tokens", 8192, "combined"],
+        ["vllm2", "input length 10000 exceeds the context length of 8000", 8000, "combined"],
+        ["ollama", "prompt too long; exceeded max context length", undefined, undefined],
+        [
+            "mistral",
+            "Prompt too large for model with 32768 maximum context length",
+            32768,
+            "combined",
+        ],
+        ["zai", "model_context_window_exceeded", undefined, undefined],
+        ["lemonade", "Context size has been exceeded", undefined, undefined],
+    ])("%s pattern matches overflow", (_provider, message, expectedLimit, expectedProvenance) => {
         const detection = detectOverflow(message);
         expect(detection.isOverflow).toBe(true);
-        if (expectedLimit !== undefined) {
-            expect(detection.reportedLimit).toBe(expectedLimit);
-        }
+        expect(detection.reportedLimit).toBe(expectedLimit);
+        expect(detection.reportedLimitProvenance).toBe(expectedProvenance);
     });
 
     test("returns not-overflow for unrelated errors", () => {
@@ -86,6 +98,7 @@ describe("overflow-detection / detectOverflow", () => {
         const detection = detectOverflow(nested);
         expect(detection.isOverflow).toBe(true);
         expect(detection.reportedLimit).toBe(128000);
+        expect(detection.reportedLimitProvenance).toBe("combined");
     });
 
     test("returns matchedPattern for diagnostics", () => {
@@ -97,32 +110,44 @@ describe("overflow-detection / detectOverflow", () => {
 
 describe("overflow-detection / parseReportedLimit", () => {
     test("extracts from 'maximum prompt length' (xAI)", () => {
-        expect(parseReportedLimit("the maximum prompt length is 256000 tokens")).toBe(256000);
+        expect(parseReportedLimit("the maximum prompt length is 256000 tokens")).toEqual({
+            value: 256000,
+            provenance: "prompt_only",
+        });
     });
 
     test("extracts from 'maximum context length' (OpenRouter/DeepSeek)", () => {
-        expect(parseReportedLimit("maximum context length is 32768 tokens")).toBe(32768);
+        expect(parseReportedLimit("maximum context length is 32768 tokens")).toEqual({
+            value: 32768,
+            provenance: "combined",
+        });
     });
 
     test("extracts from 'context length is only' (vLLM)", () => {
-        expect(parseReportedLimit("context length is only 4096 tokens")).toBe(4096);
+        expect(parseReportedLimit("context length is only 4096 tokens")).toEqual({
+            value: 4096,
+            provenance: "combined",
+        });
     });
 
     test("extracts from 'exceeds the limit of' (Copilot)", () => {
-        expect(parseReportedLimit("Prompt exceeds the limit of 64000 tokens")).toBe(64000);
+        expect(parseReportedLimit("Prompt exceeds the limit of 64000 tokens")).toEqual({
+            value: 64000,
+            provenance: "unknown",
+        });
     });
 
     test("extracts Anthropic-style '> N maximum|max|limit' caps", () => {
-        expect(parseReportedLimit("prompt is too long: 210000 tokens > 200000 maximum")).toBe(
-            200000,
-        );
-        expect(parseReportedLimit("prompt is too long: 210000 tokens > 200000 max")).toBe(200000);
-        expect(parseReportedLimit("prompt is too long: 210000 tokens > 200000 limit")).toBe(200000);
+        for (const suffix of ["maximum", "max", "limit"]) {
+            expect(
+                parseReportedLimit(`prompt is too long: 210000 tokens > 200000 ${suffix}`),
+            ).toEqual({ value: 200000, provenance: "prompt_only" });
+        }
     });
 
     test("extracts from 'too large for model with' (Mistral)", () => {
-        expect(parseReportedLimit("Too large for model with 32768 maximum context length")).toBe(
-            32768,
+        expect(parseReportedLimit("Too large for model with 32768 maximum context length")).toEqual(
+            { value: 32768, provenance: "combined" },
         );
     });
 
@@ -143,6 +168,32 @@ describe("overflow-detection / parseReportedLimit", () => {
     test("returns first plausible match when multiple numbers present", () => {
         // Prefer 'maximum context length is N' over the fallback 'max.*context.*N' pattern
         const msg = "maximum context length is 128000 tokens (limit 999)";
-        expect(parseReportedLimit(msg)).toBe(128000);
+        expect(parseReportedLimit(msg)).toEqual({ value: 128000, provenance: "combined" });
+    });
+});
+
+describe("llama.cpp context-size limit extraction", () => {
+    // The old greedy pattern (/context size.*(\d+)/) backtracked to a
+    // single-digit capture that the plausibility clamp discarded, so these
+    // messages detected overflow but silently lost the limit value.
+    test("extracts the limit from llama.cpp-style messages", () => {
+        expect(
+            parseReportedLimit(
+                "context size has been exceeded: limit 200000 tokens, you sent 214311",
+            ),
+        ).toMatchObject({ value: 200000, provenance: "combined" });
+        expect(parseReportedLimit("context size exceeded: 128000 tokens maximum")).toMatchObject({
+            value: 128000,
+            provenance: "combined",
+        });
+    });
+
+    test("does not capture a number more than 40 chars past the phrase", () => {
+        // Guards the anchor: distant numbers (e.g. request ids) must not bind.
+        expect(
+            parseReportedLimit(
+                "context size problem occurred while handling the request submitted at position 99999999 tokens",
+            ),
+        ).toBeUndefined();
     });
 });

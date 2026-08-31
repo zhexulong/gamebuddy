@@ -45,6 +45,37 @@ type PiOtherMessage = {
 };
 type PiAgentMessage = PiUserMessage | PiOtherMessage;
 
+/** Remove one derived gap marker while preserving any leading MC tag notation. */
+export function withoutPiLeadingTemporalMarker(text: string): string {
+	const { tagPrefix, body } = peelLeadingMcTagNotation(text);
+	return tagPrefix + body.replace(TEMPORAL_MARKER_PATTERN, "");
+}
+
+export function stripPiLeadingTemporalMarker(message: unknown): boolean {
+	if (!message || typeof message !== "object") return false;
+	const userMessage = message as PiUserMessage;
+	if (userMessage.role !== "user") return false;
+
+	if (typeof userMessage.content === "string") {
+		const stripped = withoutPiLeadingTemporalMarker(userMessage.content);
+		if (stripped === userMessage.content) return false;
+		userMessage.content = stripped;
+		return true;
+	}
+	if (!Array.isArray(userMessage.content)) return false;
+	const firstTextIndex = userMessage.content.findIndex(
+		(part) => part?.type === "text",
+	);
+	if (firstTextIndex < 0) return false;
+	const firstText = userMessage.content[firstTextIndex] as PiTextContent;
+	const stripped = withoutPiLeadingTemporalMarker(firstText.text);
+	if (stripped === firstText.text) return false;
+	const content = userMessage.content.slice();
+	content[firstTextIndex] = { ...firstText, text: stripped };
+	userMessage.content = content;
+	return true;
+}
+
 /**
  * Inject HTML-comment gap markers into Pi user messages. Mirrors
  * OpenCode's `injectTemporalMarkers` 1:1 in agent-visible behavior;

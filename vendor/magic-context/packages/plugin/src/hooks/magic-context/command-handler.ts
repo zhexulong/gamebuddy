@@ -1,24 +1,38 @@
 import { randomUUID } from "node:crypto";
+import { COMPACTION_ENABLED_PATH } from "../../config/agent-disable";
 import type { DreamerConfig, SidekickConfig } from "../../config/schema/magic-context";
 import type { ResolvedTransformMode } from "../../config/transform-mode";
+import type { MagicContextBuiltinCommandName } from "../../features/builtin-commands/commands";
+import { getDreamTaskBacklogs } from "../../features/magic-context/dreamer/task-gates";
 import {
     CANONICAL_DREAM_TASKS,
     type DreamTaskName,
+    formatDreamTaskBacklogs,
     isCanonicalDreamTask,
 } from "../../features/magic-context/dreamer/task-registry";
 import type { ManualRunResult } from "../../features/magic-context/dreamer/task-scheduler";
 import { runSidekick } from "../../features/magic-context/sidekick/agent";
 import { getCompartments, getOrCreateSessionMeta } from "../../features/magic-context/storage";
+import type { RustSessionStatus } from "../../plugin/rpc-handlers";
 import type { PluginContext } from "../../plugin/types";
 import { sessionLog } from "../../shared";
 import { isTuiConnected, pushNotification } from "../../shared/rpc-notifications";
+import type { StatusDetail } from "../../shared/rpc-types";
 import type { Database } from "../../shared/sqlite";
+import { formatStatusDetailMarkdown } from "../../shared/status-detail-text";
+import {
+    resolveTailHygieneStatus,
+    type WireTailHygieneBaseline,
+} from "../../shared/tail-hygiene-status";
 import {
     type PartialRecompRange,
     snapRangeToCompartments,
 } from "./compartment-runner-partial-recomp";
+import { resolveContextWindowGeometry } from "./event-resolvers";
 import { executeFlush } from "./execute-flush";
 import { executeStatus } from "./execute-status";
+import { RUST_PARTIAL_RECOMP_REFUSAL, RUST_SESSION_UPGRADE_REFUSAL } from "./maintenance-authority";
+import { MAX_WRAPUP_REQUEST_BUDGET_MS } from "./module-transport";
 import type { RustModeModuleClient } from "./rust-mode-transform";
 import type { NotificationParams } from "./send-session-notification";
 import { sendUserPrompt } from "./send-session-notification";
@@ -121,6 +135,36 @@ export function parseWrapupArgs(
     return { ok: true, messagesToKeep };
 }
 
+const commandArgumentValidators: Record<MagicContextBuiltinCommandName, (raw: string) => boolean> =
+    {
+        "ctx-status": (raw) => raw.trim() === "",
+        "ctx-recomp": (raw) => parseRecompArgs(raw).kind !== "error",
+        "ctx-wrapup": (raw) => parseWrapupArgs(raw).ok,
+        "ctx-session-upgrade": (raw) => raw.trim() === "",
+        "ctx-flush": (raw) => raw.trim() === "",
+        "ctx-aug": (raw) => raw.trim().length > 0,
+        "ctx-dream": (raw) => {
+            const requested = raw.trim();
+            return requested === "" || isCanonicalDreamTask(requested);
+        },
+        "ctx-embed": (raw) => {
+            const subcommand = raw.trim().toLowerCase();
+            return subcommand === "" || subcommand === "start" || subcommand === "pause";
+        },
+    };
+
+/**
+ * Conservative pre-dispatch gate for Desktop prompts that lost their slash.
+ * The actual command handler still parses the accepted text, so intercepted and
+ * native slash commands share one execution path and one argument interpretation.
+ */
+export function acceptsMagicContextCommandArguments(
+    command: MagicContextBuiltinCommandName,
+    raw: string,
+): boolean {
+    return commandArgumentValidators[command](raw);
+}
+
 export interface CommandExecuteInput {
     command: string;
     sessionID: string;
@@ -218,6 +262,12 @@ function formatRustOperationMessage(
                 return `## Magic Wrapup\n\n${summary || "Nothing to compact."}`;
             case "already_in_progress":
                 return `## Magic Wrapup — Skipped\n\n/ctx-wrapup is already running for this session${rounds > 0 ? ` (${rounds} round${rounds === 1 ? "" : "s"} complete)` : ""}. Wait for it to finish, then run /ctx-wrapup again if more history remains.`;
+            case "retryable":
+                // The module's nonterminal disposition: progress was made but the
+                // drain stopped short of the keep watermark for a retryable reason.
+                // The TypeScript orchestrator presents the same shape as a Partial
+                // with the prescribed continuation, not a terminal failure.
+                return `## Magic Wrapup — Partial\n\n${summary || "Wrapup made progress but stopped before the keep watermark."} Run /ctx-wrapup again to continue.`;
             default:
                 return `## Magic Wrapup — Failed\n\n${summary || "Wrapup failed; try /ctx-wrapup again."}${rounds > 0 ? ` (${rounds} round${rounds === 1 ? "" : "s"})` : ""}`;
         }
@@ -381,10 +431,26 @@ async function executeAugmentation(
 
 export type ManualDreamSummary = ManualRunResult;
 
+function readDreamTaskBacklogsSafely(
+    db: Database,
+    projectPath: string,
+    tasks: readonly DreamTaskName[],
+) {
+    try {
+        return getDreamTaskBacklogs(db, projectPath, tasks);
+    } catch {
+        // Command handling must remain available while an older/empty database is migrating.
+        return {};
+    }
+}
+
 function summarizeManualDream(s: ManualDreamSummary): string {
     const lines: string[] = ["## /ctx-dream", ""];
     if (s.ran.length > 0) lines.push(`Ran: ${s.ran.join(", ")}`);
     if (s.failed.length > 0) lines.push(`Failed: ${s.failed.join(", ")}`);
+    if ((s.failureDetails?.length ?? 0) > 0) {
+        lines.push("Failure details:", ...(s.failureDetails ?? []).map((detail) => `- ${detail}`));
+    }
     if (s.skippedNoWork.length > 0) lines.push(`Skipped (no work): ${s.skippedNoWork.join(", ")}`);
     if (s.deferredBusy.length > 0)
         lines.push(
@@ -393,6 +459,12 @@ function summarizeManualDream(s: ManualDreamSummary): string {
             // this task itself. Say so, or the message reads as a lie.
             `Busy: ${s.deferredBusy.join(", ")} — another dream task holds this domain's lease; retry in a minute`,
         );
+    if (Object.keys(s.backlogBefore ?? {}).length > 0) {
+        lines.push("", "Backlog at run start:", formatDreamTaskBacklogs(s.backlogBefore ?? {}));
+    }
+    if (Object.keys(s.backlogAfter ?? {}).length > 0) {
+        lines.push("", "Backlog at run end:", formatDreamTaskBacklogs(s.backlogAfter ?? {}));
+    }
     if (
         s.ran.length === 0 &&
         s.failed.length === 0 &&
@@ -452,9 +524,22 @@ async function executeDreaming(
         task = requested;
     }
 
+    const backlogTasks = task ? [task] : CANONICAL_DREAM_TASKS;
+    const backlogBefore = readDreamTaskBacklogsSafely(
+        deps.db,
+        deps.dreamer.projectPath,
+        backlogTasks,
+    );
     await deps.sendNotification(
         sessionId,
-        task ? `Running dream task "${task}"...` : "Starting dream run...",
+        [
+            "## /ctx-dream",
+            "",
+            task ? `Running dream task "${task}"...` : "Starting dream run...",
+            "",
+            "Backlog before starting:",
+            formatDreamTaskBacklogs(backlogBefore, backlogTasks),
+        ].join("\n"),
         dreamNotificationParams,
     );
 
@@ -467,13 +552,22 @@ async function executeDreaming(
 export function createMagicContextCommandHandler(deps: {
     db: Database;
     protectedTags: number;
+    /** Boot-resolved mode; command paths must not re-read configuration. */
+    compactionOff?: boolean;
     executeThresholdPercentage?: number | { default: number; [modelKey: string]: number };
     executeThresholdTokens?: { default?: number; [modelKey: string]: number | undefined };
     historyBudgetPercentage?: number;
     commitClusterTrigger?: { enabled: boolean; min_clusters: number };
     getLiveModelKey?: (sessionId: string) => string | undefined;
+    /** Builds the status payload shared with the TUI dialog for a chat-only fallback. */
+    getStatusDetail?: (sessionId: string, moduleStatus?: RustSessionStatus) => StatusDetail;
     /** Optional live context limit resolver — used for tokens-based threshold display. */
     getContextLimit?: (sessionId: string) => number | undefined;
+    getDreamerProgress?: () =>
+        | import("../../features/magic-context/dreamer/task-registry").DreamTaskProgress
+        | null;
+    /** Cached U/T token measurement of the final rendered conversation tail, shared by both nudge mechanisms. */
+    getTailHygiene?: (sessionId: string) => import("./ctx-reduce-nudge").Channel1State | undefined;
     onFlush?: (sessionId: string) => void;
     /** Runs /ctx-recomp. When `range` is provided, runs partial recomp over
      *  that range (snapped to enclosing compartment boundaries). When omitted,
@@ -553,6 +647,7 @@ export function createMagicContextCommandHandler(deps: {
     const callRust = async (
         method: Parameters<RustModeModuleClient["call"]>[0]["method"],
         body: Record<string, unknown>,
+        timeoutMs?: number,
     ): Promise<Record<string, unknown>> => {
         if (!rustMode) throw new Error("Rust module client is unavailable");
         return moduleResponseValue(
@@ -561,6 +656,7 @@ export function createMagicContextCommandHandler(deps: {
                 projectRoot: deps.projectRoot ?? process.cwd(),
                 method,
                 body,
+                ...(timeoutMs === undefined ? {} : { timeoutMs }),
             }),
         );
     };
@@ -595,6 +691,16 @@ export function createMagicContextCommandHandler(deps: {
 
             const sessionId = input.sessionID;
             let result = "";
+
+            if (deps.compactionOff && (isFlush || isRecomp || isWrapup)) {
+                const command = `/${input.command}`;
+                await deps.sendNotification(
+                    sessionId,
+                    `Magic Context compaction is disabled (${COMPACTION_ENABLED_PATH}: false) — ${command} manages compacted history and has no effect in this mode.`,
+                    {},
+                );
+                throwSentinel(input.command);
+            }
 
             if (isAug) {
                 await executeAugmentation(deps, sessionId, input.arguments);
@@ -707,21 +813,84 @@ export function createMagicContextCommandHandler(deps: {
                     sessionLog(sessionId, "command ctx-status: pushed show-status-dialog to TUI");
                     throwSentinel(input.command);
                 }
-                const liveModelKey = deps.getLiveModelKey?.(sessionId);
-                const liveContextLimit = deps.getContextLimit?.(sessionId);
-                const statusOutput = executeStatus(
-                    deps.db,
-                    sessionId,
-                    deps.protectedTags,
-                    deps.executeThresholdPercentage,
-                    liveModelKey,
-                    deps.historyBudgetPercentage,
-                    deps.commitClusterTrigger,
-                    deps.executeThresholdTokens,
-                    liveContextLimit,
-                );
-                const moduleStatus = rustStatus ? `\n\n${formatRustStatusText(rustStatus)}` : "";
-                const combinedStatus = `${statusOutput}${moduleStatus}`;
+                let combinedStatus: string;
+                try {
+                    const detail =
+                        rustMode && !rustStatus
+                            ? undefined
+                            : deps.getStatusDetail?.(
+                                  sessionId,
+                                  rustStatus as RustSessionStatus | undefined,
+                              );
+                    if (rustMode && !rustStatus) {
+                        combinedStatus =
+                            "## Magic Status — Unavailable\n\nRust module status could not be read. Canonical session usage, tags, and compartments live in mc-store, so context.db mirror values are intentionally omitted.";
+                    } else if (detail) {
+                        combinedStatus = formatStatusDetailMarkdown(detail);
+                    } else {
+                        // Compatibility for isolated handler consumers that have not yet
+                        // supplied the shared TUI status builder.
+                        const liveModelKey = deps.getLiveModelKey?.(sessionId);
+                        const liveContextLimit = deps.getContextLimit?.(sessionId);
+                        const modelSlash = liveModelKey?.indexOf("/") ?? -1;
+                        const windowGeometry =
+                            liveModelKey && modelSlash > 0
+                                ? resolveContextWindowGeometry(
+                                      liveModelKey.slice(0, modelSlash),
+                                      liveModelKey.slice(modelSlash + 1),
+                                      { db: deps.db, sessionID: sessionId },
+                                  )
+                                : undefined;
+                        const rustTailHygiene = rustStatus?.tail_hygiene;
+                        const tailHygiene = resolveTailHygieneStatus(
+                            deps.getTailHygiene?.(sessionId),
+                            rustTailHygiene && typeof rustTailHygiene === "object"
+                                ? (rustTailHygiene as WireTailHygieneBaseline)
+                                : undefined,
+                        );
+                        const statusOutput = executeStatus(
+                            deps.db,
+                            sessionId,
+                            deps.protectedTags,
+                            deps.executeThresholdPercentage,
+                            liveModelKey,
+                            deps.historyBudgetPercentage,
+                            deps.commitClusterTrigger,
+                            deps.executeThresholdTokens,
+                            liveContextLimit,
+                            deps.dreamer
+                                ? {
+                                      backlog: readDreamTaskBacklogsSafely(
+                                          deps.db,
+                                          deps.dreamer.projectPath,
+                                          CANONICAL_DREAM_TASKS,
+                                      ),
+                                      progress: deps.getDreamerProgress?.() ?? null,
+                                  }
+                                : undefined,
+                            windowGeometry,
+                            tailHygiene,
+                            undefined,
+                            Boolean(rustMode),
+                        );
+                        const moduleStatus = rustStatus
+                            ? `\n\n${formatRustStatusText(rustStatus)}`
+                            : "";
+                        const modeStatus = deps.compactionOff
+                            ? `**Compaction:** disabled (${COMPACTION_ENABLED_PATH}: false) — native compaction owns the context window.\n\n`
+                            : "";
+                        combinedStatus = `${modeStatus}${statusOutput}${moduleStatus}`;
+                    }
+                } catch (error) {
+                    sessionLog(
+                        sessionId,
+                        "shared ctx-status detail failed; using compatibility text:",
+                        error,
+                    );
+                    combinedStatus = rustMode
+                        ? "## Magic Status — Unavailable\n\nRust module status failed while formatting. Canonical session usage, tags, and compartments live in mc-store, so context.db mirror values are intentionally omitted."
+                        : executeStatus(deps.db, sessionId, deps.protectedTags);
+                }
                 result += result ? `\n\n${combinedStatus}` : combinedStatus;
             }
 
@@ -733,20 +902,27 @@ export function createMagicContextCommandHandler(deps: {
                 } else if (!parsed.ok) {
                     result = `## Magic Wrapup — Invalid Arguments\n\n${parsed.message}`;
                 } else if (rustMode) {
-                    const keep = Math.min(100, Math.max(5, parsed.messagesToKeep));
+                    // The requested keep watermark is forwarded unchanged: it counts raw
+                    // messages and the module honors it as given (the TypeScript
+                    // orchestrator imposes no 5/100 clamp, only a floor of 1).
+                    const keep = parsed.messagesToKeep;
                     await deps.sendNotification(
                         sessionId,
                         "## Magic Wrapup\n\nStarting wrapup…",
                         {},
                     );
                     try {
-                        const value = await callRust("session.wrapup", {
-                            method: "session.wrapup",
-                            v: 1,
-                            session_id: sessionId,
-                            keep,
-                            command_id: rustCommandId("wrapup"),
-                        });
+                        const value = await callRust(
+                            "session.wrapup",
+                            {
+                                method: "session.wrapup",
+                                v: 1,
+                                session_id: sessionId,
+                                keep,
+                                command_id: rustCommandId("wrapup"),
+                            },
+                            MAX_WRAPUP_REQUEST_BUDGET_MS,
+                        );
                         result = formatRustOperationMessage("wrapup", value);
                     } catch (error) {
                         result = `## Magic Wrapup — Failed\n\n${error instanceof Error ? error.message : String(error)}`;
@@ -767,6 +943,8 @@ export function createMagicContextCommandHandler(deps: {
                     result = `## Magic Recomp — Invalid Arguments\n\n${parsedArgs.message}`;
                 } else if (parsedArgs.kind === "upgrade") {
                     result = executeRecompUpgradeStub(deps.db, sessionId);
+                } else if (rustMode && parsedArgs.kind === "partial") {
+                    result = `## Magic Recomp — Unavailable\n\n${RUST_PARTIAL_RECOMP_REFUSAL}`;
                 } else if (rustMode) {
                     try {
                         const value = await callRust("session.recomp", {
@@ -890,6 +1068,8 @@ export function createMagicContextCommandHandler(deps: {
                 if (!sessionId) {
                     result =
                         "## Session Upgrade\n\nThis prompt is not attached to a session yet — send a message first, then run `/ctx-session-upgrade`.";
+                } else if (rustMode) {
+                    result = `## Session Upgrade — Unavailable\n\n${RUST_SESSION_UPGRADE_REFUSAL}`;
                 } else {
                     result = await executeSessionUpgrade(deps, sessionId);
                 }

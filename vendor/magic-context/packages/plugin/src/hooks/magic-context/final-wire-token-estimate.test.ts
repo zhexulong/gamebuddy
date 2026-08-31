@@ -4,6 +4,7 @@ import {
     recordToolDefinition,
 } from "../../features/magic-context/tool-definition-tokens";
 import {
+    describeFinalWireTail,
     estimateFinalWireInputTokens,
     type FinalWireTokenEstimate,
 } from "./final-wire-token-estimate";
@@ -38,6 +39,19 @@ function toolMessage(output: string): MessageLike {
 }
 
 describe("final outgoing-wire token estimate", () => {
+    it("describes the final three post-transform message tails compactly", () => {
+        const messages = [
+            { info: { role: "assistant" }, parts: [{ type: "text" }] },
+            { info: { role: "user" }, parts: [{ type: "tool" }] },
+            { info: { role: "assistant" }, parts: [{ type: "tool" }, { type: "text" }] },
+            { info: { role: "user" }, parts: [{ type: "tool_result" }] },
+        ] as MessageLike[];
+
+        expect(describeFinalWireTail(messages)).toBe(
+            "[user:toolresult, assistant:tool+text, user:toolresult]",
+        );
+    });
+
     it("reflects a flushed pending drop in telemetry", () => {
         const largeOutput = Array.from({ length: 40_000 }, (_, index) => `token_${index}`).join(
             " ",

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { parse } from "comment-json";
 import {
+    __resetTuiPreferencesWatchTestHooks,
+    __setTuiPreferencesWatchTestHooks,
     computeEffectiveOrder,
     DEFAULT_PREFS,
     DEFAULT_SLOT_ORDER,
@@ -13,6 +15,7 @@ import {
     readTuiPreferencesFile,
     resolveMagicContextPrefs,
     TUI_PREFS_FILE_ENV,
+    watchTuiPreferences,
 } from "./tui-preferences";
 
 let dir: string;
@@ -28,6 +31,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+    __resetTuiPreferencesWatchTestHooks();
     for (const key of ENV_KEYS) {
         if (savedEnv[key] === undefined) delete process.env[key];
         else process.env[key] = savedEnv[key];
@@ -76,6 +80,52 @@ describe("readTuiPreferencesFile (tolerant)", () => {
         );
         const root = await readTuiPreferencesFile();
         expect(resolveMagicContextPrefs(root).order).toBe(205);
+    });
+});
+
+describe("watchTuiPreferences", () => {
+    test("notifies when the initial read resolves after an atomic replacement", async () => {
+        const previous = `{"magic-context":{"sections":{"memory":true}}}\n`;
+        const next = `{"magic-context":{"sections":{"memory":false}}}\n`;
+        await writeFile(file, previous, "utf8");
+
+        let resolveInitialRead!: (text: string) => void;
+        const pendingInitialRead = new Promise<string>((resolve) => {
+            resolveInitialRead = resolve;
+        });
+        let emitWatchEvent!: (event: string, filename: string | null) => void;
+        let readCount = 0;
+        __setTuiPreferencesWatchTestHooks({
+            readFile: () => {
+                readCount += 1;
+                return readCount === 1 ? pendingInitialRead : Promise.resolve(next);
+            },
+            watch: (_directory, listener) => {
+                emitWatchEvent = listener;
+                return { close() {} };
+            },
+        });
+
+        const observed = new Promise<{ memory: boolean }>((resolve) => {
+            const stop = watchTuiPreferences(() => {
+                void readTuiPreferencesFile().then((root) => {
+                    stop();
+                    resolve({ memory: resolveMagicContextPrefs(root).sections.memory });
+                });
+            });
+        });
+
+        const replacement = `${file}.external.tmp`;
+        await writeFile(replacement, next, "utf8");
+        await rename(replacement, file);
+        emitWatchEvent("rename", basename(file));
+        resolveInitialRead(next);
+
+        const result = await Promise.race([
+            observed,
+            new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 300)),
+        ]);
+        expect(result).toEqual({ memory: false });
     });
 });
 

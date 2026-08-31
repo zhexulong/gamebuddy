@@ -1,8 +1,12 @@
 import { extractTiersFromInner } from "../../hooks/magic-context/compartment-parser";
 import { log } from "../../shared/logger";
 import type { Database } from "../../shared/sqlite";
+import { logSlowWriteTransaction } from "../../shared/write-transaction-timing";
 import { ensureColumn, healAllNullColumns } from "./storage-schema-helpers";
 import { bumpEpochsForWorkspaceMemberSet } from "./workspaces";
+
+/** First version reserved for downstream migrations; upstream versions stay below it. */
+export const FORK_MIGRATION_VERSION_FLOOR = 10_000;
 
 /**
  * Versioned migration framework for magic-context's SQLite database.
@@ -121,14 +125,23 @@ function assertForeignKeyIntegrity(db: Database, table?: string): void {
     }
 }
 
-function authorityPrivilegeCheck(db: Database): string {
-    const native = db as unknown as {
-        function?: unknown;
-        createFunction?: unknown;
-    };
-    return typeof native.function === "function" || typeof native.createFunction === "function"
-        ? "mc_privileged_writer() = 0"
-        : "COALESCE((SELECT enabled FROM context_privilege_state WHERE id = 1), 0) = 0";
+/**
+ * SQL predicate that guards managed-write triggers fire only for UNPRIVILEGED
+ * writers.
+ *
+ * This must ALWAYS be the durable `context_privilege_state` table check, never a
+ * connection-local scalar UDF. Triggers are DURABLE database artifacts: their SQL
+ * is stored in the file and re-evaluated on EVERY connection that opens context.db.
+ * A UDF such as the former `mc_privileged_writer()` only exists on connections that
+ * registered it, so a trigger baked with that reference fails with `no such function`
+ * on any connection that did not (older Bun without scalar-UDF support, node:sqlite,
+ * the dashboard's rusqlite). The state table is ordinary schema every connection can
+ * read, so the guard works identically everywhere. Privileged writers flip
+ * `context_privilege_state.enabled` inside their own BEGIN IMMEDIATE transaction
+ * (see withPrivilegedWriter), which no second connection can observe.
+ */
+function authorityPrivilegeCheck(): string {
+    return "COALESCE((SELECT enabled FROM context_privilege_state WHERE id = 1), 0) = 0";
 }
 
 function managedAuthorityNoteRow(row: "OLD" | "NEW"): string {
@@ -150,7 +163,7 @@ function managedAuthorityNoteRow(row: "OLD" | "NEW"): string {
 
 /** Install the latest authority fences after historical/recovery migration batches. */
 function installLatestAuthorityTriggers(db: Database): void {
-    const privilegeCheck = authorityPrivilegeCheck(db);
+    const privilegeCheck = authorityPrivilegeCheck();
     if (tableExists(db, "memories")) {
         db.exec(`
             DROP TRIGGER IF EXISTS memories_authority_guard_insert;
@@ -201,7 +214,7 @@ function installLatestAuthorityTriggers(db: Database): void {
     }
 }
 
-const MIGRATIONS: Migration[] = [
+export const MIGRATIONS: Migration[] = [
     {
         version: 1,
         description: "Merge session_notes + smart_notes into unified notes table",
@@ -220,7 +233,11 @@ const MIGRATIONS: Migration[] = [
 					updated_at INTEGER NOT NULL,
 					last_checked_at INTEGER,
 					ready_at INTEGER,
-					ready_reason TEXT
+					ready_reason TEXT,
+					compiled_provider TEXT,
+					compiled_config TEXT,
+					compiled_at INTEGER,
+					compile_status TEXT CHECK(compile_status IN ('compiled', 'plain', 'refused'))
 				);
 				CREATE INDEX IF NOT EXISTS idx_notes_session_status ON notes(session_id, status);
 				CREATE INDEX IF NOT EXISTS idx_notes_project_status ON notes(project_path, status);
@@ -334,6 +351,7 @@ const MIGRATIONS: Migration[] = [
                     status TEXT NOT NULL DEFAULT 'active',
                     promoted_at INTEGER NOT NULL,
                     source_candidate_ids TEXT DEFAULT '[]',
+                    source_candidate_provenance TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -1833,6 +1851,7 @@ const MIGRATIONS: Migration[] = [
                     last_observed_at INTEGER,
                     answer_refreshed_at INTEGER,
                     source_candidate_ids TEXT NOT NULL DEFAULT '[]',
+                    source_candidate_provenance TEXT,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -2671,25 +2690,204 @@ const MIGRATIONS: Migration[] = [
     },
     {
         version: 71,
-        description: "add project-scoped memory source exclusions",
+        description:
+            "rebuild authority guard triggers to the durable state-table form (issue #253)",
         up(db: Database): void {
+            // Earlier migrations baked a connection-local UDF reference
+            // (mc_privileged_writer()) into these triggers when the MIGRATING runtime
+            // supported scalar UDFs. That reference is only evaluable on connections
+            // that registered the UDF, so every other connection opening context.db
+            // failed each guarded write with `no such function`. Rebuild all six guards
+            // to the durable context_privilege_state predicate. DROP + CREATE is safe on
+            // both existing variants (UDF-form and state-form triggers) and on fresh
+            // databases. installLatestAuthorityTriggers now emits the state-table form
+            // unconditionally.
+            installLatestAuthorityTriggers(db);
+        },
+    },
+    {
+        version: 72,
+        description: "add per-session compaction mode record column (issue #266)",
+        up(db: Database): void {
+            // This column is added in three places to stay consistent across
+            // fresh and migrated databases: (a) this migration, (b) the
+            // CREATE TABLE in storage-db.ts, and (c) a boot-time ensureColumn
+            // backfill in storage-db.ts. NULL means no record, which the
+            // transition logic treats as "on" (compaction enabled) — so
+            // pre-existing rows are unambiguously no-record. "on"/"off" are
+            // the recorded mode values. This migration only adds the column;
+            // no code reads or writes it yet.
+            if (tableExists(db, "session_meta")) {
+                ensureColumn(db, "session_meta", "compaction_mode_record", "TEXT");
+            }
+        },
+    },
+    {
+        version: 73,
+        description: "persist the last successful todowrite permission verdict",
+        up(db: Database): void {
+            if (tableExists(db, "session_meta")) {
+                ensureColumn(
+                    db,
+                    "session_meta",
+                    "todo_permission_denied",
+                    "INTEGER NOT NULL DEFAULT 2",
+                );
+            }
+        },
+    },
+    {
+        version: 74,
+        description: "persist detected context-limit provenance",
+        up(db: Database): void {
+            if (tableExists(db, "session_meta")) {
+                ensureColumn(
+                    db,
+                    "session_meta",
+                    "detected_context_limit_provenance",
+                    "TEXT NOT NULL DEFAULT 'unknown'",
+                );
+            }
+        },
+    },
+    {
+        version: 75,
+        description: "persist mural cue validation rejection latches",
+        up(db: Database): void {
+            // A NULL cue remains eligible for compression, while this counter
+            // remembers repeated validation failures for its current content hash.
+            if (!tableExists(db, "memories")) return;
+            ensureColumn(db, "memories", "mural_cue_rejection_count", "INTEGER NOT NULL DEFAULT 0");
+        },
+    },
+    {
+        version: 76,
+        description: "persist retina provider compilation for smart-note conditions",
+        up(db: Database): void {
+            if (!tableExists(db, "notes")) return;
+            ensureColumn(db, "notes", "compiled_provider", "TEXT");
+            ensureColumn(db, "notes", "compiled_config", "TEXT");
+            ensureColumn(db, "notes", "compiled_at", "INTEGER");
+            ensureColumn(
+                db,
+                "notes",
+                "compile_status",
+                "TEXT CHECK(compile_status IN ('compiled', 'plain', 'refused'))",
+            );
+        },
+    },
+    {
+        version: 77,
+        description: "persist scoped provenance for promoted user memories and primers",
+        up(db: Database): void {
+            if (tableExists(db, "user_memories")) {
+                ensureColumn(db, "user_memories", "source_candidate_provenance", "TEXT");
+            }
+            if (tableExists(db, "primers")) {
+                ensureColumn(db, "primers", "source_candidate_provenance", "TEXT");
+            }
+        },
+    },
+    {
+        version: 78,
+        description: "add migration_pending journal for crash-safe cross-harness session migration",
+        up(db: Database): void {
+            // Recovery journal for `doctor migrate` (OpenCode → Pi/OMP). Each row
+            // tracks one in-flight session migration through its phases so a crash
+            // between staging the JSONL, committing the shared-DB state, and
+            // renaming the file into the sessions root can be reconciled by phase
+            // on the next doctor/migrate run.
+            //
+            // Column naming is load-bearing: the Pi session column is named
+            // `pi_session_id` (and the source is `source_session_id`) — NEVER
+            // `session_id`. The structural clearSession contract test discovers
+            // every table with a `session_id` column and requires clearSession to
+            // empty it; dragging this journal into that set would make ordinary
+            // session deletion destroy crash-recovery records.
             db.exec(`
-                CREATE TABLE IF NOT EXISTS memory_source_exclusions (
-                    project_path TEXT NOT NULL,
-                    source_ref TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    PRIMARY KEY (project_path, source_ref)
+                CREATE TABLE IF NOT EXISTS migration_pending (
+                    migration_key TEXT PRIMARY KEY,
+                    source_session_id TEXT NOT NULL,
+                    target_harness TEXT NOT NULL,
+                    pi_session_id TEXT NOT NULL,
+                    final_path TEXT NOT NULL,
+                    stage_path TEXT NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    phase TEXT NOT NULL CHECK (phase IN ('staged', 'db_committed')),
+                    created_at INTEGER NOT NULL
                 );
             `);
         },
     },
     {
-        version: 72,
-        description: "persist m[1] memory and mutation coverage watermarks",
+        version: 79,
+        description: "record m[0] system-hash and model-key comparison telemetry",
         up(db: Database): void {
-            if (!tableExists(db, "session_meta")) return;
-            ensureColumn(db, "session_meta", "cached_m1_max_memory_id", "INTEGER");
-            ensureColumn(db, "session_meta", "cached_m1_max_memory_mutation_id", "INTEGER");
+            // These values are evidence for an already-made materialization
+            // comparison, not current cache state. Keep historical rows NULL:
+            // NULL means the pass made no comparison, while an empty string is a
+            // valid operand from a compared but uninitialized cached marker.
+            if (!tableExists(db, "transform_decisions")) return;
+            ensureColumn(db, "transform_decisions", "system_hash_prev", "TEXT");
+            ensureColumn(db, "transform_decisions", "system_hash_new", "TEXT");
+            ensureColumn(db, "transform_decisions", "m0_model_key_prev", "TEXT");
+            ensureColumn(db, "transform_decisions", "m0_model_key_new", "TEXT");
+        },
+    },
+    {
+        version: 80,
+        description: "record observed m[0] tool-set hash comparisons",
+        up(db: Database): void {
+            // Tool-set changes never trigger a fold, but the decision site can
+            // still compare their cached and live names. Preserve only those
+            // actual operands: NULL means no comparison ran on that pass, while
+            // an empty string remains a real compared cached baseline.
+            if (!tableExists(db, "transform_decisions")) return;
+            ensureColumn(db, "transform_decisions", "m0_tool_set_hash_prev", "TEXT");
+            ensureColumn(db, "transform_decisions", "m0_tool_set_hash_new", "TEXT");
+        },
+    },
+    {
+        version: 81,
+        description: "persist last-known-good transform snapshots across restarts",
+        up(db: Database): void {
+            // Durable home for the LKG replay slot. The in-memory slot dies with
+            // the process, so a plugin restart right after a module bounce left
+            // the recovery ladder with nothing to replay. One row per session;
+            // json_prefix stores the exact serialized prefix captured by the
+            // applied pass (never re-serialized on write or read).
+            db.exec(`
+                CREATE TABLE IF NOT EXISTS lkg_slots (
+                    session_id TEXT PRIMARY KEY,
+                    json_prefix TEXT NOT NULL,
+                    input_id_seq TEXT NOT NULL,
+                    input_content_digests TEXT NOT NULL,
+                    input_content_signatures TEXT,
+                    last_input_message_id TEXT NOT NULL,
+                    model_key TEXT,
+                    provider_key TEXT,
+                    captured_at INTEGER NOT NULL,
+                    row_version INTEGER,
+                    capture_sequence INTEGER
+                );
+            `);
+        },
+    },
+    {
+        version: 82,
+        description: "record the origin of memory file-independent mappings",
+        up(db: Database): void {
+            // This column preserves who made the no-file disposition: the mapper's
+            // explicit independent choice versus a host fallback after rejecting all
+            // supplied paths. Existing mappings predate that distinction, so they
+            // conservatively retain the mapper default.
+            if (!tableExists(db, "memory_verifications")) return;
+            ensureColumn(
+                db,
+                "memory_verifications",
+                "mapping_origin",
+                "TEXT NOT NULL DEFAULT 'mapper'",
+            );
         },
     },
 ];
@@ -2716,10 +2914,16 @@ function ensureMigrationsTable(db: Database): void {
 }
 
 function getCurrentVersion(db: Database): number {
-    const row = db.prepare("SELECT MAX(version) as version FROM schema_migrations").get() as {
-        version: number | null;
-    } | null;
+    const row = db
+        .prepare(
+            "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations WHERE version < ?",
+        )
+        .get(FORK_MIGRATION_VERSION_FLOOR) as { version: number } | null;
     return row?.version ?? 0;
+}
+
+function isMigrationApplied(db: Database, version: number): boolean {
+    return db.prepare("SELECT 1 FROM schema_migrations WHERE version = ?").get(version) != null;
 }
 
 /**
@@ -2761,7 +2965,7 @@ export function isSiblingMigrationConflict(db: Database, error: unknown, version
  * Each migration runs in its own transaction — if it fails, only that migration rolls back.
  * Already-applied migrations are skipped.
  *
- * Migration application re-reads the persisted version under BEGIN IMMEDIATE
+ * Migration application re-reads the upstream-lane version under BEGIN IMMEDIATE
  * before choosing one migration. Concurrent starters therefore serialize before
  * taking a read snapshot: one applies the migration and the waiter observes the
  * advanced version instead of failing a deferred read-to-write lock upgrade.
@@ -2784,18 +2988,30 @@ export function runMigrations(db: Database): void {
         let migration: Migration | undefined;
         let currentVersion = 0;
         try {
+            const transactionStartedAt = performance.now();
             const applied = db
                 .transaction(() => {
                     currentVersion = getCurrentVersion(db);
-                    migration = MIGRATIONS.find((candidate) => candidate.version > currentVersion);
+                    // Keep the append-only version boundary for legacy databases whose
+                    // bookkeeping contains only a current-version row. Within the pending
+                    // range, check each candidate's row directly so downstream rows at or
+                    // above the reserved floor cannot make a sibling migration re-select
+                    // an already-applied version.
+                    migration = MIGRATIONS.find(
+                        (candidate) =>
+                            candidate.version > currentVersion &&
+                            !isMigrationApplied(db, candidate.version),
+                    );
                     if (!migration) return false;
 
                     if (!loggedPlan) {
                         const pendingCount = MIGRATIONS.filter(
-                            (candidate) => candidate.version > currentVersion,
+                            (candidate) =>
+                                candidate.version > currentVersion &&
+                                !isMigrationApplied(db, candidate.version),
                         ).length;
                         log(
-                            `[migrations] current schema version: ${currentVersion}, applying ${pendingCount} migration(s)`,
+                            `[migrations] current upstream migration lane: ${currentVersion}, applying ${pendingCount} migration(s)`,
                         );
                         loggedPlan = true;
                     }
@@ -2807,6 +3023,7 @@ export function runMigrations(db: Database): void {
                     return true;
                 })
                 .immediate();
+            logSlowWriteTransaction("migration-runner", transactionStartedAt);
 
             if (!applied || !migration) break;
             if (migration.version <= 61) touchedLegacyAuthorityBatch = true;
@@ -2843,7 +3060,9 @@ export function runMigrations(db: Database): void {
 
     if (touchedLegacyAuthorityBatch) {
         try {
+            const transactionStartedAt = performance.now();
             db.transaction(() => installLatestAuthorityTriggers(db)).immediate();
+            logSlowWriteTransaction("migration-runner", transactionStartedAt);
         } catch (error) {
             throw new Error(
                 `Migration authority-trigger postcondition failed: ${error instanceof Error ? error.message : String(error)}. Database may need manual repair.`,
@@ -2852,7 +3071,9 @@ export function runMigrations(db: Database): void {
     }
 
     if (loggedPlan) {
-        log(`[migrations] schema version now: ${MIGRATIONS[MIGRATIONS.length - 1].version}`);
+        log(
+            `[migrations] upstream migration lane now: ${MIGRATIONS[MIGRATIONS.length - 1].version}`,
+        );
     }
 }
 

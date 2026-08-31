@@ -1,0 +1,52 @@
+---
+title: Magic Context
+description: Persistent memory and self-managing context for OpenCode, Pi, and Oh My Pi coding agents.
+template: splash
+hero:
+  tagline: Your coding agent, with a memory. Sessions that last weeks, context that manages itself.
+  actions:
+    - text: Get started
+      link: /magic-context/getting-started/installation/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/cortexkit/magic-context
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What it does
+
+<CardGrid stagger>
+	<Card title="Unbounded sessions" icon="seti:clock">
+		A background Historian condenses old conversation into a compact, tiered
+		history. Your session keeps going — no context wall, no lossy compaction
+		pauses.
+	</Card>
+	<Card title="Project memory" icon="seti:db">
+		Durable facts, rules, and constraints persist across sessions. Every new
+		session starts already knowing your project.
+	</Card>
+	<Card title="Full recall" icon="magnifier">
+		Nothing is lost. The agent can search and re-expand any part of the
+		original conversation, project memories, and indexed git history.
+	</Card>
+	<Card title="Prompt-cache aware" icon="seti:pipeline">
+		Every mutation is engineered around provider prompt caching — context
+		management that pays for itself instead of re-billing your prefix.
+	</Card>
+</CardGrid>
+
+## Works with
+
+- **[OpenCode](https://opencode.ai)** — CLI, TUI, and Desktop
+- **[Pi](https://github.com/earendil-works/pi-mono)** — terminal coding agent
+- **[Oh My Pi](https://github.com/can1357/oh-my-pi)** — terminal coding agent with IDE-grade tooling
+
+One shared store: sessions, memories, and history are shared across all
+three harnesses on the same machine.
+
+```bash
+npx @cortexkit/magic-context@latest setup
+```

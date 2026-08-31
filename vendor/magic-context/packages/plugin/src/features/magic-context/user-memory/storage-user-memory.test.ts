@@ -3,7 +3,10 @@ import { Database } from "../../../shared/sqlite";
 import { runMigrations } from "../migrations";
 import { initializeDatabase } from "../storage-db";
 import {
+    deleteUserMemoryCandidates,
+    getActiveUserMemories,
     getUserMemoryCandidates,
+    insertUserMemory,
     insertUserMemoryCandidates,
     pruneExpiredUserMemoryCandidates,
     USER_MEMORY_CANDIDATE_TTL_MS,
@@ -15,6 +18,50 @@ function freshDb(): Database {
     runMigrations(db);
     return db;
 }
+
+describe("user-memory provenance", () => {
+    it("retains candidate session provenance after promotion consumes the candidate", () => {
+        const db = freshDb();
+        insertUserMemoryCandidates(db, [
+            {
+                content: "User prefers concise updates",
+                sessionId: "ses_source",
+                sourceCompartmentStart: 4,
+                sourceCompartmentEnd: 9,
+            },
+        ]);
+        const [candidate] = getUserMemoryCandidates(db);
+
+        db.transaction(() => {
+            insertUserMemory(db, "User prefers concise updates", [candidate.id]);
+            deleteUserMemoryCandidates(db, [candidate.id]);
+        })();
+
+        expect(getUserMemoryCandidates(db)).toHaveLength(0);
+        expect(getActiveUserMemories(db)[0].sourceProvenance).toEqual([
+            {
+                candidateId: candidate.id,
+                sessionId: "ses_source",
+                sourceCompartmentStart: 4,
+                sourceCompartmentEnd: 9,
+            },
+        ]);
+        db.close();
+    });
+
+    it("reports legacy bare candidate ids as unknown provenance", () => {
+        const db = freshDb();
+        db.prepare(
+            `INSERT INTO user_memories
+                (content, status, promoted_at, source_candidate_ids, created_at, updated_at)
+             VALUES (?, 'active', ?, ?, ?, ?)`,
+        ).run("Legacy observation", 1, "[41]", 1, 1);
+
+        expect(getActiveUserMemories(db)[0].sourceCandidateIds).toEqual([41]);
+        expect(getActiveUserMemories(db)[0].sourceProvenance).toBeNull();
+        db.close();
+    });
+});
 
 describe("user-memory candidate decay", () => {
     it("prunes candidates older than the TTL, keeps fresher ones", () => {

@@ -269,7 +269,7 @@ function reportProviderStartObservation(sessionId: string, status: number): void
 }
 
 /**
- * Register the locked Pi 0.84.1 provider boundary. The existing
+ * Register the locked Pi 0.84.4 provider boundary. The existing
  * `before_provider_request` narrative-gate IPC marker stays untouched and
  * remains pre-send serialization only; the P4c provider-start observer is
  * separate and consumes only the opaque HTTP status class.

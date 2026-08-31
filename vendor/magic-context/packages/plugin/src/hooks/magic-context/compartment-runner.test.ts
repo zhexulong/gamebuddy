@@ -19,6 +19,7 @@ import { getMemoriesByProject } from "../../features/magic-context/memory/storag
 import {
     acquireWrapupInProgress,
     closeDatabase,
+    getHistorianFailureState,
     getOrCreateSessionMeta,
     getPendingOps,
     getTagsBySession,
@@ -1531,6 +1532,168 @@ describe("runCompartmentAgent", () => {
         expect(getCompartments(db, "ses-retry")).toEqual([
             expect.objectContaining({ title: "Recovered", startMessage: 1, endMessage: 2 }),
         ]);
+    });
+
+    it("records length-capped reasoning-only output with the actionable error and drain backoff", async () => {
+        useTempDataHome("compartment-runner-length-capped-reasoning-");
+        const sessionId = "ses-length-capped-reasoning";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        const prompt = mock(async () => ({}));
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/length-capped-reasoning" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-length-capped-reasoning" } })),
+                prompt,
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: {
+                                role: "assistant",
+                                time: { created: 1 },
+                                finish_reason: "length",
+                                tokens: { output: 8192 },
+                            },
+                            parts: [
+                                {
+                                    type: "reasoning",
+                                    text: '<compartment start="1" end="2" title="Unusable"><p1>Reasoning-only output</p1></compartment>',
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        const error =
+            "historian output length-capped at 8192 tokens (all reasoning, no text) — set historian.maxTokens or route historian.model to a low-reasoning lane/variant";
+        expect(getCompartments(db, sessionId)).toHaveLength(0);
+        expect(getHistorianFailureState(db, sessionId)).toMatchObject({
+            failureCount: 1,
+            lastError: error,
+        });
+        // An unusable response records a drain-failure timestamp so emergency drain
+        // retries wait instead of immediately retrying the same broken historian.
+        expect(loadProtectedTailMeta(db, sessionId).historianDrainFailureAt).toBeGreaterThan(0);
+    });
+
+    it("publishes valid compartment markup from reasoning-only historian output", async () => {
+        useTempDataHome("compartment-runner-reasoning-fallback-");
+        const sessionId = "ses-reasoning-fallback";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/reasoning-fallback" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-reasoning-fallback" } })),
+                prompt: mock(async () => ({})),
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [
+                                {
+                                    type: "thinking",
+                                    text: '<compartment start="1" end="2" title="Recovered from reasoning"><p1>Validated summary</p1></compartment>',
+                                },
+                            ],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(getCompartments(db, sessionId)).toEqual([
+            expect.objectContaining({
+                startMessage: 1,
+                endMessage: 2,
+                title: "Recovered from reasoning",
+                p1: "Validated summary",
+            }),
+        ]);
+        expect(getHistorianFailureState(db, sessionId).failureCount).toBe(0);
+    });
+
+    it("rejects invalid reasoning-only historian output through the normal repair path", async () => {
+        useTempDataHome("compartment-runner-invalid-reasoning-");
+        const sessionId = "ses-invalid-reasoning";
+        createOpenCodeDb(sessionId, [
+            { id: "m-1", role: "user", text: "First" },
+            { id: "m-2", role: "assistant", text: "Second" },
+            { id: "m-3", role: "user", text: "protected 1" },
+            { id: "m-4", role: "user", text: "protected 2" },
+            { id: "m-5", role: "user", text: "protected 3" },
+            { id: "m-6", role: "user", text: "protected 4" },
+            { id: "m-7", role: "user", text: "protected 5" },
+        ]);
+        const db = openDatabase();
+        const prompt = mock(async () => ({}));
+        const client = {
+            session: {
+                get: mock(async () => ({ data: { directory: "/tmp/invalid-reasoning" } })),
+                create: mock(async () => ({ data: { id: "ses-agent-invalid-reasoning" } })),
+                prompt,
+                messages: mock(async () => ({
+                    data: [
+                        {
+                            info: { role: "assistant", time: { created: 1 } },
+                            parts: [{ type: "reasoning", text: "not compartment markup" }],
+                        },
+                    ],
+                })),
+                delete: mock(async () => ({})),
+            },
+        } as unknown as PluginContext["client"];
+
+        await runCompartmentAgentWithLease({
+            client,
+            db,
+            sessionId,
+            historianChunkTokens: 10_000,
+            directory: "/tmp",
+        });
+
+        expect(getHistorianPromptCount(prompt)).toBe(2);
+        expect(getCompartments(db, sessionId)).toHaveLength(0);
+        expect(getHistorianFailureState(db, sessionId)).toMatchObject({
+            failureCount: 1,
+            lastError: "Historian returned no usable compartments.",
+        });
     });
 
     it("falls back to the primary session model after historian and repair output both fail validation", async () => {

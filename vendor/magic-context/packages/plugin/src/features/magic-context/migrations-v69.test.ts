@@ -67,6 +67,7 @@ function makePreV65ReplayFixture(db: DatabaseType): void {
     // artifacts. This keeps the fixture compact while making every versioned
     // column and index flow through migrations rather than fresh declarations.
     db.exec(`
+        ALTER TABLE memories DROP COLUMN mural_cue_rejection_count;
         ALTER TABLE memories DROP COLUMN mural_cue_at;
         ALTER TABLE memories DROP COLUMN mural_cue_hash;
         ALTER TABLE memories DROP COLUMN mural_cue;

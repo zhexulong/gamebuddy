@@ -286,10 +286,19 @@ export function moduleWireBodyBytes(payload: {
  * markers are understood by the module and are only used when a single item is
  * larger than the normal page envelope.
  */
+export interface ModuleTransformWirePage {
+    page: Record<string, unknown>;
+    /** UTF-8 byte length of `JSON.stringify(page)`, counted while paging. */
+    bytes: number;
+}
+
 export function buildPagedModuleTransformPayloads(
     body: Record<string, unknown>,
-): Record<string, unknown>[] {
-    if (Buffer.byteLength(JSON.stringify(body)) <= MODULE_PAGE_MAX_BYTES) return [body];
+): ModuleTransformWirePage[] {
+    // The unpaged path must stringify once to know it fits. Return that length so
+    // the transport telemetry does not serialize the same body a second time.
+    const unpagedBytes = Buffer.byteLength(JSON.stringify(body));
+    if (unpagedBytes <= MODULE_PAGE_MAX_BYTES) return [{ page: body, bytes: unpagedBytes }];
 
     const arrayFields = [
         "input",
@@ -315,7 +324,7 @@ export function buildPagedModuleTransformPayloads(
         total: number;
         complete: boolean;
         arrays: Record<string, unknown[]>;
-    }): Record<string, unknown> => {
+    }): ModuleTransformWirePage => {
         const pageArrays = Object.fromEntries(
             arrayFields.map((field) => [field, args.arrays[field] ?? []]),
         );
@@ -335,7 +344,9 @@ export function buildPagedModuleTransformPayloads(
             ...pageArrays,
         };
         if (args.complete) Object.assign(page, scalarFields);
-        return page;
+        // Admission already counted candidate sizes incrementally. Stringify once
+        // here so transport telemetry can reuse the exact UTF-8 length.
+        return { page, bytes: Buffer.byteLength(JSON.stringify(page)) };
     };
     const hasItems = (arrays: Record<string, unknown[]>): boolean =>
         Object.values(arrays).some((values) => values.length > 0);
@@ -374,7 +385,7 @@ export function buildPagedModuleTransformPayloads(
 
     let assumedTotal = 1;
     for (let attempt = 0; attempt < 10; attempt += 1) {
-        const pages: Record<string, unknown>[] = [];
+        const pages: ModuleTransformWirePage[] = [];
         let current = emptyArrays();
         let currentBytes = Object.fromEntries(arrayFields.map((field) => [field, 2]));
         const appendUnit = (field: string, value: unknown): boolean => {
@@ -457,14 +468,7 @@ export function buildPagedModuleTransformPayloads(
             complete: true,
             arrays: current,
         });
-        if (
-            pageByteLength({
-                index: pages.length,
-                total: assumedTotal,
-                complete: true,
-                arrayBytes: currentBytes,
-            }) > MODULE_PAGE_MAX_BYTES
-        ) {
+        if (finalPage.bytes > MODULE_PAGE_MAX_BYTES) {
             if (!hasItems(current)) {
                 throw new Error("module transform scalar tail exceeds the 512 KiB page limit");
             }
@@ -484,14 +488,7 @@ export function buildPagedModuleTransformPayloads(
                 complete: true,
                 arrays: current,
             });
-            if (
-                pageByteLength({
-                    index: pages.length,
-                    total: assumedTotal,
-                    complete: true,
-                    arrayBytes: currentBytes,
-                }) > MODULE_PAGE_MAX_BYTES
-            ) {
+            if (finalPage.bytes > MODULE_PAGE_MAX_BYTES) {
                 throw new Error("module transform scalar tail exceeds the 512 KiB page limit");
             }
         }
@@ -540,7 +537,7 @@ export function moduleRawBlockMappings(message: RawMessageParts | null): ModuleR
             blockIndex += 1;
             continue;
         }
-        if (type === "reasoning") {
+        if (["reasoning", "thinking", "redacted_thinking"].includes(type)) {
             mappings.push({ blockIndex, partIndex, kind: "reasoning" });
             blockIndex += 1;
             continue;
@@ -616,6 +613,26 @@ export function encodeOpenCodeMessagesToCk(messages: unknown[]): Array<{
             (typeof info.absolute_ordinal === "number" && info.absolute_ordinal) ||
             index + 1;
         const role = typeof info.role === "string" ? info.role : "user";
+        const time =
+            info.time !== null && typeof info.time === "object"
+                ? (info.time as Record<string, unknown>)
+                : {};
+        const createdAtMs =
+            typeof time.created === "number"
+                ? time.created
+                : typeof info.time_created === "number"
+                  ? info.time_created
+                  : typeof info.timeCreated === "number"
+                    ? info.timeCreated
+                    : undefined;
+        const completedAtMs =
+            typeof time.completed === "number"
+                ? time.completed
+                : typeof info.time_completed === "number"
+                  ? info.time_completed
+                  : typeof info.timeCompleted === "number"
+                    ? info.timeCompleted
+                    : undefined;
         const parts = Array.isArray(raw.parts) ? raw.parts : [];
         const synthetic =
             parts.length > 0 &&
@@ -627,6 +644,7 @@ export function encodeOpenCodeMessagesToCk(messages: unknown[]): Array<{
                         (part as Record<string, unknown>).syntheticTodoMarker === true),
             );
         const content: Record<string, unknown>[] = [];
+        const recoveryToolTitles: Record<string, string> = {};
         for (const partValue of parts) {
             if (partValue === null || typeof partValue !== "object") continue;
             const part = partValue as Record<string, unknown>;
@@ -635,7 +653,8 @@ export function encodeOpenCodeMessagesToCk(messages: unknown[]): Array<{
                 content.push({
                     kind: { type: "text", text: typeof part.text === "string" ? part.text : "" },
                 });
-            } else if (type === "reasoning") {
+            } else if (type === "reasoning" || type === "thinking") {
+                const signature = typeof part.signature === "string" ? part.signature : undefined;
                 content.push({
                     kind: {
                         type: "reasoning",
@@ -645,7 +664,34 @@ export function encodeOpenCodeMessagesToCk(messages: unknown[]): Array<{
                                 : typeof part.thinking === "string"
                                   ? part.thinking
                                   : "",
+                        ...(signature ? { signature } : {}),
                     },
+                    ...(part.cache_control !== undefined
+                        ? {
+                              provider_extras: {
+                                  opencode: { cache_control: part.cache_control },
+                              },
+                          }
+                        : {}),
+                });
+            } else if (type === "redacted_thinking") {
+                content.push({
+                    kind: {
+                        type: "redacted_reasoning",
+                        data:
+                            typeof part.data === "string"
+                                ? part.data
+                                : typeof part.redacted === "string"
+                                  ? part.redacted
+                                  : "",
+                    },
+                    ...(part.cache_control !== undefined
+                        ? {
+                              provider_extras: {
+                                  opencode: { cache_control: part.cache_control },
+                              },
+                          }
+                        : {}),
                 });
             } else if (type === "tool") {
                 const state =
@@ -661,6 +707,15 @@ export function encodeOpenCodeMessagesToCk(messages: unknown[]): Array<{
                 const input = state.input ?? part.input ?? part.args ?? {};
                 content.push({ kind: { type: "tool_call", id: callId, name: toolName, input } });
                 if (state.status === "completed" || state.status === "error") {
+                    const metadata =
+                        state.metadata !== null && typeof state.metadata === "object"
+                            ? (state.metadata as Record<string, unknown>)
+                            : {};
+                    const title =
+                        (typeof state.title === "string" && state.title.trim()) ||
+                        (typeof metadata.title === "string" && metadata.title.trim()) ||
+                        "";
+                    if (title) recoveryToolTitles[callId] = title;
                     const output =
                         typeof state.output === "string"
                             ? state.output
@@ -700,6 +755,13 @@ export function encodeOpenCodeMessagesToCk(messages: unknown[]): Array<{
             ck: {
                 role,
                 content,
+                ...(Object.keys(recoveryToolTitles).length > 0
+                    ? {
+                          provider_extras: {
+                              opencode: { ctx_expand_tool_titles: recoveryToolTitles },
+                          },
+                      }
+                    : {}),
                 meta: {
                     harness_id: id,
                     ordinal,
@@ -707,11 +769,8 @@ export function encodeOpenCodeMessagesToCk(messages: unknown[]): Array<{
                     summary: info.summary === true,
                     errored: info.error !== undefined && info.error !== null,
                     ...(typeof info.finish === "string" ? { finish: info.finish } : {}),
-                    ...(typeof info.time_created === "number"
-                        ? { created_at_ms: info.time_created }
-                        : typeof info.timeCreated === "number"
-                          ? { created_at_ms: info.timeCreated }
-                          : {}),
+                    ...(createdAtMs === undefined ? {} : { created_at_ms: createdAtMs }),
+                    ...(completedAtMs === undefined ? {} : { completed_at_ms: completedAtMs }),
                 },
             },
         };

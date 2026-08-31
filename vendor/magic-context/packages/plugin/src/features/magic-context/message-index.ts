@@ -10,6 +10,7 @@ import type { Database, Statement as PreparedStatement } from "../../shared/sqli
 import { closeQuietly } from "../../shared/sqlite-helpers";
 import { removeSystemReminders } from "../../shared/system-directive";
 import { clearCompressionDepth } from "./compression-depth-storage";
+import { deleteSessionScopedRows } from "./storage-session-tables";
 
 interface MessageHistoryIndexRow {
     last_indexed_ordinal?: number;
@@ -666,9 +667,10 @@ function persistMessageHistoryOrphanSweepState(
 }
 
 /**
- * Delete old OpenCode FTS sessions that no longer exist in OpenCode's
+ * Delete old OpenCode session state that no longer exists in OpenCode's
  * authoritative session table. One bounded keyset page is processed per call;
- * the cursor survives restarts and only resets after a complete pass.
+ * the cursor survives restarts and only resets after a complete pass. Pi rows
+ * need a separate sweep against Pi's session files and are excluded here.
  */
 export function sweepOrphanedOpenCodeMessageIndexes(
     db: Database,
@@ -735,17 +737,11 @@ export function sweepOrphanedOpenCodeMessageIndexes(
             const stillEligible = db.prepare(
                 "SELECT 1 FROM message_history_index WHERE session_id = ? AND harness = 'opencode' AND updated_at <= ?",
             );
-            for (const sessionId of missingSessionIds) {
-                if (!stillEligible.get(sessionId, cutoff)) continue;
-                getDeleteFtsStatement(db).run(sessionId);
-                getDeleteMessageSourceStatement(db).run(sessionId);
-                const result = db
-                    .prepare(
-                        "DELETE FROM message_history_index WHERE session_id = ? AND harness = 'opencode' AND updated_at <= ?",
-                    )
-                    .run(sessionId, cutoff);
-                if (result.changes === 1) deleted += 1;
-            }
+            const eligibleSessionIds = missingSessionIds.filter((sessionId) =>
+                stillEligible.get(sessionId, cutoff),
+            );
+            deleteSessionScopedRows(db, eligibleSessionIds, "opencode");
+            deleted = eligibleSessionIds.length;
             persistMessageHistoryOrphanSweepState(db, nextCursor, completedAt);
             db.exec("COMMIT");
             committed = true;

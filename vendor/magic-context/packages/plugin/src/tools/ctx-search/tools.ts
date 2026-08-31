@@ -19,6 +19,8 @@ import {
 } from "./constants";
 import type { CtxSearchArgs, CtxSearchSource, CtxSearchToolDeps } from "./types";
 
+export { CTX_SEARCH_LIGHT_DESCRIPTION } from "../light-descriptions";
+
 const VALID_SOURCES: ReadonlySet<CtxSearchSource> = new Set([
     "memory",
     "message",

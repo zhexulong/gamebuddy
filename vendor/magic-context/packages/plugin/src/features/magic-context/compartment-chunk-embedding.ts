@@ -30,10 +30,6 @@ interface ExistingChunkHashRow {
     chunkHash: string;
 }
 
-interface StoredModelIdRow {
-    modelId: string | null;
-}
-
 interface SearchChunkRow {
     compartmentId: number;
     sessionId: string;
@@ -117,9 +113,6 @@ const existingHashStatements = new WeakMap<Database, PreparedStatement>();
 const existingHashByProjectStatements = new WeakMap<Database, PreparedStatement>();
 const deleteByCompartmentStatements = new WeakMap<Database, PreparedStatement>();
 const insertEmbeddingStatements = new WeakMap<Database, PreparedStatement>();
-const distinctModelStatements = new WeakMap<Database, PreparedStatement>();
-const clearProjectStatements = new WeakMap<Database, PreparedStatement>();
-const clearProjectModelStatements = new WeakMap<Database, PreparedStatement>();
 const searchRowsStatements = new WeakMap<Database, PreparedStatement>();
 const searchRowsByModelStatements = new WeakMap<Database, PreparedStatement>();
 const searchPoolProbeStatements = new WeakMap<Database, PreparedStatement>();
@@ -185,39 +178,6 @@ function getInsertEmbeddingStatement(db: Database): PreparedStatement {
              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
         insertEmbeddingStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getDistinctModelStatement(db: Database): PreparedStatement {
-    let stmt = distinctModelStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare(
-            `SELECT DISTINCT model_id AS modelId
-             FROM compartment_chunk_embeddings
-             WHERE project_path = ?`,
-        );
-        distinctModelStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getClearProjectStatement(db: Database): PreparedStatement {
-    let stmt = clearProjectStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare("DELETE FROM compartment_chunk_embeddings WHERE project_path = ?");
-        clearProjectStatements.set(db, stmt);
-    }
-    return stmt;
-}
-
-function getClearProjectModelStatement(db: Database): PreparedStatement {
-    let stmt = clearProjectModelStatements.get(db);
-    if (!stmt) {
-        stmt = db.prepare(
-            "DELETE FROM compartment_chunk_embeddings WHERE project_path = ? AND model_id = ?",
-        );
-        clearProjectModelStatements.set(db, stmt);
     }
     return stmt;
 }

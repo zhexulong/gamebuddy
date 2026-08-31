@@ -1,13 +1,26 @@
 import { DEFAULT_EXECUTE_THRESHOLD_PERCENTAGE } from "../../config/schema/magic-context";
 import { getCompartments } from "../../features/magic-context/compartment-storage";
+import type {
+    DreamTaskBacklogMap,
+    DreamTaskProgress,
+} from "../../features/magic-context/dreamer/task-registry";
+import { formatDreamTaskBacklogs } from "../../features/magic-context/dreamer/task-registry";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
 import { getPendingOps } from "../../features/magic-context/storage";
 import { getOrCreateSessionMeta } from "../../features/magic-context/storage-meta";
 import { getTagsBySession } from "../../features/magic-context/storage-tags";
+import { getMagicContextStorageResolution } from "../../shared/data-path";
 import { getErrorMessage } from "../../shared/error-message";
 import { formatThresholdClampNote } from "../../shared/format-threshold";
 import { sessionLog } from "../../shared/logger";
+import type { TailHygieneStatus } from "../../shared/rpc-types";
+import { RUST_MODE_HOST_PATHS_LINE } from "../../shared/rust-mode-status";
 import type { Database } from "../../shared/sqlite";
+import { formatTailHygiene } from "../../shared/tail-hygiene-status";
+import {
+    formatWindowDerivationLine,
+    type WindowGeometryResult,
+} from "../../shared/window-geometry";
 import {
     getProactiveCompartmentTriggerPercentage,
     POST_DROP_TARGET_RATIO,
@@ -23,8 +36,8 @@ import { estimateTokens } from "./read-session-formatting";
 function formatExecuteThreshold(detail: ExecuteThresholdDetail, contextLimit: number): string {
     const { percentage, mode } = detail;
     // Surfaces the silent clamp from issue #241: when the configured value exceeded
-    // the 80% safety cap, append a note showing the configured value and the cap so
-    // the user sees the math (e.g. "190,000 > 80% of 128,000"). "" when not clamped.
+    // the 90% safety cap, append a note showing the configured value and the cap so
+    // the user sees the math (e.g. "190,000 > 90% of 128,000"). "" when not clamped.
     const clampNote = formatThresholdClampNote({
         clamped: detail.clamped,
         mode,
@@ -55,6 +68,11 @@ export function executeStatus(
     commitClusterTrigger?: { enabled: boolean; min_clusters: number },
     executeThresholdTokens?: { default?: number; [modelKey: string]: number | undefined },
     contextLimit?: number,
+    dreamer?: { backlog?: DreamTaskBacklogMap; progress?: DreamTaskProgress | null },
+    windowGeometry?: WindowGeometryResult,
+    tailHygiene?: TailHygieneStatus,
+    contextUsage?: { inputTokens: number; percentage: number },
+    rustMode = false,
 ): string {
     // Single source of truth — resolver tells us both the effective percentage AND
     // which config source won (tokens vs percentage). Previously /ctx-status
@@ -99,11 +117,13 @@ export function executeStatus(
             executeThresholdPercentage,
         );
 
+        const displayInputTokens = contextUsage?.inputTokens ?? meta.lastInputTokens;
+        const displayPercentage = contextUsage?.percentage ?? meta.lastContextPercentage;
         const displayContextLimit =
             contextLimit && contextLimit > 0
                 ? contextLimit
-                : meta.lastContextPercentage > 0
-                  ? Math.round(meta.lastInputTokens / (meta.lastContextPercentage / 100))
+                : displayPercentage > 0
+                  ? Math.round(displayInputTokens / (displayPercentage / 100))
                   : 0;
 
         const lines: string[] = [
@@ -127,24 +147,54 @@ export function executeStatus(
             "### Cache TTL",
             `- Configured: ${meta.cacheTtl}`,
             `- Last response: ${meta.lastResponseTime > 0 ? `${Math.round(elapsed / 1000)}s ago` : "never"}`,
-            `- Remaining: ${cacheExpired ? "expired" : `${Math.round(remainingMs / 1000)}s`}`,
-            `- Queue will auto-execute: ${cacheExpired ? "yes (cache expired)" : `when TTL expires or context >= ${executeThresholdPercentage}%`}`,
+            `- Remaining: ${cacheExpired ? "expired" : ttlMs === Number.POSITIVE_INFINITY ? "never (MC never assumes expiry — external cache-keep)" : `${Math.round(remainingMs / 1000)}s`}`,
+            `- Queue will auto-execute: ${cacheExpired ? "yes (cache expired)" : ttlMs === Number.POSITIVE_INFINITY ? `when context >= ${executeThresholdPercentage}%` : `when TTL expires or context >= ${executeThresholdPercentage}%`}`,
             "",
             "### Execute Threshold",
             `- Execute threshold: ${formatExecuteThreshold(thresholdDetail, displayContextLimit)}`,
-            `- Last input tokens: ${meta.lastInputTokens.toLocaleString()} tokens`,
+            `- Last input tokens: ${displayInputTokens.toLocaleString()} tokens`,
             "",
             `**Protected tags:** ${protectedTags}`,
             `**Subagent session:** ${meta.isSubagent}`,
         ];
 
-        if (meta.lastContextPercentage > 0 || meta.lastInputTokens > 0) {
+        const storage = getMagicContextStorageResolution();
+        lines.push("", `**Storage:** ${storage.path} (${storage.source})`);
+
+        if (rustMode) lines.push("", "### Rust Mode", `- ${RUST_MODE_HOST_PATHS_LINE}`);
+
+        if (tailHygiene !== undefined) {
+            lines.push(
+                "",
+                "### Tail Hygiene",
+                `- Reclaimable / eligible: ${formatTailHygiene(tailHygiene)}`,
+                "- Reasoning is excluded from both terms.",
+            );
+        }
+
+        if (dreamer?.backlog && Object.keys(dreamer.backlog).length > 0) {
+            lines.push(
+                "",
+                "### Dreamer",
+                ...(dreamer.progress
+                    ? [
+                          `- Running: ${dreamer.progress.task} — ${dreamer.progress.processed}/${dreamer.progress.total} processed`,
+                      ]
+                    : []),
+                ...formatDreamTaskBacklogs(dreamer.backlog).split("\\n"),
+            );
+        }
+
+        if (displayPercentage > 0 || displayInputTokens > 0) {
             lines.push(
                 "",
                 "### Context Usage",
-                `- Last percentage: ${meta.lastContextPercentage.toFixed(1)}%`,
-                `- Last input tokens: ${meta.lastInputTokens.toLocaleString()}`,
+                `- Last percentage: ${displayPercentage.toFixed(1)}%`,
+                `- Last input tokens: ${displayInputTokens.toLocaleString()}`,
                 `- Resolved context limit: ${displayContextLimit > 0 ? displayContextLimit.toLocaleString() : "unknown"}`,
+                ...(windowGeometry
+                    ? [`- ${formatWindowDerivationLine(displayInputTokens, windowGeometry)}`]
+                    : []),
                 `- Proactive compartment evaluation: ${proactiveCompartmentTrigger}%`,
                 `- Post-drop target for historian: ${(executeThresholdPercentage * POST_DROP_TARGET_RATIO).toFixed(0)}% (${executeThresholdPercentage}% * ${POST_DROP_TARGET_RATIO})`,
                 `- Commit cluster trigger: ${commitClusterTrigger?.enabled !== false ? `enabled (min ${commitClusterTrigger?.min_clusters ?? 3} clusters)` : "disabled"}, tail-size trigger: > 3x compartment budget`,
@@ -194,6 +244,17 @@ export function executeStatus(
             for (const op of pendingOps) {
                 lines.push(`- §${op.tagId}§ → ${op.operation}`);
             }
+        }
+
+        if (dreamer?.backlog && Object.keys(dreamer.backlog).length > 0) {
+            lines.push("", "### Dreamer Backlog", formatDreamTaskBacklogs(dreamer.backlog));
+        }
+        if (dreamer?.progress) {
+            lines.push(
+                "",
+                "### Dreamer Progress",
+                `- ${dreamer.progress.task}: ${dreamer.progress.processed}/${dreamer.progress.total} processed this run`,
+            );
         }
 
         return lines.join("\n");

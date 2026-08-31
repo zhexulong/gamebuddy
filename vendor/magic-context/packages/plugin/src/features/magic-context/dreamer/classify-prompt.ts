@@ -11,7 +11,13 @@
  * 229 importances assigned, correct discrimination, 4/4 private controls held).
  */
 
-import { assertNoDuplicateManifestIds, extractCompleteManifestBody } from "./manifest-parser";
+import {
+    assertManifestCoversExactly,
+    assertNoDuplicateManifestIds,
+    assertParsedManifestNonEmpty,
+    describeUnrecognizedManifestShape,
+    extractCompleteManifestBody,
+} from "./manifest-parser";
 
 export interface ClassifyPromptMemory {
     id: number;
@@ -120,11 +126,22 @@ export interface ParsedClassification {
 
 const SCOPES = new Set(["project", "ecosystem", "universe"]);
 
+function classifyBody(text: string): string {
+    try {
+        return extractCompleteManifestBody(text, "classify");
+    } catch (error) {
+        const described = describeUnrecognizedManifestShape(text, "classify", "memory");
+        if (!described.startsWith("parsed zero entries")) throw new Error(described);
+        throw error;
+    }
+}
+
 /** Parse the agent's complete `<classify>` manifest. A missing root close tag is
- *  treated as truncation and rejects the whole batch. */
+ *  treated as truncation and rejects the whole batch. A well-formed root with
+ *  no `<memory>` entries is a format miss, not success. */
 export function parseClassifyManifest(text: string): ParsedClassification[] {
     const out: ParsedClassification[] = [];
-    const body = extractCompleteManifestBody(text, "classify");
+    const body = classifyBody(text);
     for (const m of body.matchAll(/<memory\b([^>]*)\/?>/g)) {
         const attrs = m[1];
         const idMatch = attrs.match(/\bid\s*=\s*"(\d+)"/);
@@ -154,9 +171,28 @@ export function parseClassifyManifest(text: string): ParsedClassification[] {
         }
         out.push(entry);
     }
+    if (out.length === 0 && body.trim().length > 0) {
+        throw new Error(describeUnrecognizedManifestShape(text, "classify", "memory"));
+    }
     assertNoDuplicateManifestIds(
         out.map((entry) => entry.id),
         "classify",
     );
     return out;
+}
+
+/** Retry-time contract: non-empty parse + exact id coverage. Apply still
+ *  re-asserts coverage as the final belt. */
+export function validateClassifyManifest(
+    text: string,
+    expectedIds: ReadonlySet<number>,
+): ParsedClassification[] {
+    const parsed = parseClassifyManifest(text);
+    assertParsedManifestNonEmpty(parsed.length, expectedIds.size, text, "classify", "memory");
+    assertManifestCoversExactly(
+        parsed.map((entry) => entry.id),
+        expectedIds,
+        "classify",
+    );
+    return parsed;
 }

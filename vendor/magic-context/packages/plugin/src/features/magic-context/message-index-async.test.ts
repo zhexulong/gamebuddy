@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import type { RawMessage } from "../../hooks/magic-context/read-session-raw";
+import { BOOT_QUIET_MS, setBootQuietPeriodForTests } from "../../plugin/boot-quiet";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
 import { getDirtyIndexFloor } from "./message-index";
@@ -65,6 +66,16 @@ function pagedReader(
     });
 }
 
+async function waitForCondition(condition: () => boolean, ceilingMs = 10_000): Promise<void> {
+    const start = Date.now();
+    while (!condition()) {
+        if (Date.now() - start > ceilingMs) {
+            throw new Error("waitForCondition ceiling exceeded");
+        }
+        await wait(10);
+    }
+}
+
 function wait(ms = 0): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -112,6 +123,7 @@ describe("message-index-async", () => {
     });
 
     afterEach(() => {
+        setBootQuietPeriodForTests(null);
         closeQuietly(db);
         __resetMessageIndexAsyncForTests();
     });
@@ -129,7 +141,11 @@ describe("message-index-async", () => {
             return messages;
         });
 
-        await wait(20);
+        // Poll for completion instead of a fixed wall-clock wait: the async
+        // reconciler's scheduling latency is unbounded under CI load, while the
+        // property under test (two schedules dedupe to ONE read) is load-independent
+        // once the work has actually run.
+        await waitForCondition(() => isSessionReconciled("ses-async"));
 
         expect(reads).toBe(1);
         expect(countRows(db, "ses-async")).toBe(1);
@@ -141,7 +157,10 @@ describe("message-index-async", () => {
         scheduleReconciliation(db, "ses-overlap", () => messages);
         scheduleIncrementalIndex(db, "ses-overlap", "m-1", () => messages[0] ?? null);
 
-        await wait(140);
+        await waitForCondition(() => countMessageRows(db, "ses-overlap", "m-1") >= 1);
+        // Settle briefly so a late double-insert would still be caught before the
+        // uniqueness assertion (the defect direction is MORE rows, not fewer).
+        await wait(40);
 
         expect(countMessageRows(db, "ses-overlap", "m-1")).toBe(1);
     });
@@ -354,6 +373,44 @@ describe("message-index-async", () => {
         expect(countMessageRows(db, "ses-clear", "m-1")).toBe(0);
         expect(countMessageRows(db, "ses-clear", "m-2")).toBe(1);
         expect(isSessionReconciled("ses-clear")).toBe(true);
+    });
+
+    it("rebuilds when removal overtakes a boot-quiet reconciliation", async () => {
+        const sessionId = "ses-boot-clear";
+        const surviving = [message("m-survivor", 1, "surviving searchable bytes")];
+        let reads = 0;
+        const readSurviving = () => {
+            reads++;
+            return surviving;
+        };
+        setBootQuietPeriodForTests(Date.now() - BOOT_QUIET_MS + 20);
+
+        scheduleReconciliation(db, sessionId, readSurviving);
+        scheduleClearAndReindex(db, sessionId, readSurviving);
+        expect(isSessionReconciled(sessionId)).toBe(false);
+
+        // Wait for the observable outcome, not a scheduling order. Both queued
+        // callbacks fire after the same boot-quiet deadline and may run in
+        // either order, and both interleaves are correct by design:
+        //   reconcile -> clear+rebuild: the clear invalidates the finished
+        //     reconciliation under the session lock and rebuilds (reads = 2);
+        //   clear+rebuild -> reconcile: the rebuild marks the session
+        //     reconciled and the stale reconciliation hits the idempotency
+        //     guard and skips (reads = 1).
+        // Pinning reads === 2 encoded the first order only, so the second
+        // (legal) interleave timed out with a perfectly correct index. The
+        // contract is the end state: the survivor row is indexed and the
+        // session is re-marked reconciled.
+        await waitUntil(
+            () =>
+                isSessionReconciled(sessionId) &&
+                countMessageRows(db, sessionId, "m-survivor") === 1,
+        );
+
+        expect(reads).toBeGreaterThanOrEqual(1);
+        expect(reads).toBeLessThanOrEqual(2);
+        expect(countMessageRows(db, sessionId, "m-survivor")).toBe(1);
+        expect(isSessionReconciled(sessionId)).toBe(true);
     });
 
     it("catches indexing errors without propagating", async () => {

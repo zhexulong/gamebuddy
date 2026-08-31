@@ -1,0 +1,317 @@
+[
+  {
+    "role": "system",
+    "content": [
+      {
+        "kind": {
+          "type": "text",
+          "text": "You are a helpful assistant."
+        }
+      }
+    ],
+    "meta": {}
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "kind": {
+          "type": "text",
+          "text": "Do the thing."
+        }
+      }
+    ],
+    "meta": {}
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "kind": {
+          "type": "reasoning",
+          "text": "let me think",
+          "signature": "sig-abc"
+        }
+      },
+      {
+        "kind": {
+          "type": "redacted_reasoning",
+          "data": "encrypted-blob"
+        }
+      },
+      {
+        "kind": {
+          "type": "text",
+          "text": "calling tools"
+        }
+      },
+      {
+        "kind": {
+          "type": "tool_call",
+          "id": "call_text",
+          "name": "read",
+          "input": {
+            "path": "a.txt"
+          },
+          "provider_executed": false
+        }
+      },
+      {
+        "kind": {
+          "type": "tool_call",
+          "id": "call_json",
+          "name": "inspect",
+          "input": {
+            "target": "b"
+          },
+          "provider_executed": false
+        }
+      },
+      {
+        "kind": {
+          "type": "tool_call",
+          "id": "call_denied",
+          "name": "delete",
+          "input": {
+            "path": "c"
+          },
+          "provider_executed": false
+        }
+      },
+      {
+        "kind": {
+          "type": "tool_call",
+          "id": "call_err",
+          "name": "write",
+          "input": {
+            "path": "d"
+          },
+          "provider_executed": false
+        }
+      }
+    ],
+    "origin": {
+      "provider": "anthropic",
+      "model": "claude-opus-4-8",
+      "api": "anthropic"
+    },
+    "meta": {}
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "kind": {
+          "type": "tool_result",
+          "id": "call_text",
+          "tool_name": "read",
+          "output": {
+            "kind": {
+              "type": "text",
+              "text": "file contents"
+            }
+          },
+          "provider_executed": false
+        }
+      },
+      {
+        "kind": {
+          "type": "tool_result",
+          "id": "call_json",
+          "tool_name": "inspect",
+          "output": {
+            "kind": {
+              "type": "json",
+              "value": {
+                "n": 42,
+                "ok": true
+              }
+            }
+          },
+          "provider_executed": false
+        }
+      },
+      {
+        "kind": {
+          "type": "tool_result",
+          "id": "call_denied",
+          "tool_name": "delete",
+          "output": {
+            "kind": {
+              "type": "execution_denied",
+              "reason": "policy forbids delete"
+            }
+          },
+          "provider_executed": false
+        }
+      },
+      {
+        "kind": {
+          "type": "tool_result",
+          "id": "call_err",
+          "tool_name": "write",
+          "output": {
+            "kind": {
+              "type": "error_text",
+              "text": "disk full"
+            }
+          },
+          "provider_executed": false
+        }
+      }
+    ],
+    "meta": {}
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "kind": {
+          "type": "opaque",
+          "source": {
+            "source": "wire",
+            "wire": "openai_responses"
+          },
+          "kind": "reasoning",
+          "raw": [
+            123,
+            34,
+            116,
+            121,
+            112,
+            101,
+            34,
+            58,
+            34,
+            114,
+            101,
+            97,
+            115,
+            111,
+            110,
+            105,
+            110,
+            103,
+            34,
+            44,
+            34,
+            105,
+            100,
+            34,
+            58,
+            34,
+            114,
+            115,
+            95,
+            101,
+            120,
+            97,
+            109,
+            112,
+            108,
+            101,
+            34,
+            44,
+            34,
+            115,
+            117,
+            109,
+            109,
+            97,
+            114,
+            121,
+            34,
+            58,
+            91,
+            93,
+            44,
+            34,
+            101,
+            110,
+            99,
+            114,
+            121,
+            112,
+            116,
+            101,
+            100,
+            95,
+            99,
+            111,
+            110,
+            116,
+            101,
+            110,
+            116,
+            34,
+            58,
+            34,
+            101,
+            110,
+            99,
+            95,
+            101,
+            120,
+            97,
+            109,
+            112,
+            108,
+            101,
+            34,
+            125
+          ],
+          "arc": {
+            "kind": "reasoning",
+            "id": "rs_example",
+            "role": "request"
+          }
+        }
+      }
+    ],
+    "meta": {}
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "kind": {
+          "type": "tool_call",
+          "id": "toolu_err_content",
+          "name": "run_build",
+          "input": {
+            "target": "release"
+          },
+          "provider_executed": false
+        }
+      }
+    ],
+    "meta": {}
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "kind": {
+          "type": "tool_result",
+          "id": "toolu_err_content",
+          "tool_name": "run_build",
+          "output": {
+            "kind": {
+              "type": "error_content",
+              "blocks": [
+                {
+                  "kind": {
+                    "type": "text",
+                    "text": "build failed: exit 1"
+                  }
+                }
+              ]
+            }
+          },
+          "provider_executed": false
+        }
+      }
+    ],
+    "meta": {}
+  }
+]

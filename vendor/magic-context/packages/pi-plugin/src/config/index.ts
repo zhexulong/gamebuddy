@@ -6,23 +6,31 @@ import {
 	resolveLegacyConfigSourcesForHarness,
 } from "@magic-context/core/config/migrate-config-location";
 import "@magic-context/core/config/prune-config-leaf";
-import { existsSync, readFileSync } from "node:fs";
-
+import { existsSync } from "node:fs";
 import { migrateLegacyAgentEnabledInMemory } from "@magic-context/core/config/agent-disable";
 import { migrateDreamerV2 } from "@magic-context/core/config/migrate-dreamer-v2";
 import { migrateLegacyExperimental } from "@magic-context/core/config/migrate-experimental";
+import { resolveConfigProfile } from "@magic-context/core/config/profiles";
 import {
 	constrainProjectThresholdOverrides,
 	dropInheritedEmbeddingKeyOnRedirect,
 	stripUnsafeProjectConfigFields,
 } from "@magic-context/core/config/project-security";
 import { pruneNestedConfigLeaf } from "@magic-context/core/config/prune-config-leaf";
+import { loadRawConfigFile } from "@magic-context/core/config/raw-loader";
 import {
 	type MagicContextConfig,
 	MagicContextConfigSchema,
 } from "@magic-context/core/config/schema/magic-context";
 import { substituteConfigVariables } from "@magic-context/core/config/variable";
-import { parse as parseJsonc } from "comment-json";
+import {
+	isPrototypePollutionKey,
+	sanitizeParsedJson,
+} from "@magic-context/core/shared/jsonc-parser";
+import { setOutputReserveConfig } from "@magic-context/core/shared/models-dev-cache";
+import type { PromptSurfaceConfig } from "@magic-context/core/shared/prompt-surface";
+import { setWindowOverlayPath } from "@magic-context/core/shared/window-geometry";
+import { parse as parseCommentJson } from "comment-json";
 
 export interface LoadPiConfigOptions {
 	cwd?: string;
@@ -30,6 +38,8 @@ export interface LoadPiConfigOptions {
 
 export interface LoadPiConfigResult {
 	config: MagicContextConfig;
+	/** USER-tier default/overrides captured before project routing is merged. */
+	registrationPromptSurface: PromptSurfaceConfig;
 	warnings: string[];
 	loadedFromPaths: string[];
 }
@@ -99,21 +109,39 @@ function loadConfigFile(
 	scope: "user" | "project",
 ): LoadedConfigFile | null {
 	try {
-		const rawText = readFileSync(path, "utf-8");
+		const raw = loadRawConfigFile({ configPath: path, tier: scope });
+		if (!raw) return null;
 		const substituted = substituteConfigVariables({
-			text: rawText,
+			text: raw.text,
 			configPath: path,
 			// Repo-supplied project configs are untrusted: do not expand
 			// {env:}/{file:} secret-bearing tokens (parity with OpenCode).
 			isProjectConfig: scope === "project",
 		});
+		const rejectedKeyPaths: string[] = [];
+		const config = sanitizeParsedJson(
+			parseCommentJson(substituted.text) as Record<string, unknown>,
+			{ onRejectedKey: (keyPath) => rejectedKeyPaths.push(keyPath.join(".")) },
+		);
+		const unsafeKeyWarnings = rejectedKeyPaths.map(
+			(keyPath) =>
+				`Ignored unsafe config key "${keyPath}" (security: prototype-pollution keys are not allowed).`,
+		);
 		return {
 			path,
 			scope,
-			config: parseJsonc(substituted.text) as Record<string, unknown>,
-			warnings: substituted.warnings.map((warning) => `${path}: ${warning}`),
+			config,
+			warnings: [
+				...raw.warnings,
+				...substituted.warnings,
+				...unsafeKeyWarnings,
+			].map((warning) => `${path}: ${warning}`),
 			loadOutcome:
-				substituted.warnings.length > 0 ? "substitution-failure" : "ok",
+				rejectedKeyPaths.length > 0
+					? "schema-recovery"
+					: substituted.warnings.length > 0
+						? "substitution-failure"
+						: "ok",
 		};
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -153,18 +181,38 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function defineOwnConfigValue(
+	target: Record<string, unknown>,
+	key: string,
+	value: unknown,
+): void {
+	Object.defineProperty(target, key, {
+		value,
+		enumerable: true,
+		configurable: true,
+		writable: true,
+	});
+}
+
 function mergeRawConfigs(
 	base: Record<string, unknown>,
 	override: Record<string, unknown>,
 ): Record<string, unknown> {
-	const merged: Record<string, unknown> = { ...base };
+	const merged: Record<string, unknown> = {};
+	for (const key of Object.keys(base)) {
+		if (isPrototypePollutionKey(key)) continue;
+		defineOwnConfigValue(merged, key, base[key]);
+	}
 
-	for (const [key, overrideValue] of Object.entries(override)) {
-		const baseValue = merged[key];
-		merged[key] =
+	for (const key of Object.keys(override)) {
+		if (isPrototypePollutionKey(key)) continue;
+		const overrideValue = override[key];
+		const baseValue = Object.hasOwn(base, key) ? base[key] : undefined;
+		const mergedValue =
 			isPlainObject(baseValue) && isPlainObject(overrideValue)
 				? mergeRawConfigs(baseValue, overrideValue)
 				: overrideValue;
+		defineOwnConfigValue(merged, key, mergedValue);
 	}
 
 	return merged;
@@ -206,7 +254,13 @@ function parsePiConfig(
 			const key = String(topKey);
 			errorPaths.add(key);
 			const paths = issuePathsByKey.get(key) ?? [];
-			paths.push([...issue.path]);
+			if (issue.code === "unrecognized_keys") {
+				for (const unrecognizedKey of issue.keys) {
+					paths.push([...issue.path, unrecognizedKey]);
+				}
+			} else {
+				paths.push([...issue.path]);
+			}
 			issuePathsByKey.set(key, paths);
 		}
 	}
@@ -218,14 +272,6 @@ function parsePiConfig(
 		recoveredTopLevelKeys.push(key);
 		const isAgentConfig =
 			key === "historian" || key === "dreamer" || key === "sidekick";
-
-		if (isAgentConfig) {
-			delete patched[key];
-			warnings.push(
-				`"${key}": invalid agent configuration, ignoring. Check your magic-context.jsonc.`,
-			);
-			continue;
-		}
 
 		// Object-valued key: prune ONLY invalid nested leaves, keep valid siblings
 		// (e.g. don't wipe the whole `memory` block — incl. migrated auto_search /
@@ -255,9 +301,21 @@ function parsePiConfig(
 					prunedLeaves.push(result.removed);
 				}
 			}
-			patched[key] = prunedBlock;
+			if (prunedLeaves.length === issuePaths.length) {
+				patched[key] = prunedBlock;
+				warnings.push(
+					`"${key}": invalid nested field(s) ${prunedLeaves.map((leaf) => `"${key}.${leaf}"`).join(", ")}, using defaults for those.`,
+				);
+				continue;
+			}
+		}
+
+		// Root-level or unreachable agent errors cannot be repaired safely because
+		// guessing a model configuration could select an expensive unintended model.
+		if (isAgentConfig) {
+			delete patched[key];
 			warnings.push(
-				`"${key}": invalid nested field(s) ${prunedLeaves.map((l) => `"${l}"`).join(", ")}, using defaults for those.`,
+				`"${key}": invalid agent configuration, ignoring. Check your magic-context.jsonc.`,
 			);
 			continue;
 		}
@@ -335,58 +393,66 @@ export function loadPiConfig(
 		);
 	}
 
-	let rawConfig: Record<string, unknown> = {};
 	const mergeFiles = [...loadedFiles].sort((a, b) => {
 		if (a.scope === b.scope) return 0;
 		return a.scope === "user" ? -1 : 1;
 	});
-	// The trusted user config (sorted first) — passed to the embedding-redirect
-	// guard so a project repeating the user's own endpoint is not a redirect.
-	const userRaw = mergeFiles.find((f) => f.scope === "user")?.config;
-	// Threshold trust boundary is relative to the USER/default effective config:
-	// a cloned repo may delay compaction, but it may not lower thresholds in a
-	// way that forces extra historian work on the user's account.
-	const trustedBaseConfig = parsePiConfig(userRaw ?? {}).config;
+	const userRaw = mergeFiles.find((f) => f.scope === "user")?.config ?? {};
+	const projectLoaded = mergeFiles.find((f) => f.scope === "project");
+	let projectRaw: Record<string, unknown> = {};
 
 	for (const loaded of mergeFiles) {
 		const prefix =
 			loaded.scope === "user" ? "[user config]" : "[project config]";
 		warnings.push(...loaded.warnings.map((warning) => `${prefix} ${warning}`));
+		if (loaded.scope !== "project") continue;
+		projectRaw = { ...loaded.config };
+		for (const warning of stripUnsafeProjectConfigFields(projectRaw)) {
+			warnings.push(`${prefix} ${warning}`);
+		}
+	}
 
-		if (loaded.scope === "project") {
-			// Harden the repo-supplied (untrusted) project config before merging
-			// it over the trusted user config (parity with OpenCode).
-			const projectRaw = { ...loaded.config };
-			for (const warning of stripUnsafeProjectConfigFields(projectRaw)) {
-				warnings.push(`${prefix} ${warning}`);
-			}
-			rawConfig = mergeRawConfigs(rawConfig, projectRaw);
-			for (const warning of dropInheritedEmbeddingKeyOnRedirect(
-				projectRaw,
-				rawConfig,
-				userRaw,
-			)) {
-				warnings.push(`${prefix} ${warning}`);
-			}
-			for (const warning of constrainProjectThresholdOverrides({
-				mergedRaw: rawConfig,
-				projectRaw,
-				trustedBaseConfig,
-			})) {
-				warnings.push(`${prefix} ${warning}`);
-			}
-		} else {
-			rawConfig = mergeRawConfigs(rawConfig, loaded.config);
+	const profileResolution = resolveConfigProfile({ userRaw, projectRaw });
+	warnings.push(
+		...profileResolution.warnings.map((warning) => `[config] ${warning}`),
+	);
+	const trustedProfiledRaw = mergeRawConfigs(
+		profileResolution.userBase,
+		profileResolution.overlay,
+	);
+	let rawConfig = trustedProfiledRaw;
+	// Threshold trust boundary is relative to the user/profile effective config.
+	const trustedBaseConfig = parsePiConfig(trustedProfiledRaw).config;
+	if (projectLoaded) {
+		rawConfig = mergeRawConfigs(rawConfig, profileResolution.projectBase);
+		for (const warning of dropInheritedEmbeddingKeyOnRedirect(
+			projectRaw,
+			rawConfig,
+			profileResolution.userBase,
+		)) {
+			warnings.push(`[project config] ${warning}`);
+		}
+		for (const warning of constrainProjectThresholdOverrides({
+			mergedRaw: rawConfig,
+			projectRaw: profileResolution.projectBase,
+			trustedBaseConfig,
+		})) {
+			warnings.push(`[project config] ${warning}`);
 		}
 	}
 
 	const parsed = parsePiConfig(rawConfig);
+	if (profileResolution.activeProfile)
+		parsed.config.profile = profileResolution.activeProfile;
+	setOutputReserveConfig(parsed.config.output_reserve);
+	setWindowOverlayPath(parsed.config.models?.window_overlay_path);
 	warnings.push(
 		...parsed.warnings.map((warning) => `[merged config] ${warning}`),
 	);
 
 	return {
 		config: parsed.config,
+		registrationPromptSurface: trustedBaseConfig.prompt_surface,
 		warnings,
 		loadedFromPaths: loadedFiles.map((loaded) => loaded.path),
 	};
@@ -508,49 +574,59 @@ export function loadPiConfigDetailed(
 		);
 	}
 
-	let rawConfig: Record<string, unknown> = {};
 	const mergeFiles = [...loadedFiles].sort((a, b) => {
 		if (a.scope === b.scope) return 0;
 		return a.scope === "user" ? -1 : 1;
 	});
-	const userRaw = mergeFiles.find((f) => f.scope === "user")?.config;
-	// Threshold trust boundary is relative to the USER/default effective config:
-	// a cloned repo may delay compaction, but it may not lower thresholds in a
-	// way that forces extra historian work on the user's account.
-	const trustedBaseConfig = parsePiConfig(userRaw ?? {}).config;
+	const userRaw = mergeFiles.find((f) => f.scope === "user")?.config ?? {};
+	const projectLayer = mergeFiles.find((f) => f.scope === "project");
+	let projectRaw: Record<string, unknown> = {};
 
 	for (const loaded of mergeFiles) {
 		const prefix =
 			loaded.scope === "user" ? "[user config]" : "[project config]";
 		warnings.push(...loaded.warnings.map((warning) => `${prefix} ${warning}`));
+		if (loaded.scope !== "project") continue;
+		projectRaw = { ...loaded.config };
+		for (const warning of stripUnsafeProjectConfigFields(projectRaw)) {
+			warnings.push(`${prefix} ${warning}`);
+		}
+	}
 
-		if (loaded.scope === "project") {
-			const projectRaw = { ...loaded.config };
-			for (const warning of stripUnsafeProjectConfigFields(projectRaw)) {
-				warnings.push(`${prefix} ${warning}`);
-			}
-			rawConfig = mergeRawConfigs(rawConfig, projectRaw);
-			for (const warning of dropInheritedEmbeddingKeyOnRedirect(
-				projectRaw,
-				rawConfig,
-				userRaw,
-			)) {
-				warnings.push(`${prefix} ${warning}`);
-			}
-			for (const warning of constrainProjectThresholdOverrides({
-				mergedRaw: rawConfig,
-				projectRaw,
-				trustedBaseConfig,
-			})) {
-				warnings.push(`${prefix} ${warning}`);
-			}
-		} else {
-			rawConfig = mergeRawConfigs(rawConfig, loaded.config);
+	const profileResolution = resolveConfigProfile({ userRaw, projectRaw });
+	warnings.push(
+		...profileResolution.warnings.map((warning) => `[config] ${warning}`),
+	);
+	const trustedProfiledRaw = mergeRawConfigs(
+		profileResolution.userBase,
+		profileResolution.overlay,
+	);
+	let rawConfig = trustedProfiledRaw;
+	const trustedBaseConfig = parsePiConfig(trustedProfiledRaw).config;
+	if (projectLayer) {
+		rawConfig = mergeRawConfigs(rawConfig, profileResolution.projectBase);
+		for (const warning of dropInheritedEmbeddingKeyOnRedirect(
+			projectRaw,
+			rawConfig,
+			profileResolution.userBase,
+		)) {
+			warnings.push(`[project config] ${warning}`);
+		}
+		for (const warning of constrainProjectThresholdOverrides({
+			mergedRaw: rawConfig,
+			projectRaw: profileResolution.projectBase,
+			trustedBaseConfig,
+		})) {
+			warnings.push(`[project config] ${warning}`);
 		}
 	}
 
 	const recoveredTopLevelKeys: string[] = [];
 	const parsed = parsePiConfig(rawConfig, recoveredTopLevelKeys);
+	if (profileResolution.activeProfile)
+		parsed.config.profile = profileResolution.activeProfile;
+	setOutputReserveConfig(parsed.config.output_reserve);
+	setWindowOverlayPath(parsed.config.models?.window_overlay_path);
 	warnings.push(
 		...parsed.warnings.map((warning) => `[merged config] ${warning}`),
 	);
@@ -574,6 +650,7 @@ export function loadPiConfigDetailed(
 
 	return {
 		config: parsed.config,
+		registrationPromptSurface: trustedBaseConfig.prompt_surface,
 		warnings,
 		loadedFromPaths: loadedFiles.map((loaded) => loaded.path),
 		loadOutcome: combinedOutcome({

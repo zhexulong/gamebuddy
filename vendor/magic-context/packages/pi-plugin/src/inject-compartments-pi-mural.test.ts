@@ -114,6 +114,7 @@ describe("Pi m[0] mural image fold (on-demand render → wire)", () => {
 				undefined,
 				false,
 			);
+			expect(second.m0Reason).toBeNull();
 			expect(second.m0Materialized).toBe(false);
 			expect(textOf(deferMessages[0])).toContain("<memory-mural>");
 			const deferImage = findM0Image(deferMessages);
@@ -121,6 +122,110 @@ describe("Pi m[0] mural image fold (on-demand render → wire)", () => {
 			expect(deferImage?.data).not.toBe(currentManifestBase64);
 			expect(textOf(deferMessages[0])).toBe(textOf(hardMessages[0]));
 		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("folds once when mural is disabled, removes the image, then defers byte-identically", () => {
+		const db = createTestDb();
+		try {
+			getOrCreateSessionMeta(db, SESSION_ID);
+			const firstMessages = [userMessage("enabled")];
+			injectM0M1Pi(
+				baseState({
+					muralEnabled: true,
+					mural: muralOption(),
+					injectionBudgetTokens: 8_000,
+					historyBudgetTokens: 60_000,
+				}),
+				db,
+				firstMessages as never,
+				undefined,
+				true,
+			);
+			expect(findM0Image(firstMessages)?.data).toBe(FAKE_MURAL_BASE64);
+
+			const disabledMessages = [userMessage("disabled")];
+			const disabled = injectM0M1Pi(
+				baseState({
+					muralEnabled: false,
+					injectionBudgetTokens: 8_000,
+					historyBudgetTokens: 60_000,
+				}),
+				db,
+				disabledMessages as never,
+				undefined,
+				false,
+			);
+			expect(disabled.m0Reason).toBe("render_config");
+			expect(disabled.m0Materialized).toBe(true);
+			expect(findM0Image(disabledMessages)).toBeNull();
+			expect(textOf(disabledMessages[0])).not.toContain("<memory-mural>");
+
+			const deferMessages = [userMessage("defer")];
+			const defer = injectM0M1Pi(
+				baseState({
+					muralEnabled: false,
+					injectionBudgetTokens: 8_000,
+					historyBudgetTokens: 60_000,
+				}),
+				db,
+				deferMessages as never,
+				undefined,
+				false,
+			);
+			expect(defer.m0Materialized).toBe(false);
+			expect(textOf(deferMessages[0])).toBe(textOf(disabledMessages[0]));
+			expect(findM0Image(deferMessages)).toBeNull();
+		} finally {
+			__test.clearPiMuralProcessCache(SESSION_ID);
+			closeQuietly(db);
+		}
+	});
+
+	it("folds once when memory or history render budgets change", () => {
+		const db = createTestDb();
+		try {
+			getOrCreateSessionMeta(db, SESSION_ID);
+			injectM0M1Pi(
+				baseState({
+					muralEnabled: false,
+					injectionBudgetTokens: 1_000,
+					historyBudgetTokens: 2_000,
+				}),
+				db,
+				[userMessage("first")] as never,
+				undefined,
+				true,
+			);
+			const changed = injectM0M1Pi(
+				baseState({
+					muralEnabled: false,
+					injectionBudgetTokens: 1_001,
+					historyBudgetTokens: 2_000,
+				}),
+				db,
+				[userMessage("changed")] as never,
+				undefined,
+				false,
+			);
+			expect(changed.m0Reason).toBe("render_config");
+			expect(changed.m0Materialized).toBe(true);
+
+			const unchanged = injectM0M1Pi(
+				baseState({
+					muralEnabled: false,
+					injectionBudgetTokens: 1_001,
+					historyBudgetTokens: 2_000,
+				}),
+				db,
+				[userMessage("unchanged")] as never,
+				undefined,
+				false,
+			);
+			expect(unchanged.m0Materialized).toBe(false);
+		} finally {
+			__test.clearPiMuralProcessCache(SESSION_ID);
 			closeQuietly(db);
 		}
 	});

@@ -78,6 +78,42 @@ describe("smart-note compilation selection", () => {
 });
 
 describe("evaluateSmartNotes lease guard", () => {
+    test("skips authoring-compiled notes only when retina handoff is enabled", async () => {
+        const db = freshDb();
+        try {
+            const note = addNote(db, "smart", {
+                projectPath: PROJECT,
+                content: "retina owns this condition",
+                surfaceCondition: "when path /tmp/result exists",
+                compiledProvider: "local-fs",
+                compiledConfig: JSON.stringify({ kind: "path_exists", path: "/tmp/result" }),
+                compiledAt: Date.now(),
+                compileStatus: "compiled",
+            });
+
+            expect(getSmartNotesNeedingCompilation(db, PROJECT, Date.now(), 10)).toHaveLength(1);
+            expect(getSmartNotesNeedingCompilation(db, PROJECT, Date.now(), 10, true)).toHaveLength(
+                0,
+            );
+            await expect(
+                evaluateSmartNotes({
+                    db,
+                    client: {} as never,
+                    projectIdentity: PROJECT,
+                    parentSessionId: undefined,
+                    sessionDirectory: tempProject(),
+                    holderId: "no-lease-needed",
+                    leaseKey: "smart-note-retina-handoff",
+                    deadline: Date.now() + 60_000,
+                    retinaHandoff: true,
+                }),
+            ).resolves.toEqual({ surfaced: 0, pending: 0, ran: false });
+            expect(getNotes(db, { projectPath: PROJECT, type: "smart" })[0]?.id).toBe(note.id);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
     test("does not commit due-check results after the lease is lost", async () => {
         const db = freshDb();
         try {

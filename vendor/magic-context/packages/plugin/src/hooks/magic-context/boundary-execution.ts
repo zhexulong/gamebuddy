@@ -1,3 +1,5 @@
+import { escalationBands } from "../../shared/escalation-bands";
+
 export type BypassReason = "force-materialize" | "explicit-bust" | "subagent" | "none";
 
 export interface BypassInput {
@@ -5,12 +7,14 @@ export interface BypassInput {
     sessionMeta: { isSubagent: boolean };
     historyRefreshSessions: Set<string>;
     sessionId: string;
+    effectiveExecuteThresholdPercentage: number;
 }
 
-export const FORCE_MATERIALIZE_PERCENTAGE = 85;
-
 export function detectMidTurnBypassReason(input: BypassInput): BypassReason {
-    if (input.contextUsage.percentage >= FORCE_MATERIALIZE_PERCENTAGE) return "force-materialize";
+    const { forceMaterializationPercentage } = escalationBands(
+        input.effectiveExecuteThresholdPercentage,
+    );
+    if (input.contextUsage.percentage >= forceMaterializationPercentage) return "force-materialize";
     if (input.historyRefreshSessions.has(input.sessionId)) return "explicit-bust";
     if (input.sessionMeta.isSubagent) return "subagent";
     return "none";

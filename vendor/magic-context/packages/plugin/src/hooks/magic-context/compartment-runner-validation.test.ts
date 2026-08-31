@@ -3,8 +3,10 @@ import {
     buildHistorianFailureNotice,
     buildHistorianRepairPrompt,
     HISTORIAN_PERSISTENT_FAILURE_THRESHOLD,
+    shouldDiscardLastHistorianCompartment,
     validateHistorianOutput,
 } from "./compartment-runner-validation";
+import { readSessionChunk, setRawMessageProvider } from "./read-session-chunk";
 
 describe("buildHistorianFailureNotice", () => {
     test("frames a low failure count as transient + reassuring (no alarm, no action ask)", () => {
@@ -69,6 +71,7 @@ function buildChunk(
     startIndex: number,
     endIndex: number,
     toolOnlyRanges: Array<{ start: number; end: number }> = [],
+    completedToolArcs: Array<{ start: number; end: number }> = [],
 ) {
     const lines: Array<{ ordinal: number; messageId: string }> = [];
     for (let i = startIndex; i <= endIndex; i++) {
@@ -79,6 +82,7 @@ function buildChunk(
         endIndex,
         lines,
         toolOnlyRanges,
+        completedToolArcs,
     };
 }
 
@@ -185,6 +189,129 @@ describe("healCompartmentGaps via validateHistorianOutput", () => {
             const result = validateHistorianOutput(xml, "ses-test", chunk, [], 0);
             expect(result.ok).toBe(true);
         });
+    });
+});
+
+describe("completed tool arc terminal boundaries", () => {
+    test("heals the terminal compartment through a result inside the chunk", () => {
+        const chunk = buildChunk(98, 128, [], [{ start: 123, end: 124 }]);
+        const result = validateHistorianOutput(
+            buildXml([{ start: 98, end: 123 }], 124),
+            "ses-heal-arc",
+            chunk,
+            [],
+            0,
+        );
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.compartments[0]).toMatchObject({
+                endMessage: 124,
+                endMessageId: "msg-124",
+            });
+        }
+    });
+
+    test("rejects the exact Rust error when the completed result is beyond the chunk", () => {
+        const chunk = buildChunk(1, 2, [], [{ start: 2, end: 3 }]);
+        const result = validateHistorianOutput(
+            buildXml([{ start: 1, end: 2 }], 3),
+            "ses-reject-arc",
+            chunk,
+            [],
+            0,
+        );
+
+        expect(result).toEqual({
+            ok: false,
+            error: "Historian terminal boundary splits a completed tool invocation/result arc",
+        });
+    });
+
+    test("derives the real adjacent invocation/result shape and heals a boundary proposed at the invocation", () => {
+        const sessionId = "ses-real-tool-arc-shape";
+        const messages = [
+            {
+                ordinal: 1,
+                id: "m1",
+                role: "user",
+                parts: [{ type: "text", text: "Inspect the file." }],
+            },
+            {
+                ordinal: 2,
+                id: "m2",
+                role: "assistant",
+                parts: [
+                    {
+                        type: "tool",
+                        tool: "read",
+                        callID: "call-1",
+                        state: { input: { path: "src/index.ts" } },
+                    },
+                ],
+            },
+            {
+                ordinal: 3,
+                id: "m3",
+                role: "user",
+                parts: [
+                    {
+                        type: "tool",
+                        tool: "read",
+                        callID: "call-1",
+                        state: { output: "file contents" },
+                    },
+                ],
+            },
+        ];
+        const unregister = setRawMessageProvider(sessionId, {
+            readMessages: () => messages,
+            getMessageCount: () => messages.length,
+        });
+        try {
+            const chunk = readSessionChunk(sessionId, 10_000, 1);
+            expect(chunk.completedToolArcs).toEqual([{ start: 2, end: 3 }]);
+
+            const result = validateHistorianOutput(
+                buildXml([{ start: 1, end: 2 }], 3),
+                sessionId,
+                chunk,
+                [],
+                0,
+            );
+            expect(result.ok).toBe(true);
+            if (result.ok) {
+                expect(result.compartments[0]).toMatchObject({
+                    endMessage: 3,
+                    endMessageId: "m3",
+                });
+            }
+        } finally {
+            unregister();
+        }
+    });
+});
+
+describe("discard-last completed tool arc guard", () => {
+    test("keeps k=1, allows an ordinary k=2 discard, and blocks a split-reopening discard", () => {
+        expect(
+            shouldDiscardLastHistorianCompartment([{ endMessage: 4 }], {
+                endIndex: 4,
+                completedToolArcs: [],
+            }),
+        ).toBe(false);
+        expect(
+            shouldDiscardLastHistorianCompartment([{ endMessage: 2 }, { endMessage: 4 }], {
+                endIndex: 4,
+                completedToolArcs: [],
+            }),
+        ).toBe(true);
+        expect(
+            shouldDiscardLastHistorianCompartment([{ endMessage: 123 }, { endMessage: 128 }], {
+                endIndex: 128,
+                completedToolArcs: [{ start: 123, end: 124 }],
+            }),
+        ).toBe(false);
     });
 });
 

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "drill_id": "FM-BOUNDARY-DIVERGENCE-TODO-RESET",
+  "cache_affecting": "#4975",
+  "mutations": [
+    {
+      "name": "RESTORE_UNCONDITIONAL_BUST_COUNTER_RESET",
+      "fix": "retain divergence evidence across todo-only busts",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "is_bust_pass && !active_legitimate_publication_window && (boundary_or_coverage_moved || (!divergence_inputs_moved && (divergence_converged || compartment_revision_matches)))",
+        "after": "is_bust_pass && !active_legitimate_publication_window",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module boundary_divergence_bust_reset_requires_structural_progress_or_convergence -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "assertion": "assertion failed: !boundary_divergence_reset_allowed(true, false, false, false, false, false)"
+      }
+    }
+  ],
+  "reverted_rerun": {
+    "command": "cargo test -p mc-module boundary_divergence -- --nocapture",
+    "exit_status": 0,
+    "status": "pass"
+  }
+}

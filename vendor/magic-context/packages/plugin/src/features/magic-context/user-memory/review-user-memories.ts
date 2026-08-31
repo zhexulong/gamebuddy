@@ -1,13 +1,20 @@
 import { DREAMER_REVIEWER_AGENT } from "../../../agents/dreamer";
 import { withContentLanguageDirective } from "../../../agents/language-directive";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
 import { extractLatestAssistantText } from "../../../shared/assistant-message-extractor";
 import { describeError, getErrorMessage } from "../../../shared/error-message";
 import { log } from "../../../shared/logger";
+import type { ModelInput } from "../../../shared/model-resolution";
 import { modelBodyField } from "../../../shared/resolve-fallbacks";
 import type { Database } from "../../../shared/sqlite";
-import { DREAMING_LEASE_KEY, runLeaseGuardedWrite, startLeaseHeartbeat } from "../dreamer/lease";
+import {
+    DREAMING_LEASE_KEY,
+    type LeaseAcquisition,
+    runLeaseGuardedWrite,
+    startLeaseHeartbeat,
+} from "../dreamer/lease";
 import { REVIEW_USER_MEMORIES_SYSTEM_PROMPT } from "../dreamer/task-prompts";
 import { bumpProjectUserProfileVersion } from "../storage";
 import { recordChildInvocation } from "../subagent-token-capture";
@@ -32,11 +39,12 @@ interface ReviewUserMemoriesArgs {
      *  Defaults to the legacy single lease key for back-compat. */
     leaseKey?: string;
     deadline: number;
+    leaseAcquisition?: LeaseAcquisition;
     promotionThreshold: number;
     /** Per-task model override (Dreamer v2). */
-    model?: string;
+    model?: ModelInput;
     /** Resolved dreamer fallback chain. */
-    fallbackModels?: readonly string[];
+    fallbackModels?: readonly ModelInput[];
     language?: string;
 }
 
@@ -155,18 +163,24 @@ If no promotions are warranted, return empty arrays. Always consume reviewed can
     };
     const leaseKey = args.leaseKey ?? DREAMING_LEASE_KEY;
     const abortController = new AbortController();
-    const heartbeat = startLeaseHeartbeat(args.db, args.holderId, leaseKey, (reason) => {
-        log(`[dreamer] user-memories: lease lost (${reason}) — aborting`);
-        abortController.abort();
-    });
+    const heartbeat = startLeaseHeartbeat(
+        args.db,
+        args.holderId,
+        leaseKey,
+        (reason) => {
+            log(`[dreamer] user-memories: lease lost (${reason}) — aborting`);
+            abortController.abort();
+        },
+        args.leaseAcquisition,
+    );
 
     try {
-        const createResponse = await args.client.session.create({
-            body: {
-                ...(args.parentSessionId ? { parentID: args.parentSessionId } : {}),
-                title: "magic-context-dream-user-memories",
-            },
-            query: { directory: args.sessionDirectory },
+        const createResponse = await createChildSessionWithFence({
+            client: args.client,
+            db: args.db,
+            parentSessionId: args.parentSessionId,
+            title: "magic-context-dream-user-memories",
+            directory: args.sessionDirectory,
         });
         const created = shared.normalizeSDKResponse(
             createResponse,

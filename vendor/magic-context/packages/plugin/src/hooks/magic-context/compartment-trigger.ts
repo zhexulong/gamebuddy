@@ -10,6 +10,7 @@ import {
     loadProtectedTailMeta,
 } from "../../features/magic-context/storage";
 import type { ContextUsage, SessionMeta, TagEntry } from "../../features/magic-context/types";
+import { escalationBands } from "../../shared/escalation-bands";
 import { sessionLog } from "../../shared/logger";
 import type { Database } from "../../shared/sqlite";
 import {
@@ -31,6 +32,7 @@ import {
     type RawMessage,
 } from "./read-session-raw";
 import { estimateTrueRawMessageTokens } from "./read-session-true-raw-tokens";
+import { modelAcceptsEmptyContent } from "./sentinel";
 
 const PROACTIVE_TRIGGER_OFFSET_PERCENTAGE = 2;
 const POST_DROP_TARGET_RATIO = 0.75;
@@ -38,21 +40,14 @@ const MIN_PROACTIVE_TAIL_TOKEN_ESTIMATE = 6_000;
 const MIN_PROACTIVE_TAIL_MESSAGE_COUNT = 12;
 const DEFAULT_MIN_COMMIT_CLUSTERS_FOR_TRIGGER = 3;
 const TAIL_SIZE_TRIGGER_MULTIPLIER = 3;
-const FORCE_COMPARTMENT_PERCENTAGE = 80;
 const BLOCK_UNTIL_DONE_PERCENTAGE = 95;
-const FORCE_MATERIALIZE_PERCENTAGE = 85;
 const CONTENT_TAG_OWNER_SUFFIX = /:(?:p|file)\d+$/;
 
-export {
-    BLOCK_UNTIL_DONE_PERCENTAGE,
-    FORCE_COMPARTMENT_PERCENTAGE,
-    FORCE_MATERIALIZE_PERCENTAGE,
-    POST_DROP_TARGET_RATIO,
-};
+export { BLOCK_UNTIL_DONE_PERCENTAGE, POST_DROP_TARGET_RATIO };
 
 export interface CompartmentTriggerResult {
     shouldFire: boolean;
-    reason?: "projected_headroom" | "force_80" | "commit_clusters" | "tail_size";
+    reason?: "projected_headroom" | "force_band" | "commit_clusters" | "tail_size";
     /**
      * The protected-tail boundary snapshot the decision was computed from.
      * Present whenever the tail inspection ran. Callers that start the
@@ -75,6 +70,16 @@ export interface CompartmentTriggerResult {
 export interface InMemoryTailSource {
     messages: RawMessage[];
     absoluteMessageCount: number;
+}
+
+/**
+ * Wire capability for projecting reclaimable reasoning bytes. OpenCode derives
+ * this from the provider's empty-sentinel support; Pi overrides it because its
+ * serializers safely omit cleared thinking for every provider.
+ */
+export interface ReasoningProjectionCapability {
+    providerID?: string;
+    canClearReasoning?: boolean;
 }
 
 /**
@@ -207,8 +212,9 @@ function estimateProjectedPostDropPercentage(
     sessionId: string,
     usage: ContextUsage,
     activeTags: readonly TagEntry[],
-    clearReasoningAge?: number,
-    clearedReasoningThroughTag?: number,
+    clearReasoningAge: number | undefined,
+    clearedReasoningThroughTag: number | undefined,
+    canClearReasoning: boolean,
 ): number | null {
     // Denominator must include both text/tool bytes and reasoning bytes to match the numerator
     const totalActiveBytes = activeTags.reduce(
@@ -231,10 +237,14 @@ function estimateProjectedPostDropPercentage(
 
     // 2. Reasoning clearing: reasoning bytes on message tags between watermark and age cutoff.
     //    (Phase 2 removed routine age-based tool drops — tool outputs are no longer
-    //    projected as droppable here. The tiered emergency drop fires only at ≥85%,
+    //    projected as droppable here. The tiered emergency drop fires only at the derived force band,
     //    which is above this trigger's window, so it is intentionally not modeled.)
     const maxTag = activeTags.reduce((max, t) => Math.max(max, t.tagNumber), 0);
-    if (clearReasoningAge !== undefined && clearedReasoningThroughTag !== undefined) {
+    if (
+        canClearReasoning &&
+        clearReasoningAge !== undefined &&
+        clearedReasoningThroughTag !== undefined
+    ) {
         const reasoningAgeCutoff = maxTag - clearReasoningAge;
         for (const tag of activeTags) {
             if (tag.type !== "message") continue;
@@ -404,6 +414,10 @@ function getUnsummarizedTailInfo(
     });
 }
 
+export function formatProjectedPostDropPercentage(value: number | null): string {
+    return value === null ? "none" : `${value.toFixed(1)}%`;
+}
+
 export function checkCompartmentTrigger(
     db: Database,
     sessionId: string,
@@ -418,6 +432,7 @@ export function checkCompartmentTrigger(
     contextLimit?: number,
     inMemoryTail?: InMemoryTailSource | LazyInMemoryTailSource,
     taggerFloorOverride?: number,
+    reasoningProjection?: ReasoningProjectionCapability,
 ): CompartmentTriggerResult {
     if (sessionMeta.compartmentInProgress) {
         sessionLog(
@@ -588,6 +603,13 @@ export function checkCompartmentTrigger(
         return { shouldFire: false };
     }
 
+    // Never project reclaimed reasoning unless this harness can actually clear
+    // it from the provider wire. The OpenCode fallback shares the sentinel
+    // predicate with the postprocess clearing path; Pi explicitly supplies its
+    // own provider-independent capability.
+    const canClearReasoning =
+        reasoningProjection?.canClearReasoning ??
+        modelAcceptsEmptyContent(reasoningProjection?.providerID);
     const projectedPostDropPercentage = estimateProjectedPostDropPercentage(
         db,
         sessionId,
@@ -595,37 +617,41 @@ export function checkCompartmentTrigger(
         preloadedActiveTags ?? getActiveTagsBySession(db, sessionId),
         clearReasoningAge,
         sessionMeta.clearedReasoningThroughTag,
+        canClearReasoning,
     );
     const relativePostDropTarget = executeThresholdPercentage * POST_DROP_TARGET_RATIO;
 
-    // Force at 80% — only skip if drops alone bring usage well below the relative target
-    if (usage.percentage >= FORCE_COMPARTMENT_PERCENTAGE) {
+    const forceMaterializationPercentage = escalationBands(
+        executeThresholdPercentage,
+    ).forceMaterializationPercentage;
+    // Force only at the threshold-derived band; below it the proactive path retains precedence.
+    if (usage.percentage >= forceMaterializationPercentage) {
         if (
             projectedPostDropPercentage !== null &&
             projectedPostDropPercentage <= relativePostDropTarget
         ) {
             sessionLog(
                 sessionId,
-                `compartment trigger: skipping force-${FORCE_COMPARTMENT_PERCENTAGE} because projected post-drop usage is ${projectedPostDropPercentage.toFixed(1)}% (target ${relativePostDropTarget.toFixed(1)}%)`,
+                `compartment trigger: skipping force band ${forceMaterializationPercentage}% because projected post-drop usage is ${projectedPostDropPercentage.toFixed(1)}% (target ${relativePostDropTarget.toFixed(1)}%)`,
             );
             return { shouldFire: false };
         }
 
         sessionLog(
             sessionId,
-            `compartment trigger: force-firing at ${usage.percentage.toFixed(1)}% (projected post-drop ${projectedPostDropPercentage?.toFixed(1) ?? "none"}%)`,
+            `compartment trigger: force-firing at ${usage.percentage.toFixed(1)}% (projected post-drop ${formatProjectedPostDropPercentage(projectedPostDropPercentage)})`,
         );
         if (tailInfo.boundarySnapshot && hasRunnableCompartmentWindow(tailInfo.boundarySnapshot)) {
             return {
                 shouldFire: true,
-                reason: "force_80",
+                reason: "force_band",
                 boundarySnapshot: tailInfo.boundarySnapshot,
             };
         }
         const scale = usage.percentage >= BLOCK_UNTIL_DONE_PERCENTAGE ? 0.25 : 0.5;
         // Scaled re-resolution must read from the same source as the primary
         // inspection: prime from the in-memory tail when supplied (zero DB
-        // reads), otherwise this rare ≥80% path does its own full read as before.
+        // reads), otherwise this rare force-band path does its own full read as before.
         const scaledBoundary = withRawSessionMessageCache(() => {
             if (resolvedInMemoryTail) {
                 primeInMemoryTailRawMessageCache({
@@ -646,11 +672,11 @@ export function checkCompartmentTrigger(
             });
         });
         if (hasRunnableCompartmentWindow(scaledBoundary)) {
-            return { shouldFire: true, reason: "force_80", boundarySnapshot: scaledBoundary };
+            return { shouldFire: true, reason: "force_band", boundarySnapshot: scaledBoundary };
         }
         sessionLog(
             sessionId,
-            "compartment trigger: force_80 skipped — raw exists but protected head genuinely empty after emergency tail scale",
+            "compartment trigger: force_band skipped — raw exists but protected head genuinely empty after emergency tail scale",
         );
         return { shouldFire: false };
     }
@@ -687,7 +713,7 @@ export function checkCompartmentTrigger(
     // Under no pressure the agent is managing its own context (drops working);
     // the historian shouldn't spawn until there's enough chunked data to make
     // a properly-sized compartment. Tool-heavy-but-thin tails are covered by
-    // the pressure paths (proactive floor / force_80), which fire on occupancy.
+    // the pressure paths (proactive floor / force band), which fire on occupancy.
     // The chunk scan budget IS the threshold (scanBudget = max(min-estimate,
     // budget×multiplier)), so tokenEstimate saturates at the cap — "≥ cap OR
     // the scan ran out of budget with more blocks remaining" is the complete
@@ -740,7 +766,7 @@ export function checkCompartmentTrigger(
 
     sessionLog(
         sessionId,
-        `compartment trigger: proactive fire at ${usage.percentage.toFixed(1)}% (floor=${proactiveTriggerPercentage}% projected post-drop=${projectedPostDropPercentage?.toFixed(1) ?? "none"}% target=${relativePostDropTarget.toFixed(1)}%)`,
+        `compartment trigger: proactive fire at ${usage.percentage.toFixed(1)}% (floor=${proactiveTriggerPercentage}% projected post-drop=${formatProjectedPostDropPercentage(projectedPostDropPercentage)} target=${relativePostDropTarget.toFixed(1)}%)`,
     );
     return {
         shouldFire: true,

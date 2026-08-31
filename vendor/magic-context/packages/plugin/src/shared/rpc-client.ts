@@ -149,7 +149,9 @@ export class MagicContextRpcClient {
             for (const entry of readdirSync(this.portDir)) {
                 if (!entry.startsWith("port-") || !entry.endsWith(".json")) continue;
                 const record = parseRpcPortFile(readFileSync(join(this.portDir, entry), "utf-8"));
-                if (!record || !isPidAlive(record.pid)) continue;
+                // A denied liveness probe still leaves this as a candidate; the
+                // mandatory health check below confirms whether its RPC server is reachable.
+                if (!record || isPidAlive(record.pid) === "dead") continue;
                 records.push(record);
             }
         } catch {
@@ -158,7 +160,7 @@ export class MagicContextRpcClient {
 
         try {
             const legacy = parseRpcPortFile(readFileSync(this.legacyPortFilePath, "utf-8"));
-            if (legacy && (!legacy.pid || isPidAlive(legacy.pid))) records.push(legacy);
+            if (legacy && (!legacy.pid || isPidAlive(legacy.pid) !== "dead")) records.push(legacy);
         } catch {
             // Legacy discovery is optional.
         }

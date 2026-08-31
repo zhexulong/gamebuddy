@@ -6,7 +6,8 @@
  *    `dreamer.user_memories` / `dreamer.pin_key_files`.
  *  - this release: `experimental.temporal_awareness` / `caveman_text_compression`
  *    → top-level keys; `experimental.auto_search` / `git_commit_indexing` →
- *    `memory.auto_search` / `memory.git_commit_indexing`.
+ *    `memory.auto_search` / `memory.git_commit_indexing`; and
+ *    `experimental.mural` → top-level `mural`.
  *
  * Doctor runs an on-disk migration, but users who never run doctor would
  * otherwise lose their opt-in/opt-out because the graduated keys are no longer
@@ -36,13 +37,16 @@ export function migrateLegacyExperimental(
     const exp = experimental as Record<string, unknown>;
     const hasUM = "user_memories" in exp;
     const hasPKF = "pin_key_files" in exp;
+    const hasMural = "mural" in exp;
     // Graduated out of the (now retired) `experimental.*` namespace.
     //  - temporal_awareness / caveman_text_compression → top-level config keys.
     //  - auto_search / git_commit_indexing → under `memory.*` (recall features).
     const TOP_LEVEL_GRADUATED = ["temporal_awareness", "caveman_text_compression"] as const;
     const MEMORY_GRADUATED = ["auto_search", "git_commit_indexing"] as const;
     const hasGraduated =
-        TOP_LEVEL_GRADUATED.some((k) => k in exp) || MEMORY_GRADUATED.some((k) => k in exp);
+        TOP_LEVEL_GRADUATED.some((k) => k in exp) ||
+        MEMORY_GRADUATED.some((k) => k in exp) ||
+        hasMural;
     if (!hasUM && !hasPKF && !hasGraduated) {
         return rawConfig;
     }
@@ -58,6 +62,16 @@ export function migrateLegacyExperimental(
             ? { ...(patched.memory as Record<string, unknown>) }
             : ({} as Record<string, unknown>);
     const newExperimental = { ...exp };
+
+    const coerceToObject = (value: unknown): Record<string, unknown> | undefined => {
+        if (typeof value === "boolean") {
+            return { enabled: value };
+        }
+        if (typeof value === "object" && value !== null) {
+            return { ...(value as Record<string, unknown>) };
+        }
+        return undefined;
+    };
 
     // Relocate a graduated flag from experimental.* to its new home. The
     // destination value wins when both exist (the user already graduated); for
@@ -90,15 +104,27 @@ export function migrateLegacyExperimental(
     for (const key of TOP_LEVEL_GRADUATED) relocate(key, patched, "");
     for (const key of MEMORY_GRADUATED) relocate(key, memory, "memory.");
 
-    const coerceToObject = (value: unknown): Record<string, unknown> | undefined => {
-        if (typeof value === "boolean") {
-            return { enabled: value };
+    if (hasMural) {
+        const oldMural = coerceToObject(exp.mural);
+        const existingMural = patched.mural;
+        if (existingMural === undefined) {
+            patched.mural = oldMural ?? exp.mural;
+            warnings.push(
+                'Deprecated "experimental.mural"; use top-level "mural" instead (migrated in memory; run `doctor` to persist).',
+            );
+        } else if (
+            oldMural !== undefined &&
+            typeof existingMural === "object" &&
+            existingMural !== null &&
+            !Array.isArray(existingMural)
+        ) {
+            patched.mural = {
+                ...oldMural,
+                ...(existingMural as Record<string, unknown>),
+            };
         }
-        if (typeof value === "object" && value !== null) {
-            return { ...(value as Record<string, unknown>) };
-        }
-        return undefined;
-    };
+        delete newExperimental.mural;
+    }
 
     if (hasUM) {
         const oldUM = coerceToObject(exp.user_memories);

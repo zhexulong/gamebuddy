@@ -111,7 +111,7 @@ export function parseCuesManifest(text: string): ParsedCue[] {
     const body = extractCompleteManifestBody(text, "cues");
     const out: ParsedCue[] = [];
     for (const match of body.matchAll(/<cue\s+id="(\d+)"\s*>([\s\S]*?)<\/cue>/g)) {
-        const id = Number.parseInt(match[1]!, 10);
+        const id = Number.parseInt(match[1] ?? "", 10);
         if (!Number.isInteger(id)) continue;
         out.push({ id, cue: unescapeXml(match[2] ?? "").trim() });
     }

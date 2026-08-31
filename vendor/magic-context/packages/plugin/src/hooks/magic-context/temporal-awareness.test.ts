@@ -261,6 +261,22 @@ describe("injectTemporalMarkers", () => {
         expect(n).toBe(0);
     });
 
+    test("does not assign elapsed time to a standalone transport reminder", () => {
+        const t0 = 1_000_000_000_000;
+        const messages = [
+            makeAssistantMsg(t0, t0 + 1000, "answer"),
+            makeUserMsg(
+                t0 + 1000 + 720 * 1000,
+                "<system-reminder>background work finished</system-reminder>",
+            ),
+        ];
+
+        expect(injectTemporalMarkers(messages)).toBe(0);
+        expect(messages[1].parts[0].text).toBe(
+            "<system-reminder>background work finished</system-reminder>",
+        );
+    });
+
     test("skips ignored text parts and injects into next visible part", () => {
         const t0 = 1_000_000_000_000;
         const messages = [

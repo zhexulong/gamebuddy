@@ -13,25 +13,31 @@ import {
     clearEmergencyDropSample,
     clearEmergencyRecovery,
     clearHistorianFailureState,
-    getLastNudgeLevel,
+    getChannel1NudgeState,
     getLastNudgeUndropped,
-    resetLastNudgeCycle,
-    setLastNudgeLevel,
+    markChannel1PostReduceGracePending,
+    setChannel1NudgeState,
     setLastNudgeUndropped,
 } from "../../features/magic-context/storage-meta-persisted";
 import { clearSidebarSnapshotCache } from "../../plugin/sidebar-snapshot-cache";
 import type { PluginContext } from "../../plugin/types";
 import { sessionLog } from "../../shared/logger";
 import { clearAutoSearchForSession } from "./auto-search-runner";
-import { resolveTodowriteAvailability } from "./ctx-reduce-availability";
+import type { CommandExecuteInput, CommandExecuteOutput } from "./command-handler";
+import {
+    cachedToolPermissionDenied,
+    resolveTodowriteAvailability,
+    todowritePermissionDenied,
+} from "./ctx-reduce-availability";
 import {
     buildChannel1Reminder,
     CHANNEL1_SENTINEL,
     type Channel1State,
-    computePressure,
     decideChannel1,
+    reclaimableToolOutputCount,
     toolOutputTokens,
 } from "./ctx-reduce-nudge";
+import { annotateEmptyTaskOutput } from "./empty-task-output";
 import {
     getMessageUpdatedAssistantInfo,
     getMessageUpdatedInfo,
@@ -45,6 +51,9 @@ import {
     resetNoteNudgeCooldownOnly,
 } from "./note-nudger";
 import { readRawSessionMessageById, readRawSessionMessages } from "./read-session-chunk";
+import { clearIgnoredMessages, flushIgnoredMessages } from "./send-session-notification";
+import { variantChangeBustsProviderCache } from "./sentinel";
+import { matchStrippedMagicContextCommand } from "./stripped-command";
 import { normalizeTodoStateJson } from "./todo-view";
 
 export type LiveModelBySession = Map<string, { providerID: string; modelID: string }>;
@@ -127,6 +136,21 @@ export type FlushedSessions = Set<string>;
 
 export type LastHeuristicsTurnId = Map<string, string>;
 
+type CommandNotificationParams = {
+    agent?: string;
+    variant?: string;
+    providerId?: string;
+    modelId?: string;
+};
+
+export interface MagicContextCommandHandler {
+    "command.execute.before": (
+        input: CommandExecuteInput,
+        output: CommandExecuteOutput,
+        params: CommandNotificationParams,
+    ) => Promise<unknown>;
+}
+
 export function getLiveNotificationParams(
     sessionId: string,
     liveModelBySession: LiveModelBySession,
@@ -166,15 +190,48 @@ export function createChatMessageHook(args: {
     /** E5 — one-time session upgrade reminder. Optional: only wired when the
      *  historian can run (so an upgrade is actually possible). Self-gates. */
     upgradeReminder?: (sessionId: string) => Promise<void>;
+    /** The native slash-command handler, reused when Desktop removes the slash. */
+    commandHandler?: MagicContextCommandHandler;
 }) {
-    return async (input: {
-        sessionID?: string;
-        variant?: string;
-        agent?: string;
-        model?: { providerID?: string; modelID?: string };
-    }) => {
+    return async (
+        input: {
+            sessionID?: string;
+            variant?: string;
+            agent?: string;
+            model?: { providerID?: string; modelID?: string };
+        },
+        output?: {
+            parts?: Array<{
+                type: string;
+                text?: string;
+                ignored?: boolean;
+                synthetic?: boolean;
+            }>;
+        },
+    ) => {
         const sessionId = input.sessionID;
         if (!sessionId) return;
+
+        const strippedCommand =
+            args.commandHandler && output?.parts
+                ? matchStrippedMagicContextCommand(output.parts)
+                : null;
+        if (strippedCommand && args.commandHandler && output?.parts) {
+            await args.commandHandler["command.execute.before"](
+                {
+                    command: strippedCommand.command,
+                    sessionID: sessionId,
+                    arguments: strippedCommand.arguments,
+                },
+                { parts: output.parts },
+                {
+                    agent: input.agent,
+                    variant: input.variant,
+                    providerId: input.model?.providerID,
+                    modelId: input.model?.modelID,
+                },
+            );
+        }
 
         // E5: fire-and-forget one-time upgrade reminder for legacy sessions.
         // Self-gating + model-invisible, so it never affects the prompt prefix.
@@ -203,14 +260,48 @@ export function createChatMessageHook(args: {
             input.variant !== undefined &&
             previousVariant !== input.variant
         ) {
-            sessionLog(
-                sessionId,
-                `variant changed (${previousVariant} -> ${input.variant}), triggering flush`,
-            );
-            args.historyRefreshSessions.add(sessionId);
-            args.systemPromptRefreshSessions.add(sessionId);
-            args.pendingMaterializationSessions.add(sessionId);
-            args.lastHeuristicsTurnId.delete(sessionId);
+            // A reasoning-variant change maps to a thinking-config change
+            // (effort / budget_tokens / toggle — see OpenCode's
+            // `reasoningVariants`). Whether that busts the provider's prompt
+            // cache on its own depends on the provider's cache model: the
+            // Anthropic family renders the thinking config into the prompt
+            // (so the provider itself invalidates message blocks on a change
+            // and our queued ops drain on that natural bust), while
+            // OpenAI-compatible providers carry reasoning_effort / budget as
+            // a request parameter outside the cache key, so a variant flip
+            // is a full cache HIT and our flush would be the ONLY bust — a
+            // gratuitous one. See `variantChangeBustsProviderCache` for the
+            // full rationale and the safety asymmetry.
+            //
+            // providerID comes from the hook input (the live request's
+            // model) with `liveModelBySession` as a fallback for sessions
+            // whose first chat.message predates a model-bearing event. When
+            // no provider is known yet we take the conservative TRUE arm
+            // (today's behavior) so we never silently drop a needed drain.
+            const providerID =
+                input.model?.providerID ?? args.liveModelBySession.get(sessionId)?.providerID;
+            if (variantChangeBustsProviderCache(providerID)) {
+                sessionLog(
+                    sessionId,
+                    `variant changed (${previousVariant} -> ${input.variant}), triggering flush`,
+                );
+                args.historyRefreshSessions.add(sessionId);
+                args.systemPromptRefreshSessions.add(sessionId);
+                args.pendingMaterializationSessions.add(sessionId);
+                args.lastHeuristicsTurnId.delete(sessionId);
+            } else {
+                // The provider's cache ignores request params, so a variant
+                // flip is a cache HIT. Defer the queued ops to the next
+                // natural bust (fold / threshold / TTL / flush) exactly as
+                // historian publications do — do NOT manufacture a bust here.
+                // This log line also answers the dashboard-mislabeling
+                // complaint at the log level: the variant change was observed
+                // but the flush was deferred, not triggered.
+                sessionLog(
+                    sessionId,
+                    `variant changed (${previousVariant} -> ${input.variant}) on provider ${providerID} whose cache ignores request params; deferring flush to next natural bust`,
+                );
+            }
         }
     };
 }
@@ -348,10 +439,18 @@ export function createEventHook(args: {
             args.deferredMaterializationSessions.delete(sessionId);
             args.lastHeuristicsTurnId.delete(sessionId);
             args.commitSeenLastPass?.delete(sessionId);
+            clearIgnoredMessages(sessionId);
             resetNoteNudgeCooldownOnly(sessionId);
             clearAutoSearchForSession(sessionId);
             clearSidebarSnapshotCache(sessionId);
             clearSessionTracking(sessionId);
+        }
+
+        // Terminal message.updated/session events are the other existing idle
+        // boundary. `flushIgnoredMessages` checks the same DB signal again, so
+        // streaming deltas cannot accidentally release the queue mid-turn.
+        if (input.event.type !== "session.deleted") {
+            await flushIgnoredMessages(sessionId);
         }
 
         // Historical note: v0.14.1 removed the 80% "context emergency" nudge
@@ -359,7 +458,7 @@ export function createEventHook(args: {
         // agent had already received 4-8 earlier reduction nudges from the
         // rolling band system and ignored all of them — the emergency nudge
         // was louder but mechanistically identical. Automatic safety valves
-        // (85% force-drop-tools in transform-postprocess-phase.ts, 95%
+        // (derived force-band drop-tools in transform-postprocess-phase.ts, 95%
         // block-and-wait-for-historian in transform.ts) keep context from
         // overflowing without depending on agent cooperation, so the nudge
         // was doing more harm than good: firing repeatedly during slow-
@@ -368,15 +467,9 @@ export function createEventHook(args: {
     };
 }
 
-export function createCommandExecuteBeforeHook(commandHandler: {
-    "command.execute.before": (
-        input: import("./command-handler").CommandExecuteInput,
-        output: import("./command-handler").CommandExecuteOutput,
-        params: { agent?: string; variant?: string; providerId?: string; modelId?: string },
-    ) => Promise<unknown>;
-}) {
+export function createCommandExecuteBeforeHook(commandHandler: MagicContextCommandHandler) {
     return async (input: unknown, output: unknown) => {
-        const typedInput = input as import("./command-handler").CommandExecuteInput & {
+        const typedInput = input as CommandExecuteInput & {
             agent?: string;
             variant?: string;
             providerID?: string;
@@ -389,8 +482,8 @@ export function createCommandExecuteBeforeHook(commandHandler: {
             modelId: typedInput.modelID,
         };
         return commandHandler["command.execute.before"](
-            typedInput as import("./command-handler").CommandExecuteInput,
-            output as import("./command-handler").CommandExecuteOutput,
+            typedInput as CommandExecuteInput,
+            output as CommandExecuteOutput,
             params,
         );
     };
@@ -426,44 +519,61 @@ function maybeInjectChannel1Nudge(
     // Content-based idempotency (robust to callID reuse on retries).
     if (out.output.includes(CHANNEL1_SENTINEL)) return;
 
-    // Accumulate this tool's tokens into the per-turn accumulator (prospective:
-    // this output is not yet tagged/counted in the baseline).
-    const thisTurnTokens = toolOutputTokens(out.output);
-    state.turnToolTokens += thisTurnTokens;
+    // The just-completed output is prospective input for the next pass and is
+    // inside the recency reserve, so it grows T but not U.
+    state.turnDeltaT += toolOutputTokens(out.output);
 
-    if (state.reducedSinceRefresh) return; // suppress nagging right after a reduce
+    if (state.reducedSinceRefresh || state.agentDropsAppliedThisPass) return;
 
-    const undroppedTokens = state.tailToolTokens + state.turnToolTokens;
-    const pressure = computePressure({
-        lastInputTokens: state.lastInputTokens,
-        turnToolTokens: state.turnToolTokens,
-        contextLimit: state.contextLimit,
-        executeThresholdPercentage: state.executeThresholdPercentage,
-    });
-
-    const workingWindowTokens = Math.round(
-        (state.contextLimit * state.executeThresholdPercentage) / 100,
-    );
+    const nudgeState = getChannel1NudgeState(args.db, sessionId);
     const decision = decideChannel1({
-        undroppedTokens,
-        pressure,
-        estimatedInputTokens: state.lastInputTokens + state.turnToolTokens,
-        workingWindowTokens,
+        baselineU: state.baselineU,
+        baselineT: state.baselineT,
+        turnDeltaU: state.turnDeltaU,
+        turnDeltaT: state.turnDeltaT,
         lastNudgeUndropped: getLastNudgeUndropped(args.db, sessionId),
-        lastNudgeLevel: getLastNudgeLevel(args.db, sessionId),
-        hasRecentReduce: false, // handled by reducedSinceRefresh above
+        lastNudgeLevel: nudgeState.level,
+        lastFireOrdinal: nudgeState.ordinal,
+        currentRealUserTurnCount: state.realUserTurnCount,
+        hasRecentReduce: false,
+        postReduceGracePending: nudgeState.postReduceGracePending,
+        postReduceGraceBaselineU: nudgeState.postReduceGraceBaselineU,
+        postReduceGracePreLevel: nudgeState.postReduceGracePreLevel,
+        evaluable: state.evaluable,
+        generationInvalidated: state.generationInvalidated,
     });
 
-    // Always persist the cadence + band state so a reduce-driven drop re-arms it.
+    // Store the cadence level and dampening ordinal together so one persisted state stays in sync.
     setLastNudgeUndropped(args.db, sessionId, decision.nextLastNudge);
-    setLastNudgeLevel(args.db, sessionId, decision.nextLastNudgeLevel);
-    if (!decision.fire) return;
+    const nextNudgeState = {
+        ...nudgeState,
+        level: decision.nextLastNudgeLevel,
+        postReduceGracePending: decision.clearPostReduceGrace
+            ? undefined
+            : nudgeState.postReduceGracePending,
+        postReduceGraceBaselineU: decision.clearPostReduceGrace
+            ? undefined
+            : nudgeState.postReduceGraceBaselineU,
+        postReduceGracePreLevel: decision.clearPostReduceGrace
+            ? undefined
+            : nudgeState.postReduceGracePreLevel,
+    };
+    if (!decision.fire) {
+        setChannel1NudgeState(args.db, sessionId, nextNudgeState);
+        return;
+    }
 
     out.output += buildChannel1Reminder(
         decision.level,
         decision.undroppedTokens,
+        reclaimableToolOutputCount(state.baselineParts),
         state.oldestReclaimableToolTags,
+        decision.sticky,
     );
+    setChannel1NudgeState(args.db, sessionId, {
+        ...nextNudgeState,
+        ordinal: state.realUserTurnCount,
+    });
     sessionLog(
         sessionId,
         `channel1 nudge fired: level=${decision.level} undropped~${Math.round(decision.undroppedTokens / 1000)}k tool=${tool}`,
@@ -473,6 +583,7 @@ function maybeInjectChannel1Nudge(
 export function createToolExecuteAfterHook(args: {
     db: Parameters<typeof getOrCreateSessionMeta>[0];
     channel1StateBySession: Map<string, Channel1State>;
+    client?: PluginContext["client"];
     transformMode?: "ts" | "rust";
     todoStateSet?: (input: {
         sessionId: string;
@@ -481,24 +592,52 @@ export function createToolExecuteAfterHook(args: {
     }) => Promise<unknown>;
 }) {
     return async (input: unknown, output?: unknown) => {
-        const typedInput = input as { tool?: string; sessionID?: string; args?: unknown };
+        const typedInput = input as {
+            tool?: string;
+            sessionID?: string;
+            args?: unknown;
+            agent?: string;
+        };
         if (!typedInput.sessionID || !typedInput.tool) {
             return;
         }
+
+        // `tool.execute.after` is the next existing host event after a tool
+        // boundary. The queue helper re-checks the read-only mid-turn signal,
+        // so this is a no-op until the assistant is actually idle.
+        await flushIgnoredMessages(typedInput.sessionID);
+
+        // Surface a completed native task that returned no final text so the
+        // caller can distinguish an empty result from a genuinely-empty tool.
+        annotateEmptyTaskOutput(typedInput.tool, output);
 
         if (typedInput.tool === "ctx_reduce") {
             // Mark the Channel 1 baseline dirty so the next nudge re-measures the
             // (now smaller) reclaimable tail instead of replaying a stale band.
             const state = args.channel1StateBySession.get(typedInput.sessionID);
-            if (state) state.reducedSinceRefresh = true;
+            if (state) {
+                state.reducedSinceRefresh = true;
+                state.evaluable = false;
+                state.generationInvalidated = true;
+            }
             try {
-                resetLastNudgeCycle(args.db, typedInput.sessionID);
+                const grace = markChannel1PostReduceGracePending(args.db, typedInput.sessionID);
+                if (state) {
+                    state.channel1PostReduceGrace = {
+                        pending: true,
+                        preReduceLevel: grace.postReduceGracePreLevel ?? grace.level,
+                    };
+                }
             } catch (error) {
-                sessionLog(typedInput.sessionID, "channel1 reduce reset failed (ignored):", error);
+                sessionLog(
+                    typedInput.sessionID,
+                    "channel1 reduce grace arm failed (ignored):",
+                    error,
+                );
             }
         } else {
-            // Channel 1: append an in-turn ctx_reduce nudge to this tool's output
-            // when reclaimable space + pressure warrant it. Auto-sticky via
+            // Channel 1: append an in-turn ctx_reduce nudge when the rendered-tail
+            // hygiene ratio and minimum-mass guards warrant it. Auto-sticky via
             // OpenCode's DB (the mutated output.output persists + replays). Fully
             // guarded so an injection failure can never block the tool result.
             try {
@@ -512,16 +651,37 @@ export function createToolExecuteAfterHook(args: {
             }
         }
         if (typedInput.tool === "todowrite") {
-            // Belt-and-braces gate: when the session's tools map filters the
-            // native todowrite tool out (frozen "unavailable" verdict), do not
-            // persist todo state for it. A disabled tool never fires
-            // tool.execute.after under its exact name in the first place, so
-            // this mostly guards against MCP-shaped lookalikes (mcp_Todowrite,
-            // etc.) writing state that the synthetic injector would later replay
-            // for a tool the session does not have. A provisional verdict fails
-            // open and captures as before.
+            // Persist todo state only for the exact native `todowrite` tool
+            // after checking its availability and live permission. MCP-shaped
+            // lookalikes such as `mcp_Todowrite` do not enter this branch and
+            // remain refused.
             const todowriteVerdict = resolveTodowriteAvailability(typedInput.sessionID);
             if (todowriteVerdict.frozen && !todowriteVerdict.callable) return;
+            const activeAgent = typedInput.agent;
+            if (args.client) {
+                try {
+                    if (
+                        await todowritePermissionDenied(
+                            args.client,
+                            typedInput.sessionID,
+                            activeAgent,
+                        )
+                    ) {
+                        return;
+                    }
+                } catch (error) {
+                    // Preserve a prior live deny across a transient SDK read;
+                    // otherwise a failed read could resume stale capture.
+                    if (cachedToolPermissionDenied(typedInput.sessionID, "todowrite")) {
+                        return;
+                    }
+                    sessionLog(
+                        typedInput.sessionID,
+                        "todowrite permission read failed during capture (ignored):",
+                        error,
+                    );
+                }
+            }
             // Only trigger note nudge when ALL todo items are terminal (completed/cancelled).
             // Firing on every todowrite is too eager — agents call it repeatedly while working.
             const todoArgs = typedInput.args as { todos?: unknown } | undefined;

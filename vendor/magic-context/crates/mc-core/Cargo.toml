@@ -1,0 +1,17 @@
+[package]
+name = "mc-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Magic Context cache-stability core: pass classifier + frozen-unit renderer over cortexkit-cache-core, origin-agnostic CK-in/CK-out."
+
+[lib]
+name = "mc_core"
+path = "src/lib.rs"
+
+[dependencies]
+cortexkit-cache-core = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

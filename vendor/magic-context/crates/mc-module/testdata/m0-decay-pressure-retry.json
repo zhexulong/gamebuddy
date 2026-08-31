@@ -1,0 +1,13 @@
+{
+  "provenance": "TS shared decay renderer; no sibling m0 blocks, so this is the complete <session-history> slice measured by the materializer",
+  "budget": 20,
+  "attempts": 3,
+  "tier_counts": [
+    0,
+    0,
+    0,
+    1,
+    39
+  ],
+  "m0_sha256": "f56674e49e4f72771af89d33703d1ddd4174bb03182931b416f6d0d6fc3a891d"
+}

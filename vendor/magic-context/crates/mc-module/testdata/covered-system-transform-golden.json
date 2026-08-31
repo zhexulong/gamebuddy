@@ -1,0 +1,56 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "kind": {
+          "type": "text",
+          "text": "<covered-system-messages>\n<covered-system-message>identity alpha</covered-system-message>\n<covered-system-message>identity beta</covered-system-message>\n</covered-system-messages>\n\n<session-history>\n## 0-3 · C1\nSUMMARY\n</session-history>"
+        }
+      }
+    ],
+    "meta": {
+      "synthetic": true
+    }
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "kind": {
+          "type": "text",
+          "text": "<session-history-since>(no new content since last materialization)</session-history-since>"
+        }
+      }
+    ],
+    "meta": {
+      "synthetic": true
+    }
+  },
+  {
+    "role": "system",
+    "content": [
+      {
+        "kind": {
+          "type": "text",
+          "text": "tail identity"
+        }
+      }
+    ],
+    "meta": {}
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "kind": {
+          "type": "text",
+          "text": "tail"
+        }
+      }
+    ],
+    "meta": {
+      "harness_id": "t5"
+    }
+  }
+]

@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "mode": "rust",
+  "harness": "pi",
+  "trace_scope": "Pi's rust-mode configuration is accepted by the shared schema, but Pi does not instantiate the OpenCode Rust module adapter. The failure trace therefore follows Pi's own context and JSONL seams, then records the shared-core classifier used at the refusal boundary.",
+  "shared_adapter": {
+    "module": "@magic-context/core",
+    "rust_adapter_symbol": "createRustModeTransform",
+    "called_from_pi": false,
+    "proof_locations": [
+      {
+        "path": "packages/plugin/src/hooks/magic-context/rust-mode-transform.ts",
+        "symbol": "createRustModeTransform",
+        "lines": [983, 2166]
+      },
+      {
+        "path": "packages/pi-plugin/src/index.ts",
+        "symbol": "startPiMagicContextRuntime",
+        "lines": [1188, 1195]
+      }
+    ],
+    "coverage_owner": "FM-OC-*"
+  },
+  "branches": [
+    {
+      "id": "PI-RUST-INGRESS-NO-SESSION",
+      "ingress": "pi.on(\"context\") with no resolvable session id",
+      "source_location": {
+        "path": "packages/pi-plugin/src/context-handler.ts",
+        "symbol": "registerPiContextHandler",
+        "lines": [1988, 2000]
+      },
+      "shared_adapter_called": false,
+      "implementation_owner": "pi-owned",
+      "continuation_or_refusal": "continue-unmodified",
+      "ownership_rationale": "Pi owns the context event and must leave the host-owned message array untouched when session lookup is unavailable; no Rust adapter is reached.",
+      "selected_test_ids": ["FM-PI-1-CONTINUE-JSONL", "FM-PI-1-REFUSE-JSONL"]
+    },
+    {
+      "id": "PI-RUST-INGRESS-BRANCH-PROJECTION",
+      "ingress": "context event branch-entry projection",
+      "source_location": {
+        "path": "packages/pi-plugin/src/context-handler.ts",
+        "symbol": "readPiBranchEntriesForContext",
+        "lines": [1517, 1651]
+      },
+      "shared_adapter_called": false,
+      "implementation_owner": "pi-owned",
+      "continuation_or_refusal": "continue-via-branch-or-jsonl-fallback",
+      "ownership_rationale": "Pi owns SessionEntry ancestry, leaf lookup, cycle/malformed-entry fallback, and projection caching. A projection fault is logged and falls back to getBranch; a second branch-read fault returns null for the outer Pi handler.",
+      "selected_test_ids": ["FM-PI-1-CONTINUE-JSONL", "FM-PI-1-REFUSE-JSONL"]
+    },
+    {
+      "id": "PI-RUST-INGRESS-JSONL-RAW",
+      "ingress": "branch projection unavailable and raw session messages are requested",
+      "source_location": {
+        "path": "packages/pi-plugin/src/read-session-pi.ts",
+        "symbol": "readPiSessionMessages",
+        "lines": [238, 265]
+      },
+      "shared_adapter_called": false,
+      "implementation_owner": "pi-owned",
+      "continuation_or_refusal": "continue-with-empty-or-raw-payload",
+      "ownership_rationale": "Pi owns the JSONL getBranch read and its fail-open empty-array conversion; shared core supplies only the RawMessage type and downstream formatting contracts.",
+      "selected_test_ids": ["FM-PI-1-CONTINUE-JSONL", "FM-PI-1-REFUSE-JSONL"]
+    },
+    {
+      "id": "PI-RUST-FAILURE-ORDINARY",
+      "ingress": "Pi-owned context pipeline throws an ordinary error",
+      "source_location": {
+        "path": "packages/pi-plugin/src/context-handler.ts",
+        "symbol": "registerPiContextHandler",
+        "lines": [2744, 3225]
+      },
+      "shared_adapter_called": false,
+      "implementation_owner": "pi-owned",
+      "continuation_or_refusal": "continue-with-original-messages-and-loud-error",
+      "ownership_rationale": "Pi's outer context boundary catches non-fail-closed errors, records the session-scoped last error, logs a loud continuation marker, and lets the host send the original messages.",
+      "selected_test_ids": ["FM-PI-1-CONTINUE-JSONL", "FM-PI-1-REFUSE-JSONL"]
+    },
+    {
+      "id": "PI-RUST-FAILURE-FAIL-CLOSED",
+      "ingress": "Pi-owned context pipeline receives a FailClosedBlockingError",
+      "source_location": {
+        "path": "packages/pi-plugin/src/context-handler.ts",
+        "symbol": "registerPiContextHandler",
+        "lines": [3202, 3225]
+      },
+      "shared_adapter_called": false,
+      "implementation_owner": "pi-owned-refusal-seam",
+      "continuation_or_refusal": "refuse-by-rethrow-when-compaction-enabled",
+      "ownership_rationale": "@magic-context/core owns the error type and classifier, but Pi owns the decision not to swallow that deterministic inoperability signal at its host boundary. This is the Pi-owned refusal surface selected for FM-PI-4; FM-OC-* owns shared-adapter emergency behavior.",
+      "selected_test_ids": ["FM-PI-4-CONTINUE-95-PROVIDER", "FM-PI-4-REFUSE-95-PROVIDER"]
+    },
+    {
+      "id": "PI-RUST-FAILURE-BOOT-SURFACE",
+      "ingress": "Pi boot cannot open the context database",
+      "source_location": {
+        "path": "packages/pi-plugin/src/fail-closed-pi.ts",
+        "symbol": "registerPiFailClosedSurface",
+        "lines": [25, 95]
+      },
+      "shared_adapter_called": false,
+      "shared_core_called": true,
+      "shared_adapter_call": "none; createFailClosedController/createFailClosedBlockingError/isFailClosedBlockingError come from @magic-context/core but are not the Rust transform adapter",
+      "implementation_owner": "pi-owned-refusal-seam",
+      "continuation_or_refusal": "refuse-until-storage-reprobe-recovers",
+      "ownership_rationale": "The shared core supplies the durable refusal protocol; Pi registers the JSONL context and native-compaction hooks and makes the host-specific refusal visible to the primary session.",
+      "selected_test_ids": ["FM-PI-4-CONTINUE-95-PROVIDER", "FM-PI-4-REFUSE-95-PROVIDER"]
+    },
+    {
+      "id": "PI-RUST-PROVIDER-PROVEN-PRESSURE",
+      "ingress": "pi.on(\"message_end\") provider overflow evidence followed by the next context pass",
+      "source_location": {
+        "path": "packages/pi-plugin/src/index.ts",
+        "symbol": "message_end handler",
+        "lines": [2130, 2175]
+      },
+      "helper_location": {
+        "path": "packages/pi-plugin/src/index.ts",
+        "symbol": "persistPiPressureFromMessageEnd",
+        "lines": [507, 585]
+      },
+      "shared_adapter_called": false,
+      "shared_core_called": true,
+      "shared_adapter_call": "none; detectOverflow/getOverflowState come from @magic-context/core but are not the Rust transform adapter",
+      "implementation_owner": "pi-owned-pressure-path",
+      "continuation_or_refusal": "continue-into-emergency-pipeline; refuse only when the outer fail-closed classifier is raised",
+      "ownership_rationale": "Shared core parses provider evidence and persists the limit; Pi owns the next-pass pressure/emergency scheduling and does not call createRustModeTransform. The FM-PI-4 drill therefore pins both Pi's provider-proof continuation half and its explicit refusal seam without claiming shared-adapter coverage.",
+      "selected_test_ids": ["FM-PI-4-CONTINUE-95-PROVIDER", "FM-PI-4-REFUSE-95-PROVIDER"]
+    }
+  ],
+  "required_pi_coverage": [
+    {
+      "arc": 1,
+      "fault": "module SIGKILL or equivalent Pi JSONL/branch-entry outage mid-session",
+      "expected_pi_surface": "continue via LKG when available, otherwise loud raw/original-message passthrough",
+      "selected_test_ids": ["FM-PI-1-CONTINUE-JSONL", "FM-PI-1-REFUSE-JSONL"]
+    },
+    {
+      "arc": 4,
+      "fault": "module unavailable with provider-proven pressure at or above 95 percent",
+      "expected_pi_surface": "continue through Pi's provider-proof emergency path, but rethrow an explicit fail-closed error rather than silently fall through when that refusal is raised",
+      "selected_test_ids": ["FM-PI-4-CONTINUE-95-PROVIDER", "FM-PI-4-REFUSE-95-PROVIDER"]
+    }
+  ],
+  "trace_conclusion": "Pi coverage is required: Pi owns JSONL/branch-entry continuation and the host fail-closed refusal seam. Shared Rust-adapter behavior is intentionally selected for FM-OC-* and is not duplicated by FM-PI-* drills."
+}

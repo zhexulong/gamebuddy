@@ -23,14 +23,20 @@ plugin process and reach `experimental.chat.messages.transform`. OpenCode gates
 historian / m[0]m[1] injection / nudges / auto-search behind `fullFeatureMode`
 (i.e. `!isSubagent`), and detects subagents via OpenCode's `session.parent_id`.
 
-**Pi:** Pi has **no native subagent concept**. The *only* subagents that exist
-are the ones Magic Context itself spawns (historian, dreamer, sidekick), and each
-runs as a **separate `pi --print` process** loading only the lean
-`subagent-entry.js`, whose recursion guard **never wires `pi.on("context")`**
-(see `subagent-entry.ts` header). A Pi subagent therefore *cannot* reach the
-context-handler pipeline at all.
+**Pi:** Pi has **no native subagent concept**. The subagents Magic Context itself
+spawns (historian, dreamer, sidekick) each run as a **separate `pi --print` process**
+loading only the lean `subagent-entry.js`, whose recursion guard **never wires
+`pi.on("context")`** (see `subagent-entry.ts` header). A Magic Context subagent
+therefore *cannot* reach the context-handler pipeline at all.
+`@gotgenes/pi-subagents`, however, can initialize a child session inside the same
+process. The full extension uses Pi's public child-session lifecycle events plus
+process-shared `AsyncLocalStorage` to suppress only the child while allowing
+unrelated same-process sessions to initialize normally.
 
-**Consequence:** `is_subagent` is **never written `true`** for any Pi session.
+**Consequence:** `is_subagent` is **never written `true`** for any Pi session
+that reaches the context-handler pipeline. Separate child processes load the lean
+entry, while in-process child initialization is suppressed before the normal
+context pipeline is registered.
 There is nothing to gate, so Pi does NOT need OpenCode's `fullFeatureMode`
 reduced-mode enforcement in `context-handler.ts`. The vestigial `!isSubagent`
 checks that exist in the Pi context handler are harmless (always take the
@@ -115,7 +121,7 @@ the source array for dirty indices only.
 
 ---
 
-## 6. Transient UI: Pi uses `ctx.ui.notify` toasts, not persistent dialogs
+## 6. Transient UI: Pi uses `ctx.ui.notify` toasts and RPC dialogs
 
 **OpenCode:** TUI dialogs (upgrade prompt, `/ctx-status`, `/ctx-recomp`, `/ctx-embed`, `/ctx-flush`) via RPC,
 with an ignored-message fallback for Desktop/Web. Notification drain is
@@ -123,7 +129,14 @@ with an ignored-message fallback for Desktop/Web. Notification drain is
 another) because one process can serve multiple sessions and TUI port discovery
 is newest-pid-wins.
 
-**Pi:** transient terminal notifications. The upgrade reminder passes
+**Pi:** command status is appended as a model-invisible custom entry. Interactive
+terminals render that entry through the registered entry renderer. In Pi RPC
+mode, each command uses its live `ctx`: `ctx.ui.notify` presents short progress
+as toasts. RPC hosts that execute the `ctx.ui.custom` component factory (such as
+pi-web) present detailed results as dialogs; hosts where `custom` resolves without
+executing the factory receive the same details through a notification fallback.
+A context captured by `session_start` cannot be reused because pi-web can host
+multiple sessions in one process. The upgrade reminder passes
 `deliveryPersists=false` on Pi, so a missed toast does not honor the old explicit-
 dismissal stamp. Both harnesses persist the 24-hour reminder cooldown and three-
 delivery cap, preventing repeated startup toasts while `/ctx-status` still reports
@@ -155,6 +168,13 @@ shared resolver's log-only dubious-ownership warning while still using the same
   **stdin** (Pi concatenates stdin + positional) to avoid Linux `MAX_ARG_STRLEN`
   / E2BIG; the positional is omitted when piping.
 - `--no-session` keeps subagent JSONL out of the user's session picker.
+- In pi-web, multiple sessions can share one process. Startup maintenance runs
+  once per process, while each session wires its own hooks. Dreamer registration
+  is process-shared and tracks sibling ownership, so one session's shutdown cannot
+  deregister another session's project timer.
+- `session_shutdown` drains only that session's in-flight historian and recomp work
+  and only the shutting-down extension instance's Dreamer work. Child-session
+  lifecycle listeners are detached only for that extension instance.
 
 ---
 
@@ -232,12 +252,13 @@ the harness I/O differs:
   as a user turn. The shared `channel2_nudge_state` lease
   (pending→claimed→delivered, TTL-scoped stale-claim heal, revert only on send
   failure) is used identically for the one-ceiling-per-lifetime cap; only the
-  delivery call differs. Both
-  deliver MID-TURN at step boundaries (the point
-  of the channel: warn while the pile grows): OpenCode from `message.updated`
-  (finish=tool-calls OR stop, queued message drains at the next run-loop step);
-  Pi primarily from `tool_result` with deliverAs "steer" (queued, pulled at the
-  next step), with `agent_end` + "followUp" as the idle fallback.
+  delivery call differs. Delivery timing follows each host's safe queue surface:
+  OpenCode emits from `message.updated` (finish=tool-calls OR stop), and its
+  synthetic queued message drains at the next run-loop step. Pi calls the same
+  token-bound delivery helper from `tool_result`, with clean-stop `agent_end` as
+  the fallback, but always uses `deliverAs: "nextTurn"`. That queue joins the next
+  real user turn instead of steering the active turn or starting an autonomous
+  follow-up that could race an external prompt.
 
 - **Removed in this redesign (both harnesses):** the rolling/iteration nudge
   (`nudger`/`injectPiNudge`/`nudge-injector.ts`) and the tool-heavy sticky reminder
@@ -246,6 +267,24 @@ the harness I/O differs:
   / `toolUsageSinceUserTurn` tracking backed only the deleted sticky reminder.
   Note-nudges and auto-search hints are UNCHANGED (still append to user messages
   via `appendReminderToUserMessageByIdPi`).
+
+---
+
+## 9a. Safe context limits reserve output tokens through one shared rule
+
+**OpenCode:** model metadata supplies `limit.context`, `limit.input`, and
+`limit.output`. A smaller `input` is already pre-carved; otherwise the shared
+resolver subtracts output capacity (capped at 25% of context), except for the
+proven separate-quota Google family.
+
+**Pi:** the raw context comes from `ctx.getContextUsage().contextWindow` or
+`ctx.model.contextWindow`, and output capacity comes from `ctx.model.maxTokens`.
+Pi sends both through the same `resolveLimit` rule (including
+`google-antigravity` and user `output_reserve` handling) before pressure,
+history budgets, status displays, or Rust wire input uses the value. In both
+harnesses an overflow-detected limit narrows the raw combined window before
+output reservation, preventing a detected wire truth from being compared with
+an already-reserved budget.
 
 ---
 
@@ -267,9 +306,11 @@ to compensate for Pi's estimate-token undercount. It does **not** mutate the rea
 context limit, and it passes the raw forward token count onward so emergency drop
 planning still sees the current assembled size. The floor is monotonic: it never
 lowers the persisted pressure, and missing/null forward usage preserves the old
-behavior. Earlier Channel 1/2 ctx_reduce nudges can result because their
-usable/reclaimable math consumes the same corrected input-token reading; those
-nudges are persisted/replayed like the rest of Pi's sticky context hints.
+behavior. This forward-pressure floor affects scheduler and historian decisions only.
+Channel 1/2 `ctx_reduce` nudges instead consume the persisted final-tail `{U,T}`
+hygiene baseline, excluding reasoning from both terms, so live pressure cannot
+silently escalate their severity. Those nudges remain persisted/replayed like
+the rest of Pi's sticky context hints.
 
 Emergency drops remain cache-stable: repeated force passes on the same provider
 usage sample are latched by `last_emergency_input_sample`, fresh same-turn
@@ -297,11 +338,13 @@ outside Pi's extension API.
 
 ---
 
-## 10. Cleared reasoning: Pi EMPTIES (drops signature); OpenCode writes `[cleared]`→sentinel, gated
+## 10. Cleared reasoning: historical-cleared / newest-native
 
 When Magic Context clears an aged reasoning/thinking block, the two harnesses use
 DIFFERENT mechanisms because their serializers differ. The divergence is
-deliberate and source-justified.
+deliberate and source-justified. Both preserve the same scope invariant: historical
+reasoning selected for clearing is removed from provider wire, while the newest
+provider-visible assistant keeps its native reasoning bytes and position.
 
 - **OpenCode** (`clearOldReasoning` + `stripClearedReasoning`, `strip-content.ts`):
   rewrites the thinking text to `[cleared]`, then — **only for canonical Anthropic**
@@ -310,7 +353,11 @@ deliberate and source-justified.
   (signature gone). For NON-canonical providers OpenCode now **gates the clear OFF
   entirely** (reasoning left intact), because OpenCode's non-Anthropic adapters
   forward empty parts and would otherwise leave a literal `[cleared]` (or a stale
-  signature) on the wire. (#162 D2.)
+  signature) on the wire. In Rust-native replay, a changed historical assistant
+  likewise drops its native reasoning carriers while retaining every other native
+  part and its text/tool order; only the newest provider-visible assistant may replay
+  the complete native vector with thinking byte-identical at its native position.
+  (#162 D2.)
 
 - **Pi** (`reasoning-replay-pi.ts`): EMPTIES the thinking text (`thinking = ""`)
   and **drops the now-stale `thinkingSignature`**, with NO per-provider gate —
@@ -358,7 +405,8 @@ mechanism differs because the process models differ:
   inline `await` froze all input. Pi instead spawns the recomp via
   `spawnPiRecompRun` (mirroring `spawnPiHistorianRun`): the handler returns
   immediately after the ack message, the run is tracked in an in-flight map for
-  `session_shutdown` drain, and progress surfaces through `[ctx-status]`
+  `session_shutdown` drain (keyed by session id so one session does not drain
+  another), and progress surfaces through `[ctx-status]`
   messages + the `recomp` status-line flag.
 
 Because Pi's recomp runs in the background (not inside the user's turn), its
@@ -793,12 +841,13 @@ turn. The drain loop, durable `wrapup_in_progress` marker, sequential historian
 runs, and deferred compaction semantics are shared in intent; only the progress
 surface differs.
 
-The supported and installed Pi floor is `@earendil-works/pi-coding-agent` 0.80.2.
-That version exposes `appendEntry` but not `registerEntryRenderer`, so status entries
-are persisted and session-logged but invisible in its TUI. Statuses never fall back
-to `sendMessage`, because that would leak progress text into model context. Newer
-runtimes render the same entries through the optional renderer. The intentionally
-model-visible Channel-2 ceiling nudge remains on `sendMessage`.
+The supported Pi floor is `@earendil-works/pi-coding-agent` 0.80.2, while the
+workspace test dependency is pinned to 0.83.0. The floor exposes `appendEntry` but
+not `registerEntryRenderer`, so status entries are persisted and session-logged but
+invisible in its TUI. Statuses never fall back to `sendMessage`, because that would
+leak progress text into model context. Newer runtimes render the same entries
+through the optional renderer. The intentionally model-visible Channel-2 ceiling
+nudge remains on `sendMessage` and uses the `nextTurn` queue supported at the floor.
 
 ---
 
@@ -838,11 +887,110 @@ lookup. Pi does not warm that cache (see §14); when metadata is absent the gate
 never injects the mural image until vision metadata is available; OpenCode warms
 the cache from its SDK at startup.
 
-**Config:** both honor `experimental.mural.enabled` (and `experimental.mural.model`
+**Config:** both honor `mural.enabled` (and `mural.model`
 for the compress-cues dreamer task). No intentional per-provider image-part
 blacklist today — every Pi serializer path that accepts user image content takes
 raw base64 the same way.
 
+## 27. Compaction-off mode: additive Pi transform and native Pi compaction
+
+Both harnesses keep m[0]/m[1] memory, docs, user-profile, raw-message indexing,
+search, notes, and dreamer live when `compaction.enabled=false`; both disable
+historian work, history rendering/trimming, tag writes, drops, strips, caveman
+replay, synthetic todowrite injection, nudge delivery, emergency recovery, and
+MC marker work. Pi makes that reduced path in `context-handler.ts` before its
+transcript/tag pipeline, so it writes zero new Pi tag rows and returns only the
+m[0]/m[1] additive injection.
+
+Pi's native compact hook is the host-specific part: normal mode returns
+`{ cancel: true }` because Magic Context owns the compacted view; compaction-off
+returns nothing, allowing Pi's threshold and overflow compaction to proceed.
+Pi has no OpenCode marker rows. Its MC-owned equivalent is the durable
+`pending_pi_compaction_marker_state` JSONL-drain payload plus the in-process
+deferred history/materialization signals. The off transition clears both, along
+with pending operations, the emergency latch, pending/claimed Channel-2 intent,
+and cached m[0]/m[1] bytes. The on transition invalidates the same baseline and
+signals historian catch-up when a historian is configured. This is full parity,
+not an intentional divergence; only the host marker representation differs.
+
+Pi's todowrite overlay/state capture remains registered in compaction-off mode:
+it is UI state and does not write to the model wire. The synthetic todowrite
+context pair that would consume that captured state is gated off.
+
+---
+
+## 28. Supersede deltas force-render eligible replacements omitted from m[0]
+
+Both harnesses render a `<superseded>` pointer only when its eligible replacement
+is also visible in m[1]. If the replacement predates the m[0] max-id marker but
+was omitted from m[0]'s rendered subset, the delta force-renders its full memory
+content under `<new-memories>`. This prevents a pointer to content the model has
+not received; ordinary new memories remain budget-trimmed and the forced subset
+is capped at ten entries in both harnesses.
+
+---
+
+## 29. Idle TTL boundary is strict in both harnesses
+
+Both OpenCode and Pi treat `elapsed == cache_ttl` as a defer pass. The hard-fold
+predicate is strict `elapsed > ttl`, so the exact boundary does not pay for a
+provider-cache rebuild. Pi keeps the same comparator and parity rationale in
+`context-handler.ts`.
+
+---
+
+## 30. Pending-operation reads are cache-stable on Pi defer passes
+
+OpenCode reads pending operations only on an execute, explicit materialization,
+force-materialization, known hard-fold, or in-flight-compartment pass. Pi now
+uses the same gate: ordinary defer passes replay durable tag/drop state without
+reading new `pending_ops` rows. A later eligible pass reads and applies the queued
+operations normally, preserving replay bytes while avoiding an unnecessary SQL
+read on every defer pass.
+
+---
+
+## 31. System-prompt guidance uses one provider instruction envelope on both harnesses
+
+**OpenCode:** the host exposes `experimental.chat.system.transform` as a `string[]`,
+but OpenAI-compatible serializers turn every array entry into a separate wire
+message. Magic Context therefore appends its guidance inside `system[0]` with a
+blank-line separator instead of adding another array entry. This keeps strict Qwen
+and llama.cpp chat templates at one leading system message.
+
+**Pi:** `before_agent_start` exposes one `systemPrompt: string`, and Pi's direct-API
+serializers create one provider instruction from that string. Magic Context already
+composed the host prompt and guidance with the same blank-line separator, so Pi never
+had the second-system-entry defect and requires no provider-specific fix.
+
+Same effective behavior: host identity plus Magic Context guidance is one instruction
+envelope for direct OpenAI-compatible providers, including vLLM and llama.cpp.
+
+---
+
 ## Pending parity
 
 - Last-known-good transform capture and replay for OpenCode and rust-mode sessions is pending for Pi.
+
+## 32. HARD-fold preflight uses the exact wire state and executed-fold gates
+
+Pi builds one `piM0State` for both the early HARD-fold preflight and the later wire injection. The preflight used to omit `muralEnabled`, so every session with an existing `mural-enabled:1` baseline reported an advisory `render_config` fold while the real injection (which did receive `muralEnabled: true`) replayed the cache. On defer passes that false advisory opened pending-operation, heuristic, and reasoning-cleanup gates even though no fold materialized. The affected population was **Pi sessions with the opt-in mural enabled and an already-materialized m[0] baseline**; it was not every v0.37.0 Pi session and was not caused by window-geometry budget derivation.
+
+The copied production row for session `019de471-4fdc-762d-9286-624dfad0b5fe` reproduced the discrepancy offline: the exact state (`openai-codex/gpt-5.6-sol`, mural enabled, `m15000-h27540`) returned `cache_hit`, while the old preflight shape returned `render_config` with `muralEnabled: true -> false`. `renderBudgetIdentityPi` was equal on both sides. Its compare and fold-write paths both call the same helper with the same state, so the `m15000-h27540` marker is self-consistent and cannot alternate between passes. No data migration is needed: the existing cached marker is already correct, and the next natural pass uses the exact state and exits the loop.
+
+Both harness twins now pre-execute a due fold off-wire and feed the shared `foldExecutesThisPass(foldDue, materialized)` predicate into the BUST clause. A due-but-suppressed fold cannot authorize first-application mutations. OpenCode still drains into genuine HARD folds because its off-wire pre-execution materializes in-process; a byte-differential test compares its final injected parts with the prior one-shot fold shape. The Pi end-to-end test also checks three consecutive low-pressure requests at the serialized-prefix boundary with zero transform-decision bust rows; OpenCode's existing `cache-stability.test.ts` runs the equivalent five-turn serialized system/prefix invariant.
+
+### Model-key and model-indexed lookup audit
+
+| Site | Comparison / lookup discipline |
+|---|---|
+| Pi `readCurrentMarkersFromCompartments` and `readFrozenM0InputsPi` | Canonicalize the live Pi-native model before marker persistence. |
+| Pi `mustMaterializePi` | Canonicalizes both live `hard.modelKey` and stored `cachedM0ModelKey`; aliases match, genuinely different models fold once. |
+| Pi `cachedPiRowMatchesSnapshot` | Canonicalizes both cached-row and in-process snapshot keys before the soft-refresh CAS comparison. |
+| OpenCode `readCurrentM0SnapshotMarkersUncached` | Canonicalizes the marker written with m[0]. |
+| OpenCode `mustMaterialize` | Canonicalizes both the live hard signal and cached m[0] key. |
+| OpenCode `cachedRowMatchesState` | Canonicalizes both cached-row and in-process keys. |
+| `cache_ttl`, execute-threshold, prompt-surface model maps | Resolve through `modelRefLookupOrder`, whose first candidate is canonical and whose fallbacks include native aliases. Pi canonicalizes the message-end key before persisting the resolved scalar `cacheTtl`; per-pass TTL checks parse that scalar and perform no model-key comparison. |
+| `last_observed_model_key` | Write paths canonicalize it and OpenCode readers canonicalize both sides. Pi's pressure writer does not populate this OpenCode usage-attribution field, so an empty value on the incident session is expected; Pi HARD-fold identity comes from `liveModelBySession`, not this column. |
+
+Workspace fingerprints preserve the distinction between SQL `NULL` (not workspaced) and a non-empty hash. The compare normalizes only nullish values to `null`; it does not coerce `NULL` to `""`. A legacy zero-length fingerprint would therefore trigger one self-healing fold whose write stores the current `null`, not a per-pass loop.

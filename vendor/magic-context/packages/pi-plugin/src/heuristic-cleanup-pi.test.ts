@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { CTX_REDUCE_KEEP } from "@magic-context/core/features/magic-context/reclaim-protection";
 import {
 	getActiveTagsBySession,
 	getTagsBySession,
@@ -13,7 +14,10 @@ import {
 import type { TagTarget } from "@magic-context/core/hooks/magic-context/tag-messages";
 import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
 import { tagTranscript } from "@magic-context/core/shared/tag-transcript";
-import { applyPiHeuristicCleanup } from "./heuristic-cleanup-pi";
+import {
+	applyPiHeuristicCleanup,
+	PI_CTX_REDUCE_KEEP,
+} from "./heuristic-cleanup-pi";
 import {
 	assistantMessage,
 	createTestDb,
@@ -33,6 +37,27 @@ function tagMessages(
 	const transcript = createPiTranscript(messages, sessionId);
 	const tagged = tagTranscript(sessionId, transcript, tagger, db);
 	return { tagger, transcript, targets: tagged.targets };
+}
+
+function ctxReduceExchange(callId: string, timestamp: number): unknown[] {
+	return [
+		{
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: callId,
+					name: "ctx_reduce",
+					arguments: {},
+				},
+			],
+			timestamp,
+		},
+		{
+			...toolResultMessage(callId, `reduced ${callId}`, timestamp + 1),
+			toolName: "ctx_reduce",
+		},
+	];
 }
 
 describe("applyPiHeuristicCleanup", () => {
@@ -185,6 +210,59 @@ describe("applyPiHeuristicCleanup", () => {
 		}
 	});
 
+	it("protects the same newest three ctx_reduce arcs in Pi sentinel selection", () => {
+		const db = createTestDb();
+		try {
+			const sessionId = "ses-pi-ctx-reduce-exemplars";
+			const messages: unknown[] = [];
+			for (let n = 1; n <= 5; n++) {
+				messages.push(
+					userMessage(`request ${n}`, n * 3 - 2),
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "toolCall",
+								id: `reduce-${n}`,
+								name: "ctx_reduce",
+								arguments: {},
+							},
+						],
+						timestamp: n * 3 - 1,
+					},
+					{
+						...toolResultMessage(`reduce-${n}`, `reduced ${n}`, n * 3),
+						toolName: "ctx_reduce",
+					},
+				);
+			}
+			const { transcript, targets } = tagMessages(sessionId, db, messages);
+
+			const result = applyPiHeuristicCleanup(sessionId, db, targets, messages, {
+				protectedTags: 0,
+				staleReduceStripEnabled: true,
+			});
+			transcript.commit();
+
+			const reduceStatuses = getTagsBySession(db, sessionId)
+				.filter((tag) => tag.type === "tool" && tag.toolName === "ctx_reduce")
+				.sort((left, right) => left.tagNumber - right.tagNumber)
+				.map((tag) => [tag.messageId, tag.status]);
+			expect(result.droppedStaleReduceCalls).toBe(2);
+			expect(reduceStatuses).toEqual([
+				["reduce-1", "dropped"],
+				["reduce-2", "dropped"],
+				["reduce-3", "active"],
+				["reduce-4", "active"],
+				["reduce-5", "active"],
+			]);
+			expect(CTX_REDUCE_KEEP).toBe(3);
+			expect(PI_CTX_REDUCE_KEEP).toBe(CTX_REDUCE_KEEP);
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
 	it("persists full drops for stale ctx_reduce calls and paired tool results", () => {
 		const db = createTestDb();
 		try {
@@ -211,6 +289,9 @@ describe("applyPiHeuristicCleanup", () => {
 				userMessage("next request", 4),
 				assistantMessage("newer answer", 5),
 				userMessage("latest request", 6),
+				...ctxReduceExchange("reduce-2", 7),
+				...ctxReduceExchange("reduce-3", 9),
+				...ctxReduceExchange("reduce-4", 11),
 			];
 			const tagger = createTagger();
 			tagger.initFromDb(sessionId, db);
@@ -254,6 +335,9 @@ describe("applyPiHeuristicCleanup", () => {
 				userMessage("next request", 4),
 				assistantMessage("newer answer", 5),
 				userMessage("latest request", 6),
+				...ctxReduceExchange("reduce-2", 7),
+				...ctxReduceExchange("reduce-3", 9),
+				...ctxReduceExchange("reduce-4", 11),
 			];
 			const replayTranscript = createPiTranscript(replayMessages, sessionId);
 			const replay = tagTranscript(sessionId, replayTranscript, tagger, db);
@@ -327,14 +411,16 @@ describe("applyPiHeuristicCleanup", () => {
 					toolName: "ctx_reduce",
 				},
 				userMessage("latest", 11),
+				...ctxReduceExchange("reduce-2", 12),
+				...ctxReduceExchange("reduce-3", 14),
 			];
 			const tagger = createTagger();
 			tagger.initFromDb(sessionId, db);
 			const transcript = createPiTranscript(messages, sessionId);
 			const { targets } = tagTranscript(sessionId, transcript, tagger, db);
 
-			// protectedTags:3 makes only the OLD ctx_reduce tag fall outside the
-			// protected tail (the fresh one near the end stays protected).
+			// The fresh reused call and two newer calls are the three exemplars;
+			// the old owner-qualified arc with the same callId remains reclaimable.
 			const result = applyPiHeuristicCleanup(sessionId, db, targets, messages, {
 				protectedTags: 3,
 				staleReduceStripEnabled: true,

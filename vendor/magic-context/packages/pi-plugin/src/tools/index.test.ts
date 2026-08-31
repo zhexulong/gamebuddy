@@ -1,4 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import {
+	A1_HASH_BASELINE_HEADING,
+	A1_TOOL_SECTION_HEADING,
+	a1GoldenSectionOffset,
+	readA1GoldenDocument,
+} from "@magic-context/core/shared/prompt-surface-a1-golden";
+import {
+	createPromptSurfaceRuntime,
+	LIGHT_TOOL_DESCRIPTIONS,
+} from "@magic-context/core/shared/prompt-surface-runtime";
 import { closeQuietly } from "@magic-context/core/shared/sqlite-helpers";
 import { createTestDb } from "../test-utils.test";
 import { registerMagicContextTools } from "./index";
@@ -31,6 +41,31 @@ describe("registerMagicContextTools", () => {
 			expect(registered).not.toContain("ctx_expand");
 			expect(registered).toContain("todowrite");
 			expect(commands).not.toContain("todos");
+		} finally {
+			closeQuietly(db);
+		}
+	});
+
+	it("removes only ctx_reduce in compaction-off mode", () => {
+		const db = createTestDb();
+		try {
+			const registered: string[] = [];
+			const pi = {
+				registerTool: (tool: { name: string }) => registered.push(tool.name),
+				registerCommand: () => undefined,
+			} as never;
+			registerMagicContextTools(pi, { db, compactionOff: true });
+
+			expect(registered).not.toContain("ctx_reduce");
+			expect(registered).toEqual(
+				expect.arrayContaining([
+					"ctx_search",
+					"ctx_memory",
+					"ctx_note",
+					"ctx_expand",
+					"todowrite",
+				]),
+			);
 		} finally {
 			closeQuietly(db);
 		}
@@ -195,6 +230,166 @@ describe("registerMagicContextTools", () => {
 			expect(commands).not.toContain("todos");
 		} finally {
 			closeQuietly(db);
+		}
+	});
+});
+
+type RegisteredPromptTool = {
+	name: string;
+	description: string;
+	parameters: { properties?: Record<string, unknown> };
+};
+
+function readA1GoldenTools(): Record<
+	string,
+	{ description: string; parameters: Record<string, unknown> }
+> {
+	const document = readA1GoldenDocument();
+	const toolSection = document.slice(
+		a1GoldenSectionOffset(document, A1_TOOL_SECTION_HEADING),
+		a1GoldenSectionOffset(document, A1_HASH_BASELINE_HEADING),
+	);
+	const headings = [...toolSection.matchAll(/^### (ctx_[a-z_]+) —.*$/gm)];
+	return Object.fromEntries(
+		headings.map((heading, index) => {
+			const start = (heading.index ?? 0) + heading[0].length;
+			const end = headings[index + 1]?.index ?? toolSection.length;
+			const body = toolSection.slice(start, end);
+			const description = body.match(
+				/\*\*Description:\*\*\s+```\n([\s\S]*?)\n```/,
+			)?.[1];
+			const parameters = body.match(
+				/\*\*Parameters \(JSON Schema per parameter, as serialized to the provider\):\*\*\s+```json\n([\s\S]*?)\n```/,
+			)?.[1];
+			if (description === undefined || parameters === undefined) {
+				throw new Error(`Malformed A1 golden tool section: ${heading[1]}`);
+			}
+			return [
+				heading[1],
+				{
+					description,
+					parameters: JSON.parse(parameters) as Record<string, unknown>,
+				},
+			];
+		}),
+	);
+}
+
+function captureRegisteredTools(
+	options: Parameters<typeof registerMagicContextTools>[1],
+): Map<string, RegisteredPromptTool> {
+	const registered = new Map<string, RegisteredPromptTool>();
+	const pi = {
+		registerTool: (tool: RegisteredPromptTool) =>
+			registered.set(tool.name, tool),
+		registerCommand: () => undefined,
+	} as never;
+	registerMagicContextTools(pi, options);
+	return registered;
+}
+
+describe("registerMagicContextTools — prompt-surface registration", () => {
+	it("matches the A1 golden for no config and explicit full", () => {
+		const golden = readA1GoldenTools();
+		const implicitDb = createTestDb();
+		const explicitDb = createTestDb();
+		try {
+			const implicit = captureRegisteredTools({ db: implicitDb });
+			const explicit = captureRegisteredTools({
+				db: explicitDb,
+				promptSurface: { default: "full" },
+			});
+			const implicitIds = [...implicit.keys()].filter((id) =>
+				id.startsWith("ctx_"),
+			);
+			const explicitIds = [...explicit.keys()].filter((id) =>
+				id.startsWith("ctx_"),
+			);
+
+			expect(implicitIds.sort()).toEqual(Object.keys(golden).sort());
+			expect(explicitIds.sort()).toEqual(Object.keys(golden).sort());
+			for (const [toolId, expected] of Object.entries(golden)) {
+				expect(implicit.get(toolId)?.description).toBe(expected.description);
+				expect(explicit.get(toolId)?.description).toBe(expected.description);
+				expect(explicit.get(toolId)?.parameters).toEqual(
+					implicit.get(toolId)?.parameters,
+				);
+				// Pi uses TypeBox rather than OpenCode's Zod adapter, so its
+				// parameter object has host metadata. The A1 contract here is that
+				// IDs stay aligned and prompt-surface selection leaves those
+				// Pi-owned bytes unchanged.
+				expect(
+					Object.keys(implicit.get(toolId)?.parameters.properties ?? {}).sort(),
+				).toEqual(Object.keys(expected.parameters).sort());
+			}
+		} finally {
+			closeQuietly(implicitDb);
+			closeQuietly(explicitDb);
+		}
+	});
+
+	it("registers built-in light descriptions without changing parameter schemas", () => {
+		const fullDb = createTestDb();
+		const lightDb = createTestDb();
+		try {
+			const full = captureRegisteredTools({ db: fullDb });
+			const light = captureRegisteredTools({
+				db: lightDb,
+				promptSurface: { default: "light" },
+			});
+			for (const toolId of Object.keys(LIGHT_TOOL_DESCRIPTIONS)) {
+				expect(light.get(toolId)?.description).toBe(
+					LIGHT_TOOL_DESCRIPTIONS[
+						toolId as keyof typeof LIGHT_TOOL_DESCRIPTIONS
+					],
+				);
+				expect(light.get(toolId)?.parameters).toEqual(
+					full.get(toolId)?.parameters,
+				);
+			}
+		} finally {
+			closeQuietly(fullDb);
+			closeQuietly(lightDb);
+		}
+	});
+
+	it("applies top-level overrides once without changing parameter schemas", () => {
+		const baselineDb = createTestDb();
+		const overrideDb = createTestDb();
+		const warnings: string[] = [];
+		try {
+			const baseline = captureRegisteredTools({ db: baselineDb });
+			const runtime = createPromptSurfaceRuntime({
+				userConfigDirectory: process.cwd(),
+				warn: (warning) => warnings.push(warning),
+			});
+			const overridden = captureRegisteredTools({
+				db: overrideDb,
+				promptSurface: {
+					default: "full",
+					models: { "provider/model": "light" },
+					tool_descriptions: { ctx_search: "Pi custom search surface" },
+				},
+				promptSurfaceRuntime: runtime,
+			});
+
+			expect(overridden.get("ctx_search")?.description).toBe(
+				"Pi custom search surface",
+			);
+			expect(overridden.get("ctx_reduce")?.description).toBe(
+				baseline.get("ctx_reduce")?.description,
+			);
+			for (const toolId of [...baseline.keys()].filter((id) =>
+				id.startsWith("ctx_"),
+			)) {
+				expect(overridden.get(toolId)?.parameters).toEqual(
+					baseline.get(toolId)?.parameters,
+				);
+			}
+			expect(warnings).toEqual([]);
+		} finally {
+			closeQuietly(baselineDb);
+			closeQuietly(overrideDb);
 		}
 	});
 });

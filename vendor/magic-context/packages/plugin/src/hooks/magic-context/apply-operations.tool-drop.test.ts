@@ -150,6 +150,102 @@ describe("apply operations for tool drops", () => {
         expect(getTagById(db, "ses-1", toolTagId!)?.dropMode).toBe("truncated");
     });
 
+    it("defers a pending/running task part and keeps its long prompt byte-identical (#250 open arc)", () => {
+        useTempDataHome("context-tool-drop-pending-task-");
+        const db = openDatabase();
+        // Pre-seed a tool tag for the task call so the still-running part binds
+        // into a drop target (mirrors a tag adopted from an earlier pass). The
+        // part itself has NO result output yet — the child is still spawning.
+        insertTag(db, "ses-1", "call-task", "tool", 123, 7);
+        const tagger = createTagger();
+        tagger.initFromDb("ses-1", db);
+
+        const longPrompt = `Fix the auth bug and add coverage. ${"x".repeat(600)}`;
+        const taskPart = {
+            type: "tool",
+            tool: "task",
+            callID: "call-task",
+            state: {
+                status: "running",
+                input: { prompt: longPrompt, subagent_type: "mason" },
+            },
+        };
+        const pristine = JSON.stringify(taskPart);
+        const messages: MessageLike[] = [
+            {
+                info: { id: "m-task", role: "assistant", sessionID: "ses-1" },
+                parts: [taskPart],
+            },
+        ];
+
+        const { targets } = tagMessages("ses-1", messages, tagger, db);
+        queuePendingOp(db, "ses-1", 7, "drop");
+        const didMutate = applyPendingOperations("ses-1", db, targets);
+
+        // Open arc: the drop is deferred (not applied), the pending op stays
+        // queued, the tag stays active, and the LIVE task part is byte-identical
+        // — the child agent's prompt is never clamped mid-spawn.
+        expect(didMutate).toBe(false);
+        expect(JSON.stringify(taskPart)).toBe(pristine);
+        expect(taskPart.state.input.prompt).toBe(longPrompt);
+        expect(getPendingOps(db, "ses-1")).toHaveLength(1);
+        expect(getTagById(db, "ses-1", 7)?.status).toBe("active");
+    });
+
+    it("still clamps a completed task arc on the wire while preserving the live object (#250 mutation-safety)", () => {
+        useTempDataHome("context-tool-drop-completed-task-");
+        const db = openDatabase();
+        const tagger = createTagger();
+        const longPrompt = `Investigate and fix the regression. ${"y".repeat(600)}`;
+        const taskPart = {
+            type: "tool",
+            tool: "task",
+            callID: "call-bg",
+            state: {
+                status: "completed",
+                input: { prompt: longPrompt, subagent_type: "mason" },
+                output: '<task state="running">started</task>',
+            },
+        };
+        const messages: MessageLike[] = [
+            {
+                info: { id: "m-bg", role: "assistant", sessionID: "ses-1" },
+                parts: [taskPart],
+            },
+        ];
+
+        const { targets, batch } = tagMessages("ses-1", messages, tagger, db);
+        const toolTagId = tagger.getToolTag("ses-1", "call-bg", "m-bg");
+        expect(toolTagId).toBeDefined();
+
+        // Snapshot AFTER tagging (tagMessages legitimately prefixes the output
+        // with §N§). The reclaim pass below must not change the live object any
+        // further — this is the byte-identity we assert.
+        const pristine = JSON.stringify(taskPart);
+
+        // Within the skeleton window → truncate (skeleton) path, as before.
+        queuePendingOp(db, "ses-1", toolTagId!, "drop");
+        const didMutate = applyPendingOperations("ses-1", db, targets);
+        batch.finalize();
+
+        // No reclaim regression: the completed arc still clamps.
+        expect(didMutate).toBe(true);
+        expect(getTagById(db, "ses-1", toolTagId!)?.dropMode).toBe("truncated");
+
+        // The wire copy now in the array is clamped + sentinelled...
+        const wire = messages[0]?.parts[0] as {
+            state: { input: Record<string, unknown>; output: string };
+        };
+        expect(wire).not.toBe(taskPart);
+        expect(wire.state.output).toBe(`[dropped \u00a7${toolTagId}\u00a7]`);
+        expect(wire.state.input.prompt).toBe("Inves...[truncated]");
+
+        // ...but the LIVE object OpenCode still holds is byte-identical (the long
+        // prompt is intact), so a background child spawning from it is unharmed.
+        expect(JSON.stringify(taskPart)).toBe(pristine);
+        expect(taskPart.state.input.prompt).toBe(longPrompt);
+    });
+
     it("edit_marker: preserves filePath + region hint, freezes mode, replays byte-identically", () => {
         useTempDataHome("context-edit-marker-");
         const db = openDatabase();

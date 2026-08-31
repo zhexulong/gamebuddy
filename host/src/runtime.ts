@@ -56,8 +56,8 @@ import {
 import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 
 export const RUNTIME_PACKAGE_VERSIONS = Object.freeze({
-  pi: "0.84.1",
-  magicContext: "0.33.0-gamebuddy.2",
+  pi: "0.84.4",
+  magicContext: "0.41.0-gamebuddy.1",
 });
 
 /** The selected fork domain; activation gates remain independently fail-closed. */

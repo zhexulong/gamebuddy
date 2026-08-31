@@ -1,10 +1,17 @@
 import type { Database, Statement as PreparedStatement } from "../../../shared/sqlite";
+import type { DreamTaskRunBacklog } from "./task-registry";
 
 export interface DreamRunTaskSummary {
     name: string;
     durationMs: number;
     resultChars: number;
+    /** Failure detail only. Missing means no failure was recorded; an empty
+     * string is treated as absent and is not persisted. */
     error?: string;
+    /** Successful progress/detail. Missing means no progress was reported; an
+     * empty string is treated as absent and is not persisted. */
+    progress?: string;
+    backlog?: DreamTaskRunBacklog;
 }
 
 export interface DreamRunMemoryChanges {

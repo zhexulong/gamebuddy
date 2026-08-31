@@ -22,6 +22,7 @@ import {
     resolveWrapupProtectedTailBoundary,
 } from "./protected-tail-boundary";
 import { readSessionChunk, setRawMessageProvider } from "./read-session-chunk";
+import type { RawMessage } from "./read-session-raw";
 
 function createDb(): Database {
     const db = new Database(":memory:");
@@ -30,7 +31,7 @@ function createDb(): Database {
     return db;
 }
 
-function rawMessages(count: number) {
+function rawMessages(count: number): RawMessage[] {
     return Array.from({ length: count }, (_, index) => ({
         ordinal: index + 1,
         id: `m-${index + 1}`,
@@ -41,7 +42,7 @@ function rawMessages(count: number) {
 
 function withProviderMessages<T>(
     sessionId: string,
-    messages: ReturnType<typeof rawMessages>,
+    messages: RawMessage[],
     fn: () => Promise<T>,
 ): Promise<T> {
     const unregister = setRawMessageProvider(sessionId, {
@@ -55,7 +56,7 @@ function withProvider<T>(sessionId: string, count: number, fn: () => Promise<T>)
     return withProviderMessages(sessionId, rawMessages(count), fn);
 }
 
-function alternatingMessages(count: number) {
+function alternatingMessages(count: number): RawMessage[] {
     const text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
     return Array.from({ length: count }, (_, index) => ({
         ordinal: index + 1,
@@ -63,6 +64,55 @@ function alternatingMessages(count: number) {
         role: index % 2 === 0 ? "user" : "assistant",
         parts: [{ type: "text", text: `message ${index + 1} ${text} ${text} ${text}` }],
     }));
+}
+
+function completedArcMessages(): RawMessage[] {
+    return [
+        {
+            ordinal: 1,
+            id: "m-1",
+            role: "user",
+            parts: [{ type: "text", text: "Inspect the failing flow." }],
+        },
+        {
+            ordinal: 2,
+            id: "m-2",
+            role: "assistant",
+            parts: [
+                {
+                    type: "tool",
+                    tool: "read",
+                    callID: "wrapup-call",
+                    state: { input: { path: "src/flow.ts" } },
+                },
+            ],
+        },
+        {
+            ordinal: 3,
+            id: "m-3",
+            role: "user",
+            parts: [
+                {
+                    type: "tool",
+                    tool: "read",
+                    callID: "wrapup-call",
+                    state: { output: "flow contents" },
+                },
+            ],
+        },
+        {
+            ordinal: 4,
+            id: "m-4",
+            role: "assistant",
+            parts: [{ type: "text", text: "Applied the fix." }],
+        },
+        {
+            ordinal: 5,
+            id: "m-5",
+            role: "user",
+            parts: [{ type: "text", text: "Keep this live tail." }],
+        },
+    ];
 }
 
 function historianXml(): string {
@@ -248,6 +298,40 @@ describe("runCompartmentAgent wrapup controls", () => {
             expect(getCompartments(db, sessionId)).toHaveLength(1);
             expect(getCompartments(db, sessionId)[0]?.endMessage).toBe(2);
             expect(getMemoriesByProject(db, project)).toHaveLength(0);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    it("does not let wrapup discard-last reopen a completed invocation/result arc", async () => {
+        const db = createDb();
+        const sessionId = "ses-wrapup-discard-arc";
+        try {
+            await withProviderMessages(sessionId, completedArcMessages(), async () => {
+                const snapshot = {
+                    ...wrapupSnapshot(db, sessionId),
+                    protectedTailStart: 5,
+                    protectedTailStartMessageId: "m-5",
+                    eligibleEndOrdinal: 5,
+                    eligibleEndMessageId: "m-4",
+                    rawRangeFingerprint: "",
+                    trueRawEligibleTokens: 1_000,
+                };
+                const chunk = readSessionChunk(sessionId, 10_000, 1, 5);
+                expect(chunk.completedToolArcs).toEqual([{ start: 2, end: 3 }]);
+
+                await runWithLease({
+                    db,
+                    sessionId,
+                    snapshot,
+                    forceDrainQuota: true,
+                    output: twoCompartmentHistorianXml(),
+                });
+            });
+
+            expect(
+                getCompartments(db, sessionId).map((compartment) => compartment.endMessage),
+            ).toEqual([2, 4]);
         } finally {
             closeQuietly(db);
         }

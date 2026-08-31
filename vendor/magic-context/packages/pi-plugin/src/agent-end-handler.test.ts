@@ -107,15 +107,42 @@ describe("session_shutdown handler (drain location)", () => {
 	const body = extractSessionShutdownHandlerBody(INDEX_SRC);
 
 	test("drains in-flight historians through withTimeout", () => {
-		expect(body).toContain("awaitInFlightHistorians");
-		expect(body).toContain(
-			"withTimeout(awaitInFlightHistorians(), SHUTDOWN_DRAIN_MS)",
+		expect(body).toMatch(
+			/withTimeout\(\s*awaitInFlightHistorians\(sessionId\),\s*SHUTDOWN_DRAIN_MS,?\s*\)/,
 		);
 		expect(body).not.toContain("Promise.race");
 	});
 
-	test("drains in-flight dreamers (Promise.race with timeout)", () => {
-		expect(body).toContain("awaitInFlightDreamers");
+	test("drains the shutting-down session's recomp through withTimeout", () => {
+		expect(body).toMatch(
+			/withTimeout\(\s*awaitInFlightRecomps\(sessionId\),\s*SHUTDOWN_DRAIN_MS,?\s*\)/,
+		);
+	});
+
+	test("aborts a recomp that outlives the graceful drain before shutdown returns", () => {
+		const drainAt = body.indexOf("awaitInFlightRecomps(sessionId)");
+		const abortAt = body.indexOf("abortInFlightRecomps(sessionId)");
+		expect(abortAt).toBeGreaterThan(drainAt);
+	});
+
+	test("drains the current extension owner's dreamers through withTimeout", () => {
+		expect(body).toMatch(
+			/withTimeout\(\s*awaitInFlightDreamers\(dreamerRegistrationOwner\),\s*SHUTDOWN_DRAIN_MS,?\s*\)/,
+		);
+	});
+
+	test("stops Dreamer registration before draining its work", () => {
+		const shutdownAt = body.indexOf("sessionShuttingDown = true");
+		const unregisterAt = body.indexOf("unregisterPiDreamerProject");
+		const drainAt = body.indexOf("awaitInFlightDreamers");
+		expect(shutdownAt).toBeGreaterThanOrEqual(0);
+		expect(unregisterAt).toBeGreaterThanOrEqual(0);
+		expect(drainAt).toBeGreaterThanOrEqual(0);
+		expect(shutdownAt).toBeLessThan(unregisterAt);
+		expect(unregisterAt).toBeLessThan(drainAt);
+		expect(INDEX_SRC).toMatch(
+			/function syncDreamerProjectRegistration[\s\S]*?if \(sessionShuttingDown\) return;/,
+		);
 	});
 
 	test("drain timeout uses unref/clear helper", () => {

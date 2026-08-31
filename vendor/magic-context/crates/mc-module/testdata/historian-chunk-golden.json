@@ -1,0 +1,1435 @@
+{
+  "generatedBy": "gen-historian-chunk-golden.ts",
+  "cases": [
+    {
+      "label": "noise-and-tool-absorb",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 6,
+      "exercises": [
+        "noise_absorb",
+        "tc_merge"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "u1",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "<system-reminder>ignore</system-reminder>"
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "a2",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "I will inspect"
+            }
+          ]
+        },
+        {
+          "ordinal": 3,
+          "id": "u3",
+          "role": "user",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "src/lib.rs"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ordinal": 4,
+          "id": "u4",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "continue"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "u1",
+          "ordinal": 1,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "<system-reminder>ignore</system-reminder>"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a2",
+          "ordinal": 2,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "I will inspect"
+                }
+              },
+              {
+                "kind": {
+                  "type": "tool_call",
+                  "id": "c1",
+                  "name": "read",
+                  "input": {
+                    "path": "src/lib.rs"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "t3",
+          "ordinal": 3,
+          "ck": {
+            "role": "tool",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_result",
+                  "id": "c1",
+                  "tool_name": "read",
+                  "output": {
+                    "kind": {
+                      "type": "text",
+                      "text": "ignored output"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "u4",
+          "ordinal": 4,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "continue"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 4,
+        "startMessageId": "u1",
+        "endMessageId": "u4",
+        "messageCount": 4,
+        "tokenEstimate": 27,
+        "hasMore": false,
+        "text": "[1-3] A: I will inspect / TC: read(src/lib.rs)\n[4] U: continue",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "u1"
+          },
+          {
+            "ordinal": 2,
+            "messageId": "a2"
+          },
+          {
+            "ordinal": 3,
+            "messageId": "u3"
+          },
+          {
+            "ordinal": 4,
+            "messageId": "u4"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": []
+      }
+    },
+    {
+      "label": "standalone-result-at-chunk-start",
+      "budget": 10000,
+      "offset": 2,
+      "eligibleEnd": 4,
+      "exercises": [
+        "standalone_result"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "a1",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "src/lib.rs"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "u2",
+          "role": "user",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "src/lib.rs"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ordinal": 3,
+          "id": "u3",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "after"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "a1",
+          "ordinal": 1,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_call",
+                  "id": "c1",
+                  "name": "read",
+                  "input": {
+                    "path": "src/lib.rs"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "t2",
+          "ordinal": 2,
+          "ck": {
+            "role": "tool",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_result",
+                  "id": "c1",
+                  "tool_name": "read",
+                  "output": {
+                    "kind": {
+                      "type": "text",
+                      "text": "ignored output"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "u3",
+          "ordinal": 3,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "after"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 2,
+        "endIndex": 3,
+        "startMessageId": "u2",
+        "endMessageId": "u3",
+        "messageCount": 2,
+        "tokenEstimate": 21,
+        "hasMore": false,
+        "text": "[2] A: TC: read(src/lib.rs)\n[3] U: after",
+        "lines": [
+          {
+            "ordinal": 2,
+            "messageId": "u2"
+          },
+          {
+            "ordinal": 3,
+            "messageId": "u3"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": [
+          {
+            "start": 2,
+            "end": 2
+          }
+        ]
+      }
+    },
+    {
+      "label": "budget-stop",
+      "budget": 6,
+      "offset": 1,
+      "eligibleEnd": 7,
+      "exercises": [
+        "budget_stop"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "u1",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "short"
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "a2",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "first assistant block"
+            }
+          ]
+        },
+        {
+          "ordinal": 3,
+          "id": "u3",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "this should remain unread because the budget stops before it"
+            }
+          ]
+        },
+        {
+          "ordinal": 4,
+          "id": "a4",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "tail"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "u1",
+          "ordinal": 1,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "short"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a2",
+          "ordinal": 2,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "first assistant block"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "u3",
+          "ordinal": 3,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "this should remain unread because the budget stops before it"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a4",
+          "ordinal": 4,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "tail"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 1,
+        "startMessageId": "u1",
+        "endMessageId": "u1",
+        "messageCount": 1,
+        "tokenEstimate": 6,
+        "hasMore": true,
+        "text": "[1] U: short",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "u1"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": []
+      }
+    },
+    {
+      "label": "tool-only-range-merge",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 5,
+      "exercises": [
+        "tool_only_merge"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "a1",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "one"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "a2",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "two"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ordinal": 3,
+          "id": "u3",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "narrative"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "a1",
+          "ordinal": 1,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_call",
+                  "id": "c1",
+                  "name": "read",
+                  "input": {
+                    "path": "one"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a2",
+          "ordinal": 2,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_call",
+                  "id": "c2",
+                  "name": "read",
+                  "input": {
+                    "path": "two"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "u3",
+          "ordinal": 3,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "narrative"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 3,
+        "startMessageId": "a1",
+        "endMessageId": "u3",
+        "messageCount": 3,
+        "tokenEstimate": 26,
+        "hasMore": false,
+        "text": "[1-2] A: TC: read(one) / TC: read(two)\n[3] U: narrative",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "a1"
+          },
+          {
+            "ordinal": 2,
+            "messageId": "a2"
+          },
+          {
+            "ordinal": 3,
+            "messageId": "u3"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": [
+          {
+            "start": 1,
+            "end": 2
+          }
+        ]
+      }
+    },
+    {
+      "label": "commit-cluster",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 6,
+      "exercises": [
+        "commit_cluster"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "u1",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "go"
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "a2",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "committed abcdef1 with fix"
+            }
+          ]
+        },
+        {
+          "ordinal": 3,
+          "id": "u3",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "again"
+            }
+          ]
+        },
+        {
+          "ordinal": 4,
+          "id": "a4",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "commit abcdef2 with more"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "u1",
+          "ordinal": 1,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "go"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a2",
+          "ordinal": 2,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "committed abcdef1 with fix"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "u3",
+          "ordinal": 3,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "again"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a4",
+          "ordinal": 4,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "commit abcdef2 with more"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 4,
+        "startMessageId": "u1",
+        "endMessageId": "a4",
+        "messageCount": 4,
+        "tokenEstimate": 38,
+        "hasMore": false,
+        "text": "[1] U: go\n[2] A: commits: abcdef1 committed with fix\n[3] U: again\n[4] A: commits: abcdef2 commit with more",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "u1"
+          },
+          {
+            "ordinal": 2,
+            "messageId": "a2"
+          },
+          {
+            "ordinal": 3,
+            "messageId": "u3"
+          },
+          {
+            "ordinal": 4,
+            "messageId": "a4"
+          }
+        ],
+        "commitClusterCount": 2,
+        "toolOnlyRanges": []
+      }
+    },
+    {
+      "label": "system-role-skip",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 4,
+      "exercises": [
+        "system_skip"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "u1",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "hello"
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "sys2",
+          "role": "user",
+          "parts": []
+        },
+        {
+          "ordinal": 3,
+          "id": "a3",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "done"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "u1",
+          "ordinal": 1,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "hello"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "sys2",
+          "ordinal": 2,
+          "ck": {
+            "role": "system",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "identity"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a3",
+          "ordinal": 3,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "done"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 3,
+        "startMessageId": "u1",
+        "endMessageId": "a3",
+        "messageCount": 3,
+        "tokenEstimate": 14,
+        "hasMore": false,
+        "text": "[1] U: hello\n[2-3] A: done",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "u1"
+          },
+          {
+            "ordinal": 2,
+            "messageId": "sys2"
+          },
+          {
+            "ordinal": 3,
+            "messageId": "a3"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": []
+      }
+    },
+    {
+      "label": "noise-absorb-next-block",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 4,
+      "exercises": [
+        "noise_absorb_next"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "u1",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "<!-- OMO_INTERNAL_INITIATOR -->"
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "u2",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "real user text"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "u1",
+          "ordinal": 1,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "<!-- OMO_INTERNAL_INITIATOR -->"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "u2",
+          "ordinal": 2,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "real user text"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 2,
+        "startMessageId": "u1",
+        "endMessageId": "u2",
+        "messageCount": 2,
+        "tokenEstimate": 10,
+        "hasMore": false,
+        "text": "[1-2] U: real user text",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "u1"
+          },
+          {
+            "ordinal": 2,
+            "messageId": "u2"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": []
+      }
+    },
+    {
+      "label": "zero-block-noise-absorb",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 4,
+      "exercises": [
+        "zero_block_noise"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "empty1",
+          "role": "user",
+          "parts": []
+        },
+        {
+          "ordinal": 2,
+          "id": "u2",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "real user text"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "empty1",
+          "ordinal": 1,
+          "ck": {
+            "role": "user",
+            "content": []
+          }
+        },
+        {
+          "mid": "u2",
+          "ordinal": 2,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "real user text"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 2,
+        "startMessageId": "empty1",
+        "endMessageId": "u2",
+        "messageCount": 2,
+        "tokenEstimate": 10,
+        "hasMore": false,
+        "text": "[1-2] U: real user text",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "empty1"
+          },
+          {
+            "ordinal": 2,
+            "messageId": "u2"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": []
+      }
+    },
+    {
+      "label": "duplicate-call-id-results-use-paired-arc",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 6,
+      "exercises": [
+        "duplicate_call_ids"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "a1",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "one.rs"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "u2",
+          "role": "user",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "one.rs"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ordinal": 3,
+          "id": "a3",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "two.rs"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ordinal": 4,
+          "id": "u4",
+          "role": "user",
+          "parts": [
+            {
+              "type": "tool",
+              "tool": "read",
+              "state": {
+                "input": {
+                  "path": "two.rs"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "a1",
+          "ordinal": 1,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_call",
+                  "id": "dup",
+                  "name": "read",
+                  "input": {
+                    "path": "one.rs"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "t2",
+          "ordinal": 2,
+          "ck": {
+            "role": "tool",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_result",
+                  "id": "dup",
+                  "tool_name": "read",
+                  "output": {
+                    "kind": {
+                      "type": "text",
+                      "text": "ignored output"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a3",
+          "ordinal": 3,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_call",
+                  "id": "dup",
+                  "name": "read",
+                  "input": {
+                    "path": "two.rs"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "t4",
+          "ordinal": 4,
+          "ck": {
+            "role": "tool",
+            "content": [
+              {
+                "kind": {
+                  "type": "tool_result",
+                  "id": "dup",
+                  "tool_name": "read",
+                  "output": {
+                    "kind": {
+                      "type": "text",
+                      "text": "ignored output"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 4,
+        "startMessageId": "a1",
+        "endMessageId": "u4",
+        "messageCount": 4,
+        "tokenEstimate": 42,
+        "hasMore": false,
+        "text": "[1-4] A: TC: read(one.rs) / TC: read(one.rs) / TC: read(two.rs) / TC: read(two.rs)",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "a1"
+          },
+          {
+            "ordinal": 2,
+            "messageId": "u2"
+          },
+          {
+            "ordinal": 3,
+            "messageId": "a3"
+          },
+          {
+            "ordinal": 4,
+            "messageId": "u4"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": [
+          {
+            "start": 1,
+            "end": 4
+          }
+        ]
+      }
+    },
+    {
+      "label": "max-commits-per-block-cap",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 3,
+      "exercises": [
+        "commit_cap"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "a1",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "committed 1111111 2222222 3333333 4444444 5555555 6666666 with cap"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "a1",
+          "ordinal": 1,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "committed 1111111 2222222 3333333 4444444 5555555 6666666 with cap"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 1,
+        "startMessageId": "a1",
+        "endMessageId": "a1",
+        "messageCount": 1,
+        "tokenEstimate": 28,
+        "hasMore": false,
+        "text": "[1] A: commits: 1111111, 2222222, 3333333, 4444444, 5555555 committed with cap",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "a1"
+          }
+        ],
+        "commitClusterCount": 1,
+        "toolOnlyRanges": []
+      }
+    },
+    {
+      "label": "commit-strip-cleanup-chain",
+      "budget": 10000,
+      "offset": 1,
+      "eligibleEnd": 3,
+      "exercises": [
+        "commit_cleanup"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "a1",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "committed (abcdef1) , , cleanup"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "a1",
+          "ordinal": 1,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "committed (abcdef1) , , cleanup"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 1,
+        "startMessageId": "a1",
+        "endMessageId": "a1",
+        "messageCount": 1,
+        "tokenEstimate": 13,
+        "hasMore": false,
+        "text": "[1] A: commits: abcdef1 committed, cleanup",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "a1"
+          }
+        ],
+        "commitClusterCount": 1,
+        "toolOnlyRanges": []
+      }
+    },
+    {
+      "label": "pending-noise-budget-stop",
+      "budget": 6,
+      "offset": 1,
+      "eligibleEnd": 5,
+      "exercises": [
+        "pending_noise_budget_stop"
+      ],
+      "ts": [
+        {
+          "ordinal": 1,
+          "id": "u1",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "short"
+            }
+          ]
+        },
+        {
+          "ordinal": 2,
+          "id": "noise2",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "<!-- OMO_INTERNAL_INITIATOR -->"
+            }
+          ]
+        },
+        {
+          "ordinal": 3,
+          "id": "a3",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "this assistant block is intentionally too long for the tiny chunk budget"
+            }
+          ]
+        }
+      ],
+      "ck": [
+        {
+          "mid": "u1",
+          "ordinal": 1,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "short"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "noise2",
+          "ordinal": 2,
+          "ck": {
+            "role": "user",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "<!-- OMO_INTERNAL_INITIATOR -->"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "mid": "a3",
+          "ordinal": 3,
+          "ck": {
+            "role": "assistant",
+            "content": [
+              {
+                "kind": {
+                  "type": "text",
+                  "text": "this assistant block is intentionally too long for the tiny chunk budget"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "startIndex": 1,
+        "endIndex": 1,
+        "startMessageId": "u1",
+        "endMessageId": "u1",
+        "messageCount": 1,
+        "tokenEstimate": 6,
+        "hasMore": true,
+        "text": "[1] U: short",
+        "lines": [
+          {
+            "ordinal": 1,
+            "messageId": "u1"
+          }
+        ],
+        "commitClusterCount": 0,
+        "toolOnlyRanges": []
+      }
+    }
+  ],
+  "truncationCases": [
+    {
+      "label": "truncation-marker-ascii-prefix",
+      "budget": 29,
+      "input": "historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line historian input line ",
+      "expected": "historian input line historian input line historian input line historian inp\n[… tokens truncated by Magic Context to fit the historian window …]"
+    }
+  ]
+}

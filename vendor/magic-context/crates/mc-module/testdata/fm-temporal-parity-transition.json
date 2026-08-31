@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "drill_id": "FM-TEMPORAL-PARITY-TRANSITION",
+  "cache_affecting": "historical temporal marker placement and immutable timestamp basis",
+  "red_first": {
+    "command": "cargo test -p mc-module temporal_gap_dump_golden_backfills_all_historical_markers_in_one_transition --lib -- --nocapture",
+    "exit_status": 101,
+    "output": "assertion left == right failed; left: SOFT+; right: HARD"
+  },
+  "mutations": [
+    {
+      "name": "IGNORE_PREVIOUS_MESSAGE_COMPLETION_TIME",
+      "fix": "TypeScript-compatible previous completed-or-created time basis",
+      "applied_diff": {
+        "path": "crates/mc-module/src/transform.rs",
+        "before": "previous_end = prior.ck.meta.completed_at_ms.unwrap_or(previous_created)",
+        "after": "previous_end = previous_created",
+        "changed": true
+      },
+      "command": "cargo test -p mc-module temporal_gap_dump_golden_backfills_all_historical_markers_in_one_transition --lib -- --nocapture",
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "temporal-user-2 rendered <!-- +13h 30m --> instead of <!-- +13h 29m -->"
+      }
+    }
+  ],
+  "reverted_rerun": {
+    "command": "cargo test -p mc-module temporal_gap_dump_golden_backfills_all_historical_markers_in_one_transition --lib -- --nocapture",
+    "exit_status": 0,
+    "status": "pass"
+  }
+}

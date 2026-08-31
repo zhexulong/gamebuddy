@@ -1,4 +1,6 @@
+import { CTX_REDUCE_KEEP } from "../../features/magic-context/reclaim-protection";
 import { type ContextDatabase, getActiveTagsBySession } from "../../features/magic-context/storage";
+import { getRecentTagOwnerMessageIds } from "../../features/magic-context/storage-tags";
 import type { PendingOp } from "../../features/magic-context/types";
 import { isEditTool } from "./edit-marker";
 import type { TagTarget } from "./tag-messages";
@@ -12,10 +14,25 @@ import type { TagTarget } from "./tag-messages";
 // Keep-counts are fixed constants (no config sub-knobs):
 //   - todowrite: keep newest 1 (the live plan is the synthetic todowrite we
 //     inject + protect every pass; real ones are older snapshots).
-//   - ctx_reduce: keep newest 5 (preserves the visible reduce rhythm).
+//   - ctx_reduce: keep the shared newest-K housekeeping exemplars.
 //   - zero-value meta: keep 0 (worthless once executed).
 const TODOWRITE_KEEP = 1;
-const CTX_REDUCE_KEEP = 5;
+
+/** Preserve tool entries owned by the newest 20 messages as continuation context. */
+export const SUPERSESSION_RECENT_MESSAGE_WINDOW = 20;
+
+/**
+ * Derive the continuation floor from persisted tag ordinals rather than the
+ * current provider projection. Marker advances can temporarily contract that
+ * projection, but persisted rows retain each owner's chronological position,
+ * so a missing owner cannot become reclaimable before it reappears.
+ */
+export function recentSupersessionOwnerMessageIds(
+    db: ContextDatabase,
+    sessionId: string,
+): Set<string> {
+    return getRecentTagOwnerMessageIds(db, sessionId, SUPERSESSION_RECENT_MESSAGE_WINDOW);
+}
 
 // Tools whose output is worthless once the call ran. ctx_note is handled
 // separately because only its read/dismiss actions are zero-value.
@@ -34,6 +51,7 @@ export function buildSupersessionReclaimOps(input: {
     sessionId: string;
     targets: Map<number, TagTarget>;
     pendingOps?: readonly PendingOp[];
+    recentMessageIds?: ReadonlySet<string>;
 }): PendingOp[] {
     const realPendingTagIds = new Set((input.pendingOps ?? []).map((op) => op.tagId));
     const tags = getActiveTagsBySession(input.db, input.sessionId);
@@ -65,7 +83,14 @@ export function buildSupersessionReclaimOps(input: {
             // Fail safe: only drop when we can positively read a zero-value action.
             isTarget = typeof action === "string" && CTX_NOTE_ZERO_VALUE_ACTIONS.has(action);
         }
-        if (isTarget) dropTagIds.push(tag.tagNumber);
+        if (
+            isTarget &&
+            (!input.recentMessageIds ||
+                (tag.toolOwnerMessageId !== null &&
+                    !input.recentMessageIds.has(tag.toolOwnerMessageId)))
+        ) {
+            dropTagIds.push(tag.tagNumber);
+        }
     }
 
     const synthetic: PendingOp[] = [];
@@ -98,6 +123,7 @@ export function buildEditSupersessionReclaim(input: {
     sessionId: string;
     targets: Map<number, TagTarget>;
     pendingOps?: readonly PendingOp[];
+    recentMessageIds?: ReadonlySet<string>;
 }): { ops: PendingOp[]; editMarkerTagIds: Set<number> } {
     const realPendingTagIds = new Set((input.pendingOps ?? []).map((op) => op.tagId));
     const tags = getActiveTagsBySession(input.db, input.sessionId);
@@ -120,7 +146,14 @@ export function buildEditSupersessionReclaim(input: {
             seenFile.add(filePath); // newest edit to this file stays full
             continue;
         }
-        // Older edit to an already-seen file → compress.
+        // Older edit to an already-seen file → compress, except within the
+        // owner-message recency floor where the call may still guide continuation.
+        if (
+            input.recentMessageIds &&
+            (tag.toolOwnerMessageId === null || input.recentMessageIds.has(tag.toolOwnerMessageId))
+        ) {
+            continue;
+        }
         if (realPendingTagIds.has(tag.tagNumber)) continue;
         if (input.targets.get(tag.tagNumber)?.canDrop?.() !== true) continue;
         editMarkerTagIds.add(tag.tagNumber);

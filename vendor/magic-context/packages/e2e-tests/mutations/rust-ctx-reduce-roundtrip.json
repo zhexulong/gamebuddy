@@ -1,0 +1,25 @@
+{
+  "drill": "RUST-CTX-REDUCE-ROUNDTRIP",
+  "command": "MC_E2E_MODE=rust bun test --timeout 600000 --max-concurrency=1 tests/rust-ctx-reduce-roundtrip.test.ts",
+  "mutations": [
+    {
+      "name": "CTX_REDUCE_UNKNOWN_TARGET",
+      "applied_diff": {
+        "path": "packages/e2e-tests/tests/rust-ctx-reduce-roundtrip.test.ts",
+        "before": "input: { drop: String(dropTag) },",
+        "after": "input: { drop: String(dropTag + 1_000_000) },",
+        "changed": true
+      },
+      "observed_failure": {
+        "exit_status": 1,
+        "output": "bun test v1.4.0 (34cbb9a40)\n\ntests/rust-ctx-reduce-roundtrip.test.ts:\n100 |             const queued = (await h.subc.moduleStatus(\n101 |                 sessionId,\n102 |                 h.env.workdir,\n103 |                 \"session.status\",\n104 |             )) as ModuleStatus;\n105 |             expect(queued.pending_drop_count ?? 0).toBeGreaterThan(0);\n                                                         ^\nerror: expect(received).toBeGreaterThan(expected)\n\nExpected: > 0\nReceived: 0\n\n      at <anonymous> (/Users/ufukaltinok/.local/share/cortexkit/alfonso/worktrees/8f93aad09f2535d0/bg_82f5e6af73bda586/packages/e2e-tests/tests/rust-ctx-reduce-roundtrip.test.ts:105:52)\n(fail) rust invariant: ctx_reduce round-trip > consumes an agent ctx_reduce drop on the next producer-backed bust [9091.39ms]\n\n 0 pass\n 1 fail\n 2 expect() calls\nRan 1 test across 1 file. [9.15s]\n"
+      },
+      "reverted_rerun": {
+        "exit_status": 0,
+        "output": "bun test v1.4.0 (34cbb9a40)\n\ntests/rust-ctx-reduce-roundtrip.test.ts:\n(pass) rust invariant: ctx_reduce round-trip > consumes an agent ctx_reduce drop on the next producer-backed bust [7624.46ms]\n\n 1 pass\n 0 fail\n 8 expect() calls\nRan 1 test across 1 file. [7.69s]\n",
+        "status": "pass"
+      },
+      "adequacy_finding": null
+    }
+  ]
+}

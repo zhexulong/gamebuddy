@@ -12,6 +12,10 @@ export interface RustNoteToolRequest {
     action: "write" | "read" | "update" | "dismiss";
     content?: string;
     surfaceCondition?: string;
+    compiledProvider?: string | null;
+    compiledConfig?: string | null;
+    compiledAt?: number | null;
+    compileStatus?: "compiled" | "plain" | "refused";
     filter?: "all" | "active" | "pending" | "ready" | "dismissed";
     limit?: number;
     offset?: number;

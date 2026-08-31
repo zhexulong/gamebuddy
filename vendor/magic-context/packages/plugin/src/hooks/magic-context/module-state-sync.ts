@@ -50,6 +50,7 @@ import { getHarness } from "../../shared/harness";
 import { sessionLog } from "../../shared/logger";
 import { isRecord } from "../../shared/record-type-guard";
 import { resolveTodowriteAvailability } from "./ctx-reduce-availability";
+import { isModuleTransportGenerationChangedResult } from "./module-transport";
 import { MODULE_PAGE_MAX_BYTES, moduleRawBlockMappings, moduleWireBodyBytes } from "./module-wire";
 import {
     readRawSessionMessageOrdinalById,
@@ -234,6 +235,12 @@ export interface ModuleCompartmentMirrorRow {
 export interface ModuleCompartmentMirrorResponse {
     max_sequence: number;
     compartments: ModuleCompartmentMirrorRow[];
+    /** Present on session.status; a count of 0 after a non-empty cursor is a set wipe. */
+    compartment_count?: number;
+    /** Incremented when the published set is rebuilt, recomputed, or restored. Those rewrites can replace existing rows without advancing max_sequence. */
+    revert_epoch?: number;
+    /** Optional flag that the published set was rewritten in place. Older responses omit it. */
+    set_changed?: boolean;
 }
 
 /**
@@ -249,38 +256,184 @@ export interface ModuleCompartmentReader {
     ): Promise<ModuleCompartmentMirrorResponse>;
 }
 
-export async function mirrorModuleCompartments(args: {
+interface CompartmentMirrorCursor {
+    lastMaxSequence: number;
+    lastCompartmentCount?: number;
+    lastRevertEpoch?: number;
+}
+
+const compartmentMirrorCursors = new Map<string, CompartmentMirrorCursor>();
+
+export function clearCompartmentMirrorCursor(sessionId: string): void {
+    compartmentMirrorCursors.delete(sessionId);
+}
+
+export function resetCompartmentMirrorCursorsForTest(): void {
+    compartmentMirrorCursors.clear();
+}
+
+function validateMirrorRow(
+    compartment: ModuleCompartmentMirrorRow,
+    afterSequence: number,
+    maxSequence: number,
+): void {
+    if (
+        !Number.isSafeInteger(compartment.sequence) ||
+        compartment.sequence <= afterSequence ||
+        compartment.sequence > maxSequence ||
+        !Number.isSafeInteger(compartment.start_message) ||
+        !Number.isSafeInteger(compartment.end_message) ||
+        typeof compartment.start_message_id !== "string" ||
+        typeof compartment.end_message_id !== "string" ||
+        typeof compartment.title !== "string" ||
+        typeof compartment.content !== "string"
+    ) {
+        throw new Error("module compartment mirror returned an invalid authoritative row");
+    }
+}
+
+function validateMirrorPage(
+    published: ModuleCompartmentMirrorResponse,
+    maxSequence: number | null,
+): void {
+    if (
+        !Number.isSafeInteger(published.max_sequence) ||
+        published.max_sequence < -1 ||
+        (maxSequence !== null && published.max_sequence !== maxSequence)
+    ) {
+        throw new Error("module compartment mirror changed while its authoritative set was read");
+    }
+}
+
+function compartmentMirrorSetChanged(
+    published: ModuleCompartmentMirrorResponse,
+    cursor: CompartmentMirrorCursor,
+): boolean {
+    if (published.set_changed === true) return true;
+    if (
+        published.revert_epoch !== undefined &&
+        cursor.lastRevertEpoch !== undefined &&
+        published.revert_epoch !== cursor.lastRevertEpoch
+    ) {
+        return true;
+    }
+    // session.status reports max_sequence = after_sequence when the table is empty,
+    // so a wipe is invisible to the sequence cursor. A zero count is the set change.
+    if (
+        published.compartment_count === 0 &&
+        cursor.lastMaxSequence >= 0 &&
+        published.compartments.length === 0
+    ) {
+        return true;
+    }
+    if (
+        published.compartment_count !== undefined &&
+        published.compartments.length === 0 &&
+        published.max_sequence === cursor.lastMaxSequence &&
+        published.compartment_count !== (cursor.lastCompartmentCount ?? cursor.lastMaxSequence)
+    ) {
+        return true;
+    }
+    return false;
+}
+
+function rememberCompartmentMirrorCursor(
+    sessionId: string,
+    maxSequence: number,
+    published: ModuleCompartmentMirrorResponse,
+    authoritativeCount: number,
+): void {
+    compartmentMirrorCursors.set(sessionId, {
+        lastMaxSequence: maxSequence,
+        lastCompartmentCount: published.compartment_count ?? authoritativeCount,
+        lastRevertEpoch: published.revert_epoch,
+    });
+}
+
+async function resyncModuleCompartmentsFromAuthoritative(args: {
     db: ContextDatabase;
     sessionId: string;
     reader: ModuleCompartmentReader;
 }): Promise<number> {
-    const row = args.db
-        .prepare(
-            "SELECT COALESCE(MAX(sequence), -1) AS max_sequence FROM compartments WHERE session_id = ?",
-        )
-        .get(args.sessionId) as { max_sequence?: number } | undefined;
-    const afterSequence = row?.max_sequence ?? -1;
-    const published = await args.reader.getCompartmentsAfter(args.sessionId, afterSequence);
-    if (!Number.isFinite(published.max_sequence) || published.max_sequence <= afterSequence) {
-        return afterSequence;
+    const authoritative: ModuleCompartmentMirrorRow[] = [];
+    let afterSequence = -1;
+    let maxSequence: number | null = null;
+    let lastPublished: ModuleCompartmentMirrorResponse | undefined;
+
+    for (;;) {
+        const published = await args.reader.getCompartmentsAfter(args.sessionId, afterSequence);
+        validateMirrorPage(published, maxSequence);
+        maxSequence ??= published.max_sequence;
+        lastPublished = published;
+
+        let pageAdvanced = false;
+        for (const compartment of published.compartments) {
+            validateMirrorRow(compartment, afterSequence, maxSequence);
+            authoritative.push(compartment);
+            afterSequence = compartment.sequence;
+            pageAdvanced = true;
+        }
+
+        if (afterSequence >= maxSequence) break;
+        if (!pageAdvanced) {
+            throw new Error("module compartment mirror returned an incomplete authoritative set");
+        }
     }
-    const insert = args.db.prepare(
-        "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, p1, p2, p3, p4, importance, episode_type, legacy, created_at, harness) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(session_id, sequence) DO NOTHING",
+
+    const local = args.db
+        .prepare(
+            "SELECT sequence, end_message FROM compartments WHERE session_id = ? ORDER BY sequence ASC",
+        )
+        .all(args.sessionId) as Array<{ sequence: number; end_message: number }>;
+    let firstDifference = 0;
+    while (
+        firstDifference < local.length &&
+        firstDifference < authoritative.length &&
+        local[firstDifference]?.sequence === authoritative[firstDifference]?.sequence &&
+        local[firstDifference]?.end_message === authoritative[firstDifference]?.end_message
+    ) {
+        firstDifference += 1;
+    }
+    const localDifference = local[firstDifference]?.sequence;
+    const authoritativeDifference = authoritative[firstDifference]?.sequence;
+    const divergentSequence =
+        localDifference === undefined
+            ? authoritativeDifference
+            : authoritativeDifference === undefined
+              ? localDifference
+              : Math.min(localDifference, authoritativeDifference);
+
+    const upsert = args.db.prepare(
+        `INSERT INTO compartments
+            (session_id, sequence, start_message, end_message, start_message_id, end_message_id,
+             title, content, p1, p2, p3, p4, importance, episode_type, legacy, created_at, harness)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(session_id, sequence) DO UPDATE SET
+             start_message = excluded.start_message,
+             end_message = excluded.end_message,
+             start_message_id = excluded.start_message_id,
+             end_message_id = excluded.end_message_id,
+             title = excluded.title,
+             content = excluded.content,
+             p1 = excluded.p1,
+             p2 = excluded.p2,
+             p3 = excluded.p3,
+             p4 = excluded.p4,
+             importance = excluded.importance,
+             episode_type = excluded.episode_type,
+             legacy = excluded.legacy,
+             created_at = excluded.created_at,
+             harness = excluded.harness`,
     );
     const now = Date.now();
     args.db.transaction(() => {
-        for (const compartment of published.compartments) {
-            if (
-                !Number.isFinite(compartment.sequence) ||
-                compartment.sequence <= afterSequence ||
-                typeof compartment.start_message_id !== "string" ||
-                typeof compartment.end_message_id !== "string" ||
-                typeof compartment.title !== "string" ||
-                typeof compartment.content !== "string"
-            ) {
-                continue;
-            }
-            insert.run(
+        if (divergentSequence !== undefined) {
+            args.db
+                .prepare("DELETE FROM compartments WHERE session_id = ? AND sequence >= ?")
+                .run(args.sessionId, divergentSequence);
+        }
+        for (const compartment of authoritative) {
+            upsert.run(
                 args.sessionId,
                 compartment.sequence,
                 compartment.start_message,
@@ -301,7 +454,49 @@ export async function mirrorModuleCompartments(args: {
             );
         }
     })();
-    return published.max_sequence;
+    rememberCompartmentMirrorCursor(
+        args.sessionId,
+        maxSequence,
+        lastPublished ?? { max_sequence: maxSequence, compartments: [] },
+        authoritative.length,
+    );
+    return maxSequence;
+}
+
+export async function mirrorModuleCompartments(args: {
+    db: ContextDatabase;
+    sessionId: string;
+    reader: ModuleCompartmentReader;
+}): Promise<number> {
+    // A process-local cursor avoids re-reading the full authoritative set on every
+    // pass. The first call, a max_sequence regression, a sequence gap, or a set
+    // change the cursor cannot express still walks from -1.
+    const cursor = compartmentMirrorCursors.get(args.sessionId);
+    if (cursor !== undefined) {
+        const published = await args.reader.getCompartmentsAfter(
+            args.sessionId,
+            cursor.lastMaxSequence,
+        );
+        validateMirrorPage(published, null);
+        for (const compartment of published.compartments) {
+            validateMirrorRow(compartment, cursor.lastMaxSequence, published.max_sequence);
+        }
+        const firstNew = published.compartments[0];
+        const hasGap = firstNew !== undefined && firstNew.sequence !== cursor.lastMaxSequence + 1;
+        const regressed = published.max_sequence < cursor.lastMaxSequence;
+        const setChanged = compartmentMirrorSetChanged(published, cursor);
+        if (
+            !regressed &&
+            !hasGap &&
+            !setChanged &&
+            published.compartments.length === 0 &&
+            published.max_sequence === cursor.lastMaxSequence
+        ) {
+            return published.max_sequence;
+        }
+    }
+
+    return resyncModuleCompartmentsFromAuthoritative(args);
 }
 
 interface ModuleWorkspaceContext {
@@ -1301,10 +1496,9 @@ export async function buildModuleStateSyncPayload(args: {
                   nowMs: args.pass.nowMs,
               })
         : [];
-    const userProfile =
-        includeUserProfile && profileChanged
-            ? getActiveUserMemories(args.pass.db).map((memory) => memory.content)
-            : [];
+    const userProfile = includeUserProfile
+        ? getActiveUserMemories(args.pass.db).map((memory) => memory.content)
+        : [];
     const memoryMutations =
         memoryMutationsChanged && args.pass.projectPath
             ? getMemoryMutationsForRenderByProjects(
@@ -1480,6 +1674,10 @@ export async function buildModuleStateSyncPayload(args: {
 }
 
 export interface ModuleStateSyncClient {
+    /** Synchronously exposes capabilities cached for the transport's live connection generation. */
+    getCachedStateSyncCapabilities?(): { state_sync_deltas?: boolean } | undefined;
+    /** Clears a capability snapshot when the module reports a restart-like signal. */
+    invalidateStateSyncCapabilities?(): void;
     /** Capability probe is optional so older/test transports retain legacy wire semantics. */
     stateSyncCapabilities?(args: {
         sessionId: string;
@@ -1492,6 +1690,7 @@ export interface ModuleStateSyncClient {
             | "state_sync"
             | "transform"
             | "session.status"
+            | "session.delete"
             | "session.flush"
             | "session.recomp"
             | "session.wrapup"
@@ -1504,6 +1703,8 @@ export interface ModuleStateSyncClient {
             | "transform.nack";
         body: unknown;
         signal?: AbortSignal;
+        generationSensitive?: boolean;
+        attemptClass?: "transform_page_upload" | "transform_series_execute";
     }): Promise<unknown>;
 }
 
@@ -1576,24 +1777,28 @@ export async function syncModuleState(args: {
 }): Promise<ModuleStateSyncResult> {
     let force = args.force;
     const adoption = args.options?.authoritySeqAdoption ?? { used: false };
-    let stateSyncDeltas = args.options?.stateSyncDeltas;
-    if (stateSyncDeltas === undefined && args.client.stateSyncCapabilities) {
-        try {
-            stateSyncDeltas =
-                (
+    const resolveStateSyncDeltas = async (afterGenerationChange = false): Promise<boolean> => {
+        let capability = afterGenerationChange ? undefined : args.options?.stateSyncDeltas;
+        capability ??= args.client.getCachedStateSyncCapabilities?.()?.state_sync_deltas;
+        if (capability === undefined && args.client.stateSyncCapabilities) {
+            try {
+                capability = (
                     await args.client.stateSyncCapabilities({
                         sessionId: args.pass.sessionId,
                         projectRoot: args.projectRoot,
                     })
-                ).state_sync_deltas === true;
-        } catch {
-            // If the capability check fails, assume the module does not support
-            // state_sync_deltas and send the older payload format with its state-sync
-            // fields always present.
-            stateSyncDeltas = false;
+                ).state_sync_deltas;
+            } catch {
+                // If the capability check fails, assume the module does not support
+                // state_sync_deltas and send the older payload format with its state-sync
+                // fields always present.
+                capability = false;
+            }
         }
-    }
-    for (;;) {
+        return capability === true;
+    };
+    let stateSyncDeltas = await resolveStateSyncDeltas();
+    syncLoop: for (;;) {
         const payload = await buildModuleStateSyncPayload({
             state: args.state,
             pass: args.pass,
@@ -1620,7 +1825,14 @@ export async function syncModuleState(args: {
                         method: batch.method,
                         ...batch.params,
                     },
+                    generationSensitive: stateSyncDeltas,
                 });
+                if (isModuleTransportGenerationChangedResult(response)) {
+                    // The payload used the previous connection's capabilities. Re-probe the new
+                    // connection and rebuild before retrying because it may not support deltas.
+                    stateSyncDeltas = await resolveStateSyncDeltas(true);
+                    continue syncLoop;
+                }
                 if (
                     args.options?.authority === true &&
                     responseMemoriesSkipped(response) &&

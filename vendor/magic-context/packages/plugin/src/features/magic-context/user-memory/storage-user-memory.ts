@@ -17,12 +17,20 @@ export interface UserMemoryCandidate {
     createdAt: number;
 }
 
+export interface UserMemorySourceProvenance {
+    candidateId: number;
+    sessionId: string;
+    sourceCompartmentStart: number | null;
+    sourceCompartmentEnd: number | null;
+}
+
 export interface UserMemory {
     id: number;
     content: string;
     status: "active" | "dismissed";
     promotedAt: number;
     sourceCandidateIds: number[];
+    sourceProvenance: UserMemorySourceProvenance[] | null;
     createdAt: number;
     updatedAt: number;
 }
@@ -109,18 +117,73 @@ export function pruneExpiredUserMemoryCandidates(
 
 // ── Stable user memories ────────────────────────────────────────────────
 
+function loadUserMemorySourceProvenance(
+    db: Database,
+    candidateIds: number[],
+): UserMemorySourceProvenance[] {
+    const ids = [...new Set(candidateIds)].sort((a, b) => a - b);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db
+        .prepare(
+            `SELECT id, session_id, source_compartment_start, source_compartment_end
+               FROM user_memory_candidates
+              WHERE id IN (${placeholders})
+              ORDER BY id ASC`,
+        )
+        .all(...ids) as Array<{
+        id: number;
+        session_id: string;
+        source_compartment_start: number | null;
+        source_compartment_end: number | null;
+    }>;
+    return rows.map((row) => ({
+        candidateId: row.id,
+        sessionId: row.session_id,
+        sourceCompartmentStart: row.source_compartment_start,
+        sourceCompartmentEnd: row.source_compartment_end,
+    }));
+}
+
+function serializeUserMemorySourceProvenance(
+    provenance: UserMemorySourceProvenance[],
+    sourceCandidateIds: number[],
+): string | null {
+    if (provenance.length === 0 && sourceCandidateIds.length > 0) return null;
+    return JSON.stringify(
+        provenance.map((source) => ({
+            candidate_id: source.candidateId,
+            session_id: source.sessionId,
+            source_compartment_start: source.sourceCompartmentStart,
+            source_compartment_end: source.sourceCompartmentEnd,
+        })),
+    );
+}
+
 export function insertUserMemory(
     db: Database,
     content: string,
     sourceCandidateIds: number[],
 ): number {
-    const now = Date.now();
-    const result = db
-        .prepare(
-            "INSERT INTO user_memories (content, status, promoted_at, source_candidate_ids, created_at, updated_at) VALUES (?, 'active', ?, ?, ?, ?)",
-        )
-        .run(content, now, JSON.stringify(sourceCandidateIds), now, now);
-    return Number(result.lastInsertRowid);
+    return db.transaction(() => {
+        const now = Date.now();
+        const sourceProvenance = loadUserMemorySourceProvenance(db, sourceCandidateIds);
+        const result = db
+            .prepare(
+                `INSERT INTO user_memories
+                    (content, status, promoted_at, source_candidate_ids, source_candidate_provenance, created_at, updated_at)
+                 VALUES (?, 'active', ?, ?, ?, ?, ?)`,
+            )
+            .run(
+                content,
+                now,
+                JSON.stringify(sourceCandidateIds),
+                serializeUserMemorySourceProvenance(sourceProvenance, sourceCandidateIds),
+                now,
+                now,
+            );
+        return Number(result.lastInsertRowid);
+    })();
 }
 
 export function getActiveUserMemories(db: Database): UserMemory[] {
@@ -129,7 +192,7 @@ export function getActiveUserMemories(db: Database): UserMemory[] {
             // id ASC tiebreaker: promoted_at can tie at millisecond granularity;
             // without a stable secondary sort the <user-profile> render order is
             // non-deterministic across passes, drifting m[0]/m[1] bytes.
-            "SELECT id, content, status, promoted_at, source_candidate_ids, created_at, updated_at FROM user_memories WHERE status = 'active' ORDER BY promoted_at ASC, id ASC",
+            "SELECT id, content, status, promoted_at, source_candidate_ids, source_candidate_provenance, created_at, updated_at FROM user_memories WHERE status = 'active' ORDER BY promoted_at ASC, id ASC",
         )
         .all() as Array<{
         id: number;
@@ -137,6 +200,7 @@ export function getActiveUserMemories(db: Database): UserMemory[] {
         status: string;
         promoted_at: number;
         source_candidate_ids: string;
+        source_candidate_provenance: string | null;
         created_at: number;
         updated_at: number;
     }>;
@@ -158,27 +222,67 @@ export function dismissUserMemory(db: Database, id: number): void {
     );
 }
 
+function parseCandidateIds(raw: string): number[] {
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed)
+            ? parsed.filter((id): id is number => typeof id === "number" && Number.isFinite(id))
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+function parseUserMemorySourceProvenance(raw: string | null): UserMemorySourceProvenance[] | null {
+    if (raw === null) return null;
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        const provenance: UserMemorySourceProvenance[] = [];
+        for (const value of parsed) {
+            if (!value || typeof value !== "object") return null;
+            const source = value as Record<string, unknown>;
+            if (
+                typeof source.candidate_id !== "number" ||
+                !Number.isFinite(source.candidate_id) ||
+                typeof source.session_id !== "string" ||
+                (source.source_compartment_start !== null &&
+                    typeof source.source_compartment_start !== "number") ||
+                (source.source_compartment_end !== null &&
+                    typeof source.source_compartment_end !== "number")
+            ) {
+                return null;
+            }
+            provenance.push({
+                candidateId: source.candidate_id,
+                sessionId: source.session_id,
+                sourceCompartmentStart: source.source_compartment_start as number | null,
+                sourceCompartmentEnd: source.source_compartment_end as number | null,
+            });
+        }
+        return provenance;
+    } catch {
+        return null;
+    }
+}
+
 function parseUserMemoryRow(row: {
     id: number;
     content: string;
     status: string;
     promoted_at: number;
     source_candidate_ids: string;
+    source_candidate_provenance: string | null;
     created_at: number;
     updated_at: number;
 }): UserMemory {
-    let candidateIds: number[] = [];
-    try {
-        candidateIds = JSON.parse(row.source_candidate_ids);
-    } catch {
-        // Intentional: corrupted JSON shouldn't crash reads
-    }
     return {
         id: row.id,
         content: row.content,
         status: row.status === "dismissed" ? "dismissed" : "active",
         promotedAt: row.promoted_at,
-        sourceCandidateIds: candidateIds,
+        sourceCandidateIds: parseCandidateIds(row.source_candidate_ids),
+        sourceProvenance: parseUserMemorySourceProvenance(row.source_candidate_provenance),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };

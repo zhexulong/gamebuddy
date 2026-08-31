@@ -1,0 +1,53 @@
+{
+  "drill": "PROMPT-SURFACE-EPOCH-FOLD",
+  "mutations": [
+    {
+      "name": "PROMPT_SURFACE_DOUBLE_FOLD",
+      "command": "cargo test -p mc-module guidance_and_manifest_changes_share_one_prompt_surface_fold",
+      "applied_diff": [
+        {
+          "path": "crates/mc-module/src/transform.rs",
+          "before": "system_prompt_hash is omitted from render_identity_base when prompt_surface_epoch is active",
+          "after": "system_prompt_hash is always folded independently into render_identity_base",
+          "changed": true
+        },
+        {
+          "path": "crates/mc-module/src/prompt_surface.rs",
+          "before": "unified_content_epoch hashes guidance and manifest identity together",
+          "after": "unified_content_epoch returns only manifest identity",
+          "changed": true
+        }
+      ],
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "transform::tests::guidance_and_manifest_changes_share_one_prompt_surface_fold failed: assertion failed: !folded.contains(\"system:\")"
+      },
+      "reverted_rerun": {
+        "exit_status": 0,
+        "output": "1 passed; 0 failed",
+        "status": "pass"
+      },
+      "adequacy_finding": null
+    },
+    {
+      "name": "PROMPT_SURFACE_PRESET_FLIP_WITHOUT_FOLD",
+      "command": "cargo test -p mc-module prompt_surface_preset_flip_takes_one_hard_then_freezes_defer_bytes",
+      "applied_diff": {
+        "path": "crates/mc-module/src/prompt_surface.rs",
+        "before": "unified_content_epoch returns the selected prompt-surface identity",
+        "after": "unified_content_epoch always returns the empty legacy sentinel",
+        "changed": true
+      },
+      "observed_failure": {
+        "exit_status": 101,
+        "output": "transform::tests::prompt_surface_preset_flip_takes_one_hard_then_freezes_defer_bytes failed: expected HARD, received SOFT+"
+      },
+      "reverted_rerun": {
+        "exit_status": 0,
+        "output": "1 passed; 0 failed",
+        "status": "pass"
+      },
+      "adequacy_finding": null
+    }
+  ]
+}

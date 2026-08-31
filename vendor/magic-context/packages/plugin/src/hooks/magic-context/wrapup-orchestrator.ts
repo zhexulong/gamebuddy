@@ -225,12 +225,18 @@ async function runOneWrapupIteration(args: {
         boundarySnapshot: plan.snapshot,
         currentContextLimit: ctx.contextLimit,
         directory: ctx.directory,
+        model: ctx.historianModel,
         fallbackModels: ctx.fallbackModels,
         fallbackModelId: ctx.fallbackModelId,
         language: ctx.language,
         historianTwoPass: ctx.historianTwoPass,
         memoryEnabled: ctx.memoryEnabled,
         autoPromote: ctx.autoPromote,
+        // User-memory collection is forwarded on the same gate as every other
+        // historian surface: wrapup chunks persist user observations exactly when
+        // the scheduled review-user-memories task enables collection. Dropping the
+        // flag here silently suppressed observations that the module lane persists.
+        experimentalUserMemories: ctx.userMemoriesEnabled,
         ensureProjectRegistered: ctx.ensureProjectRegistered,
         getNotificationParams: () => ctx.getNotificationParams(sessionId),
         preserveInjectionCacheUntilConsumed: true,

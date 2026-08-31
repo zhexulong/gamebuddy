@@ -45,12 +45,25 @@
 // node:sqlite at runtime (both expose prepare/run/get/all/exec/close).
 import type BetterSqlite3 from "better-sqlite3";
 
-// Detect Bun via process.versions.bun. Both globalThis.Bun and
-// process.versions.bun are set by the Bun runtime, but process.versions
-// is a lower-level surface less likely to be sandboxed by host runtimes
-// (e.g. Electron in OpenCode desktop apps that re-expose a Bun-flavored
-// environment). Real Node and Electron never set this field.
-const isBun = typeof process !== "undefined" && typeof process.versions?.bun === "string";
+export type SqliteRuntime = "Bun" | "Node.js";
+
+type SqliteModule = {
+    Database?: unknown;
+    DatabaseSync?: unknown;
+};
+
+export function detectSqliteRuntime(): SqliteRuntime {
+    // process.versions.bun is the least ambiguous marker, but some launchers
+    // proxy or partially sandbox process. Keep globalThis.Bun as a fallback so
+    // a Bun process does not accidentally select node:sqlite just because its
+    // process compatibility surface was trimmed.
+    const hasBunVersion =
+        typeof process !== "undefined" && typeof process.versions?.bun === "string";
+    const hasBunGlobal =
+        typeof globalThis !== "undefined" &&
+        typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+    return hasBunVersion || hasBunGlobal ? "Bun" : "Node.js";
+}
 
 // IMPORTANT: bundler-evading dynamic imports.
 //
@@ -69,9 +82,72 @@ const isBun = typeof process !== "undefined" && typeof process.versions?.bun ===
 const bunSpec = "bun:" + "sqlite";
 const nodeSpec = "node:" + "sqlite";
 
-const sqliteModule = isBun
-    ? await import(/* @vite-ignore */ bunSpec)
-    : await import(/* @vite-ignore */ nodeSpec);
+async function importSqliteModule(specifier: string): Promise<SqliteModule> {
+    // The runtime chooses this specifier; Vite must not resolve it as a
+    // build-time dependency because the other runtime's backend is absent.
+    return (await import(
+        /* @vite-ignore -- keep the runtime-selected backend unresolved */ specifier
+    )) as SqliteModule;
+}
+
+function isModuleNotFoundError(error: unknown, specifier: string): boolean {
+    const candidate = error as { code?: unknown; name?: unknown } | null;
+    const code = typeof candidate?.code === "string" ? candidate.code : "";
+    const name = typeof candidate?.name === "string" ? candidate.name : "";
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    const details = `${code} ${name} ${message}`.toLowerCase();
+    const mentionsSpecifier = details.includes(specifier.toLowerCase());
+    if (!mentionsSpecifier) return false;
+
+    return (
+        code === "ERR_MODULE_NOT_FOUND" ||
+        code === "ERR_UNKNOWN_BUILTIN_MODULE" ||
+        code === "MODULE_NOT_FOUND" ||
+        name === "ResolveMessage" ||
+        details.includes("module not found") ||
+        details.includes("cannot find module") ||
+        details.includes("cannot find package") ||
+        details.includes("no such built-in module")
+    );
+}
+
+export class SqliteRuntimeUnavailableError extends Error {
+    readonly runtime: SqliteRuntime;
+    readonly specifier: string;
+
+    constructor(runtime: SqliteRuntime, specifier: string, cause: unknown) {
+        const requirement =
+            specifier === nodeSpec
+                ? "Requires Node.js >= 24, or Bun with bun:sqlite — this Bun build lacks node:sqlite."
+                : "Requires Bun with bun:sqlite, or Node.js >= 24 — this Bun build lacks bun:sqlite.";
+        super(
+            `Magic Context detected ${runtime}, but could not load ${specifier}. ${requirement}`,
+            { cause },
+        );
+        this.name = "SqliteRuntimeUnavailableError";
+        this.runtime = runtime;
+        this.specifier = specifier;
+    }
+}
+
+export async function loadSqliteModule(
+    runtime: SqliteRuntime = detectSqliteRuntime(),
+    importer: (specifier: string) => Promise<SqliteModule> = importSqliteModule,
+): Promise<SqliteModule> {
+    const specifier = runtime === "Bun" ? bunSpec : nodeSpec;
+    try {
+        return await importer(specifier);
+    } catch (error) {
+        if (isModuleNotFoundError(error, specifier)) {
+            throw new SqliteRuntimeUnavailableError(runtime, specifier, error);
+        }
+        throw error;
+    }
+}
+
+const detectedRuntime = detectSqliteRuntime();
+const isBun = detectedRuntime === "Bun";
+const sqliteModule = await loadSqliteModule(detectedRuntime);
 
 // Different export shapes between the two backends:
 //   - bun:sqlite  → named export `Database` (has its own .transaction, accepts
@@ -201,30 +277,6 @@ export type Database = BetterSqlite3.Database;
 export type Statement = BetterSqlite3.Statement<unknown[], unknown>;
 
 const privilegeDepth = new WeakMap<Database, number>();
-const registeredPrivilegeFunctions = new WeakSet<Database>();
-const privilegeUdfAvailable = new WeakSet<Database>();
-
-/** Register the connection-local privilege predicate used by managed-write guards. */
-export function registerPrivilegedWriter(db: Database): void {
-    if (registeredPrivilegeFunctions.has(db)) return;
-    const native = db as unknown as {
-        function?: (name: string, implementation: () => number) => void;
-        createFunction?: (name: string, implementation: () => number) => void;
-    };
-    const implementation = (): number => ((privilegeDepth.get(db) ?? 0) > 0 ? 1 : 0);
-    if (typeof native.function === "function") {
-        native.function("mc_privileged_writer", implementation);
-    } else if (typeof native.createFunction === "function") {
-        native.createFunction("mc_privileged_writer", implementation);
-    } else {
-        // Older Bun releases do not expose scalar UDF registration. Migration 55
-        // retains the pre-UDF state-table trigger on those runtimes.
-        registeredPrivilegeFunctions.add(db);
-        return;
-    }
-    privilegeUdfAvailable.add(db);
-    registeredPrivilegeFunctions.add(db);
-}
 
 function isInTransaction(db: Database): boolean {
     const candidate = db as unknown as { inTransaction?: unknown; isTransaction?: unknown };
@@ -232,11 +284,17 @@ function isInTransaction(db: Database): boolean {
 }
 
 /**
- * Run a storage operation while the connection-local privilege predicate is enabled.
- * The depth lives outside SQLite, so a second connection can never observe or inherit it.
+ * Run a storage operation with the managed-write privilege enabled.
+ *
+ * The privilege is recorded in the durable `context_privilege_state` table (row
+ * id=1, enabled=1) so the guard triggers — which reference that table, never a
+ * connection-local UDF — stand down for this connection's writes. The write happens
+ * inside a BEGIN IMMEDIATE transaction (single writer), and enabled is cleared back
+ * to 0 before commit, so no second connection can ever observe enabled=1. Nesting is
+ * tracked by privilegeDepth (outside SQLite): only the outermost scope clears the
+ * flag, so an inner scope releasing does not drop permission out from under its caller.
  */
 export function withPrivilegedWriter<T>(db: Database, operation: () => T): T {
-    registerPrivilegedWriter(db);
     const previousDepth = privilegeDepth.get(db) ?? 0;
     const nested = isInTransaction(db);
     const savepoint = "mc_privilege_scope";
@@ -247,13 +305,11 @@ export function withPrivilegedWriter<T>(db: Database, operation: () => T): T {
     }
     privilegeDepth.set(db, previousDepth + 1);
     try {
-        if (!privilegeUdfAvailable.has(db)) {
-            db.prepare(
-                "INSERT INTO context_privilege_state(id, enabled) VALUES (1, 1) ON CONFLICT(id) DO UPDATE SET enabled = 1",
-            ).run();
-        }
+        db.prepare(
+            "INSERT INTO context_privilege_state(id, enabled) VALUES (1, 1) ON CONFLICT(id) DO UPDATE SET enabled = 1",
+        ).run();
         const result = operation();
-        if (!privilegeUdfAvailable.has(db) && previousDepth === 0) {
+        if (previousDepth === 0) {
             db.prepare("UPDATE context_privilege_state SET enabled = 0 WHERE id = 1").run();
         }
         if (nested) {

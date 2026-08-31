@@ -191,11 +191,15 @@ export interface CtxSearchToolDeps {
 	memoryEnabled?: boolean;
 	embeddingEnabled?: boolean;
 	gitCommitsEnabled?: boolean;
+	/** Resolve a directory's project identity, allowing home only when user-level configuration enables it. */
+	resolveProjectIdentity?: (directory: string) => string | undefined;
 }
 
 export function createCtxSearchTool(
 	deps: CtxSearchToolDeps,
 ): ToolDefinition<typeof ParamsSchema> {
+	const resolveProject =
+		deps.resolveProjectIdentity ?? resolveProjectIdentityForSession;
 	return {
 		name: "ctx_search",
 		label: "Magic Context: Search",
@@ -228,7 +232,7 @@ export function createCtxSearchTool(
 			}
 
 			const sessionId = ctx.sessionManager.getSessionId();
-			const projectIdentity = resolveProjectIdentityForSession(ctx.cwd);
+			const projectIdentity = resolveProject(ctx.cwd);
 			if (!projectIdentity) {
 				return {
 					content: [

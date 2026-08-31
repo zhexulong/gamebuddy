@@ -1,8 +1,10 @@
 import { SMART_NOTE_COMPILER_AGENT } from "../../../agents/smart-note-compiler";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
 import { extractLatestAssistantText } from "../../../shared/assistant-message-extractor";
 import { log } from "../../../shared/logger";
+import type { ModelInput } from "../../../shared/model-resolution";
 import { modelBodyField } from "../../../shared/resolve-fallbacks";
 import type { Database } from "../../../shared/sqlite";
 import { getModuleNoteEvaluationBridge } from "../context-authority";
@@ -22,9 +24,10 @@ import {
     storeCompiledSmartNoteCheck,
 } from "../smart-notes/storage";
 import type { SmartNoteCheckNote } from "../smart-notes/types";
+import { wakePlaneStatus } from "../smart-notes/wake-plane";
 import { getPendingSmartNotes, markNoteChecked, markNoteReady } from "../storage-notes";
 import { recordChildInvocation } from "../subagent-token-capture";
-import { peekLeaseHolderAndExpiry, startLeaseHeartbeat } from "./lease";
+import { type LeaseAcquisition, peekLeaseHolderAndExpiry, startLeaseHeartbeat } from "./lease";
 
 export interface EvaluateSmartNotesArgs {
     db: Database;
@@ -36,8 +39,17 @@ export interface EvaluateSmartNotesArgs {
     /** Keyed lease this task holds (Dreamer v2: per-project evaluate-smart-notes domain). */
     leaseKey: string;
     deadline: number;
-    model?: string;
-    fallbackModels?: readonly string[];
+    /**
+     * Wall-clock budget for one due-check sweep. Defaults to 10s in production;
+     * tests lower it so a sweep queued behind slow sandbox infrastructure cancels
+     * fast instead of eating the whole test timeout.
+     */
+    sweepBudgetMs?: number;
+    leaseAcquisition?: LeaseAcquisition;
+    model?: ModelInput;
+    fallbackModels?: readonly ModelInput[];
+    /** When true, authoring-compiled provider conditions are owned by retina. */
+    retinaHandoff?: boolean;
     onLeaseLost?: (phase: string, error?: unknown) => void;
 }
 
@@ -85,10 +97,20 @@ function createPromptAbortSignal(
 export async function evaluateSmartNotes(
     args: EvaluateSmartNotesArgs,
 ): Promise<EvaluateSmartNotesResult> {
+    if ((await wakePlaneStatus()) === "present") {
+        const pending = getPendingSmartNotes(args.db, args.projectIdentity).length;
+        log("[dreamer] evaluate-smart-notes: skipped (wake plane active)");
+        return { surfaced: 0, pending, ran: false };
+    }
+
     const projectRoot = args.sessionDirectory ?? args.projectIdentity;
     const moduleBridge = getModuleNoteEvaluationBridge(args.projectIdentity);
     await moduleBridge?.sync();
-    const pendingAtStart = getPendingSmartNotes(args.db, args.projectIdentity).length;
+    const pendingNotes = () =>
+        getPendingSmartNotes(args.db, args.projectIdentity).filter(
+            (note) => !args.retinaHandoff || note.compileStatus !== "compiled",
+        );
+    const pendingAtStart = pendingNotes().length;
     if (pendingAtStart === 0) {
         log("[dreamer] smart notes: no pending notes");
         return { surfaced: 0, pending: 0, ran: false };
@@ -104,21 +126,24 @@ export async function evaluateSmartNotes(
             throw new Error(`Dream lease lost during smart-notes ${phase}`);
         }
     };
-    const heartbeat = startLeaseHeartbeat(args.db, args.holderId, args.leaseKey, () => {
-        leaseLost = true;
-        leaseAbortController.abort(new Error("Dream lease lost during smart notes"));
-        log("[dreamer] smart notes: lease lost — aborting");
-        args.onLeaseLost?.("smart notes");
-    });
+    const heartbeat = startLeaseHeartbeat(
+        args.db,
+        args.holderId,
+        args.leaseKey,
+        () => {
+            leaseLost = true;
+            leaseAbortController.abort(new Error("Dream lease lost during smart notes"));
+            log("[dreamer] smart notes: lease lost — aborting");
+            args.onLeaseLost?.("smart notes");
+        },
+        args.leaseAcquisition,
+    );
 
     let surfaced = 0;
     let didWork = false;
     try {
         if (moduleBridge) {
-            const candidates = getPendingSmartNotes(args.db, args.projectIdentity).slice(
-                0,
-                MAX_COMPILE_PER_RUN,
-            );
+            const candidates = pendingNotes().slice(0, MAX_COMPILE_PER_RUN);
             for (const note of candidates) {
                 if (Date.now() >= args.deadline) break;
                 assertLeaseHeld("module evaluation start");
@@ -145,7 +170,7 @@ export async function evaluateSmartNotes(
                 if (met) surfaced += 1;
             }
             await moduleBridge.sync();
-            const pending = getPendingSmartNotes(args.db, args.projectIdentity).length;
+            const pending = pendingNotes().length;
             return { surfaced, pending, ran: didWork };
         }
         const dueRun = await runDueCompiledSmartNoteChecks({
@@ -153,9 +178,10 @@ export async function evaluateSmartNotes(
             projectIdentity: args.projectIdentity,
             projectRoot,
             maxChecks: 10,
-            sweepBudgetMs: 10_000,
+            sweepBudgetMs: args.sweepBudgetMs ?? 10_000,
             leaseHeld,
             signal: leaseAbortController.signal,
+            retinaHandoff: args.retinaHandoff,
         });
         surfaced += dueRun.surfaced;
         didWork ||= dueRun.ran > 0;
@@ -165,6 +191,7 @@ export async function evaluateSmartNotes(
             args.projectIdentity,
             Date.now(),
             MAX_COMPILE_PER_RUN,
+            args.retinaHandoff,
         );
         for (const note of candidates) {
             if (Date.now() >= args.deadline) break;
@@ -186,6 +213,7 @@ export async function evaluateSmartNotes(
             args.projectIdentity,
             Date.now(),
             MAX_FALLBACK_PER_RUN,
+            args.retinaHandoff,
         );
         for (const note of stale) {
             if (Date.now() >= args.deadline) break;
@@ -202,7 +230,7 @@ export async function evaluateSmartNotes(
             if (met) surfaced += 1;
         }
 
-        const fallbackNotes = getPendingSmartNotes(args.db, args.projectIdentity)
+        const fallbackNotes = pendingNotes()
             .filter((note) => note.checkStatus === "fallback")
             .slice(0, MAX_FALLBACK_PER_RUN);
         for (const note of fallbackNotes) {
@@ -440,12 +468,12 @@ async function confirmReadOnly(
         });
     };
     try {
-        const createResponse = await args.client.session.create({
-            body: {
-                ...(args.parentSessionId ? { parentID: args.parentSessionId } : {}),
-                title: `magic-context-smart-note-confirm-${noteId}`,
-            },
-            query: { directory: args.sessionDirectory ?? args.projectIdentity },
+        const createResponse = await createChildSessionWithFence({
+            client: args.client,
+            db: args.db,
+            parentSessionId: args.parentSessionId,
+            title: `magic-context-smart-note-confirm-${noteId}`,
+            directory: args.sessionDirectory ?? args.projectIdentity,
         });
         const created = shared.normalizeSDKResponse(
             createResponse,

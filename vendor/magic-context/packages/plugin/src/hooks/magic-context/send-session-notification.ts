@@ -1,5 +1,6 @@
 import { getErrorMessage } from "../../shared/error-message";
 import { sessionLog } from "../../shared/logger";
+import { isMidTurn } from "./read-session-db";
 
 export interface NotificationParams {
     agent?: string;
@@ -10,7 +11,89 @@ export interface NotificationParams {
     toastDurationMs?: number;
 }
 
-export type NotificationDeliveryDisposition = "sent" | "skipped" | "failed";
+export type NotificationDeliveryDisposition = "sent" | "queued" | "skipped" | "failed";
+
+/**
+ * Notifications are status lines, not user input. Keep only the newest entries
+ * while a real turn is active so a long background run cannot grow memory or
+ * manufacture a backlog of user rows at the next idle boundary.
+ */
+export const MAX_QUEUED_IGNORED_NOTIFICATIONS = 16;
+
+interface QueuedIgnoredNotification {
+    client: unknown;
+    sessionId: string;
+    text: string;
+    params: NotificationParams;
+    forcePersist: boolean;
+}
+
+const queuedIgnoredNotifications = new Map<string, QueuedIgnoredNotification[]>();
+const flushingIgnoredNotifications = new Set<string>();
+let midTurnDetector = (sessionId: string): boolean => isMidTurn(undefined, sessionId);
+
+function queueIgnoredNotification(notification: QueuedIgnoredNotification): void {
+    const queued = queuedIgnoredNotifications.get(notification.sessionId) ?? [];
+    queued.push(notification);
+    if (queued.length > MAX_QUEUED_IGNORED_NOTIFICATIONS) {
+        queued.splice(0, queued.length - MAX_QUEUED_IGNORED_NOTIFICATIONS);
+        sessionLog(
+            notification.sessionId,
+            `ignored notification queue full; dropped oldest entries (kept newest ${MAX_QUEUED_IGNORED_NOTIFICATIONS})`,
+        );
+    }
+    queuedIgnoredNotifications.set(notification.sessionId, queued);
+}
+
+async function trySendTuiToast(
+    sessionId: string,
+    text: string,
+    params: NotificationParams,
+    forcePersist: boolean,
+): Promise<boolean> {
+    if (forcePersist) return false;
+
+    const title = extractToastTitle(text);
+    const message = text.length > 200 ? `${text.slice(0, 200)}…` : text;
+    const toastVariant = inferToastVariant(text);
+    const duration = params.toastDurationMs ?? 5000;
+    const { isTuiConnected: checkTui } = await import("../../shared/rpc-notifications");
+    if (!checkTui(sessionId)) return false;
+
+    try {
+        const { pushNotification } = await import("../../shared/rpc-notifications");
+        pushNotification(
+            "toast",
+            {
+                title,
+                message,
+                variant: toastVariant,
+                duration,
+            },
+            sessionId,
+        );
+        return true;
+    } catch {
+        // RPC enqueue failed — fall through to the persisted ignored-message path.
+        sessionLog(sessionId, "TUI RPC toast enqueue failed, falling back to ignored message");
+        return false;
+    }
+}
+
+/** Test seams for the process-local queue; production uses the read-only OpenCode DB signal. */
+export const __ignoredNotificationTest = {
+    pendingTexts(sessionId: string): string[] {
+        return (queuedIgnoredNotifications.get(sessionId) ?? []).map((item) => item.text);
+    },
+    reset(): void {
+        queuedIgnoredNotifications.clear();
+        flushingIgnoredNotifications.clear();
+        midTurnDetector = (sessionId: string): boolean => isMidTurn(undefined, sessionId);
+    },
+    setMidTurnDetector(detector: (sessionId: string) => boolean): void {
+        midTurnDetector = detector;
+    },
+};
 
 interface NotificationClient {
     session?: {
@@ -62,56 +145,37 @@ function extractToastTitle(text: string): string {
     return "Magic Context";
 }
 
-export async function sendIgnoredMessage(
+async function sendIgnoredMessageNow(
     client: unknown,
     sessionId: string,
     text: string,
     params: NotificationParams,
-    // When true, ALWAYS persist as an ignored message (skip the TUI toast path)
-    // so the content survives in scrollback. Used for outcomes of long-running
-    // background work (e.g. session-upgrade result) where a transient 5s toast
-    // is too easy to miss — dogfood 2026-05-30.
-    forcePersist = false,
+    forcePersist: boolean,
 ): Promise<NotificationDeliveryDisposition> {
-    const title = extractToastTitle(text);
-    const message = text.length > 200 ? `${text.slice(0, 200)}…` : text;
-    const toastVariant = inferToastVariant(text);
-    const duration = params.toastDurationMs ?? 5000;
-
-    // In TUI mode, show as toast via RPC instead of ignored message — UNLESS the
-    // caller asked to force-persist (long-running outcome must stay in scrollback).
-    // Cannot use process.env.OPENCODE_CLIENT — it's undefined in the server plugin process.
-    const { isTuiConnected: checkTui } = await import("../../shared/rpc-notifications");
-    if (!forcePersist && checkTui(sessionId)) {
-        try {
-            const { pushNotification } = await import("../../shared/rpc-notifications");
-            pushNotification(
-                "toast",
-                {
-                    title,
-                    message,
-                    variant: toastVariant,
-                    duration,
-                },
-                sessionId,
-            );
-            return "sent";
-        } catch {
-            // RPC enqueue failed — fall through to ignored message.
-            sessionLog(sessionId, "TUI RPC toast enqueue failed, falling back to ignored message");
-        }
+    // A final active-run check closes the window created by the title/context
+    // lookups below. The normal caller checks before entering this function too.
+    if (midTurnDetector(sessionId)) {
+        queueIgnoredNotification({ client, sessionId, text, params, forcePersist });
+        return "queued";
     }
+
     // Title-safety guard (issue #129): an ignored message is hidden from the
     // LLM but NOT `synthetic`, so OpenCode's title gate counts it as a real
     // user message — one post into a not-yet-titled session permanently
     // suppresses that session's title generation. Only persist into sessions
     // that already have a real title (the toast path above is unaffected).
-    // Mid-session callers (historian failures, recomp outcomes) always pass
-    // immediately because their sessions are titled.
     const { waitForSafeNotificationTarget } = await import("../../shared/safe-notification-target");
     if ((await waitForSafeNotificationTarget(client, sessionId)) === "skip") {
         sessionLog(sessionId, "notification skipped (session not titled yet)");
         return "skipped";
+    }
+
+    // Check again immediately before constructing the prompt. This prevents an
+    // active run that began during title lookup or prompt-context resolution
+    // from receiving a new user row.
+    if (midTurnDetector(sessionId)) {
+        queueIgnoredNotification({ client, sessionId, text, params, forcePersist });
+        return "queued";
     }
 
     if (!hasNotificationSessionClient(client)) {
@@ -154,9 +218,19 @@ export async function sendIgnoredMessage(
         }
     }
 
+    // The context lookup above can yield to a newly started run. Check directly
+    // before the SDK call so the final mutation gate covers that last window too.
+    if (midTurnDetector(sessionId)) {
+        queueIgnoredNotification({ client, sessionId, text, params, forcePersist });
+        return "queued";
+    }
+
     const input = {
         path: { id: sessionId },
         body: {
+            // noReply prevents this status line from starting a new model loop.
+            // It does not make appending during an active loop safe; the caller
+            // defers while mid-turn, which is the separate safety gate.
             noReply: true,
             agent,
             model,
@@ -187,6 +261,71 @@ export async function sendIgnoredMessage(
         sessionLog(sessionId, "failed to send notification:", msg);
         return "failed";
     }
+}
+
+export async function sendIgnoredMessage(
+    client: unknown,
+    sessionId: string,
+    text: string,
+    params: NotificationParams,
+    // When true, always persist as an ignored message instead of using the TUI
+    // toast path, so the content remains in scrollback. Use this for outcomes of
+    // long-running background work, such as a session-upgrade result, when a
+    // transient five-second toast may be missed.
+    forcePersist = false,
+): Promise<NotificationDeliveryDisposition> {
+    // TUI notifications are already out-of-band and do not create a user row.
+    if (await trySendTuiToast(sessionId, text, params, forcePersist)) return "sent";
+
+    // OpenCode's MessageV2.latest is role-based and treats an ignored-only user
+    // row as the latest user turn. Do not create that invisible chronology entry
+    // while the read-only DB signal says the assistant is still mid-turn.
+    if (midTurnDetector(sessionId)) {
+        queueIgnoredNotification({ client, sessionId, text, params, forcePersist });
+        return "queued";
+    }
+
+    return sendIgnoredMessageNow(client, sessionId, text, params, forcePersist);
+}
+
+/**
+ * Flush queued status lines after an event that may have made the session idle.
+ * The event hook and tool.execute.after both call this; the same DB-backed gate
+ * remains authoritative, so a non-idle event is harmless.
+ */
+export async function flushIgnoredMessages(sessionId: string): Promise<void> {
+    if (flushingIgnoredNotifications.has(sessionId) || midTurnDetector(sessionId)) return;
+    const queued = queuedIgnoredNotifications.get(sessionId);
+    if (!queued || queued.length === 0) return;
+
+    queuedIgnoredNotifications.delete(sessionId);
+    flushingIgnoredNotifications.add(sessionId);
+    try {
+        for (const notification of queued) {
+            const disposition = await sendIgnoredMessage(
+                notification.client,
+                notification.sessionId,
+                notification.text,
+                notification.params,
+                notification.forcePersist,
+            );
+            if (disposition === "queued") {
+                // The current item is already re-queued by sendIgnoredMessage.
+                // Preserve the remaining entries behind it in their original order.
+                for (const remaining of queued.slice(queued.indexOf(notification) + 1)) {
+                    queueIgnoredNotification(remaining);
+                }
+                break;
+            }
+        }
+    } finally {
+        flushingIgnoredNotifications.delete(sessionId);
+    }
+}
+
+export function clearIgnoredMessages(sessionId: string): void {
+    queuedIgnoredNotifications.delete(sessionId);
+    flushingIgnoredNotifications.delete(sessionId);
 }
 
 /**

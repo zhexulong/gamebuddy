@@ -8,6 +8,7 @@ import {
 } from "../../../agents/dreamer";
 import { withContentLanguageDirective } from "../../../agents/language-directive";
 import type { DreamingTask } from "../../../config/schema/magic-context";
+import { createChildSessionWithFence } from "../../../hooks/magic-context/child-session-spawn";
 import type { RawMessageProvider } from "../../../hooks/magic-context/read-session-chunk";
 import type { PluginContext } from "../../../plugin/types";
 import * as shared from "../../../shared";
@@ -17,7 +18,6 @@ import { log } from "../../../shared/logger";
 import { modelBodyField } from "../../../shared/resolve-fallbacks";
 import type { Database } from "../../../shared/sqlite";
 import { getCompartmentEvents } from "../compartment-events";
-import { getContextStoreUuid } from "../context-authority";
 import {
     getMemoriesByProject,
     getMemoryCountsByStatus,
@@ -28,9 +28,15 @@ import { runCompressCues } from "../mural/compress-cues";
 import { recordChildInvocation } from "../subagent-token-capture";
 import { reviewUserMemories } from "../user-memory/review-user-memories";
 import { getActiveUserMemories } from "../user-memory/storage-user-memory";
-import { type ClassifyModuleClient, ClassifyModuleFailureError, runClassify } from "./classify";
+import { type ClassifyModuleClient, runClassify } from "./classify";
 import { evaluateSmartNotes } from "./evaluate-smart-notes";
-import { runLeaseGuardedWrite, startLeaseHeartbeat } from "./lease";
+import {
+    acquireLeaseWithAcquisition,
+    type LeaseAcquisition,
+    leaseOwnershipMatches,
+    runLeaseGuardedWrite,
+    startLeaseHeartbeat,
+} from "./lease";
 import {
     enforceMaintainDocsProtectedRegions,
     snapshotMaintainDocsFiles,
@@ -59,6 +65,7 @@ import {
     isRetrospectiveWindowProcessed,
     recordRetrospectiveWindowProcessed,
 } from "./storage-task-schedule";
+import { getDreamTaskBacklog } from "./task-gates";
 import {
     buildDreamTaskPrompt,
     buildFrictionGatePrompt,
@@ -70,7 +77,18 @@ import {
     RETROSPECTIVE_SYSTEM_PROMPT,
     type RetrospectivePromptEvent,
 } from "./task-prompts";
-import type { DreamTaskRuntimeConfig, TaskExecOutcome, TaskExecutor } from "./task-scheduler";
+import {
+    type DreamTaskName,
+    type DreamTaskProgress,
+    type DreamTaskRunBacklog,
+    processedDreamTaskItems,
+} from "./task-registry";
+import type {
+    DreamTaskRuntimeConfig,
+    TaskExecOutcome,
+    TaskExecutor,
+    TaskExecutorContext,
+} from "./task-scheduler";
 import { runVerify } from "./verify";
 
 export interface DreamTaskExecutorDeps {
@@ -100,9 +118,11 @@ export interface DreamTaskExecutorDeps {
     /** Resolved project transform mode; an explicit TS mode always stays on TS. */
     transformMode?: "ts" | "rust";
     /** Rust-mode module transport; classify uses it only after MODULE authority is confirmed. */
-    dreamerModel?: string;
-    experimentalMural?: { enabled: boolean; model?: string };
+    mural?: { enabled: boolean; model?: string };
     memoryInjectionBudgetTokens?: number;
+    retinaHandoff?: boolean;
+    /** Process-local progress callback for user-facing status displays; it never reads from or writes to the prompt/result cache. */
+    onProgress?: (progress: DreamTaskProgress | null, completedTask?: DreamTaskName) => void;
     moduleClient?: ClassifyModuleClient & {
         authorityStatus?: (args: {
             context_store_uuid: string;
@@ -168,6 +188,23 @@ function loadActiveMemoryPromptMemories(
     return memories.map((memory) => toCuratePromptMemory(memory, verificationById));
 }
 
+const TEXTUAL_CURATE_TOOL_CALL_PATTERNS = [
+    /\[\s*historical tool call\s*\][\s\S]*?(?:^|\n)\s*name\s*:\s*ctx_memory\b[\s\S]*?(?:^|\n)\s*arguments\s*:/im,
+    /(?:^|\n)\s*name\s*:\s*ctx_memory\b[\s\S]*?(?:^|\n)\s*arguments\s*:/im,
+    /(?:^|\n)\s*(?:```[^\n]*\n\s*)?ctx_memory\s*\(\s*action\s*=/im,
+    /["']name["']\s*:\s*["']ctx_memory["'][\s\S]*?["']arguments["']\s*:/i,
+] as const;
+
+/** Reject serialized or hand-written ctx_memory invocations. They are assistant
+ * text, not executable tool parts, so accepting one would leave its mutation
+ * unapplied while recording the whole curate run as complete. */
+function validateCurateAssistantText(text: string): string {
+    if (TEXTUAL_CURATE_TOOL_CALL_PATTERNS.some((pattern) => pattern.test(text))) {
+        throw new Error("Curate returned an unresolved textual ctx_memory tool call.");
+    }
+    return text;
+}
+
 /**
  * Build the TaskExecutor the v2 scheduler drives. The scheduler owns the keyed
  * domain lease + holderId and hands them in; this executor runs one task's actual
@@ -208,16 +245,38 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
 
     return async (
         config: DreamTaskRuntimeConfig,
-        ctx: { db: Database; projectIdentity: string; holderId: string; leaseKey: string },
+        ctx: TaskExecutorContext,
     ): Promise<TaskExecOutcome> => {
         const { db, projectIdentity, holderId, leaseKey } = ctx;
         const startedAt = Date.now();
+        const leaseAcquisition: LeaseAcquisition =
+            ctx.leaseAcquisition ??
+            acquireLeaseWithAcquisition(db, holderId, leaseKey) ??
+            (() => {
+                throw new Error("Dream lease unavailable during executor setup");
+            })();
         const deadline = startedAt + config.timeoutMinutes * 60 * 1000;
+        const backlogAtStart = getDreamTaskBacklog(db, projectIdentity, config.task);
+        const reportProgress = (processed: number, refused?: number): void => {
+            deps.onProgress?.({
+                task: config.task,
+                processed: Math.max(0, processed),
+                total: backlogAtStart.pending,
+                startedAt,
+                ...(refused === undefined ? {} : { refused: Math.max(0, refused) }),
+            });
+        };
+        reportProgress(0);
+        const incompleteMessage = (remaining: number): string => {
+            const processed = processedDreamTaskItems(backlogAtStart.pending, remaining);
+            return `${config.task} incomplete: ${remaining} remain (was ${backlogAtStart.pending} at run start; processed ${processed} this run)`;
+        };
         const parent = await resolveParentSessionId();
         let moduleRoute: Awaited<ReturnType<typeof resolveDreamerModuleRoute>>;
         if (
             config.task === "map-memories" ||
             config.task === "compress-cues" ||
+            config.task === "classify-memories" ||
             config.task === "verify" ||
             config.task === "verify-broad" ||
             config.task === "retrospective"
@@ -235,6 +294,9 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                 throw new DreamerModuleFailureError("authority.status", error);
             }
         }
+        if (!leaseOwnershipMatches(db, holderId, leaseAcquisition.generation, leaseKey)) {
+            throw new Error("Dream lease lost during executor setup");
+        }
 
         const recordRun = (
             status: "completed" | "failed",
@@ -243,6 +305,12 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                 memoryChanges?: ReturnType<typeof computeMemoryDelta>;
                 smartNotesSurfaced?: number;
                 smartNotesPending?: number;
+                /** Broad verification closes its cycle before telemetry is recorded,
+                 *  so pass the cycle-local backlog explicitly when needed. */
+                backlogAfter?: { pending: number; total: number };
+                /** Successful progress/detail; empty strings are omitted so absent
+                 *  and empty have the same persisted meaning. */
+                progress?: string | null;
             },
         ): void => {
             try {
@@ -256,7 +324,25 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                             name: config.task,
                             durationMs: Date.now() - startedAt,
                             resultChars: 0,
-                            ...(error ? { error } : {}),
+                            ...(status === "failed" && error ? { error } : {}),
+                            ...(extra?.progress ? { progress: extra.progress } : {}),
+                            backlog: (() => {
+                                const end =
+                                    extra?.backlogAfter ??
+                                    getDreamTaskBacklog(db, projectIdentity, config.task);
+                                const processed = processedDreamTaskItems(
+                                    backlogAtStart.pending,
+                                    end.pending,
+                                );
+                                const value: DreamTaskRunBacklog = {
+                                    pendingAtStart: backlogAtStart.pending,
+                                    totalAtStart: backlogAtStart.total,
+                                    pendingAtEnd: end.pending,
+                                    totalAtEnd: end.total,
+                                    processed,
+                                };
+                                return value;
+                            })(),
                         },
                     ],
                     tasksSucceeded: status === "completed" ? 1 : 0,
@@ -297,23 +383,17 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
 
         try {
             if (config.task === "compress-cues") {
-                if (deps.experimentalMural?.enabled !== true) {
+                if (deps.mural?.enabled !== true) {
                     // Config-gated no-op, but say so: a silent "completed" here
                     // reads as a successful run in /ctx-dream summaries and would
                     // otherwise mask a wiring gap.
-                    log("[dreamer] compress-cues: skipped (experimental.mural is not enabled)");
+                    log("[dreamer] compress-cues: skipped (mural is not enabled)");
                     recordRun("completed", null);
                     return { status: "completed" };
                 }
-                if (moduleRoute) {
-                    const reason =
-                        "compress-cues parked: MODULE memory authority has no cue write facade";
-                    log(`[dreamer] compress-cues: skipped (${reason})`);
-                    recordRun("failed", reason);
-                    return { status: "failed", transient: true, error: reason };
-                }
-                // Model ladder mirrors classify: task override → experimental.mural
-                // model (the cue COMPRESSOR model) → dreamer model → session model.
+                // `config.model` is already resolved by task-config using the
+                // executing harness's task-specific, mural/project-level,
+                // then default model settings.
                 const result = await runCompressCues({
                     db,
                     client: deps.client,
@@ -323,14 +403,17 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                     holderId,
                     leaseKey,
                     deadline,
-                    model: config.model ?? deps.experimentalMural.model ?? deps.dreamerModel,
+                    leaseAcquisition,
+                    model: config.model,
                     fallbackModels: config.fallbackModels,
+                    moduleRoute,
+                    onProgress: (processed) => reportProgress(processed),
                 });
                 log(
                     `[dreamer] compress-cues: compressed=${result.compressed} skipped=${result.skipped} chunks=${result.chunks} remaining=${result.remaining}`,
                 );
                 if (!result.complete) {
-                    const error = `compress-cues incomplete: ${result.remaining} selected memories remain`;
+                    const error = incompleteMessage(result.remaining);
                     recordRun("failed", error);
                     return { status: "failed", transient: true, error };
                 }
@@ -347,6 +430,7 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                     holderId,
                     leaseKey,
                     deadline,
+                    leaseAcquisition,
                     promotionThreshold: config.promotionThreshold ?? 3,
                     model: config.model,
                     fallbackModels: config.fallbackModels,
@@ -369,15 +453,35 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                     holderId,
                     leaseKey,
                     deadline,
+                    leaseAcquisition,
                     model: config.model,
                     fallbackModels: config.fallbackModels,
                     moduleRoute,
+                    onProgress: (processed) => reportProgress(processed),
                 });
                 log(
-                    `[dreamer] map-memories: mapped=${result.mapped} independent=${result.independent} batches=${result.batches} remaining=${result.remaining}`,
+                    `[dreamer] map-memories: committed=${result.mapped + result.independent} mapped=${result.mapped} independent=${result.independent} batches=${result.batches} remaining=${result.remaining} complete=${result.complete}${result.stopReason ? ` stop_reason=${result.stopReason}` : ""}`,
                 );
                 if (!result.complete) {
-                    const error = `map-memories incomplete: ${result.remaining} selected memories remain`;
+                    if (result.stopReason === "timeout-circuit-breaker") {
+                        // A repeated timeout is a model-capacity starvation signal, not
+                        // a normal deadline remainder. Keep its failed status loud so
+                        // /ctx-dream and dreamer history expose why it stopped.
+                        const error = `map-memories starvation: timeout circuit breaker stopped the run with ${result.remaining} remain`;
+                        recordRun("failed", error);
+                        return { status: "failed", transient: true, error };
+                    }
+                    const processed = result.mapped + result.independent;
+                    if (processed > 0) {
+                        // Mappings are persisted one completed host batch at a time.
+                        // Like a resumable verify-broad cycle, bank real progress as a
+                        // completed scheduled run so lastRunAt advances, while the
+                        // remaining gate set drives the next scheduled run.
+                        const progress = `map-memories: committed ${processed} mapping(s) (mapped ${result.mapped}, independent ${result.independent}); ${result.remaining} remain`;
+                        recordRun("completed", null, { progress });
+                        return { status: "completed" };
+                    }
+                    const error = incompleteMessage(result.remaining);
                     recordRun("failed", error);
                     return { status: "failed", transient: true, error };
                 }
@@ -396,21 +500,51 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                     holderId,
                     leaseKey,
                     deadline,
+                    leaseAcquisition,
                     forceBroad: config.task === "verify-broad",
                     model: config.model,
                     fallbackModels: config.fallbackModels,
                     language: config.language ?? deps.language,
                     moduleRoute,
+                    onProgress: (processed, refused) => reportProgress(processed, refused),
                 });
+                const processed =
+                    result.verified +
+                    result.updated +
+                    result.archived +
+                    result.skipped +
+                    result.refused;
+                const verificationProgress = `${config.task}${config.task === "verify-broad" ? ` cycle ${result.broadCycleStartAt ?? "open"}` : ""}: processed ${processed} (verified ${result.verified}, updated ${result.updated}, archived ${result.archived}, skipped ${result.skipped}, refused ${result.refused}); ${result.remaining} remain`;
+                const broadProgress = config.task === "verify-broad" ? verificationProgress : null;
+                const backlogAfter =
+                    config.task === "verify-broad"
+                        ? { pending: result.remaining, total: backlogAtStart.total }
+                        : undefined;
                 if (!result.complete) {
-                    const error = `${config.task} incomplete: ${result.remaining} selected memories remain`;
+                    // A broad cycle is intentionally resumable: ordinary progress
+                    // is a successful scheduled run, even though this deadline did
+                    // not drain the complete cycle. Only a zero-progress broad run
+                    // is a failure that should raise the dashboard's red status.
+                    if (broadProgress && processed > 0) {
+                        recordRun("completed", null, {
+                            progress: broadProgress,
+                            memoryChanges: computeMemoryDelta(memoryBefore),
+                            backlogAfter,
+                        });
+                        return { status: "completed" };
+                    }
+                    const error = incompleteMessage(result.remaining);
                     recordRun("failed", error, {
+                        progress: verificationProgress,
                         memoryChanges: computeMemoryDelta(memoryBefore),
+                        backlogAfter,
                     });
                     return { status: "failed", transient: true, error };
                 }
                 recordRun("completed", null, {
+                    progress: verificationProgress,
                     memoryChanges: computeMemoryDelta(memoryBefore),
+                    backlogAfter,
                 });
                 return { status: "completed" };
             }
@@ -429,45 +563,15 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                           | "moduleCommandId"
                       >
                     | undefined;
-                const moduleTransport = deps.transformMode === "ts" ? undefined : deps.moduleClient;
-                if (moduleTransport?.authorityStatus) {
-                    const contextStoreUuid = getContextStoreUuid(db);
-                    if (!contextStoreUuid) {
-                        throw new Error("Rust classify requires a context store identity");
-                    }
-                    let authority: {
-                        authority: { state?: string; generation?: number } | null;
+                if (moduleRoute) {
+                    moduleArgs = {
+                        moduleClient: moduleRoute.moduleClient,
+                        moduleSessionId: moduleRoute.moduleSessionId,
+                        moduleProjectRoot: moduleRoute.moduleProjectRoot,
+                        moduleContextStoreUuid: moduleRoute.moduleContextStoreUuid,
+                        moduleAuthorityGeneration: moduleRoute.moduleAuthorityGeneration,
+                        moduleCommandId: moduleRoute.moduleCommandId,
                     };
-                    try {
-                        authority = await moduleTransport.authorityStatus({
-                            context_store_uuid: contextStoreUuid,
-                            project: projectIdentity,
-                            projectRoot: deps.sessionDirectory,
-                            domain: "memories",
-                        });
-                    } catch (error) {
-                        throw new ClassifyModuleFailureError("authority.status", error);
-                    }
-                    if (authority.authority?.state === "MODULE") {
-                        const generation = authority.authority.generation;
-                        if (typeof generation !== "number") {
-                            throw new ClassifyModuleFailureError(
-                                "authority.status",
-                                new Error("response omitted generation"),
-                            );
-                        }
-                        const moduleClient: ClassifyModuleClient = {
-                            call: (callArgs) => moduleTransport.call(callArgs),
-                        };
-                        moduleArgs = {
-                            moduleClient,
-                            moduleSessionId: projectIdentity,
-                            moduleProjectRoot: deps.sessionDirectory,
-                            moduleContextStoreUuid: contextStoreUuid,
-                            moduleAuthorityGeneration: generation,
-                            moduleCommandId: `${startedAt}:${holderId}`,
-                        };
-                    }
                 }
                 const result = await runClassify({
                     db,
@@ -478,15 +582,18 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                     holderId,
                     leaseKey,
                     deadline,
+                    leaseAcquisition,
                     model: config.model,
                     fallbackModels: config.fallbackModels,
+                    language: config.language ?? deps.language,
                     ...moduleArgs,
+                    onProgress: (processed) => reportProgress(processed),
                 });
                 log(
                     `[dreamer] classify-memories: stage=${result.stage} classified=${result.classified} changed=${result.changed} chunks=${result.chunks} remaining=${result.remaining}`,
                 );
                 if (!result.complete) {
-                    const error = `classify-memories incomplete: ${result.remaining} selected memories remain`;
+                    const error = incompleteMessage(result.remaining);
                     recordRun("failed", error);
                     return { status: "failed", transient: true, error };
                 }
@@ -503,6 +610,7 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                     holderId,
                     leaseKey,
                     deadline,
+                    leaseAcquisition,
                     promotionThreshold: config.promotionThreshold ?? 2,
                     ensureProjectRegistered: deps.ensureProjectRegistered,
                 });
@@ -523,10 +631,12 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                     holderId,
                     leaseKey,
                     deadline,
+                    leaseAcquisition,
                     model: config.model,
                     fallbackModels: config.fallbackModels,
                     language: config.language ?? deps.language,
                     rawProviderFactory: deps.primerRawProviderFactory,
+                    onProgress: (processed) => reportProgress(processed),
                 });
                 recordRun("completed", null);
                 log(
@@ -545,8 +655,10 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
                     holderId,
                     leaseKey,
                     deadline,
+                    leaseAcquisition,
                     model: config.model,
                     fallbackModels: config.fallbackModels,
+                    retinaHandoff: deps.retinaHandoff,
                 });
                 recordRun("completed", null, {
                     smartNotesSurfaced: result.surfaced,
@@ -591,6 +703,8 @@ export function createDreamTaskExecutor(deps: DreamTaskExecutorDeps): TaskExecut
             recordRun("failed", brief);
             log(`[dreamer] task ${config.task} failed (transient=${transient}): ${brief}`);
             return { status: "failed", transient, error: brief };
+        } finally {
+            deps.onProgress?.(null, config.task);
         }
     };
 }
@@ -731,7 +845,7 @@ function retrospectiveEventsForSessions(
 
 async function runRetrospectiveTask(
     config: DreamTaskRuntimeConfig,
-    ctx: { db: Database; projectIdentity: string; holderId: string; leaseKey: string },
+    ctx: TaskExecutorContext,
     helpers: {
         deps: DreamTaskExecutorDeps;
         deadline: number;
@@ -780,19 +894,25 @@ async function runRetrospectiveTask(
 
     const abortController = new AbortController();
     let leaseLost = false;
-    const heartbeat = startLeaseHeartbeat(db, holderId, leaseKey, () => {
-        leaseLost = true;
-        abortController.abort();
-    });
+    const heartbeat = startLeaseHeartbeat(
+        db,
+        holderId,
+        leaseKey,
+        () => {
+            leaseLost = true;
+            abortController.abort();
+        },
+        ctx.leaseAcquisition,
+    );
 
     let childSessionId: string | null = null;
     try {
-        const createResponse = await deps.client.session.create({
-            body: {
-                ...(parent ? { parentID: parent } : {}),
-                title: "magic-context-dream-retrospective",
-            },
-            query: { directory: deps.sessionDirectory },
+        const createResponse = await createChildSessionWithFence({
+            client: deps.client,
+            db,
+            parentSessionId: parent ?? undefined,
+            title: "magic-context-dream-retrospective",
+            directory: deps.sessionDirectory,
         });
         const created = shared.normalizeSDKResponse(
             createResponse,
@@ -1012,7 +1132,7 @@ async function runRetrospectiveTask(
  *  with lease renewal → abort-on-loss and maintain-docs protected-region enforce. */
 async function runAgenticTask(
     config: DreamTaskRuntimeConfig,
-    ctx: { db: Database; projectIdentity: string; holderId: string; leaseKey: string },
+    ctx: TaskExecutorContext,
     helpers: {
         deps: DreamTaskExecutorDeps;
         deadline: number;
@@ -1076,19 +1196,25 @@ async function runAgenticTask(
 
     const abortController = new AbortController();
     let leaseLost = false;
-    const heartbeat = startLeaseHeartbeat(db, holderId, leaseKey, () => {
-        leaseLost = true;
-        abortController.abort();
-    });
+    const heartbeat = startLeaseHeartbeat(
+        db,
+        holderId,
+        leaseKey,
+        () => {
+            leaseLost = true;
+            abortController.abort();
+        },
+        ctx.leaseAcquisition,
+    );
 
     let childSessionId: string | null = null;
     try {
-        const createResponse = await deps.client.session.create({
-            body: {
-                ...(parent ? { parentID: parent } : {}),
-                title: `magic-context-dream-${task}`,
-            },
-            query: { directory: docsDir },
+        const createResponse = await createChildSessionWithFence({
+            client: deps.client,
+            db,
+            parentSessionId: parent ?? undefined,
+            title: `magic-context-dream-${task}`,
+            directory: docsDir,
         });
         const created = shared.normalizeSDKResponse(
             createResponse,
@@ -1142,7 +1268,7 @@ async function runAgenticTask(
                 validateOutput: (messages) => {
                     const text = extractLatestAssistantText(messages);
                     if (!text) throw new Error("Dreamer returned no assistant output.");
-                    return text;
+                    return task === "curate" ? validateCurateAssistantText(text) : text;
                 },
             },
         );

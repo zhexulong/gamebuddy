@@ -14,6 +14,9 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { ContextDatabase } from "@magic-context/core/features/magic-context/storage";
+import type { PromptSurfaceConfig } from "@magic-context/core/shared/prompt-surface";
+import type { PromptSurfaceRuntime } from "@magic-context/core/shared/prompt-surface-runtime";
+import { createPromptSurfaceRuntime } from "@magic-context/core/shared/prompt-surface-runtime";
 import { createCtxExpandTool } from "./ctx-expand";
 import { createCtxMemoryTool } from "./ctx-memory";
 import { createCtxNoteTool } from "./ctx-note";
@@ -31,6 +34,8 @@ export interface RegisterToolsOptions {
 	memoryEnabled?: boolean;
 	embeddingEnabled?: boolean;
 	gitCommitsEnabled?: boolean;
+	/** Resolve the current directory's project identity using the user-level home-project setting. */
+	resolveProjectIdentity?: (ctx: { cwd: string }) => string | undefined;
 	/** When true, ctx_memory exposes dreamer-only actions (update, merge, archive).
 	 *  Set by the subagent extension entry when the parent passes
 	 *  `--magic-context-dreamer-actions`. The main extension entry
@@ -60,31 +65,67 @@ export interface RegisterToolsOptions {
 	todowriteEnabled?: boolean;
 	/** Main Pi entry registers /todos; lean subagent entries keep commands off. */
 	todowriteCommandEnabled?: boolean;
+	/** In compaction-off mode, omit ctx_reduce and keep the other Pi tools available. */
+	compactionOff?: boolean;
+	promptSurface?: PromptSurfaceConfig;
+	promptSurfaceRuntime?: PromptSurfaceRuntime;
 }
 
 export function registerMagicContextTools(
 	pi: ExtensionAPI,
 	opts: RegisterToolsOptions,
 ): void {
-	pi.registerTool(
-		createCtxSearchTool({
-			db: opts.db,
-			ensureProjectRegistered: opts.ensureProjectRegistered,
-			memoryEnabled: opts.memoryEnabled,
-			embeddingEnabled: opts.embeddingEnabled,
-			gitCommitsEnabled: opts.gitCommitsEnabled,
-		}),
+	const resolveProjectIdentity = opts.resolveProjectIdentity
+		? (directory: string) => opts.resolveProjectIdentity?.({ cwd: directory })
+		: undefined;
+	const promptSurfaceRuntime =
+		opts.promptSurfaceRuntime ??
+		createPromptSurfaceRuntime({
+			userConfigDirectory: process.cwd(),
+			warn: (message) =>
+				console.warn(`[magic-context][pi] config warning: ${message}`),
+		});
+	// Pi registers provider tools once when the extension loads. Resolve the
+	// registration default once here; project/model switches may reroute guidance
+	// but cannot mutate the descriptions owned by this ExtensionAPI instance.
+	const registration = promptSurfaceRuntime.resolveRegistration(
+		opts.promptSurface,
 	);
+	const surfaceTool = <T extends { name: string; description: string }>(
+		definition: T,
+	): T => ({
+		...definition,
+		description: registration.descriptionFor(
+			definition.name,
+			definition.description,
+		),
+	});
 
-	if (opts.memoryToolEnabled !== false) {
-		pi.registerTool(
-			createCtxMemoryTool({
+	pi.registerTool(
+		surfaceTool(
+			createCtxSearchTool({
 				db: opts.db,
 				ensureProjectRegistered: opts.ensureProjectRegistered,
 				memoryEnabled: opts.memoryEnabled,
 				embeddingEnabled: opts.embeddingEnabled,
-				allowDreamerActions: opts.allowDreamerActions ?? false,
+				gitCommitsEnabled: opts.gitCommitsEnabled,
+				resolveProjectIdentity,
 			}),
+		),
+	);
+
+	if (opts.memoryToolEnabled !== false) {
+		pi.registerTool(
+			surfaceTool(
+				createCtxMemoryTool({
+					db: opts.db,
+					ensureProjectRegistered: opts.ensureProjectRegistered,
+					memoryEnabled: opts.memoryEnabled,
+					embeddingEnabled: opts.embeddingEnabled,
+					allowDreamerActions: opts.allowDreamerActions ?? false,
+					resolveProjectIdentity,
+				}),
+			),
 		);
 	}
 
@@ -95,14 +136,17 @@ export function registerMagicContextTools(
 	// stays available and ctx_memory is controlled above.
 	if (!opts.sessionScopedToolsDisabled) {
 		pi.registerTool(
-			createCtxNoteTool({
-				db: opts.db,
-				dreamerEnabled: opts.dreamerEnabled ?? false,
-				resolveDreamerEnabled: opts.resolveDreamerEnabled,
-			}),
+			surfaceTool(
+				createCtxNoteTool({
+					db: opts.db,
+					dreamerEnabled: opts.dreamerEnabled ?? false,
+					resolveDreamerEnabled: opts.resolveDreamerEnabled,
+					resolveProjectIdentity,
+				}),
+			),
 		);
 
-		pi.registerTool(createCtxExpandTool({ db: opts.db }));
+		pi.registerTool(surfaceTool(createCtxExpandTool({ db: opts.db })));
 	}
 
 	if (opts.todowriteEnabled !== false) {
@@ -121,13 +165,15 @@ export function registerMagicContextTools(
 	// ctx_reduce is session-scoped just like ctx_note/ctx_expand: it resolves the
 	// CURRENT session id at call time. Omit it for `--no-session` children where
 	// that id points at a hidden ephemeral child session.
-	if (!opts.sessionScopedToolsDisabled) {
+	if (!opts.sessionScopedToolsDisabled && !opts.compactionOff) {
 		pi.registerTool(
-			createCtxReduceTool({
-				db: opts.db,
-				protectedTags: opts.protectedTags ?? 20,
-				resolveProtectedTags: opts.resolveProtectedTags,
-			}),
+			surfaceTool(
+				createCtxReduceTool({
+					db: opts.db,
+					protectedTags: opts.protectedTags ?? 20,
+					resolveProtectedTags: opts.resolveProtectedTags,
+				}),
+			),
 		);
 	}
 }

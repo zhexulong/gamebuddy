@@ -37,6 +37,52 @@ export function modelAcceptsEmptyContent(providerID?: string): boolean {
 }
 
 /**
+ * Decide whether a reasoning-variant change (effort / budget_tokens / toggle)
+ * busts the provider's prompt cache on its own.
+ *
+ * Two provider cache models govern this:
+ *
+ *  - Thinking-config-in-prompt (Anthropic family): the reasoning
+ *    configuration is rendered into the prompt itself, so changing it
+ *    re-serializes the affected message blocks. Anthropic's docs state that
+ *    changing the thinking config "always invalidates message blocks"; the
+ *    same holds on Bedrock. The bust therefore happens regardless of our
+ *    flush, and our queued ops drain on that natural bust.
+ *
+ *  - Request-param-outside-cache-key (OpenAI-compatible et al.):
+ *    reasoning_effort / budget is a request parameter that lives outside the
+ *    cache key. A variant flip does NOT re-serialize any cached bytes, so the
+ *    provider serves the whole prefix as a cache HIT. Our flush would be the
+ *    ONLY bust — manufacturing a gratuitous one that re-runs heuristics and
+ *    re-materializes drops for no provider-side reason (reporter's evidence:
+ *    104 pending ops drained at 54% usage, 156K uncached tokens, while a
+ *    no-op variant flip on the same provider was a full cache HIT).
+ *
+ * Safety asymmetry: misclassifying toward TRUE keeps today's behavior
+ * (wasteful but correct — the ops still drain). Misclassifying toward FALSE
+ * only defers queued ops to the next natural bust (fold / threshold / TTL /
+ * flush), which is the already-designed steady-state for historian publishes
+ * (ARCHITECTURE.md invariant 3: deferred work rides the next bust cycle, it
+ * never forces its own). So the conservative default for unknown providers is
+ * TRUE (today's behavior).
+ *
+ * Provider IDs matched (per OpenCode's `provider/transform.ts`):
+ *   - `anthropic`                     — canonical @ai-sdk/anthropic
+ *   - `bedrock`                        — @ai-sdk/amazon-bedrock (reported as "bedrock")
+ *   - `google-vertex-anthropic`       — @ai-sdk/google-vertex/anthropic
+ * The `bedrock` check uses `includes` so any future bedrock-derived providerID
+ * (e.g. a mantle variant) is also covered, matching how OpenCode's own
+ * `useMessageLevelOptions` gate matches bedrock.
+ */
+export function variantChangeBustsProviderCache(providerID?: string): boolean {
+    if (providerID === undefined) return true;
+    if (providerID === "anthropic") return true;
+    if (providerID === "google-vertex-anthropic") return true;
+    if (providerID.includes("bedrock")) return true;
+    return false;
+}
+
+/**
  * Create an empty-text sentinel to replace a stripped message PART (not a
  * whole message) while preserving the array's length and index positions
  * across passes.

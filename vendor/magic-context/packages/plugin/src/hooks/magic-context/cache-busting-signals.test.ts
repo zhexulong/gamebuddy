@@ -33,15 +33,15 @@ describe("canConsumeDeferredOnThisPass", () => {
         ).toBe(true);
     });
 
-    it("consumes mid-turn ONLY when force-materialization pressure (>=85%) overrides", () => {
-        expect(
-            canConsumeDeferredOnThisPass({
-                schedulerDecision: "defer",
-                contextPercentage: 90,
-                justAwaitedPublication: false,
-                activeRunBlocksMaterialization: false,
-            }),
-        ).toBe(true);
+    it("consumes mid-turn only at the resolved force-materialization band", () => {
+        const input = {
+            schedulerDecision: "defer" as const,
+            justAwaitedPublication: false,
+            activeRunBlocksMaterialization: false,
+            forceMaterializationPercentage: 92,
+        };
+        expect(canConsumeDeferredOnThisPass({ ...input, contextPercentage: 91 })).toBe(false);
+        expect(canConsumeDeferredOnThisPass({ ...input, contextPercentage: 92 })).toBe(true);
     });
 
     it("always consumes right after awaiting a publication (inline await path)", () => {
