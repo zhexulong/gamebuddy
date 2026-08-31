@@ -1,6 +1,8 @@
 using System.IO.Pipes;
 using System.Text;
 using GameBuddy.Stardew;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Protocol;
 
 /// <summary>
 /// Focused Farmhand-only contract for the ordinary LocalPipeBridge outbound

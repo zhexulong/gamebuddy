@@ -45,13 +45,18 @@
           "move_to_tile",
           "inspect_self"
         ],
+        "catalogRevision": 1,
+        "enabledActionIds": [
+          "move_to_tile"
+        ],
         "presentationLocale": "en-US",
         "registrations": [
           {
             "actionId": "move_to_tile",
             "familyId": "movement_navigation",
             "identityVersion": 1,
-            "lifecycle": "published"
+            "lifecycle": "published",
+            "kind": "execution"
           }
         ]
       }
@@ -97,6 +102,10 @@
         "capabilities": [
           "move_to_tile",
           "inspect_self"
+        ],
+        "catalogRevision": 1,
+        "enabledActionIds": [
+          "move_to_tile"
         ],
         "presentationLocale": "en-US",
         "activeExecution": null

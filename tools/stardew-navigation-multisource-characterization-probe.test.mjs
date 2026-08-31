@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const sourceUrl = new URL('./stardew-navigation-multisource-characterization/ModEntry.cs', import.meta.url);
+const loaderSourceUrl = new URL('./stardew-navigation-p4-loader/ModEntry.cs', import.meta.url);
 
 function phaseBlock(source) {
   const start = source.indexOf('private enum ProbePhase');
@@ -11,6 +12,19 @@ function phaseBlock(source) {
   assert.ok(end > start, 'ProbePhase logging code must precede production identity inspection');
   return source.slice(start, end);
 }
+
+test('P4 loader exits the native title menu immediately after requesting the authenticated save load', async () => {
+  const source = await readFile(loaderSourceUrl, 'utf8');
+  const verify = source.indexOf('this.fixture.VerifyCurrentSaveSlot();');
+  const load = source.indexOf('SaveGame.Load(this.fixture.ObservedSaveSlot);', verify);
+  const exitMenu = source.indexOf('Game1.exitActiveMenu();', load);
+  const awaitingSaveLoaded = source.indexOf('exited the native title menu and awaiting SaveLoaded.', exitMenu);
+  assert.ok(
+    verify >= 0 && verify < load && load < exitMenu && exitMenu < awaitingSaveLoaded,
+    'the loader must preserve fixture verification, then match the target LoadGameMenu activation boundary so SMAPI can establish world readiness',
+  );
+  assert.doesNotMatch(source, /Context\.IsWorldReady\s*=|SaveLoaded\s*\(/, 'the loader must await the original SMAPI lifecycle instead of forging readiness or invoking a SaveLoaded handler');
+});
 
 test('probe private diagnosis trace is a closed fixed-code Trace-only seam outside authenticated evidence', async () => {
   const source = await readFile(sourceUrl, 'utf8');
@@ -35,8 +49,9 @@ test('probe private diagnosis trace is a closed fixed-code Trace-only seam outsi
     .map((member) => member.trim())
     .filter(Boolean);
   assert.deepEqual(actualPhases, expectedPhases, 'ProbePhase must expose exactly the fixed diagnosis allowlist');
-  assert.equal((source.match(/this\.Monitor\.Log\(/g) ?? []).length, 1, 'TracePhase must be the probe-wide only logging seam');
+  assert.equal((source.match(/this\.Monitor\.Log\(/g) ?? []).length, 2, 'the probe must have exactly the phase and topology-rejection logging seams');
   assert.match(phaseSource, /this\.Monitor\.Log\(phase switch\s*\{[\s\S]*?_ => throw new ArgumentOutOfRangeException\(nameof\(phase\)\),?\s*\}, LogLevel\.Trace\)/);
+  assert.match(source, /private void TraceTopologyRejection\(string reasonCode\)\s*=> this\.Monitor\.Log\(reasonCode switch\s*\{[\s\S]*?_ => "GBMS_TOPOLOGY:unknown_rejection",?\s*\}, LogLevel\.Trace\);/, 'topology rejection logging must be a closed literal switch');
   for (const code of [
     'arm_accepted',
     'arm_rejected',
@@ -51,7 +66,21 @@ test('probe private diagnosis trace is a closed fixed-code Trace-only seam outsi
   ]) assert.equal((phaseSource.match(new RegExp(`=> "GBMS_PHASE:${code}"`, 'g')) ?? []).length, 1, `phase code ${code} must have exactly one fixed mapping`);
   assert.equal((phaseSource.match(/GBMS_PHASE:/g) ?? []).length, 10, 'no other phase code may be logged');
   assert.doesNotMatch(source, /Monitor\.Log\(\s*\$"|Monitor\.Log\([^)]*\+/, 'probe-wide logging must not interpolate or concatenate values');
-  assert.doesNotMatch(source, /LogLevel\.(?!Trace)/, 'probe-wide phase logs must use Trace only');
+  assert.doesNotMatch(source, /LogLevel\.(?!Trace)/, 'probe-wide diagnostics must use Trace only');
+  for (const code of [
+    'world_or_binding_unavailable',
+    'loaded_locations_unavailable',
+    'loaded_source_identity_invalid',
+    'loaded_source_identity_duplicate',
+    'ordinary_warp_target_identity_invalid',
+    'ordinary_warp_target_coordinates_invalid',
+    'accepted_destination_not_loaded',
+    'ordinary_warp_target_not_loaded',
+    'unexpected_exception',
+    'unknown_rejection',
+  ]) assert.equal((source.match(new RegExp(`"GBMS_TOPOLOGY:${code}"`, 'g')) ?? []).length, 1, `topology diagnostic ${code} must have exactly one fixed mapping`);
+  assert.match(source, /this\.TraceTopologyRejection\(reasonCode\);[\s\S]*?"blocked", "production_topology_creation_rejected"/, 'extractor rejection must be traced before the generic authenticated blocker');
+  assert.match(source, /catch\s*\{\s*this\.TraceTopologyRejection\("unexpected_exception"\);/, 'unexpected extractor failure must use the fixed exception diagnostic');
   const fileStreamCalls = source.match(/new FileStream\([\s\S]*?\)/g) ?? [];
   assert.equal(fileStreamCalls.length, 1, 'the probe must retain exactly one observation write stream');
   assert.match(fileStreamCalls[0], /FileMode\.CreateNew, FileAccess\.Write, FileShare\.None/, 'the sole observation write must remain exclusive CreateNew');
@@ -73,5 +102,5 @@ test('probe private diagnosis trace is a closed fixed-code Trace-only seam outsi
   const rawStart = source.indexOf('string raw = JsonSerializer.Serialize');
   const rawEnd = source.indexOf('using var stream = new FileStream', rawStart);
   assert.ok(rawStart >= 0 && rawEnd > rawStart, 'existing authenticated raw observation serialization must remain present');
-  assert.doesNotMatch(source.slice(rawStart, rawEnd), /GBMS_PHASE|TracePhase|Monitor\.Log/, 'diagnostic phase codes must not enter the authenticated raw observation');
+  assert.doesNotMatch(source.slice(rawStart, rawEnd), /GBMS_PHASE|GBMS_TOPOLOGY|TracePhase|TraceTopologyRejection|Monitor\.Log/, 'private diagnostics must not enter the authenticated raw observation');
 });

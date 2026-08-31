@@ -35,6 +35,18 @@ public sealed class FarmhandActionRouter
         BridgeExecutionRequest request,
         IExecutionLedger ledger,
         out LocalExecutionReceipt receipt,
+        out string reasonCode) =>
+        this.TryRoute(request, ledger, executionId: null, out receipt, out reasonCode);
+
+    /// <summary>
+    /// Routes a dispatch whose execution identity was minted by the authenticated
+    /// caller. The identity is bound before the handler can start a native body.
+    /// </summary>
+    public bool TryRoute(
+        BridgeExecutionRequest request,
+        IExecutionLedger ledger,
+        string? executionId,
+        out LocalExecutionReceipt receipt,
         out string reasonCode)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -49,6 +61,16 @@ public sealed class FarmhandActionRouter
 
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
         {
+            if (executionId is not null
+                && ledger is IDispatchExecutionLedger dispatchLedger
+                && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string existingExecutionId)
+                && !string.Equals(existingExecutionId, executionId, StringComparison.Ordinal))
+            {
+                receipt = default!;
+                reasonCode = "execution_identity_conflict";
+                return false;
+            }
+
             receipt = existing;
             reasonCode = "replayed_existing_receipt";
             return true;
@@ -61,9 +83,24 @@ public sealed class FarmhandActionRouter
             return false;
         }
 
-        // The action identity belongs to the Mod's dispatch/ledger lineage and
-        // is bound before a handler can synchronously publish any receipt.
-        ledger.BindAction(request.RequestId, request.Action);
+        if (executionId is not null)
+        {
+            string bindingReason = "execution_identity_unavailable";
+            if (ledger is not IDispatchExecutionLedger dispatchLedger
+                || (!dispatchLedger.TryBindDispatch(request.RequestId, request.Action, executionId, out bindingReason)
+                    && bindingReason != "execution_identity_already_bound"))
+            {
+                receipt = default!;
+                reasonCode = string.IsNullOrEmpty(bindingReason) ? "execution_identity_unavailable" : bindingReason;
+                return false;
+            }
+        }
+        else
+        {
+            // Direct/local callers retain the legacy action-only binding path.
+            ledger.BindAction(request.RequestId, request.Action);
+        }
+
         receipt = handler.Execute(request, ledger);
         reasonCode = "accepted";
         return true;

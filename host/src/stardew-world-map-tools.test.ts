@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createStardewObservationTools } from "./game-tools.js";
+import type { ActionPolicy } from "./action-registry.js";
+import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
+import type { NavigationReadResult } from "./protocol.js";
 
 const scope = {
   integrationId: "stardew",
@@ -102,7 +104,7 @@ test("find-destination tool mounts from its own Mod read-only publication and fo
         nextCursor: null,
         candidates: null,
         destination: { kind: "label", label: "Mine", ref: null },
-        unlockState: null,
+        unlockState: "unknown",
       };
     },
   }).find((candidate) => candidate.name === "stardew_find_destination");
@@ -116,8 +118,166 @@ test("find-destination tool mounts from its own Mod read-only publication and fo
     nextCursor: null,
     candidates: null,
     destination: { kind: "label", label: "Mine", ref: null },
-    unlockState: null,
+    unlockState: "unknown",
   }));
+});
+
+test("navigate-to-destination mounts only from its live Mod execution publication and forwards the strict selector", async () => {
+  let received: unknown = null;
+  const fixture = integration();
+  const executionIntegration: MoveCapableIntegration = {
+    ...fixture,
+    state: {
+      ...fixture.state,
+      capabilities: ["navigate_to_destination"],
+      catalogRegistrations: [
+        {
+          actionId: "navigate_to_destination",
+          familyId: "world_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        },
+      ],
+      snapshot: {
+        ...fixture.state.snapshot!,
+        capabilities: ["navigate_to_destination"],
+      },
+    },
+    async execute(request) {
+      received = request;
+      return {
+        executionId: "execution_navigation_01",
+        requestId: request.requestId,
+        actionId: "navigate_to_destination",
+        state: "accepted",
+        reasonCode: "accepted",
+        revision: 1,
+        evidence: {},
+      };
+    },
+    async cancel() {
+      throw new Error("unexpected_cancel");
+    },
+  };
+  const admission = {
+    owner: { ownerId: "navigation_projection", epoch: 1 },
+    observer: {
+      beforeWrite: () => undefined,
+      bindReceipt: () => undefined,
+      markUncertain: () => undefined,
+    },
+    async cancelExact() {
+      throw new Error("unexpected_cancel");
+    },
+  };
+
+  const tool = createStardewActionTools(
+    executionIntegration,
+    undefined,
+    () => admission,
+  ).find((candidate) => candidate.name === "stardew_navigate_to_destination");
+  assert.ok(tool);
+  const result = await tool.execute(
+    "navigate_01",
+    {
+      destination: { kind: "label", label: "Mine" },
+      requestId: "request_navigation_01",
+      idempotencyKey: "idempotency_navigation_01",
+    },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
+  assert.deepEqual((received as { action: string; args: unknown }).action, "navigate_to_destination");
+  assert.deepEqual((received as { args: unknown }).args, {
+    destination: { kind: "label", label: "Mine" },
+  });
+  assert.match(result.content[0]?.type === "text" ? result.content[0].text : "", /\"state\":\"accepted\"/);
+
+  const readOnlyRegistration: MoveCapableIntegration = {
+    ...executionIntegration,
+    state: {
+      ...executionIntegration.state,
+      catalogRegistrations: executionIntegration.state.catalogRegistrations!.map((registration) => ({
+        ...registration,
+        kind: "read_only" as const,
+      })),
+    },
+  };
+  assert.equal(
+    createStardewActionTools(readOnlyRegistration, undefined, () => admission).some(
+      (candidate) => candidate.name === "stardew_navigate_to_destination",
+    ),
+    false,
+  );
+
+  const denied = {
+    policyVersion: 1,
+    deniedActions: ["navigate_to_destination"],
+    deniedFamilies: [],
+  } satisfies ActionPolicy;
+  assert.equal(
+    createStardewActionTools(executionIntegration, denied, () => admission).some(
+      (candidate) => candidate.name === "stardew_navigate_to_destination",
+    ),
+    false,
+  );
+});
+
+test("navigation policy denied action and denied family each prevent tool mounting", () => {
+  const deniedActionPolicy = {
+    policyVersion: 1,
+    deniedActions: ["find_destination"],
+    deniedFamilies: [],
+  } satisfies ActionPolicy;
+  const deniedFamilyPolicy = {
+    policyVersion: 1,
+    deniedActions: [],
+    deniedFamilies: ["world_navigation"],
+  } satisfies ActionPolicy;
+
+  assert.equal(
+    createStardewObservationTools(integration(), deniedActionPolicy).some(
+      (tool) => tool.name === "stardew_find_destination",
+    ),
+    false,
+  );
+  assert.equal(
+    createStardewObservationTools(integration(), deniedFamilyPolicy).some(
+      (tool) => tool.name === "stardew_find_destination",
+    ),
+    false,
+  );
+});
+
+test("mounted find-destination tool rechecks mutable policy before bridge write", async () => {
+  let writes = 0;
+  const deniedFamilies: Array<"world_navigation"> = [];
+  const policy = {
+    policyVersion: 1,
+    deniedActions: [],
+    deniedFamilies,
+  } satisfies ActionPolicy;
+  const fixture = integration();
+  const tool = createStardewObservationTools(
+    {
+      ...fixture,
+      navigationRead: async () => {
+        writes++;
+        throw new Error("unexpected_navigation_write");
+      },
+    },
+    policy,
+  ).find((candidate) => candidate.name === "stardew_find_destination");
+  assert.ok(tool);
+
+  policy.deniedFamilies.push("world_navigation");
+  await assert.rejects(
+    tool.execute("find_after_policy_denial", { query: "mine" }, new AbortController().signal, () => {}, {} as never),
+    /bridge_capability_not_ready/,
+  );
+  assert.equal(writes, 0);
 });
 
 test("find-destination tool rechecks its own live publication before bridge write", async () => {
@@ -143,10 +303,10 @@ test("find-destination tool rechecks its own live publication before bridge writ
         reason: "destination_not_found" as const,
         entries: null,
         nextCursor: null,
-        candidates: [],
+        candidates: null,
         destination: null,
         unlockState: null,
-      };
+      } satisfies NavigationReadResult;
     },
   };
   const tool = createStardewObservationTools(live).find((candidate) => candidate.name === "stardew_find_destination");
@@ -199,6 +359,7 @@ test("navigation tools reject missing bridge, revision drift, and every exact re
   const mismatches = [
     { lifecycle: "experimental" },
     { kind: "execution" },
+    { familyId: "movement_navigation" },
     { actionId: "other" },
     { identityVersion: 2 },
   ] as const;
@@ -274,20 +435,30 @@ test("find destination returns seven-key candidates verbatim without mutating in
   const fixture = integration();
   const before = JSON.stringify(fixture.state);
   const exactResult = {
-    status: "ambiguous",
-    reason: "multiple_matches",
+    status: "candidates",
+    reason: "ambiguous_exact",
     entries: null,
     nextCursor: null,
     candidates: [
-      { label: "Mines", contextLabel: "Mountain", ref: null },
-      { label: "Quarry Mine", contextLabel: "Quarry", ref: "node:QuarryMine" },
+      {
+        label: "Mines",
+        contextLabel: "Mountain",
+        destination: { kind: "ref", label: null, ref: null },
+        unlockState: "unknown",
+      },
+      {
+        label: "Quarry Mine",
+        contextLabel: "Quarry",
+        destination: { kind: "ref", label: null, ref: null },
+        unlockState: "unknown",
+      },
     ],
     destination: null,
     unlockState: null,
-  };
+  } satisfies NavigationReadResult;
   const tool = createStardewObservationTools({
     ...fixture,
-    navigationRead: async () => exactResult as never,
+    navigationRead: async () => exactResult,
   }).find((candidate) => candidate.name === "stardew_find_destination");
   assert.ok(tool);
   const result = await tool.execute("find", { query: "mine" }, new AbortController().signal, () => {}, {} as never);

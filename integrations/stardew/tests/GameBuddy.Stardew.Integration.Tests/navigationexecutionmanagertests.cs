@@ -1,4 +1,5 @@
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Navigation;
@@ -45,6 +46,38 @@ public sealed class NavigationExecutionManagerTests
         // Navigation receipt state remains public, but route/progress traces may
         // carry live location/tile and are intentionally never published.
         harness.Manager.Trace.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void PreboundNavigationExecutionId_IsUsedForAcceptedAndTerminalReceipts()
+    {
+        var harness = new ManagerHarness(NotAtFarm());
+        IDispatchExecutionLedger ledger = harness.Manager;
+
+        ledger.TryBindDispatch("req_bound", "navigate_to_destination", "execution_bound", out string bindReason)
+            .Should().BeTrue();
+        bindReason.Should().Be("bound");
+
+        LocalExecutionReceipt accepted = harness.Manager.RequestNavigate("req_bound", Label("Mine"), Deadline());
+        accepted.ExecutionId.Should().Be("execution_bound");
+
+        harness.Emit(ExecutionState.Failed, "native_path_ended", "route_broken");
+        harness.Stored("req_bound").ExecutionId.Should().Be("execution_bound");
+    }
+
+    [Fact]
+    public void RebindingNavigationExecutionIdentityFailsAndKeepsOriginalBinding()
+    {
+        var harness = new ManagerHarness(NotAtFarm());
+        IDispatchExecutionLedger ledger = harness.Manager;
+
+        ledger.TryBindDispatch("req_rebind", "navigate_to_destination", "execution_original", out _)
+            .Should().BeTrue();
+        ledger.TryBindDispatch("req_rebind", "navigate_to_destination", "execution_other", out string reason)
+            .Should().BeFalse();
+        reason.Should().Be("execution_identity_conflict");
+
+        harness.Manager.RequestNavigate("req_rebind", Label("Mine"), Deadline()).ExecutionId.Should().Be("execution_original");
     }
 
     [Fact]
@@ -293,13 +326,14 @@ public sealed class NavigationExecutionManagerTests
     }
 
     [Fact]
-    public void ProductionConstruction_UsesRealApproachNative()
-    {
-        var production = new ExecutionManager(new DummyMonitor(), Surface());
-        production.UsesRealApproachNative.Should().BeTrue();
-        var harness = new ManagerHarness(NotAtFarm());
-        harness.Manager.UsesRealApproachNative.Should().BeFalse();
-    }
+public void ProductionConstruction_UsesRealApproachNativeWithoutTestAuthorization()
+{
+var production = new ExecutionManager(new DummyMonitor(), Surface());
+production.UsesRealApproachNative.Should().BeTrue();
+
+var harness = new ManagerHarness(NotAtFarm());
+harness.Manager.UsesRealApproachNative.Should().BeFalse();
+}
 
     // ── multi-hop tests ──
 

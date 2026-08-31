@@ -253,7 +253,7 @@ function resolveContext(options) {
     !isAbsolute(options.releaseDir)
   )
     throw new Error("native_local_fixture_absolute_paths_required");
-  const modRoot = join(options.modsPath, "GameBuddy");
+  const modRoot = join(options.modsPath, "GameBuddy.Stardew");
   return Object.freeze({
     root: options.root,
     modsPath: options.modsPath,
@@ -412,8 +412,7 @@ function assertNativeLocalBinding(binding, observedSaveSlot) {
 function assertBridgeConfig(config) {
   const opaque = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
   if (
-    config?.EnableLocalBridge !== true ||
-    !opaque(config.PipeName) ||
+    !opaque(config?.PipeName) ||
     typeof config.BridgeToken !== "string" ||
     config.BridgeToken.length < 16 ||
     config.BridgeToken.length > 256 ||
@@ -464,6 +463,7 @@ function configureNativeLocalPlayer(config, observedSaveSlot, timeoutSeconds, ac
     throw new Error("invalid_native_local_fixture_timeout");
   assertNativeLocalBinding(binding, observedSaveSlot);
   const result = structuredClone(config);
+  result.EnableLocalBridge = true;
   result.SaveId = binding.saveId;
   result.WorldId = binding.worldId;
   result.PlayerId = binding.playerId;

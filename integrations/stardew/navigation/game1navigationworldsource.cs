@@ -65,7 +65,7 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
         out string reasonCode)
     {
         topology = null;
-        reasonCode = "destination_access_indeterminate";
+        reasonCode = "world_or_binding_unavailable";
         Farmer? player = Game1.player;
         GameLocation? currentLocation = player?.currentLocation;
         if (!Context.IsWorldReady || player is null || currentLocation is null
@@ -75,40 +75,71 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
 
         IList<GameLocation> locations = Game1.locations;
         if (locations is null || locations.Count == 0)
+        {
+            reasonCode = "loaded_locations_unavailable";
             return false;
+        }
 
         HashSet<string> sourceIds = new(StringComparer.Ordinal);
         List<NavigationOrdinaryWarpLegs> sources = new();
         foreach (GameLocation location in locations)
         {
             string sourceId = location.NameOrUniqueName;
-            if (string.IsNullOrWhiteSpace(sourceId) || !sourceIds.Add(sourceId))
+            if (string.IsNullOrWhiteSpace(sourceId))
+            {
+                reasonCode = "loaded_source_identity_invalid";
                 return false;
+            }
+            if (!sourceIds.Add(sourceId))
+            {
+                reasonCode = "loaded_source_identity_duplicate";
+                return false;
+            }
 
             List<NavigationTransitionLeg> legs = new();
             foreach (Warp warp in location.warps)
             {
                 if (warp is null || warp.npcOnly.Value)
                     continue;
-                if (string.IsNullOrWhiteSpace(warp.TargetName) || !InRange(warp.X, warp.Y, warp.TargetX, warp.TargetY))
+                if (string.IsNullOrWhiteSpace(warp.TargetName))
+                {
+                    reasonCode = "ordinary_warp_target_identity_invalid";
                     return false;
+                }
+                if (warp.X < 0 || warp.Y < 0 || warp.X > 1000 || warp.Y > 1000)
+                    continue;
+                if (!CoordinateInRange(warp.TargetX, warp.TargetY))
+                    continue;
                 legs.Add(new NavigationTransitionLeg(warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY, false));
             }
             sources.Add(new NavigationOrdinaryWarpLegs(sourceId, legs));
         }
 
         string currentSource = currentLocation.NameOrUniqueName;
-        if (!sourceIds.Contains(acceptedBinding.CanonicalDestinationIdentity)
-            || sources.SelectMany(source => source.OutgoingOrdinaryLegs).Any(leg => !sourceIds.Contains(leg.TargetLocation)))
+        if (!sourceIds.Contains(acceptedBinding.CanonicalDestinationIdentity))
+        {
+            reasonCode = "accepted_destination_not_loaded";
             return false;
+        }
+        // The live game may retain ordinary warps for locations that are not in
+        // the currently loaded subgraph. Keep only loaded endpoints; the planner
+        // will fail closed when the accepted destination is not reachable.
+        NavigationOrdinaryWarpLegs[] filteredSources = sources
+            .Select(source => new NavigationOrdinaryWarpLegs(
+                source.SourceId,
+                source.OutgoingOrdinaryLegs.Where(leg => sourceIds.Contains(leg.TargetLocation)).ToArray()))
+            .ToArray();
 
-        topology = new NavigationOrdinaryWarpTopology(currentSource, sources);
+        topology = new NavigationOrdinaryWarpTopology(currentSource, filteredSources);
         reasonCode = "accepted";
         return true;
     }
 
     private static bool InRange(int x, int y, int targetX, int targetY) =>
-        x >= 0 && y >= 0 && x <= 1000 && y <= 1000 && targetX >= 0 && targetY >= 0 && targetX <= 1000 && targetY <= 1000;
+        CoordinateInRange(x, y) && CoordinateInRange(targetX, targetY);
+
+    private static bool CoordinateInRange(int x, int y) =>
+        x >= 0 && y >= 0 && x <= 1000 && y <= 1000;
 
     private static Warp? ResolveDoorWarp(GameLocation location, Point point)
     {

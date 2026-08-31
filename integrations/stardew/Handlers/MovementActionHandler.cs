@@ -35,16 +35,22 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
                 (int)(request.Args.Y ?? 0),
                 request.DeadlineMs),
 
-            "navigate_to_destination" => this.Navigate(request),
+            "navigate_to_destination" => this.Navigate(request, ledger),
 
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),
         };
     }
 
-    private LocalExecutionReceipt Navigate(BridgeExecutionRequest request)
+    private LocalExecutionReceipt Navigate(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (!NavigationDestinationSelector.TryCreateFromWire(request.Args.Destination, out NavigationDestinationSelector? selector) || selector is null)
-            return new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Rejected, "destination_selector_invalid", this.executions.CurrentRevision, null);
+        {
+            string executionId = ledger is IDispatchExecutionLedger dispatchLedger
+                && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
+                ? boundExecutionId
+                : Guid.NewGuid().ToString("N");
+            return new LocalExecutionReceipt(executionId, request.RequestId, ExecutionState.Rejected, "destination_selector_invalid", this.executions.CurrentRevision, null);
+        }
         return this.executions.RequestNavigate(request.RequestId, selector, request.DeadlineMs);
     }
 }

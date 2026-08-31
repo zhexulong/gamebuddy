@@ -12,7 +12,7 @@ import {
 import { type KnowledgeBundle, loadKnowledgeBundle, parseKnowledgeBundle } from "./knowledge.js";
 import { LocalStardewBridgeClient, type LocalStardewBridgeFact } from "./local-stardew-bridge.js";
 import type { ExecutionReceiptQuery, Scope } from "./protocol.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 /** Operator-owned local configuration for the receipt-backed Stardew adapter. */
 export type StardewLauncherConfig = Readonly<{
@@ -31,7 +31,7 @@ export type StardewLauncherConfig = Readonly<{
  */
 export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Object.freeze({
   integrationId: "stardew",
-  module: STARDEW_INTEGRATION_MODULE,
+  module: STARDEW_GAME_INTEGRATION_ADAPTER,
   async prepare(config, { configDirectory }): Promise<PreparedIntegrationLaunch> {
     const operator = parseStardewOperatorConfig(config);
     const knowledge =
@@ -226,7 +226,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     });
     const connection = Object.freeze({
       scope,
-      module: STARDEW_INTEGRATION_MODULE,
+      module: STARDEW_GAME_INTEGRATION_ADAPTER,
       get state() {
         return bridge.state;
       },
@@ -249,12 +249,12 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     return Object.freeze({
       connection,
       // This adapter-owned client is deliberately not projected through the
-      // generic IntegrationConnection facade. Preview composition validates
+      // generic GameConnection facade. Preview composition validates
       // the narrow presentation surface before use.
       presentationBridge: bridge,
       // Narrow adapter-owned read-only recovery capability bound to this
       // exact authenticated connection. It is not exposed on
-      // IntegrationConnection and fails closed once the bridge is closed.
+      // GameConnection and fails closed once the bridge is closed.
       receiptRecovery: (query: ExecutionReceiptQuery) => bridge.queryExecutionReceipt(query),
       events,
       authority: RECEIPT_BACKED_INTEGRATION_AUTHORITY,

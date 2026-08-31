@@ -207,6 +207,8 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
   );
   try {
     const client = await LocalStardewBridgeClient.connect(scope, pipeName, token);
+    const catalogRevision = () => client.state.catalogRevision;
+    const snapshotRevision = () => client.state.snapshot?.revision;
     const catalogUpdate = (revision: number) =>
       peer?.write(
         frame({
@@ -221,19 +223,19 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
       );
 
     catalogUpdate(2);
-    for (let attempt = 0; attempt < 20 && client.state.catalogRevision !== 2; attempt++)
+    for (let attempt = 0; attempt < 20 && catalogRevision() !== 2; attempt++)
       await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
     assert.equal(client.state.snapshot, null);
-    assert.equal(client.state.catalogRevision, 2);
+    assert.equal(catalogRevision(), 2);
     assert.equal(observeRequests, 1);
     const refresh1 = client.refreshAfterCatalogUpdate();
     const refresh2 = client.refreshAfterCatalogUpdate();
     assert.strictEqual(refresh1, refresh2);
 
     catalogUpdate(3);
-    for (let attempt = 0; attempt < 20 && client.state.catalogRevision !== 3; attempt++)
+    for (let attempt = 0; attempt < 20 && catalogRevision() !== 3; attempt++)
       await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
-    assert.equal(client.state.catalogRevision, 3);
+    assert.equal(catalogRevision(), 3);
     assert.equal(observeRequests, 1);
     observeResponses[0]?.();
     for (let attempt = 0; attempt < 20 && observeRequests < 2; attempt++)
@@ -242,7 +244,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
     observeResponses[1]?.();
     const snapshot = await refresh1;
     assert.equal(snapshot.catalogRevision, 3);
-    assert.equal(client.state.snapshot?.revision, 21);
+    assert.equal(snapshotRevision(), 21);
 
     peer?.write(
       frame({
@@ -268,7 +270,7 @@ test("local Stardew bridge coalesces catalog refreshes and rejects stale authori
       }),
     );
     await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
-    assert.equal(client.state.snapshot?.revision, 21);
+    assert.equal(snapshotRevision(), 21);
 
     const disconnected = new Promise<Readonly<{ state: string; reasonCode: string }>>((resolvePromise) =>
       client.onConnectionFact(resolvePromise),
@@ -418,8 +420,12 @@ test("local Stardew bridge forwards a validated player_input semantic event", as
     assert.equal(fact.payload.kind, "player_input");
     assert.equal(fact.payload.playerControl?.sourceEventId, "source_01");
     assert.deepEqual(diagnostics, [
+      { stage: "pipe_bytes_received", reasonCode: "observed" },
+      { stage: "pipe_frame_header_accepted", reasonCode: "observed" },
+      { stage: "pipe_frame_payload_complete", reasonCode: "observed" },
       { stage: "native_chat_bridge_inbound_frame_received", reasonCode: "received" },
       { stage: "native_chat_bridge_player_control_validated", reasonCode: "accepted" },
+      { stage: "pipe_frame_dispatched", reasonCode: "observed" },
     ]);
     assert.equal(client.state.connected, true);
     client.close();
@@ -502,8 +508,12 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
       reasonCode: "malformed_player_control",
     });
     assert.deepEqual(diagnostics, [
+      { stage: "pipe_bytes_received", reasonCode: "observed" },
+      { stage: "pipe_frame_header_accepted", reasonCode: "observed" },
+      { stage: "pipe_frame_payload_complete", reasonCode: "observed" },
       { stage: "native_chat_bridge_inbound_frame_received", reasonCode: "received" },
       { stage: "native_chat_bridge_inbound_rejected", reasonCode: "malformed_player_control" },
+      { stage: "pipe_frame_dispatched", reasonCode: "observed" },
     ]);
     assert.equal((await disconnected).reasonCode, "invalid_semantic_event");
     assert.equal(facts, 0);
@@ -570,6 +580,7 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
             payload: {
               executionId: "execution_receipt_01",
               requestId: request.payload.requestId,
+              actionId: request.payload.action,
               state: "succeeded",
               reasonCode: "completed",
               revision: 7,
@@ -804,6 +815,7 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
             payload: {
               executionId: request.payload.executionId,
               requestId: request.payload.requestId,
+              actionId: "move_to_tile",
               state: "cancelled",
               reasonCode: "stop_requested",
               revision: 5,
@@ -869,7 +881,7 @@ async function withNavigationBridge(
         const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
         buffer = buffer.subarray(4 + length);
         if (request.type === "hello") {
-          socket.write(frame({ ...request, messageId: `hello_${name}`, type: "hello_ack", payload: { sessionId: `session_${name}`, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "find_destination", familyId: "movement_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" }], runtimeRole: "native_local_fixture", launchGeneration: null } }));
+          socket.write(frame({ ...request, messageId: `hello_${name}`, type: "hello_ack", payload: { sessionId: `session_${name}`, capabilities: [], catalogRevision: 1, enabledActionIds: [], presentationLocale: "en-US", registrations: [{ actionId: "find_destination", familyId: "world_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" }], runtimeRole: "native_local_fixture", launchGeneration: null } }));
         } else if (request.type === "navigation_read_request") onNavigation(socket, request);
       }
     });
@@ -918,7 +930,7 @@ test("navigationRead rejects a wrong correlated response type without admitting 
 
 test("navigationRead rejects a wrong correlated receipt without mutating receipt state", async () => {
   await withNavigationBridge("wrong_receipt", (socket, request) => {
-    socket.write(frame({ ...request, messageId: "nav_wrong_receipt", type: "execution_receipt", payload: { executionId: "wrong_execution", requestId: "wrong_request", state: "succeeded", reasonCode: "completed", revision: 1, evidence: {} } }));
+    socket.write(frame({ ...request, messageId: "nav_wrong_receipt", type: "execution_receipt", payload: { executionId: "wrong_execution", requestId: "wrong_request", actionId: "move_to_tile", state: "succeeded", reasonCode: "completed", revision: 1, evidence: {} } }));
   }, async (client) => {
     await assert.rejects(client.navigationRead({ operation: "inspect_world_map", args: {} }), /unexpected_navigation_read_response/);
     assert.equal(client.state.latestReceipt, null);

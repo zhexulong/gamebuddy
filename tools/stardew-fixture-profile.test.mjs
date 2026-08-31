@@ -400,6 +400,7 @@ async function makeRelease(releaseDir) {
   await mkdir(releaseDir, { recursive: true });
   await writeFile(join(releaseDir, "GameBuddy.Stardew.dll"), "fixture-dll");
   await writeFile(join(releaseDir, "GameBuddy.Stardew.Core.dll"), "fixture-core-dll");
+  await writeFile(join(releaseDir, "Raffinert.FuzzySharp.dll"), "fixture-fuzzy-sharp");
   await writeFile(join(releaseDir, "manifest.json"), "{}");
   await writeFile(join(releaseDir, "GameBuddy.Stardew.deps.json"), "{}");
 }

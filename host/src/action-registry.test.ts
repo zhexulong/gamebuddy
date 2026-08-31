@@ -27,13 +27,13 @@ test("the Mod-owned family and lifecycle constrain local typed adapters", () => 
       actionId: "move_to_tile",
       familyId: "Mod_declared_family",
       identityVersion: 9,
-      lifecycle: "published" as const,
+      lifecycle: "published" as const, kind: "execution" as const,
     },
     {
       actionId: "equip_tool",
       familyId: "body_tools",
       identityVersion: 1,
-      lifecycle: "experimental" as const,
+      lifecycle: "experimental" as const, kind: "execution" as const,
     },
   ];
 

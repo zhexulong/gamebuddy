@@ -13,18 +13,17 @@ $projectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $smapi = Join-Path $GamePath "StardewModdingAPI.exe"
 $releaseDir = Join-Path $projectRoot "integrations/stardew/bin/Release/net6.0"
 $clientConfig = Join-Path $ModsPath "GameBuddy.Stardew/config.json"
-$backupName = "native-local-navigation-read-only-fixture-backup"
+$backupName = "native-local-navigation-mutation-fixture-backup"
 $fixtureSaveHarness = Join-Path $PSScriptRoot "prepare-stardew-action-fixture.ps1"
-$bootstrapHarness = Join-Path $PSScriptRoot "run-stardew-native-local-player-move-fixture.ps1"
 . (Join-Path $PSScriptRoot "lib/stardew-named-pipe-readiness.ps1")
 $stardewSaveRoot = Join-Path $env:APPDATA "StardewValley\Saves"
-$gateScript = Join-Path $PSScriptRoot "stardew-navigation-read-only-direct-gate.mjs"
+$gateScript = Join-Path $PSScriptRoot "run-stardew-native-local-player-navigation-mutation-smoke.mjs"
 
 foreach ($path in @($smapi, $ModsPath, $FixtureRoot, $releaseDir, $clientConfig, $gateScript)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Missing harness path: $path" }
 }
 if ($SaveName -notmatch '^GameBuddyFixture[A-Za-z0-9]{0,64}_[0-9]{1,32}$') {
-    throw "Navigation read-only gate requires an observed physical GameBuddyFixture slot ending in _<nativeUniqueId>."
+    throw "Navigation mutation gate requires an observed physical GameBuddyFixture slot ending in _<nativeUniqueId>."
 }
 
 function Assert-NoStardewProcesses([string]$Phase) {
@@ -69,10 +68,10 @@ try {
     } | Select-Object -First 1 -ExpandProperty FullName
     if ([string]::IsNullOrWhiteSpace($bindingPath)) {
         $logicalSaveName = $SaveName -replace '_[0-9]{1,32}$', ''
-        throw "Navigation read-only gate requires bootstrap-captured binding '$logicalSaveName.native-local-binding.json' for observed slot $SaveName. Bootstrap with an existing action fixture first, then rerun this gate."
+        throw "Navigation mutation gate requires bootstrap-captured binding '$logicalSaveName.native-local-binding.json' for observed slot $SaveName."
     }
-    node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds --action navigation_read_only --binding-path $bindingPath
-    if ($LASTEXITCODE -ne 0) { throw "Native-local Navigation fixture prepare failed." }
+    node (Join-Path $PSScriptRoot "prepare-stardew-native-local-player-fixture.mjs") --root $FixtureRoot --mods-path $ModsPath --release-dir $releaseDir --save-name $SaveName --backup-name $backupName --timeout-seconds $TimeoutSeconds --action navigation_mutation --binding-path $bindingPath
+    if ($LASTEXITCODE -ne 0) { throw "Native-local Navigation mutation fixture prepare failed." }
     $prepared = $true
     & $fixtureSaveHarness -FixtureRoot $FixtureRoot -TemplateName $SaveName -SaveName $SaveName -StardewSaveRoot $stardewSaveRoot
     if ($LASTEXITCODE -ne 0) { throw "Native-local Navigation working-save restore failed." }
@@ -84,13 +83,13 @@ try {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while (-not (Test-GameBuddyNamedPipeListening -PipeName $pipeName)) {
         Start-Sleep -Milliseconds 250
-        if ($process.HasExited) { throw "Native-local SMAPI process exited before Navigation read-only smoke." }
+        if ($process.HasExited) { throw "Native-local SMAPI process exited before Navigation mutation smoke." }
         if ([DateTime]::UtcNow -ge $deadline) { throw "Native-local bridge pipe was not ready before timeout." }
     }
     Start-Sleep -Milliseconds 300
     Assert-LaunchedSmapiIdentity -ExpectedSmapi $smapi -ExpectedModsPath $ModsPath
     node $gateScript --client-config $clientConfig
-    if ($LASTEXITCODE -ne 0) { throw "Native-local Navigation read-only direct gate did not pass." }
+    if ($LASTEXITCODE -ne 0) { throw "Native-local Navigation mutation gate did not pass." }
 } finally {
     $cleanupFailure = $null
     try {

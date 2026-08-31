@@ -213,6 +213,7 @@ test("bridge message payloads fail closed", () => {
     {
       executionId: "execution_01",
       requestId: "request_01",
+      actionId: "move_to_tile",
       state: "succeeded",
       reasonCode: "target_reached",
       revision: 5,
@@ -232,6 +233,7 @@ test("bridge message payloads fail closed", () => {
     {
       executionId: "execution_02",
       requestId: "request_02",
+      actionId: "move_to_tile",
       state: "cancelled",
       reasonCode: "player_stop",
       revision: 6,
@@ -247,6 +249,7 @@ test("bridge message payloads fail closed", () => {
     {
       executionId: "execution_03",
       requestId: "request_03",
+      actionId: "move_to_tile",
       state: "cancelled",
       reasonCode: "player_stop",
       revision: 7,
@@ -865,6 +868,55 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "unknown_action",
   );
+  const navigateByLabel = {
+    ...valid,
+    action: "navigate_to_destination",
+    args: { destination: { kind: "label", label: "Mine" } },
+  };
+  const navigationSnapshot = {
+    ...snapshot,
+    capabilities: [...snapshot.capabilities, "navigate_to_destination"],
+  };
+  const canonicalUrlSafeRef = "dr1_-_-_-_-_-_-_-_-_-_-_AQ";
+  const nonCanonicalSixteenByteRef = "dr1_AAAAAAAAAAAAAAAAAAAAAB";
+  assert.equal(validateExecutionRequest(navigateByLabel, navigationSnapshot, now), null);
+  assert.equal(
+    validateExecutionRequest(
+      { ...navigateByLabel, args: { destination: { kind: "ref", ref: canonicalUrlSafeRef } } },
+      navigationSnapshot,
+      now,
+    ),
+    null,
+  );
+  for (const destination of [
+    { kind: "label", label: "Mine", ref: null },
+    { kind: "label", label: "" },
+    { kind: "ref", ref: "destinationRef" },
+    { kind: "ref", ref: null },
+    { kind: "ref", ref: "dr1_mine" },
+    { kind: "ref", ref: "dr1_aaaaaaaaaaaaaaaaaaaaaaa" },
+    { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAA!" },
+    { kind: "ref", ref: nonCanonicalSixteenByteRef },
+    { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA", label: null },
+  ]) {
+    assert.equal(
+      validateExecutionRequest(
+        { ...navigateByLabel, args: { destination } },
+        navigationSnapshot,
+        now,
+      ),
+      "invalid_navigation_destination",
+    );
+  }
+  assert.equal(
+    validateExecutionRequest(
+      { ...navigateByLabel, args: { destination: { kind: "label", label: "Mine" }, destinationRef: "dr1_AAAAAAAAAAAAAAAAAAAAAA" } },
+      navigationSnapshot,
+      now,
+    ),
+    "invalid_args",
+  );
+
   const travel = { ...valid, action: "travel", args: { x: 10, y: 10 } };
   assert.equal(
     validateExecutionRequest(travel, { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] }, now),

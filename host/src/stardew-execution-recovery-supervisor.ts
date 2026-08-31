@@ -15,7 +15,7 @@ export type ReceiptRecoveryOutcome =
   | Readonly<{ requestId: string; result: "not_found" }>
   | Readonly<{ requestId: string; result: "rejected"; reasonCode: string }>;
 
-/** Narrow capability guard for the composition boundary; it never widens IntegrationConnection. */
+/** Narrow capability guard for the composition boundary; it never widens GameConnection. */
 export function isExactReceiptRecoveryPort(value: unknown): value is ExactReceiptRecoveryPort {
   return (
     typeof value === "object" &&

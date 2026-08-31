@@ -62,12 +62,12 @@ internal sealed class DestinationSearch
             .ThenBy(destination => destination.CanonicalIdentity, StringComparer.Ordinal)
             .ToArray();
 
-        if (exact.Length > MaximumCandidates)
-            return DestinationSearchResult.Unavailable();
         if (exact.Length > 1)
         {
             DestinationSearchResult exactResult = DestinationSearchResult.WithCandidates("ambiguous_exact",
-                exact.Select(destination => ToCandidate(destination, destinations, forceOpaqueSelector: true)).ToArray());
+                exact.Take(MaximumCandidates)
+                    .Select(destination => ToCandidate(destination, destinations, forceOpaqueSelector: true))
+                    .ToArray());
             return IsWithinResultByteLimit(exactResult) ? exactResult : DestinationSearchResult.Unavailable();
         }
         if (exactCurrent.Length == 1)

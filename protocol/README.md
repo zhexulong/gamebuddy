@@ -8,10 +8,10 @@ is the checked-in deterministic replay sequence used by the Host test suite.
 The envelope framing is transport-neutral, but v1's `Scope`, `Snapshot`, action
 IDs, target fields, and receipt vocabulary are intentionally Stardew-shaped.
 They are not a general cross-game wire protocol. The Host's
-`GameIntegrationModule` seam allows a future adapter to supply its own catalog,
-tools, state projection, receipt validator, and transport without teaching the
-Host composition root Stardew behavior; it does **not** make a second game use
-this schema by default. Any future shared wire version requires an explicit,
+`GameIntegrationAdapter` and `GameConnection` seams allow a future adapter to
+supply its own catalog, tools, state projection, receipt validator, and
+transport without teaching the Host composition root Stardew behavior; they do
+**not** make a second game use this schema by default. Any future shared wire version requires an explicit,
 versioned protocol proposal and cross-language conformance corpus.
 
 Integration-specific capabilities and action payload validation remain owned by

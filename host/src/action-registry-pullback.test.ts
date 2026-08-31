@@ -45,7 +45,7 @@ test("unregistered local adapters never materialize", () => {
         actionId: "unknown_mod_action",
         familyId: "unknown_family",
         identityVersion: 1,
-        lifecycle: "published",
+        lifecycle: "published", kind: "execution" as const,
       },
     ],
     ["unknown_mod_action"],

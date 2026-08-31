@@ -306,20 +306,24 @@ public sealed class BridgeNavigationReadArgs
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
 
-public sealed record BridgeNavigationDestinationSelector(string Kind, string? Label, string? Ref);
+public sealed record BridgeNavigationDestinationSelector(
+    string Kind,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Label,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Ref
+);
 
 public sealed record BridgeDestinationSearchCandidate(
     string Label,
-    string? ContextLabel,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ContextLabel,
     BridgeNavigationDestinationSelector Destination,
     string UnlockState
 );
 
 public sealed record BridgeWorldMapEntry(
     string Label,
-    string? ContextLabel,
-    string? NodeRef,
-    BridgeNavigationDestinationSelector? Destination
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ContextLabel,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NodeRef,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeNavigationDestinationSelector? Destination
 );
 
 /// <summary>
@@ -329,9 +333,9 @@ public sealed record BridgeWorldMapEntry(
 public sealed record BridgeNavigationReadResult(
     string Status,
     string Reason,
-    IReadOnlyList<BridgeWorldMapEntry>? Entries,
-    string? NextCursor,
-    IReadOnlyList<BridgeDestinationSearchCandidate>? Candidates = null,
-    BridgeNavigationDestinationSelector? Destination = null,
-    string? UnlockState = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyList<BridgeWorldMapEntry>? Entries,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NextCursor,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyList<BridgeDestinationSearchCandidate>? Candidates = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeNavigationDestinationSelector? Destination = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? UnlockState = null
 );

@@ -162,7 +162,24 @@ test("terminal receipts buffered before the Host listener mounts are replayed ex
               ...message,
               messageId: "mod_hello_buffered",
               type: "hello_ack",
-              payload: { sessionId: "session_buffered", capabilities: [], presentationLocale: "en-US" },
+              payload: {
+sessionId: "session_buffered",
+capabilities: [],
+catalogRevision: 1,
+enabledActionIds: [],
+presentationLocale: "en-US",
+registrations: [
+{
+actionId: "move_to_tile",
+familyId: "movement_navigation",
+identityVersion: 1,
+lifecycle: "published",
+kind: "execution",
+},
+],
+runtimeRole: "unattested",
+launchGeneration: null,
+},
             }),
           );
           // The terminal receipt is already on the wire before the Host can
@@ -232,9 +249,11 @@ function snapshotPayload(revision: number) {
     tile: { x: 5, y: 8 },
     stamina: 250,
     health: 100,
-    actionable: true,
-    capabilities: ["inspect_self"],
-    presentationLocale: "en-US",
+actionable: true,
+capabilities: ["inspect_self"],
+catalogRevision: 1,
+enabledActionIds: [],
+presentationLocale: "en-US",
     activeExecution: null,
   };
 }
@@ -253,6 +272,7 @@ function receiptMessage(state: ExecutionState): BridgeMessage {
     type: "execution_receipt",
     payload: {
       executionId: "execution_1",
+      actionId: "move_to_tile",
       requestId: "request_1",
       state,
       reasonCode: `reason_${state}`,
@@ -290,7 +310,24 @@ async function launchWithFakeMod(): Promise<{
               ...message,
               messageId: "mod_hello_wake",
               type: "hello_ack",
-              payload: { sessionId: "session_wake", capabilities: ["inspect_self"], presentationLocale: "en-US" },
+              payload: {
+sessionId: "session_wake",
+capabilities: ["inspect_self"],
+catalogRevision: 1,
+enabledActionIds: [],
+presentationLocale: "en-US",
+registrations: [
+{
+actionId: "move_to_tile",
+familyId: "movement_navigation",
+identityVersion: 1,
+lifecycle: "published",
+kind: "execution",
+},
+],
+runtimeRole: "unattested",
+launchGeneration: null,
+},
             }),
           );
         else if (message.type === "observe_request")

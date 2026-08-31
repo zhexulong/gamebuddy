@@ -170,7 +170,7 @@ internal sealed partial class ExecutionManager
             return existing;
 
         this.revision++;
-        string executionId = Guid.NewGuid().ToString("N");
+        string executionId = this.NewExecutionId(requestId);
         this.navigationExecutionIds.Add(executionId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (deadlineMs <= nowMs || deadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)

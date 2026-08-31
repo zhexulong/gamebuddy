@@ -32,5 +32,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\GameBuddy.Stardew.csproj" />
     <ProjectReference Include="..\..\src\Core\GameBuddy.Stardew.Core.csproj" />
+    <Compile Include="..\FarmhandLocalPipeBridgeDeliveryTests.cs" Link="FarmhandLocalPipeBridgeDeliveryTests.cs" />
   </ItemGroup>
 </Project>

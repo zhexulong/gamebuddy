@@ -109,7 +109,7 @@ async function createFixture(t, suffix) {
   t.after(() => removeFixtureTree(root));
   const modsPath = join(root, "mods");
   const releaseDir = join(root, "release");
-  const modRoot = join(modsPath, "GameBuddy");
+  const modRoot = join(modsPath, "GameBuddy.Stardew");
   await mkdir(modRoot, { recursive: true });
   await mkdir(releaseDir, { recursive: true });
 
@@ -294,8 +294,25 @@ test("failed preparation redacts restore failure while preserving recovery state
   assert.equal(configured.NativeLocalPlayerFixture.Enable, true);
 });
 
-test("navigation mutation fixture publishes the frozen action set without creating world facts", async (t) => {
+test("navigation mutation fixture activates the bridge only inside its reversible transaction", async (t) => {
   const options = { ...(await createFixture(t, "navigation-mutation")), action: "navigation_mutation" };
+  const configPath = join(options.modRoot, "config.json");
+  const base = JSON.parse(await readFile(configPath, "utf8"));
+  base.EnableLocalBridge = false;
+  await writeFile(configPath, `${JSON.stringify(base, null, 2)}\n`);
+
+  const stardewSaveRoot = join(options.root, "working-saves");
+  const template = join(options.root, "templates", options.saveName);
+  await mkdir(stardewSaveRoot);
+  await mkdir(template, { recursive: true });
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+  const validation = await validateNativeLocalPlayerFixturePreparation({
+    ...options,
+    stardewSaveRoot,
+  });
+  assert.equal(validation.state, "ready");
+
   const prepared = await prepareNativeLocalPlayerFixture(options);
   assert.equal(
     await readFile(join(options.modRoot, "Raffinert.FuzzySharp.dll"), "utf8"),
@@ -304,6 +321,7 @@ test("navigation mutation fixture publishes the frozen action set without creati
   const backupManifest = JSON.parse(await readFile(join(prepared.backup, "manifest.json"), "utf8"));
   assert.ok(backupManifest.entries.some((entry) => entry.name === "Raffinert.FuzzySharp.dll"));
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
+  assert.equal(configured.EnableLocalBridge, true);
   assert.deepEqual(configured.EnabledActions, [
     "inspect_world_map",
     "find_destination",
@@ -320,6 +338,8 @@ test("navigation mutation fixture publishes the frozen action set without creati
   assert.match(branch, /Helper\.WriteConfig/);
   assert.doesNotMatch(branch, /warpFarmer|Game1\.warp|terrainFeatures|objects\.|player\.Items|Position\s*=/);
   await restoreNativeLocalPlayerFixture(options);
+  const restored = JSON.parse(await readFile(configPath, "utf8"));
+  assert.equal(restored.EnableLocalBridge, false);
   assert.equal(
     await readFile(join(options.modRoot, "Raffinert.FuzzySharp.dll"), "utf8"),
     "original-Raffinert.FuzzySharp.dll",
@@ -1309,4 +1329,22 @@ test("native-local fixture restore fails closed when a registered backup is tamp
   assert.ok(
     await readFile(join(options.root, ".stardew-native-local-player-fixture.lock", "transaction.json"), "utf8"),
   );
+});
+
+
+test("Navigation fixture launchers continue cleanup after restore failure", async () => {
+  for (const filename of [
+    "./run-stardew-native-local-player-navigation-mutation-fixture.ps1",
+    "./run-stardew-native-local-player-navigation-read-only-fixture.ps1",
+  ]) {
+    const launcher = await readFile(new URL(filename, import.meta.url), "utf8");
+    const restore = launcher.indexOf("restore-stardew-native-local-player-fixture.mjs");
+    const cleanup = launcher.indexOf("-Cleanup", restore);
+    assert.ok(restore >= 0 && cleanup > restore, `${filename} must retain save cleanup after restore`);
+    assert.match(launcher, /\$cleanupFailure = \$null/);
+    assert.match(launcher, /if \(\$null -eq \$cleanupFailure\) \{ \$cleanupFailure = \$_ \}/);
+	assert.doesNotMatch(launcher, /if \(\$LASTEXITCODE -ne 0\) \{ throw[^\n]+\n\s*\}\n\s*\}\n\s*if \(\$workingSavePrepared\)/);
+	assert.match(launcher, /Join-Path \$ModsPath "GameBuddy\.Stardew\/config\.json"/);
+	assert.doesNotMatch(launcher, /Join-Path \$ModsPath "GameBuddy\/config\.json"/);
+	}
 });

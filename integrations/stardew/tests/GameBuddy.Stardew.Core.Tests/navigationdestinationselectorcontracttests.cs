@@ -16,6 +16,7 @@ namespace GameBuddy.Stardew.Core.Tests;
 public sealed class NavigationDestinationSelectorContractTests
 {
     private const string RefHandle = "dr1_AAAAAAAAAAAAAAAAAAAAAA";
+    private const string UrlSafeRefHandle = "dr1_-_-_-_-_-_-_-_-_-_-_AQ";
 
     [Fact]
     public void CanonicalRefSelector_DeserializesExactRef_PreDispatch()
@@ -28,6 +29,27 @@ public sealed class NavigationDestinationSelectorContractTests
         envelope.Payload.Args.Destination.Should().NotBeNull();
         envelope.Payload.Args.Destination!.Kind.Should().Be("ref");
         envelope.Payload.Args.Destination.Ref.Should().Be(RefHandle);
+    }
+
+    [Fact]
+    public void CanonicalUrlSafeRefSelector_DeserializesExactRef_PreDispatch()
+    {
+        string json = EnvelopeJsonWithRef($"{{\"kind\":\"ref\",\"ref\":\"{UrlSafeRefHandle}\"}}");
+
+        BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? envelope, out string reason)
+            .Should().BeTrue(reason);
+        envelope!.Payload.Args.Destination!.Ref.Should().Be(UrlSafeRefHandle);
+    }
+
+    [Fact]
+    public void NonCanonicalSixteenByteRefSelector_IsRejectedBeforeDispatch()
+    {
+        string json = EnvelopeJsonWithRef("{\"kind\":\"ref\",\"ref\":\"dr1_AAAAAAAAAAAAAAAAAAAAAB\"}");
+
+        BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? envelope, out string reasonCode)
+            .Should().BeFalse();
+        reasonCode.Should().Be("invalid_envelope");
+        envelope.Should().BeNull();
     }
 
     [Fact]
