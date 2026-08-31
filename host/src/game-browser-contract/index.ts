@@ -158,6 +158,8 @@ export const GamePrerequisiteStateV1Schema = strictObject({
 export const GameInstanceV1Schema = strictObject({
   status: InstanceStatus,
   gameTitle: GameTitleLabel,
+  /** Redacted launch-ready generation: 0 until the coordinator owns/stages the instance. */
+  generation: NonNegativeGeneration,
 });
 
 export const GameCompatibilityV1Schema = strictObject({
@@ -482,7 +484,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
       browserSession: { expiresAtMs: 100_000 },
       game: {
         prerequisites: { status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] },
-        instance: { status: "detected" as const, gameTitle: "Stardew Valley" },
+        instance: { status: "detected" as const, gameTitle: "Stardew Valley", generation: 0 },
         compatibility: { status: "compatible" as const, message: null },
         attachment: { status: "none" as const, generation: 0 },
         connectionStatus: "none" as const,
@@ -502,7 +504,7 @@ export const GameBrowserFixtureV1 = Object.freeze({
       browserSession: { expiresAtMs: 100_000 },
       game: {
         prerequisites: { status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] },
-        instance: { status: "running" as const, gameTitle: "Stardew Valley" },
+        instance: { status: "running" as const, gameTitle: "Stardew Valley", generation: 3 },
         compatibility: { status: "compatible" as const, message: null },
         attachment: { status: "attached" as const, generation: 3 },
         connectionStatus: "connected_idle" as const,

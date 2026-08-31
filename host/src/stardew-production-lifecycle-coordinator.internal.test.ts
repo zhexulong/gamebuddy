@@ -208,7 +208,7 @@ async function createAdmissionBroker() {
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
   const root = await bootstrap.json() as { chat: { csrfToken: string } };
-  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_stop" | "game_disconnect"): IncomingMessage => {
+  const request = (operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_disconnect"): IncomingMessage => {
     const originUrl = new URL(origin);
     const method = operation === "cabin_read" ? "GET" : "POST";
     const url = operation === "lifecycle_activation"
@@ -219,9 +219,11 @@ async function createAdmissionBroker() {
           ? "/api/composed-reference-game/v1/game/stardew/cabins/confirm"
            : operation === "game_setup"
              ? "/api/composed-reference-game/v1/game/prerequisites/setup"
-             : operation === "game_stop"
-               ? "/api/composed-reference-game/v1/game/stop"
-               : "/api/composed-reference-game/v1/game/disconnect";
+             : operation === "game_launch"
+               ? "/api/composed-reference-game/v1/game/launch"
+               : operation === "game_stop"
+                 ? "/api/composed-reference-game/v1/game/stop"
+                 : "/api/composed-reference-game/v1/game/disconnect";
     return {
       method,
       url,
@@ -235,7 +237,7 @@ async function createAdmissionBroker() {
     } as unknown as IncomingMessage;
   };
   const issue = (
-    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_stop" | "game_disconnect" = "lifecycle_activation",
+    operation: "lifecycle_activation" | "cabin_read" | "cabin_confirm" | "game_setup" | "game_launch" | "game_stop" | "game_disconnect" = "lifecycle_activation",
   ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
@@ -655,7 +657,7 @@ test("Stage-C admits internally, direct-spawns once, and projects only awaiting 
         /stardew_game_setup_in_progress/,
       );
        await first;
-       await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 });
+       await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 });
        const result = fixture.coordinator.activationOwner.readPrivateActivationSnapshot();
        assert.equal(result.state, "awaiting_player_host_attestation");
        assert.equal(Object.isFrozen(result), true);
@@ -718,6 +720,31 @@ test("Game setup stages an admitted installation without launching Player Host",
   });
 });
 
+test("launch-readiness generation is 0 until staged, then 1, and resets once launch starts", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture();
+    try {
+      assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 0);
+      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
+      assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 0);
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
+      assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 1);
+      assert.deepEqual(fixture.playerSpawnCalls, []);
+      await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 });
+      assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "awaiting_player_host_attestation");
+      assert.equal(fixture.coordinator.launchReadinessReader.readLaunchReadinessView().generation, 0);
+      assert.equal(
+        JSON.stringify(fixture.coordinator.launchReadinessReader.readLaunchReadinessView()).includes("player-generation-1"),
+        false,
+      );
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
 test("Game launch rejects an incorrect first instance generation before spawning", async () => {
   await withWindowsPlatform(async () => {
     const fixture = await createFixture();
@@ -726,7 +753,7 @@ test("Game launch rejects an incorrect first instance generation before spawning
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
       await assert.rejects(
         fixture.coordinator.activationOwner.launchPlayerHost(
-          fixture.broker.issue("game_setup"),
+          fixture.broker.issue("game_launch"),
           { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 2 },
         ),
         /stardew_game_instance_generation_conflict/,
@@ -746,12 +773,12 @@ test("Game launch consumes setup once and replays exact command", async () => {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" });
       const command = { apiVersion: 1 as const, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 };
-      const first = fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), command);
-      const replay = fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), command);
+      const first = fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), command);
+      const replay = fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), command);
       assert.equal(replay, first);
       await first;
       assert.equal(fixture.playerSpawnCalls.length, 1);
-      await assert.rejects(fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { ...command, expectedInstanceGeneration: 2 }), /stardew_game_launch_idempotency_conflict/);
+      await assert.rejects(fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { ...command, expectedInstanceGeneration: 2 }), /stardew_game_launch_idempotency_conflict/);
     } finally {
       await fixture.coordinator.close();
       await fixture.broker.close();
@@ -766,7 +793,7 @@ test("Game launch rejects a different key while the first launch is pending", as
     fixture = await createFixture({
       afterPlayerSpawn: () => {
         competingLaunch = fixture.coordinator.activationOwner.launchPlayerHost(
-          fixture.broker.issue("game_setup"),
+          fixture.broker.issue("game_launch"),
           { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
         );
         competingLaunch.catch(() => undefined);
@@ -779,7 +806,7 @@ test("Game launch rejects a different key while the first launch is pending", as
         { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" },
       );
       await fixture.coordinator.activationOwner.launchPlayerHost(
-        fixture.broker.issue("game_setup"),
+        fixture.broker.issue("game_launch"),
         { apiVersion: 1, idempotencyKey: "CDEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
       );
       assert.notEqual(competingLaunch, undefined);
@@ -942,7 +969,7 @@ test("signed Player Host advertisement is consumed privately with exact generati
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await publishSignedPlayerHostSession(fixture.runtimeRoot);
-       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
+       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
        const result = fixture.coordinator.activationOwner.readPrivateActivationSnapshot();
        assert.equal(result.state, "awaiting_player_host_attestation");
       assert.deepEqual(Object.keys(result).sort(), ["authorityGeneration", "requestId", "revision", "schemaVersion", "state"]);
@@ -964,7 +991,7 @@ test("missing Player Host advertisement remains privately retryable before owner
     const fixture = await createFixture();
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
+       await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
        const result = fixture.coordinator.activationOwner.readPrivateActivationSnapshot();
        assert.equal(result.state, "awaiting_player_host_attestation");
       await publishSignedPlayerHostSession(fixture.runtimeRoot);
@@ -989,7 +1016,7 @@ test("missing Player Host advertisement becomes terminal after the retained owne
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await assert.rejects(
-        fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
+        fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
          /stardew_player_host_launch_failed/,
        );
        assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "failed");
@@ -1008,7 +1035,7 @@ test("Player Host advertisement generation mismatch fails closed and quarantines
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await publishSignedPlayerHostSession(fixture.runtimeRoot, "wrong-player-generation");
       await assert.rejects(
-        fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
+        fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
          /stardew_player_host_launch_failed/,
        );
        assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "failed");
@@ -1040,7 +1067,7 @@ test("Stage-C admission failure restores staged and permits a later valid retry"
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await assert.rejects(
-        fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
+        fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
         /stardew_game_setup_failed/,
       );
       assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
@@ -1049,10 +1076,10 @@ test("Stage-C admission failure restores staged and permits a later valid retry"
          fixture.broker.issue("game_setup"),
          { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w" },
        );
-       await fixture.coordinator.activationOwner.launchPlayerHost(
-         fixture.broker.issue("game_setup"),
-         { apiVersion: 1, idempotencyKey: "CDEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
-       );
+        await fixture.coordinator.activationOwner.launchPlayerHost(
+          fixture.broker.issue("game_launch"),
+          { apiVersion: 1, idempotencyKey: "CDEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+        );
        assert.equal(fixture.playerSpawnCalls.length, 1);
     } finally {
       await fixture.coordinator.close();
@@ -1074,7 +1101,7 @@ test("Stage-C reparse admission failure is pre-launch, restores staged, and perm
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
       await assert.rejects(
-        fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
+        fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
         /stardew_game_setup_failed/,
       );
       assert.equal(fixture.coordinator.activationOwner.readPrivateActivationSnapshot().state, "staged");
@@ -1083,10 +1110,10 @@ test("Stage-C reparse admission failure is pre-launch, restores staged, and perm
         fixture.broker.issue("game_setup"),
         { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w" },
        );
-       await fixture.coordinator.activationOwner.launchPlayerHost(
-         fixture.broker.issue("game_setup"),
-         { apiVersion: 1, idempotencyKey: "CDEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
-       );
+        await fixture.coordinator.activationOwner.launchPlayerHost(
+          fixture.broker.issue("game_launch"),
+          { apiVersion: 1, idempotencyKey: "CDEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 },
+        );
        assert.equal(fixture.playerSpawnCalls.length, 1);
     } finally {
       await fixture.coordinator.close();
@@ -1105,7 +1132,7 @@ for (const failure of ["spawn", "probe"] as const) {
       try {
         await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
         await assert.rejects(
-          fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
+          fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 })),
          /stardew_player_host_launch_failed/,
          );
          assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
@@ -1132,7 +1159,7 @@ test("close during Stage-C admission drains and prevents a later spawn", async (
     const fixture = await createFixture({ inspectorGate: gate });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      const launch = fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
+      const launch = fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
       const close = fixture.coordinator.close();
       release();
       await assert.rejects(launch, /stardew_lifecycle_closing/);
@@ -1151,7 +1178,7 @@ test("close after successful spawn stops only the exact Player Host and projects
     const fixture = await createFixture();
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
       await fixture.coordinator.close();
       assert.deepEqual(fixture.playerKillCalls, [4102]);
       assert.deepEqual(fixture.aiKillCalls, []);
@@ -1171,7 +1198,7 @@ test("close after spawn preserves exact-child retry and never respawns", async (
     const fixture = await createFixture({ playerKillResults: [false, true] });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
+      await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
       await assert.rejects(fixture.coordinator.close(), /stardew_lifecycle_close_incomplete/);
       assert.deepEqual(fixture.playerKillCalls, [4102]);
       assert.equal(fixture.playerSpawnCalls.length, 1);
@@ -1280,7 +1307,7 @@ test("production lifecycle construction is fail-closed off Windows", async () =>
   });
   if (process.platform !== "win32") {
     await assert.rejects(
-      () => Promise.resolve(createStardewProductionLifecycleCoordinator(manifest)),
+      () => Promise.resolve(createStardewProductionLifecycleCoordinator(manifest, () => null)),
       /stardew_private_bootstrap_composition_requires_windows/,
     );
   }
@@ -1301,7 +1328,7 @@ async function prepareCabinCoordinator(
   await withWindowsPlatform(async () => {
     await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
     await publishSignedPlayerHostSession(fixture.runtimeRoot, "player-generation-1", availableCabins, expiresAtUnixMs);
-    await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
+    await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }).then(() => fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), { apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w", expectedInstanceGeneration: 1 }));
   });
   return fixture;
 }

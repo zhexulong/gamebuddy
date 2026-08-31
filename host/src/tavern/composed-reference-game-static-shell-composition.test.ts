@@ -17,6 +17,7 @@ import {
 import {
   composeGameProfile,
   GameBrowserFixtureV1,
+  type GameLaunchCommandV1,
   type GameStopCommandV1,
   type StardewCabinConfirmCommandV1,
 } from "../game-browser-contract/index.js";
@@ -41,6 +42,15 @@ const cabinProfile = composeReferenceGameBrowserProfile({
     profileId: "gamebuddy.game.preview",
     releaseTier: "game_preview",
     operationIds: ["game.state.read", "game.prerequisites.setup", "game.stop", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+    navigationItemIds: ["game"],
+  }),
+});
+const launchProfile = composeReferenceGameBrowserProfile({
+  tavernProfile,
+  gameProfile: composeGameProfile({
+    profileId: "gamebuddy.game.preview",
+    releaseTier: "game_preview",
+    operationIds: ["game.state.read", "game.launch"],
     navigationItemIds: ["game"],
   }),
 });
@@ -435,6 +445,81 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
     assert.equal(stopCalls, 1);
   } finally {
     await server.close().catch(() => {});
+    await fixture.dispose();
+  }
+});
+
+test("composed shell mounts game.launch to the lifecycle owner and returns 204", async () => {
+  const fixture = await artifactFixture();
+  const idempotencyKey = "A".repeat(22);
+  const command: GameLaunchCommandV1 = {
+    apiVersion: 1,
+    idempotencyKey,
+    expectedInstanceGeneration: 1,
+  };
+  let issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer | undefined;
+  let calls = 0;
+  let consumedCommand: GameLaunchCommandV1 | undefined;
+  const lifecycleSink = Object.freeze({
+    bindBrowserAdmissionIssuer(value: ComposedReferenceGameBrowserLifecycleActivationIssuer) { issuer = value; },
+    async launchPlayerHost(
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+      receivedCommand: GameLaunchCommandV1,
+    ) {
+      calls += 1;
+      consumedCommand = receivedCommand;
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "game_launch",
+        () => Object.freeze({ schemaVersion: 1, state: "awaiting_player_host_attestation" }),
+      );
+      assert.notEqual(consumed, undefined);
+    },
+  });
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile: launchProfile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    async readGame(context) {
+      const state = GameBrowserFixtureV1.state();
+      return {
+        ...state,
+        build: { ...state.build, profileId: launchProfile.gameProfile!.profileId },
+        csrfToken: context.csrfToken,
+        browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+      };
+    },
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    lifecycleActivationBindingSink: lifecycleSink,
+  });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const root = await bootstrap.json();
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/launch`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": root.chat.csrfToken,
+      },
+      body: JSON.stringify(command),
+    });
+    assert.equal(response.status, 204);
+    assert.equal(await response.text(), "");
+    assert.equal(calls, 1);
+    assert.deepEqual(consumedCommand, command);
+  } finally {
+    await server.close();
     await fixture.dispose();
   }
 });

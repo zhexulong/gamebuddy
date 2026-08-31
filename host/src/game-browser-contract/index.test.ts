@@ -32,7 +32,7 @@ const baseState = {
   browserSession: { expiresAtMs: 100_000 },
   game: {
     prerequisites: { status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] },
-    instance: { status: "detected" as const, gameTitle: "Stardew Valley" },
+    instance: { status: "detected" as const, gameTitle: "Stardew Valley", generation: 0 },
     compatibility: { status: "compatible" as const, message: null },
     attachment: { status: "none" as const, generation: 0 },
     connectionStatus: "none" as const,
@@ -227,7 +227,7 @@ test("GameBrowserStateV1 accepts all valid instance statuses", () => {
     assert.equal(
       validator.Check({
         ...baseState,
-        game: { ...baseState.game, instance: { status, gameTitle: null } },
+        game: { ...baseState.game, instance: { status, gameTitle: null, generation: 0 } },
       }),
       true,
     );
