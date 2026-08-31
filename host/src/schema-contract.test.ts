@@ -6,6 +6,11 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 
 type ReplayFixture = Readonly<{ messages: readonly unknown[] }>;
 
+const snapshotCatalogFacts = Object.freeze({
+  catalogRevision: 1,
+  enabledActionIds: Object.freeze([]),
+});
+
 async function schemaValidator() {
   const schema = JSON.parse(
     await readFile(fileURLToPath(new URL("../../protocol/bridge-v1.schema.json", import.meta.url)), "utf8"),
@@ -143,6 +148,7 @@ test("language-neutral schema and Host share closed shapes for every published s
       health: 100,
       actionable: true,
       capabilities: [],
+      ...snapshotCatalogFacts,
       presentationLocale: "en-US",
       activeExecution: null,
     },
@@ -356,6 +362,7 @@ test("language-neutral schema requires positive ResourceClump health in debris s
       health: 100,
       actionable: true,
       capabilities: ["clear_debris"],
+      ...snapshotCatalogFacts,
       presentationLocale: "en-US",
       activeExecution: null,
       debrisTargets: [
@@ -432,6 +439,7 @@ test("language-neutral schema validates exact Wood Fence request and result targ
       health: 100,
       actionable: true,
       capabilities: ["place_wood_fence"],
+      ...snapshotCatalogFacts,
       presentationLocale: "en-US",
       activeExecution: null,
       woodFenceResultTargets: [
@@ -564,6 +572,7 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       health: 100,
       actionable: true,
       capabilities: ["dig_artifact_spot"],
+      ...snapshotCatalogFacts,
       presentationLocale: "en-US",
       artifactSpotTargets: [
         { targetId: "artifact_spot_deadbeef", location: "Farm", x: 10, y: 12, qualifiedItemId: "(O)590" },
@@ -613,6 +622,7 @@ test("language-neutral schema validates exact dig_artifact_spot request argument
       health: 100,
       actionable: true,
       capabilities: ["dig_artifact_spot"],
+      ...snapshotCatalogFacts,
       presentationLocale: "en-US",
       artifactSpotResultTargets: [
         { targetId: "artifact_result_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true },
@@ -682,6 +692,7 @@ test("language-neutral schema validates exact clear_hoedirt request arguments an
       health: 100,
       actionable: true,
       capabilities: ["clear_hoedirt"],
+      ...snapshotCatalogFacts,
       presentationLocale: "en-US",
       clearHoeDirtTargets: [
         { targetId: "hoedirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true },
@@ -757,6 +768,7 @@ test("language-neutral schema validates strict chop-tree result snapshot facts",
       health: 100,
       actionable: true,
       capabilities: ["chop_tree_source"],
+      ...snapshotCatalogFacts,
       presentationLocale: "en-US",
       activeExecution: null,
       treeChopResultTargets: [
@@ -834,6 +846,59 @@ test("language-neutral schema rejects malformed and retired typed payloads", asy
         deadlineMs: 1,
       },
     }),
+    false,
+  );
+});
+
+
+test("language-neutral schema validates exact navigate_to_destination execution selectors", async () => {
+  const validate = await schemaValidator();
+  const [message] = (await fixture("golden-sequence.json")).messages;
+  const request = {
+    ...(message as Record<string, unknown>),
+    type: "execution_request",
+    payload: {
+      requestId: "request_01",
+      idempotencyKey: "idempotency_01",
+      action: "navigate_to_destination",
+      args: { destination: { kind: "label", label: "Town" } },
+      expectedRevision: 1,
+      deadlineMs: 1,
+    },
+  };
+
+  const canonicalUrlSafeRef = `dr1_${"-_".repeat(10)}AQ`;
+  const nonCanonicalSixteenByteRef = `dr1_${"A".repeat(21)}B`;
+  assert.equal(validate(request), true, JSON.stringify(validate.errors));
+  assert.equal(
+    validate({
+      ...request,
+      payload: { ...request.payload, args: { destination: { kind: "ref", ref: canonicalUrlSafeRef } } },
+    }),
+    true,
+    JSON.stringify(validate.errors),
+  );
+
+  for (const destination of [
+    { kind: "label", label: "Town", ref: null },
+    { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA", label: null },
+    { kind: "ref", ref: "legacy_ref" },
+    { kind: "ref", ref: "dr1_deadbeef" },
+    { kind: "ref", ref: "dr1_aaaaaaaaaaaaaaaaaaaaaaa" },
+    { kind: "ref", ref: "dr1_AAAAAAAAAAAAAAAAAAAAA!" },
+    { kind: "ref", ref: nonCanonicalSixteenByteRef },
+    { kind: "label", label: "Town", unexpected: true },
+    { kind: "label", label: "" },
+    null,
+  ])
+    assert.equal(
+      validate({ ...request, payload: { ...request.payload, args: { destination } } }),
+      false,
+      `schema must reject ${JSON.stringify(destination)}`,
+    );
+
+  assert.equal(
+    validate({ ...request, payload: { ...request.payload, args: { destination: { kind: "label", label: "Town" }, destinationRef: "dr1_deadbeef" } } }),
     false,
   );
 });
