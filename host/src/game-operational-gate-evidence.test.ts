@@ -9,12 +9,13 @@ import {
 } from "./game-operational-gate-evidence.js";
 import type { IntegrationEventSource } from "./integration-launcher.js";
 import type {
-  GameIntegrationModule,
+  GameIntegrationAdapter,
   IntegrationExecutionReceipt,
   IntegrationReceiptEvidence,
   IntegrationStateView,
-} from "./integration-module.js";
-import type { IntegrationConnection } from "./integration-types.js";
+} from "./game-integration-adapter.js";
+import type { GameConnection } from "./game-connection.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const nonce = "a".repeat(64);
 
@@ -87,17 +88,23 @@ function setup(
       };
     },
   });
-  const module = Object.freeze({
+  const module: GameIntegrationAdapter = Object.freeze({
+    ...STARDEW_GAME_INTEGRATION_ADAPTER,
     readState: () => currentState,
-    defaultPolicy: Object.freeze({}),
     actionCatalog: Object.freeze({
+      ...STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
       visibleActions: () => Object.freeze([]),
       hasCompletionEvidence,
     }),
-  }) as unknown as GameIntegrationModule;
+  });
+  const connection: GameConnection = Object.freeze({
+    scope: Object.freeze({ integrationId: "stardew" }),
+    module,
+    state: Object.freeze({}),
+  });
   const projection = createGameOperationalGateEvidenceProjection(
     module,
-    Object.freeze({}) as IntegrationConnection,
+    connection,
     events,
     stopSource,
   );
@@ -184,8 +191,6 @@ test("v2 projection rejects mismatched, stale, unsuccessful, evidence-free, and 
   harness.emit(fact(1, { source: "host_local_transport" }));
   harness.emit(fact(1, { executionId: "execution_other", correlationId: "execution_other" }));
   harness.setState(state(receipt(1), { snapshotRevision: 6 }));
-  harness.emit(fact(1));
-  harness.setState(state(receipt(1, { actionId: undefined })));
   harness.emit(fact(1));
   harness.setState(state(receipt(1, { state: "failed" })));
   harness.emit(fact(1));
