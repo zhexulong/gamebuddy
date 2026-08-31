@@ -167,14 +167,12 @@ export function summarizeSnapshot(snapshot) {
   if (snapshot == null) return null;
   return {
     revision: snapshot.revision,
-    location: snapshot.location,
-    tile: snapshot.tile,
     actionable: snapshot.actionable,
     capabilityCount: Array.isArray(snapshot.capabilities) ? snapshot.capabilities.length : 0,
+    hasLocation: typeof snapshot.location === "string" && snapshot.location.length > 0,
+    hasTile: snapshot.tile != null,
     activeExecution: snapshot.activeExecution
       ? {
-          executionId: snapshot.activeExecution.executionId,
-          requestId: snapshot.activeExecution.requestId,
           state: snapshot.activeExecution.state,
           reasonCode: snapshot.activeExecution.reasonCode,
         }
@@ -186,8 +184,6 @@ export function summarizeSnapshot(snapshot) {
 export function summarizeReceipt(receipt) {
   if (receipt == null) return null;
   return {
-    executionId: receipt.executionId,
-    requestId: receipt.requestId,
     state: receipt.state,
     reasonCode: receipt.reasonCode,
     revision: receipt.revision,
@@ -240,15 +236,24 @@ export async function connectNativeLocalClient(
   const { LocalStardewBridgeClient } = await loadModule(entry);
   const client = await LocalStardewBridgeClient.connect(scope, config.PipeName, config.BridgeToken);
   const receipts = [];
+  const diagnostics = [];
   const unsubscribe = client.onFact((fact) => {
     if (fact.type === "execution_receipt") receipts.push(fact.payload);
   });
+  const unsubscribeDiagnostic = typeof client.onDiagnostic === "function"
+    ? client.onDiagnostic((diagnostic) => {
+      diagnostics.push(diagnostic);
+      if (diagnostics.length > 16) diagnostics.shift();
+    })
+    : () => {};
   return {
     client,
     scope,
     receipts,
+    diagnostics,
     async close() {
       unsubscribe();
+      unsubscribeDiagnostic();
       await client.close();
     },
   };

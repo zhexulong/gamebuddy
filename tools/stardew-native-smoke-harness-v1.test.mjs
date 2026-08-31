@@ -205,9 +205,11 @@ test("receipt identity and summaries remain exact and redacted", () => {
   });
   const receiptSummary = summarizeReceipt(accepted);
   assert.equal(snapshotSummary.capabilityCount, 1);
+  assert.equal(snapshotSummary.hasLocation, true);
+  assert.equal(snapshotSummary.hasTile, true);
   assert.equal(receiptSummary.hasEvidence, true);
-  assert.doesNotMatch(JSON.stringify(snapshotSummary), /move_to_tile|must-not-appear/);
-  assert.doesNotMatch(JSON.stringify(receiptSummary), /secret-native-detail/);
+  assert.doesNotMatch(JSON.stringify(snapshotSummary), /Farm|"x":1|"y":2|move_to_tile|must-not-appear/);
+  assert.doesNotMatch(JSON.stringify(receiptSummary), /execution-|request-|secret-native-detail/);
 });
 
 test("readNativeClientConfig parses the bounded runner config and fails closed", async () => {
@@ -256,6 +258,7 @@ test("connectNativeLocalClient builds a bounded session and tears down exactly o
     BridgeToken: "secret-token",
   };
   const listeners = new Set();
+  const diagnosticListeners = new Set();
   const fakeClient = {
     connect: async (scope, pipeName, token) => {
       fakeClient.scope = scope;
@@ -266,6 +269,10 @@ test("connectNativeLocalClient builds a bounded session and tears down exactly o
     onFact: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    onDiagnostic: (listener) => {
+      diagnosticListeners.add(listener);
+      return () => diagnosticListeners.delete(listener);
     },
     close: () => {
       fakeClient.closed += 1;
@@ -290,8 +297,16 @@ test("connectNativeLocalClient builds a bounded session and tears down exactly o
     listener({ type: "execution_receipt", payload: { executionId: "e2" } });
   }
   assert.deepEqual(session.receipts, [{ executionId: "e1" }, { executionId: "e2" }]);
+  for (let index = 0; index < 20; index += 1) {
+    for (const listener of diagnosticListeners) listener({ stage: "pipe_frame_dispatched", reasonCode: `fixed_${index}` });
+  }
+  assert.deepEqual(
+    session.diagnostics.map((diagnostic) => diagnostic.reasonCode),
+    Array.from({ length: 16 }, (_, index) => `fixed_${index + 4}`),
+  );
   await session.close();
   assert.equal(listeners.size, 0);
+  assert.equal(diagnosticListeners.size, 0);
   assert.equal(fakeClient.closed, 1);
   assert.doesNotMatch(JSON.stringify({ scope: session.scope, receipts: session.receipts }), /secret-token|secret/);
   await assert.rejects(connectNativeLocalClient({ ...config, PipeName: "" }), hasErrorCode("invalid_native_config"));
