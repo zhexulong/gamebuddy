@@ -45,6 +45,8 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         health: fc.integer({ min: 0, max: 100 }),
         actionable: fc.boolean(),
         capabilities: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 5 }),
+        catalogRevision: fc.constant(1),
+        enabledActionIds: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 5 }),
         presentationLocale: fc.constant("en-US"),
         inventorySlots: fc.option(fc.integer({ min: 12, max: 36 }), { nil: undefined }),
         soilTiles: fc.option(fc.array(fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }), { minLength: 0, maxLength: 5 }), { nil: undefined }),
@@ -91,6 +93,8 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
     health: 100,
     actionable: true,
     capabilities: ["till_soil", "water_crop"],
+    catalogRevision: 1,
+    enabledActionIds: ["till_soil", "water_crop"],
     presentationLocale: "en-US",
     soilTiles: [{ x: 5, y: 10 }, { x: 5, y: 11 }],
     toolSlots: [{ slot: 0, label: "Axe" }, { slot: 1, label: "Hoe" }],
@@ -134,6 +138,8 @@ test("Projections handle completely empty or missing optional fields cleanly", (
     health: 50,
     actionable: false,
     capabilities: [],
+    catalogRevision: 1,
+    enabledActionIds: [],
     presentationLocale: "en-US",
   };
 
