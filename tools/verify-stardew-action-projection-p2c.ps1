@@ -54,13 +54,16 @@ $P2OwnedPaths = @(
     "host/src/game-tools.ts",
     "host/src/protocol.ts",
     "host/src/execution-correlation-ledger.ts",
-    "host/src/stardew-integration-module.ts",
+    "host/src/game-connection.ts",
+    "host/src/game-integration-adapter.ts",
+    "host/src/stardew-game-integration-adapter.ts",
+    "host/src/test-support/game-connection-test-client.ts",
     "host/src/action-registry.test.ts",
     "host/src/game-tools.test.ts",
     "host/src/protocol.test.ts",
     "host/src/execution-correlation-ledger.test.ts",
-    "host/src/stardew-integration-module.test.ts",
-    "host/src/integration-module.test.ts",
+    "host/src/game-integration-adapter.test.ts",
+    "host/src/stardew-game-integration-adapter.test.ts",
     "host/src/strict-bridge-json.ts",
     "host/src/strict-bridge-json.test.ts",
     "host/src/named-pipe.ts",
@@ -142,9 +145,12 @@ try {
         "src/protocol.test.ts",
         "src/execution-correlation-ledger.ts",
         "src/execution-correlation-ledger.test.ts",
-        "src/stardew-integration-module.ts",
-        "src/stardew-integration-module.test.ts",
-        "src/integration-module.test.ts",
+        "src/game-connection.ts",
+        "src/game-integration-adapter.ts",
+        "src/game-integration-adapter.test.ts",
+        "src/stardew-game-integration-adapter.ts",
+        "src/stardew-game-integration-adapter.test.ts",
+        "src/test-support/game-connection-test-client.ts",
         "src/strict-bridge-json.ts",
         "src/strict-bridge-json.test.ts",
         "src/named-pipe.ts",
@@ -179,8 +185,8 @@ try {
             dist-p2c/game-tools.test.js `
             dist-p2c/protocol.test.js `
             dist-p2c/execution-correlation-ledger.test.js `
-            dist-p2c/stardew-integration-module.test.js `
-            dist-p2c/integration-module.test.js `
+            dist-p2c/game-integration-adapter.test.js `
+            dist-p2c/stardew-game-integration-adapter.test.js `
             dist-p2c/strict-bridge-json.test.js `
             dist-p2c/local-stardew-bridge.test.js `
             dist-p2c/schema-contract.test.js `

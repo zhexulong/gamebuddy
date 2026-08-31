@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createDeterministicBridgePair } from "./bridge.js";
-import { GameBridgeClient } from "./game-bridge-client.js";
+import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
 import { newEnvelope, type Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { fc } from "./test-support/fast-check.js";
@@ -63,7 +63,7 @@ test("Catalog PBT: Host projection follows complete monotone Mod publications", 
       fc.array(fc.boolean(), { minLength: 0, maxLength: 12 }),
       (desiredMemberships) => {
         const [host, mod] = createDeterministicBridgePair(scope);
-        const client = new GameBridgeClient(scope, host, STARDEW_GAME_INTEGRATION_ADAPTER);
+        const client = new GameConnectionTestClient(scope, host, STARDEW_GAME_INTEGRATION_ADAPTER);
         try {
           assert.equal(client.hello(token, now), null);
           mod.send(

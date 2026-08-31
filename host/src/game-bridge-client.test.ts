@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createDeterministicBridgePair } from "./bridge.js";
-import { GameBridgeClient } from "./game-bridge-client.js";
+import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
 import {
   type BridgeMessage,
   type CancelRequestPayload,
@@ -41,7 +41,7 @@ function snapshot(revision = 3) {
 
 test("integration client exposes only Mod-originated state and receipts", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   const modInbound: string[] = [];
   modEndpoint.onMessage((message) => {
     modInbound.push(message.type);
@@ -102,7 +102,7 @@ test("integration client exposes only Mod-originated state and receipts", () => 
 
 test("integration client retains a Mod-published read-only operation without projecting an execution action", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   modEndpoint.onMessage((message) => {
     if (message.type !== "hello") return;
     modEndpoint.send(
@@ -142,7 +142,7 @@ test("integration client retains a Mod-published read-only operation without pro
 
 test("integration client keeps the newest Mod snapshot when a delayed older snapshot arrives", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   modEndpoint.send(
     newEnvelope(
       "hello_ack",
@@ -161,7 +161,7 @@ test("integration client keeps the newest Mod snapshot when a delayed older snap
 
 test("integration client clears projection until a matching snapshot follows a catalog update", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   modEndpoint.send(
     newEnvelope(
       "hello_ack",
@@ -236,7 +236,7 @@ test("integration client clears projection until a matching snapshot follows a c
 
 test("integration client rejects a catalog update that promotes a read-only operation", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   modEndpoint.send(
     newEnvelope(
       "hello_ack",
@@ -269,7 +269,7 @@ test("integration client rejects a catalog update that promotes a read-only oper
 
 test("integration client rejects a stale catalog update", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   modEndpoint.send(
     newEnvelope(
       "hello_ack",
@@ -301,7 +301,7 @@ test("integration client rejects a stale catalog update", () => {
 
 test("integration client rejects an unregistered executable catalog update", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   modEndpoint.send(
     newEnvelope(
       "hello_ack",
@@ -333,7 +333,7 @@ test("integration client rejects an unregistered executable catalog update", () 
 
 test("integration client fails closed before hello/snapshot and on disconnect", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   const request = {
     requestId: "request_01",
     idempotencyKey: "idempotency_01",
@@ -352,7 +352,7 @@ test("integration client fails closed before hello/snapshot and on disconnect", 
 
 test("integration client binds a typed cancel identity per request and validates it before sending", () => {
   const [hostEndpoint, modEndpoint] = createDeterministicBridgePair(scope);
-  const client = new GameBridgeClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
+  const client = new GameConnectionTestClient(scope, hostEndpoint, STARDEW_GAME_INTEGRATION_ADAPTER);
   const cancelPayloads: CancelRequestPayload[] = [];
   modEndpoint.onMessage((message) => {
     if (message.type === "hello")
