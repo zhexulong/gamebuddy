@@ -9,6 +9,7 @@ import {
   CLEANUP_TIMEOUT_MS,
   DEFAULT_SUITE_TIMEOUT_MS,
   runBoundedChild,
+  runOneShotControlChild,
 } from "../src/process-supervisor.mjs";
 
 const nodeCommand = process.execPath;
@@ -17,6 +18,116 @@ const childScript = (source) => ["--input-type=module", "-e", source];
 test("exports stable timeout defaults", () => {
   assert.equal(DEFAULT_SUITE_TIMEOUT_MS, 15 * 60_000);
   assert.equal(CLEANUP_TIMEOUT_MS, 5_000);
+});
+
+test("runs a one-shot control child with one bounded JSON frame and separate stderr", async () => {
+  const result = await runOneShotControlChild({
+    command: nodeCommand,
+    args: childScript(`
+      let input = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => { input += chunk; });
+      process.stdin.on("end", () => {
+        const start = JSON.parse(input);
+        process.stderr.write("diagnostic");
+        process.stdout.write(JSON.stringify({ accepted: start.actionId }) + "\\n");
+      });
+    `),
+    start: { actionId: "toggle_lamp" },
+  });
+  assert.deepEqual(result.result, { accepted: "toggle_lamp" });
+  assert.equal(result.child.stderr, "diagnostic");
+  assert.equal(result.child.stdout, '{"accepted":"toggle_lamp"}\n');
+  assert.equal(result.child.stdout.includes("diagnostic"), false);
+  assert.deepEqual(result.exit, { code: 0, signal: null });
+  assert.ok(Number.isSafeInteger(result.child.pid));
+});
+
+test("rejects malformed, duplicate, oversized, and extra control-child stdout", async () => {
+  for (const source of [
+    "process.stdout.write('not-json\\n'); setInterval(() => {}, 1000);",
+    "process.stdout.write('{}\\n{}\\n'); setInterval(() => {}, 1000);",
+    "process.stdout.write('{}\\nextra'); setInterval(() => {}, 1000);",
+    "process.stdout.write(JSON.stringify({ value: 'x'.repeat(64 * 1024) }) + '\\n'); setInterval(() => {}, 1000);"
+  ]) {
+    await assert.rejects(
+      runOneShotControlChild({ command: nodeCommand, args: childScript(source), start: {} }),
+      /control_child_invalid_result/,
+    );
+  }
+});
+
+test("does not spawn a pre-aborted control child", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    runOneShotControlChild({ command: "never-spawned", start: {}, signal: controller.signal, spawnProcess: () => assert.fail("must not spawn") }),
+    /control_child_aborted/,
+  );
+});
+
+test("writes one JSON start line and uses caller abort as control-child cancellation", async () => {
+  const controller = new AbortController();
+  const result = runOneShotControlChild({
+    command: nodeCommand,
+    args: childScript(`
+      let frames = 0;
+      process.stdin.on("data", () => { frames += 1; });
+      process.stdin.on("end", () => { if (frames !== 1) process.exitCode = 1; else setInterval(() => {}, 1000); });
+    `),
+    start: { request: "one" },
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(), 50).unref();
+  await assert.rejects(result, /control_child_aborted/);
+  await assert.rejects(
+    runOneShotControlChild({ command: nodeCommand, args: childScript(""), start: { value: "x".repeat(64 * 1024) } }),
+    /invalid_control_child_start/,
+  );
+  const stderrResult = await runOneShotControlChild({
+    command: nodeCommand,
+    args: childScript("process.stderr.write('x'.repeat(128 * 1024)); process.stdout.write('{}\\n');"),
+    start: {},
+  });
+  assert.ok(Buffer.byteLength(stderrResult.child.stderr, "utf8") <= 64 * 1024);
+});
+
+test("returns independent exit facts for valid result with nonzero code or signal", async () => {
+  const nonzero = await runOneShotControlChild({
+    command: nodeCommand,
+    args: childScript("process.stdout.write('{}\\n'); process.exit(7);"),
+    start: {},
+  });
+  assert.deepEqual(nonzero.exit, { code: 7, signal: null });
+  const signalChild = fakeChild();
+  const signaled = runOneShotControlChild({ command: "fake", start: {}, spawnProcess: () => signalChild });
+  signalChild.stdout.emit("data", Buffer.from("{}\n"));
+  signalChild.emit("close", null, "SIGTERM");
+  assert.deepEqual((await signaled).exit, { code: null, signal: "SIGTERM" });
+});
+
+test("abort observed before completed close fails closed; close/result first returns exit facts", async () => {
+  const controller = new AbortController();
+  const child = fakeChild();
+  const pending = runOneShotControlChild({
+    command: "fake",
+    start: {},
+    signal: controller.signal,
+    spawnProcess: () => child,
+    killTree: async () => { child.emit("close", null, "SIGKILL"); },
+  });
+  controller.abort();
+  await assert.rejects(pending, /control_child_aborted/);
+
+  const completeChild = fakeChild();
+  const settled = runOneShotControlChild({
+    command: "fake",
+    start: {},
+    spawnProcess: () => completeChild,
+  });
+  completeChild.stdout.emit("data", Buffer.from("{}\n"));
+  completeChild.emit("close", 7, null);
+  assert.deepEqual((await settled).exit, { code: 7, signal: null });
 });
 
 test("deadline races child close, not only exit", async () => {
@@ -63,6 +174,65 @@ test("supports inherited stdio without requiring capture streams", async () => {
   assert.equal(result.stderr, "");
 });
 
+test("rejects mandatory spawn option overrides before spawning", async () => {
+  for (const key of ["shell", "windowsHide", "detached", "stdio"]) {
+    await assert.rejects(
+      runBoundedChild({ command: "never-spawned", spawnOptions: { [key]: true }, spawnProcess: () => assert.fail("must not spawn") }),
+      /test_supervisor_spawn_options_override_mandatory/,
+    );
+    await assert.rejects(
+      runOneShotControlChild({ command: "never-spawned", start: {}, spawnOptions: { [key]: true }, spawnProcess: () => assert.fail("must not spawn") }),
+      /test_supervisor_spawn_options_override_mandatory/,
+    );
+  }
+});
+
+test("cleans a real process tree before rejecting an invalid post-spawn child surface", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "game-action-devkit-invalid-child-"));
+  const marker = join(temp, "should-not-exist");
+  const startRealButReturnInvalidSurface = () => {
+    const realChild = spawn(nodeCommand, childScript(`
+      import { writeFileSync } from "node:fs";
+      setTimeout(() => writeFileSync(${JSON.stringify(marker)}, "leaked"), 300);
+    `), { detached: process.platform !== "win32", stdio: "ignore", windowsHide: true });
+    return { pid: realChild.pid };
+  };
+  try {
+    await assert.rejects(
+      runBoundedChild({ command: "fake", spawnProcess: startRealButReturnInvalidSurface, cleanupTimeoutMs: 500 }),
+      /invalid_test_supervisor_child/,
+    );
+    await assert.rejects(
+      runOneShotControlChild({ command: "fake", start: {}, spawnProcess: startRealButReturnInvalidSurface, cleanupTimeoutMs: 500 }),
+      /invalid_control_child_process/,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await assert.rejects(readFile(marker));
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("disposes all runBoundedChild listeners after timeout cleanup expires without close", async () => {
+  const child = fakeChild();
+  await assert.rejects(
+    runBoundedChild({
+      command: "fake",
+      timeoutMs: 100,
+      cleanupTimeoutMs: 1,
+      spawnProcess: () => child,
+      killTree: async () => {},
+    }),
+    /test_supervisor_timeout/,
+  );
+  for (const emitter of [child, child.stdout, child.stderr]) {
+    assert.equal(emitter.listenerCount("error"), 0);
+    assert.equal(emitter.listenerCount("close"), 0);
+    assert.equal(emitter.listenerCount("data"), 0);
+    assert.equal(emitter.listenerCount("end"), 0);
+  }
+});
+
 test("rejects an invalid cleanup budget before spawning", async () => {
   await assert.rejects(
     runBoundedChild({ command: "never-spawned", cleanupTimeoutMs: Infinity, spawnProcess: () => assert.fail("must not spawn") }),
@@ -94,6 +264,7 @@ function fakeChild({ pid = 4321 } = {}) {
   child.pid = pid;
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
+  child.stdin = { end() {} };
   child.kill = () => true;
   return child;
 }

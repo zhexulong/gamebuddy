@@ -128,6 +128,19 @@ test("rejects an absent portfolio through a symlink even for selectorless status
   } finally { await removeTree(outside); }
 });
 
+test("leaves profile optional for generic run-live while adapters may reject its absence", async () => {
+  const requiresProfileAdapter = `export async function runActionProject({ manifest, invocation }) { if (invocation.profileFile === undefined) throw new Error("adapter_profile_required"); return { schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: "live", outcome: "blocked", actionId: invocation.actionId, runId: invocation.runId }; }`;
+  await withProject({ "project.json": manifest, ...dependencies, "adapter.mjs": requiresProfileAdapter }, async (root) => {
+    const projectFile = path.join(root, "project.json");
+    await assert.rejects(
+      runActionProject({ projectFile, invocation: { command: "run-live", actionId: "equip_tool" } }),
+      /adapter_profile_required/,
+    );
+    const result = await runActionProject({ projectFile, invocation: { command: "run-live", actionId: "equip_tool", profileFile: path.join(root, "profile.json") } });
+    assert.equal(result.status, "live");
+  });
+});
+
 test("mints a fresh bounded opaque run id and passes canonical manifest roots for every run-live attempt", async () => {
   const blockedAdapter = `export async function runActionProject({ manifest, invocation }) { return { schema: "gamebuddy-action-scenario-result/v1", gameId: manifest.gameId, status: "blocked", outcome: "blocked", actionId: invocation.actionId, runId: invocation.runId, evidenceRoot: manifest.evidenceRoot }; }`;
   await withProject({ "project.json": manifest, ...dependencies, "adapter.mjs": blockedAdapter }, async (root) => {

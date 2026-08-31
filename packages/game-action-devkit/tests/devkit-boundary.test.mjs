@@ -9,6 +9,7 @@ const sourceFiles = [
   "src/cli.mjs",
   "src/index.mjs",
   "src/project-runner.mjs",
+  "src/process-supervisor.mjs",
   "bin/game-action.mjs",
 ];
 const schemaFiles = [
