@@ -3,6 +3,14 @@ import { createConnection, type Socket } from "node:net";
 
 import { MAX_MESSAGE_BYTES, serializeBounded } from "./protocol.js";
 
+export type NamedPipeFrameStage =
+  | "pipe_bytes_received"
+  | "pipe_frame_header_accepted"
+  | "pipe_frame_payload_complete"
+  | "pipe_frame_dispatched"
+  | "pipe_write_completed"
+  | "pipe_write_failed";
+
 /** Windows local named-pipe framing shared with LocalPipeBridge.cs. */
 export class NamedPipeTransport {
   readonly #events = new EventEmitter();
@@ -63,6 +71,12 @@ export class NamedPipeTransport {
     return () => this.#events.off("message", listener);
   }
 
+  /** Content-free framing stages; never includes pipe names, lengths, or payload data. */
+  public onFrameStage(listener: (stage: NamedPipeFrameStage) => void): () => void {
+    this.#events.on("frameStage", listener);
+    return () => this.#events.off("frameStage", listener);
+  }
+
   public onClose(listener: (reasonCode: string) => void): () => void {
     this.#events.on("close", listener);
     return () => this.#events.off("close", listener);
@@ -75,7 +89,14 @@ export class NamedPipeTransport {
     if (payload.byteLength > MAX_MESSAGE_BYTES) throw new Error("message_too_large");
     const header = Buffer.allocUnsafe(4);
     header.writeInt32LE(payload.byteLength, 0);
-    this.#socket.write(Buffer.concat([header, payload]));
+    try {
+      this.#socket.write(Buffer.concat([header, payload]), (error) => {
+        this.#events.emit("frameStage", error == null ? "pipe_write_completed" : "pipe_write_failed");
+      });
+    } catch (error) {
+      this.#events.emit("frameStage", "pipe_write_failed");
+      throw error;
+    }
   }
 
   public close(reasonCode = "local_close"): void {
@@ -87,6 +108,7 @@ export class NamedPipeTransport {
 
   private receive(chunk: Buffer): void {
     this.#events.emit("data");
+    this.#events.emit("frameStage", "pipe_bytes_received");
     this.#buffer = Buffer.concat([this.#buffer, chunk]);
     while (this.#buffer.byteLength >= 4) {
       const length = this.#buffer.readInt32LE(0);
@@ -94,10 +116,13 @@ export class NamedPipeTransport {
         this.close("invalid_frame_length");
         return;
       }
+      this.#events.emit("frameStage", "pipe_frame_header_accepted");
       if (this.#buffer.byteLength < 4 + length) return;
+      this.#events.emit("frameStage", "pipe_frame_payload_complete");
       const payload = this.#buffer.subarray(4, 4 + length);
       this.#buffer = this.#buffer.subarray(4 + length);
       this.#events.emit("message", payload.toString("utf8"));
+      this.#events.emit("frameStage", "pipe_frame_dispatched");
     }
   }
 }
