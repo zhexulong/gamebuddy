@@ -73,6 +73,12 @@ const WINDOWS_STARDEW_FOLDER_PICKER = Object.freeze({
   helper: "GameBuddy.WindowsStardewFolderPicker.exe",
   manifest: "windows-stardew-folder-picker.manifest.json",
 });
+const WINDOWS_STARDEW_BOOTSTRAP_GUARDIAN = Object.freeze({
+  kind: "verified_windows_stardew_bootstrap_guardian",
+  destination: "native/windows-stardew-bootstrap-guardian/win-x64",
+  helper: "GameBuddy.WindowsStardewBootstrapGuardian.exe",
+  manifest: "windows-stardew-bootstrap-guardian.manifest.json",
+});
 const exactKeys = (value, keys) => value !== null && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const artifactRelativeModule = (artifactRoot, importer, specifier, artifactFileSet) => {
@@ -293,6 +299,12 @@ function validateWindowsStardewFolderPicker(value) {
     throw new Error("invalid_windows_stardew_folder_picker_descriptor");
   return Object.freeze({ ...WINDOWS_STARDEW_FOLDER_PICKER });
 }
+function validateWindowsStardewBootstrapGuardian(value) {
+  if (!exactKeys(value, ["kind", "destination", "helper", "manifest"])
+    || Object.keys(WINDOWS_STARDEW_BOOTSTRAP_GUARDIAN).some((key) => value[key] !== WINDOWS_STARDEW_BOOTSTRAP_GUARDIAN[key]))
+    throw new Error("invalid_windows_stardew_bootstrap_guardian_descriptor");
+  return Object.freeze({ ...WINDOWS_STARDEW_BOOTSTRAP_GUARDIAN });
+}
 function canonicalWindowsReparseManifest(sha256) {
   return `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsReparseInspector.exe","sha256":"${sha256}"}\n`;
 }
@@ -301,6 +313,9 @@ function canonicalWindowsStaleLockReclaimerManifest(sha256) {
 }
 function canonicalWindowsStardewFolderPickerManifest(sha256) {
   return `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsStardewFolderPicker.exe","sha256":"${sha256}"}\n`;
+}
+function canonicalWindowsStardewBootstrapGuardianManifest(sha256) {
+  return `{"schemaVersion":1,"protocolVersion":1,"rid":"win-x64","helperFileName":"GameBuddy.WindowsStardewBootstrapGuardian.exe","sha256":"${sha256}"}\n`;
 }
 /** Verifies construction provenance only. Current live probe evidence is owned
  * exclusively by the release gate process and cannot be supplied to this API. */
@@ -348,6 +363,20 @@ export async function verifyWindowsStardewFolderPickerPair({ root, descriptor = 
     return Object.freeze({ helperSha256, pairRoot, helper, manifest });
   } catch { throw new Error("windows_stardew_folder_picker_pair_invalid"); }
 }
+export async function verifyWindowsStardewBootstrapGuardianPair({ root, descriptor = WINDOWS_STARDEW_BOOTSTRAP_GUARDIAN }) {
+  const pairRoot = resolve(root, descriptor.destination.replaceAll("/", sep));
+  const helper = resolve(pairRoot, descriptor.helper);
+  const manifest = resolve(pairRoot, descriptor.manifest);
+  try {
+    await safeAncestors(root, pairRoot, "windows_stardew_bootstrap_guardian"); await directory(pairRoot, "windows_stardew_bootstrap_guardian");
+    const entries = (await readdir(pairRoot)).sort();
+    if (JSON.stringify(entries) !== JSON.stringify([descriptor.helper, descriptor.manifest].sort())) throw new Error("entries");
+    for (const path of [helper, manifest]) { await safeAncestors(pairRoot, path, "windows_stardew_bootstrap_guardian"); await regular(path, "windows_stardew_bootstrap_guardian"); }
+    const helperSha256 = digest(await readFile(helper));
+    if (await readFile(manifest, "utf8") !== canonicalWindowsStardewBootstrapGuardianManifest(helperSha256)) throw new Error("manifest");
+    return Object.freeze({ helperSha256, pairRoot, helper, manifest });
+  } catch { throw new Error("windows_stardew_bootstrap_guardian_pair_invalid"); }
+}
 function validateExternalClosure(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)
     || value.kind !== "declared_external_runtime_closure"
@@ -376,7 +405,7 @@ function validateExternalClosure(value) {
 }
 export async function readArtifactConfig(hostRoot) {
   const config = JSON.parse(await readFile(resolve(hostRoot, "production-artifact.config.json"), "utf8"));
-  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "externalRuntimeClosure"];
+  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsStardewBootstrapGuardian", "externalRuntimeClosure"];
   if (config === null || typeof config !== "object" || Array.isArray(config)
     || config.schema !== "gamebuddy-host-production-artifact-config/v2"
     || Object.keys(config).some((key) => !allowedKeys.includes(key))
@@ -396,6 +425,7 @@ export async function readArtifactConfig(hostRoot) {
   if (config.windowsReparseInspector !== undefined) config.windowsReparseInspector = validateWindowsReparseInspector(config.windowsReparseInspector);
   if (config.windowsStaleLockReclaimer !== undefined) config.windowsStaleLockReclaimer = validateWindowsStaleLockReclaimer(config.windowsStaleLockReclaimer);
   if (config.windowsStardewFolderPicker !== undefined) config.windowsStardewFolderPicker = validateWindowsStardewFolderPicker(config.windowsStardewFolderPicker);
+  if (config.windowsStardewBootstrapGuardian !== undefined) config.windowsStardewBootstrapGuardian = validateWindowsStardewBootstrapGuardian(config.windowsStardewBootstrapGuardian);
   config.externalRuntimeClosure = validateExternalClosure(config.externalRuntimeClosure);
   return config;
 }
@@ -586,6 +616,24 @@ async function ensureWindowsStardewFolderPickerPair({ hostRoot, stagingRoot, des
 async function verifiedWindowsStardewFolderPickerOrigins({ stagingRoot, descriptor }) {
   const verified = await verifyWindowsStardewFolderPickerPair({ root: stagingRoot, descriptor });
   const origin = windowsStardewFolderPickerOrigin(descriptor, verified.helperSha256);
+  return new Map([...[descriptor.helper, descriptor.manifest].map((name) => [`${descriptor.destination}/${name}`, origin])]);
+}
+function windowsStardewBootstrapGuardianOrigin(descriptor, helperSha256) {
+  return Object.freeze({ kind: descriptor.kind, destination: descriptor.destination, helper: descriptor.helper, manifest: descriptor.manifest, helperSha256 });
+}
+async function ensureWindowsStardewBootstrapGuardianPair({ hostRoot, stagingRoot, descriptor }) {
+  const buildPairRoot = resolve(hostRoot, "native", "windows-stardew-bootstrap-guardian", ".dist", "win-x64");
+  const source = await verifyWindowsStardewBootstrapGuardianPair({ root: resolve(buildPairRoot, ".."), descriptor: { ...descriptor, destination: "win-x64" } });
+  const destinationRoot = resolve(stagingRoot, descriptor.destination.replaceAll("/", sep));
+  for (const name of [descriptor.helper, descriptor.manifest]) {
+    const destination = resolve(destinationRoot, name); await mkdir(dirname(destination), { recursive: true }); await copyFile(resolve(source.pairRoot, name), destination);
+    await safeAncestors(stagingRoot, destination, "windows_stardew_bootstrap_guardian_destination"); await regular(destination, "windows_stardew_bootstrap_guardian_destination");
+  }
+  return verifyWindowsStardewBootstrapGuardianPair({ root: stagingRoot, descriptor });
+}
+async function verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot, descriptor }) {
+  const verified = await verifyWindowsStardewBootstrapGuardianPair({ root: stagingRoot, descriptor });
+  const origin = windowsStardewBootstrapGuardianOrigin(descriptor, verified.helperSha256);
   return new Map([...[descriptor.helper, descriptor.manifest].map((name) => [`${descriptor.destination}/${name}`, origin])]);
 }
 function rejectUnverifiedBrowserArtifactFiles(artifactFiles, origins) {
@@ -903,6 +951,10 @@ export async function publishProductionArtifact({ hostRoot, emittedRoot, outputR
       await ensureWindowsStardewFolderPickerPair({ hostRoot, stagingRoot, descriptor: config.windowsStardewFolderPicker });
       for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
     }
+    if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined) {
+      await ensureWindowsStardewBootstrapGuardianPair({ hostRoot, stagingRoot, descriptor: config.windowsStardewBootstrapGuardian });
+      for (const [path, origin] of await verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot, descriptor: config.windowsStardewBootstrapGuardian })) origins.set(path, origin);
+    }
     // Freeze the browser descriptor's checked bytes before inventory creation;
     // a final exact-snapshot verification below closes the remaining
     // pre-publish mutation window as far as this pathname-based architecture permits.
@@ -931,6 +983,9 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   }
   if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
     for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
+  }
+  if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined) {
+    for (const [path, origin] of await verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot: artifactRoot, descriptor: config.windowsStardewBootstrapGuardian })) origins.set(path, origin);
   }
   const inventory = await verifyArtifact({ artifactRoot, hostRoot, config, expectedInventory: manifest, origins });
   if (pointer.inventoryDigest !== inventory.digest) throw new Error("production_current_pointer_inventory_mismatch");
@@ -975,6 +1030,9 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   }
   if (process.platform === "win32" && config.windowsStardewFolderPicker !== undefined) {
     for (const [path, origin] of await verifiedWindowsStardewFolderPickerOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsStardewFolderPicker })) origins.set(path, origin);
+  }
+  if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined) {
+    for (const [path, origin] of await verifiedWindowsStardewBootstrapGuardianOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.windowsStardewBootstrapGuardian })) origins.set(path, origin);
   }
   const manifest = JSON.parse(await readFile(resolve(selected.artifactRoot, "production-inventory.json"), "utf8"));
   const inventory = await verifyArtifact({ artifactRoot: selected.artifactRoot, hostRoot, config, expectedInventory: manifest, origins });

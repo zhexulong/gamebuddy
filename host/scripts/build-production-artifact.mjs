@@ -3,8 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { publishProductionArtifact, reachableProductionModules, readArtifactConfig, verifyWindowsReparseInspectorPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { publishProductionArtifact, reachableProductionModules, readArtifactConfig, verifyWindowsReparseInspectorPair, verifyWindowsStardewBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { buildWindowsReparseInspector, outputRoot as windowsReparseInspectorBuildRoot } from "./build-windows-reparse-inspector.mjs";
+import { buildWindowsStardewBootstrapGuardian, outputRoot as windowsStardewBootstrapGuardianBuildRoot } from "./build-windows-stardew-bootstrap-guardian.mjs";
 import { buildWindowsStardewFolderPicker, outputRoot as windowsStardewFolderPickerBuildRoot } from "./build-windows-stardew-folder-picker.mjs";
 import { runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
 
@@ -366,6 +367,9 @@ export async function buildProductionArtifact({
       await buildWindowsStardewFolderPicker();
       if (config.windowsStardewFolderPicker === undefined) throw new Error("windows_stardew_folder_picker_descriptor_missing");
       await verifyWindowsStardewFolderPickerPair({ root: resolve(windowsStardewFolderPickerBuildRoot, ".."), descriptor: { ...config.windowsStardewFolderPicker, destination: "win-x64" } });
+      await buildWindowsStardewBootstrapGuardian();
+      if (config.windowsStardewBootstrapGuardian === undefined) throw new Error("windows_stardew_bootstrap_guardian_descriptor_missing");
+      await verifyWindowsStardewBootstrapGuardianPair({ root: resolve(windowsStardewBootstrapGuardianBuildRoot, ".."), descriptor: { ...config.windowsStardewBootstrapGuardian, destination: "win-x64" } });
     }
     const invocation = await resolveTypeScriptInvocation({ project: "tsconfig.production.json" });
     await runChild({ ...invocation, args: [...invocation.args, "--outDir", stagingRoot] });
