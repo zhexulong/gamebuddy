@@ -85,10 +85,15 @@ never substitutes for target-runtime evidence.
 
 ## Live `equip_tool` gate
 
-The package adapter exposes the devkit `run-live` project operation, but this
-operation is intentionally not a package `scripts` entry. Resolve the exact
-private devkit invocation from the package manifest and adapter before use; do
-not invent a package script or pass unsupported options.
+The package exposes the canonical action-neutral `action:run-live` script. The
+caller must provide the exact action and absolute target profile explicitly:
+
+```bash
+pnpm --dir integrations/stardew/action-development action:run-live --action equip_tool --profile <absolute-profile-json>
+```
+
+Do not invoke the devkit binary through an alternate route or pass unsupported
+options.
 
 Before using it, complete the action-specific non-mutating preflight and one
 aggregate independent review, then obtain explicit authorization from the
