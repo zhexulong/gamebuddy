@@ -20,11 +20,12 @@ import {
   DEFAULT_IDENTITY_PROFILE,
   identityProfileHash,
 } from "./identity-profile.js";
-import { CompanionIntegrationClient } from "./integration.js";
+import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
+import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
 import {
   createIntegrationActionCatalog,
-  type GameIntegrationModule,
-} from "./integration-module.js";
+  type GameIntegrationAdapter,
+} from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type { Scope } from "./protocol.js";
@@ -48,7 +49,7 @@ import {
   resolveMagicContextExtensionEntry,
   resolveRuntimePaths,
 } from "./runtime.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 // The compiled test artifact is deliberately not a production artifact, so
@@ -153,7 +154,7 @@ test("mounted Companion status reports live integration facts without inferring 
       playerId: identity.playerId,
       companionId: identity.companionId,
     },
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     state: {
       connected: true,
       sessionId: "session_01",
@@ -253,7 +254,7 @@ test("runtime mounts a fake integration through the module port", async () => {
       },
     }),
   });
-  const fake: GameIntegrationModule = {
+  const fake: GameIntegrationAdapter = {
     descriptor: Object.freeze({
       integrationId: "test-arcade",
       version: "fixture-v1",
@@ -266,9 +267,11 @@ test("runtime mounts a fake integration through the module port", async () => {
       deniedFamilies: [],
     }),
     parsePolicy: (value: unknown) => value as never,
-    actorId: () => "embodied_actor_01",
+    actorId: () => identity.playerId,
     assertIdentityBinding: (_connection, boundIdentity) => {
-      if (boundIdentity.companionId !== identity.companionId)
+      if (
+        boundIdentity.companionId !== identity.companionId
+      )
         throw new Error("integration_identity_binding_mismatch");
     },
     worldScope: () => null,
@@ -374,12 +377,12 @@ test("runtime refresh waits for Pi idle and coalesces to the current adapter pro
   const idle = new Promise<void>((resolvePromise) => {
     releaseIdle = resolvePromise;
   });
-  const module: GameIntegrationModule = {
+  const module: GameIntegrationAdapter = {
     descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" },
     actionCatalog: createIntegrationActionCatalog([{ actionId: "activate_console" }]),
     defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
     parsePolicy: (value) => value as never,
-    actorId: () => "embodied_actor_01",
+    actorId: () => "fixture_actor",
     assertIdentityBinding: () => undefined,
     worldScope: () => null,
     createToolSet: ({ connection }) => {
@@ -487,10 +490,10 @@ test("runtime rejects a mounted integration whose save identity does not match",
     companionId: identity.companionId,
   };
   const [hostEndpoint] = createDeterministicBridgePair(wrongScope);
-  const integration = new CompanionIntegrationClient(
+  const integration = new GameConnectionTestClient(
     wrongScope,
     hostEndpoint,
-    STARDEW_INTEGRATION_MODULE,
+    STARDEW_GAME_INTEGRATION_ADAPTER,
   );
   await assert.rejects(
     () => createCompanionRuntime(identity, root, integration),
@@ -509,10 +512,10 @@ test("generic runtime keeps an explicit game surface when the Host construction 
     companionId: identity.companionId,
   };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new CompanionIntegrationClient(
+  const integration = new GameConnectionTestClient(
     scope,
     hostEndpoint,
-    STARDEW_INTEGRATION_MODULE,
+    STARDEW_GAME_INTEGRATION_ADAPTER,
   );
   const runtime = await createCompanionRuntime(
     { ...identity, continuityId: "continuity_01" },
@@ -583,10 +586,10 @@ test("formal Preview Game composition does not load Magic Context", async () => 
     companionId: identity.companionId,
   };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new CompanionIntegrationClient(
+  const integration = new GameConnectionTestClient(
     scope,
     hostEndpoint,
-    STARDEW_INTEGRATION_MODULE,
+    STARDEW_GAME_INTEGRATION_ADAPTER,
   );
   const runtime = await createGameCompanionRuntime(
     identity,
@@ -642,7 +645,7 @@ test("Stardew action tools fail closed when a connection lacks the launcher exec
   };
   const integration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     state: {
       connected: true,
       sessionId: "session_01",
@@ -698,7 +701,7 @@ test("runtime composes a ledger admission before mounting and executing a live S
   let executeWrites = 0;
   const integration = {
     scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     executionGate: { executable: true },
     state: {
       connected: true,
@@ -782,10 +785,10 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
     companionId: identity.companionId,
   };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new CompanionIntegrationClient(
+  const integration = new GameConnectionTestClient(
     scope,
     hostEndpoint,
-    STARDEW_INTEGRATION_MODULE,
+    STARDEW_GAME_INTEGRATION_ADAPTER,
   );
   const runtime = await createCompanionRuntime(identity, root, integration);
   try {
@@ -823,16 +826,12 @@ test("runtime materializes the optional gameplay subagent without exposing its t
     companionId: identity.companionId,
   };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new CompanionIntegrationClient(
+  const integration = new GameConnectionTestClient(
     scope,
     hostEndpoint,
-    STARDEW_INTEGRATION_MODULE,
+    STARDEW_GAME_INTEGRATION_ADAPTER,
   );
-  const config = {
-    provider: "cpa-oai" as const,
-    modelId: "deepseek-v4-flash" as const,
-    thinkingLevel: "high" as const,
-  };
+  const config = GAMEPLAY_SUBAGENT_MODEL_CONFIG;
   const offline = await createCompanionRuntime(identity, offlineRoot);
   try {
     assert.equal(
@@ -859,11 +858,7 @@ test("runtime materializes the optional gameplay subagent without exposing its t
     const manifest = JSON.parse(
       await readFile(delegated.paths.runManifestPath, "utf8"),
     );
-    assert.deepEqual(manifest.model, {
-      provider: "cpa-oai",
-      modelId: "deepseek-v4-flash",
-      thinkingLevel: "high",
-    });
+    assert.deepEqual(manifest.model, GAMEPLAY_SUBAGENT_MODEL_CONFIG);
     assert.deepEqual(manifest.gameplaySubagentModel, config);
     assert.equal(
       delegated.session.agent.state.tools.some(
@@ -899,10 +894,10 @@ test("gameplay subagent composition fails closed without a mounted game model co
     companionId: identity.companionId,
   };
   const [hostEndpoint] = createDeterministicBridgePair(scope);
-  const integration = new CompanionIntegrationClient(
+  const integration = new GameConnectionTestClient(
     scope,
     hostEndpoint,
-    STARDEW_INTEGRATION_MODULE,
+    STARDEW_GAME_INTEGRATION_ADAPTER,
   );
   try {
     await assert.rejects(
@@ -947,10 +942,10 @@ test("runtime mounts Host-owned version-bound knowledge only when explicitly con
       },
     ],
   };
-  const integration = new CompanionIntegrationClient(
+  const integration = new GameConnectionTestClient(
     scope,
     hostEndpoint,
-    STARDEW_INTEGRATION_MODULE,
+    STARDEW_GAME_INTEGRATION_ADAPTER,
     bundle,
     "1.6.15",
   );

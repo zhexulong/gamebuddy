@@ -25,8 +25,8 @@ import type {
   IntegrationActionPolicy,
   IntegrationDispatchAdmission,
   IntegrationExecutionReceipt,
-} from "./integration-module.js";
-import type { IntegrationConnection } from "./integration-types.js";
+} from "./game-integration-adapter.js";
+import type { GameConnection } from "./game-connection.js";
 import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 
 /** Gameplay workers are deliberately pinned independently from the dialogue model. */
@@ -46,7 +46,7 @@ export type GameplayTaskResult = Readonly<{
 
 export type GameplayTaskRecord = Readonly<{
   taskId: string;
-  scope: IntegrationConnection["scope"];
+  scope: GameConnection["scope"];
   cancellationEpoch: number;
   /** Highest Mod-owned terminal receipt revision observed by this task. */
   minimumSnapshotRevision: number | null;
@@ -116,7 +116,7 @@ export type GameplayTaskDispatchAdmissionFactory =
 
 type MutableTaskRecord = {
   taskId: string;
-  scope: IntegrationConnection["scope"];
+  scope: GameConnection["scope"];
   cancellationEpoch: number;
   /** Restrictive local fence; this value is copied from Mod receipt facts only. */
   minimumSnapshotRevision: number | null;
@@ -171,7 +171,7 @@ export class GameplayTaskSubagent {
 
   public constructor(
     private readonly paths: RuntimePaths,
-    private readonly integration: IntegrationConnection,
+    private readonly integration: GameConnection,
     private readonly actionPolicy?: IntegrationActionPolicy,
     private readonly sessionFactory?: GameplayTaskSessionFactory,
     private readonly executionWakeSource?: ExecutionWakeSource,
@@ -336,11 +336,11 @@ export class GameplayTaskSubagent {
             report.state === "completed" &&
             !hasAuthoritativeCompletion(
               report,
-              requireIntegrationModule(this.integration).readState(
+              requireIntegrationAdapter(this.integration).readState(
                 this.integration,
               ).latestReceipt,
               record.executions,
-              requireIntegrationModule(this.integration).actionCatalog,
+              requireIntegrationAdapter(this.integration).actionCatalog,
             )
           ) {
             throw new Error("authoritative_completion_receipt_required");
@@ -353,7 +353,7 @@ export class GameplayTaskSubagent {
           };
         },
       });
-      const integrationModule = requireIntegrationModule(this.integration);
+      const integrationAdapter = requireIntegrationAdapter(this.integration);
       const status = defineTool({
         name: "companion_status",
         label: "Companion Status",
@@ -361,7 +361,7 @@ export class GameplayTaskSubagent {
           "Read the mounted integration status for this private gameplay task.",
         parameters: Type.Object({}),
         execute: async () => {
-          const state = requireIntegrationModule(this.integration).readState(
+          const state = requireIntegrationAdapter(this.integration).readState(
             this.integration,
           );
           const details = {
@@ -390,7 +390,7 @@ export class GameplayTaskSubagent {
               active.dispatchAdmission = admission;
               return admission;
             };
-      const integrationToolSet = integrationModule.createToolSet({
+      const integrationToolSet = integrationAdapter.createToolSet({
         connection: this.integration,
         knowledge: this.integration.knowledge,
         gameVersion: this.integration.gameVersion,
@@ -425,8 +425,8 @@ export class GameplayTaskSubagent {
           record,
           controller,
           this.integration,
-          integrationModule,
-          this.actionPolicy ?? integrationModule.defaultPolicy,
+          integrationAdapter,
+          this.actionPolicy ?? integrationAdapter.defaultPolicy,
           cancelSettledPendingDispatch,
         ),
       );
@@ -436,8 +436,8 @@ export class GameplayTaskSubagent {
           record,
           controller,
           this.integration,
-          integrationModule,
-          this.actionPolicy ?? integrationModule.defaultPolicy,
+          integrationAdapter,
+          this.actionPolicy ?? integrationAdapter.defaultPolicy,
           cancelSettledPendingDispatch,
         ),
         ...scopedIntegrationTools,
@@ -446,8 +446,8 @@ export class GameplayTaskSubagent {
           record,
           controller,
           this.integration,
-          integrationModule,
-          this.actionPolicy ?? integrationModule.defaultPolicy,
+          integrationAdapter,
+          this.actionPolicy ?? integrationAdapter.defaultPolicy,
           cancelSettledPendingDispatch,
         ),
       ];
@@ -551,9 +551,9 @@ export class GameplayTaskSubagent {
         if (
           !hasAuthoritativeCompletion(
             finalReport,
-            integrationModule.readState(this.integration).latestReceipt,
+            integrationAdapter.readState(this.integration).latestReceipt,
             record.executions,
-            integrationModule.actionCatalog,
+            integrationAdapter.actionCatalog,
           )
         ) {
           record.terminalReasonCode = "authoritative_completion_receipt_lost";
@@ -570,7 +570,7 @@ export class GameplayTaskSubagent {
             report: Object.freeze({ reasonCode: record.terminalReasonCode }),
           };
         }
-        const receipt = integrationModule.readState(
+        const receipt = integrationAdapter.readState(
           this.integration,
         ).latestReceipt;
         if (receipt === null)
@@ -815,9 +815,9 @@ export function admitGameplayAction(
   activeExecution:
     Readonly<{ requestId: string; executionId: string }> | null | undefined,
   catalog: IntegrationActionCatalog,
-  registrations: readonly import("./integration-module.js").IntegrationActionRegistration[],
+  registrations: readonly import("./game-integration-adapter.js").IntegrationActionRegistration[],
   capabilities: readonly string[],
-  policy: import("./integration-module.js").IntegrationActionPolicy,
+  policy: import("./game-integration-adapter.js").IntegrationActionPolicy,
   snapshotRevision?: number | null,
 ): GameplayActionAdmission {
   const entry = catalog
@@ -922,16 +922,16 @@ function taskScopedTool(
   tool: ToolDefinition,
   record: MutableTaskRecord,
   controller: AbortController,
-  integration: IntegrationConnection,
-  integrationModule: ReturnType<typeof requireIntegrationModule>,
-  mountedPolicy: import("./integration-module.js").IntegrationActionPolicy,
+  integration: GameConnection,
+  integrationAdapter: ReturnType<typeof requireIntegrationAdapter>,
+  mountedPolicy: import("./game-integration-adapter.js").IntegrationActionPolicy,
   cancelSettledPendingDispatch: (
     requestId: string,
     executionId: string,
   ) => void,
 ): ToolDefinition {
-  const actionId = integrationModule.actionIdForToolName(tool.name);
-  const isCancel = integrationModule.isCancellationTool(tool.name);
+  const actionId = integrationAdapter.actionIdForToolName(tool.name);
+  const isCancel = integrationAdapter.isCancellationTool(tool.name);
   return {
     ...tool,
     executionMode: "sequential",
@@ -955,12 +955,12 @@ function taskScopedTool(
       }
       if (actionId !== null) {
         reconcileKnownExecution(record, integration);
-        const state = integrationModule.readState(integration);
+        const state = integrationAdapter.readState(integration);
         const admission = admitGameplayAction(
           actionId,
           record,
           state.activeExecution,
-          integrationModule.actionCatalog,
+          integrationAdapter.actionCatalog,
           state.registrations ?? [],
           state.capabilities,
           mountedPolicy,
@@ -991,7 +991,7 @@ function taskScopedTool(
           settlePendingDispatch(
             record,
             integration,
-            integrationModule,
+            integrationAdapter,
             result.details,
             cancelSettledPendingDispatch,
           );
@@ -1013,7 +1013,7 @@ async function abortedTaskResult(
   taskId: string,
   record: MutableTaskRecord,
   report: GameplayTaskReport | null,
-  integration: IntegrationConnection,
+  integration: GameConnection,
   _signal: AbortSignal | undefined,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<GameplayTaskResult> {
@@ -1051,7 +1051,7 @@ async function abortedTaskResult(
 
 async function awaitOwnedTerminalReceipt(
   record: MutableTaskRecord,
-  integration: IntegrationConnection,
+  integration: GameConnection,
   signal: AbortSignal | undefined,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<MutableTaskRecord["terminalReceipt"]> {
@@ -1062,7 +1062,7 @@ async function awaitOwnedTerminalReceipt(
     signal,
     wakeSource,
     readReceipt: () =>
-      requireIntegrationModule(integration).readState(integration)
+      requireIntegrationAdapter(integration).readState(integration)
         .latestReceipt,
   });
 }
@@ -1172,10 +1172,10 @@ function isTerminalReceiptState(state: string): boolean {
 
 function reconcileKnownExecution(
   record: MutableTaskRecord,
-  integration: IntegrationConnection,
+  integration: GameConnection,
 ): void {
   const receipt =
-    requireIntegrationModule(integration).readState(integration).latestReceipt;
+    requireIntegrationAdapter(integration).readState(integration).latestReceipt;
   if (receipt === null) return;
   const known = record.executions.find(
     (execution) =>
@@ -1206,15 +1206,15 @@ function recordTerminalReceiptRevision(
 
 function settlePendingDispatch(
   record: MutableTaskRecord,
-  integration: IntegrationConnection,
-  integrationModule: ReturnType<typeof requireIntegrationModule>,
+  integration: GameConnection,
+  integrationAdapter: ReturnType<typeof requireIntegrationAdapter>,
   details: unknown,
   cancelSettledPendingDispatch: (
     requestId: string,
     executionId: string,
   ) => void,
 ): void {
-  const receipt = parseReceipt(details, integrationModule);
+  const receipt = parseReceipt(details, integrationAdapter);
   const pending = record.pendingDispatch;
   if (
     pending == null ||
@@ -1247,7 +1247,7 @@ function settlePendingDispatch(
 
 function settlePendingCorrelation(
   record: MutableTaskRecord,
-  integration: IntegrationConnection,
+  integration: GameConnection,
   actionId: string,
   requestId: string,
   executionId: string,
@@ -1260,7 +1260,7 @@ function settlePendingCorrelation(
   // authoritative terminal state rather than issuing a stale cancel from a
   // delayed accepted/running response.
   const latest =
-    requireIntegrationModule(integration).readState(integration).latestReceipt;
+    requireIntegrationAdapter(integration).readState(integration).latestReceipt;
   const resolvedState =
     latest?.requestId === requestId &&
     latest.executionId === executionId &&
@@ -1305,13 +1305,13 @@ function issueTaskOwnedCancellation(
 
 function settlePendingTerminalWake(
   record: MutableTaskRecord,
-  integration: IntegrationConnection,
+  integration: GameConnection,
   wake: Extract<ExecutionWake, { kind: "terminal" }>,
 ): void {
   const pending = record.pendingDispatch;
   if (pending === null || pending.requestId !== wake.requestId) return;
   const receipt =
-    requireIntegrationModule(integration).readState(integration).latestReceipt;
+    requireIntegrationAdapter(integration).readState(integration).latestReceipt;
   if (
     receipt !== null &&
     receipt.requestId === wake.requestId &&
@@ -1332,7 +1332,7 @@ function settlePendingTerminalWake(
 
 async function awaitPendingDispatchAndOwnedTerminalReceipt(
   record: MutableTaskRecord,
-  integration: IntegrationConnection,
+  integration: GameConnection,
   wakeSource: ExecutionWakeSource | undefined,
 ): Promise<MutableTaskRecord["terminalReceipt"]> {
   const deadline = Date.now() + 5_000;
@@ -1358,12 +1358,12 @@ async function awaitPendingDispatchAndOwnedTerminalReceipt(
  */
 async function awaitPendingDispatchSettlement(
   record: MutableTaskRecord,
-  integration: IntegrationConnection,
+  integration: GameConnection,
   wakeSource: ExecutionWakeSource | undefined,
   deadlineMs: number,
 ): Promise<void> {
   if (record.pendingDispatch === null || Date.now() >= deadlineMs) return;
-  const integrationModule = requireIntegrationModule(integration);
+  const integrationAdapter = requireIntegrationAdapter(integration);
   await new Promise<void>((resolve) => {
     let settled = false;
     let poll: ReturnType<typeof setInterval> | undefined;
@@ -1380,7 +1380,7 @@ async function awaitPendingDispatchSettlement(
     const reconcile = () => {
       const pending = record.pendingDispatch;
       if (pending === null) return finish();
-      const receipt = integrationModule.readState(integration).latestReceipt;
+      const receipt = integrationAdapter.readState(integration).latestReceipt;
       if (
         receipt !== null &&
         receipt.requestId === pending.requestId &&
@@ -1415,12 +1415,12 @@ async function awaitPendingDispatchSettlement(
 
 function parseReceipt(
   details: unknown,
-  integrationModule: ReturnType<typeof requireIntegrationModule>,
+  integrationAdapter: ReturnType<typeof requireIntegrationAdapter>,
 ): IntegrationExecutionReceipt | null {
-  return integrationModule.parseReceipt(details);
+  return integrationAdapter.parseReceipt(details);
 }
 
-function requireIntegrationModule(integration: IntegrationConnection) {
+function requireIntegrationAdapter(integration: GameConnection) {
   if (integration.module === undefined)
     throw new Error("integration_module_required");
   return integration.module;

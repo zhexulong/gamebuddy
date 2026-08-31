@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { CompanionInterruption, StopAdmission } from "./companion-interruption.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
-import type { CompanionLoop } from "./companion-loop.js";
+import type { CompanionLoop, NativeGameCompanionContent, NativeGameContentPresenter } from "./companion-loop.js";
 import type { WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
+import type {
+  CompanionTextPort,
+  GameCompanionTextExpression,
+  HostPresentationAdmissionProvider,
+} from "./presentation.js";
 import type { ExecutionReceipt } from "./protocol.js";
 import { resolveStopSystemNotice, type StopSystemNotice } from "./system-notices.js";
 import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
@@ -40,13 +45,15 @@ export class GameTurnLineageTracker {
     this.#generation += 1;
     this.#lineage = undefined;
   }
-  capture(): Readonly<{
+  capture(expectedSourceEventId?: string): Readonly<{
     surface: "game";
     sourceEventId: string;
     admission: Readonly<{ hostBinding: object; assertHostCurrent(binding: object): void }>;
   }> {
     const lineage = this.#lineage;
     if (lineage === undefined) throw new Error("presentation_lineage_unavailable");
+    if (expectedSourceEventId !== undefined && lineage.sourceEventId !== expectedSourceEventId)
+      throw new Error("native_game_presentation_lineage_mismatch");
     if (lineage.presentations !== 0) throw new Error("player_turn_presentation_already_committed");
     const committed = Object.freeze({ ...lineage, presentations: 1 });
     this.#lineage = committed;
@@ -74,15 +81,15 @@ export function createGamePresentationAdmissionProvider(
   turnTracker: GameTurnLineageTracker,
   interruption: CompanionInterruption,
 ): Readonly<{
-  capture(): Readonly<{
+  capture(expectedSourceEventId: string): Readonly<{
     surface: "game";
     sourceEventId: string;
     admission: Readonly<{ hostBinding: object; assertHostCurrent(binding: object): void }>;
   }>;
 }> {
   return Object.freeze({
-    capture: () => {
-      const capturedLineage = turnTracker.capture();
+    capture: (expectedSourceEventId: string) => {
+      const capturedLineage = turnTracker.capture(expectedSourceEventId);
       const interruptionBinding = interruption.capture();
       const binding = Object.freeze({});
       return Object.freeze({
@@ -161,6 +168,7 @@ export class CompanionHostService {
   readonly #unsubscribeConnection: () => void;
   #unsubscribeVoice: (() => Promise<void>) | undefined;
   #flushScheduled = false;
+  #integrationToolRefresh: Promise<void> | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #retryDelayMs = 50;
   #closed = false;
@@ -364,6 +372,34 @@ export class CompanionHostService {
     if (batchId !== undefined && this.#activePiBatch?.batchId === batchId) this.#activePiBatch = undefined;
   }
 
+  /**
+   * Projects final native assistant content through the exact Host-captured Game
+   * lineage. This presenter owns no gameplay or action authority.
+   */
+  public createNativeAssistantContentPresenter(
+    options: Readonly<{
+      sessionId: string;
+      locale: string;
+      admissionProvider: HostPresentationAdmissionProvider;
+      textPort: CompanionTextPort;
+    }>,
+  ): NativeGameContentPresenter {
+    return async (content: NativeGameCompanionContent): Promise<void> => {
+      if (this.#closed || !this.#integrationAdmissionOpen || content.text.trim().length === 0) return;
+      const captured = options.admissionProvider.capture(content.sourceEventId);
+      if (captured.surface !== "game") throw new Error("native_game_presentation_lineage_mismatch");
+      const expression: GameCompanionTextExpression = Object.freeze({
+        surface: "game",
+        expressionId: randomUUID(),
+        sessionId: options.sessionId,
+        sourceEventId: captured.sourceEventId,
+        text: content.text,
+        locale: options.locale,
+      });
+      await options.textPort.present(expression, captured.admission);
+    };
+  }
+
   /** Captures only a Pi-consumed authenticated input lineage for presentation. */
   public capturePresentationAdmission(): ReturnType<GameTurnLineageTracker["capture"]> {
     if (this.#closed || !this.#integrationAdmissionOpen) throw new Error("presentation_lineage_unavailable");
@@ -500,17 +536,26 @@ export class CompanionHostService {
       this.#containIntegrationOverflow();
       return;
     }
-    // The adapter has already authenticated and installed the current snapshot.
-    // Refresh only after Host admission succeeds; a failure seals integration
-    // ingress instead of retaining a stale executable surface.
-    if (fact.kind === "snapshot") {
-      void this.refreshIntegrationTools?.().catch(() => {
+    if (fact.kind === "snapshot" && this.refreshIntegrationTools !== undefined) {
+      // The runtime callback owns idle-barrier coalescing. Retain only its
+      // latest shared completion so a burst stays bounded and Pi cannot receive
+      // any admitted snapshot before the corresponding projection is installed.
+      try {
+        const previousRefresh = this.#integrationToolRefresh;
+        const nextRefresh = this.refreshIntegrationTools();
+        // Each async invocation may return a distinct wrapper around the
+        // runtime's shared in-flight refresh. Observe an overwritten wrapper so
+        // its common rejection cannot escape while the latest one owns gating.
+        if (previousRefresh !== undefined) void previousRefresh.catch(() => undefined);
+        this.#integrationToolRefresh = nextRefresh;
+      } catch {
         try {
-          this.#containIntegrationOverflow();
+          this.#containIntegrationFailure("integration_tool_refresh_failed");
         } catch {
-          // The external event callback remains contained after authority revoke.
+          // The stable refresh failure owns containment even if revocation rejects.
         }
-      });
+        return;
+      }
     }
     void this.flushSoon().catch(() => undefined);
   }
@@ -616,8 +661,13 @@ export class CompanionHostService {
    * unconditional cancellation boundary and its error never replaces it.
    */
   #containIntegrationOverflow(revocationAlreadyRequested = false): void {
+    this.#containIntegrationFailure("event_overflow", revocationAlreadyRequested);
+  }
+
+  #containIntegrationFailure(reasonCode: string, revocationAlreadyRequested = false): void {
     if (!this.#integrationAdmissionOpen) return;
     this.#integrationAdmissionOpen = false;
+    this.#integrationToolRefresh = undefined;
     this.turnTracker.revoke();
     if (this.#retryTimer !== undefined) {
       clearTimeout(this.#retryTimer);
@@ -625,7 +675,7 @@ export class CompanionHostService {
     }
     let callbackError: unknown;
     try {
-      if (!revocationAlreadyRequested) this.onIntegrationDisconnected?.("event_overflow");
+      if (!revocationAlreadyRequested) this.onIntegrationDisconnected?.(reasonCode);
     } catch (error) {
       callbackError = error;
     } finally {
@@ -647,7 +697,25 @@ export class CompanionHostService {
       await Promise.resolve();
       // An overflow can occur after this work was scheduled. Admission is the
       // Host-owned cancellation fence for scheduled and retry flushes.
-      if (!this.#closed && this.#integrationAdmissionOpen) await this.loop.flush();
+      if (!this.#closed && this.#integrationAdmissionOpen) {
+        while (this.#integrationToolRefresh !== undefined) {
+          const refresh = this.#integrationToolRefresh;
+          try {
+            await refresh;
+          } catch {
+            try {
+              this.#containIntegrationFailure("integration_tool_refresh_failed");
+            } catch {
+              // The stable refresh failure remains the externally observable
+              // reason even if adapter revocation itself rejects.
+            }
+            throw new Error("integration_tool_refresh_failed");
+          } finally {
+            if (this.#integrationToolRefresh === refresh) this.#integrationToolRefresh = undefined;
+          }
+        }
+        if (!this.#closed && this.#integrationAdmissionOpen) await this.loop.flush();
+      }
       this.#retryDelayMs = 50;
     } catch (error) {
       // EventPump restored the exact batch. Do not spin or create an unhandled

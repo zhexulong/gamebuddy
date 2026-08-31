@@ -304,6 +304,153 @@ test("Host service forwards adapter-labelled facts as ordinary coalesced Agent t
   assert.equal(harness.facts.length, 1);
 });
 
+test("Host service refreshes integration tools before flushing an admitted snapshot", async () => {
+  const adapter = eventHarness();
+  const calls: string[] = [];
+  let releaseRefresh!: () => void;
+  const refreshPending = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const loop = {
+    pump: {
+      pendingCount: 1,
+      hasPendingDelivery: false,
+      enqueueFact() {
+        calls.push("enqueue");
+      },
+      enqueuePlayerInput() {},
+      clear() {},
+    },
+    async flush() {
+      calls.push("flush");
+    },
+  };
+  const service = new CompanionHostService(
+    loop as never,
+    adapter.events,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      calls.push("refresh:start");
+      await refreshPending;
+      calls.push("refresh:end");
+    },
+  );
+
+  adapter.emit(snapshot(7));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["enqueue", "refresh:start"]);
+  releaseRefresh();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["enqueue", "refresh:start", "refresh:end", "flush"]);
+  service.close();
+});
+
+test("Host service bounds a snapshot burst behind the runtime refresher before one Pi flush", async () => {
+  const adapter = eventHarness();
+  let refreshCalls = 0;
+  let flushes = 0;
+  let releaseRefresh!: () => void;
+  const pendingRefresh = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const loop = {
+    pump: {
+      pendingCount: 1,
+      hasPendingDelivery: false,
+      enqueueFact() {},
+      enqueuePlayerInput() {},
+      clear() {},
+    },
+    async flush() {
+      flushes++;
+    },
+  };
+  const service = new CompanionHostService(
+    loop as never,
+    adapter.events,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      refreshCalls++;
+      await pendingRefresh;
+    },
+  );
+
+  adapter.emit(snapshot(7));
+  adapter.emit(snapshot(8));
+  adapter.emit(snapshot(9));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(refreshCalls, 3);
+  assert.equal(flushes, 0);
+  releaseRefresh();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(flushes, 1);
+  service.close();
+});
+
+test("Host service fail-closes refresh rejection without stale flush or reopen", async () => {
+  const adapter = eventHarness();
+  const calls: string[] = [];
+  let pending = 0;
+  const loop = {
+    pump: {
+      get pendingCount() {
+        return pending;
+      },
+      get hasPendingDelivery() {
+        return pending > 0;
+      },
+      enqueueFact() {
+        pending++;
+        calls.push("enqueue");
+      },
+      enqueuePlayerInput() {},
+      clear() {
+        pending = 0;
+        calls.push("clear");
+      },
+    },
+    async flush() {
+      calls.push("flush");
+    },
+  };
+  const service = new CompanionHostService(
+    loop as never,
+    adapter.events,
+    (reasonCode) => calls.push(`revoke:${reasonCode}`),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => {
+      calls.push("refresh");
+      throw new Error("projection_failed");
+    },
+  );
+
+  adapter.emit(snapshot(7));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["enqueue", "refresh", "revoke:integration_tool_refresh_failed", "clear"]);
+  adapter.emit(snapshot(8));
+  await service.acceptPlayerText("must remain sealed", "en-US", 1);
+  await new Promise<void>((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(calls, ["enqueue", "refresh", "revoke:integration_tool_refresh_failed", "clear"]);
+  service.close();
+});
+
 test("Host service does not microtask-spin on a held snapshot after its initial coalescing flush", async () => {
   const adapter = eventHarness();
   let flushes = 0;
@@ -455,55 +602,6 @@ test("Host service preserves an ordinary event overflow revoke error after clear
   assert.deepEqual(calls, ["revoke:event_overflow", "clear"]);
   adapter.emit(snapshot(2));
   assert.deepEqual(calls, ["revoke:event_overflow", "clear"]);
-  service.close();
-});
-
-test("Host service seals integration ingress when snapshot tool refresh fails", async () => {
-  const adapter = eventHarness();
-  const admitted: string[] = [];
-  const disconnects: string[] = [];
-  let clears = 0;
-  let refreshes = 0;
-  const loop = {
-    pump: {
-      pendingCount: 0,
-      enqueueFact(fact: WorldFact) {
-        admitted.push(fact.correlationId);
-      },
-      enqueuePlayerInput() {},
-      clear() {
-        clears += 1;
-      },
-    },
-    async flush() {},
-  };
-  const service = new CompanionHostService(
-    loop as never,
-    adapter.events,
-    (reasonCode) => disconnects.push(reasonCode),
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    async () => {
-      refreshes += 1;
-      throw new Error("tool_refresh_failed");
-    },
-  );
-
-  adapter.emit(snapshot(1));
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.equal(refreshes, 1);
-  assert.deepEqual(disconnects, ["event_overflow"]);
-  assert.equal(clears, 1);
-  assert.deepEqual(admitted, ["snapshot_1"]);
-
-  adapter.emit(snapshot(2));
-  assert.equal(refreshes, 1);
-  assert.deepEqual(admitted, ["snapshot_1"]);
   service.close();
 });
 
@@ -704,12 +802,183 @@ test("presentation lineage exists only during the real Pi-consumed authenticated
   service.close();
 });
 
+test("native assistant content presenter projects exact Game lineage and original text", async () => {
+  const adapter = eventHarness();
+  const tracker = new GameTurnLineageTracker();
+  const interruption = createCompanionInterruption();
+  const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
+  const presented: unknown[] = [];
+  const presenter = service.createNativeAssistantContentPresenter({
+    sessionId: "game_session_01",
+    locale: "zh-CN",
+    admissionProvider: createGamePresentationAdmissionProvider(tracker, interruption),
+    textPort: {
+      present(expression, admission) {
+        admission.assertHostCurrent(admission.hostBinding);
+        presented.push(expression);
+      },
+    },
+  });
+
+  tracker.beginPlayerBatch("source_native_01");
+  await presenter({ sourceEventId: "source_native_01", text: "  原样回复  " });
+  assert.equal(presented.length, 1);
+  assert.deepEqual(presented[0], {
+    surface: "game",
+    expressionId: (presented[0] as { expressionId: string }).expressionId,
+    sessionId: "game_session_01",
+    sourceEventId: "source_native_01",
+    text: "  原样回复  ",
+    locale: "zh-CN",
+  });
+  assert.match((presented[0] as { expressionId: string }).expressionId, /^[0-9a-f-]{36}$/);
+  tracker.endBatch();
+  service.close();
+});
+
+test("native assistant content presenter no-ops for blank, closed, and sealed Host admission", async () => {
+  const createPresenter = (service: CompanionHostService, calls: string[]) =>
+    service.createNativeAssistantContentPresenter({
+      sessionId: "game_session_noop",
+      locale: "en-US",
+      admissionProvider: {
+        capture(_expectedSourceEventId: string) {
+          calls.push("capture");
+          throw new Error("unbound_presentation_admission");
+        },
+      },
+      textPort: {
+        present() {
+          calls.push("present");
+        },
+      },
+    });
+
+  const blankAdapter = eventHarness();
+  const blank = new CompanionHostService(fakeLoop().loop as never, blankAdapter.events);
+  const blankCalls: string[] = [];
+  await createPresenter(blank, blankCalls)({ sourceEventId: "source_blank", text: " \n\t " });
+  assert.deepEqual(blankCalls, []);
+  blank.close();
+
+  const closedAdapter = eventHarness();
+  const closed = new CompanionHostService(fakeLoop().loop as never, closedAdapter.events);
+  const closedCalls: string[] = [];
+  const closedPresenter = createPresenter(closed, closedCalls);
+  closed.close();
+  await closedPresenter({ sourceEventId: "source_closed", text: "must not present" });
+  assert.deepEqual(closedCalls, []);
+
+  const sealedAdapter = eventHarness();
+  const sealedLoop = {
+    pump: {
+      pendingCount: 0,
+      enqueueFact() {
+        throw new Error("event_pump_event_overflow");
+      },
+      enqueuePlayerInput() {},
+      clear() {},
+    },
+    async flush() {},
+  };
+  const sealed = new CompanionHostService(sealedLoop as never, sealedAdapter.events);
+  const sealedCalls: string[] = [];
+  const sealedPresenter = createPresenter(sealed, sealedCalls);
+  sealedAdapter.emit(snapshot(1));
+  await sealedPresenter({ sourceEventId: "source_sealed", text: "must not present" });
+  assert.deepEqual(sealedCalls, []);
+  sealed.close();
+});
+
+test("native assistant content presenter rejects mismatch without consuming lineage", async () => {
+  const adapter = eventHarness();
+  const tracker = new GameTurnLineageTracker();
+  const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
+  let presentations = 0;
+  const presenter = service.createNativeAssistantContentPresenter({
+    sessionId: "game_session_mismatch",
+    locale: "en-US",
+    admissionProvider: createGamePresentationAdmissionProvider(tracker, createCompanionInterruption()),
+    textPort: {
+      present() {
+        presentations++;
+      },
+    },
+  });
+
+  tracker.beginPlayerBatch("source_expected");
+  await assert.rejects(
+    presenter({ sourceEventId: "source_other", text: "do not project" }),
+    /native_game_presentation_lineage_mismatch/,
+  );
+  assert.equal(presentations, 0);
+  await presenter({ sourceEventId: "source_expected", text: "project exactly once" });
+  assert.equal(presentations, 1);
+  tracker.endBatch();
+  service.close();
+});
+
+test("native assistant content presenter is at-most-once for one captured lineage", async () => {
+  const adapter = eventHarness();
+  const tracker = new GameTurnLineageTracker();
+  const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
+  const presented: unknown[] = [];
+  const presenter = service.createNativeAssistantContentPresenter({
+    sessionId: "game_session_replay",
+    locale: "en-US",
+    admissionProvider: createGamePresentationAdmissionProvider(tracker, createCompanionInterruption()),
+    textPort: {
+      present(expression) {
+        presented.push(expression);
+      },
+    },
+  });
+
+  tracker.beginPlayerBatch("source_replay");
+  await presenter({ sourceEventId: "source_replay", text: "first" });
+  await assert.rejects(
+    presenter({ sourceEventId: "source_replay", text: "replay" }),
+    /player_turn_presentation_already_committed/,
+  );
+  assert.equal(presented.length, 1);
+  tracker.endBatch();
+  service.close();
+});
+
+test("native assistant content presenter consumes lineage when text port fails", async () => {
+  const adapter = eventHarness();
+  const tracker = new GameTurnLineageTracker();
+  const service = new CompanionHostService(fakeLoop().loop as never, adapter.events);
+  const presenter = service.createNativeAssistantContentPresenter({
+    sessionId: "game_session_failure",
+    locale: "en-US",
+    admissionProvider: createGamePresentationAdmissionProvider(tracker, createCompanionInterruption()),
+    textPort: {
+      present() {
+        throw new Error("native_text_port_failed");
+      },
+    },
+  });
+
+  tracker.beginPlayerBatch("source_failure");
+  await assert.rejects(
+    presenter({ sourceEventId: "source_failure", text: "cannot deliver" }),
+    /native_text_port_failed/,
+  );
+  await assert.rejects(
+    presenter({ sourceEventId: "source_failure", text: "do not retry uncertain delivery" }),
+    /player_turn_presentation_already_committed/,
+  );
+  tracker.endBatch();
+  service.close();
+});
+
 test("presentation admission is also revoked by a direct interruption epoch closure", () => {
   const interruption = createCompanionInterruption();
   const tracker = new GameTurnLineageTracker();
   const provider = createGamePresentationAdmissionProvider(tracker, interruption);
   tracker.beginPlayerBatch("source_epoch_01");
-  const captured = provider.capture();
+  const captured = provider.capture("source_epoch_01");
   captured.admission.assertHostCurrent(captured.admission.hostBinding);
   interruption.close("runtime_closed");
   assert.throws(

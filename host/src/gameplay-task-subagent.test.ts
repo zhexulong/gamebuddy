@@ -18,9 +18,9 @@ import {
   selectTaskOwnedCancellation,
 } from "./gameplay-task-subagent.js";
 import type { ExecutionWake } from "./integration-launcher.js";
-import type { CompanionIntegration } from "./integration-types.js";
+import type { StardewBridgeConnection } from "./game-connection.js";
 import type { RuntimePaths } from "./runtime.js";
-import { STARDEW_INTEGRATION_MODULE } from "./stardew-integration-module.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const paths: RuntimePaths = {
   root: tmpdir(),
@@ -44,7 +44,7 @@ const paths: RuntimePaths = {
   ),
 };
 
-const integration: CompanionIntegration = {
+const integration: StardewBridgeConnection = {
   scope: {
     integrationId: "stardew",
     saveId: "save_01",
@@ -61,7 +61,7 @@ const integration: CompanionIntegration = {
     latestReasonCode: null,
     catalogRegistrations: TEST_MOD_REGISTRATIONS,
   },
-  module: STARDEW_INTEGRATION_MODULE,
+  module: STARDEW_GAME_INTEGRATION_ADAPTER,
 };
 
 test("GameplayTaskSubagent exposes no mutable task trace before a Host-created task runs", () => {
@@ -76,6 +76,7 @@ test("GameplayTaskSubagent exposes no mutable task trace before a Host-created t
 test("completed worker report requires a succeeded evidenced receipt owned by the task", () => {
   const succeeded = {
     executionId: "execution_01",
+    actionId: "move_to_tile",
     requestId: "request_01",
     state: "succeeded" as const,
     reasonCode: "soil_tilled",
@@ -98,7 +99,7 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
       report,
       succeeded,
       owned,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     true,
   );
@@ -107,7 +108,7 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
       report,
       { ...succeeded, evidence: null },
       owned,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -116,7 +117,7 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
       report,
       { ...succeeded, state: "running" },
       owned,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -128,7 +129,7 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
       },
       succeeded,
       owned,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -137,7 +138,7 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
       report,
       succeeded,
       [],
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -151,7 +152,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
         reasonCode: "tool_selected",
         evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
       },
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     true,
   );
@@ -159,7 +160,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
     hasActionPostconditionEvidence(
       "equip_tool",
       { reasonCode: "tool_selected", evidence: { detail: "slot=1;after=Axe" } },
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -170,7 +171,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
         reasonCode: "unexpected_success",
         evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
       },
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -178,7 +179,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
     hasActionPostconditionEvidence(
       "unknown_action",
       { reasonCode: "succeeded", evidence: { detail: "anything" } },
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -189,7 +190,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
         reasonCode: "soil_tilled",
         evidence: { detail: "before=none;after=Stone" },
       },
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -204,7 +205,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
     hasActionPostconditionEvidence(
       "plant_seed",
       planted,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     true,
   );
@@ -218,7 +219,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
             "location=Farm;target=seed_target_01;tile=3,4;item=(O)479;crop=479;inventory_before=2;inventory_after=2",
         },
       },
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -232,7 +233,7 @@ test("completion evidence must contain action-specific postcondition keys", () =
             "location=Farm;target=seed_target_01;tile=3,4;item=(O)479;crop=none;inventory_before=2;inventory_after=1",
         },
       },
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
     ),
     false,
   );
@@ -243,13 +244,13 @@ test("Gameplay action admission enforces only the single embodied actor mutation
   const liveCapabilities = TEST_MOD_REGISTRATIONS.map(
     (entry) => entry.actionId,
   );
-  const policy = STARDEW_INTEGRATION_MODULE.defaultPolicy;
+  const policy = STARDEW_GAME_INTEGRATION_ADAPTER.defaultPolicy;
   assert.deepEqual(
     admitGameplayAction(
       "till_soil",
       record,
       null,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
       TEST_MOD_REGISTRATIONS,
       liveCapabilities,
       policy,
@@ -261,7 +262,7 @@ test("Gameplay action admission enforces only the single embodied actor mutation
       "equip_tool",
       record,
       null,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
       TEST_MOD_REGISTRATIONS,
       liveCapabilities,
       policy,
@@ -273,7 +274,7 @@ test("Gameplay action admission enforces only the single embodied actor mutation
       "equip_tool",
        record,
       null,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
       TEST_MOD_REGISTRATIONS,
       liveCapabilities,
       policy,
@@ -285,7 +286,7 @@ test("Gameplay action admission enforces only the single embodied actor mutation
       "equip_tool",
       record,
       { requestId: "request_01", executionId: "execution_01" },
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
       TEST_MOD_REGISTRATIONS,
       liveCapabilities,
       policy,
@@ -297,7 +298,7 @@ test("Gameplay action admission enforces only the single embodied actor mutation
       "not_published",
       record,
       null,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
       TEST_MOD_REGISTRATIONS,
       liveCapabilities,
       policy,
@@ -322,7 +323,7 @@ test("Gameplay action admission enforces only the single embodied actor mutation
         ],
       },
       null,
-      STARDEW_INTEGRATION_MODULE.actionCatalog,
+      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog,
       TEST_MOD_REGISTRATIONS,
       liveCapabilities,
       policy,
@@ -344,7 +345,7 @@ type MutableIntegrationState = {
 function scriptedIntegration(
   state: MutableIntegrationState,
   calls: { execute: string[]; cancel: string[] },
-): CompanionIntegration & {
+): StardewBridgeConnection & {
   execute(request: any): Promise<any>;
   cancel(
     requestId: string,
@@ -354,7 +355,7 @@ function scriptedIntegration(
 } {
   return {
     scope: integration.scope,
-    module: STARDEW_INTEGRATION_MODULE,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
     executionGate: { executable: true } as never,
     get state() {
       return state;
@@ -364,6 +365,7 @@ function scriptedIntegration(
       return {
         requestId: request.requestId,
         executionId: `execution_${calls.execute.length}`,
+        actionId: request.action,
         state: "accepted",
         reasonCode: "accepted",
         revision: request.expectedRevision,
@@ -375,6 +377,7 @@ function scriptedIntegration(
       state.latestReceipt = {
         requestId,
         executionId,
+        actionId: "cancel_active_execution",
         state: "cancelled",
         reasonCode,
         revision: state.snapshot.revision,
@@ -637,6 +640,7 @@ test("Gameplay worker fake session blocks a second action until the owned receip
           state.latestReceipt = {
             requestId: "request_01",
             executionId: "execution_1",
+            actionId: "equip_tool",
             state: "succeeded",
             reasonCode: "tool_selected",
             revision: 7,
@@ -651,6 +655,7 @@ test("Gameplay worker fake session blocks a second action until the owned receip
           state.latestReceipt = {
             requestId: "request_02",
             executionId: "execution_2",
+            actionId: "move_to_tile",
             state: "succeeded",
             reasonCode: "target_reached",
             revision: 7,
@@ -711,6 +716,7 @@ test("Gameplay worker permits repeated actions in one family after each receipt 
           state.latestReceipt = {
             requestId: "request_first",
             executionId: "execution_1",
+            actionId: "equip_tool",
             state: "succeeded",
             reasonCode: "tool_selected",
             revision: 7,
@@ -1055,9 +1061,10 @@ test("worker blocks the next action until a terminal receipt has a fresh snapsho
   mounted.execute = async (request) => {
     calls.execute.push(request.action);
     const receipt = {
-      requestId: request.requestId,
-      executionId: `execution_${calls.execute.length}`,
-      state: "succeeded",
+        requestId: request.requestId,
+        executionId: `execution_${calls.execute.length}`,
+        actionId: request.action,
+        state: "succeeded",
       reasonCode: "completed",
       revision: 8,
       evidence: { detail: "native" },
@@ -1122,9 +1129,10 @@ test("worker mints a fresh runtime-owned admission for each action invocation", 
   mounted.execute = async (request) => {
     calls.execute.push(request.action);
     const receipt = {
-      requestId: request.requestId,
-      executionId: `execution_${calls.execute.length}`,
-      state: "succeeded",
+        requestId: request.requestId,
+        executionId: `execution_${calls.execute.length}`,
+        actionId: request.action,
+        state: "succeeded",
       reasonCode: "completed",
       revision: request.expectedRevision,
       evidence: null,
@@ -1233,9 +1241,10 @@ test("latest nonterminal receipt before delayed tool resolution remains ledger-p
   // State reconciliation must not settle this dispatch from an observed
   // nonterminal receipt before game-tools binds the execute response to the ledger.
   state.latestReceipt = {
-    requestId: "request_pending",
-    executionId: "execution_pending",
-    state: "running",
+      requestId: "request_pending",
+      executionId: "execution_pending",
+      actionId: "equip_tool",
+      state: "running",
     reasonCode: "running",
     revision: 7,
     evidence: null,
@@ -1321,6 +1330,7 @@ test("pending post-write dispatch settles from an exact terminal wake before its
   state.latestReceipt = {
     requestId: "request_wake",
     executionId: "execution_wake",
+    actionId: "equip_tool",
     state: "cancelled",
     reasonCode: "player_stop",
     revision: 7,
@@ -1395,9 +1405,10 @@ test("latest terminal receipt before delayed tool resolution retires ledger corr
   // Even a matching terminal receipt is only observation until game-tools
   // invokes bindReceipt; cancellation is retained by the ledger meanwhile.
   state.latestReceipt = {
-    requestId: "request_terminal",
-    executionId: "execution_terminal",
-    state: "succeeded",
+      requestId: "request_terminal",
+      executionId: "execution_terminal",
+      actionId: "equip_tool",
+      state: "succeeded",
     reasonCode: "tool_selected",
     revision: 7,
     evidence: { detail: "slot=1;before=none;expected=Axe;after=Axe" },
