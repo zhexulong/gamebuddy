@@ -120,7 +120,6 @@ async function main() {
     scope: SCOPE,
     executionId: "execution_wire_1",
     requestId: "request_wire_1",
-    actionId: "equip_tool",
     state: "succeeded",
     reasonCode: "tool_selected",
     revision: 8,
@@ -134,7 +133,7 @@ async function main() {
   const receipt = parseAndValidate(encodedReceipt.stdout, parseStrictBridgeJson, validateBridgeMessage, now, "receipt");
   assert(receipt.type === "execution_receipt", "receipt_type");
   assert(receipt.payload.executionId === receiptInput.executionId && receipt.payload.requestId === receiptInput.requestId, "receipt_typed_fields");
-  assert(receipt.payload.actionId === receiptInput.actionId && receipt.payload.evidence.target === "工具_2", "receipt_unicode_evidence");
+  assert(receipt.payload.evidence.target === "工具_2", "receipt_unicode_evidence");
 
   const encodedQuery = await runContract(
     "--encode-execution-receipt-query",
@@ -183,27 +182,34 @@ async function main() {
   const errorMessage = parseAndValidate(encodedError.stdout, parseStrictBridgeJson, validateBridgeMessage, now, "error");
   assert(errorMessage.type === "error" && errorMessage.payload.reasonCode === "execution_rejected", "error_encoded_fields");
 
-  await expectRejected("malformed_json", Buffer.from("{", "utf8"), "invalid_json");
-  await expectRejected("oversize", Buffer.alloc(MAX_MESSAGE_BYTES + 1), "message_too_large");
-  await expectRejected("invalid_utf8", Buffer.from([0xff]), "invalid_utf8");
-  await expectRejected(
-    "invalid_version",
-    Buffer.from(JSON.stringify({ ...request, protocolVersion: 2 }), "utf8"),
-    "invalid_envelope",
-  );
-  await expectRejected(
-    "invalid_type",
-    Buffer.from(JSON.stringify({ ...request, type: "EXECUTION_REQUEST" }), "utf8"),
-    "invalid_envelope",
-  );
-  await expectRejected(
-    "invalid_casing",
-    Buffer.from(JSON.stringify({
-      ...request,
-      payload: { RequestId: request.payload.requestId, idempotencyKey: request.payload.idempotencyKey, action: request.payload.action, args: request.payload.args, expectedRevision: request.payload.expectedRevision, deadlineMs: request.payload.deadlineMs },
-    }), "utf8"),
-    "invalid_envelope",
-  );
+  const inboundDecoders = [
+    ["execution_request", "--decode-execution-request", request, "requestId"],
+    ["execution_receipt_query", "--decode-execution-receipt-query", query, "requestId"],
+    ["cancel_request", "--decode-cancel-request", cancel, "requestId"],
+    ["error", "--decode-error", error, "reasonCode"],
+  ];
+  const boundaryCaseIds = [];
+  for (const [messageType, command, envelope, payloadKey] of inboundDecoders) {
+    const invalidCasingReason = messageType === "execution_receipt_query"
+      ? "invalid_execution_receipt_query"
+      : "invalid_envelope";
+    const cases = [
+      ["malformed_json", Buffer.from("{", "utf8"), "invalid_json"],
+      ["oversize", Buffer.alloc(MAX_MESSAGE_BYTES + 1), "message_too_large"],
+      ["invalid_utf8", Buffer.from([0xff]), "invalid_utf8"],
+      ["invalid_version", Buffer.from(JSON.stringify({ ...envelope, protocolVersion: 2 }), "utf8"), "invalid_envelope"],
+      ["invalid_type", Buffer.from(JSON.stringify({ ...envelope, type: messageType.toUpperCase() }), "utf8"), "invalid_envelope"],
+      ["invalid_casing", Buffer.from(JSON.stringify({
+        ...envelope,
+        payload: Object.fromEntries(Object.entries(envelope.payload).map(([key, value]) => [key === payloadKey ? `${key[0].toUpperCase()}${key.slice(1)}` : key, value])),
+      }), "utf8"), invalidCasingReason],
+    ];
+    for (const [boundary, input, reason] of cases) {
+      const caseId = `${messageType}_${boundary}`;
+      await expectRejected(command, caseId, input, reason);
+      boundaryCaseIds.push(caseId);
+    }
+  }
 
   for (const caseId of [
     "decode_execution_request",
@@ -214,12 +220,7 @@ async function main() {
     "encode_execution_receipt_query",
     "encode_cancel_request",
     "encode_error",
-    "malformed_json",
-    "oversize",
-    "invalid_utf8",
-    "invalid_version",
-    "invalid_type",
-    "invalid_casing",
+    ...boundaryCaseIds,
   ]) console.log(`${caseId}:passed`);
 }
 
@@ -231,8 +232,8 @@ function parseAndValidate(output, parseStrictBridgeJson, validateBridgeMessage, 
   return parsed;
 }
 
-async function expectRejected(caseId, input, expectedReason) {
-  const result = await runContract("--decode-execution-request", input, caseId, 1);
+async function expectRejected(command, caseId, input, expectedReason) {
+  const result = await runContract(command, input, caseId, 1);
   assert(result.stdout.byteLength === 0, `${caseId}_stdout_empty`);
   assert(result.stderr.toString("utf8").trim() === expectedReason, `${caseId}_reason`);
 }

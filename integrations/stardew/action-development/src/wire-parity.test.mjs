@@ -34,22 +34,27 @@ test("cross-language wire parity covers request, recovery, cancel, error, and bo
   const result = await runWireParity();
   assert.equal(result.code, 0, result.stderr || result.stdout);
   assert.equal(result.signal, null);
-  assert.deepEqual(result.stdout.trimEnd().split("\n"), [
-    "decode_execution_request:passed",
-    "decode_execution_receipt_query:passed",
-    "decode_cancel_request:passed",
-    "decode_error:passed",
-    "encode_execution_receipt:passed",
-    "encode_execution_receipt_query:passed",
-    "encode_cancel_request:passed",
-    "encode_error:passed",
-    "malformed_json:passed",
-    "oversize:passed",
-    "invalid_utf8:passed",
-    "invalid_version:passed",
-    "invalid_type:passed",
-    "invalid_casing:passed",
-  ]);
+  const boundaryCases = [
+    "malformed_json",
+    "oversize",
+    "invalid_utf8",
+    "invalid_version",
+    "invalid_type",
+    "invalid_casing",
+  ];
+  const expected = [
+    "decode_execution_request",
+    "decode_execution_receipt_query",
+    "decode_cancel_request",
+    "decode_error",
+    "encode_execution_receipt",
+    "encode_execution_receipt_query",
+    "encode_cancel_request",
+    "encode_error",
+    ...["execution_request", "execution_receipt_query", "cancel_request", "error"]
+      .flatMap((type) => boundaryCases.map((boundary) => `${type}_${boundary}`)),
+  ].map((caseId) => `${caseId}:passed`);
+  assert.deepEqual(result.stdout.trimEnd().split("\n"), expected);
   assert.equal(result.stderr, "");
 });
 
