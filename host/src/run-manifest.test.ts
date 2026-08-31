@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { IntegrationActionPolicy } from "./integration-module.js";
+import type { IntegrationActionPolicy } from "./game-integration-adapter.js";
 import { type CompanionRunManifest, writeOrVerifyRunManifest } from "./run-manifest.js";
 import type { RuntimePaths } from "./runtime.js";
 
