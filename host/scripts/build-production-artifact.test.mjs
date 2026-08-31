@@ -69,10 +69,10 @@ test("builder composes one verified private browser subtree into the published H
     const browserEntries = complete.entries.filter((entry) => entry.path.startsWith("browser/"));
     assert.deepEqual(browserEntries.map((entry) => entry.path), observed.files.map((path) => `browser/tavern/v1/${path}`));
     assert.equal(published.generation, complete.generation);
-    for (const path of ["tavern/p4-durable-turn-acceptance.js", "tavern/p4-durable-turn-acceptance.internal.js"])
-      assert.ok(complete.entries.some((entry) => entry.path === path), `${path} must be retained as a verified P4 composition module`);
+    for (const path of ["tavern/player-turn-acceptance.js", "tavern/player-turn-acceptance.internal.js"])
+      assert.ok(complete.entries.some((entry) => entry.path === path), `${path} must be retained as a verified mounted-turn composition module`);
     await assert.rejects(
-      resolveProductionEntry({ hostRoot, outputRoot: fixture.root, entry: "tavern/p4-durable-turn-acceptance.js" }),
+      resolveProductionEntry({ hostRoot, outputRoot: fixture.root, entry: "tavern/player-turn-acceptance.js" }),
       /production_entry_not_configured/,
     );
     assert.ok(requestedBrowserStagingRoot);

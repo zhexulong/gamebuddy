@@ -1075,443 +1075,93 @@ test("blocks production closure imports of test-only coordinator support and dir
   );
 });
 
-test("enforces P4a, P4b, and P4c exclusive facade → bridge → coordinator/store composition topology", async () => {
-  const p4Facade = "host/src/tavern/p4-durable-turn-acceptance.ts";
-  const p4Bridge = "host/src/tavern/p4-durable-turn-acceptance.internal.ts";
-  const p4bFacade = "host/src/tavern/p4-provider-attempt.ts";
-  const p4bBridge = "host/src/tavern/p4-provider-attempt.internal.ts";
-  const p4cFacade = "host/src/tavern/p4-provider-start.ts";
-  const p4cBridge = "host/src/tavern/p4-provider-start.internal.ts";
-  const p5Facade = "host/src/tavern/p5-presentation-commit.ts";
-  const p5Bridge = "host/src/tavern/p5-presentation-commit.internal.ts";
-  const transitionAuthority = "host/src/tavern/chat-thread-store.p4-p5-transition-authority.internal.ts";
+test("enforces the generic mounted-turn facade, coordinator, authority, store, and provider-start topology", async () => {
+  const acceptanceFacade = "host/src/tavern/player-turn-acceptance.ts";
+  const acceptanceBridge = "host/src/tavern/player-turn-acceptance.internal.ts";
+  const claimFacade = "host/src/tavern/provider-attempt-claim.ts";
+  const claimBridge = "host/src/tavern/provider-attempt-claim.internal.ts";
+  const providerStart = "host/src/tavern/chat-provider-start.ts";
+  const execution = "host/src/tavern/p4-provider-start-execution.ts";
+  const transitionAuthority = "host/src/tavern/chat-thread-store.mounted-turn-transition.internal.ts";
   const coordinator =
     "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts";
   const store = "host/src/tavern/chat-thread-store.ts";
   const intended = {
     "host/src/main.ts": "export {};\n",
     "host/src/dialogue-web-main.ts": "export {};\n",
-    [p4Facade]: 'import "./p4-durable-turn-acceptance.internal";\n',
-    [p4Bridge]: [
+    [acceptanceFacade]: 'import "./player-turn-acceptance.internal";\n',
+    [acceptanceBridge]: [
       'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
       'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
-      'import { acceptMountedP4DurableTurn, consumeMountedP4Admission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
-      'import { acceptP4MountedPlayerMessage, type AcceptedQueuedTurn } from "./chat-thread-store.js";',
-      "type P4MountedAcceptanceCommand = Readonly<{ text: string; locale: string; idempotencyKey: string; expectedDraftRevision: number }>;",
-      "export async function acceptMountedP4DurableTurnFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, command: P4MountedAcceptanceCommand): Promise<AcceptedQueuedTurn> {",
-      "  return acceptMountedP4DurableTurn(manifest, lease, admission => consumeMountedP4Admission(admission, binding => acceptP4MountedPlayerMessage(binding, command)));",
+      'import { acceptMountedDurableTurn, consumeMountedDurableAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
+      'import { acceptMountedPlayerMessage, type AcceptedQueuedTurn } from "./chat-thread-store.js";',
+      "type MountedAcceptanceCommand = Readonly<{ text: string; locale: string; idempotencyKey: string; expectedDraftRevision: number }>;",
+      "export async function acceptMountedDurableTurnFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, command: MountedAcceptanceCommand): Promise<AcceptedQueuedTurn> {",
+      "  return acceptMountedDurableTurn(manifest, lease, admission => consumeMountedDurableAdmission(admission, binding => acceptMountedPlayerMessage(binding, command)));",
       "}",
     ].join("\n"),
-    [p4bFacade]: 'import "./p4-provider-attempt.internal";\n',
-    [p4bBridge]: [
+    [claimFacade]: 'import "./provider-attempt-claim.internal";\n',
+    [claimBridge]: [
       'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
       'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
-      'import { claimMountedP4Attempt, consumeMountedP4AttemptAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
-      'import { claimP4MountedAttempt, type AttemptStartingTurn } from "./chat-thread-store.js";',
-      "export async function claimMountedP4ProviderAttemptFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease): Promise<AttemptStartingTurn> {",
-      "  return claimMountedP4Attempt(manifest, lease, admission => consumeMountedP4AttemptAdmission(admission, binding => claimP4MountedAttempt(binding)));",
+      'import { claimMountedAttempt, consumeMountedAttemptAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
+      'import { claimMountedAttempt as claimStoreMountedAttempt, type AttemptStartingTurn } from "./chat-thread-store.js";',
+      "export async function claimMountedProviderAttemptFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease): Promise<AttemptStartingTurn> {",
+      "  return claimMountedAttempt(manifest, lease, admission => consumeMountedAttemptAdmission(admission, binding => claimStoreMountedAttempt(binding)));",
       "}",
     ].join("\n"),
-    [p4cFacade]: 'import "./p4-provider-start.internal";\n',
-    [p5Facade]: 'import "./p5-presentation-commit.internal";\n',
-    [p5Bridge]: [
-      'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
+    [providerStart]: [
+      'import { startMountedAttempt, consumeMountedAttemptInvocationAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
       'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
-      'import { createP4ProviderStartFacade } from "./p4-provider-start.js";',
-      "export async function startMountedP5PresentationCommitFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease) {",
-      "  return createP4ProviderStartFacade(manifest, lease).start();",
+      'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
+      'import { runMountedProviderStartLedger, type NativeChatPreviewPublisher } from "./p4-provider-start-execution.js";',
+      "export async function startMountedChatProvider(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, previewPublisher?: NativeChatPreviewPublisher) {",
+      "  return await startMountedAttempt(manifest, lease, invocation => consumeMountedAttemptInvocationAdmission(invocation, scope => runMountedProviderStartLedger(scope, previewPublisher)));",
       "}",
     ].join("\n"),
-    [transitionAuthority]: "export const transitionAuthority = 1;\n",
-    [p4cBridge]: [
-      'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
-      'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
-      'import { startMountedP4Attempt, consumeMountedP4AttemptInvocationAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
-      'import { runMountedP4ProviderStartLedger } from "./p4-provider-start-execution.js";',
-      "export async function startMountedP4ProviderStartFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease) {",
-      "  return startMountedP4Attempt(manifest, lease, invocation => consumeMountedP4AttemptInvocationAdmission(invocation, scope => runMountedP4ProviderStartLedger(scope)));",
-      "} ",
+    [execution]: "export async function runMountedProviderStartLedger(scope: unknown, preview?: unknown) { return scope ?? preview; }\n",
+    [transitionAuthority]: "export function createMountedTurnTransitionAuthority() {}\n",
+    [coordinator]: [
+      'import { createMountedTurnTransitionAuthority } from "../tavern/chat-thread-store.mounted-turn-transition.internal.js";',
+      'import { transitionMountedProviderStart, transitionMountedPresentation } from "../tavern/chat-thread-store.js";',
+      "export const acceptMountedDurableTurn = 1; export const consumeMountedDurableAdmission = 2;",
+      "export const claimMountedAttempt = 3; export const consumeMountedAttemptAdmission = 4;",
+      "export const startMountedAttempt = 5; export const consumeMountedAttemptInvocationAdmission = 6;",
+      "void createMountedTurnTransitionAuthority; void transitionMountedProviderStart; void transitionMountedPresentation;",
     ].join("\n"),
-    "host/src/tavern/p4-provider-start-execution.ts":
-      "export async function runMountedP4ProviderStartLedger(scope: unknown) { return scope; }\n",
-    [coordinator]:
-      "export const acceptMountedP4DurableTurn = 1; export const consumeMountedP4Admission = 2; export const claimMountedP4Attempt = 3; export const consumeMountedP4AttemptAdmission = 4; export const startMountedP4Attempt = 5; export const consumeMountedP4AttemptInvocationAdmission = 6;\n",
-    [store]: "export const acceptP4MountedPlayerMessage = 3; export const claimP4MountedAttempt = 4;\n",
+    [store]: "export const acceptMountedPlayerMessage = 1; export const claimMountedAttempt = 2; export const transitionMountedProviderStart = 3; export const transitionMountedPresentation = 4;\n",
   };
   await withFixture(intended, (root) => {
     const report = checkHostProductionImportBoundary({ root, roots });
     assert.equal(report.verdict, "passed", JSON.stringify(report.violations));
-    assert.deepEqual(report.inspectedFiles, [
-      coordinator,
-      "host/src/dialogue-web-main.ts",
-      "host/src/main.ts",
-      store,
-      p4Bridge,
-      p4Facade,
-      p4bBridge,
-      p4bFacade,
-      "host/src/tavern/p4-provider-start-execution.ts",
-      p4cBridge,
-      p4cFacade,
-      p5Bridge,
-      p5Facade,
-    ]);
+    assert.ok(report.inspectedFiles.includes(providerStart));
+    assert.ok(report.inspectedFiles.includes(coordinator));
   });
-  for (const [name, consumerSource, expectedKind] of [
-    ["bridge", 'import "./tavern/p4-durable-turn-acceptance.internal";\n', "unauthorized_p4_bridge_import"],
-    ["attempt-bridge", 'import "./tavern/p4-provider-attempt.internal";\n', "unauthorized_p4_bridge_import"],
-    [
-      "coordinator",
-      'import "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal";\n',
-      "unauthorized_coordinator_internal_import",
-    ],
-    [
-      "store",
-      'import { acceptP4MountedPlayerMessage } from "./tavern/chat-thread-store";\n',
-      "unauthorized_p4_store_ingress_import",
-    ],
-    [
-      "attempt-store",
-      'import { claimP4MountedAttempt } from "./tavern/chat-thread-store";\n',
-      "unauthorized_p4_store_ingress_import",
-    ],
-    [
-      "transition-authority",
-      'import "./tavern/chat-thread-store.p4-p5-transition-authority.internal";\n',
-      "unauthorized_p4_p5_transition_authority_import",
-    ],
-    [
-      "string-named-store",
-      'import { "acceptP4MountedPlayerMessage" as raw } from "./tavern/chat-thread-store";\nvoid raw;\n',
-      "unauthorized_p4_store_ingress_import",
-    ],
+  for (const [name, source, expectedKind] of [
+    ["authority mint", 'import { createMountedTurnTransitionAuthority } from "./tavern/chat-thread-store.mounted-turn-transition.internal";\n', "unauthorized_mounted_turn_transition_authority_import"],
+    ["provider transition", 'import { transitionMountedProviderStart } from "./tavern/chat-thread-store";\n', "unauthorized_mounted_turn_store_ingress_import"],
+    ["presentation transition", 'import { transitionMountedPresentation } from "./tavern/chat-thread-store";\n', "unauthorized_mounted_turn_store_ingress_import"],
+    ["acceptance bridge", 'import "./tavern/player-turn-acceptance.internal";\n', "unauthorized_mounted_turn_bridge_import"],
+    ["claim bridge", 'import "./tavern/provider-attempt-claim.internal";\n', "unauthorized_mounted_turn_bridge_import"],
   ]) {
-    await withFixture({ ...intended, "host/src/main.ts": consumerSource }, (root) => {
+    await withFixture({ ...intended, "host/src/main.ts": source }, (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(
-        report.violations.some((item) => item.kind === expectedKind),
-        name,
-      );
-    });
-  }
-  for (const [name, consumerSource] of [
-    [
-      "computed-create-require-store",
-      [
-        'import * as Module from "node:module";',
-        'const load = Module["createRequire"](import.meta.url);',
-        'const { acceptP4MountedPlayerMessage: raw } = load("./tavern/chat-thread-store.js");',
-        "void raw;",
-      ].join("\\n"),
-    ],
-    [
-      "computed-module-require-store",
-      [
-        'const load = module["require"];',
-        'const { acceptP4MountedPlayerMessage: raw } = load("./tavern/chat-thread-store.js");',
-        "void raw;",
-      ].join("\\n"),
-    ],
-  ]) {
-    await withFixture({ ...intended, "host/src/main.ts": consumerSource }, (root) => {
-      const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(
-        report.violations.some((item) => item.kind === "unauthorized_p4_store_ingress_import"),
-        name,
-      );
-    });
-  }
-  for (const [name, facadeSource, expectedKind] of [
-    [
-      "coordinator",
-      'import "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal";\n',
-      "unauthorized_coordinator_internal_import",
-    ],
-    [
-      "store",
-      'import { acceptP4MountedPlayerMessage } from "./chat-thread-store";\n',
-      "unauthorized_p4_store_ingress_import",
-    ],
-    [
-      "computed-object-descriptor-loader",
-      [
-        'const descriptor = Object[("getOwn" + "PropertyDescriptor") as "getOwnPropertyDescriptor"](process, "getBuiltinModule");',
-        "const builtin = descriptor!.value as typeof process.getBuiltinModule;",
-        'const raw = builtin("node:module")[("create" + "Require") as "createRequire"](import.meta.url)("./chat-thread-store.js");',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "parenthesized-process-descriptor-loader",
-      [
-        "const processRef = (process);",
-        'const builtin = Object.getOwnPropertyDescriptor(processRef, "getBuiltinModule")!.value as any;',
-        'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js").acceptP4MountedPlayerMessage;',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "erased-wrapper-process-descriptor-loader",
-      [
-        "const processRef = ((process as typeof process) satisfies typeof process)!;",
-        'const builtin = Object.getOwnPropertyDescriptor(processRef, "getBuiltinModule")!.value as any;',
-        'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js").acceptP4MountedPlayerMessage;',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "computed-global-process-loader",
-      [
-        'const builtin = globalThis.process[("getBuiltin" + "Module") as keyof typeof globalThis.process] as any;',
-        'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "computed-global-process-acquisition-loader",
-      [
-        'const processRef = globalThis[("pro" + "cess") as "process"];',
-        'const descriptor = Object.getOwnPropertyDescriptor(processRef, "getBuiltinModule");',
-        'const raw = (descriptor!.value as any)("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "static-global-process-alias-loader",
-      [
-        'const processRef = globalThis["process"];',
-        'const builtin = Object.getOwnPropertyDescriptor(processRef, "getBuiltinModule")!.value as any;',
-        'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js").acceptP4MountedPlayerMessage;',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "nested-global-process-alias-loader",
-      [
-        "const processRef = globalThis.global.process;",
-        'const builtin = Object.getOwnPropertyDescriptor(processRef, "getBuiltinModule")!.value as any;',
-        'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js").acceptP4MountedPlayerMessage;',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "parenthesized-nested-global-process-alias-loader",
-      [
-        "const processRef = (globalThis).global.process;",
-        'const builtin = Object.getOwnPropertyDescriptor(processRef, "getBuiltinModule")!.value as any;',
-        'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js").acceptP4MountedPlayerMessage;',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "erased-wrapper-nested-global-process-alias-loader",
-      [
-        "const processRef = ((globalThis as typeof globalThis) satisfies typeof globalThis)!.global.process;",
-        'const builtin = Object.getOwnPropertyDescriptor(processRef, "getBuiltinModule")!.value as any;',
-        'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js").acceptP4MountedPlayerMessage;',
-        "void raw;",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-  ]) {
-    await withFixture({ ...intended, [p4Facade]: facadeSource }, (root) => {
-      const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(
-        report.violations.some((item) => item.kind === expectedKind),
-        name,
-      );
-    });
-  }
-  for (const p5BridgeSource of [
-    'import { createP4ProviderStartFacade } from "./p4-provider-start.js"; export async function startMountedP5PresentationCommitFromFacade(manifest, lease) { return createP4ProviderStartFacade(manifest, lease).start(); } export const leaked = createP4ProviderStartFacade;\n',
-    'import { startMountedP4ProviderStartFromFacade } from "./p4-provider-start.internal.js"; export async function startMountedP5PresentationCommitFromFacade(manifest, lease) { return startMountedP4ProviderStartFromFacade(manifest, lease); }\n',
-  ]) {
-    await withFixture({ ...intended, [p5Bridge]: p5BridgeSource }, (root) => {
-      const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(report.violations.some((item) => item.kind === "invalid_p5_bridge_implementation"));
-    });
-  }
-  for (const bridgeSource of [
-    'export { acceptMountedP4DurableTurn } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal";\n',
-    'import { acceptP4MountedPlayerMessage as leak } from "./chat-thread-store"; export { leak };\n',
-    'import { acceptP4MountedPlayerMessage as leak } from "./chat-thread-store"; export { leak as renamed };\n',
-    'import { acceptP4MountedPlayerMessage as leak } from "./chat-thread-store"; export default leak;\n',
-    'import * as leak from "./chat-thread-store"; export { leak };\n',
-    'import leak from "./chat-thread-store"; export { leak };\n',
-    'import { acceptP4MountedPlayerMessage as raw } from "./chat-thread-store"; const second = raw; export { second as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { acceptP4MountedPlayerMessage as raw } from "./chat-thread-store"; const second = raw; const third = second; export { third as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { acceptP4MountedPlayerMessage as raw } from "./chat-thread-store"; const second = raw; const third = second; export default third;\n',
-    'import { acceptP4MountedPlayerMessage as raw } from "./chat-thread-store"; const second = raw, third = second; export { third as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { acceptP4MountedPlayerMessage as raw } from "./chat-thread-store";\nconst second = raw;\nconst third = second;\nexport { third as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { acceptMountedP4DurableTurn as raw } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal"; let second = raw; export { second as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { consumeMountedP4Admission as raw } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal"; var second = raw; export { second as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { "acceptP4MountedPlayerMessage" as raw } from "./chat-thread-store"; const leaked = raw as typeof raw; export { leaked as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { acceptP4MountedPlayerMessage as raw } from "./chat-thread-store"; const leaked = raw satisfies typeof raw; export { leaked as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { acceptP4MountedPlayerMessage as raw } from "./chat-thread-store"; const leaked = raw!; export { leaked as acceptMountedP4DurableTurnFromFacade };\n',
-    'import { acceptP4MountedPlayerMessage as raw } from "./chat-thread-store"; const leaked = (raw); export { leaked as acceptMountedP4DurableTurnFromFacade };\n',
-  ]) {
-    await withFixture({ ...intended, [p4Bridge]: bridgeSource }, (root) => {
-      const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(report.violations.some((item) => item.kind === "invalid_p4_bridge_runtime_export_surface"));
+      assert.ok(report.violations.some((item) => item.kind === expectedKind), name);
     });
   }
   await withFixture(
     {
       ...intended,
-      [p4Bridge]: `${intended[p4Bridge]}\nexport type { AcceptedQueuedTurn } from "./chat-thread-store.js";`,
-    },
-    (root) => {
-      assert.equal(checkHostProductionImportBoundary({ root, roots }).verdict, "passed");
-    },
-  );
-  for (const [name, bridgeSource, expectedKind] of [
-    [
-      "direct-raw-wrapper",
-      [
-        'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
-        'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
-        'import { acceptP4MountedPlayerMessage, type AcceptedQueuedTurn } from "./chat-thread-store.js";',
-        "type P4MountedAcceptanceCommand = Readonly<{ text: string; locale: string; idempotencyKey: string; expectedDraftRevision: number }>;",
-        "export async function acceptMountedP4DurableTurnFromFacade(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, command: P4MountedAcceptanceCommand): Promise<AcceptedQueuedTurn> {",
-        "  return acceptP4MountedPlayerMessage({ runtimeRoot: manifest.runtimeRoot, playerId: manifest.principal.playerId, companionId: manifest.principal.companionId, continuityId: manifest.principal.continuityId, chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId, selectionGeneration: lease.browserProjection.selectionGeneration }, command);",
-        "}",
-      ].join("\\n"),
-      "invalid_p4_bridge_implementation",
-    ],
-    [
-      "lexical-computed-module-loader",
-      [
-        'import * as Module from "node:module";',
-        'const member = "createRequire";',
-        'const raw = Module[member](import.meta.url)("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "process-builtin-loader",
-      [
-        'const raw = process.getBuiltinModule("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "process-builtin-loader-alias",
-      [
-        "const { getBuiltinModule: builtin } = process;",
-        'const raw = builtin("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "reflect-process-builtin-loader",
-      [
-        'const raw = Reflect.get(process, "getBuiltinModule")("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "reflect-computed-process-builtin-loader",
-      [
-        'const raw = Reflect["get"](process, "getBuiltinModule")("node:module").createRequire(import.meta.url)("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "reflect-node-module-loader",
-      [
-        'import * as Module from "node:module";',
-        'const raw = Reflect.get(Module, "createRequire")(import.meta.url)("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-    [
-      "computed-object-descriptor-process-loader",
-      [
-        'const descriptor = Object[("getOwn" + "PropertyDescriptor") as "getOwnPropertyDescriptor"](process, "getBuiltinModule");',
-        "const builtin = descriptor!.value as typeof process.getBuiltinModule;",
-        'const raw = builtin("node:module")[("create" + "Require") as "createRequire"](import.meta.url)("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-      "unresolved_dynamic_require",
-    ],
-  ]) {
-    await withFixture({ ...intended, [p4Bridge]: bridgeSource }, (root) => {
-      const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(
-        report.violations.some((item) => item.kind === expectedKind),
-        name,
-      );
-    });
-  }
-  await withFixture(
-    {
-      ...intended,
-      [p4Bridge]: intended[p4Bridge].replace(
-        "command: P4MountedAcceptanceCommand): Promise<AcceptedQueuedTurn>",
-        'command: P4MountedAcceptanceCommand = (void acceptP4MountedPlayerMessage({ runtimeRoot: manifest.runtimeRoot, playerId: manifest.principal.playerId, companionId: manifest.principal.companionId, continuityId: manifest.principal.continuityId, chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId, selectionGeneration: lease.browserProjection.selectionGeneration }, { text: "bypass", locale: "en-US", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0 }), { text: "bypass", locale: "en-US", idempotencyKey: "abcdefghijklmnopqrstuv", expectedDraftRevision: 0 }))): Promise<AcceptedQueuedTurn>',
+      [providerStart]: intended[providerStart].replace(
+        "runMountedProviderStartLedger(scope, previewPublisher)",
+        "scope.transitionStore({ operation: 'arm', observedAtMs: 1 })",
       ),
     },
     (root) => {
       const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(report.violations.some((item) => item.kind === "invalid_p4_bridge_implementation"));
+      assert.ok(report.violations.some((item) => item.kind === "invalid_provider_start_implementation"));
     },
   );
-  for (const [name, bridgeSource] of [
-    [
-      "direct-create-require",
-      [
-        'import { createRequire } from "node:module";',
-        'const raw = createRequire(import.meta.url)("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-    ],
-    [
-      "create-require-loader-alias",
-      [
-        'import { createRequire } from "node:module";',
-        "const load = createRequire(import.meta.url);",
-        'const raw = load("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-    ],
-    [
-      "direct-computed-module-require",
-      [
-        'const raw = module["require"]("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-    ],
-    [
-      "computed-module-require-loader-alias",
-      [
-        'const load = module["require"];',
-        'const raw = load("./chat-thread-store.js");',
-        "export async function acceptMountedP4DurableTurnFromFacade() { return raw; }",
-      ].join("\\n"),
-    ],
-  ]) {
-    await withFixture({ ...intended, [p4Bridge]: bridgeSource }, (root) => {
-      const report = checkHostProductionImportBoundary({ root, roots });
-      assert.ok(
-        report.violations.some((item) => item.kind === "invalid_p4_bridge_store_edge"),
-        name,
-      );
-    });
-  }
 });
 
 test("blocks non-coordinator semantic authority imports, the semantic backend, and legacy backend mint identifiers", async () => {

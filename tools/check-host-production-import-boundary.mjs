@@ -9,16 +9,13 @@ const ts = requireFromHost("typescript");
 const here = dirname(fileURLToPath(import.meta.url));
 export const repositoryRoot = resolve(here, "..");
 export const DEFAULT_ROOTS = Object.freeze(["host/src/main.ts", "host/src/dialogue-web-main.ts"]);
-/** P4 is a production composition island, not an application entry root. */
-export const P4_COMPOSITION_ROOTS = Object.freeze([
-  "host/src/tavern/p4-durable-turn-acceptance.ts",
-  "host/src/tavern/p4-durable-turn-acceptance.internal.ts",
-  "host/src/tavern/p4-provider-attempt.ts",
-  "host/src/tavern/p4-provider-attempt.internal.ts",
-  "host/src/tavern/p4-provider-start.ts",
-  "host/src/tavern/p4-provider-start.internal.ts",
-  "host/src/tavern/p5-presentation-commit.ts",
-  "host/src/tavern/p5-presentation-commit.internal.ts",
+/** Mounted-turn composition is a production island, not an application entry root. */
+export const MOUNTED_TURN_COMPOSITION_ROOTS = Object.freeze([
+  "host/src/tavern/player-turn-acceptance.ts",
+  "host/src/tavern/player-turn-acceptance.internal.ts",
+  "host/src/tavern/provider-attempt-claim.ts",
+  "host/src/tavern/provider-attempt-claim.internal.ts",
+  "host/src/tavern/chat-provider-start.ts",
 ]);
 export function validateHostProductionImportBoundaryBaseline(report) {
   return report?.verdict === "passed"
@@ -48,31 +45,33 @@ const SEMANTIC_PRODUCTION_COORDINATOR_PUBLIC_MODULE =
 const SEMANTIC_PRODUCTION_COORDINATOR_INTERNAL_MODULE =
   "continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts";
 const SEMANTIC_BACKEND_MODULE = "continuity-semantic-backend/";
-const P4_FACADE_MODULE = "tavern/p4-durable-turn-acceptance.ts";
-const P4_BRIDGE_MODULE = "tavern/p4-durable-turn-acceptance.internal.ts";
-const P4B_FACADE_MODULE = "tavern/p4-provider-attempt.ts";
-const P4B_BRIDGE_MODULE = "tavern/p4-provider-attempt.internal.ts";
-const P4C_FACADE_MODULE = "tavern/p4-provider-start.ts";
-const P4C_BRIDGE_MODULE = "tavern/p4-provider-start.internal.ts";
-const _P4C_EXECUTION_MODULE = "tavern/p4-provider-start-execution.ts";
-const P5_FACADE_MODULE = "tavern/p5-presentation-commit.ts";
-const P5_BRIDGE_MODULE = "tavern/p5-presentation-commit.internal.ts";
-const P4_STORE_MODULE = "tavern/chat-thread-store.ts";
-const P4_P5_TRANSITION_AUTHORITY_MODULE = "tavern/chat-thread-store.p4-p5-transition-authority.internal.ts";
-const P4_COORDINATOR_IMPORTS = new Set(["acceptMountedP4DurableTurn", "consumeMountedP4Admission"]);
-const P4B_COORDINATOR_IMPORTS = new Set([
-  "claimMountedP4Attempt",
-  "consumeMountedP4AttemptAdmission",
-  "consumeMountedP4AttemptInvocationAdmission",
+const ACCEPTANCE_FACADE_MODULE = "tavern/player-turn-acceptance.ts";
+const ACCEPTANCE_BRIDGE_MODULE = "tavern/player-turn-acceptance.internal.ts";
+const CLAIM_FACADE_MODULE = "tavern/provider-attempt-claim.ts";
+const CLAIM_BRIDGE_MODULE = "tavern/provider-attempt-claim.internal.ts";
+const PROVIDER_START_MODULE = "tavern/chat-provider-start.ts";
+const PROVIDER_START_EXECUTION_MODULE = "tavern/p4-provider-start-execution.ts";
+const CHAT_THREAD_STORE_MODULE = "tavern/chat-thread-store.ts";
+const MOUNTED_TURN_TRANSITION_AUTHORITY_MODULE = "tavern/chat-thread-store.mounted-turn-transition.internal.ts";
+const ACCEPTANCE_COORDINATOR_IMPORTS = new Set(["acceptMountedDurableTurn", "consumeMountedDurableAdmission"]);
+const CLAIM_COORDINATOR_IMPORTS = new Set(["claimMountedAttempt", "consumeMountedAttemptAdmission"]);
+const PROVIDER_START_COORDINATOR_IMPORTS = new Set([
+  "startMountedAttempt",
+  "consumeMountedAttemptInvocationAdmission",
 ]);
-const P4C_COORDINATOR_IMPORTS = new Set(["startMountedP4Attempt", "consumeMountedP4AttemptInvocationAdmission"]);
-const P4_STORE_IMPORTS = new Set([
-  "acceptP4MountedPlayerMessage",
-  "claimP4MountedAttempt",
-  "transitionP4MountedProviderStart",
-  "transitionP5MountedPresentation",
+const MOUNTED_STORE_IMPORTS = new Set([
+  "acceptMountedPlayerMessage",
+  "claimMountedAttempt",
+  "transitionMountedProviderStart",
+  "transitionMountedPresentation",
 ]);
-const P4_SENSITIVE_IMPORTS = new Set([...P4_COORDINATOR_IMPORTS, ...P4_STORE_IMPORTS]);
+const MOUNTED_TURN_SENSITIVE_IMPORTS = new Set([
+  ...ACCEPTANCE_COORDINATOR_IMPORTS,
+  ...CLAIM_COORDINATOR_IMPORTS,
+  ...PROVIDER_START_COORDINATOR_IMPORTS,
+  ...MOUNTED_STORE_IMPORTS,
+  "createMountedTurnTransitionAuthority",
+]);
 const LEGACY_BACKEND_MINT_IDENTIFIERS = Object.freeze([
   "createSemanticProductionBackend",
   "SemanticProductionBackend",
@@ -270,7 +269,7 @@ function importedBindings(all, start, end) {
     if ((token.type !== "word" && token.type !== "string") || token.value === "type" || token.value === "as") continue;
     if (inBraces && ["{", ","].includes(all[cursor - 1]?.value) && all[cursor - 1]?.value !== "type")
       // ES module bindings may be string-named (for example
-      // `import { "acceptP4MountedPlayerMessage" as raw }`). Those are
+      // `import { "acceptMountedPlayerMessage" as raw }`). Those are
       // executable bindings just like identifier-named imports.
       bindings.push(token.value);
     else if (!inBraces && cursor === start && token.type === "word") bindings.push("default");
@@ -282,7 +281,7 @@ function isDeclaredExternalPackage(specifier, externalPackages) {
 }
 /** Parses the bridge's deliberately tiny runtime export surface. Type-only
  * imports/exports are erased, so they cannot leak a runtime ingress. */
-function p4BridgeRuntimeExports(source) {
+function bridgeRuntimeExports(source) {
   const all = tokens(source);
   const sensitiveLocals = new Set();
   for (let index = 0; index < all.length; index += 1) {
@@ -320,7 +319,7 @@ function p4BridgeRuntimeExports(source) {
   // wrapper set preserves sensitive provenance; calls, member access,
   // destructuring, assignments, and every other initializer remain outside
   // this deliberately narrow graph.
-  const ast = ts.createSourceFile("p4-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const ast = ts.createSourceFile("mounted-turn-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const erasedAliasSource = (expression) => {
     let current = expression;
     while (
@@ -382,17 +381,17 @@ function p4BridgeRuntimeExports(source) {
   }
   return exports;
 }
-function isExactP4BridgeImplementation(
+function isExactBridgeImplementation(
   source,
   shape = Object.freeze({
-    facade: "acceptMountedP4DurableTurnFromFacade",
-    runner: "acceptMountedP4DurableTurn",
-    consumer: "consumeMountedP4Admission",
-    store: "acceptP4MountedPlayerMessage",
+    facade: "acceptMountedDurableTurnFromFacade",
+    runner: "acceptMountedDurableTurn",
+    consumer: "consumeMountedDurableAdmission",
+    store: "acceptMountedPlayerMessage",
     command: true,
   }),
 ) {
-  const file = ts.createSourceFile("p4-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const file = ts.createSourceFile("mounted-turn-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const runtimeImports = new Map();
   const addRuntimeImport = (module, name, local) => {
     const entries = runtimeImports.get(module) ?? [];
@@ -445,7 +444,9 @@ function isExactP4BridgeImplementation(
           : [{ name: shape.invocationConsumer, local: shape.invocationConsumer }]),
       ],
     ) ||
-    !hasExactRuntimeImports("./chat-thread-store.js", [{ name: shape.store, local: shape.store }]) ||
+    !hasExactRuntimeImports("./chat-thread-store.js", [
+      { name: shape.storeImported ?? shape.store, local: shape.store },
+    ]) ||
     implementation === undefined ||
     implementation.name?.text !== shape.facade ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
@@ -558,9 +559,9 @@ function isExactP4BridgeImplementation(
   );
 }
 
-/** P4c may only start an already durable P4b claim through its private scope. */
-function isExactP4cBridgeImplementation(source) {
-  const file = ts.createSourceFile("p4c-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+/** Provider start may only enter an already durable claim through its private scope and execution ledger. */
+function isExactProviderStartImplementation(source) {
+  const file = ts.createSourceFile("chat-provider-start.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const runtimeImports = new Map();
   let implementation;
   for (const statement of file.statements) {
@@ -605,25 +606,26 @@ function isExactP4cBridgeImplementation(source) {
     !exactImports(
       "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
       [
-        { name: "startMountedP4Attempt", local: "startMountedP4Attempt" },
-        { name: "consumeMountedP4AttemptInvocationAdmission", local: "consumeMountedP4AttemptInvocationAdmission" },
+        { name: "startMountedAttempt", local: "startMountedAttempt" },
+        { name: "consumeMountedAttemptInvocationAdmission", local: "consumeMountedAttemptInvocationAdmission" },
       ],
     ) ||
     !exactImports("./p4-provider-start-execution.js", [
-      { name: "runMountedP4ProviderStartLedger", local: "runMountedP4ProviderStartLedger" },
+      { name: "runMountedProviderStartLedger", local: "runMountedProviderStartLedger" },
     ]) ||
     implementation === undefined ||
-    implementation.name?.text !== "startMountedP4ProviderStartFromFacade" ||
+    implementation.name?.text !== "startMountedChatProvider" ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-    implementation.parameters.length !== 2 ||
+    (implementation.parameters.length !== 2 && implementation.parameters.length !== 3) ||
     implementation.parameters.some(
       (parameter, index) =>
         parameter.name.kind !== ts.SyntaxKind.Identifier ||
-        parameter.name.getText(file) !== ["manifest", "lease"][index] ||
+        parameter.name.getText(file) !== ["manifest", "lease", "previewPublisher"][index] ||
         parameter.initializer !== undefined ||
         parameter.dotDotDotToken !== undefined ||
-        parameter.questionToken !== undefined ||
+        (index < 2 && parameter.questionToken !== undefined) ||
+        (index === 2 && parameter.questionToken === undefined) ||
         (parameter.modifiers?.length ?? 0) !== 0,
     ) ||
     implementation.body === undefined ||
@@ -632,11 +634,12 @@ function isExactP4cBridgeImplementation(source) {
     implementation.body.statements[0].expression === undefined
   )
     return false;
-  const outer = implementation.body.statements[0].expression;
+  const returned = implementation.body.statements[0].expression;
+  const outer = ts.isAwaitExpression(returned) ? returned.expression : returned;
   if (
     !ts.isCallExpression(outer) ||
     !ts.isIdentifier(outer.expression) ||
-    outer.expression.text !== "startMountedP4Attempt" ||
+    outer.expression.text !== "startMountedAttempt" ||
     outer.arguments.length !== 3
   )
     return false;
@@ -659,7 +662,7 @@ function isExactP4cBridgeImplementation(source) {
   if (
     !ts.isCallExpression(invocationBody) ||
     !ts.isIdentifier(invocationBody.expression) ||
-    invocationBody.expression.text !== "consumeMountedP4AttemptInvocationAdmission" ||
+    invocationBody.expression.text !== "consumeMountedAttemptInvocationAdmission" ||
     invocationBody.arguments.length !== 2 ||
     !ts.isIdentifier(invocationBody.arguments[0]) ||
     invocationBody.arguments[0].text !== invocation
@@ -676,87 +679,12 @@ function isExactP4cBridgeImplementation(source) {
   return (
     ts.isCallExpression(scopeCallback.body) &&
     ts.isIdentifier(scopeCallback.body.expression) &&
-    scopeCallback.body.expression.text === "runMountedP4ProviderStartLedger" &&
-    scopeCallback.body.arguments.length === 1 &&
+    scopeCallback.body.expression.text === "runMountedProviderStartLedger" &&
+    scopeCallback.body.arguments.length === (implementation.parameters.length === 3 ? 2 : 1) &&
     ts.isIdentifier(scopeCallback.body.arguments[0]) &&
-    scopeCallback.body.arguments[0].text === scope
-  );
-}
-
-/** P5 has no independent ingress: its bridge may only delegate to P4c's facade. */
-function isExactP5BridgeImplementation(source) {
-  const file = ts.createSourceFile("p5-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const runtimeImports = new Map();
-  let implementation;
-  for (const statement of file.statements) {
-    if (ts.isImportDeclaration(statement)) {
-      if (!ts.isStringLiteral(statement.moduleSpecifier)) return false;
-      const clause = statement.importClause;
-      if (clause === undefined || clause.isTypeOnly) continue;
-      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings))
-        return false;
-      runtimeImports.set(
-        statement.moduleSpecifier.text,
-        clause.namedBindings.elements
-          .filter((entry) => !entry.isTypeOnly)
-          .map((entry) => ({
-            name: entry.propertyName?.text ?? entry.name.text,
-            local: entry.name.text,
-          })),
-      );
-      continue;
-    }
-    if (
-      ts.isTypeAliasDeclaration(statement) ||
-      ts.isInterfaceDeclaration(statement) ||
-      (ts.isExportDeclaration(statement) && statement.isTypeOnly)
-    )
-      continue;
-    if (ts.isFunctionDeclaration(statement) && implementation === undefined) {
-      implementation = statement;
-      continue;
-    }
-    return false;
-  }
-  const imports = runtimeImports.get("./p4-provider-start.js") ?? [];
-  if (
-    runtimeImports.size !== 1 ||
-    imports.length !== 1 ||
-    imports[0]?.name !== "createP4ProviderStartFacade" ||
-    imports[0]?.local !== "createP4ProviderStartFacade" ||
-    implementation === undefined ||
-    implementation.name?.text !== "startMountedP5PresentationCommitFromFacade" ||
-    !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
-    !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-    implementation.parameters.length !== 2 ||
-    implementation.parameters.some(
-      (parameter, index) =>
-        parameter.name.kind !== ts.SyntaxKind.Identifier ||
-        parameter.name.getText(file) !== ["manifest", "lease"][index] ||
-        parameter.initializer !== undefined ||
-        parameter.dotDotDotToken !== undefined ||
-        parameter.questionToken !== undefined ||
-        (parameter.modifiers?.length ?? 0) !== 0,
-    ) ||
-    implementation.body === undefined ||
-    implementation.body.statements.length !== 1 ||
-    !ts.isReturnStatement(implementation.body.statements[0]) ||
-    implementation.body.statements[0].expression === undefined
-  )
-    return false;
-  const returned = implementation.body.statements[0].expression;
-  return (
-    ts.isCallExpression(returned) &&
-    ts.isPropertyAccessExpression(returned.expression) &&
-    returned.expression.name.text === "start" &&
-    ts.isCallExpression(returned.expression.expression) &&
-    ts.isIdentifier(returned.expression.expression.expression) &&
-    returned.expression.expression.expression.text === "createP4ProviderStartFacade" &&
-    returned.expression.expression.arguments.length === 2 &&
-    returned.expression.expression.arguments.every(
-      (argument, index) => ts.isIdentifier(argument) && argument.text === ["manifest", "lease"][index],
-    ) &&
-    returned.arguments.length === 0
+    scopeCallback.body.arguments[0].text === scope &&
+    (implementation.parameters.length !== 3 ||
+      (ts.isIdentifier(scopeCallback.body.arguments[1]) && scopeCallback.body.arguments[1].text === "previewPublisher"))
   );
 }
 
@@ -1191,41 +1119,35 @@ function semanticAuthorityModule(root, target) {
 function isExactModule(root, path, module) {
   return sourcePath(root, path).replace(/\.ts$/, "") === module.replace(/\.ts$/, "");
 }
-function isP4Facade(root, path) {
-  return isExactModule(root, path, P4_FACADE_MODULE);
+function isAcceptanceFacade(root, path) {
+  return isExactModule(root, path, ACCEPTANCE_FACADE_MODULE);
 }
-function isP4Bridge(root, path) {
-  return isExactModule(root, path, P4_BRIDGE_MODULE);
+function isAcceptanceBridge(root, path) {
+  return isExactModule(root, path, ACCEPTANCE_BRIDGE_MODULE);
 }
-function isP4BFacade(root, path) {
-  return isExactModule(root, path, P4B_FACADE_MODULE);
+function isClaimFacade(root, path) {
+  return isExactModule(root, path, CLAIM_FACADE_MODULE);
 }
-function isP4BBridge(root, path) {
-  return isExactModule(root, path, P4B_BRIDGE_MODULE);
+function isClaimBridge(root, path) {
+  return isExactModule(root, path, CLAIM_BRIDGE_MODULE);
 }
-function isP4CFacade(root, path) {
-  return isExactModule(root, path, P4C_FACADE_MODULE);
+function isProviderStart(root, path) {
+  return isExactModule(root, path, PROVIDER_START_MODULE);
 }
-function isP4CBridge(root, path) {
-  return isExactModule(root, path, P4C_BRIDGE_MODULE);
+function isProviderStartExecution(root, path) {
+  return isExactModule(root, path, PROVIDER_START_EXECUTION_MODULE);
 }
-function isP5Facade(root, path) {
-  return isExactModule(root, path, P5_FACADE_MODULE);
+function isAnyMountedTurnBridge(root, path) {
+  return isAcceptanceBridge(root, path) || isClaimBridge(root, path);
 }
-function isP5Bridge(root, path) {
-  return isExactModule(root, path, P5_BRIDGE_MODULE);
+function isAnyMountedTurnFacade(root, path) {
+  return isAcceptanceFacade(root, path) || isClaimFacade(root, path);
 }
-function isAnyP4Bridge(root, path) {
-  return isP4Bridge(root, path) || isP4BBridge(root, path) || isP4CBridge(root, path);
+function isChatThreadStore(root, path) {
+  return isExactModule(root, path, CHAT_THREAD_STORE_MODULE);
 }
-function isAnyP4Facade(root, path) {
-  return isP4Facade(root, path) || isP4BFacade(root, path) || isP4CFacade(root, path);
-}
-function isP4Store(root, path) {
-  return isExactModule(root, path, P4_STORE_MODULE);
-}
-function isP4P5TransitionAuthorityModule(root, path) {
-  return isExactModule(root, path, P4_P5_TRANSITION_AUTHORITY_MODULE);
+function isMountedTurnTransitionAuthorityModule(root, path) {
+  return isExactModule(root, path, MOUNTED_TURN_TRANSITION_AUTHORITY_MODULE);
 }
 function isSemanticProductionCoordinatorAuthorityInternal(root, importer) {
   return (
@@ -1284,9 +1206,9 @@ export function checkHostProductionImportBoundary({
       configError = "invalid_external_runtime_closure";
     }
   }
-  // The P4 facade and private bridge are mandatory production inspection roots
-  // whenever present, even though ordinary application roots do not import them.
-  const allRoots = [...new Set([...roots, ...P4_COMPOSITION_ROOTS.filter((path) => existsSync(resolve(root, path)))])];
+  // Mounted-turn facades, private bridges, and provider start are mandatory production
+  // inspection roots whenever present, even when application roots do not import them.
+  const allRoots = [...new Set([...roots, ...MOUNTED_TURN_COMPOSITION_ROOTS.filter((path) => existsSync(resolve(root, path)))])];
   const absoluteRoots = allRoots.map((path) => resolve(root, path));
   const pending = [];
   const visited = new Set();
@@ -1430,48 +1352,42 @@ export function checkHostProductionImportBoundary({
           ),
         );
       }
-      if (isAnyP4Bridge(root, target) && !isAnyP4Facade(root, importer)) {
-        const requiredFacade = isP4BBridge(root, target) ? P4B_FACADE_MODULE : P4_FACADE_MODULE;
+      if (isAnyMountedTurnBridge(root, target) && !isAnyMountedTurnFacade(root, importer)) {
+        const requiredFacade = isClaimBridge(root, target) ? CLAIM_FACADE_MODULE : ACCEPTANCE_FACADE_MODULE;
         violations.push(
           violation(
-            "unauthorized_p4_bridge_import",
+            "unauthorized_mounted_turn_bridge_import",
             shownImporter,
             reference.specifier,
             reference.line,
-            `p4_bridge_import_requires:${requiredFacade}`,
-          ),
-        );
-      }
-      if (isP5Bridge(root, target) && !isP5Facade(root, importer)) {
-        violations.push(
-          violation(
-            "unauthorized_p5_bridge_import",
-            shownImporter,
-            reference.specifier,
-            reference.line,
-            `p5_bridge_import_requires:${P5_FACADE_MODULE}`,
+            `mounted_turn_bridge_import_requires:${requiredFacade}`,
           ),
         );
       }
       if (
-        isP4P5TransitionAuthorityModule(root, target) &&
-        !isSemanticProductionCoordinatorAuthorityInternal(root, importer) &&
-        !isP4Store(root, importer)
+        isMountedTurnTransitionAuthorityModule(root, target) &&
+        (reference.kind === "require" ||
+          reference.kind === "re_export" ||
+          reference.bindings?.includes("createMountedTurnTransitionAuthority") ||
+          reference.bindings?.includes("*") ||
+          reference.bindings?.includes("default")) &&
+        !isSemanticProductionCoordinatorAuthorityInternal(root, importer)
       ) {
         violations.push(
           violation(
-            "unauthorized_p4_p5_transition_authority_import",
+            "unauthorized_mounted_turn_transition_authority_import",
             shownImporter,
             reference.specifier,
             reference.line,
-            `p4_p5_transition_authority_import_requires:${SEMANTIC_PRODUCTION_COORDINATOR_INTERNAL_MODULE}_or:${P4_STORE_MODULE}`,
+            `mounted_turn_transition_authority_mint_requires:${SEMANTIC_PRODUCTION_COORDINATOR_INTERNAL_MODULE}`,
           ),
         );
       }
       if (
         isSemanticProductionCoordinatorInternal(root, target) &&
         !isSemanticProductionCoordinatorPublic(root, importer) &&
-        !isAnyP4Bridge(root, importer)
+        !isAnyMountedTurnBridge(root, importer) &&
+        !isProviderStart(root, importer)
       ) {
         violations.push(
           violation(
@@ -1486,52 +1402,50 @@ export function checkHostProductionImportBoundary({
       // CommonJS has no static named-binding clause. A require of this module
       // can obtain the raw ingress, so it is sensitive by construction rather
       // than silently becoming an untracked topology edge.
-      const importsSensitiveP4Ingress =
+      const importsSensitiveMountedTurnIngress =
         reference.kind === "require" ||
         reference.kind === "re_export" ||
-        reference.bindings?.some((binding) => P4_SENSITIVE_IMPORTS.has(binding)) ||
+        reference.bindings?.some((binding) => MOUNTED_TURN_SENSITIVE_IMPORTS.has(binding)) ||
         reference.bindings?.includes("*") ||
         reference.bindings?.includes("default");
       if (
-        isP4Store(root, target) &&
-        importsSensitiveP4Ingress &&
-        !isAnyP4Bridge(root, importer) &&
+        isChatThreadStore(root, target) &&
+        importsSensitiveMountedTurnIngress &&
+        !isAnyMountedTurnBridge(root, importer) &&
         !isSemanticProductionCoordinatorAuthorityInternal(root, importer)
       ) {
         violations.push(
           violation(
-            "unauthorized_p4_store_ingress_import",
+            "unauthorized_mounted_turn_store_ingress_import",
             shownImporter,
             reference.specifier,
             reference.line,
-            `p4_store_ingress_import_requires:${P4_BRIDGE_MODULE}_or:${P4B_BRIDGE_MODULE}`,
+            `mounted_turn_store_ingress_import_requires:${ACCEPTANCE_BRIDGE_MODULE}_or:${CLAIM_BRIDGE_MODULE}`,
           ),
         );
       }
-      if (isAnyP4Bridge(root, importer) && isSemanticProductionCoordinatorInternal(root, target)) {
-        const allowed = isP4CBridge(root, importer)
-          ? P4C_COORDINATOR_IMPORTS
-          : isP4BBridge(root, importer)
-            ? P4B_COORDINATOR_IMPORTS
-            : P4_COORDINATOR_IMPORTS;
+      if ((isAnyMountedTurnBridge(root, importer) || isProviderStart(root, importer)) && isSemanticProductionCoordinatorInternal(root, target)) {
+        const allowed = isProviderStart(root, importer)
+          ? PROVIDER_START_COORDINATOR_IMPORTS
+          : isClaimBridge(root, importer)
+            ? CLAIM_COORDINATOR_IMPORTS
+            : ACCEPTANCE_COORDINATOR_IMPORTS;
         const invalid = reference.kind === "re_export" || reference.bindings?.some((binding) => !allowed.has(binding));
         if (invalid)
           violations.push(
             violation(
-              "invalid_p4_bridge_coordinator_edge",
+              "invalid_mounted_turn_bridge_coordinator_edge",
               shownImporter,
               reference.specifier,
               reference.line,
-              "p4_bridge_may_import_only_opaque_runner_and_consumer",
+              "mounted_turn_bridge_may_import_only_opaque_runner_and_consumer",
             ),
           );
       }
-      if (isAnyP4Bridge(root, importer) && isP4Store(root, target)) {
-        const expectedIngress = isP4BBridge(root, importer)
-          ? "claimP4MountedAttempt"
-          : isP4CBridge(root, importer)
-            ? null
-            : "acceptP4MountedPlayerMessage";
+      if (isAnyMountedTurnBridge(root, importer) && isChatThreadStore(root, target)) {
+        const expectedIngress = isClaimBridge(root, importer)
+          ? "claimMountedAttempt"
+          : "acceptMountedPlayerMessage";
         const exactStoreIngress =
           expectedIngress !== null &&
           reference.kind === "import" &&
@@ -1540,11 +1454,11 @@ export function checkHostProductionImportBoundary({
         if (!exactStoreIngress)
           violations.push(
             violation(
-              "invalid_p4_bridge_store_edge",
+              "invalid_mounted_turn_bridge_store_edge",
               shownImporter,
               reference.specifier,
               reference.line,
-              "p4_bridge_may_import_only_exact_named_store_ingress",
+              "mounted_turn_bridge_may_import_only_exact_named_store_ingress",
             ),
           );
       }
@@ -1588,63 +1502,53 @@ export function checkHostProductionImportBoundary({
       }
       pending.push(target);
     }
-    if (isP5Bridge(root, importer)) {
-      const bridgeExports = p4BridgeRuntimeExports(source);
-      if (
-        bridgeExports.length !== 1 ||
-        bridgeExports[0]?.name !== "startMountedP5PresentationCommitFromFacade" ||
-        bridgeExports[0]?.sensitive ||
-        !isExactP5BridgeImplementation(source)
-      )
-        violations.push(
-          violation(
-            "invalid_p5_bridge_implementation",
-            display(root, importer),
-            null,
-            1,
-            "p5_bridge_must_delegate_only_to_p4c_facade",
-          ),
-        );
-    }
-    if (isAnyP4Bridge(root, importer)) {
-      const isAttemptBridge = isP4BBridge(root, importer);
-      const isStartBridge = isP4CBridge(root, importer);
-      const expectedExport = isStartBridge
-        ? "startMountedP4ProviderStartFromFacade"
-        : isAttemptBridge
-          ? "claimMountedP4ProviderAttemptFromFacade"
-          : "acceptMountedP4DurableTurnFromFacade";
+    if (isAnyMountedTurnBridge(root, importer)) {
+      const isAttemptBridge = isClaimBridge(root, importer);
+      const expectedExport = isAttemptBridge
+        ? "claimMountedProviderAttemptFromFacade"
+        : "acceptMountedDurableTurnFromFacade";
       const shape = isAttemptBridge
         ? Object.freeze({
-            facade: "claimMountedP4ProviderAttemptFromFacade",
-            runner: "claimMountedP4Attempt",
-            consumer: "consumeMountedP4AttemptAdmission",
-            store: "claimP4MountedAttempt",
+            facade: "claimMountedProviderAttemptFromFacade",
+            runner: "claimMountedAttempt",
+            consumer: "consumeMountedAttemptAdmission",
+             store: "claimStoreMountedAttempt",
+            storeImported: "claimMountedAttempt",
             command: false,
           })
         : undefined;
-      const bridgeExports = p4BridgeRuntimeExports(source);
+      const bridgeExports = bridgeRuntimeExports(source);
       if (bridgeExports.length !== 1 || bridgeExports[0]?.name !== expectedExport || bridgeExports[0]?.sensitive)
         violations.push(
           violation(
-            "invalid_p4_bridge_runtime_export_surface",
+            "invalid_mounted_turn_bridge_runtime_export_surface",
             display(root, importer),
             null,
             1,
-            `p4_bridge_may_export_only_${expectedExport}`,
+            `mounted_turn_bridge_may_export_only_${expectedExport}`,
           ),
         );
-      if (!(isStartBridge ? isExactP4cBridgeImplementation(source) : isExactP4BridgeImplementation(source, shape)))
+      if (!isExactBridgeImplementation(source, shape))
         violations.push(
           violation(
-            "invalid_p4_bridge_implementation",
+            "invalid_mounted_turn_bridge_implementation",
             display(root, importer),
             null,
             1,
-            "p4_bridge_must_use_exact_coordinator_admission_chain",
+            "mounted_turn_bridge_must_use_exact_coordinator_admission_chain",
           ),
         );
     }
+    if (isProviderStart(root, importer) && !isExactProviderStartImplementation(source))
+      violations.push(
+        violation(
+          "invalid_provider_start_implementation",
+          display(root, importer),
+          null,
+          1,
+          "provider_start_must_use_exact_invocation_admission_and_execution_ledger",
+        ),
+      );
     for (const token of parsed.tokens) {
       if (token.type !== "word") continue;
       if (LEGACY_ADOPTION_FUNCTIONS.includes(token.value)) {

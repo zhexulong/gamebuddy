@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import test from "node:test";
 import { DEFAULT_SUITE_TIMEOUT_MS, runBoundedChild } from "@gamebuddy/game-action-devkit/process-supervisor";
 import { resolveTypeScriptInvocation, verifyDeclaredMagicContextArtifact } from "./build-production-artifact.mjs";
@@ -12,10 +13,10 @@ import { createProductionChildEnvironment } from "./production-control-launch.mj
 
 const hostRoot = fileURLToPath(new URL("..", import.meta.url));
 const REQUIRED_VERIFICATION_ROOTS = [
-  "tavern/p4-durable-turn-acceptance.js",
-  "tavern/p4-provider-attempt.js",
+  "tavern/player-turn-acceptance.js",
+  "tavern/provider-attempt-claim.js",
   "tavern/chat-provider-start.js",
-  "tavern/p3-static-shell-composition.js",
+  "tavern/reference-pipeline-static-shell-composition.js",
   "reference-pipeline-dialogue-web.js",
   "tavern-management-dialogue-web.js",
   "tavern/tavern-management-static-shell-composition.js",
@@ -47,7 +48,7 @@ async function installArtifactTestDependencies(root) {
   await cp(join(hostRoot, "node_modules", "typescript", "lib"), join(root, "node_modules", "typescript", "lib"), { recursive: true });
   await writeFile(join(root, "node_modules", "typescript", "package.json"), JSON.stringify({ name: "typescript", main: "./lib/typescript.js" }));
   await mkdir(join(root, "node_modules", "typebox"), { recursive: true });
-  await writeFile(join(root, "node_modules", "typebox", "package.json"), JSON.stringify({ name: "typebox", main: "index.js" }));
+  await writeFile(join(root, "node_modules", "typebox", "package.json"), JSON.stringify({ name: "typebox", type: "module", main: "index.js" }));
   await writeFile(join(root, "node_modules", "typebox", "index.js"), "export {};\n");
 }
 
@@ -58,7 +59,7 @@ async function runChild(command, args, options) {
     command,
     args,
     cwd: options.cwd,
-    stdio: options.stdio,
+    stdio: options.stdio === "inherit" ? "inherit" : "pipe",
     timeoutMs: DEFAULT_SUITE_TIMEOUT_MS,
   });
 }
@@ -245,7 +246,8 @@ test("production TypeScript emits exactly the two roots' reachable closure", asy
     const emitted = (await readdir(emittedRoot, { recursive: true })).map((path) => path.replaceAll("\\", "/"));
     for (const root of ["main.js", "dialogue-web-main.js", "stardew-attachment.js", ...REQUIRED_VERIFICATION_ROOTS]) assert.ok(emitted.includes(root));
     for (const required of [
-      "tavern/p4-durable-turn-acceptance.internal.js",
+      "tavern/player-turn-acceptance.internal.js",
+      "tavern/provider-attempt-claim.internal.js",
       "continuity-semantic-provisioning/continuity-semantic-provisioning.internal.js",
       "continuity-semantic-store/continuity-semantic-production-store.js",
       "continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",
@@ -1041,9 +1043,7 @@ test("non-D0 starter relays ordinary child IPC and leaves the child live", async
   const dist = join(root, "dist");
   await mkdir(join(root, "scripts"));
   for (const script of ["production-artifact.mjs", "production-artifact-esm-resolution-probe.mjs", "production-control-launch.mjs", "start-production-artifact.mjs"])  await cp(join(scriptRoot, script), join(root, "scripts", script));
-  await mkdir(join(root, "node_modules", "typescript"), { recursive: true });
-  await cp(join(hostRoot, "node_modules", "typescript", "lib"), join(root, "node_modules", "typescript", "lib"), { recursive: true });
-  await writeFile(join(root, "node_modules", "typescript", "package.json"), JSON.stringify({ name: "typescript", main: "./lib/typescript.js" }));
+  await installArtifactTestDependencies(root);
   const emitted = await emit(root);
   await writeFile(join(emitted, "main.js"), 'import "typebox"; process.on("message", (message) => process.send?.({ schema: "ordinary-parent-ipc-ack", received: message })); process.send?.({ schema: "ordinary-production-ipc", value: 1 }); setTimeout(() => process.exit(0), 80);');
   await publishProductionArtifact({ hostRoot: root, emittedRoot: emitted, outputRoot: dist });
