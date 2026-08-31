@@ -1,20 +1,37 @@
-import { writeLifecycleCleanupResult, writeLifecyclePhaseResult } from "../src/write-lifecycle-result.mjs";
+import { writeStardewClosureBackendResult } from "../src/write-lifecycle-result.mjs";
 
-function required(name) {
-  const index = process.argv.indexOf(name);
-  if (index < 0 || !process.argv[index + 1]) throw new Error(`missing_${name.slice(2)}`);
-  return process.argv[index + 1];
+const FLAGS = process.argv.slice(2);
+
+function flagValue(name) {
+  const index = FLAGS.indexOf(name);
+  if (index < 0) throw new Error(`missing_${name.slice(2)}`);
+  if (index + 1 >= FLAGS.length) throw new Error(`missing_${name.slice(2)}`);
+  return FLAGS[index + 1];
 }
 
-const resultFile = required("--result-file");
-const state = required("--state");
+function countFlag(name) {
+  return FLAGS.filter((flag) => flag === name).length;
+}
+
+const resultFile = flagValue("--result-file");
+const state = flagValue("--state");
+const known = ["--result-file", "--state"];
+let phase;
+let code;
 if (state === "completed") {
-  await writeLifecycleCleanupResult(resultFile, { completed: true });
+  phase = undefined;
+  code = undefined;
 } else if (state === "failed") {
-  await writeLifecyclePhaseResult(resultFile, {
-    phase: required("--phase"),
-    code: required("--code"),
-  });
+  phase = flagValue("--phase");
+  code = flagValue("--code");
+  known.push("--phase", "--code");
 } else {
   throw new Error("lifecycle_result_state_invalid");
 }
+for (const flag of known) {
+  if (countFlag(flag) > 1) throw new Error("lifecycle_result_extra_argument");
+}
+const extra = FLAGS.filter((flag) => flag.startsWith("-") && !known.includes(flag));
+if (extra.length > 0) throw new Error("lifecycle_result_extra_argument");
+
+await writeStardewClosureBackendResult(resultFile, { state, phase, code });

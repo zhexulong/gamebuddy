@@ -1,8 +1,8 @@
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
-const CLEANUP_SCHEMA = "gamebuddy-stardew-lifecycle-cleanup-result/v1";
-export const LIFECYCLE_PHASE_RESULT_SCHEMA = "gamebuddy-stardew-lifecycle-phase-result/v1";
+export const STARDEW_CLOSURE_BACKEND_RESULT_SCHEMA =
+  "gamebuddy-stardew-closure-backend-result/v1";
 export const LIFECYCLE_FAILURE_PHASES = Object.freeze([
   "runner_resolution",
   "input_validation",
@@ -20,16 +20,14 @@ export const LIFECYCLE_FAILURE_PHASES = Object.freeze([
 const FAILURE_PHASE_SET = new Set(LIFECYCLE_FAILURE_PHASES);
 const FAILURE_CODE_SET = new Set(["failed", "child_nonzero"]);
 
-export function serializeLifecycleCleanupResult({ completed }) {
-  if (typeof completed !== "boolean") throw new Error("lifecycle_result_completed_invalid");
-  return JSON.stringify({ schema: CLEANUP_SCHEMA, completed });
-}
-
-export function serializeLifecyclePhaseResult({ phase, code }) {
-  if (!FAILURE_PHASE_SET.has(phase) || !FAILURE_CODE_SET.has(code)) {
-    throw new Error("lifecycle_phase_result_invalid");
+export function serializeStardewClosureBackendResult({ state, phase, code }) {
+  if (state === "completed" && phase === undefined && code === undefined) {
+    return JSON.stringify({ schema: STARDEW_CLOSURE_BACKEND_RESULT_SCHEMA, state });
   }
-  return JSON.stringify({ schema: LIFECYCLE_PHASE_RESULT_SCHEMA, phase, code });
+  if (state === "failed" && FAILURE_PHASE_SET.has(phase) && FAILURE_CODE_SET.has(code)) {
+    return JSON.stringify({ schema: STARDEW_CLOSURE_BACKEND_RESULT_SCHEMA, state, phase, code });
+  }
+  throw new Error("stardew_closure_backend_result_invalid");
 }
 
 async function writeLifecycleResult(resultFile, text) {
@@ -48,10 +46,6 @@ async function writeLifecycleResult(resultFile, text) {
   }
 }
 
-export async function writeLifecycleCleanupResult(resultFile, { completed }) {
-  await writeLifecycleResult(resultFile, serializeLifecycleCleanupResult({ completed }));
-}
-
-export async function writeLifecyclePhaseResult(resultFile, { phase, code }) {
-  await writeLifecycleResult(resultFile, serializeLifecyclePhaseResult({ phase, code }));
+export async function writeStardewClosureBackendResult(resultFile, result) {
+  await writeLifecycleResult(resultFile, serializeStardewClosureBackendResult(result));
 }

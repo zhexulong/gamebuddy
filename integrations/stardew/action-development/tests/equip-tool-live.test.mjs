@@ -241,12 +241,13 @@ test("real immutable binding and Devkit claims turn missing cleanup receipt into
       },
       runLifecycle: (options) => runEquipToolLifecycle({
         ...options,
-        resolvePowerShell: () => "fake-powershell",
-        runChild: async ({ args }) => {
+        runBackend: async ({ actionResultFile, lifecycleResultFile }) => {
           childCalls++;
-          const actionFile = args[args.indexOf("-ResultFile") + 1];
-          await writePrivateResultFile(actionFile, JSON.stringify(exactProof(options.runId)));
-          return { code: 0, signal: null };
+          // Simulate a missing lifecycle result from the closure backend: the
+          // adapter must fail closed with a bounded backend code before any
+          // scenario proof is accepted, leaving immutable staging unreleased.
+          await writePrivateResultFile(actionResultFile, JSON.stringify(exactProof(options.runId)));
+          throw new Error("stardew_closure_backend_lifecycle_result_missing");
         },
       }),
       finalizeComplete: async () => { completeCalls++; throw new Error("unexpected complete finalization"); },

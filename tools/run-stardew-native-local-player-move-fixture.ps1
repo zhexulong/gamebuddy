@@ -8,7 +8,6 @@ param(
     [Parameter(Mandatory = $true)][string]$ReleaseDir,
     [Parameter(Mandatory = $true)][string]$ResultFile,
     [Parameter(Mandatory = $true)][string]$LifecycleResultFile,
-    [Parameter(Mandatory = $true)][string]$LifecyclePhaseResultFile,
     [string]$ScenarioIdentity,
     [string]$Action = "move_to_tile",
     [switch]$BootstrapNativeSave,
@@ -18,14 +17,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $smapi = Join-Path $GamePath "StardewModdingAPI.exe"
-# The phase result destination itself must be canonical before a preflight failure
-# can be reported through it. The package-owned adapter always provides this claim.
-if (-not [IO.Path]::IsPathFullyQualified($LifecyclePhaseResultFile)) { throw "LifecyclePhaseResultFile must be an absolute private result path." }
-$phaseResultPath = [IO.Path]::GetFullPath($LifecyclePhaseResultFile)
+# The one canonical lifecycle result destination must be canonical before any
+# preflight failure can be reported through it. The package-owned closure
+# backend always provides this claim and consumes exactly one terminal result.
+if (-not [IO.Path]::IsPathFullyQualified($LifecycleResultFile)) { throw "LifecycleResultFile must be an absolute private result path." }
+$lifecycleResultPath = [IO.Path]::GetFullPath($LifecycleResultFile)
 $packageRoot = Join-Path (Join-Path $PSScriptRoot "..") "integrations/stardew/action-development"
 $equipToolChild = Join-Path $packageRoot "scenarios/equip-tool-live-child.mjs"
 $lifecycleResultWriter = Join-Path $packageRoot "scenarios/write-lifecycle-result.mjs"
-$clientConfig = Join-Path $ModsPath "GameBuddy/config.json"
+$clientConfig = Join-Path $ModsPath "GameBuddy.Stardew/config.json"
 $backupName = "native-local-$($Action.Replace('_', '-'))-fixture-backup"
 $fixtureSaveHarness = Join-Path $PSScriptRoot "prepare-stardew-action-fixture.ps1"
 $stardewSaveRoot = Join-Path $env:APPDATA "StardewValley\Saves"
@@ -33,9 +33,9 @@ $pipeReadinessHelper = Join-Path $PSScriptRoot "lib/stardew-named-pipe-readiness
 . $pipeReadinessHelper
 $runnerResolver = Join-Path $PSScriptRoot "resolve-stardew-action-gate-runner.mjs"
 
-function Publish-FailurePhaseReceipt([string]$Phase) {
+function Publish-FailureLifecycleResult([string]$Phase) {
     try {
-        node $lifecycleResultWriter --result-file $phaseResultPath --state failed --phase $Phase --code failed
+        node $lifecycleResultWriter --result-file $lifecycleResultPath --state failed --phase $Phase --code failed
     } catch {}
 }
 
@@ -54,14 +54,11 @@ try {
     $phase = "input_validation"
     if (-not [IO.Path]::IsPathFullyQualified($ReleaseDir)) { throw "ReleaseDir must be an absolute staged bundle path." }
     if (-not [IO.Path]::IsPathFullyQualified($ResultFile)) { throw "ResultFile must be an absolute private result path." }
-    if (-not [IO.Path]::IsPathFullyQualified($LifecycleResultFile)) { throw "LifecycleResultFile must be an absolute private result path." }
     $releaseDir = [IO.Path]::GetFullPath($ReleaseDir).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
     $actionResultPath = [IO.Path]::GetFullPath($ResultFile)
-    $lifecycleResultPath = [IO.Path]::GetFullPath($LifecycleResultFile)
-    if ($actionResultPath -eq $lifecycleResultPath -or $actionResultPath -eq $phaseResultPath -or $lifecycleResultPath -eq $phaseResultPath) { throw "Action, lifecycle, and phase result files must be separate." }
+    if ($actionResultPath -eq $lifecycleResultPath) { throw "Action and lifecycle result files must be separate." }
     if (Test-Path -LiteralPath $actionResultPath) { throw "Action result file must be initially absent." }
     if (Test-Path -LiteralPath $lifecycleResultPath) { throw "Lifecycle result file must be initially absent." }
-    if (Test-Path -LiteralPath $phaseResultPath) { throw "Lifecycle phase result file must be initially absent." }
     if ($Action -eq "equip_tool") {
         if ([string]::IsNullOrWhiteSpace($ScenarioIdentity)) { throw "equip_tool requires ScenarioIdentity." }
         try { $null = $ScenarioIdentity | ConvertFrom-Json } catch { throw "ScenarioIdentity must be valid JSON." }
@@ -80,7 +77,7 @@ try {
 } catch {
     $failure = $_
     $failurePhase = $phase
-    Publish-FailurePhaseReceipt $failurePhase
+    Publish-FailureLifecycleResult $failurePhase
     throw $failure
 }
 
@@ -253,7 +250,7 @@ try {
             $failurePhase = $phase
         }
     }
-    if ($null -ne $failure) { Publish-FailurePhaseReceipt $failurePhase }
+    if ($null -ne $failure) { Publish-FailureLifecycleResult $failurePhase }
 }
 if ($null -ne $failure) { throw $failure }
 }
