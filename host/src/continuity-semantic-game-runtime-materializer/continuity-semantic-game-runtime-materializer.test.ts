@@ -44,7 +44,7 @@ function fixture(onClose: () => void, onRevoke: () => void): ConfigurableIntegra
     ]),
     defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
     parsePolicy: (value) => value as never,
-    actorId: () => "arcade_actor_01",
+    actorId: () => principal.playerId,
     assertIdentityBinding: (_connection, identity) => {
       if (
         identity.companionId !== principal.companionId ||
@@ -582,8 +582,8 @@ test("production materializer source rejects legacy lifecycle, facade, store com
   );
   assert.match(
     sources[0],
-    /const workerAttachment =\s*gameOperationalGateNonceSha256 === undefined\s*\n\s*\? undefined\s*\n\s*: await/,
-    "unarmed production Game materialization must not construct a worker attachment",
+    /const workerAttachment = gameplayWorkerEnabled\s*\n\s*\? await/,
+    "armed production Game materialization constructs the worker attachment",
   );
   assert.match(
     sources[0],
@@ -592,7 +592,7 @@ test("production materializer source rejects legacy lifecycle, facade, store com
   );
   assert.match(
     sources[0],
-    /gameOperationalGateNonceSha256 === undefined \? hostBindingFactory : undefined,\s*\n\s*workerAttachment,/,
+    /workerAttachment === undefined \? hostBindingFactory : undefined,\s*\n\s*workerAttachment,/,
     "unarmed production Game materialization preserves ordinary Host binding without a worker",
   );
   assert.match(

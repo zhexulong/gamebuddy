@@ -36,12 +36,12 @@ import {
   writeIdentityProfileBinding,
 } from "./identity-profile.js";
 import {
-  assertIntegrationModule,
+  assertIntegrationAdapter,
   DEFAULT_INTEGRATION_ACTION_POLICY,
-  type GameIntegrationModule,
+  type GameIntegrationAdapter,
   type IntegrationActionPolicy,
-} from "./integration-module.js";
-import type { IntegrationConnection } from "./integration-types.js";
+} from "./game-integration-adapter.js";
+import type { GameConnection } from "./game-connection.js";
 import type { PresentationRuntime } from "./presentation.js";
 import type { ExecutionReceipt } from "./protocol.js";
 import {
@@ -124,7 +124,7 @@ async function reloadMagicContextInRuntimeRoot(
  * The base Companion tool is read-only and never creates game authority. Its
  * status is sourced from the mounted integration when one exists.
  */
-export function createCompanionStatusTool(integration?: IntegrationConnection) {
+export function createCompanionStatusTool(integration?: GameConnection) {
   return defineTool({
     name: "companion_status",
     label: "Companion Status",
@@ -334,14 +334,14 @@ export function identityKey(identity: CompanionIdentity): string {
  * normalization; it never routes an action and never interprets postconditions.
  */
 function createRuntimeDispatchController(
-  connection: IntegrationConnection,
+  connection: GameConnection,
 ): ActionExecutionCoordinator {
   return createActionExecutionCoordinator(connection);
 }
 
 function gateIntegrationTool(
   tool: ToolDefinition,
-  connection: IntegrationConnection,
+  connection: GameConnection,
 ): ToolDefinition {
   return {
     ...tool,
@@ -382,8 +382,8 @@ function toRuntimeTool(tool: ToolDefinition): RuntimeAgentTool {
 
 function createIntegrationToolRefresher(input: Readonly<{
   session: AgentSession;
-  connection: IntegrationConnection;
-  module: GameIntegrationModule;
+  connection: GameConnection;
+  module: GameIntegrationAdapter;
   knowledge: unknown;
   gameVersion: string | undefined;
   policy: IntegrationActionPolicy;
@@ -502,7 +502,7 @@ export type GameCompanionRuntimeAttachment = Readonly<{
 export async function createCompanionRuntime(
   identity: CompanionIdentity,
   root?: string,
-  integration?: IntegrationConnection,
+  integration?: GameConnection,
   modelConfig?: CompanionModelConfig,
   actionPolicy?: IntegrationActionPolicy,
   presentation?: PresentationRuntime,
@@ -540,7 +540,7 @@ export async function createCompanionRuntime(
 export async function createGameCompanionRuntime(
   identity: GameCompanionIdentity,
   root: string,
-  integration: IntegrationConnection,
+  integration: GameConnection,
   gameSessionId: string,
   gameOperationalGate: GameOperationalGateConfig | undefined,
   gameHostBindingFactory?: GameHostBindingFactory,
@@ -578,7 +578,7 @@ export async function createGameCompanionRuntime(
 async function createRuntime(
   identity: CompanionIdentity,
   root?: string,
-  integration?: IntegrationConnection,
+  integration?: GameConnection,
   modelConfig?: CompanionModelConfig,
   actionPolicy?: IntegrationActionPolicy,
   presentation?: PresentationRuntime,
@@ -622,12 +622,12 @@ async function createRuntime(
   if (!loadMagicContextExtension && gameOperationalGate !== undefined) {
     throw new Error("game_operational_marker_requires_magic_context");
   }
-  const integrationModule: GameIntegrationModule | undefined =
+  const integrationModule: GameIntegrationAdapter | undefined =
     integration?.module;
   if (integration !== undefined && integrationModule === undefined)
     throw new Error("integration_module_required");
   if (integration !== undefined) {
-    assertIntegrationModule(
+    assertIntegrationAdapter(
       integration.module,
       integration.scope.integrationId,
     );

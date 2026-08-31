@@ -6,8 +6,8 @@ import {
   type RecoverableExecutionDispatch,
 } from "./execution-correlation-ledger.js";
 import type { ExecutionWake, ExecutionWakeSource } from "./integration-launcher.js";
-import type { IntegrationDispatchAdmission } from "./integration-module.js";
-import type { IntegrationConnection } from "./integration-types.js";
+import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
+import type { GameConnection } from "./game-connection.js";
 import type { ExecutionReceipt } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
 
@@ -58,7 +58,7 @@ export type ActionExecutionCoordinator = Readonly<{
  * method is reachable only as the ledger's exact sender; neither Agent surface
  * receives it directly.
  */
-export function createActionExecutionCoordinator(connection: IntegrationConnection): ActionExecutionCoordinator {
+export function createActionExecutionCoordinator(connection: GameConnection): ActionExecutionCoordinator {
   const interruption = createCompanionInterruption();
   const ledger = new ExecutionCorrelationLedger(
     async (requestId, executionId, reasonCode) =>
@@ -96,7 +96,11 @@ export function createActionExecutionCoordinator(connection: IntegrationConnecti
       observer: Object.freeze({
         beforeWrite: (dispatch: ExecutionDispatch) => {
           interruption.assertCurrent(snapshot);
-          ledger.beforeWrite(dispatch);
+          // Always defer the post-admission STOP fence through a promise. Even
+          // a synchronous ledger admission is awaited by the tool wrapper, so a
+          // STOP queued in the same turn must close the epoch before native
+          // execution can resume from that await continuation.
+          return Promise.resolve(ledger.beforeWrite(dispatch)).then(() => interruption.assertCurrent(snapshot));
         },
         bindReceipt: (receipt: ExecutionReceipt) => receiveReceipt(receipt),
         markUncertain: (dispatch: ExecutionDispatch) => ledger.markUncertain(dispatch),

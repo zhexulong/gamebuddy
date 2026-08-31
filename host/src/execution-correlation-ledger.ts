@@ -1,4 +1,8 @@
-import type { ExecutionReceipt, ExecutionState } from "./protocol.js";
+import type { ExecutionReceipt, ExecutionRequest, ExecutionState } from "./protocol.js";
+import type {
+  StardewLogicalActionRecoveryJournal,
+  StardewLogicalActionRecoveryRecord,
+} from "./stardew-logical-action-recovery-journal.js";
 
 export type ExecutionCorrelationOwner = Readonly<{
   ownerId: string;
@@ -10,6 +14,14 @@ export type ExecutionDispatch = ExecutionCorrelationOwner &
     requestId: string;
     /** Original immutable key, retained only for exact read-only receipt recovery. */
     idempotencyKey?: string;
+    /** Optional complete request material for the private Stardew recovery journal. */
+    recoveryMaterial?: Readonly<{
+      logicalActionId: string;
+      dispatchOrdinal?: number;
+      request: ExecutionRequest;
+      scope?: Readonly<Record<string, unknown>>;
+      bindingIdentity?: Readonly<Record<string, unknown>>;
+    }>;
   }>;
 
 export type ExecutionCancelSender = (
@@ -19,9 +31,9 @@ export type ExecutionCancelSender = (
 ) => Promise<ExecutionReceipt>;
 
 export interface ExecutionDispatchObserver {
-  beforeWrite(dispatch: ExecutionDispatch): void;
-  bindReceipt(receipt: ExecutionReceipt): void;
-  markUncertain(dispatch: ExecutionDispatch): void;
+  beforeWrite(dispatch: ExecutionDispatch): void | Promise<void>;
+  bindReceipt(receipt: ExecutionReceipt): void | Promise<void>;
+  markUncertain(dispatch: ExecutionDispatch): void | Promise<void>;
 }
 
 export type RecoverableExecutionDispatch = Readonly<{
@@ -29,6 +41,14 @@ export type RecoverableExecutionDispatch = Readonly<{
   epoch: number;
   requestId: string;
   idempotencyKey: string;
+  logicalActionId?: string;
+  dispatchOrdinal?: number;
+  actionId?: string;
+  args?: Readonly<Record<string, unknown>>;
+  expectedRevision?: number;
+  deadlineMs?: number;
+  scope?: Readonly<Record<string, unknown>>;
+  bindingIdentity?: Readonly<Record<string, unknown>>;
 }>;
 
 type Correlation = ExecutionDispatch & {
@@ -77,49 +97,147 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
   readonly #tombstones = new Map<string, true>();
   readonly #maxTombstones: number;
   readonly #sendCancel: ExecutionCancelSender;
+  readonly #recoveryJournal: StardewLogicalActionRecoveryJournal | undefined;
+  readonly #preparingRequestIds = new Set<string>();
 
-  constructor(sendCancel: ExecutionCancelSender, options: Readonly<{ maxTombstones?: number }> = {}) {
+  constructor(
+    sendCancel: ExecutionCancelSender,
+    options: Readonly<{
+      maxTombstones?: number;
+      recoveryJournal?: StardewLogicalActionRecoveryJournal;
+    }> = {},
+  ) {
     this.#sendCancel = sendCancel;
+    this.#recoveryJournal = options.recoveryJournal;
     this.#maxTombstones = options.maxTombstones ?? 256;
     if (!Number.isSafeInteger(this.#maxTombstones) || this.#maxTombstones < 1)
       throw new Error("invalid_execution_correlation_tombstone_limit");
   }
 
-  beforeWrite(dispatch: ExecutionDispatch): void {
+  beforeWrite(dispatch: ExecutionDispatch): void | Promise<void> {
     assertDispatch(dispatch);
-    if (this.#byRequestId.has(dispatch.requestId) || this.#tombstones.has(dispatch.requestId))
+    if (
+      this.#byRequestId.has(dispatch.requestId) ||
+      this.#tombstones.has(dispatch.requestId) ||
+      this.#preparingRequestIds.has(dispatch.requestId)
+    )
       throw new Error("duplicate_execution_correlation");
-    this.#byRequestId.set(dispatch.requestId, {
-      ...dispatch,
-      executionId: null,
-      uncertain: false,
-      cancelRequired: null,
-      cancelSent: false,
-      cancelPromise: null,
-      cancelSettled: null,
-      resolveCancelSettled: null,
-      rejectCancelSettled: null,
-    });
+
+    if (this.#recoveryJournal === undefined) {
+      this.#insert(dispatch);
+      return;
+    }
+
+    const material = dispatch.recoveryMaterial;
+    if (material === undefined) throw new Error("recovery_material_required");
+    this.#preparingRequestIds.add(dispatch.requestId);
+    const record = {
+      logicalActionId: material.logicalActionId,
+      dispatchOrdinal:
+        material.dispatchOrdinal ?? this.#recoveryJournal.allocateDispatchOrdinal(),
+      ownerId: dispatch.ownerId,
+      epoch: dispatch.epoch,
+      requestId: dispatch.requestId,
+      idempotencyKey: material.request.idempotencyKey,
+      actionId: material.request.action,
+      canonicalRequest: material.request,
+      canonicalArgs: material.request.args,
+      expectedRevision: material.request.expectedRevision,
+      deadlineMs: material.request.deadlineMs,
+      ...(material.scope === undefined ? {} : { scope: material.scope }),
+      ...(material.bindingIdentity === undefined
+        ? {}
+        : { bindingIdentity: material.bindingIdentity }),
+    };
+    return this.#recoveryJournal.prepare(record).then(
+      () => {
+        this.#preparingRequestIds.delete(dispatch.requestId);
+        this.#insert({
+          ...dispatch,
+          idempotencyKey: material.request.idempotencyKey,
+          recoveryMaterial: {
+            ...material,
+            dispatchOrdinal: record.dispatchOrdinal,
+          },
+        });
+      },
+      (error) => {
+        this.#preparingRequestIds.delete(dispatch.requestId);
+        throw error;
+      },
+    );
   }
 
-  bindReceipt(receipt: ExecutionReceipt): void {
+  bindReceipt(receipt: ExecutionReceipt): void | Promise<void> {
     const correlation = this.#byRequestId.get(receipt.requestId);
     if (correlation === undefined) return;
     if (correlation.executionId !== null && correlation.executionId !== receipt.executionId)
       throw new Error("execution_correlation_receipt_mismatch");
+    const material = correlation.recoveryMaterial;
+    const journalRecord =
+      material === undefined || this.#recoveryJournal === undefined
+        ? null
+        : this.#recoveryJournal.record(material.logicalActionId);
+    if (journalRecord?.state === "recovery_required")
+      throw new Error("execution_correlation_recovery_required");
+    if (material !== undefined && material.request.action !== receipt.actionId)
+      throw new Error("execution_correlation_action_mismatch");
     correlation.executionId = receipt.executionId;
     correlation.uncertain = false;
     if (isTerminalExecutionState(receipt.state)) {
+      const settle =
+        this.#recoveryJournal === undefined || material === undefined
+          ? undefined
+          : this.#recoveryJournal.markTerminalSettled(material.logicalActionId);
+      if (settle !== undefined) {
+        return settle.then(
+          () => {
+            correlation.resolveCancelSettled?.();
+            this.#retire(correlation);
+          },
+          (error) => {
+            correlation.uncertain = true;
+            throw error;
+          },
+        );
+      }
       correlation.resolveCancelSettled?.();
       this.#retire(correlation);
       return;
     }
+    const pending =
+      this.#recoveryJournal === undefined || material === undefined
+        ? undefined
+        : this.#recoveryJournal.markRecoveryPending(material.logicalActionId);
+    if (pending !== undefined) {
+      return pending.then(
+        () => {
+          this.#sendPendingCancel(correlation);
+        },
+        (error) => {
+          correlation.uncertain = true;
+          throw error;
+        },
+      );
+    }
     this.#sendPendingCancel(correlation);
   }
 
-  markUncertain(dispatch: ExecutionDispatch): void {
+  markUncertain(dispatch: ExecutionDispatch): void | Promise<void> {
     const correlation = this.#require(dispatch);
-    if (correlation.executionId === null) correlation.uncertain = true;
+    if (correlation.executionId !== null) return;
+    correlation.uncertain = true;
+    const material = correlation.recoveryMaterial;
+    if (this.#recoveryJournal === undefined || material === undefined) return;
+    return this.#recoveryJournal.markSentUnknown(material.logicalActionId).then(
+      () => this.#recoveryJournal!.markRecoveryPending(material.logicalActionId),
+    ).then(
+      () => undefined,
+      (error) => {
+        correlation.uncertain = false;
+        throw error;
+      },
+    );
   }
 
   /** Mark one owner's registrations before any asynchronous work. */
@@ -157,9 +275,80 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
           (correlation): correlation is Correlation & { idempotencyKey: string } =>
             correlation.uncertain && validText(correlation.idempotencyKey ?? ""),
         )
-        .map(({ ownerId, epoch, requestId, idempotencyKey }) =>
-          Object.freeze({ ownerId, epoch, requestId, idempotencyKey }),
-        ),
+        .map((correlation) => {
+          const material = correlation.recoveryMaterial;
+          return Object.freeze({
+            ownerId: correlation.ownerId,
+            epoch: correlation.epoch,
+            requestId: correlation.requestId,
+            idempotencyKey: correlation.idempotencyKey,
+            ...(material === undefined
+              ? {}
+              : {
+                  logicalActionId: material.logicalActionId,
+                  dispatchOrdinal: material.dispatchOrdinal,
+                  actionId: material.request.action,
+                  args: material.request.args,
+                  expectedRevision: material.request.expectedRevision,
+                  deadlineMs: material.request.deadlineMs,
+                  ...(material.scope === undefined ? {} : { scope: material.scope }),
+                  ...(material.bindingIdentity === undefined ? {} : { bindingIdentity: material.bindingIdentity }),
+                }),
+          });
+        }),
+    );
+  }
+
+  /** Rehydrate only nonterminal records from the direct Host recovery journal. */
+  rehydrate(records: readonly StardewLogicalActionRecoveryRecord[]): void {
+    for (const record of records) {
+      if (record.state === "terminal_settled" || record.state === "recovery_required") continue;
+      if (this.#byRequestId.has(record.requestId) || this.#tombstones.has(record.requestId))
+        throw new Error("duplicate_execution_correlation");
+      this.#byRequestId.set(record.requestId, {
+        ownerId: record.ownerId,
+        epoch: record.epoch,
+        requestId: record.requestId,
+        idempotencyKey: record.idempotencyKey,
+        recoveryMaterial: {
+          logicalActionId: record.logicalActionId,
+          dispatchOrdinal: record.dispatchOrdinal,
+          request: record.canonicalRequest,
+          ...(record.scope === undefined ? {} : { scope: record.scope }),
+          ...(record.bindingIdentity === undefined ? {} : { bindingIdentity: record.bindingIdentity }),
+        },
+        executionId: null,
+        uncertain: true,
+        cancelRequired: null,
+        cancelSent: false,
+        cancelPromise: null,
+        cancelSettled: null,
+        resolveCancelSettled: null,
+        rejectCancelSettled: null,
+      });
+    }
+  }
+
+  /** Fence one uncertain lineage after recovery could not prove a receipt. */
+  markRecoveryRequired(dispatch: RecoverableExecutionDispatch): Promise<void> {
+    const correlation = this.#byRequestId.get(dispatch.requestId);
+    if (
+      correlation === undefined ||
+      correlation.ownerId !== dispatch.ownerId ||
+      correlation.epoch !== dispatch.epoch ||
+      correlation.idempotencyKey !== dispatch.idempotencyKey
+    ) {
+      return Promise.reject(new Error("unknown_execution_correlation"));
+    }
+    const material = correlation.recoveryMaterial;
+    if (this.#recoveryJournal === undefined || material === undefined) return Promise.resolve();
+    correlation.uncertain = false;
+    return this.#recoveryJournal.markRecoveryRequired(material.logicalActionId).then(
+      () => undefined,
+      (error) => {
+        correlation.uncertain = false;
+        throw error;
+      },
     );
   }
 
@@ -185,6 +374,20 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     const pending = this.#requestCancel(correlation, reasonCode);
     if (pending === null) throw new Error("unknown_execution_correlation");
     return pending;
+  }
+
+  #insert(dispatch: ExecutionDispatch): void {
+    this.#byRequestId.set(dispatch.requestId, {
+      ...dispatch,
+      executionId: null,
+      uncertain: false,
+      cancelRequired: null,
+      cancelSent: false,
+      cancelPromise: null,
+      cancelSettled: null,
+      resolveCancelSettled: null,
+      rejectCancelSettled: null,
+    });
   }
 
   #require(dispatch: ExecutionDispatch): Correlation {
@@ -237,6 +440,20 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
 function assertDispatch(dispatch: ExecutionDispatch): void {
   assertOwner(dispatch);
   if (!validText(dispatch.requestId)) throw new Error("invalid_execution_correlation_dispatch");
+  if (dispatch.idempotencyKey !== undefined && !validText(dispatch.idempotencyKey))
+    throw new Error("invalid_execution_correlation_dispatch");
+  if (dispatch.recoveryMaterial !== undefined) {
+    if (
+      !validText(dispatch.recoveryMaterial.logicalActionId) ||
+      (dispatch.recoveryMaterial.dispatchOrdinal !== undefined &&
+        (!Number.isSafeInteger(dispatch.recoveryMaterial.dispatchOrdinal) ||
+          dispatch.recoveryMaterial.dispatchOrdinal < 1)) ||
+      dispatch.recoveryMaterial.request.requestId !== dispatch.requestId ||
+      dispatch.recoveryMaterial.request.idempotencyKey !== dispatch.idempotencyKey
+    ) {
+      throw new Error("invalid_execution_correlation_recovery_material");
+    }
+  }
 }
 
 function assertOwner(owner: ExecutionCorrelationOwner): void {

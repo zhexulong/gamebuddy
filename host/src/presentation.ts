@@ -56,7 +56,7 @@ export type GamePresentationAdmissionCapture = Readonly<{
  * entering a Game presentation port.
  */
 export interface HostPresentationAdmissionProvider {
-  capture(): ChatPresentationAdmissionCapture | GamePresentationAdmissionCapture;
+  capture(expectedSourceEventId: string): ChatPresentationAdmissionCapture | GamePresentationAdmissionCapture;
 }
 
 export interface CompanionTextPort {

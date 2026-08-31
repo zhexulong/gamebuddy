@@ -15,11 +15,11 @@ import {
   GameTurnLineageTracker,
 } from "../host-service.js";
 import type {
-  GameIntegrationModule,
+  GameIntegrationAdapter,
   IntegrationActionPolicy,
   IntegrationStateView,
-} from "../integration-module.js";
-import type { IntegrationConnection } from "../integration-types.js";
+} from "../game-integration-adapter.js";
+import type { GameConnection } from "../game-connection.js";
 import { createGameCompanionRuntime, type RuntimeSession } from "../runtime.js";
 import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
 import {
@@ -31,7 +31,6 @@ import {
   type MaterializedGameRuntime,
   materializeExactEnter,
 } from "./continuity-semantic-game-runtime-materializer.internal.js";
-import { createLineageBoundNativeGamePresenter } from "./continuity-semantic-game-runtime-presentation.internal.js";
 
 export type {
   GameRuntimeMaterializer,
@@ -75,10 +74,11 @@ export function createHostGameRuntimeMaterializer(
           options.gameVoicePresentation,
         );
         const runtime = constructed.runtime;
+        const liveSourceAttester = options.liveSourceAttester;
         const loop = new CompanionLoop(
           runtime.session,
           undefined,
-          options.liveSourceAttester,
+          liveSourceAttester,
         );
         const lifecycle = new IntegrationLifecycleSnapshot(
           execution.connection.module,
@@ -120,7 +120,7 @@ export function createHostGameRuntimeMaterializer(
           },
           constructed.turnTracker,
           runtime.bindIntegrationReceipt,
-          options.liveSourceAttester,
+          liveSourceAttester,
           runtime.refreshIntegrationTools,
         );
         const operationalGateEvidence =
@@ -138,7 +138,14 @@ export function createHostGameRuntimeMaterializer(
           runtime.presentation.textPort !== undefined &&
           runtime.presentation.admissionProvider !== undefined
         ) {
-          loop.attachNativeGameContentPresenter(createLineageBoundNativeGamePresenter(runtime.presentation));
+          loop.attachNativeGameContentPresenter(
+            host.createNativeAssistantContentPresenter({
+              sessionId: runtime.presentation.sessionId,
+              locale: runtime.presentation.profile.locale,
+              admissionProvider: runtime.presentation.admissionProvider,
+              textPort: runtime.presentation.textPort,
+            }),
+          );
         }
         if (options.gameVoicePresentation !== undefined)
           host.attachVoiceStopper(
@@ -190,14 +197,13 @@ export function createHostGameRuntimeMaterializer(
  * game-status projection. It owns no lifecycle authority and reads no Chat or
  * origin data.
  */
-
 class IntegrationLifecycleSnapshot {
   #connectionAvailable = true;
   #closing = false;
 
   public constructor(
-    private readonly module: GameIntegrationModule,
-    private readonly connection: IntegrationConnection,
+    private readonly module: GameIntegrationAdapter,
+    private readonly connection: GameConnection,
     private readonly policy?: IntegrationActionPolicy,
   ) {}
 
@@ -303,7 +309,7 @@ type MaterializedGameRuntimeInput = Readonly<{
   }>;
   world: Readonly<{ saveId: string; worldId: string }>;
   runtimeRoot: string;
-  connection: IntegrationConnection;
+  connection: GameConnection;
   gameSessionId: string;
 }>;
 
@@ -317,7 +323,7 @@ async function createMaterializedGameRuntime(
   principal: MaterializedGameRuntimeInput["principal"],
   world: MaterializedGameRuntimeInput["world"],
   runtimeRoot: string,
-  connection: IntegrationConnection,
+  connection: GameConnection,
   presentationBridge: unknown,
   gameSessionId: string,
   gameOperationalGateNonceSha256?: string,
@@ -333,12 +339,13 @@ async function createMaterializedGameRuntime(
     worldId: world.worldId,
   });
   const turnTracker = new GameTurnLineageTracker();
+  const presentationLocale = "zh-CN";
   const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
     if (!isFarmhandPresentationBridge(presentationBridge))
       throw new Error("game_presentation_bridge_unavailable");
     return Object.freeze({
       surface: "game" as const,
-      profile: Object.freeze({ locale: "zh-CN", text: true, speech: null }),
+      profile: Object.freeze({ locale: presentationLocale, text: true, speech: null }),
       sessionId: gameSessionId,
       textPort: createFarmhandCompanionPresentationPort(
         presentationBridge,
@@ -350,23 +357,23 @@ async function createMaterializedGameRuntime(
       ),
     });
   };
-  const workerAttachment =
-    gameOperationalGateNonceSha256 === undefined
-      ? undefined
-      : await (async () => {
-          const modelConfig = resolveModelProfileConfig(
-            await new ModelProfileStore(
-              join(runtimeRoot, "settings", "model-profiles.json"),
-            ).read("game"),
-          );
-          if (modelConfig === null)
-            throw new Error("game_runtime_model_configuration_unavailable");
-          return Object.freeze({
-            modelConfig,
-            gameplaySubagentEnabled: true as const,
-            hostBindingFactory,
-          });
-        })();
+  const gameplayWorkerEnabled = gameOperationalGateNonceSha256 !== undefined;
+  const workerAttachment = gameplayWorkerEnabled
+    ? await (async () => {
+        const modelConfig = resolveModelProfileConfig(
+          await new ModelProfileStore(
+            join(runtimeRoot, "settings", "model-profiles.json"),
+          ).read("game"),
+        );
+        if (modelConfig === null)
+          throw new Error("game_runtime_model_configuration_unavailable");
+        return Object.freeze({
+          modelConfig,
+          gameplaySubagentEnabled: true as const,
+          hostBindingFactory,
+        });
+      })()
+    : undefined;
   const runtime = await createGameCompanionRuntime(
     identity,
     runtimeRoot,
@@ -375,7 +382,7 @@ async function createMaterializedGameRuntime(
     gameOperationalGateNonceSha256 === undefined
       ? undefined
       : Object.freeze({ nonceSha256: gameOperationalGateNonceSha256 }),
-    gameOperationalGateNonceSha256 === undefined ? hostBindingFactory : undefined,
+    workerAttachment === undefined ? hostBindingFactory : undefined,
     workerAttachment,
   );
   return Object.freeze({ runtime, turnTracker });

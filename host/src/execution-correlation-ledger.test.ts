@@ -6,6 +6,7 @@ import { EXECUTION_STATES, type ExecutionReceipt, type ExecutionState } from "./
 const receipt = (state: ExecutionState = "accepted") => ({
   requestId: "request_1",
   executionId: "execution_1",
+  actionId: "move_to_tile",
   state,
   reasonCode: state,
   revision: 1,
