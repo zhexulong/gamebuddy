@@ -7,6 +7,7 @@ import {
   buildWindowsStardewBootstrapGuardian,
   canonicalManifest,
   fixtureFileName,
+  testGuardianFileName,
   fixtureProjectFile,
   guardianOutputRoot,
   helperFileName,
@@ -24,7 +25,7 @@ test.before(async () => {
 
 test("production builder freshly publishes exact Guardian and disposable fixture outputs", winOnly, async () => {
   assert.deepEqual((await readdir(guardianOutputRoot)).sort(), [helperFileName, manifestFileName].sort());
-  assert.deepEqual(await readdir(new URL("../native/windows-stardew-bootstrap-guardian/.dist/fixtures/", import.meta.url)), [fixtureFileName]);
+  assert.deepEqual((await readdir(new URL("../native/windows-stardew-bootstrap-guardian/.dist/fixtures/", import.meta.url))).sort(), [fixtureFileName, testGuardianFileName].sort());
   const helper = await readFile(publication.helperPath);
   const sha256 = createHash("sha256").update(helper).digest("hex");
   assert.equal(publication.sha256, sha256);

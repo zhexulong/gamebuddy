@@ -27,6 +27,9 @@ internal sealed class GuardianLease : IDisposable
         return new GuardianLease(mutex);
     }
 
+    /** A new same-name mutex generation is a recovery exclusion gate only. */
+    internal static GuardianLease CreateRecoveryGate(string name) => Create(name);
+
     private static void ValidateName(string name)
     {
         if (!name.StartsWith("Local\\", StringComparison.Ordinal) || name.Length > 140 || name[6..].Length == 0 ||

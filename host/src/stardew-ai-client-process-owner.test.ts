@@ -71,6 +71,8 @@ function createHarness(input: Readonly<{
     rawPlayerHostProbe: rawProbe,
     createBootstrapIdentity: () => "bootstrap-owner-test",
     createGuardianRevision: () => "guardian-revision-owner-test",
+    createGuardianInstanceId: () => "guardian-instance-owner-test",
+    createGuardianEpoch: () => 1,
     createGuardianLeaseName: () => "Local\\GameBuddy-OwnerTest-Lease",
     createGuardianPlayerJobName: () => "Local\\GameBuddy-OwnerTest-Player",
     createGuardianAiJobName: () => "Local\\GameBuddy-OwnerTest-Ai",

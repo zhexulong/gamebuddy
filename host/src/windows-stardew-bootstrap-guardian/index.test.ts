@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   armAttempt,
-  beginRecovery,
   containRole,
   createPublishedWindowsStardewBootstrapGuardian,
   launchRole,
@@ -31,8 +30,7 @@ const validRequests = [
   exactArmRequest,
   { schemaVersion: 1, operation: "launch_role", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, role: "player_host" },
   { schemaVersion: 1, operation: "contain_role", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, role: "ai_client" },
-  { schemaVersion: 1, operation: "begin_recovery", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
-  { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2 },
+  { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
 ] as const;
 
 test("guardian validates and reconstructs every fixed redacted request grammar", () => {
@@ -47,9 +45,11 @@ test("guardian rejects path, pid, token, bridge, lease substitution, unknown rol
     { ...exactArmRequest, leaseName: "substituted-lease" },
     { schemaVersion: 1, operation: "contain_role", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, bridgeToken: "secret" },
     { schemaVersion: 1, operation: "contain_role", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, role: "bridge" },
-    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 0, attemptId: OPAQUE_2 },
-    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1.5, attemptId: OPAQUE_2 },
-    { schemaVersion: 1, operation: "begin_recovery", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: "gamebuddy-stardew-token" },
+    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 0, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
+    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1.5, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
+    { schemaVersion: 1, operation: "begin_recovery", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
+    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2 },
+    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: "gamebuddy-stardew-token" },
   ]) assert.throws(() => validateGuardianRequest(request), /windows_stardew_bootstrap_guardian_invalid_request/);
 });
 
@@ -69,10 +69,9 @@ test(
         armAttempt(capability, validRequests[0]),
         launchRole(capability, validRequests[1]),
         containRole(capability, validRequests[2]),
-        beginRecovery(capability, validRequests[3]),
-        recoverAttempt(capability, validRequests[4]),
+        recoverAttempt(capability, validRequests[3]),
       ]);
-      assert.deepEqual(results, Array(5).fill("kept_unavailable"));
+      assert.deepEqual(results, Array(4).fill("kept_unavailable"));
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }

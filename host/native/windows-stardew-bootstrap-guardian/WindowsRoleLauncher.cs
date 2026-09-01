@@ -18,7 +18,7 @@ internal sealed class WindowsRoleLauncher
             throw new PlatformNotSupportedException("windows_stardew_bootstrap_guardian_role_abi_invalid");
     }
 
-    internal static LaunchedRole LaunchSuspended(WindowsJobOwner job, string executable, IReadOnlyList<string> arguments, string? cwd, IReadOnlyDictionary<string, string>? environment, CancellationToken closing)
+    internal static LaunchedRole CreateSuspendedRole(WindowsJobOwner job, string executable, IReadOnlyList<string> arguments, string? cwd, IReadOnlyDictionary<string, string>? environment)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         var startup = new STARTUPINFOEX { StartupInfo = new STARTUPINFO() { cb = (uint)Marshal.SizeOf<STARTUPINFOEX>() } };
@@ -37,17 +37,13 @@ internal sealed class WindowsRoleLauncher
             {
                 Marshal.WriteIntPtr(jobsPtr, jobs[0]);
                 if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, (nuint)ProcThreadAttributeJobList, jobsPtr, (nuint)IntPtr.Size, IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_job_attribute_failed");
-                closing.ThrowIfCancellationRequested();
                 var commandLine = new System.Text.StringBuilder(BuildCommandLine(executable, arguments));
                 var environmentBlock = BuildEnvironment(environment);
                 try
                 {
-                    closing.ThrowIfCancellationRequested();
                     var created = CreateProcessW(executable, commandLine, IntPtr.Zero, IntPtr.Zero, false, CreateSuspended | CreateUnicodeEnvironment | ExtendedStartupInfoPresent, environmentBlock, cwd, ref startup, out var processInfo);
                     if (!created) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_stardew_bootstrap_guardian_role_create_failed");
                     process = new SafeKernelHandle(processInfo.hProcess, true); thread = new SafeKernelHandle(processInfo.hThread, true);
-                    if (!IsProcessInJob(process, job.Handle)) throw new InvalidOperationException("windows_stardew_bootstrap_guardian_membership_failed");
-                    if (closing.IsCancellationRequested) throw new OperationCanceledException(closing);
                     return new LaunchedRole(process, thread);
                 }
                 finally { if (environmentBlock != IntPtr.Zero) Marshal.FreeHGlobal(environmentBlock); }
@@ -63,6 +59,11 @@ internal sealed class WindowsRoleLauncher
         {
             if (startup.lpAttributeList != IntPtr.Zero) { DeleteProcThreadAttributeList(startup.lpAttributeList); Marshal.FreeHGlobal(startup.lpAttributeList); }
         }
+    }
+
+    internal static void VerifyMembership(LaunchedRole role, WindowsJobOwner job)
+    {
+        if (!IsProcessInJob(role.Process, job.Handle)) throw new InvalidOperationException("windows_stardew_bootstrap_guardian_membership_failed");
     }
 
     internal static void Resume(LaunchedRole role) { if (ResumeThread(role.Thread) == uint.MaxValue) { TerminateProcess(role.Process, 1); throw new Win32Exception(Marshal.GetLastWin32Error()); } }
@@ -95,7 +96,7 @@ internal sealed class WindowsRoleLauncher
         var entries = environment.Select(pair =>
         {
             if (pair.Key.Length == 0 || pair.Key.Contains('\0') || pair.Key.Contains('=') || pair.Value.Contains('\0') ||
-                pair.Key.StartsWith("GAMEBUDDY_GUARDIAN_CONTROL_", StringComparison.OrdinalIgnoreCase) || !seen.Add(pair.Key))
+                pair.Key.StartsWith("GAMEBUDDY_GUARDIAN_CONTROL_", StringComparison.OrdinalIgnoreCase) || pair.Key.Equals("GAMEBUDDY_GUARDIAN_MODE", StringComparison.OrdinalIgnoreCase) || !seen.Add(pair.Key))
                 throw new InvalidDataException("windows_stardew_bootstrap_guardian_environment_invalid");
             return pair;
         }).OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).ThenBy(pair => pair.Key, StringComparer.Ordinal);
@@ -114,6 +115,13 @@ internal sealed class WindowsRoleLauncher
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct STARTUPINFO { internal uint cb; internal IntPtr lpReserved; internal string? lpDesktop, lpTitle; internal uint dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags; internal ushort wShowWindow, cbReserved2; internal IntPtr lpReserved2, hStdInput, hStdOutput, hStdError; }
     [StructLayout(LayoutKind.Sequential)] private struct STARTUPINFOEX { internal STARTUPINFO StartupInfo; internal IntPtr lpAttributeList; }
     [StructLayout(LayoutKind.Sequential)] private struct PROCESS_INFORMATION { internal IntPtr hProcess, hThread; internal uint dwProcessId, dwThreadId; }
-    internal sealed class LaunchedRole : IDisposable { internal SafeKernelHandle Process { get; } internal SafeKernelHandle Thread { get; } internal LaunchedRole(SafeKernelHandle process, SafeKernelHandle thread) { Process = process; Thread = thread; } public void Dispose() { Thread.Dispose(); Process.Dispose(); } }
+    internal sealed class LaunchedRole : IDisposable
+    {
+        internal SafeKernelHandle Process { get; }
+        internal SafeKernelHandle Thread { get; }
+        internal LaunchedRole(SafeKernelHandle process, SafeKernelHandle thread) { Process = process; Thread = thread; }
+        internal void Abort() { if (!Process.IsInvalid) TerminateProcess(Process, 1); Dispose(); }
+        public void Dispose() { Thread.Dispose(); Process.Dispose(); }
+    }
     internal sealed class SafeKernelHandle : SafeHandleZeroOrMinusOneIsInvalid { internal static SafeKernelHandle Invalid => new(IntPtr.Zero, false); internal SafeKernelHandle() : base(true) { } internal SafeKernelHandle(IntPtr value, bool owns) : base(owns) => SetHandle(value); protected override bool ReleaseHandle() => CloseHandle(handle); [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle); }
 }

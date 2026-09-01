@@ -13,6 +13,17 @@ internal static class Program
 
     private static async Task<int> MainAsync()
     {
+        var mode = Environment.GetEnvironmentVariable("GAMEBUDDY_GUARDIAN_MODE");
+        var pipe = Environment.GetEnvironmentVariable("GAMEBUDDY_GUARDIAN_CONTROL_PIPE");
+        var token = Environment.GetEnvironmentVariable("GAMEBUDDY_GUARDIAN_CONTROL_TOKEN");
+        if ((mode is not ("resident" or "recovery")) || string.IsNullOrWhiteSpace(pipe) || string.IsNullOrWhiteSpace(token)) return Fail();
+        return mode == "recovery"
+            ? await RunRecoveryAsync(pipe, token).ConfigureAwait(false)
+            : await RunResidentAsync(pipe, token).ConfigureAwait(false);
+    }
+
+    private static async Task<int> RunResidentAsync(string pipe, string token)
+    {
         WindowsJobOwner? playerJob = null;
         WindowsJobOwner? aiJob = null;
         GuardianPrivateLaunchIngress? ingress = null;
@@ -21,17 +32,15 @@ internal static class Program
         WindowsRoleLauncher.LaunchedRole? ai = null;
         try
         {
-            var pipe = Environment.GetEnvironmentVariable("GAMEBUDDY_GUARDIAN_CONTROL_PIPE");
-            var token = Environment.GetEnvironmentVariable("GAMEBUDDY_GUARDIAN_CONTROL_TOKEN");
-            if (string.IsNullOrWhiteSpace(pipe) || string.IsNullOrWhiteSpace(token)) return Fail();
             WindowsJobOwner.ValidateAbi();
             WindowsRoleLauncher.ValidateAbi();
             GuardianPrivateLaunchIngress.ValidateAbi();
             using var input = Console.OpenStandardInput();
             using var output = Console.OpenStandardOutput();
             using var closing = new CancellationTokenSource();
-            var publicFrames = Channel.CreateUnbounded<byte[]?>();
-            var publicReader = ReadPublicFramesAsync(input, publicFrames.Writer, closing);
+            var stateGate = new ResidentGuardianStateGate();
+            var publicFrames = Channel.CreateBounded<byte[]?>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = true });
+            var publicReader = ReadPublicFramesAsync(input, publicFrames.Writer, closing, stateGate);
             var armed = false;
             GuardianPrivateLaunchIngress.ArmBinding? armBinding = null;
             GuardianProtocol.Correlation? activeCorrelation = null;
@@ -64,17 +73,35 @@ internal static class Program
                     if (!launchedRoles.Add(role)) return Fail();
                     if (role == GuardianProtocol.Role.PlayerHost ? player is not null : ai is not null) return Fail();
                     var plan = await ingress.ReceiveLaunchPlanAsync(closing.Token).ConfigureAwait(false);
-                    if (closing.IsCancellationRequested || plan is null || plan.Correlation != command.Correlation || plan.Role != role || plan.DeadlineUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) return Fail();
+                    if (closing.IsCancellationRequested || stateGate.IsClosing() || plan is null || plan.Correlation != command.Correlation || plan.Role != role || plan.DeadlineUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) return Fail();
                     var job = role == GuardianProtocol.Role.PlayerHost ? playerJob : aiJob;
-                    var launched = WindowsRoleLauncher.LaunchSuspended(job, plan.Executable, plan.Arguments, plan.WorkingDirectory, plan.Environment, closing.Token);
+#if GUARDIAN_TEST_HOOKS
+                    ResidentGuardianTestHooks.Wait("before-create");
+#endif
+                    WindowsRoleLauncher.LaunchedRole? launched = null;
+                    if (!stateGate.TryRunOpen(() => launched = WindowsRoleLauncher.CreateSuspendedRole(job, plan.Executable, plan.Arguments, plan.WorkingDirectory, plan.Environment))) return Fail();
                     try
                     {
-                        if (closing.IsCancellationRequested || plan.DeadlineUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) throw new TimeoutException();
-                        WindowsRoleLauncher.Resume(launched);
+#if GUARDIAN_TEST_HOOKS
+                        ResidentGuardianTestHooks.Wait("after-create");
+#endif
+                        if (!stateGate.TryRunOpen(() => WindowsRoleLauncher.VerifyMembership(launched!, job))) throw new OperationCanceledException();
+#if GUARDIAN_TEST_HOOKS
+                        ResidentGuardianTestHooks.Wait("after-membership");
+#endif
+                        if (!stateGate.TryRunOpen(() => { })) throw new OperationCanceledException();
+#if GUARDIAN_TEST_HOOKS
+                        ResidentGuardianTestHooks.Wait("before-resume");
+#endif
+                        if (!stateGate.TryRunOpen(() =>
+                        {
+                            if (plan.DeadlineUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) throw new TimeoutException();
+                            WindowsRoleLauncher.Resume(launched!);
+                        })) throw new OperationCanceledException();
                         if (role == GuardianProtocol.Role.PlayerHost) player = launched; else ai = launched;
                         await WriteAsync(output, GuardianProtocol.Response("role_active")).ConfigureAwait(false);
                     }
-                    catch { launched.Dispose(); throw; }
+                    catch { launched?.Abort(); throw; }
                 }
                 else
                 {
@@ -93,23 +120,68 @@ internal static class Program
         catch { return Fail(); }
         finally
         {
-            ingress?.Dispose(); player?.Dispose(); ai?.Dispose();
-            playerJob?.Dispose(); aiJob?.Dispose(); lease?.Dispose();
+            ingress?.Dispose();
+            try { playerJob?.TerminateAndDrain(); } catch { }
+            try { aiJob?.TerminateAndDrain(); } catch { }
+            player?.Dispose(); ai?.Dispose();
+            playerJob?.Dispose(); aiJob?.Dispose();
+            // The exact lease is always the last native ownership handle released.
+            lease?.Dispose();
         }
     }
 
-    private static async Task ReadPublicFramesAsync(Stream stream, ChannelWriter<byte[]?> frames, CancellationTokenSource closing)
+    /** C2 recovery is a separate private session; it opens only post-CAS exact named Jobs. */
+    private static async Task<int> RunRecoveryAsync(string pipe, string token)
+    {
+        GuardianRecoveryIngress? ingress = null;
+        GuardianLease? gate = null;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            WindowsJobRecoveryClassifier.ValidateAbi();
+            ingress = new GuardianRecoveryIngress(pipe, token);
+            var pre = await ingress.ReceivePreCasAsync(timeout.Token).ConfigureAwait(false);
+            if (pre is null) return Fail();
+            try { gate = GuardianLease.CreateRecoveryGate(pre.LeaseName); }
+            catch (InvalidOperationException) { await ingress.ReplyAsync("held").ConfigureAwait(false); return 0; }
+            await ingress.ReplyAsync("acquired").ConfigureAwait(false);
+            var post = await ingress.ReceivePostCasAsync(pre, timeout.Token).ConfigureAwait(false);
+            if (post is null) return Fail();
+            using var input = Console.OpenStandardInput();
+            var line = await ReadLineBoundedAsync(input).WaitAsync(timeout.Token).ConfigureAwait(false);
+            if (line is null) return Fail();
+            var command = GuardianProtocol.Parse(line);
+            if (command.Operation != "recover_attempt" || command.Correlation != post.Correlation || command.RecoveryInstanceId != post.RecoveryInstanceId) return Fail();
+            var expectedRoles = new HashSet<GuardianProtocol.Role> { GuardianProtocol.Role.PlayerHost, GuardianProtocol.Role.AiClient };
+            while (expectedRoles.Count != 0)
+            {
+                var classification = await ingress.ReceiveClassificationAsync(post, timeout.Token).ConfigureAwait(false);
+                if (classification is null || !expectedRoles.Remove(classification.Role)) return Fail();
+                var jobName = classification.Role == GuardianProtocol.Role.PlayerHost ? post.PlayerJobName : post.AiJobName;
+                var result = WindowsJobRecoveryClassifier.Classify(jobName, classification.State);
+                await ingress.ReplyAsync(result).ConfigureAwait(false);
+            }
+            // Explicit authenticated private release is strictly last.
+            if (!await ingress.ReceiveReleaseAsync(timeout.Token).ConfigureAwait(false)) return Fail();
+            gate.Dispose(); gate = null;
+            return 0;
+        }
+        catch { return Fail(); }
+        finally { gate?.Dispose(); ingress?.Dispose(); }
+    }
+
+    private static async Task ReadPublicFramesAsync(Stream stream, ChannelWriter<byte[]?> frames, CancellationTokenSource closing, ResidentGuardianStateGate stateGate)
     {
         try
         {
             while (true)
             {
                 var line = await ReadLineBoundedAsync(stream).ConfigureAwait(false);
-                await frames.WriteAsync(line).ConfigureAwait(false);
-                if (line is null) { closing.Cancel(); break; }
+                if (line is null) { stateGate.Close(); closing.Cancel(); break; }
+                if (stateGate.IsClosing() || !frames.TryWrite(line)) { stateGate.Close(); closing.Cancel(); break; }
             }
         }
-        catch (Exception error) { frames.TryComplete(error); closing.Cancel(); return; }
+        catch (Exception error) { stateGate.Close(); frames.TryComplete(error); closing.Cancel(); return; }
         finally { frames.TryComplete(); }
     }
 
@@ -132,7 +204,7 @@ internal static class Program
         using var document = JsonDocument.Parse(line, new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 8 });
         var root = document.RootElement;
         var operation = root.TryGetProperty("operation", out var op) && op.ValueKind == JsonValueKind.String ? op.GetString() : null;
-        var expected = operation switch { "arm_attempt" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId" }, "launch_role" or "contain_role" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role" }, _ => throw GuardianProtocol.Invalid() };
+                var expected = operation switch { "arm_attempt" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId" }, "launch_role" or "contain_role" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role" }, _ => throw GuardianProtocol.Invalid() };
         GuardianProtocol.RequireExactKeys(root, expected);
         if (!root.TryGetProperty("schemaVersion", out var schema) || schema.GetInt32() != GuardianProtocol.SchemaVersion) throw GuardianProtocol.Invalid();
         return GuardianProtocol.Parse(line);

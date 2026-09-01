@@ -28,12 +28,14 @@ import { bindWindowsStaleLockReclaimer, pathLockPath, withPathLock } from "./pat
 import type { StardewPlayerHostBootstrapClaim } from "./stardew-player-host-bootstrap.js";
 import type { StardewPlayerHostLaunchReservation } from "./stardew-player-host-process-owner.js";
 import * as productionComposer from "./stardew-private-bootstrap-composer.js";
+import type { StardewBootstrapGuardianNativePorts } from "./stardew-bootstrap-guardian.private.js";
 import type {
   StardewExternalPlayerHostPhaseAOwner,
   StardewOwnedPlayerHostPhaseAOwner,
   StardewPrivateBootstrapComposition,
 } from "./stardew-private-bootstrap-composer.js";
 import * as internalComposer from "./stardew-private-bootstrap-composer.internal.js";
+import * as productionCore from "./stardew-private-bootstrap-composer.core.js";
 import {
   consumeOwnedPlayerHostPhaseAOwner,
   stageOwnedPlayerHostPhaseB,
@@ -49,6 +51,7 @@ import {
 import * as composerTestSupportInternal from "./stardew-private-bootstrap-composer.test-support-internal.js";
 import {
   consumeOwnedFarmhandBridgeConnectionForTesting,
+  createOwnerTransitionsForTesting,
   createStardewPrivateBootstrapCompositionForTesting,
   launchOwnedAiClientStageDForTesting,
   materializeAiClientProfileAfterManifestAdmissionForTesting,
@@ -75,7 +78,7 @@ type ProductionInternalComposition = ReturnType<typeof internalComposer.createSt
 type _ProductionInternalCompositionHasExactKeys = Assert<
   HasExactKeys<
     ProductionInternalComposition,
-     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedAiClientStageD" | "consumeOwnedFarmhandBridgeConnection" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner"
+     "composition" | "createOwnedPlayerHostAttachmentFlow" | "readAndCorrelateOwnedPlayerHostSession" | "createOwnedPlayerHostManifestHandoffCoordinator" | "materializeAiClientProfileAfterManifestAdmission" | "launchOwnedAiClientStageD" | "consumeOwnedFarmhandBridgeConnection" | "launchOwnedPlayerHostStageC" | "reserveOwnedPlayerHostPhaseAForActivation" | "stageOwnedPlayerHostPhaseB" | "terminalizeOwnedPlayerHostOwner" | "quarantineOwnedPlayerHostOwner" | "createStardewBootstrapGuardianOwner"
   >
 >;
 type _ProductionInternalCompositionRetainsPublicComposition = Assert<
@@ -84,7 +87,7 @@ type _ProductionInternalCompositionRetainsPublicComposition = Assert<
 
 const EXE = process.platform === "win32" ? "C:\\GameBuddy\\ai-client.exe" : "/gamebuddy/ai-client";
 const CREATION = "20250102030405.000000+000";
-const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v3";
+const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v4";
 const OWNER_FILE = "owner.json";
 
 function signedAttachmentSession(sessionToken: string, launchGeneration = "player-generation-1") {
@@ -361,6 +364,8 @@ function createHarness(input: Readonly<{
       return input.bootstrapIds?.[index] ?? `bootstrap-${index + 1}`;
     },
      createGuardianRevision: () => input.guardianRevisions?.[guardianRevisionIndex++] ?? "revision-1",
+     createGuardianInstanceId: () => "guardian-instance-1",
+     createGuardianEpoch: () => 1,
      createGuardianLeaseName: () => input.guardianLeaseNames?.[guardianLeaseNameIndex++] ?? "Local\\GameBuddy-Test-Lease-1",
      createGuardianPlayerJobName: () => input.guardianPlayerJobNames?.[guardianPlayerJobNameIndex++] ?? "Local\\GameBuddy-Test-PlayerJob-1",
      createGuardianAiJobName: () => input.guardianAiJobNames?.[guardianAiJobNameIndex++] ?? "Local\\GameBuddy-Test-AiJob-1",
@@ -380,10 +385,12 @@ function createHarness(input: Readonly<{
     ...baseDependencies,
     staging: input.staging ?? defaultStagingDependencies(),
   };
-  const composition = createStardewPrivateBootstrapCompositionForTesting(dependencies).composition;
+  const testCore = createStardewPrivateBootstrapCompositionForTesting(dependencies);
+  const composition = testCore.composition;
 
   return {
     dependencies,
+    testCore,
     composition,
     spawnCalls,
     playerHostSpawnCalls,
@@ -511,9 +518,18 @@ function ownerPath(root: string, bootstrapId = "bootstrap-1"): string {
   return join(root, "stardew-private-bootstrap", bootstrapId, OWNER_FILE);
 }
 
-function expectedGuardianBinding(input: Readonly<{ revision?: string; leaseName?: string; playerJobName?: string; aiJobName?: string }> = {}) {
+function createOwnerTransitions(
+  harness: ReturnType<typeof createHarness>,
+  input: Parameters<typeof createOwnerTransitionsForTesting>[1],
+) {
+  return createOwnerTransitionsForTesting(harness.testCore, input);
+}
+
+function expectedGuardianBinding(input: Readonly<{ revision?: string; instanceId?: string; epoch?: number; leaseName?: string; playerJobName?: string; aiJobName?: string }> = {}) {
   return {
-    revision: input.revision ?? "revision-1",
+    bindingRevision: input.revision ?? "revision-1",
+    guardianInstanceId: input.instanceId ?? "guardian-instance-1",
+    guardianEpoch: input.epoch ?? 1,
     leaseName: input.leaseName ?? "Local\\GameBuddy-Test-Lease-1",
     playerJobName: input.playerJobName ?? "Local\\GameBuddy-Test-PlayerJob-1",
     aiJobName: input.aiJobName ?? "Local\\GameBuddy-Test-AiJob-1",
@@ -536,6 +552,12 @@ function expectedOwnedRecord(input: Readonly<{
     playerId: input.playerId ?? "player-1",
     companionId: input.companionId ?? "companion-1",
     guardian: expectedGuardianBinding(),
+    ownerRecordRevision: state === "quarantined" ? 2 : 1,
+    state,
+    guardianState: state === "reserved" ? "reserved" : "quarantined",
+    playerHostState: state === "reserved" ? "reserved" : "quarantined",
+    aiClientState: state === "reserved" ? "reserved" : "quarantined",
+    recoveryInstanceId: null,
      playerHost: {
       kind: "launch_reserved",
       launchGeneration: input.playerHostGeneration ?? "player-generation-1",
@@ -545,7 +567,6 @@ function expectedOwnedRecord(input: Readonly<{
       launchGeneration: input.aiGeneration ?? "generation-1",
     },
     expiresAtMs: input.expiresAtMs ?? 5_000,
-    state,
     cleanupDisposition: state === "reserved" ? "pending" : "retry_required",
     managedPaths: [OWNER_FILE],
   };
@@ -566,23 +587,186 @@ function expectedRecord(input: Readonly<{
     playerId: input.playerId ?? "player-1",
     companionId: input.companionId ?? "companion-1",
     guardian: expectedGuardianBinding(),
+    ownerRecordRevision: state === "quarantined" ? 2 : 1,
+    state,
+    guardianState: state === "reserved" ? "reserved" : "quarantined",
+    playerHostState: state === "reserved" ? "reserved" : "quarantined",
+    aiClientState: state === "reserved" ? "reserved" : "quarantined",
+    recoveryInstanceId: null,
      playerHost: { kind: "external_unattested" },
     aiClient: {
       kind: "launch_reserved",
       launchGeneration: input.generation ?? "generation-1",
     },
     expiresAtMs: input.expiresAtMs ?? 5_000,
-    state,
     cleanupDisposition: state === "reserved" ? "pending" : "retry_required",
     managedPaths: [OWNER_FILE],
   };
 }
+
+test("v4 owner transition CAS enforces legal lifecycle transitions, immutable fences, and exact revisions", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  const owner = await reserveFresh(harness, root);
+  const transitions = createOwnerTransitions(harness, {
+    ownerPath: ownerPath(root),
+    containmentRoot: root,
+    immutableFence: {
+      bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1",
+      guardian: expectedGuardianBinding(),
+    },
+  });
+  const armed = await transitions.arm(1);
+  assert.equal(armed.ownerRecordRevision, 2);
+  assert.equal(armed.guardianState, "armed");
+  assert.equal(armed.playerHostState, "armed");
+  assert.equal(armed.aiClientState, "armed");
+  const active = await transitions.activate("playerHost", 2);
+  assert.equal(active.ownerRecordRevision, 3);
+  assert.equal(active.playerHostState, "active");
+  const closing = await transitions.beginControlledClose(3);
+  assert.equal(closing.ownerRecordRevision, 4);
+  const playerContained = await transitions.containControlledRole("playerHost", 4);
+  assert.equal(playerContained.ownerRecordRevision, 5);
+  await assert.rejects(transitions.finalizeControlledContained(5), /transition_invalid/);
+  const bothContained = await transitions.containControlledRole("aiClient", 5);
+  const final = await transitions.finalizeControlledContained(bothContained.ownerRecordRevision);
+  assert.equal(final.ownerRecordRevision, 7);
+  assert.equal(final.state, "contained");
+  await assert.rejects(transitions.arm(1), /transition_mismatch/);
+  await assert.rejects(transitions.beginRecovery(7, "recovery-1"), /transition_invalid/);
+});
+
+test("v4 recovery CAS binds the exact recovery actor and only finalizes both contained roles", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  const owner = await reserveFresh(harness, root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: ownerPath(root), containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  const recovering = await transition.beginRecovery(1, "recovery-1");
+  const partial = await transition.containRecoveringRole("playerHost", 2, "recovery-1");
+  assert.equal(partial.playerHostState, "contained");
+  assert.equal(partial.aiClientState, "reserved");
+  await assert.rejects(transition.containRecoveringRole("aiClient", 3, "recovery-2"), /transition_mismatch/);
+  await assert.rejects(transition.finalizeRecoveredContained(3, "recovery-1"), /transition_invalid/);
+  const both = await transition.containRecoveringRole("aiClient", 3, "recovery-1");
+  const final = await transition.finalizeRecoveredContained(both.ownerRecordRevision, "recovery-1");
+  assert.equal(final.state, "contained");
+  assert.equal(final.ownerRecordRevision, 5);
+});
+
+test("v4 recovery quarantine requires its exact actor, preserves contained roles, and clears it only in terminal successor", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  const recovering = await transition.beginRecovery(1, "recovery-1");
+  const partial = await transition.containRecoveringRole("playerHost", recovering.ownerRecordRevision, "recovery-1");
+  const preservedBytes = await readFile(path, "utf8");
+  await assert.rejects(transition.quarantine(partial.ownerRecordRevision), /transition_invalid/);
+  assert.equal(await readFile(path, "utf8"), preservedBytes, "generic quarantine must not rewrite recovery bytes");
+  await assert.rejects(transition.quarantineRecovery(partial.ownerRecordRevision, "recovery-2"), /transition_mismatch/);
+  assert.equal(await readFile(path, "utf8"), preservedBytes, "wrong recovery actor must not rewrite bytes");
+  await assert.rejects(transition.quarantineRecovery(partial.ownerRecordRevision - 1, "recovery-1"), /transition_mismatch/);
+  assert.equal(await readFile(path, "utf8"), preservedBytes, "stale recovery revision must not rewrite bytes");
+  const quarantined = await transition.quarantineRecovery(partial.ownerRecordRevision, "recovery-1");
+  assert.deepEqual({ state: quarantined.state, guardian: quarantined.guardianState, player: quarantined.playerHostState, ai: quarantined.aiClientState, recovery: quarantined.recoveryInstanceId },
+    { state: "quarantined", guardian: "quarantined", player: "contained", ai: "quarantined", recovery: null });
+});
+
+test("v4 CAS rejects stale, v3, altered-fence, illegal in-memory successors, and unreachable bytes without changing prior bytes", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const path = ownerPath(root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: path, containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  const initialBytes = await readFile(path, "utf8");
+  await assert.rejects(transition.activate("playerHost", 1), /transition_invalid/);
+  assert.equal(await readFile(path, "utf8"), initialBytes, "illegal successor must not write");
+  await assert.rejects(transition.arm(2), /transition_mismatch/);
+  assert.equal(await readFile(path, "utf8"), initialBytes, "stale revision must not write");
+  await writeFile(path, initialBytes.replace("/v4", "/v3"), "utf8");
+  const v3Bytes = await readFile(path, "utf8");
+  await assert.rejects(transition.arm(1), /invalid_stardew_bootstrap_owner/);
+  assert.equal(await readFile(path, "utf8"), v3Bytes, "explicit v3 is never rewritten");
+  await writeFile(path, initialBytes, "utf8");
+  await writeFile(path, initialBytes.replace("\"bindingRevision\":\"revision-1\"", "\"bindingRevision\":\"altered-guardian\""), "utf8");
+  const alteredBytes = await readFile(path, "utf8");
+  await assert.rejects(transition.arm(1), /transition_mismatch/);
+  assert.equal(await readFile(path, "utf8"), alteredBytes, "immutable-fence mismatch must not write");
+  for (const unreachable of [
+    { ...expectedRecord(), state: "recovering", guardianState: "recovering", recoveryInstanceId: "recovery-1", playerHostState: "reserved", aiClientState: "active" },
+    { ...expectedRecord(), state: "recovering", guardianState: "recovering", recoveryInstanceId: "recovery-1", playerHostState: "armed", aiClientState: "closing" },
+    { ...expectedRecord(), state: "recovering", guardianState: "recovering", recoveryInstanceId: "recovery-1", playerHostState: "closing", aiClientState: "active" },
+    { ...expectedRecord(), guardianState: "armed", playerHostState: "reserved", aiClientState: "armed" },
+  ]) {
+    await writeFile(path, `${JSON.stringify(unreachable)}\n`, "utf8");
+    const unreachableBytes = await readFile(path, "utf8");
+    await assert.rejects(transition.quarantine(1), /invalid_stardew_bootstrap_owner/);
+    assert.equal(await readFile(path, "utf8"), unreachableBytes, "unreachable predecessor is never rewritten");
+  }
+});
+
+test("v4 recovery CAS rejects takeover and requires its exact actor for every recovery mutation", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: ownerPath(root), containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  const recovering = await transition.beginRecovery(1, "recovery-1");
+  await assert.rejects(transition.beginRecovery(recovering.ownerRecordRevision, "recovery-2"), /transition_invalid/);
+  await assert.rejects(transition.containRecoveringRole("playerHost", recovering.ownerRecordRevision, "recovery-2"), /transition_mismatch/);
+  await assert.rejects(transition.finalizeRecoveredContained(recovering.ownerRecordRevision, "recovery-2"), /transition_mismatch/);
+});
+
+test("v4 owner quarantine is monotonic, fence-bound, preserves contained roles, and strict-rereads", async () => {
+  const harness = createHarness();
+  const root = await createRoot();
+  await reserveFresh(harness, root);
+  const transition = createOwnerTransitions(harness, {
+    ownerPath: ownerPath(root), containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding() },
+  });
+  const quarantined = await transition.quarantine(1);
+  assert.equal(quarantined.ownerRecordRevision, 2);
+  assert.equal(quarantined.state, "quarantined");
+  assert.equal(quarantined.cleanupDisposition, "retry_required");
+  await assert.rejects(transition.quarantine(1), /transition_mismatch/);
+  const alteredFence = createOwnerTransitions(harness, {
+    ownerPath: ownerPath(root), containmentRoot: root,
+    immutableFence: { bootstrapId: "bootstrap-1", playerId: "player-1", companionId: "companion-1", guardian: expectedGuardianBinding({ revision: "other" }) },
+  });
+  await assert.rejects(alteredFence.quarantine(2), /transition_mismatch/);
+  assert.equal(Object.isFrozen(quarantined), true);
+  assert.equal(Object.isFrozen(quarantined.guardian), true);
+});
+
+test("public composer declaration excludes guardian native record facts", async () => {
+  const source = await readFile(join(resolve(dirname(fileURLToPath(import.meta.url)), "..", "src"), "stardew-private-bootstrap-composer.ts"), "utf8");
+  for (const forbidden of ["StardewGuardianBinding", "StardewPrivateBootstrapOwnerRecord", "StardewExternalPlayerHostBootstrapOwnerRecord", "StardewOwnedPlayerHostBootstrapOwnerRecord", "leaseName", "playerJobName", "aiJobName", "ownerRecordRevision", "schema"]) assert.equal(source.includes(forbidden), false, forbidden);
+});
 
 test("production composer exports no testing or Phase-B staging entry", () => {
   assert.deepEqual(Object.keys(productionComposer), ["createStardewPrivateBootstrapComposition"]);
   for (const forbidden of ["Testing", "testing", "Stage", "stage", "Dependencies", "dependencies"]) {
     assert.equal(Object.keys(productionComposer).some((key) => key.includes(forbidden)), false);
   }
+});
+
+test("production core namespace has no injectable owner-transition testing factory", () => {
+  assert.equal("createStardewBootstrapOwnerTransitionPrimitivesForTesting" in productionCore, false);
+  assert.equal(Object.keys(productionCore).some((key) => /OwnerTransitionPersistence|TransitionPrimitivesForTesting/.test(key)), false);
 });
 
 test("production internal exports no testing constructor, raw owner view, or binder", () => {
@@ -612,8 +796,11 @@ test("production internal exports no testing constructor, raw owner view, or bin
   ]);
   assert.deepEqual(Object.keys(composerTestSupportInternal).sort(), [
     "bindStardewPrivateBootstrapOwnerTestSupport",
+    "consumeOwnedFarmhandBridgeConnectionForTesting",
     "consumeStagedOwnedPlayerHostPhaseBForTesting",
+    "createOwnerTransitionsForTesting",
     "createStardewPrivateBootstrapCompositionForTesting",
+    "launchOwnedAiClientStageDForTesting",
     "launchOwnedPlayerHostStageCForTesting",
     "materializeAiClientProfileAfterManifestAdmissionForTesting",
   ]);
@@ -650,18 +837,28 @@ test("only the production internal and dedicated test-only adapter import the co
   assert.equal(publicComposerSource.includes("as StardewPrivateBootstrapComposition"), false);
   assert.equal(publicComposerSource.includes("launchOwnedPlayerHostStageC"), false);
 
-  assert.deepEqual(coreImporters.sort(), [
-    "stardew-private-bootstrap-composer.internal.ts",
-    "stardew-private-bootstrap-composer.test-support-internal.ts",
-  ]);
-  assert.deepEqual(testInternalImporters.sort(), [
-    "stardew-private-bootstrap-composer.test-support.ts",
+   assert.deepEqual(coreImporters.sort(), [
+     "stardew-bootstrap-guardian.private.test.ts",
+     "stardew-bootstrap-guardian.private.ts",
+     "stardew-owned-farmhand-game-session-materializer.internal.ts",
+     "stardew-private-bootstrap-composer.internal.ts",
+     "stardew-private-bootstrap-composer.test-support-internal.ts",
+     "stardew-private-bootstrap-composer.test.ts",
+     "stardew-production-lifecycle-coordinator.internal.ts",
+     "stardew-production-lifecycle-coordinator.test-support-internal.ts",
+   ]);
+   assert.deepEqual(testInternalImporters.sort(), [
+     "stardew-bootstrap-guardian.private.test.ts",
+     "stardew-private-bootstrap-composer.test-support.ts",
     "stardew-private-bootstrap-composer.test.ts",
     "stardew-production-lifecycle-coordinator.internal.test.ts",
     "stardew-production-lifecycle-coordinator.test-support-internal.ts",
   ]);
-  const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
-  assert.doesNotMatch(productionInternal, /test-support|ForTesting|TestView|TestingComposition/);
+   const productionCoreSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.core.ts"), "utf8");
+   const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
+    assert.doesNotMatch(productionCoreSource, /from\s+["'][^"']*stardew-bootstrap-guardian\.private\.js["']/);
+    assert.doesNotMatch(productionCoreSource, /export\s+(?:type\s+)?(?:function|type)\s+(?:createStardewBootstrapOwnerTransitionPrimitivesForTesting|OwnerTransitionPersistence)/);
+   assert.doesNotMatch(productionInternal, /test-support|ForTesting|TestView|TestingComposition/);
 });
 
 test("production internal composition exposes only the private C1 materializer while public facade remains unchanged", () => {
@@ -669,11 +866,15 @@ test("production internal composition exposes only the private C1 materializer w
   const internal = internalComposer.createStardewPrivateBootstrapComposition();
   assert.deepEqual(Object.keys(internal).sort(), [
     "composition",
+    "consumeOwnedFarmhandBridgeConnection",
     "createOwnedPlayerHostAttachmentFlow",
     "createOwnedPlayerHostManifestHandoffCoordinator",
+    "createStardewBootstrapGuardianOwner",
+    "launchOwnedAiClientStageD",
     "launchOwnedPlayerHostStageC",
     "materializeAiClientProfileAfterManifestAdmission",
     "quarantineOwnedPlayerHostOwner",
+    "readAndCorrelateOwnedPlayerHostSession",
     "reserveOwnedPlayerHostPhaseAForActivation",
     "stageOwnedPlayerHostPhaseB",
     "terminalizeOwnedPlayerHostOwner",
@@ -771,6 +972,8 @@ test("test-support accepts only raw OS, identity, and clock dependencies", () =>
     rawPlayerHostProbe: (() => null) as StardewAiClientProcessProbe,
      createBootstrapIdentity: () => "bootstrap-1",
      createGuardianRevision: () => "revision-1",
+     createGuardianInstanceId: () => "guardian-instance-1",
+     createGuardianEpoch: () => 1,
      createGuardianLeaseName: () => "Local\\GameBuddy-Test-Lease-1",
      createGuardianPlayerJobName: () => "Local\\GameBuddy-Test-PlayerJob-1",
      createGuardianAiJobName: () => "Local\\GameBuddy-Test-AiJob-1",
@@ -810,22 +1013,17 @@ test("test-support accepts only raw OS, identity, and clock dependencies", () =>
   ]);
 });
 
-test("exact internal claim/reservation pair writes only the v3 external-player/manager-generation record", async () => {
+test("exact internal claim/reservation pair writes only the v4 external-player/manager-generation record", async () => {
   const harness = createHarness();
   const root = await createRoot();
   const owner = await reserveFresh(harness, root);
 
-  assert.deepEqual(owner.record, expectedRecord());
+  const persisted = JSON.parse(await readFile(ownerPath(root), "utf8"));
+  assert.deepEqual(persisted, expectedRecord());
   assert.equal(Object.isFrozen(owner), true);
-  assert.equal(Object.isFrozen(owner.record), true);
-  assert.equal(Object.isFrozen(owner.record.guardian), true);
-  assert.equal(Object.isFrozen(owner.record.playerHost), true);
-  assert.equal(Object.isFrozen(owner.record.aiClient), true);
-  assert.equal(Object.isFrozen(owner.record.managedPaths), true);
-  assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")), expectedRecord());
-  const serialized = JSON.stringify(owner.record);
-  for (const forbidden of ["browserSessionId", "pid", "creationDate", "executable", "args", "connected", "attached"]) {
-    assert.equal(serialized.includes(forbidden), false);
+  assert.deepEqual(Reflect.ownKeys(owner).sort(), ["consumeAiClientLaunch", "quarantine"]);
+  for (const forbidden of ["record", "transactionDirectory", "guardian", "leaseName", "playerJobName", "aiJobName"]) {
+    assert.equal(forbidden in owner, false);
   }
 });
 
@@ -839,13 +1037,14 @@ test("owner persistence generates exact single-separator Local guardian names be
   const root = await createRoot();
   const owner = await reserveFresh(harness, root);
 
-  assert.deepEqual(owner.record.guardian, {
-    revision: "guardian-revision-1",
+  assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")).guardian, {
+    bindingRevision: "guardian-revision-1",
+    guardianInstanceId: "guardian-instance-1",
+    guardianEpoch: 1,
     leaseName: "Local\\lease_name",
     playerJobName: "Local\\player_job_name",
     aiJobName: "Local\\ai_job_name",
   });
-  assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")).guardian, owner.record.guardian);
 });
 
 test("owner persistence rejects invalid or non-distinct Guardian identities before writing owner.json", async () => {
@@ -1753,7 +1952,8 @@ test("external AI launch fresh-checks exact expiry inside its active callback", 
 
 test("quarantine inside an active consume callback synchronously rejects launch without spawning", async () => {
   const harness = createHarness();
-  const owner = await reserveFresh(harness, await createRoot());
+  const root = await createRoot();
+  const owner = await reserveFresh(harness, root);
   let releasePersistence!: () => void;
   const persistenceGate = new Promise<void>((resolveGate) => { releasePersistence = resolveGate; });
   bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(() => helperChild(async (request) => {
@@ -1783,7 +1983,7 @@ test("quarantine inside an active consume callback synchronously rejects launch 
   );
   releasePersistence();
   await pendingQuarantine;
-  assert.deepEqual(owner.record, expectedRecord({ state: "quarantined" }));
+  assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")), expectedRecord({ state: "quarantined" }));
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
   assert.throws(
     () => owner.consumeAiClientLaunch(() => undefined),
@@ -1793,7 +1993,8 @@ test("quarantine inside an active consume callback synchronously rejects launch 
 
 test("quarantine synchronously closes launch authority before its first await and repeated calls share one promise", async () => {
   const harness = createHarness();
-  const owner = await reserveFresh(harness, await createRoot());
+  const root = await createRoot();
+  const owner = await reserveFresh(harness, root);
   let releasePersistence!: () => void;
   const persistenceGate = new Promise<void>((resolveGate) => { releasePersistence = resolveGate; });
   let quarantineWriteRelease = 0;
@@ -1818,7 +2019,7 @@ test("quarantine synchronously closes launch authority before its first await an
   releasePersistence();
   await first;
   await owner.quarantine();
-  assert.deepEqual(owner.record, expectedRecord({ state: "quarantined" }));
+  assert.deepEqual(JSON.parse(await readFile(ownerPath(root), "utf8")), expectedRecord({ state: "quarantined" }));
   assert.deepEqual(harness.composition.aiClientProcessOwner.readStatus(), { kind: "idle" });
 });
 

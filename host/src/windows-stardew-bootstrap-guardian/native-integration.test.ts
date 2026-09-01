@@ -17,6 +17,7 @@ function request(operation: string, extra = "") {
 
 async function runHelper(input: string) {
   const env = { ...process.env };
+  delete env.GAMEBUDDY_GUARDIAN_MODE;
   delete env.GAMEBUDDY_GUARDIAN_CONTROL_PIPE;
   delete env.GAMEBUDDY_GUARDIAN_CONTROL_TOKEN;
   const child = spawn(helperPath, [], {
@@ -46,7 +47,7 @@ async function runHelper(input: string) {
   return { ...result, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
 }
 
-test("published resident Guardian fails closed without private launcher credentials", async (t) => {
+test("published Guardian fails closed without exact private mode and rejects deleted recovery grammar", async (t) => {
   if (process.platform !== "win32") {
     t.skip("Windows-only compiled Guardian integration");
     return;
@@ -59,6 +60,8 @@ test("published resident Guardian fails closed without private launcher credenti
   for (const input of [
     "",
     request("arm_attempt"),
+    request("begin_recovery", ',"recoveryInstanceId":"53ee44a2-d70b-4a49-a857-1ca4883e5d2e"'),
+    request("recover_attempt", ',"recoveryInstanceId":"53ee44a2-d70b-4a49-a857-1ca4883e5d2e"'),
     request("arm_attempt", ',"sensitive":"token"'),
     request("arm_attempt").replace(/\n$/, "embedded\n"),
     `${request("arm_attempt")}${"x".repeat(70_000)}`,

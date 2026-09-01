@@ -1,4 +1,5 @@
 import {
+  createStardewBootstrapGuardianOwnerBinding,
   createStardewPrivateBootstrapTestCore,
   type StardewOwnedPlayerHostPhaseACoreTestView,
   type StardewOwnedAiClientStageDResult,
@@ -6,6 +7,11 @@ import {
   type StardewPrivateFarmhandBridgeConnection,
   type StardewPrivateBootstrapCoreDependencies,
 } from "./stardew-private-bootstrap-composer.core.js";
+import {
+  createStardewBootstrapGuardianOwner,
+  type StardewBootstrapGuardianNativePorts,
+  type StardewBootstrapGuardianOwner,
+} from "./stardew-bootstrap-guardian.private.js";
 import type { AdmittedStardewInstallation } from "./stardew-installation-admission.js";
 import type { StardewManifestHandoffCoordinator } from "./stardew-private-bootstrap-composer.core.js";
 import type {
@@ -20,6 +26,7 @@ export type {
 } from "./stardew-private-bootstrap-composer.core.js";
 
 export type StardewOwnedPlayerHostPhaseATestView = StardewOwnedPlayerHostPhaseACoreTestView;
+
 export type StardewManifestAdmissionForTesting = Awaited<ReturnType<StardewManifestHandoffCoordinator["confirmAndAdmit"]>>;
 
 /**
@@ -66,6 +73,11 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   quarantineOwnedPlayerHostOwner(
     owner: StardewOwnedPlayerHostPhaseAOwner,
   ): Promise<void>;
+  createStardewBootstrapGuardianOwner(
+    owner: StardewOwnedPlayerHostPhaseAOwner,
+    native: StardewBootstrapGuardianNativePorts,
+  ): StardewBootstrapGuardianOwner;
+  createOwnerTransitionsForTesting: ReturnType<typeof createStardewPrivateBootstrapTestCore>["createOwnerTransitionsForTesting"];
 }>;
 
 const testOwnerBinders = new WeakMap<
@@ -111,6 +123,10 @@ const testStageCLaunchers = new WeakMap<
     installation: AdmittedStardewInstallation,
   ) => Promise<StardewOwnedPlayerHostStageCResult>
 >();
+const testOwnerTransitionFactories = new WeakMap<
+  StardewPrivateBootstrapTestingComposition,
+  StardewPrivateBootstrapTestingComposition["createOwnerTransitionsForTesting"]
+>();
 
 function registerTestingComposition(
   testingComposition: StardewPrivateBootstrapTestingComposition,
@@ -134,7 +150,9 @@ function registerTestingComposition(
   testStageDLaunchers.set(composition, testingComposition.launchOwnedAiClientStageD);
   testBridgeConnectionConsumers.set(composition, testingComposition.consumeOwnedFarmhandBridgeConnection);
   testStageCLaunchers.set(composition, testingComposition.launchOwnedPlayerHostStageC);
-  return Object.freeze({ ...testingComposition, composition });
+  const registered = Object.freeze({ ...testingComposition, composition });
+  testOwnerTransitionFactories.set(registered, testingComposition.createOwnerTransitionsForTesting);
+  return registered;
 }
 
 /**
@@ -148,8 +166,23 @@ export function createStardewPrivateBootstrapCompositionForTesting(
   const core = createStardewPrivateBootstrapTestCore(dependencies);
   return registerTestingComposition(Object.freeze({
     ...core,
+    createStardewBootstrapGuardianOwner: (owner, native) =>
+      createStardewBootstrapGuardianOwner(createStardewBootstrapGuardianOwnerBinding(owner), native),
     materializeAiClientProfileAfterManifestAdmission: core.materializeAiClientProfileAfterManifestAdmission,
   }));
+}
+
+/**
+ * Creates CAS transitions only through a registered test composition. A bare
+ * owner path, fence, and fault persistence object cannot reach the core engine.
+ */
+export function createOwnerTransitionsForTesting(
+  testingComposition: StardewPrivateBootstrapTestingComposition,
+  input: Parameters<StardewPrivateBootstrapTestingComposition["createOwnerTransitionsForTesting"]>[0],
+): ReturnType<StardewPrivateBootstrapTestingComposition["createOwnerTransitionsForTesting"]> {
+  const factory = testOwnerTransitionFactories.get(testingComposition);
+  if (factory === undefined) throw new Error("stardew_private_bootstrap_test_composition_not_registered");
+  return factory(input);
 }
 
 export function bindStardewPrivateBootstrapOwnerTestSupport(
