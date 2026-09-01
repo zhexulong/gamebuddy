@@ -7,16 +7,18 @@ public sealed class ProductionEntryBoundaryTests
     {
         var source = File.ReadAllText(DesktopProgramSource());
 
-        Assert.Contains("CurrentUserRootLayout.DeriveForCurrentUser()", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("DeriveForTesting", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("Fixtures", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("ICurrentUserRegistrationStore", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("ILocalApplicationDataProvider", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("--root", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("GAMEBUDDY_ROOT", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("CreateForCurrentUser", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("RemoveForCurrentUserAfterCallerPolicy", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("Process.", source, StringComparison.Ordinal);
+        Assert.Contains("InstalledGenerationAdmission.FromCurrentUserRegistration()", source, StringComparison.Ordinal);
+        var productionPath = source[source.IndexOf("private static async Task<DesktopLaunchResult> RunProductionAsync", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("DeriveForTesting", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("Fixtures", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("ICurrentUserRegistrationStore", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("ICurrentUserRootRegistrationReader", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("ILocalApplicationDataProvider", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("--root", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("GAMEBUDDY_ROOT", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateForCurrentUser", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("RemoveForCurrentUserAfterCallerPolicy", productionPath, StringComparison.Ordinal);
+        Assert.DoesNotContain("Process.", productionPath, StringComparison.Ordinal);
     }
 
     [Fact]

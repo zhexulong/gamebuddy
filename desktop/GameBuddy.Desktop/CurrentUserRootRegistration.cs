@@ -25,6 +25,12 @@ internal interface ILocalApplicationDataProvider
     string GetLocalApplicationDataPath();
 }
 
+// Internal test seam: callers supply registration authority, never a root path.
+internal interface ICurrentUserRootRegistrationReader
+{
+    CurrentUserRootRegistrationRecord Read();
+}
+
 internal sealed class RootRegistrationUnavailableException : Exception
 {
     internal RootRegistrationUnavailableException() : base("GameBuddy root registration is unavailable.")

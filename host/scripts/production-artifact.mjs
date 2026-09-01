@@ -18,6 +18,8 @@ const GENERATIONS = "generations";
 const PUBLISHER_LOCK = ".publisher.lock";
 const PUBLISHER_LOCK_WAIT_MS = 5_000;
 const PUBLISHER_LOCK_RETRY_MS = 50;
+const GUARDIAN_ADMISSION = "guardian-admission.json";
+const GUARDIAN_ADMISSION_SCHEMA = "gamebuddy-host-guardian-admission/v1";
 const slash = (path) => path.replaceAll("\\", "/");
 const inside = (root, path) => { const value = relative(root, path); return value === "" || (!value.startsWith(`..${sep}`) && value !== ".." && !isAbsolute(value)); };
 const digest = (content) => createHash("sha256").update(content).digest("hex");
@@ -468,7 +470,7 @@ export async function reachableProductionModules({ artifactRoot, artifactFiles, 
 async function verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots, origins }) {
   const reachable = await reachableProductionModules({ artifactRoot, artifactFiles, entryRoots });
   for (const item of artifactFiles) {
-    if (item === "production-inventory.json") continue;
+    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION) continue;
     if (origins.has(slash(item))) continue;
     if (extname(item) === ".js") {
       if (!reachable.has(item)) throw new Error(`production_module_unreachable_from_entry_roots:${item}`);
@@ -621,9 +623,32 @@ async function verifiedWindowsStardewFolderPickerOrigins({ stagingRoot, descript
 function windowsStardewBootstrapGuardianOrigin(descriptor, helperSha256) {
   return Object.freeze({ kind: descriptor.kind, destination: descriptor.destination, helper: descriptor.helper, manifest: descriptor.manifest, helperSha256 });
 }
+function canonicalGuardianAdmission({ inventoryDigest, descriptor, helperSha256, manifestSha256 }) {
+  return `${JSON.stringify({
+    schema: GUARDIAN_ADMISSION_SCHEMA,
+    inventoryDigest,
+    helperPath: `${descriptor.destination}/${descriptor.helper}`,
+    manifestPath: `${descriptor.destination}/${descriptor.manifest}`,
+    helperSha256,
+    manifestSha256,
+    manifestSchemaVersion: 1,
+    manifestProtocolVersion: 1,
+    manifestRid: "win-x64",
+    manifestHelperFileName: descriptor.helper,
+  })}\n`;
+}
+async function emitGuardianAdmission({ stagingRoot, inventory, descriptor }) {
+  const verified = await verifyWindowsStardewBootstrapGuardianPair({ root: stagingRoot, descriptor });
+  const manifestSha256 = digest(await readFile(verified.manifest));
+  await writeFile(
+    resolve(stagingRoot, GUARDIAN_ADMISSION),
+    canonicalGuardianAdmission({ inventoryDigest: inventory.digest, descriptor, helperSha256: verified.helperSha256, manifestSha256 }),
+    { flag: "wx" },
+  );
+}
 async function ensureWindowsStardewBootstrapGuardianPair({ hostRoot, stagingRoot, descriptor }) {
   const buildPairRoot = resolve(hostRoot, "native", "windows-stardew-bootstrap-guardian", ".dist", "win-x64");
-  const source = await verifyWindowsStardewBootstrapGuardianPair({ root: resolve(buildPairRoot, ".."), descriptor: { ...descriptor, destination: "win-x64" } });
+  const source = await verifyWindowsStardewBootstrapGuardianPair({ root: buildPairRoot, descriptor: { ...descriptor, destination: "." } });
   const destinationRoot = resolve(stagingRoot, descriptor.destination.replaceAll("/", sep));
   for (const name of [descriptor.helper, descriptor.manifest]) {
     const destination = resolve(destinationRoot, name); await mkdir(dirname(destination), { recursive: true }); await copyFile(resolve(source.pairRoot, name), destination);
@@ -658,7 +683,7 @@ export async function createInventory({ artifactRoot, origins = new Map(), exter
   if (entryRoots !== undefined) await verifyEntrypointClosure({ artifactRoot, artifactFiles, entryRoots, origins });
   const entries = [];
   for (const item of artifactFiles) {
-    if (item === "production-inventory.json") continue;
+    if (item === "production-inventory.json" || item === GUARDIAN_ADMISSION) continue;
     // `files` has rejected traversal and symbolic links; normalize only its
     // canonical relative path before exact membership checking. Windows
     // arbitrary-reparse enforcement remains blocked by design/42.
@@ -963,6 +988,8 @@ export async function publishProductionArtifact({ hostRoot, emittedRoot, outputR
     const inventory = await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, origins, browserArtifactSnapshot });
     await writeFile(resolve(stagingRoot, "production-inventory.json"), `${JSON.stringify(inventory, null, 2)}\n`);
     await verifyArtifact({ artifactRoot: stagingRoot, hostRoot, config, expectedInventory: inventory, origins, browserArtifactSnapshot });
+    if (process.platform === "win32" && config.windowsStardewBootstrapGuardian !== undefined)
+      await emitGuardianAdmission({ stagingRoot, inventory, descriptor: config.windowsStardewBootstrapGuardian });
     await rename(stagingRoot, finalRoot); // immutable generation becomes visible before current changes
     await writeFile(pointerStaging, `${JSON.stringify({ schema: "gamebuddy-host-production-current/v1", generation, inventoryDigest: inventory.digest })}\n`);
     await rename(pointerStaging, resolve(outputRoot, POINTER));

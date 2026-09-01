@@ -28,6 +28,12 @@ internal sealed class CurrentUserRootLayout
     internal static CurrentUserRootLayout DeriveForTesting(CurrentUserRootRegistrationRecord registration, ILocalApplicationDataProvider localApplicationDataProvider) =>
         Derive(registration, localApplicationDataProvider);
 
+    internal static CurrentUserRootLayout DeriveForTesting(ICurrentUserRootRegistrationReader reader, ILocalApplicationDataProvider localApplicationDataProvider)
+    {
+        ArgumentNullException.ThrowIfNull(reader);
+        return Derive(reader.Read(), localApplicationDataProvider);
+    }
+
     private static CurrentUserRootLayout Derive(CurrentUserRootRegistrationRecord registration, ILocalApplicationDataProvider localApplicationDataProvider)
     {
         ArgumentNullException.ThrowIfNull(registration);

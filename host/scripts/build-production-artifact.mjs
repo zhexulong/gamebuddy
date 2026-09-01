@@ -369,7 +369,7 @@ export async function buildProductionArtifact({
       await verifyWindowsStardewFolderPickerPair({ root: resolve(windowsStardewFolderPickerBuildRoot, ".."), descriptor: { ...config.windowsStardewFolderPicker, destination: "win-x64" } });
       await buildWindowsStardewBootstrapGuardian();
       if (config.windowsStardewBootstrapGuardian === undefined) throw new Error("windows_stardew_bootstrap_guardian_descriptor_missing");
-      await verifyWindowsStardewBootstrapGuardianPair({ root: resolve(windowsStardewBootstrapGuardianBuildRoot, ".."), descriptor: { ...config.windowsStardewBootstrapGuardian, destination: "win-x64" } });
+      await verifyWindowsStardewBootstrapGuardianPair({ root: resolve(windowsStardewBootstrapGuardianBuildRoot, "win-x64"), descriptor: { ...config.windowsStardewBootstrapGuardian, destination: "." } });
     }
     const invocation = await resolveTypeScriptInvocation({ project: "tsconfig.production.json" });
     await runChild({ ...invocation, args: [...invocation.args, "--outDir", stagingRoot] });
