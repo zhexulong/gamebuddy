@@ -1,97 +1,250 @@
 import { join, resolve } from "node:path";
 import { withPathLock } from "./path-lock.js";
-import { readStardewGuardianArmBinding } from "./stardew-private-bootstrap-composer.core.js";
-import type { StardewGuardianBinding } from "./stardew-private-bootstrap-composer.js";
+import {
+  consumeStardewBootstrapGuardianOwnerBinding,
+  readStardewGuardianArmBinding,
+  type StardewBootstrapGuardianOwnerBinding,
+  type StardewBootstrapGuardianRecoveryGateBinding,
+} from "./stardew-private-bootstrap-composer.core.js";
+import type { StardewGuardianBinding } from "./stardew-private-bootstrap-owner-records.private.js";
 
 const OWNER_FILE = "owner.json";
 const OPAQUE = /^[A-Za-z0-9_-]{1,128}$/;
 
-export type StardewBootstrapGuardianArmCorrelation = Readonly<{
-  runtimeRoot: string;
-  bootstrapId: string;
-  playerId: string;
-  companionId: string;
-  expectedRevision: string;
+type GuardianRole = "playerHost" | "aiClient";
+export type StardewBootstrapGuardianOutcome = "contained" | "unavailable" | "quarantined";
+
+/** Native contracts only: Batch C supplies the Win32 implementations. */
+export type StardewBootstrapGuardianControlledClosePort = Readonly<{
+  drainRole(binding: StardewBootstrapGuardianOwnerBinding, role: GuardianRole): Promise<void>;
+  releaseAndExit(binding: StardewBootstrapGuardianOwnerBinding): Promise<void>;
+}>;
+
+declare const recoveryCapabilityBrand: unique symbol;
+export type StardewBootstrapGuardianRecoveryCapability = Readonly<{
+  readonly [recoveryCapabilityBrand]: never;
+}>;
+/** The pre-CAS ingress deliberately has no Job names, owner record revision, or durable role state. */
+/** The post-CAS ingress is authorized only after the durable recovering CAS. */
+export type StardewBootstrapGuardianRecoveryClassificationBinding = StardewBootstrapGuardianOwnerBinding;
+export type StardewBootstrapGuardianRecoveryGatePort = Readonly<{
+  acquire(binding: StardewBootstrapGuardianRecoveryGateBinding): Promise<
+    | Readonly<{ kind: "held" }>
+    | Readonly<{ kind: "acquired"; capability: StardewBootstrapGuardianRecoveryCapability }>
+  >;
+  release(capability: StardewBootstrapGuardianRecoveryCapability): Promise<void>;
+}>;
+export type StardewBootstrapGuardianRecoveryClassificationPort = Readonly<{
+  classify(binding: StardewBootstrapGuardianRecoveryClassificationBinding, capability: StardewBootstrapGuardianRecoveryCapability, role: GuardianRole): Promise<"contained" | "unavailable" | "quarantined">;
+}>;
+
+export type StardewBootstrapGuardianNativePorts = Readonly<{
+  controlledClose: StardewBootstrapGuardianControlledClosePort;
+  recoveryGate: StardewBootstrapGuardianRecoveryGatePort;
+  recoveryClassification: StardewBootstrapGuardianRecoveryClassificationPort;
+}>;
+
+export type StardewBootstrapGuardianOwner = Readonly<{
+  /** Durable acknowledgement only; it does not claim or launch a native process. */
+  arm(): Promise<void>;
+  /** Durable role-active acknowledgement only; Batch B makes no native launch claim. */
+  launchPlayerHost(): Promise<void>;
+  /** Durable role-active acknowledgement only; Batch B makes no native launch claim. */
+  launchAiClient(): Promise<void>;
+  /** Nonterminal private containment: drains and CASes Player Host only. */
+  containPlayerHost(): Promise<void>;
+  /** Nonterminal private containment: drains and CASes AI Client only. */
+  containAiClient(): Promise<void>;
+  recoverOrQuarantine(recoveryInstanceId: string): Promise<StardewBootstrapGuardianOutcome>;
+  close(): Promise<StardewBootstrapGuardianOutcome>;
 }>;
 
 /**
- * Frozen private transport for the Guardian's authenticated arm ingress.
- * It is intentionally available only inside `consumeArmBinding`; neither this
- * module nor its facade can create processes or persist owner identities.
+ * Private orchestration owner over one composition-minted, one-shot binding.
+ * It never receives a path, fence, revision, record, or persistence callback.
  */
-export type StardewBootstrapGuardianArmBinding = Readonly<StardewGuardianBinding>;
+export function createStardewBootstrapGuardianOwner(
+  binding: StardewBootstrapGuardianOwnerBinding,
+  native: StardewBootstrapGuardianNativePorts,
+): StardewBootstrapGuardianOwner {
+  validateNativePorts(native);
+  const consumedBinding = consumeStardewBootstrapGuardianOwnerBinding(binding);
+  const transitions = consumedBinding.transitions;
+  const recoveryGateBinding = consumedBinding.recoveryGateBinding;
+  let armState: "new" | "armed" = "new";
+  let playerLaunched = false;
+  let aiLaunched = false;
+  let controlledState: "open" | "closing" | "release_pending" | "closed" | "quarantined" = "open";
+  const contained = new Set<GuardianRole>();
+  let recovery: undefined | {
+    id: string;
+    capability: StardewBootstrapGuardianRecoveryCapability;
+    phase: "begin" | "classify" | "release_pending" | "quarantine_release_pending" | "closed" | "quarantined";
+    readonly classified: Set<GuardianRole>;
+  };
 
-export type StardewBootstrapGuardianPrivateArmBindingFacade = Readonly<{
-  consumeArmBinding<T>(
-    callback: (binding: StardewBootstrapGuardianArmBinding) => Promise<T> | T,
-  ): Promise<T>;
-}>;
-
-/**
- * Creates a one-shot, owner-record-bound private arm transport. The exact
- * owner bytes are read and validated while holding the existing owner path
- * lock, immediately before the caller performs its native private ingress.
- */
-export function createStardewBootstrapGuardianPrivateArmBindingFacade(
-  correlation: StardewBootstrapGuardianArmCorrelation,
-): StardewBootstrapGuardianPrivateArmBindingFacade {
-  validateCorrelation(correlation);
-  const frozenCorrelation = Object.freeze({ ...correlation });
-  let consumed = false;
-
-  return Object.freeze({
-    async consumeArmBinding<T>(
-      callback: (binding: StardewBootstrapGuardianArmBinding) => Promise<T> | T,
-    ): Promise<T> {
-      if (typeof callback !== "function" || consumed) {
-        throw new Error("stardew_bootstrap_guardian_arm_binding_unavailable");
+  const activate = async (role: GuardianRole): Promise<void> => {
+    if (armState !== "armed" || controlledState !== "open" || recovery !== undefined || (role === "playerHost" ? playerLaunched : aiLaunched)) {
+      throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
+    }
+    await transitions.roleActive(role);
+    if (role === "playerHost") playerLaunched = true;
+    else aiLaunched = true;
+  };
+  const quarantineControlled = async (): Promise<boolean> => {
+    if (controlledState === "release_pending" || controlledState === "closed") return false;
+    try {
+      await transitions.quarantine();
+      controlledState = "quarantined";
+      return true;
+    } catch {
+      // The predecessor is not known terminal when its quarantine CAS fails.
+      return false;
+    }
+  };
+  const beginControlledClose = async (): Promise<void> => {
+    if (controlledState === "open") {
+      try {
+        await transitions.beginControlledClose();
+        controlledState = "closing";
+      } catch (error) {
+        await quarantineControlled();
+        throw error;
       }
-      // Linearize replay before any filesystem or native-facing callback.
-      consumed = true;
-      const root = resolve(frozenCorrelation.runtimeRoot);
-      const ownerPath = join(
-        root,
-        "stardew-private-bootstrap",
-        frozenCorrelation.bootstrapId,
-        OWNER_FILE,
-      );
-      return withPathLock(ownerPath, async () => {
-        const binding = await readStardewGuardianArmBinding({
-          ownerPath,
-          containmentRoot: root,
-          bootstrapId: frozenCorrelation.bootstrapId,
-          playerId: frozenCorrelation.playerId,
-          companionId: frozenCorrelation.companionId,
-          expectedRevision: frozenCorrelation.expectedRevision,
-          nowMs: Date.now(),
-        });
-        return callback(binding);
-      }, { containmentRoot: root });
+    }
+    if (controlledState !== "closing") throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
+  };
+  const containRole = async (role: GuardianRole): Promise<void> => {
+    await beginControlledClose();
+    if (contained.has(role)) throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
+    try {
+      await native.controlledClose.drainRole(binding, role);
+      await transitions.controlledRoleContained(role);
+      contained.add(role);
+    } catch (error) {
+      await quarantineControlled();
+      throw error;
+    }
+  };
+  const finishControlledClose = async (): Promise<StardewBootstrapGuardianOutcome> => {
+    if (controlledState === "closed") return "contained";
+    if (controlledState === "release_pending") {
+      try {
+        await native.controlledClose.releaseAndExit(binding);
+        controlledState = "closed";
+        return "contained";
+      } catch {
+        return "unavailable";
+      }
+    }
+    if (controlledState === "quarantined") return "quarantined";
+    try {
+      await beginControlledClose();
+      for (const role of ["playerHost", "aiClient"] as const) if (!contained.has(role)) await containRole(role);
+      await transitions.finalizeControlledContained();
+      controlledState = "release_pending";
+      return finishControlledClose();
+    } catch {
+      return "unavailable";
+    }
+  };
+  const recover = async (recoveryInstanceId: string): Promise<StardewBootstrapGuardianOutcome> => {
+    if (!OPAQUE.test(recoveryInstanceId) || controlledState !== "open") throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
+    if (recovery !== undefined && recovery.id !== recoveryInstanceId) throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
+    if (recovery?.phase === "closed") return "contained";
+    if (recovery?.phase === "quarantined") return "quarantined";
+    if (recovery === undefined) {
+      let gate: unknown;
+        try { gate = await native.recoveryGate.acquire(recoveryGateBinding); } catch { return "unavailable"; }
+      if (!isRecoveryGateResult(gate) || gate.kind === "held") return "unavailable";
+      recovery = { id: recoveryInstanceId, capability: gate.capability, phase: "begin", classified: new Set() };
+    }
+    const active = recovery;
+    const releaseTerminal = async (outcome: "contained" | "quarantined"): Promise<StardewBootstrapGuardianOutcome> => {
+      try {
+        await native.recoveryGate.release(active.capability);
+        active.phase = outcome === "contained" ? "closed" : "quarantined";
+        return outcome;
+      } catch {
+        active.phase = outcome === "contained" ? "release_pending" : "quarantine_release_pending";
+        return "unavailable";
+      }
+    };
+    if (active.phase === "release_pending") return releaseTerminal("contained");
+    if (active.phase === "quarantine_release_pending") return releaseTerminal("quarantined");
+    try {
+      if (active.phase === "begin") {
+        await transitions.beginRecovery(active.id);
+        active.phase = "classify";
+      }
+      for (const role of ["playerHost", "aiClient"] as const) {
+        if (active.classified.has(role)) continue;
+        const classification = await native.recoveryClassification.classify(binding, active.capability, role);
+        if (classification !== "contained") {
+          await transitions.quarantineRecovery(active.id);
+          return releaseTerminal("quarantined");
+        }
+        await transitions.recoveryRoleContained(role, active.id);
+        active.classified.add(role);
+      }
+      await transitions.finalizeRecoveredContained(active.id);
+      active.phase = "release_pending";
+      return releaseTerminal("contained");
+    } catch {
+      if (active.phase === "begin") return "unavailable";
+      try {
+        await transitions.quarantineRecovery(active.id);
+        return releaseTerminal("quarantined");
+      } catch { return "unavailable"; }
+    }
+  };
+  return Object.freeze({
+    async arm() {
+      if (armState !== "new" || controlledState !== "open" || recovery !== undefined) throw new Error("stardew_bootstrap_guardian_owner_transition_unavailable");
+      await transitions.armAcknowledged();
+      armState = "armed";
     },
+    launchPlayerHost: () => activate("playerHost"),
+    launchAiClient: () => activate("aiClient"),
+    containPlayerHost: () => containRole("playerHost"),
+    containAiClient: () => containRole("aiClient"),
+    recoverOrQuarantine: recover,
+    close: finishControlledClose,
   });
 }
 
+function isRecoveryGateResult(value: unknown): value is Awaited<ReturnType<StardewBootstrapGuardianRecoveryGatePort["acquire"]>> {
+  return isRecord(value) && (
+    (value.kind === "held" && Object.keys(value).length === 1) ||
+    (value.kind === "acquired" && Object.keys(value).length === 2 && value.capability !== undefined)
+  );
+}
 
+function validateNativePorts(value: StardewBootstrapGuardianNativePorts): void {
+  if (!isRecord(value) || !isRecord(value.controlledClose) || !isRecord(value.recoveryGate) || !isRecord(value.recoveryClassification) ||
+      typeof value.controlledClose.drainRole !== "function" || typeof value.controlledClose.releaseAndExit !== "function" ||
+      typeof value.recoveryGate.acquire !== "function" || typeof value.recoveryGate.release !== "function" ||
+      typeof value.recoveryClassification.classify !== "function") throw new TypeError("invalid_stardew_bootstrap_guardian_native_ports");
+}
+
+export type StardewBootstrapGuardianArmCorrelation = Readonly<{ runtimeRoot: string; bootstrapId: string; playerId: string; companionId: string; expectedRevision: string; expectedOwnerRecordRevision: number }>;
+export type StardewBootstrapGuardianArmBinding = Readonly<StardewGuardianBinding & { ownerRecordRevision: number }>;
+export type StardewBootstrapGuardianPrivateArmBindingFacade = Readonly<{ consumeArmBinding<T>(callback: (binding: StardewBootstrapGuardianArmBinding) => Promise<T> | T): Promise<T> }>;
+
+export function createStardewBootstrapGuardianPrivateArmBindingFacade(correlation: StardewBootstrapGuardianArmCorrelation): StardewBootstrapGuardianPrivateArmBindingFacade {
+  validateCorrelation(correlation);
+  const frozenCorrelation = Object.freeze({ ...correlation });
+  let consumed = false;
+  return Object.freeze({ async consumeArmBinding<T>(callback: (binding: StardewBootstrapGuardianArmBinding) => Promise<T> | T): Promise<T> {
+    if (typeof callback !== "function" || consumed) throw new Error("stardew_bootstrap_guardian_arm_binding_unavailable");
+    consumed = true;
+    const root = resolve(frozenCorrelation.runtimeRoot);
+    const ownerPath = join(root, "stardew-private-bootstrap", frozenCorrelation.bootstrapId, OWNER_FILE);
+    return withPathLock(ownerPath, async () => callback(await readStardewGuardianArmBinding({ ownerPath, containmentRoot: root, bootstrapId: frozenCorrelation.bootstrapId, playerId: frozenCorrelation.playerId, companionId: frozenCorrelation.companionId, expectedRevision: frozenCorrelation.expectedRevision, expectedOwnerRecordRevision: frozenCorrelation.expectedOwnerRecordRevision, nowMs: Date.now() }) as StardewBootstrapGuardianArmBinding), { containmentRoot: root });
+  } });
+}
 function validateCorrelation(value: StardewBootstrapGuardianArmCorrelation): void {
-  if (
-    !isRecord(value) ||
-    !exactKeys(value, ["runtimeRoot", "bootstrapId", "playerId", "companionId", "expectedRevision"]) ||
-    typeof value.runtimeRoot !== "string" ||
-    value.runtimeRoot.length === 0 ||
-    !OPAQUE.test(value.bootstrapId) ||
-    !OPAQUE.test(value.playerId) ||
-    !OPAQUE.test(value.companionId) ||
-    !OPAQUE.test(value.expectedRevision)
-  ) throw new TypeError("invalid_stardew_bootstrap_guardian_arm_correlation");
+  if (!isRecord(value) || !exactKeys(value, ["runtimeRoot", "bootstrapId", "playerId", "companionId", "expectedRevision", "expectedOwnerRecordRevision"]) || typeof value.runtimeRoot !== "string" || value.runtimeRoot.length === 0 || !OPAQUE.test(value.bootstrapId) || !OPAQUE.test(value.playerId) || !OPAQUE.test(value.companionId) || !OPAQUE.test(value.expectedRevision) || typeof value.expectedOwnerRecordRevision !== "number" || !Number.isSafeInteger(value.expectedOwnerRecordRevision) || value.expectedOwnerRecordRevision <= 0) throw new TypeError("invalid_stardew_bootstrap_guardian_arm_correlation");
 }
-
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
-  const keys = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  return keys.length === wanted.length && keys.every((key, index) => key === wanted[index]);
-}
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean { const keys = Object.keys(value).sort(); const wanted = [...expected].sort(); return keys.length === wanted.length && keys.every((key, index) => key === wanted[index]); }

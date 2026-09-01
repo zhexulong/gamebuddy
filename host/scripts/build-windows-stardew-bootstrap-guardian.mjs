@@ -15,6 +15,7 @@ export const guardianOutputRoot = resolve(outputRoot, "win-x64");
 export const fixtureOutputRoot = resolve(outputRoot, "fixtures");
 export const helperFileName = "GameBuddy.WindowsStardewBootstrapGuardian.exe";
 export const fixtureFileName = "RoleRootFixture.exe";
+export const testGuardianFileName = "GameBuddy.WindowsStardewBootstrapGuardian.Test.exe";
 export const manifestFileName = "windows-stardew-bootstrap-guardian.manifest.json";
 export const protocolVersion = 1;
 export const manifestSchemaVersion = 1;
@@ -87,9 +88,9 @@ async function assertLockedSdk(dotnet) {
   if (result.code !== 0 || result.signal || result.stdout.trim() !== await readLockedSdkVersion()) throw new Error("windows_stardew_bootstrap_guardian_dotnet_sdk_drift");
 }
 
-async function publishProject(dotnet, project, destination) {
+async function publishProject(dotnet, project, destination, properties = []) {
   await ensureDirectory(destination);
-  const result = await runBounded(dotnet, ["publish", project, "--configuration", "Release", "--runtime", rid, "--self-contained", "true", "--output", destination, "-p:PublishSingleFile=true", "-p:PublishTrimmed=false", "-p:DebugType=None", "-p:DebugSymbols=false", "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true", "-p:UseAppHost=true", "--nologo"]);
+  const result = await runBounded(dotnet, ["publish", project, "--configuration", "Release", "--runtime", rid, "--self-contained", "true", "--output", destination, "-p:PublishSingleFile=true", "-p:PublishTrimmed=false", "-p:DebugType=None", "-p:DebugSymbols=false", "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true", "-p:UseAppHost=true", ...properties, "--nologo"]);
   if (result.code !== 0 || result.signal) throw new Error("windows_stardew_bootstrap_guardian_dotnet_failed");
 }
 
@@ -188,9 +189,10 @@ export async function buildWindowsStardewBootstrapGuardian() {
     await verifyExactOutput(stagingGuardian, [helperFileName, manifestFileName]);
     await probeGuardian(helperPath);
     await publishProject(dotnet, fixtureProjectFile, stagingFixture);
-    const [fixturePath] = await verifyExactOutput(stagingFixture, [fixtureFileName]);
+    await publishProject(dotnet, projectFile, stagingFixture, ["-p:GuardianTestHooks=true"]);
+    const [fixturePath] = await verifyExactOutput(stagingFixture, [fixtureFileName, testGuardianFileName]);
     await replaceFinalDirectories(stagingGuardian, stagingFixture, { output, guardianOutput, fixtureOutput });
-    return Object.freeze({ helperPath: resolve(guardianOutput, helperFileName), fixturePath: resolve(fixtureOutput, fixtureFileName), sha256 });
+    return Object.freeze({ helperPath: resolve(guardianOutput, helperFileName), fixturePath: resolve(fixtureOutput, fixtureFileName), testGuardianPath: resolve(fixtureOutput, testGuardianFileName), sha256 });
   } finally {
     await rm(stagingRoot, { recursive: true, force: true });
   }

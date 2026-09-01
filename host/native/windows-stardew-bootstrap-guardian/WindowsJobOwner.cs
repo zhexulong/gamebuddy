@@ -100,7 +100,9 @@ internal sealed class WindowsJobOwner : IDisposable
         internal static SecurityReference CreateCurrentUserAttributes()
         {
             var sid = System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("windows_stardew_bootstrap_guardian_current_sid_missing");
-            if (!ConvertStringSecurityDescriptorToSecurityDescriptorW($"D:P(A;;0x0010000F;;;{sid})", 1, out var descriptor, out _)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        // Recovery requires only QUERY/TERMINATE/SYNCHRONIZE plus READ_CONTROL
+        // to attest this fixed current-user DACL; DELETE and ACL mutation stay absent.
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW($"D:P(A;;0x0012000C;;;{sid})", 1, out var descriptor, out _)) throw new Win32Exception(Marshal.GetLastWin32Error());
             return new SecurityReference(new SECURITY_ATTRIBUTES { nLength = Marshal.SizeOf<SECURITY_ATTRIBUTES>(), lpSecurityDescriptor = descriptor, bInheritHandle = 0 });
         }
         internal static void Free(IntPtr descriptor) { if (descriptor != IntPtr.Zero) LocalFree(descriptor); }

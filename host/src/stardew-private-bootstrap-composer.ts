@@ -18,46 +18,6 @@ import type {
 } from "./stardew-player-host-process-owner.js";
 import { createStardewPrivateBootstrapComposition as createProductionComposition } from "./stardew-private-bootstrap-composer.internal.js";
 
-const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v3";
-
-export type StardewGuardianBinding = Readonly<{
-  revision: string;
-  leaseName: string;
-  playerJobName: string;
-  aiJobName: string;
-}>;
-
-export type StardewExternalPlayerHostBootstrapOwnerRecord = Readonly<{
-  schema: typeof OWNER_SCHEMA;
-  bootstrapId: string;
-  playerId: string;
-  companionId: string;
-  guardian: StardewGuardianBinding;
-  playerHost: Readonly<{ kind: "external_unattested" }>;
-  aiClient: Readonly<{ kind: "launch_reserved"; launchGeneration: string }>;
-  expiresAtMs: number;
-  state: "reserved" | "quarantined";
-  cleanupDisposition: "pending" | "retry_required";
-  managedPaths: readonly string[];
-}>;
-
-export type StardewOwnedPlayerHostBootstrapOwnerRecord = Readonly<{
-  schema: typeof OWNER_SCHEMA;
-  bootstrapId: string;
-  playerId: string;
-  companionId: string;
-  guardian: StardewGuardianBinding;
-  playerHost: Readonly<{ kind: "launch_reserved"; launchGeneration: string }>;
-  aiClient: Readonly<{ kind: "launch_reserved"; launchGeneration: string }>;
-  expiresAtMs: number;
-  state: "reserved" | "quarantined";
-  cleanupDisposition: "pending" | "retry_required";
-  managedPaths: readonly string[];
-}>;
-
-export type StardewPrivateBootstrapOwnerRecord =
-  | StardewExternalPlayerHostBootstrapOwnerRecord
-  | StardewOwnedPlayerHostBootstrapOwnerRecord;
 
 export type StardewAiClientLaunch = (
   input: LaunchAiClientInput,
@@ -67,9 +27,16 @@ export type StardewPlayerHostLaunch = (
   input: LaunchPlayerHostInput,
 ) => Readonly<{ status: StardewPlayerHostProcessStatus }>;
 
+declare const stardewExternalPlayerHostPhaseAOwnerBrand: unique symbol;
+
+/**
+ * Opaque external-host Phase-A authority. Durable owner bytes, runtime paths,
+ * and Guardian facts remain closure-private; only the existing narrow launch
+ * consume and fail-closed quarantine operations are exposed.
+ */
 export type StardewExternalPlayerHostPhaseAOwner = Readonly<{
-  readonly record: StardewExternalPlayerHostBootstrapOwnerRecord;
-  readonly transactionDirectory: string;
+  /** Nominal only; no runtime field is present on the opaque owner. */
+  readonly [stardewExternalPlayerHostPhaseAOwnerBrand]?: never;
   consumeAiClientLaunch<T>(callback: (launch: StardewAiClientLaunch) => T): T;
   quarantine(): Promise<void>;
 }>;

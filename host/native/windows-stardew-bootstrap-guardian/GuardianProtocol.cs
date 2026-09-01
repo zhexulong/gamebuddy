@@ -17,12 +17,13 @@ internal static class GuardianProtocol
         var operation = RequiredString(root, "operation");
         if (!root.TryGetProperty("schemaVersion", out var schema) || schema.GetInt32() != SchemaVersion) throw Invalid();
         var common = new Correlation(RequiredOpaque(root, "guardianInstanceId"), RequiredPositiveInt(root, "guardianEpoch"), RequiredOpaque(root, "attemptId"));
-        var expected = operation switch { "arm_attempt" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId" }, "launch_role" or "contain_role" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role" }, _ => throw Invalid() };
+        var expected = operation switch { "arm_attempt" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId" }, "launch_role" or "contain_role" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role" }, "recover_attempt" => new[] { "schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId" }, _ => throw Invalid() };
         RequireExactKeys(root, expected);
         return operation switch
         {
-            "arm_attempt" => new Request(operation, common, null),
-            "launch_role" or "contain_role" => new Request(operation, common, RequiredRole(root, "role")),
+            "launch_role" or "contain_role" => new Request(operation, common, RequiredRole(root, "role"), null),
+            "arm_attempt" => new Request(operation, common, null, null),
+            "recover_attempt" => new Request(operation, common, null, RequiredOpaque(root, "recoveryInstanceId")),
             _ => throw Invalid(),
         };
     }
@@ -60,5 +61,5 @@ internal static class GuardianProtocol
 
     internal enum Role { PlayerHost, AiClient }
     internal readonly record struct Correlation(string InstanceId, int Epoch, string AttemptId);
-    internal sealed record Request(string Operation, Correlation Correlation, Role? Role);
+    internal sealed record Request(string Operation, Correlation Correlation, Role? Role, string? RecoveryInstanceId);
 }

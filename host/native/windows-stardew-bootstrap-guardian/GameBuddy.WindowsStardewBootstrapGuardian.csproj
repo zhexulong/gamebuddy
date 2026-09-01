@@ -8,6 +8,10 @@
     <RootNamespace>GameBuddy.WindowsStardewBootstrapGuardian</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(GuardianTestHooks)' == 'true'">
+    <AssemblyName>GameBuddy.WindowsStardewBootstrapGuardian.Test</AssemblyName>
+    <DefineConstants>$(DefineConstants);GUARDIAN_TEST_HOOKS</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <Compile Remove="fixtures/**/*.cs" />
   </ItemGroup>

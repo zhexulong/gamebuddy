@@ -2,7 +2,6 @@ export type WindowsStardewBootstrapGuardianOperation =
   | "arm_attempt"
   | "launch_role"
   | "contain_role"
-  | "begin_recovery"
   | "recover_attempt";
 export type WindowsStardewBootstrapGuardianRole = "player_host" | "ai_client";
 export type WindowsStardewBootstrapGuardianCategory =
@@ -23,13 +22,11 @@ type GuardianCorrelation = Readonly<{
 export type ArmAttemptRequest = GuardianCorrelation & Readonly<{ operation: "arm_attempt" }>;
 export type LaunchRoleRequest = GuardianCorrelation & Readonly<{ operation: "launch_role"; role: WindowsStardewBootstrapGuardianRole }>;
 export type ContainRoleRequest = GuardianCorrelation & Readonly<{ operation: "contain_role"; role: WindowsStardewBootstrapGuardianRole }>;
-export type BeginRecoveryRequest = GuardianCorrelation & Readonly<{ operation: "begin_recovery"; recoveryInstanceId: string }>;
-export type RecoverAttemptRequest = GuardianCorrelation & Readonly<{ operation: "recover_attempt" }>;
+export type RecoverAttemptRequest = GuardianCorrelation & Readonly<{ operation: "recover_attempt"; recoveryInstanceId: string }>;
 export type WindowsStardewBootstrapGuardianRequest =
   | ArmAttemptRequest
   | LaunchRoleRequest
   | ContainRoleRequest
-  | BeginRecoveryRequest
   | RecoverAttemptRequest;
 
 const OPAQUE_CORRELATION_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,8 +35,7 @@ const EXACT_REQUEST_KEYS: ReadonlyMap<WindowsStardewBootstrapGuardianOperation, 
   ["arm_attempt", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId"]],
   ["launch_role", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role"]],
   ["contain_role", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role"]],
-  ["begin_recovery", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId"]],
-  ["recover_attempt", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId"]],
+  ["recover_attempt", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId"]],
 ]);
 
 /** Validates and reconstructs the redacted Task 1 request. It grants no native
@@ -66,9 +62,8 @@ export function validateGuardianRequest(input: unknown): WindowsStardewBootstrap
       if (input.role !== "player_host" && input.role !== "ai_client") throw invalid();
       return Object.freeze({ ...common, operation, role: input.role });
     }
-    case "begin_recovery":
+    case "recover_attempt":
       return Object.freeze({ ...common, operation, recoveryInstanceId: validateOpaqueCorrelation(input.recoveryInstanceId) });
-    case "recover_attempt": return Object.freeze({ ...common, operation });
     default: throw invalid();
   }
 }

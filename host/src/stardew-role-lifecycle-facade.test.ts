@@ -88,6 +88,8 @@ async function withFixture(
       rawPlayerHostProbe: () => null,
       createBootstrapIdentity: () => "lifecycle-bootstrap",
       createGuardianRevision: () => "guardian-revision-lifecycle-test",
+      createGuardianInstanceId: () => "guardian-instance-lifecycle-test",
+      createGuardianEpoch: () => 1,
       createGuardianLeaseName: () => "Local\\GameBuddy-LifecycleTest-Lease",
       createGuardianPlayerJobName: () => "Local\\GameBuddy-LifecycleTest-Player",
       createGuardianAiJobName: () => "Local\\GameBuddy-LifecycleTest-Ai",

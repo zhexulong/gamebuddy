@@ -16,7 +16,6 @@ const inventoryOriginKind = "verified_windows_stardew_bootstrap_guardian";
 import {
   validateGuardianRequest,
   type ArmAttemptRequest,
-  type BeginRecoveryRequest,
   type ContainRoleRequest,
   type LaunchRoleRequest,
   type RecoverAttemptRequest,
@@ -25,7 +24,6 @@ import {
 } from "./protocol.js";
 export type {
   ArmAttemptRequest,
-  BeginRecoveryRequest,
   ContainRoleRequest,
   LaunchRoleRequest,
   RecoverAttemptRequest,
@@ -85,13 +83,6 @@ export async function launchRole(
 export async function containRole(
   capability: WindowsStardewBootstrapGuardianCapability,
   request: ContainRoleRequest,
-): Promise<WindowsStardewBootstrapGuardianCategory> {
-  return await invokeGuardian(capability, request);
-}
-
-export async function beginRecovery(
-  capability: WindowsStardewBootstrapGuardianCapability,
-  request: BeginRecoveryRequest,
 ): Promise<WindowsStardewBootstrapGuardianCategory> {
   return await invokeGuardian(capability, request);
 }

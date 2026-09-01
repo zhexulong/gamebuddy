@@ -60,17 +60,19 @@ import {
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type {
   StardewAiClientLaunch,
-   StardewExternalPlayerHostBootstrapOwnerRecord,
-   StardewExternalPlayerHostPhaseAOwner,
-   StardewGuardianBinding,
-  StardewOwnedPlayerHostBootstrapOwnerRecord,
+  StardewExternalPlayerHostPhaseAOwner,
   StardewOwnedPlayerHostPhaseAOwner,
   StardewPlayerHostLaunch,
   StardewPrivateBootstrapComposition,
-  StardewPrivateBootstrapOwnerRecord,
 } from "./stardew-private-bootstrap-composer.js";
+import type {
+  StardewExternalPlayerHostBootstrapOwnerRecord,
+  StardewGuardianBinding,
+  StardewOwnedPlayerHostBootstrapOwnerRecord,
+  StardewPrivateBootstrapOwnerRecord,
+} from "./stardew-private-bootstrap-owner-records.private.js";
 
-const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v3";
+const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v4";
 const OWNER_FILE = "owner.json";
 const OWNER_LOCK_LEAF = pathLockPath(OWNER_FILE);
 const LAUNCH_GENERATION_ENVIRONMENT_VARIABLE = "GAMEBUDDY_STARDEW_LAUNCH_GENERATION";
@@ -158,30 +160,16 @@ type PlayerHostLaunchRegistration = {
   readonly registration: StardewPlayerHostLaunchRegistration;
 };
 
-type StardewPrivateBootstrapOwnerRecordBase = Readonly<{
-  schema: typeof OWNER_SCHEMA;
-  bootstrapId: string;
-  playerId: string;
-  companionId: string;
-  guardian: StardewGuardianBinding;
-  aiClient: Readonly<{
-    kind: "launch_reserved";
-    launchGeneration: string;
-  }>;
-  expiresAtMs: number;
-  state: "reserved" | "quarantined";
-  cleanupDisposition: "pending" | "retry_required";
-  managedPaths: readonly string[];
-}>;
-
 export type StardewPrivateBootstrapCoreDependencies = Readonly<{
   rawSpawn: StardewAiClientProcessSpawn;
   rawProbe: StardewAiClientProcessProbe;
   rawPlayerHostSpawn: StardewPlayerHostProcessSpawn;
   rawPlayerHostProbe: StardewPlayerHostProcessProbe;
    createBootstrapIdentity: () => string;
-    createGuardianRevision: () => string;
-    createGuardianLeaseName: () => string;
+  createGuardianRevision: () => string;
+  createGuardianInstanceId: () => string;
+  createGuardianEpoch: () => number;
+  createGuardianLeaseName: () => string;
     createGuardianPlayerJobName: () => string;
     createGuardianAiJobName: () => string;
    createLaunchGeneration: () => string;
@@ -284,6 +272,8 @@ export function createStardewPrivateBootstrapProductionCore(): StardewPrivateBoo
     rawPlayerHostProbe: productionPlayerHostProbe,
      createBootstrapIdentity: randomUUID,
      createGuardianRevision: randomUUID,
+     createGuardianInstanceId: randomUUID,
+     createGuardianEpoch: () => 1,
      createGuardianLeaseName: () => `Local\\GameBuddy-${randomUUID()}`,
      createGuardianPlayerJobName: () => `Local\\GameBuddy-${randomUUID()}`,
      createGuardianAiJobName: () => `Local\\GameBuddy-${randomUUID()}`,
@@ -363,6 +353,13 @@ export function createStardewPrivateBootstrapTestCore(
   bindOwnedPlayerHostPhaseAOwner(
     owner: StardewOwnedPlayerHostPhaseAOwner,
   ): StardewOwnedPlayerHostPhaseACoreTestView;
+    createOwnerTransitionsForTesting(
+      input: Readonly<{
+        ownerPath: string;
+        containmentRoot: string;
+        immutableFence: StardewOwnerImmutableFence;
+      }>,
+    ): StardewOwnerTransitionPrimitives;
 }> {
   validateTestingDependencies(dependencies);
   const base = createStardewPrivateBootstrapCore(dependencies);
@@ -433,6 +430,9 @@ export function createStardewPrivateBootstrapTestCore(
         consumeAiClientLaunch: facts.consumeAiClientLaunch,
         hasPrivateMaterial: () => facts.privateMaterial.value !== null,
       });
+    },
+    createOwnerTransitionsForTesting(input) {
+      return createStardewBootstrapOwnerTransitionPrimitives(input, productionOwnerTransitionPersistence);
     },
   });
 }
@@ -772,11 +772,11 @@ function createClosedComposition(
         requireOwnedPhaseAFacts(owner, compositionIdentity);
         terminalizeOwnedPlayerHostPhaseAOwner(owner);
       },
-      quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
-        const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
-        return facts.quarantineOwner();
-      },
-  });
+     quarantineOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostPhaseAOwner): Promise<void> => {
+       const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+       return facts.quarantineOwner();
+     },
+   });
 }
 
 type DurableOwner = Readonly<{
@@ -844,9 +844,14 @@ async function persistPrivateBootstrapOwner(
           launchGeneration: input.aiClientLaunchGeneration,
         },
         expiresAtMs: input.bootstrapFacts.expiresAtMs,
-        state: "reserved" as const,
-        cleanupDisposition: "pending" as const,
-        managedPaths: [OWNER_FILE] as [typeof OWNER_FILE],
+         ownerRecordRevision: 1,
+         state: "reserved" as const,
+         guardianState: "reserved" as const,
+         playerHostState: "reserved" as const,
+         aiClientState: "reserved" as const,
+         recoveryInstanceId: null,
+         cleanupDisposition: "pending" as const,
+         managedPaths: [OWNER_FILE] as [typeof OWNER_FILE],
       };
       const record: StardewPrivateBootstrapOwnerRecord = input.playerHost.kind === "external_unattested"
         ? freezeRecord({ ...baseRecord, playerHost: input.playerHost })
@@ -868,24 +873,13 @@ async function persistPrivateBootstrapOwner(
       if (quarantineStarted && record.state === "quarantined") return Promise.resolve();
       quarantineStarted = true;
       const persistence = (async () => {
-        await withPathLock(ownerPath, async () => {
-          const current = await readAndValidateOwner(ownerPath, root);
-          if (current.bootstrapId !== record.bootstrapId)
-            throw new Error("stardew_bootstrap_owner_state_mismatch");
-          if (current.state === "quarantined") {
-            record = current;
-            return;
-          }
-          if (current.state !== "reserved")
-            throw new Error("stardew_bootstrap_owner_state_mismatch");
-          const next = freezeRecord({
-            ...current,
-            state: "quarantined",
-            cleanupDisposition: "retry_required",
-          });
-          await atomicWriteFile(ownerPath, `${JSON.stringify(next)}\n`, root);
-          record = next;
-        }, { containmentRoot: root });
+        const current = record;
+        if (current.state === "quarantined") return;
+        record = await createProductionStardewBootstrapOwnerTransitionPrimitives({
+          ownerPath,
+          containmentRoot: root,
+          immutableFence: immutableFenceFor(current),
+        }).quarantine(current.ownerRecordRevision);
       })();
       quarantinePromise = persistence.then(
         () => undefined,
@@ -2147,9 +2141,9 @@ function composeExternalPlayerHostOwner(
     registration.revoke();
   };
 
+  // Keep the record, transaction directory, and Guardian binding exclusively
+  // in this closure. The public external owner is an operation capability.
   return Object.freeze({
-    get record() { return durableOwner.record; },
-    transactionDirectory: durableOwner.transactionDirectory,
     consumeAiClientLaunch<T>(callback: (launch: StardewAiClientLaunch) => T): T {
       if (launchState !== "available")
         throw new Error("stardew_ai_client_launch_not_available");
@@ -2205,7 +2199,7 @@ function composeExternalPlayerHostOwner(
       );
       return quarantinePromise;
     },
-  });
+  }) as StardewExternalPlayerHostPhaseAOwner;
 }
 
 type ActiveBootstrap = {
@@ -2702,14 +2696,247 @@ async function readDirectoryIfPresent(path: string, root: string): Promise<reado
 
 function createGuardianBinding(dependencies: StardewPrivateBootstrapCoreDependencies): StardewGuardianBinding {
   const binding = {
-    revision: dependencies.createGuardianRevision(),
+    bindingRevision: dependencies.createGuardianRevision(),
+    guardianInstanceId: dependencies.createGuardianInstanceId(),
+    guardianEpoch: dependencies.createGuardianEpoch(),
     leaseName: dependencies.createGuardianLeaseName(),
     playerJobName: dependencies.createGuardianPlayerJobName(),
     aiJobName: dependencies.createGuardianAiJobName(),
   };
-  if (!isOpaque(binding.revision) || !isGuardianName(binding.leaseName) || !isGuardianName(binding.playerJobName) || !isGuardianName(binding.aiJobName) ||
+  if (!isOpaque(binding.bindingRevision) || !isOpaque(binding.guardianInstanceId) ||
+      !isPositiveBoundedInteger(binding.guardianEpoch) ||
+      !isGuardianName(binding.leaseName) || !isGuardianName(binding.playerJobName) || !isGuardianName(binding.aiJobName) ||
       new Set([binding.leaseName, binding.playerJobName, binding.aiJobName]).size !== 3) throw new Error("invalid_stardew_guardian_binding");
   return Object.freeze(binding);
+}
+
+type StardewOwnerImmutableFence = Readonly<{
+  bootstrapId: string;
+  playerId: string;
+  companionId: string;
+  guardian: StardewGuardianBinding;
+}>;
+
+type StardewOwnerTransitionPrimitives = Readonly<{
+  arm(expectedRevision: number): Promise<StardewPrivateBootstrapOwnerRecord>;
+  activate(role: "playerHost" | "aiClient", expectedRevision: number): Promise<StardewPrivateBootstrapOwnerRecord>;
+  beginControlledClose(expectedRevision: number): Promise<StardewPrivateBootstrapOwnerRecord>;
+  containControlledRole(role: "playerHost" | "aiClient", expectedRevision: number): Promise<StardewPrivateBootstrapOwnerRecord>;
+  beginRecovery(expectedRevision: number, recoveryInstanceId: string): Promise<StardewPrivateBootstrapOwnerRecord>;
+  containRecoveringRole(role: "playerHost" | "aiClient", expectedRevision: number, recoveryInstanceId: string): Promise<StardewPrivateBootstrapOwnerRecord>;
+  finalizeControlledContained(expectedRevision: number): Promise<StardewPrivateBootstrapOwnerRecord>;
+  finalizeRecoveredContained(expectedRevision: number, requiredRecoveryInstanceId: string): Promise<StardewPrivateBootstrapOwnerRecord>;
+  quarantine(expectedRevision: number): Promise<StardewPrivateBootstrapOwnerRecord>;
+  quarantineRecovery(expectedRevision: number, requiredRecoveryInstanceId: string): Promise<StardewPrivateBootstrapOwnerRecord>;
+}>;
+
+type OwnerTransitionPersistence = Readonly<{
+  atomicWrite(ownerPath: string, content: string, containmentRoot: string): Promise<void>;
+  strictRead(ownerPath: string, containmentRoot: string): Promise<StardewPrivateBootstrapOwnerRecord>;
+}>;
+
+/** Core-private durable lifecycle transition engine. */
+function createStardewBootstrapOwnerTransitionPrimitives(
+  input: Readonly<{
+    ownerPath: string;
+    containmentRoot: string;
+    immutableFence: StardewOwnerImmutableFence;
+  }>,
+  persistence: OwnerTransitionPersistence,
+): StardewOwnerTransitionPrimitives {
+  const transition = async (
+    expectedRevision: number,
+    mutate: (current: StardewPrivateBootstrapOwnerRecord) => StardewPrivateBootstrapOwnerRecord,
+    requiredRecoveryInstanceId: string | null = null,
+  ): Promise<StardewPrivateBootstrapOwnerRecord> => withPathLock(input.ownerPath, async () => {
+    // Validate the persisted predecessor before constructing or writing a
+    // successor. A failed CAS therefore leaves its exact bytes untouched.
+    const current = await persistence.strictRead(input.ownerPath, input.containmentRoot);
+    if (current.ownerRecordRevision !== expectedRevision || !sameImmutableFence(current, input.immutableFence) ||
+        (requiredRecoveryInstanceId !== null && current.recoveryInstanceId !== requiredRecoveryInstanceId)) {
+      throw new Error("stardew_bootstrap_owner_transition_mismatch");
+    }
+    const candidate = { ...mutate(current), ownerRecordRevision: current.ownerRecordRevision + 1 };
+    // The same strict v4 validator validates both disk JSON and in-memory CAS
+    // successors before the single atomic write.
+    const next = validateOwnerRecord(candidate);
+    if (!sameImmutableFence(next, input.immutableFence) ||
+        next.ownerRecordRevision !== current.ownerRecordRevision + 1) {
+      throw new Error("stardew_bootstrap_owner_transition_invalid");
+    }
+    await persistence.atomicWrite(input.ownerPath, `${JSON.stringify(next)}\n`, input.containmentRoot);
+    const reread = await persistence.strictRead(input.ownerPath, input.containmentRoot);
+    if (reread.ownerRecordRevision !== next.ownerRecordRevision || JSON.stringify(reread) !== JSON.stringify(next)) {
+      throw new Error("stardew_bootstrap_owner_transition_reread_mismatch");
+    }
+    return reread;
+  }, { containmentRoot: input.containmentRoot });
+  const changeRole = (current: StardewPrivateBootstrapOwnerRecord, role: "playerHost" | "aiClient", state: StardewPrivateBootstrapOwnerRecord["playerHostState"]) =>
+    role === "playerHost" ? { ...current, playerHostState: state } : { ...current, aiClientState: state };
+  return Object.freeze({
+    arm: (revision) => transition(revision, (current) => {
+      if (current.state !== "reserved" || current.guardianState !== "reserved" || current.playerHostState !== "reserved" || current.aiClientState !== "reserved") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      return { ...current, guardianState: "armed", playerHostState: "armed", aiClientState: "armed" };
+    }),
+    activate: (role, revision) => transition(revision, (current) => {
+      if (current.state !== "reserved" || current.guardianState !== "armed" || (role === "playerHost" ? current.playerHostState : current.aiClientState) !== "armed") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      return changeRole(current, role, "active");
+    }),
+    beginControlledClose: (revision) => transition(revision, (current) => {
+      if (current.state !== "reserved" || current.guardianState !== "armed" ||
+          ![current.playerHostState, current.aiClientState].every((state) => state === "armed" || state === "active" || state === "contained")) {
+        throw new Error("stardew_bootstrap_owner_transition_invalid");
+      }
+      return { ...current, state: "closing", guardianState: "closing", playerHostState: current.playerHostState === "contained" ? "contained" : "closing", aiClientState: current.aiClientState === "contained" ? "contained" : "closing" };
+    }),
+    containControlledRole: (role, revision) => transition(revision, (current) => {
+      if (current.state !== "closing" || current.guardianState !== "closing" || (role === "playerHost" ? current.playerHostState : current.aiClientState) !== "closing") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      return changeRole(current, role, "contained");
+    }),
+    beginRecovery: (revision, recoveryInstanceId) => transition(revision, (current) => {
+      if (!isOpaque(recoveryInstanceId) || current.recoveryInstanceId !== null ||
+          !((current.state === "reserved" && (current.guardianState === "reserved" || current.guardianState === "armed")) ||
+            (current.state === "closing" && current.guardianState === "closing"))) {
+        throw new Error("stardew_bootstrap_owner_transition_invalid");
+      }
+      return { ...current, state: "recovering", guardianState: "recovering", recoveryInstanceId };
+    }),
+    containRecoveringRole: (role, revision, recoveryInstanceId) => transition(revision, (current) => {
+      if (current.state !== "recovering" || current.guardianState !== "recovering" || (role === "playerHost" ? current.playerHostState : current.aiClientState) === "contained") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      return changeRole(current, role, "contained");
+    }, recoveryInstanceId),
+    finalizeControlledContained: (revision) => transition(revision, (current) => {
+      if (current.state !== "closing" || current.guardianState !== "closing" || current.recoveryInstanceId !== null ||
+          current.playerHostState !== "contained" || current.aiClientState !== "contained") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      return { ...current, state: "contained", guardianState: "contained", recoveryInstanceId: null };
+    }),
+    finalizeRecoveredContained: (revision, recoveryInstanceId) => transition(revision, (current) => {
+      if (!isOpaque(recoveryInstanceId) || current.state !== "recovering" || current.guardianState !== "recovering" ||
+          current.playerHostState !== "contained" || current.aiClientState !== "contained") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      return { ...current, state: "contained", guardianState: "contained", recoveryInstanceId: null };
+    }, recoveryInstanceId),
+    quarantine: (revision) => transition(revision, (current) => {
+      if (current.state === "recovering" || current.state === "contained" || current.state === "quarantined") throw new Error("stardew_bootstrap_owner_transition_invalid");
+      return { ...current, state: "quarantined", guardianState: "quarantined", playerHostState: current.playerHostState === "contained" ? "contained" : "quarantined", aiClientState: current.aiClientState === "contained" ? "contained" : "quarantined", recoveryInstanceId: null, cleanupDisposition: "retry_required" };
+    }),
+    quarantineRecovery: (revision, recoveryInstanceId) => transition(revision, (current) => {
+      if (!isOpaque(recoveryInstanceId) || current.state !== "recovering" || current.guardianState !== "recovering") {
+        throw new Error("stardew_bootstrap_owner_transition_invalid");
+      }
+      return { ...current, state: "quarantined", guardianState: "quarantined", playerHostState: current.playerHostState === "contained" ? "contained" : "quarantined", aiClientState: current.aiClientState === "contained" ? "contained" : "quarantined", recoveryInstanceId: null, cleanupDisposition: "retry_required" };
+    }, recoveryInstanceId),
+  });
+}
+
+const productionOwnerTransitionPersistence: OwnerTransitionPersistence = Object.freeze({
+  atomicWrite: atomicWriteFile,
+  strictRead: readAndValidateOwner,
+});
+
+function createProductionStardewBootstrapOwnerTransitionPrimitives(
+  input: Readonly<{ ownerPath: string; containmentRoot: string; immutableFence: StardewOwnerImmutableFence }>,
+): StardewOwnerTransitionPrimitives {
+  return createStardewBootstrapOwnerTransitionPrimitives(input, productionOwnerTransitionPersistence);
+}
+
+function immutableFenceFor(owner: StardewPrivateBootstrapOwnerRecord): StardewOwnerImmutableFence {
+  return Object.freeze({ bootstrapId: owner.bootstrapId, playerId: owner.playerId, companionId: owner.companionId, guardian: owner.guardian });
+}
+
+/**
+ * Fieldless, composition-bound handoff for the Guardian private owner. The
+ * WeakMap below is the only place that associates it with a durable path,
+ * immutable fence, and current CAS revision.
+ */
+declare const stardewGuardianOwnerBindingBrand: unique symbol;
+export type StardewBootstrapGuardianOwnerBinding = Readonly<{
+  readonly [stardewGuardianOwnerBindingBrand]: never;
+}>;
+
+export type StardewBootstrapGuardianOwnerTransitionPort = Readonly<{
+  armAcknowledged(): Promise<void>;
+  roleActive(role: "playerHost" | "aiClient"): Promise<void>;
+  beginControlledClose(): Promise<void>;
+  controlledRoleContained(role: "playerHost" | "aiClient"): Promise<void>;
+  finalizeControlledContained(): Promise<void>;
+  beginRecovery(recoveryInstanceId: string): Promise<void>;
+  recoveryRoleContained(role: "playerHost" | "aiClient", recoveryInstanceId: string): Promise<void>;
+  finalizeRecoveredContained(recoveryInstanceId: string): Promise<void>;
+  quarantine(): Promise<void>;
+  quarantineRecovery(recoveryInstanceId: string): Promise<void>;
+}>;
+
+export type StardewBootstrapGuardianRecoveryGateBinding = Readonly<{
+  bindingRevision: string;
+  leaseName: string;
+}>;
+
+type GuardianOwnerBindingFacts = {
+  readonly port: StardewBootstrapGuardianOwnerTransitionPort;
+  readonly recoveryGateBinding: StardewBootstrapGuardianRecoveryGateBinding;
+  consumed: boolean;
+};
+const guardianOwnerBindings = new WeakMap<object, GuardianOwnerBindingFacts>();
+
+/**
+ * Creates one exact Guardian owner binding for a composer-minted owned Phase-A
+ * owner. No path, fence, record, revision, or persistence callback crosses
+ * this boundary; every named transition advances the closure-held CAS cursor.
+ */
+export function createStardewBootstrapGuardianOwnerBinding(
+  owner: StardewOwnedPlayerHostPhaseAOwner,
+  compositionIdentity?: object,
+): StardewBootstrapGuardianOwnerBinding {
+  const facts = requireOwnedPhaseAFacts(owner, compositionIdentity);
+  const existing = guardianOwnerBindings.get(owner);
+  if (existing !== undefined) throw new Error("stardew_bootstrap_guardian_owner_binding_unavailable");
+  const initial = facts.durableOwner.record;
+  const transitions = createProductionStardewBootstrapOwnerTransitionPrimitives({
+    ownerPath: join(facts.durableOwner.transactionDirectory, OWNER_FILE),
+    containmentRoot: dirname(dirname(facts.durableOwner.transactionDirectory)),
+    immutableFence: immutableFenceFor(initial),
+  });
+  let revision = initial.ownerRecordRevision;
+  const advance = async (operation: (expectedRevision: number) => Promise<StardewPrivateBootstrapOwnerRecord>): Promise<void> => {
+    const next = await operation(revision);
+    revision = next.ownerRecordRevision;
+    facts.durableOwner.replaceRecord(next);
+  };
+  const port: StardewBootstrapGuardianOwnerTransitionPort = Object.freeze({
+    armAcknowledged: () => advance((current) => transitions.arm(current)),
+    roleActive: (role) => advance((current) => transitions.activate(role, current)),
+    beginControlledClose: () => advance((current) => transitions.beginControlledClose(current)),
+    controlledRoleContained: (role) => advance((current) => transitions.containControlledRole(role, current)),
+    finalizeControlledContained: () => advance((current) => transitions.finalizeControlledContained(current)),
+    beginRecovery: (actor) => advance((current) => transitions.beginRecovery(current, actor)),
+    recoveryRoleContained: (role, actor) => advance((current) => transitions.containRecoveringRole(role, current, actor)),
+    finalizeRecoveredContained: (actor) => advance((current) => transitions.finalizeRecoveredContained(current, actor)),
+    quarantine: () => advance((current) => transitions.quarantine(current)),
+    quarantineRecovery: (actor) => advance((current) => transitions.quarantineRecovery(current, actor)),
+  });
+  guardianOwnerBindings.set(owner, {
+    port,
+    recoveryGateBinding: Object.freeze({ bindingRevision: initial.guardian.bindingRevision, leaseName: initial.guardian.leaseName }),
+    consumed: false,
+  });
+  return owner as unknown as StardewBootstrapGuardianOwnerBinding;
+}
+
+/** Consumes only a registered composition-bound Guardian owner binding. */
+export function consumeStardewBootstrapGuardianOwnerBinding(
+  binding: StardewBootstrapGuardianOwnerBinding,
+): Readonly<{ transitions: StardewBootstrapGuardianOwnerTransitionPort; recoveryGateBinding: StardewBootstrapGuardianRecoveryGateBinding }> {
+  if (typeof binding !== "object" || binding === null) {
+    throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
+  }
+  const facts = guardianOwnerBindings.get(binding);
+  if (facts === undefined || facts.consumed) throw new Error("stardew_bootstrap_guardian_owner_binding_not_registered");
+  facts.consumed = true;
+  return Object.freeze({ transitions: facts.port, recoveryGateBinding: facts.recoveryGateBinding });
+}
+
+function sameImmutableFence(owner: StardewPrivateBootstrapOwnerRecord, fence: StardewOwnerImmutableFence): boolean {
+  return owner.bootstrapId === fence.bootstrapId && owner.playerId === fence.playerId && owner.companionId === fence.companionId && JSON.stringify(owner.guardian) === JSON.stringify(fence.guardian);
 }
 
 export type StardewGuardianArmBindingRead = Readonly<{
@@ -2719,6 +2946,7 @@ export type StardewGuardianArmBindingRead = Readonly<{
   playerId: string;
   companionId: string;
   expectedRevision: string;
+  expectedOwnerRecordRevision: number;
   nowMs: number;
 }>;
 
@@ -2731,14 +2959,18 @@ export async function readStardewGuardianArmBinding(
     owner.bootstrapId !== input.bootstrapId ||
     owner.playerId !== input.playerId ||
     owner.companionId !== input.companionId ||
-    owner.guardian.revision !== input.expectedRevision ||
+    owner.guardian.bindingRevision !== input.expectedRevision ||
+    owner.ownerRecordRevision !== input.expectedOwnerRecordRevision ||
     owner.expiresAtMs <= input.nowMs ||
     owner.state !== "reserved" ||
-    owner.cleanupDisposition !== "pending" ||
+    owner.guardianState !== "reserved" ||
+    owner.playerHostState !== "reserved" ||
+    owner.aiClientState !== "reserved" ||
+    owner.recoveryInstanceId !== null ||
     owner.managedPaths.length !== 1 ||
     owner.managedPaths[0] !== OWNER_FILE
   ) throw new Error("stardew_bootstrap_guardian_arm_binding_mismatch");
-  return Object.freeze({ ...owner.guardian });
+  return Object.freeze({ ...owner.guardian, ownerRecordRevision: owner.ownerRecordRevision }) as StardewGuardianBinding & Readonly<{ ownerRecordRevision: number }>;
 }
 
 async function readAndValidateOwner(
@@ -2748,32 +2980,29 @@ async function readAndValidateOwner(
   await verifySafePathBoundary(path, root);
   const stat = await lstat(path);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("invalid_stardew_bootstrap_owner");
-  const value: unknown = JSON.parse(await readFile(path, "utf8"));
+  return validateOwnerRecord(JSON.parse(await readFile(path, "utf8")));
+}
+
+/** One exact strict v4 validator for persisted bytes and in-memory successors. */
+function validateOwnerRecord(value: unknown): StardewPrivateBootstrapOwnerRecord {
   if (
     !isRecord(value) ||
     !exactKeys(value, [
-      "schema",
-      "bootstrapId",
-      "playerId",
-       "companionId",
-       "guardian",
-       "playerHost",
-      "aiClient",
-      "expiresAtMs",
-      "state",
-      "cleanupDisposition",
-      "managedPaths",
+      "schema", "bootstrapId", "playerId", "companionId", "guardian",
+      "ownerRecordRevision", "state", "guardianState", "playerHostState", "aiClientState", "recoveryInstanceId",
+      "playerHost", "aiClient", "expiresAtMs", "cleanupDisposition", "managedPaths",
     ]) ||
     value.schema !== OWNER_SCHEMA ||
     !isOpaque(value.bootstrapId) ||
     !isOpaque(value.playerId) ||
-     !isOpaque(value.companionId) ||
-     !isGuardianBinding(value.guardian) ||
-     (!isExternalPlayerHost(value.playerHost) && !isReservedPlayerHost(value.playerHost)) ||
+    !isOpaque(value.companionId) ||
+    !isGuardianBinding(value.guardian) ||
+    (!isExternalPlayerHost(value.playerHost) && !isReservedPlayerHost(value.playerHost)) ||
     !isReservedAiClient(value.aiClient) ||
     !Number.isSafeInteger(value.expiresAtMs) ||
-    (value.state !== "reserved" && value.state !== "quarantined") ||
+    !isPositiveBoundedInteger(value.ownerRecordRevision) ||
     (value.cleanupDisposition !== "pending" && value.cleanupDisposition !== "retry_required") ||
+    !isOwnerStateMatrix(value) ||
     !isManagedPathSet(value.managedPaths)
   ) throw new Error("invalid_stardew_bootstrap_owner");
   return freezeRecord(value as unknown as StardewPrivateBootstrapOwnerRecord);
@@ -2814,7 +3043,7 @@ function validateTestingDependencies(value: StardewPrivateBootstrapCoreDependenc
   const optionalKeys = value.staging === undefined ? [] : ["staging"];
   if (!exactKeys(value, [
          "rawSpawn", "rawProbe", "rawPlayerHostSpawn", "rawPlayerHostProbe",
-         "createBootstrapIdentity", "createGuardianRevision", "createGuardianLeaseName", "createGuardianPlayerJobName", "createGuardianAiJobName",
+         "createBootstrapIdentity", "createGuardianRevision", "createGuardianInstanceId", "createGuardianEpoch", "createGuardianLeaseName", "createGuardianPlayerJobName", "createGuardianAiJobName",
          "createLaunchGeneration", "createPlayerHostLaunchGeneration",
         "createBridgePipeName", "createBridgeToken", "nowMs",
         ...optionalKeys,
@@ -2824,8 +3053,10 @@ function validateTestingDependencies(value: StardewPrivateBootstrapCoreDependenc
       typeof value.rawPlayerHostSpawn !== "function" ||
       typeof value.rawPlayerHostProbe !== "function" ||
        typeof value.createBootstrapIdentity !== "function" ||
-        typeof value.createGuardianRevision !== "function" ||
-        typeof value.createGuardianLeaseName !== "function" ||
+         typeof value.createGuardianRevision !== "function" ||
+         typeof value.createGuardianInstanceId !== "function" ||
+         typeof value.createGuardianEpoch !== "function" ||
+         typeof value.createGuardianLeaseName !== "function" ||
         typeof value.createGuardianPlayerJobName !== "function" ||
         typeof value.createGuardianAiJobName !== "function" ||
        typeof value.createLaunchGeneration !== "function" ||
@@ -2864,9 +3095,38 @@ function isExternalPlayerHost(value: unknown): boolean {
 }
 
 function isGuardianBinding(value: unknown): value is StardewGuardianBinding {
-  return isRecord(value) && exactKeys(value, ["revision", "leaseName", "playerJobName", "aiJobName"]) &&
-    isOpaque(value.revision) && isGuardianName(value.leaseName) && isGuardianName(value.playerJobName) && isGuardianName(value.aiJobName) &&
+  return isRecord(value) && exactKeys(value, ["bindingRevision", "guardianInstanceId", "guardianEpoch", "leaseName", "playerJobName", "aiJobName"]) &&
+    isOpaque(value.bindingRevision) && isOpaque(value.guardianInstanceId) && isPositiveBoundedInteger(value.guardianEpoch) &&
+    isGuardianName(value.leaseName) && isGuardianName(value.playerJobName) && isGuardianName(value.aiJobName) &&
     new Set([value.leaseName, value.playerJobName, value.aiJobName]).size === 3;
+}
+
+function isPositiveBoundedInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647;
+}
+
+function isOwnerStateMatrix(value: Record<string, unknown>): boolean {
+  const parent = value.state;
+  const guardian = value.guardianState;
+  const player = value.playerHostState;
+  const ai = value.aiClientState;
+  const recovery = value.recoveryInstanceId;
+  const role = (item: unknown): item is "reserved" | "armed" | "active" | "closing" | "contained" | "quarantined" =>
+    item === "reserved" || item === "armed" || item === "active" || item === "closing" || item === "contained" || item === "quarantined";
+  if (!role(player) || !role(ai)) return false;
+  if (parent === "reserved" && guardian === "reserved") return player === "reserved" && ai === "reserved" && recovery === null && value.cleanupDisposition === "pending";
+  // Arm is atomic for the Guardian and both role Jobs: an armed Guardian can
+  // never coexist with a never-armed role.
+  if (parent === "reserved" && guardian === "armed") return recovery === null && value.cleanupDisposition === "pending" && [player, ai].every((item) => item === "armed" || item === "active" || item === "contained");
+  if (parent === "closing" && guardian === "closing") return recovery === null && value.cleanupDisposition === "pending" && [player, ai].every((item) => item === "closing" || item === "contained");
+  if (parent === "recovering" && guardian === "recovering") {
+    if (!isOpaque(recovery) || value.cleanupDisposition !== "pending") return false;
+    const belongsTo = (states: readonly string[]) => [player, ai].every((item) => item === "contained" || states.includes(item as string));
+    return belongsTo(["reserved"]) || belongsTo(["armed", "active"]) || belongsTo(["closing"]);
+  }
+  if (parent === "contained" && guardian === "contained") return player === "contained" && ai === "contained" && recovery === null && value.cleanupDisposition === "pending";
+  if (parent === "quarantined" && guardian === "quarantined") return recovery === null && value.cleanupDisposition === "retry_required" && [player, ai].every((item) => item === "contained" || item === "quarantined") && (player === "quarantined" || ai === "quarantined");
+  return false;
 }
 
 function isGuardianName(value: unknown): value is string {

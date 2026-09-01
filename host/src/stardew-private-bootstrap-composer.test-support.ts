@@ -24,6 +24,8 @@ export type StardewPrivateBootstrapComposerTestSupportInput = Readonly<{
   rawPlayerHostProbe: StardewPlayerHostProcessProbe;
   createBootstrapIdentity: () => string;
   createGuardianRevision: () => string;
+  createGuardianInstanceId: () => string;
+  createGuardianEpoch: () => number;
   createGuardianLeaseName: () => string;
   createGuardianPlayerJobName: () => string;
   createGuardianAiJobName: () => string;
