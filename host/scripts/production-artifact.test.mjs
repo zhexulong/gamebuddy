@@ -496,6 +496,35 @@ test("publishes immutable versioned generations and an atomically replaced curre
   await assertCompleteProductionArtifact({ hostRoot: root, outputRoot: dist });
 }));
 
+test("Host atomically emits the fixed Guardian admission contract after pair verification", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-specific Guardian admission publication");
+  await withFixture(async (root) => {
+    await addCanonicalWindowsStardewBootstrapGuardian(root);
+    await writeFile(join(root, "production-artifact.config.json"), JSON.stringify(productionConfig({
+      entryRoots: ["main.js"],
+      resources: [{ source: "resources/windows-named-mutex-broker.ps1", destination: "windows-named-mutex-broker.ps1" }],
+      windowsStardewBootstrapGuardian: windowsStardewBootstrapGuardianDescriptor,
+      externalRuntimeClosure: { kind: "declared_external_runtime_closure", packages: ["typebox"] },
+    })));
+    const outputRoot = join(root, "dist");
+    const published = await publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root), outputRoot });
+    const contract = JSON.parse(await readFile(join(outputRoot, "generations", published.generation, "guardian-admission.json"), "utf8"));
+    const helperSha256 = createHash("sha256").update(Buffer.from("canonical Windows Stardew bootstrap Guardian")).digest("hex");
+    assert.deepEqual(contract, {
+      schema: "gamebuddy-host-guardian-admission/v1",
+      inventoryDigest: published.digest,
+      helperPath: "native/windows-stardew-bootstrap-guardian/win-x64/GameBuddy.WindowsStardewBootstrapGuardian.exe",
+      manifestPath: "native/windows-stardew-bootstrap-guardian/win-x64/windows-stardew-bootstrap-guardian.manifest.json",
+      helperSha256,
+      manifestSha256: createHash("sha256").update(Buffer.from(`{\"schemaVersion\":1,\"protocolVersion\":1,\"rid\":\"win-x64\",\"helperFileName\":\"GameBuddy.WindowsStardewBootstrapGuardian.exe\",\"sha256\":\"${helperSha256}\"}\n`)).digest("hex"),
+      manifestSchemaVersion: 1,
+      manifestProtocolVersion: 1,
+      manifestRid: "win-x64",
+      manifestHelperFileName: "GameBuddy.WindowsStardewBootstrapGuardian.exe",
+    });
+  });
+});
+
 test("rejects unlisted, unused, unresolvable, and undocumented dynamic external closure ingress", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
   await assert.rejects(publishProductionArtifact({ hostRoot: root, emittedRoot: await emit(root, 'import "unlisted";'), outputRoot: dist }), /external_package_unlisted/);
