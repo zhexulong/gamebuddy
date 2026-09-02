@@ -12,12 +12,7 @@ import type {
   RunningTurn,
 } from "./chat-thread-store.js";
 import { createChatEventStream } from "./chat-event-stream.js";
-import {
-  P4C_CANONICAL_DIALOGUE_INPUT_KIND,
-  renderCanonicalDialogueEnvelope,
-  runMountedProviderStart,
-  type NativeChatPreviewPublisher,
-} from "./p4-provider-start-execution.js";
+import { runMountedProviderStart, type NativeChatPreviewPublisher } from "./p4-provider-start-execution.js";
 
 let nativeListener: ((event: unknown) => void) | undefined;
 
@@ -315,25 +310,13 @@ function createScope(overrides: ScopeOverrides = {}) {
   return { scope, transitions, presentationTransitions };
 }
 
-test("P4c serializes the canonical accepted-message envelope without provider facts", () => {
-  const envelope = JSON.parse(renderCanonicalDialogueEnvelope(facts, "Hello")) as Record<string, unknown>;
-  assert.deepEqual(envelope, {
-    kind: P4C_CANONICAL_DIALOGUE_INPUT_KIND,
-    turnId: facts.turnId,
-    messageId: facts.messageId,
-    attemptId: facts.attemptId,
-    idempotencyKey: facts.idempotencyKey,
-    acceptedAtMs: facts.acceptedAtMs,
-    text: "Hello",
-    locale: "und",
-  });
-});
 
 test("P4c terminalizes an observed prompt without a durable presentation as failed", async () => {
   let observer: Observer | undefined;
   let promptCalls = 0;
   let unregisterCalls = 0;
-  let receivedEnvelope: unknown;
+  let receivedPromptText: string | undefined;
+  let receivedPromptOptions: unknown;
   const { scope, transitions, presentationTransitions } = createScope({
     runtimeSession: Object.freeze({
       installTavernProviderStartObserver(onStart: Observer) {
@@ -343,9 +326,10 @@ test("P4c terminalizes an observed prompt without a durable presentation as fail
         };
       },
       session: Object.freeze({
-        prompt(envelope: string) {
+        prompt(text: string, options: unknown) {
           promptCalls += 1;
-          receivedEnvelope = JSON.parse(envelope);
+          receivedPromptText = text;
+          receivedPromptOptions = options;
           observer?.(Object.freeze({ statusClass: "success" as const }));
           return Promise.resolve();
         },
@@ -368,7 +352,8 @@ test("P4c terminalizes an observed prompt without a durable presentation as fail
     presentationTransitions.map(({ operation }) => operation),
     ["claim_completion", "fail"],
   );
-  assert.deepEqual(receivedEnvelope, JSON.parse(renderCanonicalDialogueEnvelope(facts, "Hello")));
+  assert.equal(receivedPromptText, "Hello");
+  assert.deepEqual(receivedPromptOptions, { expandPromptTemplates: false, source: "rpc" });
 });
 
 test("P4c runs when native assistant output settles before the provider observer", async () => {

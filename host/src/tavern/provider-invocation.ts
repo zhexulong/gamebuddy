@@ -8,55 +8,6 @@ import type {
   FailedTurn,
   RunningTurn,
 } from "./chat-thread-store.js";
-
-/**
- * Frozen canonical player envelope. It is rendered strictly from the
- * durable accepted message facts (the persisted player message text and the
- * idempotency-backed turn correlation) and never from a provider, model,
- * Memory, or any in-flight prompt fact.
- */
-export const CANONICAL_DIALOGUE_INPUT_KIND = "gamebuddy_dialogue_input_v1" as const;
-
-export type CanonicalDialogueEnvelope = Readonly<{
-  kind: typeof CANONICAL_DIALOGUE_INPUT_KIND;
-  turnId: string;
-  messageId: string;
-  attemptId: string;
-  idempotencyKey: string;
-  acceptedAtMs: number;
-  text: string;
-  /** ChatThreadStore persists no language metadata; the provider must not infer one. */
-  locale: "und";
-}>;
-
-/**
- * Serializes the canonical envelope in a fixed key order. `session.prompt`
- * receives exactly this string; no system prompting or memory materialization
- * is performed by this layer.
- */
-export function renderCanonicalDialogueEnvelope(
-  facts: Readonly<{
-    turnId: string;
-    messageId: string;
-    attemptId: string;
-    idempotencyKey: string;
-    acceptedAtMs: number;
-  }>,
-  text: string,
-): string {
-  const envelope: CanonicalDialogueEnvelope = Object.freeze({
-    kind: CANONICAL_DIALOGUE_INPUT_KIND,
-    turnId: facts.turnId,
-    messageId: facts.messageId,
-    attemptId: facts.attemptId,
-    idempotencyKey: facts.idempotencyKey,
-    acceptedAtMs: facts.acceptedAtMs,
-    text,
-    locale: "und",
-  });
-  return JSON.stringify(envelope);
-}
-
 export type ProviderInvocationResult =
   | Readonly<{ outcome: "completed"; ledger: CompletedTurn }>
   | Readonly<{ outcome: "cancelled"; ledger: CancelledTurn }>
@@ -323,7 +274,6 @@ export async function runMountedProviderInvocation(
       return { outcome: "not_started", ledger };
     }
     const text = await scope.readAcceptedMessageText();
-    const envelope = renderCanonicalDialogueEnvelope(scope.facts, text);
     // The message read is asynchronous, so it cannot share the previous
     // linearization point. Revalidate immediately before the Host invocation.
     try {
@@ -349,7 +299,7 @@ export async function runMountedProviderInvocation(
     // queued turn; a synchronous throw is equivalent to rejection.
     const settlePrompt = (): Promise<"fulfilled" | "rejected"> => {
       try {
-        return promptFn.call(runtimeSession.session, envelope, {
+        return promptFn.call(runtimeSession.session, text, {
           expandPromptTemplates: false,
           source: "rpc",
         }).then(

@@ -9,54 +9,6 @@ import type {
   RunningTurn,
 } from "./chat-thread-store.js";
 
-/**
- * P4c's frozen canonical player envelope. It is rendered strictly from the
- * durable accepted message facts (the persisted player message text and the
- * idempotency-backed turn correlation) and never from a provider, model,
- * Memory, or any in-flight prompt fact.
- */
-export const P4C_CANONICAL_DIALOGUE_INPUT_KIND = "gamebuddy_dialogue_input_v1" as const;
-
-export type P4CCanonicalDialogueEnvelope = Readonly<{
-  kind: typeof P4C_CANONICAL_DIALOGUE_INPUT_KIND;
-  turnId: string;
-  messageId: string;
-  attemptId: string;
-  idempotencyKey: string;
-  acceptedAtMs: number;
-  text: string;
-  /** ChatThreadStore persists no language metadata; P4c must not infer one. */
-  locale: "und";
-}>;
-
-/**
- * Serializes the canonical envelope in a fixed key order. `session.prompt`
- * receives exactly this string; no system prompting or memory materialization
- * is performed by P4c.
- */
-export function renderCanonicalDialogueEnvelope(
-  facts: Readonly<{
-    turnId: string;
-    messageId: string;
-    attemptId: string;
-    idempotencyKey: string;
-    acceptedAtMs: number;
-  }>,
-  text: string,
-): string {
-  const envelope: P4CCanonicalDialogueEnvelope = Object.freeze({
-    kind: P4C_CANONICAL_DIALOGUE_INPUT_KIND,
-    turnId: facts.turnId,
-    messageId: facts.messageId,
-    attemptId: facts.attemptId,
-    idempotencyKey: facts.idempotencyKey,
-    acceptedAtMs: facts.acceptedAtMs,
-    text,
-    locale: "und",
-  });
-  return JSON.stringify(envelope);
-}
-
 export type ProviderStartResult =
   | Readonly<{ outcome: "completed"; ledger: CompletedTurn }>
   | Readonly<{ outcome: "cancelled"; ledger: CancelledTurn }>
@@ -322,7 +274,6 @@ export async function runMountedProviderStart(
       return { outcome: "not_started", ledger };
     }
     const text = await scope.readAcceptedMessageText();
-    const envelope = renderCanonicalDialogueEnvelope(scope.facts, text);
     // The message read is asynchronous, so it cannot share the previous
     // linearization point. Revalidate immediately before the Host invocation.
     try {
@@ -348,7 +299,7 @@ export async function runMountedProviderStart(
     // queued turn; a synchronous throw is equivalent to rejection.
     const settlePrompt = (): Promise<"fulfilled" | "rejected"> => {
       try {
-        return promptFn.call(runtimeSession.session, envelope, {
+        return promptFn.call(runtimeSession.session, text, {
           expandPromptTemplates: false,
           source: "rpc",
         }).then(
