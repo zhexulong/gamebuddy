@@ -27,7 +27,7 @@ const config = {
   runtimeRoot: "E:\\GameBuddy\\preview",
   runtimeInstanceId: "runtime_01",
   requiredPresentationLocale: "zh-CN",
-  identity: { playerId: "player_01", companionId: "companion_01", saveId: "save_01", worldId: "world_01" },
+  identity: { playerId: "player_01", companionId: "companion_01", continuityId: "preview_continuity_01", saveId: "save_01", worldId: "world_01" },
   bridge: { pipeName: "gamebuddy_preview", bridgeToken: "a".repeat(32) },
 };
 
@@ -165,7 +165,7 @@ test("preview config rejects untrusted capability, legacy bridge expiry, and inv
     () =>
       parseFarmhandCompanionPreviewConfig({
         ...config,
-        identity: { ...config.identity, continuityId: "semantic_memory_partition" },
+        identity: { ...config.identity, continuityId: "bad id" },
       }),
     /invalid_farmhand_companion_preview_config/,
   );
@@ -466,7 +466,7 @@ test("one explicit relaunch launches once, recovers the private coordinator once
   const launch = {
     ...base,
     connection,
-    receiptRecovery: {
+    receiptRecovery: Object.freeze({
       scope: RECOVERY_IDENTITY,
       bindingIdentity: RECOVERY_IDENTITY,
       queryExecutionReceipt: async (query: { requestId: string; idempotencyKey: string }) => {
@@ -481,7 +481,7 @@ test("one explicit relaunch launches once, recovers the private coordinator once
           evidence: { targetId: "soil_01" },
         };
       },
-    } as ExactReceiptRecoveryPort,
+    }) satisfies ExactReceiptRecoveryPort,
   };
   const next = await relaunchFarmhandCompanionPreviewForTest(predecessor, config, dependencies(events, launch));
   assert.deepEqual(events, [
@@ -524,7 +524,7 @@ test("relaunch is single-flight; a concurrent explicit relaunch fails closed", a
         await gate;
         return {
           ...handle(),
-          receiptRecovery: {
+          receiptRecovery: Object.freeze({
             scope: RECOVERY_IDENTITY,
             bindingIdentity: RECOVERY_IDENTITY,
             queryExecutionReceipt: async () => ({
@@ -536,7 +536,7 @@ test("relaunch is single-flight; a concurrent explicit relaunch fails closed", a
               revision: 2,
               evidence: { targetId: "soil_01" },
             }),
-          },
+          }) satisfies ExactReceiptRecoveryPort,
         };
       },
     },

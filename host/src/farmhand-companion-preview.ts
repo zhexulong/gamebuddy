@@ -135,9 +135,10 @@ export function parseFarmhandCompanionPreviewConfig(value: unknown): FarmhandCom
     !isIdentifier(value.runtimeInstanceId) ||
     (value.requiredPresentationLocale !== "zh-CN" && value.requiredPresentationLocale !== "en-US") ||
     !isRecord(identity) ||
-    Object.keys(identity).some((key) => !["playerId", "companionId", "saveId", "worldId"].includes(key)) ||
+    Object.keys(identity).some((key) => !["playerId", "companionId", "continuityId", "saveId", "worldId"].includes(key)) ||
     !isIdentifier(identity.playerId) ||
     !isIdentifier(identity.companionId) ||
+    !isIdentifier(identity.continuityId) ||
     !isIdentifier(identity.saveId) ||
     !isIdentifier(identity.worldId) ||
     !isRecord(bridge) ||
@@ -166,6 +167,7 @@ export function parseFarmhandCompanionPreviewConfig(value: unknown): FarmhandCom
     identity: Object.freeze({
       playerId: identity.playerId,
       companionId: identity.companionId,
+      continuityId: identity.continuityId,
       saveId: identity.saveId,
       worldId: identity.worldId,
     }),

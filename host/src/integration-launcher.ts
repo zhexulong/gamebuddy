@@ -1,4 +1,5 @@
 import type { WorldFact } from "./event-pump.js";
+import type { ExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
 import { assertIntegrationAdapter, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
 import type { CompanionIdentity } from "./runtime.js";
@@ -60,7 +61,7 @@ export type IntegrationLaunchHandle = Readonly<{
    * it before running one bounded exact-receipt recovery pass. It never
    * reissues an action request.
    */
-  receiptRecovery?: unknown;
+  receiptRecovery?: ExactReceiptRecoveryPort;
   events: IntegrationEventSource;
   authority: ReceiptBackedIntegrationAuthority;
   lifecycle: "ready";
