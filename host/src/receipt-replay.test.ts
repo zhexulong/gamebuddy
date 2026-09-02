@@ -28,12 +28,79 @@ test("receipt replay accepts authoritative terminal paths with monotonic revisio
   }
 });
 
-test("receipt replay fails closed for terminal rewrites, mismatch, regressions, and evidence-free success", () => {
+test("unknown execution receipt query returns null", () => {
+  assert.equal(new ReceiptReplayLedger().receipt("unknown_execution"), null);
+});
+
+test("identical receipt re-delivery is a no-op", () => {
   const ledger = new ReceiptReplayLedger();
-  assert.equal(ledger.apply(receipt("accepted", 1)), null);
-  assert.equal(ledger.apply(receipt("succeeded", 2, null)), "success_without_evidence");
-  assert.equal(ledger.apply(receipt("failed", 2)), null);
-  assert.equal(ledger.apply(receipt("running", 3)), "terminal_state_rewritten");
-  assert.equal(ledger.apply({ ...receipt("failed", 4), requestId: "other_request" }), "execution_request_mismatch");
-  assert.equal(ledger.apply(receipt("failed", 2)), "non_monotonic_revision");
+  const first = receipt("running", 1, { nested: { target: "tile_12_34" } });
+  assert.equal(ledger.apply(first), null);
+  const stored = ledger.receipt(first.executionId);
+
+  assert.equal(ledger.apply(structuredClone(first)), null);
+  assert.strictEqual(ledger.receipt(first.executionId), stored);
+  assert.deepEqual(ledger.receipt(first.executionId), first);
+});
+
+test("rejected receipts preserve the last accepted state", () => {
+  const cases: readonly Readonly<{
+    initial: ExecutionReceipt;
+    rejected: ExecutionReceipt;
+    fault: string;
+  }>[] = [
+    {
+      initial: receipt("accepted", 1),
+      rejected: receipt("succeeded", 2, null),
+      fault: "success_without_evidence",
+    },
+    {
+      initial: receipt("failed", 2),
+      rejected: receipt("running", 3),
+      fault: "terminal_state_rewritten",
+    },
+    {
+      initial: receipt("accepted", 1),
+      rejected: { ...receipt("running", 2), requestId: "other_request" },
+      fault: "execution_request_mismatch",
+    },
+    {
+      initial: receipt("accepted", 2),
+      rejected: receipt("running", 2),
+      fault: "non_monotonic_revision",
+    },
+    {
+      initial: receipt("accepted", 1),
+      rejected: { ...receipt("running", 2), state: "invalid_previous_state" } as unknown as ExecutionReceipt,
+      fault: "invalid_previous_state",
+    },
+  ];
+  for (const { initial, rejected, fault } of cases) {
+    const ledger = new ReceiptReplayLedger();
+    assert.equal(ledger.apply(initial), null);
+    const before = ledger.receipt(initial.executionId);
+
+    assert.equal(ledger.apply(rejected), fault);
+    assert.strictEqual(ledger.receipt(initial.executionId), before);
+  }
+});
+
+test("receipt replay stores and returns an immutable deep snapshot", () => {
+  const ledger = new ReceiptReplayLedger();
+  const input = receipt("succeeded", 1, { nested: { target: "tile_12_34" }, trail: ["start", "finish"] });
+  assert.equal(ledger.apply(input), null);
+
+  const inputEvidence = input.evidence as { nested: { target: string }; trail: string[] };
+  inputEvidence.nested.target = "mutated_input";
+  inputEvidence.trail.push("after_apply");
+  const stored = ledger.receipt(input.executionId)!;
+  const evidence = stored.evidence as { nested: { target: string }; trail: string[] };
+
+  assert.deepEqual(evidence, { nested: { target: "tile_12_34" }, trail: ["start", "finish"] });
+  assert.equal(Object.isFrozen(stored), true);
+  assert.equal(Object.isFrozen(stored.evidence), true);
+  assert.equal(Object.isFrozen(evidence.nested), true);
+  assert.equal(Object.isFrozen(evidence.trail), true);
+  assert.throws(() => { evidence.nested.target = "mutated_return"; }, TypeError);
+  assert.throws(() => { evidence.trail.push("mutated_return"); }, TypeError);
 });

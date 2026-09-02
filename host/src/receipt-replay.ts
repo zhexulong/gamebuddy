@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type { ExecutionReceipt, ExecutionState } from "./protocol.js";
 
 const TERMINAL_STATES = new Set<ExecutionState>([
@@ -21,8 +23,10 @@ export class ReceiptReplayLedger {
   readonly #latest = new Map<string, ExecutionReceipt>();
 
   public apply(receipt: ExecutionReceipt): string | null {
+    if (!PROGRESS_STATES.has(receipt.state) && !TERMINAL_STATES.has(receipt.state)) return "invalid_previous_state";
     const previous = this.#latest.get(receipt.executionId);
     if (previous !== undefined) {
+      if (isDeepStrictEqual(previous, receipt)) return null;
       if (previous.requestId !== receipt.requestId) return "execution_request_mismatch";
       if (receipt.revision <= previous.revision) return "non_monotonic_revision";
       if (TERMINAL_STATES.has(previous.state)) return "terminal_state_rewritten";
@@ -30,11 +34,18 @@ export class ReceiptReplayLedger {
     }
     if (receipt.state === "succeeded" && (receipt.evidence === null || Object.keys(receipt.evidence).length === 0))
       return "success_without_evidence";
-    this.#latest.set(receipt.executionId, Object.freeze({ ...receipt }));
+    this.#latest.set(receipt.executionId, freezeDeep(structuredClone(receipt)));
     return null;
   }
 
   public receipt(executionId: string): ExecutionReceipt | null {
     return this.#latest.get(executionId) ?? null;
   }
+}
+
+function freezeDeep<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const nested of Object.values(value)) freezeDeep(nested, seen);
+  return Object.freeze(value);
 }
