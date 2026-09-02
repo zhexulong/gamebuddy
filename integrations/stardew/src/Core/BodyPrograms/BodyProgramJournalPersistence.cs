@@ -4,315 +4,164 @@ using GameBuddy.Stardew.Core.Models;
 
 namespace GameBuddy.Stardew.Core.BodyPrograms;
 
-/// <summary>Strict versioned codec for the complete Mod-owned Body Program journal.</summary>
+/// <summary>Strict exact-key codec for the complete Mod-owned dynamic BodyProgramJournal/v1.</summary>
 public static class BodyProgramJournalPersistence
 {
     public const int SchemaVersion = 1;
-    private static readonly JsonSerializerOptions WriteOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false,
-    };
+    private static readonly JsonSerializerOptions WriteOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public static string Encode(BodyProgramJournalState state)
     {
-        if (!TryValidate(state, out _))
-            throw new ArgumentException("Body Program journal state is malformed.", nameof(state));
+        if (!TryValidate(state, out _)) throw new ArgumentException("Body Program journal state is malformed.", nameof(state));
         return JsonSerializer.Serialize(state, WriteOptions);
     }
 
-    public static bool TryDecode(string? encoded, VerifiedBodyPrograms catalog, BridgeScope expectedScope, out BodyProgramJournalState? state)
+    public static bool TryDecode(string? encoded, BodyProgramActionCatalog catalog, BridgeScope expectedScope, out BodyProgramJournalState? state)
     {
         state = null;
-        if (string.IsNullOrEmpty(encoded) || catalog is null || expectedScope is null || !expectedScope.IsValid)
-            return false;
+        if (string.IsNullOrEmpty(encoded) || catalog is null || expectedScope is null || !expectedScope.IsValid) return false;
         try
         {
-            using JsonDocument document = JsonDocument.Parse(encoded);
-            if (!TryReadState(document.RootElement, out BodyProgramJournalState? decoded)
-                || decoded is null || !decoded.Scope.Equals(expectedScope)
-                || !TryValidate(decoded, out _)
-                || !decoded.Programs.All(program => catalog.MatchesCanonical(program.Descriptor)))
-                return false;
+            using JsonDocument document = JsonDocument.Parse(encoded, new JsonDocumentOptions { MaxDepth = 16 });
+            if (!TryReadState(document.RootElement, out BodyProgramJournalState? decoded) || decoded is null || !decoded.Scope.Equals(expectedScope)
+                || !TryValidate(decoded, out _) || !decoded.Programs.All(program => MatchesCatalog(program, catalog, expectedScope))) return false;
             state = FreezeState(decoded);
             return true;
         }
-        catch (JsonException)
-        {
-            return false;
-        }
+        catch (JsonException) { return false; }
     }
 
     internal static bool TryValidate(BodyProgramJournalState? state, out string? reason)
     {
         reason = null;
-        if (state is null || state.SchemaVersion != SchemaVersion || state.Scope is null || !state.Scope.IsValid
-            || state.PolicyIdentity is null || !state.PolicyIdentity.IsValid || state.Programs is null || state.Programs.Count > 128)
+        if (state is null || state.SchemaVersion != SchemaVersion || state.Scope is null || !state.Scope.IsValid || state.PolicyIdentity is null || !state.PolicyIdentity.IsValid
+            || state.EventHighWater < 0 || state.Programs is null || state.Events is null || state.Programs.Count > 128 || state.Events.Count > 4096) { reason = "invalid_state"; return false; }
+        HashSet<string> ids = new(StringComparer.Ordinal);
+        if (state.Programs.Any(program => program is null || !ids.Add(program.Program.ProgramId) || !ValidateProgram(program))) { reason = "invalid_program"; return false; }
+        long prior = 0;
+        foreach (BodyProgramJournalEvent @event in state.Events)
         {
-            reason = "invalid_state";
-            return false;
+            if (@event is null || @event.Cursor <= prior || @event.Cursor > state.EventHighWater || !ids.Contains(@event.ProgramId) || !BodyProgramValidation.IsIdentifier(@event.Kind)
+                || @event.CatalogRevision < 0 || (@event.NodeId is not null && !BodyProgramValidation.IsIdentifier(@event.NodeId)) || @event.NodeAttempt is < 1) { reason = "invalid_event"; return false; }
+            BodyProgramJournalProgram program = state.Programs.Single(item => item.Program.ProgramId == @event.ProgramId);
+            if (@event.CatalogRevision != program.Program.CatalogRevision) { reason = "event_catalog_revision"; return false; }
+            prior = @event.Cursor;
         }
-        HashSet<string> programs = new(StringComparer.Ordinal);
-        foreach (BodyProgramJournalProgram? program in state.Programs)
-        {
-            if (program is null || !programs.Add(program.ProgramId) || !ValidateProgram(program))
-            {
-                reason = "invalid_program";
-                return false;
-            }
-        }
+        if (state.Events.Count > 0 && prior != state.EventHighWater) { reason = "event_high_water"; return false; }
         return true;
     }
 
-    internal static BodyProgramJournalState FreezeState(BodyProgramJournalState state) => new(
-        state.SchemaVersion,
-        state.Scope,
-        state.PolicyIdentity,
-        Array.AsReadOnly(state.Programs.Select(program => new BodyProgramJournalProgram(
-            program.ProgramId,
-            BodyProgramValidation.FreezeDescriptor(program.Descriptor),
-            program.State,
-            Array.AsReadOnly(program.Nodes.Select(node => new BodyProgramJournalNode(
-                node.NodeId,
-                node.State,
-                node.Attempt,
-                new ReadOnlyDictionary<string, int>(new Dictionary<string, int>(node.PredecessorAttempts, StringComparer.Ordinal)))).ToArray()))).ToArray()));
+    internal static BodyProgramJournalState FreezeState(BodyProgramJournalState state) => new(state.SchemaVersion, state.Scope, state.PolicyIdentity, state.EventHighWater,
+        Array.AsReadOnly(state.Programs.Select(FreezeProgram).ToArray()), Array.AsReadOnly(state.Events.Select(@event => @event with { }).ToArray()));
+    private static BodyProgramJournalProgram FreezeProgram(BodyProgramJournalProgram program) => new(FreezeVerified(program.Program), program.State, program.StopEpoch,
+        Array.AsReadOnly(program.Nodes.Select(node => node with { }).ToArray()), Array.AsReadOnly(program.Facts.Select(fact => new RuntimeFact(fact.ProgramId, fact.NodeId, fact.NodeAttempt, fact.FactName, BodyProgramValidation.FreezeMap(fact.Values))).ToArray()));
+    internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,
+        Array.AsReadOnly(program.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.CanonicalArguments), Array.AsReadOnly(node.DependsOn.ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), BodyProgramValidation.FreezeMap(node.DerivedResourceClaims), node.DeadlineMs)).ToArray()));
 
     private static bool ValidateProgram(BodyProgramJournalProgram program)
     {
-        if (!BodyProgramValidation.IsIdentifier(program.ProgramId) || program.Descriptor is null
-            || program.ProgramId != program.Descriptor.ProgramId || !BodyProgramValidation.IsValidDescriptor(program.Descriptor)
-            || !Enum.IsDefined(program.State) || program.Nodes is null || program.Nodes.Count != program.Descriptor.Nodes.Count)
-            return false;
-        Dictionary<string, BodyProgramNodeDescriptor> descriptors = program.Descriptor.Nodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
+        if (program.Program is null || !IsValidVerified(program.Program) || HasUnorderedResourceConflict(program.Program.Nodes) || !Enum.IsDefined(program.State) || program.StopEpoch < 0 || program.Nodes is null || program.Facts is null || program.Nodes.Count != program.Program.Nodes.Count) return false;
         Dictionary<string, BodyProgramJournalNode> nodes = new(StringComparer.Ordinal);
-        foreach (BodyProgramJournalNode? node in program.Nodes)
+        foreach (BodyProgramJournalNode node in program.Nodes)
+            if (node is null || !nodes.TryAdd(node.NodeId, node) || !Enum.IsDefined(node.State) || node.NodeAttempt < 0 || node.AdmissionAttempt < 0 || (node.GrantId is not null && !BodyProgramValidation.IsIdentifier(node.GrantId))) return false;
+        if (!program.Program.Nodes.All(node => nodes.ContainsKey(node.NodeId))) return false;
+        HashSet<string> factKeys = new(StringComparer.Ordinal);
+        foreach (RuntimeFact fact in program.Facts)
         {
-            if (node is null || !nodes.TryAdd(node.NodeId, node) || !descriptors.ContainsKey(node.NodeId)
-                || !Enum.IsDefined(node.State) || node.Attempt < 0 || node.PredecessorAttempts is null
-                || !node.PredecessorAttempts.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value > 0))
-                return false;
+            if (fact is null || fact.ProgramId != program.Program.ProgramId || !nodes.TryGetValue(fact.NodeId, out BodyProgramJournalNode? node) || fact.NodeAttempt != node.NodeAttempt
+                || node.State != BodyProgramNodeState.Succeeded || !BodyProgramValidation.IsIdentifier(fact.FactName) || fact.Values is null || fact.Values.Count > 32
+                || !factKeys.Add($"{fact.NodeId}\u001f{fact.NodeAttempt}\u001f{fact.FactName}")) return false;
+            VerifiedBodyProgramNode descriptor = program.Program.Nodes.Single(item => item.NodeId == fact.NodeId);
+            if (descriptor.ActionId.Length == 0 || fact.Values.Count != 1 || !fact.Values.TryGetValue(fact.FactName, out BodyProgramCanonicalValue? value)
+                || !BodyProgramValidation.IsValidCanonicalValue(value, value.Kind)) return false;
         }
-        if (nodes.Count != descriptors.Count)
-            return false;
-        IReadOnlyDictionary<string, IReadOnlyList<string>> predecessors = BuildPredecessors(program.Descriptor);
-        foreach ((string nodeId, BodyProgramJournalNode node) in nodes)
-        {
-            IReadOnlyList<string> expectedPredecessors = predecessors[nodeId];
-            bool requiresAttempt = node.State is not (BodyProgramNodeState.Pending or BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Quarantined);
-            if (requiresAttempt && node.Attempt < 1)
-                return false;
-            if (node.Attempt == 0 && node.PredecessorAttempts.Count != 0)
-                return false;
-            if (node.Attempt > 0 && (!expectedPredecessors.All(node.PredecessorAttempts.ContainsKey)
-                || node.PredecessorAttempts.Keys.Any(key => !expectedPredecessors.Contains(key, StringComparer.Ordinal))
-                || expectedPredecessors.Any(predecessor => nodes[predecessor].State != BodyProgramNodeState.Succeeded
-                    || nodes[predecessor].Attempt != node.PredecessorAttempts[predecessor])))
-                return false;
-        }
-        return ValidateProgramTerminalParity(program, nodes.Values);
-    }
-
-    private static bool ValidateProgramTerminalParity(BodyProgramJournalProgram program, IEnumerable<BodyProgramJournalNode> nodes)
-    {
-        BodyProgramJournalNode[] materialized = nodes.ToArray();
         return program.State switch
         {
-            BodyProgramState.Active => materialized.All(node => node.State is not (BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled
-                or BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Quarantined)),
-            BodyProgramState.Succeeded => materialized.All(node => node.State == BodyProgramNodeState.Succeeded),
-            BodyProgramState.Failed => materialized.Any(node => node.State == BodyProgramNodeState.Failed),
-            BodyProgramState.Cancelled => materialized.Any(node => node.State == BodyProgramNodeState.Cancelled),
-            BodyProgramState.RecoveryRequired => materialized.Any(node => node.State is BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Quarantined),
-            BodyProgramState.Quarantined => materialized.Any(node => node.State == BodyProgramNodeState.Quarantined),
+            BodyProgramState.Active => nodes.Values.All(node => node.State is not (BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled)),
+            BodyProgramState.Succeeded => nodes.Values.All(node => node.State == BodyProgramNodeState.Succeeded),
+            BodyProgramState.Failed => nodes.Values.Any(node => node.State == BodyProgramNodeState.Failed),
+            BodyProgramState.Cancelled => nodes.Values.Any(node => node.State == BodyProgramNodeState.Cancelled),
+            BodyProgramState.RecoveryRequired or BodyProgramState.Quarantined => nodes.Values.Any(node => node.State == BodyProgramNodeState.RecoveryRequired),
             _ => false,
         };
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<string>> BuildPredecessors(BodyProgramDescriptor descriptor)
+    internal static bool IsValidVerified(VerifiedBodyProgram? program) => program is not null && BodyProgramValidation.IsIdentifier(program.ProgramId) && program.CatalogRevision >= 0
+        && program.Nodes is { Count: >= 1 and <= BodyProgramValidation.MaximumNodes } && program.Nodes.All(node => node is not null && BodyProgramValidation.IsIdentifier(node.NodeId) && BodyProgramValidation.IsIdentifier(node.ActionId) && BodyProgramValidation.IsValidDeadlineMs(node.DeadlineMs)
+            && node.CanonicalArguments is { Count: <= 32 } && node.DependsOn is { Count: <= 8 } && node.Bindings is { Count: <= 4 } && node.DerivedResourceClaims is { Count: <= 16 }
+            && node.CanonicalArguments.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is not null && BodyProgramValidation.IsValidCanonicalValue(pair.Value, pair.Value.Kind))
+            && node.DependsOn.All(BodyProgramValidation.IsIdentifier) && node.DependsOn.Distinct(StringComparer.Ordinal).Count() == node.DependsOn.Count
+            && node.Bindings.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is not null && BodyProgramValidation.IsIdentifier(pair.Value.ProducerNodeId) && BodyProgramValidation.IsIdentifier(pair.Value.FactName))
+            && node.DerivedResourceClaims.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is { Length: <= 4096 }))
+        && program.Nodes.Select(node => node.NodeId).Distinct(StringComparer.Ordinal).Count() == program.Nodes.Count;
+    private static bool MatchesCatalog(BodyProgramJournalProgram journal, BodyProgramActionCatalog catalog, BridgeScope scope)
     {
-        Dictionary<string, List<string>> mutable = descriptor.Nodes.ToDictionary(node => node.NodeId, _ => new List<string>(), StringComparer.Ordinal);
-        foreach (BodyProgramNodeDescriptor node in descriptor.Nodes)
-        foreach (string successor in node.SuccessorNodeIds)
-            mutable[successor].Add(node.NodeId);
-        return new ReadOnlyDictionary<string, IReadOnlyList<string>>(mutable.ToDictionary(
-            pair => pair.Key,
-            pair => (IReadOnlyList<string>)Array.AsReadOnly(pair.Value.OrderBy(value => value, StringComparer.Ordinal).ToArray()),
-            StringComparer.Ordinal));
+        VerifiedBodyProgram program = journal.Program;
+        if (program.CatalogRevision != catalog.Revision) return false;
+        Dictionary<string, VerifiedBodyProgramNode> nodes = program.Nodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
+        foreach (VerifiedBodyProgramNode node in program.Nodes)
+        {
+            if (!catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action) || !BodyProgramVerifier.ArgumentsMatch(node.CanonicalArguments, action!) || !BodyProgramVerifier.ResourceClaimsMatch(node.DerivedResourceClaims, action!, scope)) return false;
+            if (node.DependsOn.Any(dependency => !nodes.ContainsKey(dependency) || dependency == node.NodeId)) return false;
+            foreach ((string argument, ActionProgramBinding binding) in node.Bindings)
+            {
+                BodyProgramArgumentDescriptor? consumer = action!.Arguments.SingleOrDefault(item => item.Name == argument);
+                if (!node.DependsOn.Contains(binding.ProducerNodeId, StringComparer.Ordinal) || !nodes.TryGetValue(binding.ProducerNodeId, out VerifiedBodyProgramNode? producer) || !catalog.TryGetAction(producer.ActionId, out BodyProgramActionDescriptor? producerAction) || consumer is null || !producerAction!.OutputFacts.Any(fact => fact.Name == binding.FactName && fact.Kind == consumer.Kind)) return false;
+            }
+        }
+        foreach (RuntimeFact fact in journal.Facts)
+        {
+            VerifiedBodyProgramNode producer = nodes[fact.NodeId];
+            if (!catalog.TryGetAction(producer.ActionId, out BodyProgramActionDescriptor? producerAction)
+                || producerAction!.OutputFacts.SingleOrDefault(output => output.Name == fact.FactName) is not BodyProgramFactDescriptor output
+                || !fact.Values.TryGetValue(fact.FactName, out BodyProgramCanonicalValue? value)
+                || !BodyProgramValidation.IsValidCanonicalValue(value, output.Kind)) return false;
+        }
+        return !HasCycle(nodes) && !HasUnorderedResourceConflict(program.Nodes);
+    }
+    private static bool HasCycle(IReadOnlyDictionary<string, VerifiedBodyProgramNode> nodes) { HashSet<string> done = new(StringComparer.Ordinal), active = new(StringComparer.Ordinal); bool Visit(string id) { if (!done.Add(id)) return active.Contains(id); active.Add(id); bool cycle = nodes[id].DependsOn.Any(Visit); active.Remove(id); return cycle; } return nodes.Keys.Any(Visit); }
+    private static bool HasUnorderedResourceConflict(IReadOnlyList<VerifiedBodyProgramNode> programNodes)
+    {
+        Dictionary<string, VerifiedBodyProgramNode> nodes = programNodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
+        VerifiedBodyProgramNode[] all = programNodes.ToArray();
+        for (int index = 0; index < all.Length; index++)
+        for (int other = index + 1; other < all.Length; other++)
+            if (all[index].DerivedResourceClaims.Keys.Intersect(all[other].DerivedResourceClaims.Keys, StringComparer.Ordinal).Any()
+                && !DependsTransitively(all[index].NodeId, all[other].NodeId, nodes)
+                && !DependsTransitively(all[other].NodeId, all[index].NodeId, nodes)) return true;
+        return false;
+    }
+    private static bool DependsTransitively(string nodeId, string targetId, IReadOnlyDictionary<string, VerifiedBodyProgramNode> nodes)
+    {
+        HashSet<string> visited = new(StringComparer.Ordinal);
+        bool Visit(string id) => visited.Add(id) && nodes[id].DependsOn.Any(dependency => dependency == targetId || (nodes.ContainsKey(dependency) && Visit(dependency)));
+        return Visit(nodeId);
     }
 
     private static bool TryReadState(JsonElement root, out BodyProgramJournalState? state)
     {
         state = null;
-        if (!HasExactProperties(root, "schemaVersion", "scope", "policyIdentity", "programs")
-            || !TryReadScope(root.GetProperty("scope"), out BridgeScope? scope)
-            || !TryReadPolicyIdentity(root.GetProperty("policyIdentity"), out BodyProgramPolicyIdentity? identity)
-            || !TryReadArray(root.GetProperty("programs"), TryReadProgram, out BodyProgramJournalProgram[] programs))
-            return false;
-        if (!root.GetProperty("schemaVersion").TryGetInt32(out int schemaVersion))
-            return false;
-        state = new BodyProgramJournalState(schemaVersion, scope!, identity!, programs);
-        return true;
+        if (!Exact(root, "schemaVersion", "scope", "policyIdentity", "eventHighWater", "programs", "events") || !ReadScope(root.GetProperty("scope"), out BridgeScope? scope) || !ReadPolicy(root.GetProperty("policyIdentity"), out BodyProgramPolicyIdentity? identity) || !root.GetProperty("schemaVersion").TryGetInt32(out int version) || !root.GetProperty("eventHighWater").TryGetInt64(out long highWater) || !ReadArray(root.GetProperty("programs"), ReadProgram, out BodyProgramJournalProgram[] programs) || !ReadArray(root.GetProperty("events"), ReadEvent, out BodyProgramJournalEvent[] events)) return false;
+        state = new BodyProgramJournalState(version, scope!, identity!, highWater, programs, events); return true;
     }
-
-    private static bool TryReadProgram(JsonElement element, out BodyProgramJournalProgram? program)
-    {
-        program = null;
-        if (!HasExactProperties(element, "programId", "descriptor", "state", "nodes")
-            || !TryReadString(element.GetProperty("programId"), out string? programId)
-            || !TryReadDescriptor(element.GetProperty("descriptor"), out BodyProgramDescriptor? descriptor)
-            || !TryReadEnum<BodyProgramState>(element.GetProperty("state"), out BodyProgramState? state)
-            || !TryReadArray(element.GetProperty("nodes"), TryReadNode, out BodyProgramJournalNode[] nodes))
-            return false;
-        program = new BodyProgramJournalProgram(programId!, descriptor!, state!.Value, nodes);
-        return true;
-    }
-
-    private static bool TryReadNode(JsonElement element, out BodyProgramJournalNode? node)
-    {
-        node = null;
-        if (!HasExactProperties(element, "nodeId", "state", "attempt", "predecessorAttempts")
-            || !TryReadString(element.GetProperty("nodeId"), out string? nodeId)
-            || !TryReadEnum<BodyProgramNodeState>(element.GetProperty("state"), out BodyProgramNodeState? state)
-            || !TryReadInt(element.GetProperty("attempt"), out int? attempt)
-            || !TryReadIntMap(element.GetProperty("predecessorAttempts"), out IReadOnlyDictionary<string, int>? predecessors))
-            return false;
-        node = new BodyProgramJournalNode(nodeId!, state!.Value, attempt!.Value, predecessors!);
-        return true;
-    }
-
-    private static bool TryReadDescriptor(JsonElement element, out BodyProgramDescriptor? descriptor)
-    {
-        descriptor = null;
-        if (!HasExactProperties(element, "programId", "nodes") || !TryReadString(element.GetProperty("programId"), out string? programId)
-            || !TryReadArray(element.GetProperty("nodes"), TryReadDescriptorNode, out BodyProgramNodeDescriptor[] nodes))
-            return false;
-        descriptor = new BodyProgramDescriptor(programId!, nodes);
-        return true;
-    }
-
-    private static bool TryReadDescriptorNode(JsonElement element, out BodyProgramNodeDescriptor? node)
-    {
-        node = null;
-        if (!HasExactProperties(element, "nodeId", "actionId", "arguments", "bindings", "resourceClaims", "successorNodeIds")
-            || !TryReadString(element.GetProperty("nodeId"), out string? nodeId)
-            || !TryReadString(element.GetProperty("actionId"), out string? actionId)
-            || !TryReadStringMap(element.GetProperty("arguments"), out IReadOnlyDictionary<string, string>? arguments, TryReadString)
-            || !TryReadStringMap(element.GetProperty("bindings"), out IReadOnlyDictionary<string, string>? bindings, TryReadString)
-            || !TryReadStringMap(element.GetProperty("resourceClaims"), out IReadOnlyDictionary<string, string>? claims, TryReadString)
-            || !TryReadStringArray(element.GetProperty("successorNodeIds"), out string[] successors))
-            return false;
-        node = new BodyProgramNodeDescriptor(nodeId!, actionId!, arguments!, bindings!, claims!, successors);
-        return true;
-    }
-
-    private static bool TryReadScope(JsonElement element, out BridgeScope? scope)
-    {
-        scope = null;
-        if (!HasExactProperties(element, "integrationId", "saveId", "worldId", "playerId", "companionId")
-            || !TryReadString(element.GetProperty("integrationId"), out string? integrationId)
-            || !TryReadString(element.GetProperty("saveId"), out string? saveId)
-            || !TryReadString(element.GetProperty("worldId"), out string? worldId)
-            || !TryReadString(element.GetProperty("playerId"), out string? playerId)
-            || !TryReadString(element.GetProperty("companionId"), out string? companionId))
-            return false;
-        scope = new BridgeScope(integrationId!, saveId!, worldId!, playerId!, companionId!);
-        return true;
-    }
-
-    private static bool TryReadPolicyIdentity(JsonElement element, out BodyProgramPolicyIdentity? identity)
-    {
-        identity = null;
-        if (!HasExactProperties(element, "embodimentId", "generation")
-            || !TryReadString(element.GetProperty("embodimentId"), out string? embodimentId)
-            || !TryReadLong(element.GetProperty("generation"), out long? generation))
-            return false;
-        identity = new BodyProgramPolicyIdentity(embodimentId!, generation!.Value);
-        return true;
-    }
-
-    private delegate bool ElementReader<T>(JsonElement element, out T? value);
-
-    private static bool TryReadArray<T>(JsonElement element, ElementReader<T> reader, out T[] values)
-    {
-        values = Array.Empty<T>();
-        if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() > 128)
-            return false;
-        List<T> result = new();
-        foreach (JsonElement item in element.EnumerateArray())
-        {
-            if (!reader(item, out T? value) || value is null) return false;
-            result.Add(value);
-        }
-        values = result.ToArray();
-        return true;
-    }
-
-    private static bool TryReadStringArray(JsonElement element, out string[] values) => TryReadArray(element, TryReadString, out values);
-
-    private static bool TryReadStringMap<T>(JsonElement element, out IReadOnlyDictionary<string, T>? map, ElementReader<T> valueReader)
-    {
-        map = null;
-        if (element.ValueKind != JsonValueKind.Object || element.EnumerateObject().Count() > 128)
-            return false;
-        Dictionary<string, T> result = new(StringComparer.Ordinal);
-        foreach (JsonProperty property in element.EnumerateObject())
-        {
-            if (!BodyProgramValidation.IsIdentifier(property.Name) || !valueReader(property.Value, out T? value) || value is null || !result.TryAdd(property.Name, value))
-                return false;
-        }
-        map = new ReadOnlyDictionary<string, T>(result);
-        return true;
-    }
-
-    private static bool TryReadIntMap(JsonElement element, out IReadOnlyDictionary<string, int>? map)
-    {
-        map = null;
-        if (element.ValueKind != JsonValueKind.Object || element.EnumerateObject().Count() > 128)
-            return false;
-        Dictionary<string, int> result = new(StringComparer.Ordinal);
-        foreach (JsonProperty property in element.EnumerateObject())
-        {
-            if (!BodyProgramValidation.IsIdentifier(property.Name) || !property.Value.TryGetInt32(out int value) || !result.TryAdd(property.Name, value))
-                return false;
-        }
-        map = new ReadOnlyDictionary<string, int>(result);
-        return true;
-    }
-
-    private static bool TryReadString(JsonElement element, out string? value)
-    {
-        value = element.ValueKind == JsonValueKind.String ? element.GetString() : null;
-        return value is not null;
-    }
-
-    private static bool TryReadInt(JsonElement element, out int? value)
-    {
-        bool valid = element.TryGetInt32(out int raw);
-        value = valid ? raw : null;
-        return valid;
-    }
-
-    private static bool TryReadLong(JsonElement element, out long? value)
-    {
-        bool valid = element.TryGetInt64(out long raw);
-        value = valid ? raw : null;
-        return valid;
-    }
-
-    private static bool TryReadEnum<T>(JsonElement element, out T? value) where T : struct, Enum
-    {
-        bool valid = element.TryGetInt32(out int raw) && Enum.IsDefined(typeof(T), raw);
-        value = valid ? (T)Enum.ToObject(typeof(T), raw) : null;
-        return valid;
-    }
-
-    private static bool HasExactProperties(JsonElement element, params string[] expected)
-    {
-        if (element.ValueKind != JsonValueKind.Object) return false;
-        JsonProperty[] properties = element.EnumerateObject().ToArray();
-        return properties.Length == expected.Length
-            && properties.Select(property => property.Name).Distinct(StringComparer.Ordinal).Count() == expected.Length
-            && properties.All(property => expected.Contains(property.Name, StringComparer.Ordinal));
-    }
+    private static bool ReadProgram(JsonElement value, out BodyProgramJournalProgram? program) { program = null; if (!Exact(value, "program", "state", "stopEpoch", "nodes", "facts") || !ReadVerified(value.GetProperty("program"), out VerifiedBodyProgram? verified) || !ReadEnum<BodyProgramState>(value.GetProperty("state"), out BodyProgramState state) || !value.GetProperty("stopEpoch").TryGetInt64(out long stopEpoch) || !ReadArray(value.GetProperty("nodes"), ReadNode, out BodyProgramJournalNode[] nodes) || !ReadArray(value.GetProperty("facts"), ReadFact, out RuntimeFact[] facts)) return false; program = new(verified!, state, stopEpoch, nodes, facts); return true; }
+    private static bool ReadVerified(JsonElement value, out VerifiedBodyProgram? program) { program = null; if (!Exact(value, "programId", "catalogRevision", "nodes") || !ReadString(value.GetProperty("programId"), out string? id) || !value.GetProperty("catalogRevision").TryGetInt64(out long revision) || !ReadArray(value.GetProperty("nodes"), ReadVerifiedNode, out VerifiedBodyProgramNode[] nodes)) return false; program = new(id!, revision, nodes); return true; }
+    private static bool ReadVerifiedNode(JsonElement value, out VerifiedBodyProgramNode? node) { node = null; if (!Exact(value, "nodeId", "actionId", "canonicalArguments", "dependsOn", "bindings", "derivedResourceClaims", "deadlineMs") || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadString(value.GetProperty("actionId"), out string? action) || !ReadCanonicalMap(value.GetProperty("canonicalArguments"), out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? arguments) || !ReadStringArray(value.GetProperty("dependsOn"), out string[] dependsOn) || !ReadBindings(value.GetProperty("bindings"), out IReadOnlyDictionary<string, ActionProgramBinding>? bindings) || !ReadStringMap(value.GetProperty("derivedResourceClaims"), out IReadOnlyDictionary<string, string>? claims) || !value.GetProperty("deadlineMs").TryGetInt64(out long deadline)) return false; node = new(id!, action!, arguments!, dependsOn, bindings!, claims!, deadline); return true; }
+    private static bool ReadNode(JsonElement value, out BodyProgramJournalNode? node) { node = null; if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId") || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadEnum<BodyProgramNodeState>(value.GetProperty("state"), out BodyProgramNodeState state) || !value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) || !value.GetProperty("admissionAttempt").TryGetInt32(out int admission) || !ReadNullableString(value.GetProperty("grantId"), out string? grant)) return false; node = new(id!, state, attempt, admission, grant); return true; }
+    private static bool ReadFact(JsonElement value, out RuntimeFact? fact) { fact = null; if (!Exact(value, "programId", "nodeId", "nodeAttempt", "factName", "values") || !ReadString(value.GetProperty("programId"), out string? program) || !ReadString(value.GetProperty("nodeId"), out string? node) || !value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) || !ReadString(value.GetProperty("factName"), out string? name) || !ReadCanonicalMap(value.GetProperty("values"), out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? values)) return false; fact = new(program!, node!, attempt, name!, values!); return true; }
+    private static bool ReadEvent(JsonElement value, out BodyProgramJournalEvent? @event) { @event = null; if (!Exact(value, "cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt") || !value.GetProperty("cursor").TryGetInt64(out long cursor) || !ReadString(value.GetProperty("programId"), out string? program) || !ReadString(value.GetProperty("kind"), out string? kind) || !value.GetProperty("catalogRevision").TryGetInt64(out long revision) || !ReadNullableString(value.GetProperty("nodeId"), out string? node) || !ReadNullableInt(value.GetProperty("nodeAttempt"), out int? attempt)) return false; @event = new(cursor, program!, kind!, revision, node, attempt); return true; }
+    private static bool ReadScope(JsonElement value, out BridgeScope? scope) { scope = null; if (!Exact(value, "integrationId", "saveId", "worldId", "playerId", "companionId") || !ReadString(value.GetProperty("integrationId"), out string? i) || !ReadString(value.GetProperty("saveId"), out string? s) || !ReadString(value.GetProperty("worldId"), out string? w) || !ReadString(value.GetProperty("playerId"), out string? p) || !ReadString(value.GetProperty("companionId"), out string? c)) return false; scope = new(i!, s!, w!, p!, c!); return true; }
+    private static bool ReadPolicy(JsonElement value, out BodyProgramPolicyIdentity? policy) { policy = null; if (!Exact(value, "embodimentId", "generation") || !ReadString(value.GetProperty("embodimentId"), out string? id) || !value.GetProperty("generation").TryGetInt64(out long generation)) return false; policy = new(id!, generation); return true; }
+    private delegate bool Reader<T>(JsonElement element, out T? value);
+    private static bool ReadArray<T>(JsonElement element, Reader<T> reader, out T[] values) { values = Array.Empty<T>(); if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() > 4096) return false; List<T> result = new(); foreach (JsonElement item in element.EnumerateArray()) { if (!reader(item, out T? itemValue) || itemValue is null) return false; result.Add(itemValue); } values = result.ToArray(); return true; }
+    private static bool ReadStringArray(JsonElement value, out string[] values) => ReadArray(value, ReadString, out values);
+    private static bool ReadCanonicalMap(JsonElement value, out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? map) { map = null; if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false; Dictionary<string, BodyProgramCanonicalValue> result = new(StringComparer.Ordinal); foreach (JsonProperty property in value.EnumerateObject()) { if (!BodyProgramValidation.IsIdentifier(property.Name) || !Exact(property.Value, "kind", "canonicalValue") || !ReadEnum<BodyProgramArgumentKind>(property.Value.GetProperty("kind"), out BodyProgramArgumentKind kind) || !ReadString(property.Value.GetProperty("canonicalValue"), out string? canonical) || !BodyProgramValidation.IsValidCanonicalValue(new(kind, canonical!), kind) || !result.TryAdd(property.Name, new(kind, canonical!))) return false; } map = new ReadOnlyDictionary<string, BodyProgramCanonicalValue>(result); return true; }
+    private static bool ReadStringMap(JsonElement value, out IReadOnlyDictionary<string, string>? map) { map = null; if (!ReadMap(value, ReadString, out Dictionary<string, string>? result)) return false; map = new ReadOnlyDictionary<string, string>(result!); return true; }
+    private static bool ReadBindings(JsonElement value, out IReadOnlyDictionary<string, ActionProgramBinding>? bindings) { bindings = null; if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false; Dictionary<string, ActionProgramBinding> result = new(StringComparer.Ordinal); foreach (JsonProperty property in value.EnumerateObject()) { if (!BodyProgramValidation.IsIdentifier(property.Name) || !Exact(property.Value, "producerNodeId", "factName") || !ReadString(property.Value.GetProperty("producerNodeId"), out string? producer) || !ReadString(property.Value.GetProperty("factName"), out string? fact) || !result.TryAdd(property.Name, new(producer!, fact!))) return false; } bindings = new ReadOnlyDictionary<string, ActionProgramBinding>(result); return true; }
+    private static bool ReadMap<T>(JsonElement value, Reader<T> reader, out Dictionary<string, T>? map) { map = null; if (value.ValueKind != JsonValueKind.Object || value.EnumerateObject().Count() > 32) return false; Dictionary<string, T> result = new(StringComparer.Ordinal); foreach (JsonProperty property in value.EnumerateObject()) { if (!BodyProgramValidation.IsIdentifier(property.Name) || !reader(property.Value, out T? item) || !result.TryAdd(property.Name, item!)) return false; } map = result; return true; }
+    private static bool ReadString(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.String ? value.GetString() : null; return result is { Length: <= 4096 }; }
+    private static bool ReadNullableString(JsonElement value, out string? result) { result = value.ValueKind == JsonValueKind.Null ? null : value.ValueKind == JsonValueKind.String ? value.GetString() : null; return value.ValueKind == JsonValueKind.Null || result is { Length: <= 128 }; }
+    private static bool ReadNullableInt(JsonElement value, out int? result) { result = value.ValueKind == JsonValueKind.Null ? null : value.TryGetInt32(out int parsed) ? parsed : null; return value.ValueKind == JsonValueKind.Null || result is not null; }
+    private static bool ReadEnum<T>(JsonElement value, out T result) where T : struct, Enum { result = default; if (!value.TryGetInt32(out int raw) || !Enum.IsDefined(typeof(T), raw)) return false; result = (T)Enum.ToObject(typeof(T), raw); return true; }
+    private static bool Exact(JsonElement value, params string[] names) => value.ValueKind == JsonValueKind.Object && value.EnumerateObject().Count() == names.Length && value.EnumerateObject().Select(property => property.Name).Distinct(StringComparer.Ordinal).Count() == names.Length && value.EnumerateObject().All(property => names.Contains(property.Name, StringComparer.Ordinal));
 }

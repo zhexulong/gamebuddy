@@ -1,7 +1,7 @@
+using System.Text.Json;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
-using GameBuddy.Stardew.Core.Policy;
 using Xunit;
 
 namespace GameBuddy.Stardew.Core.Tests;
@@ -9,276 +9,248 @@ namespace GameBuddy.Stardew.Core.Tests;
 public sealed class BodyProgramAuthorityTests
 {
     [Fact]
-    public void FreshAuthorityIsEmptyAndCanRunABoundedDag()
+    public void CodecMatchesFrozenHostCandidateShapeAndDecodesTypedArguments()
     {
-        var store = new MemoryStore();
-        VerifiedBodyPrograms catalog = CreateCatalog();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        var authority = Open(store, catalog, policy);
-        var controller = new FarmhandBodyProgramController(authority, () => Publication("move_to_tile", "till_soil"), () => policy);
-
-        authority.Status.Should().Be(BodyProgramJournalOpenStatus.Empty);
-        controller.TryStart("program").IsSuccess.Should().BeTrue();
-        BodyProgramGrant first = controller.TryGrant("program", "first").Value!;
-        controller.TryConsumeGrant(first).IsSuccess.Should().BeTrue();
-        controller.TryComplete(first, Terminal(first), BodyProgramNodeOutcome.Succeeded).IsSuccess.Should().BeTrue();
-        BodyProgramGrant second = controller.TryGrant("program", "second").Value!;
-        controller.TryConsumeGrant(second).IsSuccess.Should().BeTrue();
-        controller.TryComplete(second, Terminal(second), BodyProgramNodeOutcome.Succeeded).IsSuccess.Should().BeTrue();
-
-        Open(store, catalog, new("embodiment", 9)).Status.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        const string json = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"7\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":1000}]}";
+        ActionProgramCandidateCodec.TryDecode(json, out ActionProgramCandidate? candidate, out _).Should().BeTrue();
+        candidate!.Nodes.Single().DeadlineMs.Should().Be(1000);
+        Open().Verify(candidate).Accepted.Should().BeTrue();
+        ActionProgramCandidateCodec.TryDecode(json.Replace("\"7\"", "\"07\"", StringComparison.Ordinal), out _, out _).Should().BeTrue();
+        ActionProgramCandidateCodec.TryDecode(json.Replace("\"7\"", "\"07\"", StringComparison.Ordinal), out ActionProgramCandidate? invalid, out _).Should().BeTrue();
+        Open().Verify(invalid!).Accepted.Should().BeFalse();
+        ActionProgramCandidateCodec.TryDecode(json.Replace("\"nodes\"", "\"deadlineMs\":1000,\"nodes\"", StringComparison.Ordinal), out _, out _).Should().BeFalse();
+        ActionProgramCandidateCodec.TryDecode(json.Replace("\"deadlineMs\":1000", "", StringComparison.Ordinal).Replace(",}", "}", StringComparison.Ordinal), out _, out _).Should().BeFalse();
     }
 
     [Fact]
-    public void ReopenFencesNonTerminalWorkButPreservesTerminalDiagnostics()
+    public void VerifyIsPureWhileSubmitDurablyAcceptsAndIsIdempotent()
     {
-        var store = new MemoryStore();
-        VerifiedBodyPrograms catalog = CreateCatalog();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        var controller = new FarmhandBodyProgramController(Open(store, catalog, policy), () => Publication("move_to_tile", "till_soil"), () => policy);
-        controller.TryStart("program").IsSuccess.Should().BeTrue();
-        BodyProgramGrant grant = controller.TryGrant("program", "first").Value!;
-
-        var reopened = Open(store, catalog, new("embodiment", 2));
-        var fenced = new FarmhandBodyProgramController(reopened, () => Publication("move_to_tile", "till_soil"), () => new BodyProgramPolicyIdentity("embodiment", 2));
-        reopened.Status.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired, store.Value);
-        reopened.Snapshot.Programs.Single().State.Should().Be(BodyProgramState.RecoveryRequired);
-        fenced.TryConsumeGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
-        fenced.TryGrant("program", "second").Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
+        var store = new MemoryStore(); var authority = Open(store); ActionProgramCandidate candidate = Program("program", 1000);
+        authority.Verify(candidate).Accepted.Should().BeTrue(); store.Value.Should().BeNull();
+        authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Accepted); store.Value.Should().NotBeNull();
+        authority.Submit(candidate).Code.Should().Be(BodyProgramSubmitCode.Idempotent);
+        authority.Submit(Program("program", 2000)).Code.Should().Be(BodyProgramSubmitCode.Conflict);
     }
 
     [Fact]
-    public void ReopenFencesPendingSiblingAfterProgramFailure()
+    public void SubmitRejectsPolicyGenerationDowngradeWithoutChangingDurableState()
+    {
+        BodyProgramPolicyIdentity policy = Policy(2);
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, policy: () => policy);
+        authority.Submit(Program("accepted", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        string persistedAtGeneration2 = store.Value!;
+
+        policy = Policy(1);
+        BodyProgramSubmitResult stale = authority.Submit(Program("stale", 1000));
+
+        stale.Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        stale.Verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "policy_identity_stale");
+        store.Value.Should().Be(persistedAtGeneration2);
+        authority.Snapshot.PolicyIdentity.Generation.Should().Be(2);
+        authority.Status("stale").Code.Should().Be(BodyProgramQueryCode.NotFound);
+    }
+
+    [Fact]
+    public void StatusAndEventsCarryHostAddressedCatalogProjection()
+    {
+        var authority = Open(); authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
+        status.CatalogRevision.Should().Be(7); status.EventHighWater.Should().BeGreaterThan(0);
+        BodyProgramEventsResult events = authority.Events("program", 0, 1);
+        events.Events.Should().ContainSingle().Which.CatalogRevision.Should().Be(7);
+        events.NextCursor.Should().Be(events.Events.Single().Cursor);
+    }
+
+    [Fact]
+    public void DispatchAndCompletionRejectModifiedGrantDeadlineStopCatalogArgsResourcesAndPolicyAba()
+    {
+        BodyProgramPolicyIdentity policy = Policy(); long now = 10; var authority = Open(policy: () => policy, now: () => now);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+        authority.TryConsumeHostGrant(grant).IsSuccess.Should().BeTrue();
+        authority.TryBeginNativeDispatch(grant with { GrantId = "forged" }).Code.Should().Be(BodyProgramControllerResultCode.GrantMismatch);
+        authority.TryBeginNativeDispatch(grant with { DeadlineMs = 999 }).Code.Should().Be(BodyProgramControllerResultCode.GrantMismatch);
+        authority.TryBeginNativeDispatch(grant with { CanonicalArguments = CanonicalMap("tile", 8) }).Code.Should().Be(BodyProgramControllerResultCode.GrantMismatch);
+        authority.TryBeginNativeDispatch(grant with { DerivedResourceClaims = Claims("actor", "other") }).Code.Should().Be(BodyProgramControllerResultCode.GrantMismatch);
+        policy = Policy(2); authority.TryBeginNativeDispatch(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+        policy = Policy(1); authority.TryBeginNativeDispatch(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+        now = 1001; authority.TryBeginNativeDispatch(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
+    }
+
+    [Fact]
+    public void CompleteRejectsUndefinedOutcomeWithoutChangingRunningNodeOrJournal()
     {
         var store = new MemoryStore();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        VerifiedBodyPrograms catalog = CreateParallelCatalog();
-        var controller = new FarmhandBodyProgramController(Open(store, catalog, policy), () => Publication("move_to_tile", "till_soil"), () => policy);
-        controller.TryStart("parallel").IsSuccess.Should().BeTrue();
-        BodyProgramGrant failed = controller.TryGrant("parallel", "failed").Value!;
-        controller.TryConsumeGrant(failed).IsSuccess.Should().BeTrue();
-        controller.TryComplete(failed, Terminal(failed), BodyProgramNodeOutcome.Failed).IsSuccess.Should().BeTrue();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        var controller = new FarmhandBodyProgramController(authority);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = controller.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = Grant(challenge);
+        controller.TryConsumeHostGrant(grant).IsSuccess.Should().BeTrue();
+        controller.TryBeginNativeDispatch(grant).IsSuccess.Should().BeTrue();
+        string journalBeforeCompletion = store.Value!;
 
-        OpenBodyProgramJournalAuthority reopened = Open(store, catalog, new("embodiment", 2));
-        var fenced = new FarmhandBodyProgramController(reopened, () => Publication("move_to_tile", "till_soil"), () => new BodyProgramPolicyIdentity("embodiment", 2));
-        BodyProgramJournalProgram program = reopened.Snapshot.Programs.Single(candidate => candidate.ProgramId == "parallel");
+        BodyProgramControllerResult<RuntimeFact> result = controller.TryComplete(grant, Fact(grant), (BodyProgramNodeOutcome)999);
 
-        reopened.Status.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+        result.Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        authority.Status("program").Snapshot!.State.Should().Be(BodyProgramState.Active);
+        authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
+        store.Value.Should().Be(journalBeforeCompletion);
+    }
+
+    [Fact]
+    public void AuthorityCompleteRejectsUndefinedOutcomeWithoutChangingRunningNodeOrJournal()
+    {
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = Grant(challenge);
+        authority.TryConsumeHostGrant(grant).IsSuccess.Should().BeTrue();
+        authority.TryBeginNativeDispatch(grant).IsSuccess.Should().BeTrue();
+        string journalBeforeCompletion = store.Value!;
+
+        BodyProgramControllerResult<RuntimeFact> result = authority.TryComplete(grant, Fact(grant), (BodyProgramNodeOutcome)999);
+
+        result.Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Empty);
+        authority.OpenStatus.Should().NotBe(BodyProgramJournalOpenStatus.PersistenceWriteFailed);
+        authority.Status("program").Snapshot!.State.Should().Be(BodyProgramState.Active);
+        authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
+        store.Value.Should().Be(journalBeforeCompletion);
+    }
+
+    [Theory]
+    [InlineData(BodyProgramNodeOutcome.Failed)]
+    [InlineData(BodyProgramNodeOutcome.Cancelled)]
+    public void RestartFencesTerminalFailedOrCancelledProgramsWithAnyNonterminalSibling(BodyProgramNodeOutcome outcome)
+    {
+        var store = new MemoryStore(); var authority = Open(store);
+        authority.Submit(Program("program", 1000, twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+        authority.TryConsumeHostGrant(grant).IsSuccess.Should().BeTrue(); authority.TryBeginNativeDispatch(grant).IsSuccess.Should().BeTrue();
+        authority.TryComplete(grant, Fact(grant), outcome).IsSuccess.Should().BeTrue();
+
+        OpenBodyProgramJournalAuthority reopened = Open(store, policy: () => Policy(2));
+        reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+        BodyProgramJournalProgram program = reopened.Snapshot.Programs.Single();
         program.State.Should().Be(BodyProgramState.RecoveryRequired);
-        program.Nodes.Single(node => node.NodeId == "failed").State.Should().Be(BodyProgramNodeState.Failed);
-        program.Nodes.Single(node => node.NodeId == "sibling").State.Should().Be(BodyProgramNodeState.RecoveryRequired);
-        fenced.TryStart("other").Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
-        fenced.TryGrant("parallel", "sibling").Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
-        fenced.TryConsumeGrant(failed).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
-        fenced.TryComplete(failed, Terminal(failed), BodyProgramNodeOutcome.Failed).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
+        program.Nodes.Single(node => node.NodeId == "first").State.Should().Be(outcome == BodyProgramNodeOutcome.Failed ? BodyProgramNodeState.Failed : BodyProgramNodeState.Cancelled);
+        program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.RecoveryRequired);
     }
 
     [Fact]
-    public void ReopenFencesTerminalProgramWithGrantedSiblingAndBlocksAllExecutionEntries()
+    public void ReopenRejectsPersistedFactWithTamperedOutputKind()
     {
-        var store = new MemoryStore();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        VerifiedBodyPrograms catalog = CreateParallelCatalog();
-        var controller = new FarmhandBodyProgramController(Open(store, catalog, policy), () => Publication("move_to_tile", "till_soil"), () => policy);
-        controller.TryStart("parallel").IsSuccess.Should().BeTrue();
-        BodyProgramGrant failed = controller.TryGrant("parallel", "failed").Value!;
-        controller.TryConsumeGrant(failed).IsSuccess.Should().BeTrue();
-        BodyProgramGrant sibling = controller.TryGrant("parallel", "sibling").Value!;
-        controller.TryComplete(failed, Terminal(failed), BodyProgramNodeOutcome.Failed).IsSuccess.Should().BeTrue();
+        var store = new MemoryStore(); var authority = Open(store);
+        authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+        authority.TryConsumeHostGrant(grant).IsSuccess.Should().BeTrue(); authority.TryBeginNativeDispatch(grant).IsSuccess.Should().BeTrue();
+        authority.TryComplete(grant, Fact(grant), BodyProgramNodeOutcome.Succeeded).IsSuccess.Should().BeTrue();
 
-        OpenBodyProgramJournalAuthority reopened = Open(store, catalog, new("embodiment", 2));
-        var fenced = new FarmhandBodyProgramController(reopened, () => Publication("move_to_tile", "till_soil"), () => new BodyProgramPolicyIdentity("embodiment", 2));
-
-        reopened.Status.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
-        reopened.Snapshot.Programs.Single(program => program.ProgramId == "parallel").State.Should().Be(BodyProgramState.RecoveryRequired);
-        fenced.TryStart("other").Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
-        fenced.TryGrant("parallel", "sibling").Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
-        fenced.TryConsumeGrant(sibling).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
-        fenced.TryComplete(sibling, Terminal(sibling), BodyProgramNodeOutcome.Failed).Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
+        store.Set(store.Value!.Replace("\"factName\":\"arrival\",\"values\":{\"arrival\":{\"kind\":1", "\"factName\":\"arrival\",\"values\":{\"arrival\":{\"kind\":2", StringComparison.Ordinal));
+        OpenBodyProgramJournalAuthority? reopened = null;
+        Action reopen = () => reopened = Open(store);
+        reopen.Should().NotThrow();
+        reopened!.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
     }
 
     [Fact]
-    public void CompletionRejectsNullRuntimeFactValues()
+    public void CandidateVerifierRejectsDuplicateDependencyIds()
     {
-        var store = new MemoryStore();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        var controller = new FarmhandBodyProgramController(Open(store, CreateCatalog(), policy), () => Publication("move_to_tile", "till_soil"), () => policy);
-        controller.TryStart("program").IsSuccess.Should().BeTrue();
-        BodyProgramGrant grant = controller.TryGrant("program", "first").Value!;
-        controller.TryConsumeGrant(grant).IsSuccess.Should().BeTrue();
-
-        RuntimeFact malformed = Terminal(grant) with { Values = null! };
-        controller.TryComplete(grant, malformed, BodyProgramNodeOutcome.Succeeded).Code.Should().Be(BodyProgramControllerResultCode.InvalidFact);
-    }
-
-    [Fact]
-    public void GrantConsumeAndCompletionRejectPolicyChangeIncludingDisableEnableAba()
-    {
-        var store = new MemoryStore();
-        VerifiedBodyPrograms catalog = CreateCatalog();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        FarmhandCapabilityPublication publication = Publication("move_to_tile", "till_soil");
-        var controller = new FarmhandBodyProgramController(Open(store, catalog, policy), () => publication, () => policy);
-        controller.TryStart("program").IsSuccess.Should().BeTrue();
-        BodyProgramGrant grant = controller.TryGrant("program", "first").Value!;
-        publication = Publication("till_soil");
-        policy = new BodyProgramPolicyIdentity("embodiment", 2);
-        controller.TryConsumeGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
-        publication = Publication("move_to_tile", "till_soil");
-        controller.TryConsumeGrant(grant).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
-        controller.TryComplete(grant, Terminal(grant), BodyProgramNodeOutcome.Succeeded).Code.Should().Be(BodyProgramControllerResultCode.PolicyIdentityStale);
-    }
-
-    [Fact]
-    public void WrongProgramOrAttemptFactCannotCompleteOrUnlockSuccessor()
-    {
-        var store = new MemoryStore();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        var controller = new FarmhandBodyProgramController(Open(store, CreateCatalog(), policy), () => Publication("move_to_tile", "till_soil"), () => policy);
-        controller.TryStart("program").IsSuccess.Should().BeTrue();
-        BodyProgramGrant grant = controller.TryGrant("program", "first").Value!;
-        controller.TryConsumeGrant(grant).IsSuccess.Should().BeTrue();
-        RuntimeFact wrong = Terminal(grant) with { ProgramId = "other", NodeAttempt = grant.NodeAttempt + 1 };
-        controller.TryComplete(grant, wrong, BodyProgramNodeOutcome.Succeeded).Code.Should().Be(BodyProgramControllerResultCode.FactProvenanceMismatch);
-        controller.TryGrant("program", "second").Code.Should().Be(BodyProgramControllerResultCode.NodeNotEligible);
-    }
-
-    [Fact]
-    public void CodecRejectsWrongScopeAndStaleSuccessorBinding()
-    {
-        VerifiedBodyPrograms catalog = CreateCatalog();
-        BridgeScope scope = Scope();
-        BodyProgramJournalState state = ActiveState(catalog, scope) with
+        ActionProgramCandidate candidate = new("program", new[]
         {
-            Programs = new[] { new BodyProgramJournalProgram("program", catalog.Descriptors.Single(), BodyProgramState.Active, new[]
-            {
-                new BodyProgramJournalNode("first", BodyProgramNodeState.Succeeded, 1, IntMap()),
-                new BodyProgramJournalNode("second", BodyProgramNodeState.Granted, 1, IntMap("first", "1")),
-            }) },
-        };
-        string encoded = BodyProgramJournalPersistence.Encode(state);
-        BodyProgramJournalPersistence.TryDecode(encoded, catalog, new BridgeScope("stardew", "other", "world", "player", "companion"), out _).Should().BeFalse();
-        BodyProgramJournalPersistence.TryDecode(encoded.Replace("\"first\":1", "\"first\":2", StringComparison.Ordinal), catalog, scope, out _).Should().BeFalse();
+            new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), 1000),
+            new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first", "first" }, Bindings(), 1000),
+        });
+
+        BodyProgramVerificationReport verification = Open().Verify(candidate);
+
+        verification.Accepted.Should().BeFalse();
+        verification.Diagnostics.Should().ContainSingle(diagnostic => diagnostic.Code == "invalid_dependency" && diagnostic.NodeId == "second");
     }
 
     [Fact]
-    public void CodecRejectsActiveProgramContainingTerminalFailure()
-    {
-        VerifiedBodyPrograms catalog = CreateCatalog();
-        BridgeScope scope = Scope();
-        BodyProgramJournalState failed = ActiveState(catalog, scope) with
-        {
-            Programs = new[] { new BodyProgramJournalProgram("program", catalog.Descriptors.Single(), BodyProgramState.Failed, new[]
-            {
-                new BodyProgramJournalNode("first", BodyProgramNodeState.Failed, 1, IntMap()),
-                new BodyProgramJournalNode("second", BodyProgramNodeState.Pending, 0, IntMap()),
-            }) },
-        };
-        string encoded = BodyProgramJournalPersistence.Encode(failed);
-        string malformed = encoded.Replace("\"state\":3", "\"state\":1", StringComparison.Ordinal);
-        string malformedCancelled = malformed.Replace("\"state\":5", "\"state\":6", StringComparison.Ordinal);
-
-        BodyProgramJournalPersistence.TryDecode(malformed, catalog, scope, out _).Should().BeFalse();
-        BodyProgramJournalPersistence.TryDecode(malformedCancelled, catalog, scope, out _).Should().BeFalse();
-    }
-
-    [Fact]
-    public void CodecRejectsTamperedCatalogFieldsAndSparseOrUnknownState()
-    {
-        VerifiedBodyPrograms catalog = CreateCatalog();
-        BridgeScope scope = Scope();
-        BodyProgramJournalState state = ActiveState(catalog, scope);
-        string encoded = BodyProgramJournalPersistence.Encode(state);
-        BodyProgramJournalPersistence.TryDecode(encoded.Replace("move_to_tile", "unknown_action", StringComparison.Ordinal), catalog, scope, out _).Should().BeFalse();
-        BodyProgramJournalPersistence.TryDecode(encoded.Replace("tile", "changed", StringComparison.Ordinal), catalog, scope, out _).Should().BeFalse();
-        BodyProgramJournalPersistence.TryDecode(encoded.Replace("\"nodes\":[", "\"nodes\":[]", StringComparison.Ordinal), catalog, scope, out _).Should().BeFalse();
-        BodyProgramJournalPersistence.TryDecode(encoded.Replace("\"schemaVersion\":1", "\"schemaVersion\":1,\"unknown\":1", StringComparison.Ordinal), catalog, scope, out _).Should().BeFalse();
-    }
-
-    [Fact]
-    public void ReopenLeavesTerminalDiagnosticRecordsReadable()
+    public void ReopenRejectsPersistedDuplicateDependencyId()
     {
         var store = new MemoryStore();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        VerifiedBodyPrograms catalog = CreateCatalog();
-        var controller = new FarmhandBodyProgramController(Open(store, catalog, policy), () => Publication("move_to_tile", "till_soil"), () => policy);
-        controller.TryStart("program").IsSuccess.Should().BeTrue();
-        BodyProgramGrant first = controller.TryGrant("program", "first").Value!;
-        controller.TryConsumeGrant(first).IsSuccess.Should().BeTrue();
-        controller.TryComplete(first, Terminal(first), BodyProgramNodeOutcome.Succeeded).IsSuccess.Should().BeTrue();
-        BodyProgramGrant second = controller.TryGrant("program", "second").Value!;
-        controller.TryConsumeGrant(second).IsSuccess.Should().BeTrue();
-        controller.TryComplete(second, Terminal(second), BodyProgramNodeOutcome.Failed).IsSuccess.Should().BeTrue();
+        Open(store).Submit(OrderedConflictingProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        store.Set(store.Value!.Replace("\"dependsOn\":[\"first\"]", "\"dependsOn\":[\"first\",\"first\"]", StringComparison.Ordinal));
 
-        OpenBodyProgramJournalAuthority reopened = Open(store, catalog, new("embodiment", 2));
-        reopened.Status.Should().Be(BodyProgramJournalOpenStatus.Opened);
-        reopened.Snapshot.Programs.Single().State.Should().Be(BodyProgramState.Failed);
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
     }
 
     [Fact]
-    public void FailedWriteLeavesPriorCommittedValue()
+    public void ReopenRejectsPersistedUnorderedResourceConflict()
     {
         var store = new MemoryStore();
-        BodyProgramPolicyIdentity policy = new("embodiment", 1);
-        var authority = Open(store, CreateCatalog(), policy);
-        string? prior = store.Value;
-        store.FailWrites = true;
-        var controller = new FarmhandBodyProgramController(authority, () => Publication("move_to_tile", "till_soil"), () => policy);
-        controller.TryStart("program").Code.Should().Be(BodyProgramControllerResultCode.PersistenceWriteFailed);
-        store.Value.Should().Be(prior);
+        Open(store).Submit(OrderedConflictingProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        store.Set(store.Value!.Replace("\"dependsOn\":[\"first\"]", "\"dependsOn\":[]", StringComparison.Ordinal));
+
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
     }
 
-    private static OpenBodyProgramJournalAuthority Open(MemoryStore store, VerifiedBodyPrograms catalog, BodyProgramPolicyIdentity policy) =>
-        OpenBodyProgramJournalAuthority.Open(store, catalog, Scope(), policy);
-
-    private static VerifiedBodyPrograms CreateCatalog() => new(new[]
+    [Fact]
+    public void CandidateCodecAndVerifierRejectDeadlinePastJavaScriptSafeInteger()
     {
-        new BodyProgramDescriptor("program", new[]
-        {
-            new BodyProgramNodeDescriptor("first", "move_to_tile", Map("tile", "one"), Map(), Map("body", "farmhand"), new[] { "second" }),
-            new BodyProgramNodeDescriptor("second", "till_soil", Map("tile", "two"), Map(), Map("body", "farmhand"), Array.Empty<string>()),
-        }),
+        const long maximumSafeInteger = 9007199254740991L;
+        string tooLarge = "{\"programId\":\"program\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"7\"}},\"dependsOn\":[],\"bindings\":{},\"deadlineMs\":9007199254740992}]}";
+        ActionProgramCandidateCodec.TryDecode(tooLarge, out _, out _).Should().BeFalse();
+        Open().Verify(Program("program", maximumSafeInteger + 1)).Accepted.Should().BeFalse();
+        ActionProgramCandidateCodec.TryDecode(tooLarge.Replace("9007199254740992", "9007199254740991", StringComparison.Ordinal), out ActionProgramCandidate? candidate, out _).Should().BeTrue();
+        Open().Verify(candidate!).Accepted.Should().BeTrue();
+    }
+
+    [Fact]
+    public void CandidateCodecDoesNotApplyBodyProgramSpecificSizeCap()
+    {
+        BodyProgramArgumentDescriptor[] arguments = Enumerable.Range(0, 32).Select(index => new BodyProgramArgumentDescriptor($"arg{index:D2}", BodyProgramArgumentKind.String)).ToArray();
+        BodyProgramActionCatalog catalog = new(7, new[] { new BodyProgramActionDescriptor("large_action", 1, arguments, Array.Empty<BodyProgramFactDescriptor>(), Array.Empty<BodyProgramResourceTemplateClaim>()) });
+        IReadOnlyDictionary<string, BodyProgramRuntimeValue> values = arguments.ToDictionary(argument => argument.Name, _ => new BodyProgramRuntimeValue("string", new string('x', 400)), StringComparer.Ordinal);
+        ActionProgramCandidate source = new("program", new[] { new ActionProgramCandidateNode("first", "large_action", values, Array.Empty<string>(), Bindings(), 1000) });
+        string json = JsonSerializer.Serialize(source, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        System.Text.Encoding.UTF8.GetByteCount(json).Should().BeGreaterThan(12 * 1024);
+        ActionProgramCandidateCodec.TryDecode(json, out ActionProgramCandidate? decoded, out _).Should().BeTrue();
+        Open(catalog: catalog).Verify(decoded!).Accepted.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ReopenRejectsMalformedDescriptorMapsFactsBindingsAndTopologyWithoutThrowing()
+    {
+        Action invalidTemplate = () => _ = new BodyProgramActionCatalog(7, new[] { new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, Array.Empty<BodyProgramFactDescriptor>(), new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer), new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ActionId) }) });
+        invalidTemplate.Should().Throw<ArgumentException>();
+        var store = new MemoryStore(); var authority = Open(store); authority.Submit(Program("program", 1000)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        string corrupt = store.Value!.Replace("\"canonicalValue\":\"7\"", "\"canonicalValue\":\"07\"", StringComparison.Ordinal);
+        store.Set(corrupt);
+        Open(store).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
+    }
+
+    private static OpenBodyProgramJournalAuthority Open(MemoryStore? store = null, BodyProgramActionCatalog? catalog = null, Func<BodyProgramPolicyIdentity>? policy = null, Func<long>? now = null) =>
+        OpenBodyProgramJournalAuthority.Open(store ?? new MemoryStore(), catalog ?? Catalog(), Scope(), policy ?? (() => Policy()), now ?? (() => 10));
+    private static BodyProgramActionCatalog Catalog() => new(7, new[]
+    {
+        new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
+        new BodyProgramActionDescriptor("till_soil", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, Array.Empty<BodyProgramFactDescriptor>(), new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
     });
-
-    private static VerifiedBodyPrograms CreateParallelCatalog() => new(new[]
+    private static ActionProgramCandidate OrderedConflictingProgram() => new("program", new[]
     {
-        new BodyProgramDescriptor("parallel", new[]
-        {
-            new BodyProgramNodeDescriptor("failed", "move_to_tile", Map("tile", "one"), Map(), Map("body", "failed"), Array.Empty<string>()),
-            new BodyProgramNodeDescriptor("sibling", "till_soil", Map("tile", "two"), Map(), Map("body", "sibling"), Array.Empty<string>()),
-        }),
-        new BodyProgramDescriptor("other", new[]
-        {
-            new BodyProgramNodeDescriptor("only", "move_to_tile", Map("tile", "three"), Map(), Map("body", "farmhand"), Array.Empty<string>()),
-        }),
+        new ActionProgramCandidateNode("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), 1000),
+        new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first" }, Bindings(), 1000),
     });
-
-    private static BodyProgramJournalState ActiveState(VerifiedBodyPrograms catalog, BridgeScope scope) => new(
-        BodyProgramJournalPersistence.SchemaVersion,
-        scope,
-        new BodyProgramPolicyIdentity("embodiment", 1),
-        new[] { new BodyProgramJournalProgram("program", catalog.Descriptors.Single(), BodyProgramState.Active, new[]
-        {
-            new BodyProgramJournalNode("first", BodyProgramNodeState.Pending, 0, IntMap()),
-            new BodyProgramJournalNode("second", BodyProgramNodeState.Pending, 0, IntMap()),
-        }) });
-
-    private static RuntimeFact Terminal(BodyProgramGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, RuntimeFactKind.Terminal, Map("postcondition", "true"));
-    private static FarmhandCapabilityPublication Publication(params string[] actions) => FarmhandCapabilityPublication.Initial(new HashSet<string>(actions, StringComparer.Ordinal));
+    private static ActionProgramCandidate Program(string programId, long deadline, bool twoNodes = false)
+    {
+        ActionProgramCandidateNode first = new("first", "move_to_tile", RuntimeMap("tile", 7), Array.Empty<string>(), Bindings(), deadline);
+        return twoNodes ? new(programId, new[] { first, new ActionProgramCandidateNode("second", "till_soil", RuntimeMap("tile", 8), new[] { "first" }, Bindings("tile", new ActionProgramBinding("first", "arrival")), deadline) }) : new(programId, new[] { first });
+    }
+    private static HostAdmissionGrant Grant(NodeAdmissionChallenge challenge) => new(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt, challenge.StopEpoch, challenge.CatalogRevision, challenge.PolicyIdentity, challenge.ActionId, challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs, "grant");
+    private static RuntimeFact Fact(HostAdmissionGrant grant) => new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "arrival", CanonicalMap("arrival", 7));
+    private static BodyProgramPolicyIdentity Policy(long generation = 1) => new("embodiment", generation);
     private static BridgeScope Scope() => new("stardew", "save", "world", "player", "companion");
-    private static IReadOnlyDictionary<string, string> Map(params string[] values) => values.Chunk(2).ToDictionary(pair => pair[0], pair => pair[1], StringComparer.Ordinal);
-    private static IReadOnlyDictionary<string, int> IntMap(params string[] values) => values.Chunk(2).ToDictionary(pair => pair[0], pair => int.Parse(pair[1], System.Globalization.CultureInfo.InvariantCulture), StringComparer.Ordinal);
-
-    private sealed class MemoryStore : IBodyProgramJournalStore
-    {
-        internal string? Value { get; private set; }
-        internal bool FailWrites { get; set; }
-        public string? Read() => this.Value;
-        public bool TryWrite(string encodedState)
-        {
-            if (this.FailWrites) return false;
-            this.Value = encodedState;
-            return true;
-        }
-    }
+    private static IReadOnlyDictionary<string, ActionProgramBinding> Bindings(params object[] values) => values.Chunk(2).ToDictionary(pair => (string)pair[0], pair => (ActionProgramBinding)pair[1], StringComparer.Ordinal);
+    private static IReadOnlyDictionary<string, BodyProgramRuntimeValue> RuntimeMap(string key, long value) => new Dictionary<string, BodyProgramRuntimeValue>(StringComparer.Ordinal) { [key] = new("integer", value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
+    private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalMap(string key, long value) => new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal) { [key] = new(BodyProgramArgumentKind.Integer, value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
+    private static IReadOnlyDictionary<string, string> Claims(string key, string value) => new Dictionary<string, string>(StringComparer.Ordinal) { [key] = value };
+    private sealed class MemoryStore : IBodyProgramJournalStore { internal string? Value { get; private set; } public string? Read() => this.Value; public bool TryWrite(string encodedState) { this.Value = encodedState; return true; } internal void Set(string value) => this.Value = value; }
 }
