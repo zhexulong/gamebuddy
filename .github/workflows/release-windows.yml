@@ -42,6 +42,10 @@ jobs:
       # Repository-wide formatting/linting belongs to ordinary contributor CI.
       # This protected lane validates the fixed Host release composition only.
       - run: pnpm check:host-production-import-boundary
+      # Build the workspace-owned protocol before Host typecheck so a clean
+      # checkout never depends on stale generated protocol declarations.
+      - run: pnpm --filter @gamebuddy/voice-protocol typecheck
+      - run: pnpm --filter @gamebuddy/voice-protocol build
       - run: pnpm typecheck
       - run: pnpm --dir host test
       # This is the sole network-acquisition entry. It fails closed unless the
