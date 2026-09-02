@@ -8,7 +8,11 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
-import { StardewLogicalActionRecoveryJournal } from "./stardew-logical-action-recovery-journal.js";
+import {
+  StardewLogicalActionRecoveryJournal,
+  type HostNodeAdmissionRecord,
+  type NodeAdmissionChallenge,
+} from "./stardew-logical-action-recovery-journal.js";
 
 type R = Parameters<StardewLogicalActionRecoveryJournal["prepare"]>[0];
 const record = (id = "logical-1"): R => ({ logicalActionId: id, dispatchOrdinal: 1, ownerId: "owner", epoch: 2, requestId: `request-${id}`, idempotencyKey: `key-${id}`, actionId: "move_to_tile", canonicalArgs: { x: 1, y: 2 }, canonicalRequest: { requestId: `request-${id}`, idempotencyKey: `key-${id}`, action: "move_to_tile", args: { x: 1, y: 2 }, expectedRevision: 3, deadlineMs: 9999 }, expectedRevision: 3, deadlineMs: 9999, scope: { save: "s" }, bindingIdentity: { binding: "b" } });
@@ -20,6 +24,23 @@ const admissionRecord = (id: string, ownerId: string, epoch: number, binding: st
   dispatchOrdinal,
 });
 const options = (directory: string) => ({ directory, scope: { save: "s" } });
+const nodeChallenge = (overrides: Partial<NodeAdmissionChallenge> = {}): NodeAdmissionChallenge => ({
+  programId: "program_01", nodeId: "node_01", nodeAttempt: 1, admissionAttempt: 1,
+  stopEpoch: 1, scopeIdentity: { save: "s" }, policyIdentity: { identity: "mod-policy_01" },
+  catalogRevision: "catalog_01", actionIdentity: "move_to_tile", canonicalBoundArgs: { x: 1, y: 2 },
+  derivedResourceClaims: [{ resource: "actor" }], deadlineMs: 9_999, ...overrides,
+});
+const nodeAdmissionRecord = (
+  challenge: NodeAdmissionChallenge = nodeChallenge(),
+  grantId = "grant_01",
+): HostNodeAdmissionRecord => ({
+  challenge,
+  state: "grant_issued",
+  grant: {
+    grantId, challenge, attachmentGeneration: "attachment_01", policyRevision: "host-policy_01",
+    policyIdentity: challenge.policyIdentity, catalogRevision: challenge.catalogRevision,
+  },
+});
 async function root() { return mkdtemp(join(tmpdir(), "gamebuddy-recovery-")); }
 
 test("prepare is durable before return and reopens exact pending material", async () => {
@@ -82,6 +103,55 @@ test("malformed, duplicate, schema and scope data fail closed", async () => {
     await writeFile(path, JSON.stringify({ schemaVersion: 1, scope: { save: "s" }, records: [{ ...record(), canonicalArgs: { x: 9, y: 2 } }] }));
     await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)), /invalid_recovery_journal_record/);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("NUL-bearing admission tuple members remain distinct and persist across reopen", async () => {
+  const dir = await root();
+  try {
+    const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    const firstChallenge = nodeChallenge({ programId: "program\u0000node", nodeId: "source" });
+    const secondChallenge = nodeChallenge({ programId: "program", nodeId: "node\u0000source" });
+    const first = nodeAdmissionRecord(firstChallenge);
+    const second = nodeAdmissionRecord(secondChallenge, "grant_02");
+
+    await journal.recordAdmission(first);
+    await journal.recordAdmission(second);
+    assert.deepEqual(journal.admissionRecord(firstChallenge), first);
+    assert.deepEqual(journal.admissionRecord(secondChallenge), second);
+    await journal.close();
+
+    const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    assert.deepEqual(reopened.admissionRecord(firstChallenge), first);
+    assert.deepEqual(reopened.admissionRecord(secondChallenge), second);
+    assert.deepEqual(await reopened.recordAdmission(first), first);
+    await reopened.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("node admission persists the exact opaque Mod policy identity and rejects a mismatched grant", async () => {
+  const dir = await root();
+  try {
+    const journal = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    const admission = await journal.recordAdmission(nodeAdmissionRecord());
+    assert.deepEqual(admission.grant?.policyIdentity, { identity: "mod-policy_01" });
+    await journal.close();
+
+    const path = join(dir, "stardew-logical-action-recovery-journal.json");
+    const reopened = await StardewLogicalActionRecoveryJournal.open(options(dir));
+    assert.deepEqual(reopened.admissionRecord(nodeChallenge()), admission);
+    await reopened.close();
+
+    const document = JSON.parse(await readFile(path, "utf8")) as {
+      admissionRecords: Array<{ grant?: { policyIdentity: Record<string, unknown> } }>;
+    };
+    document.admissionRecords[0]!.grant!.policyIdentity = { identity: "substituted" };
+    await writeFile(path, JSON.stringify(document));
+    await assert.rejects(() => StardewLogicalActionRecoveryJournal.open(options(dir)), /invalid_recovery_journal_record/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("duplicate logical action and request IDs are rejected", async () => {

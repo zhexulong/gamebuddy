@@ -37,7 +37,7 @@ export type StardewLogicalActionRecoveryJournalOptions = Readonly<{
   initialRecords?: readonly StardewLogicalActionRecoveryRecord[];
   /** Test-only writer; production callers must use open(). */
   write?: (
-    record: StardewLogicalActionRecoveryRecord,
+    record: StardewLogicalActionRecoveryRecord | HostNodeAdmissionRecord,
   ) => void | StardewLogicalActionRecoveryRecord | Promise<void | StardewLogicalActionRecoveryRecord>;
 }>;
 
@@ -48,10 +48,53 @@ export type StardewLogicalActionRecoveryJournalOpenOptions = Readonly<{
   maxBytes?: number;
 }>;
 
+export const HOST_NODE_ADMISSION_STATES = Object.freeze([
+  "challenge_received",
+  "grant_issued",
+  "admission_rejected",
+  "admission_unavailable",
+] as const);
+export type HostNodeAdmissionState = (typeof HOST_NODE_ADMISSION_STATES)[number];
+
+/** Controller-named exact node; Host treats all fields as opaque canonical data. */
+export type NodeAdmissionChallenge = Readonly<{
+  programId: string;
+  nodeId: string;
+  nodeAttempt: number;
+  admissionAttempt: number;
+  stopEpoch: number;
+  scopeIdentity: Readonly<Record<string, unknown>>;
+  /** Opaque identity minted by the Mod; Host only preserves and compares it exactly. */
+  policyIdentity: Readonly<Record<string, unknown>>;
+  catalogRevision: string;
+  actionIdentity: string;
+  canonicalBoundArgs: Readonly<Record<string, unknown>>;
+  derivedResourceClaims: readonly Readonly<Record<string, unknown>>[];
+  deadlineMs: number;
+}>;
+
+export type HostAdmissionGrant = Readonly<{
+  grantId: string;
+  challenge: NodeAdmissionChallenge;
+  attachmentGeneration: string;
+  policyRevision: string;
+  /** Exact opaque echo of challenge.policyIdentity; Host never interprets it. */
+  policyIdentity: Readonly<Record<string, unknown>>;
+  catalogRevision: string;
+}>;
+
+export type HostNodeAdmissionRecord = Readonly<{
+  challenge: NodeAdmissionChallenge;
+  state: HostNodeAdmissionState;
+  grant?: HostAdmissionGrant;
+  rejectionCode?: string;
+}>;
+
 type Document = Readonly<{
   schemaVersion: 1;
   scope?: Record<string, unknown>;
   records: StardewLogicalActionRecoveryRecord[];
+  admissionRecords?: HostNodeAdmissionRecord[];
 }>;
 
 type NormalizedOpenOptions = StardewLogicalActionRecoveryJournalOpenOptions;
@@ -98,8 +141,9 @@ export class StardewLogicalActionRecoveryJournal {
   readonly #requestIds = new Map<string, string>();
   readonly #idempotencyKeys = new Map<string, string>();
   readonly #dispatchOrdinals = new Map<number, string>();
+  readonly #admissionRecords = new Map<string, HostNodeAdmissionRecord>();
   #write: (
-    record: StardewLogicalActionRecoveryRecord,
+    record: StardewLogicalActionRecoveryRecord | HostNodeAdmissionRecord,
   ) => void | StardewLogicalActionRecoveryRecord | Promise<void | StardewLogicalActionRecoveryRecord>;
   #scope?: Readonly<Record<string, unknown>>;
   #scopeConfigured = false;
@@ -141,8 +185,26 @@ export class StardewLogicalActionRecoveryJournal {
     journal.#scope = normalized.scope;
     journal.#scopeConfigured = true;
     for (const record of document!.records) journal.#seed(record);
+    for (const record of document!.admissionRecords ?? []) journal.#seedAdmission(record);
 
     journal.#write = async (record): Promise<StardewLogicalActionRecoveryRecord> => {
+      if (isHostNodeAdmissionRecord(record)) {
+        await withPathLock(
+          path,
+          async () => {
+            const current = validateDocument(await readStrictJsonFile(path, maxBytes), normalized, maxRecords);
+            const admissionRecords = [...(current.admissionRecords ?? [])];
+            if (admissionRecords.some((item) => admissionKey(item.challenge) === admissionKey(record.challenge)))
+              throw new Error("duplicate_node_admission_record");
+            admissionRecords.push(record);
+            const encoded = JSON.stringify(makeDocument(normalized, current.records, admissionRecords));
+            if (Buffer.byteLength(encoded, "utf8") > maxBytes) throw new Error("recovery_journal_budget_exceeded");
+            await atomicWriteFile(path, encoded, normalized.directory);
+          },
+          { containmentRoot: normalized.directory },
+        );
+        return undefined as never;
+      }
       let durableRecord: StardewLogicalActionRecoveryRecord | undefined;
       await withPathLock(
         path,
@@ -223,12 +285,48 @@ export class StardewLogicalActionRecoveryJournal {
   public records(): readonly StardewLogicalActionRecoveryRecord[] {
     return Object.freeze([...this.#records.values()]);
   }
+  /** Durable exact-node Host transport records; never a Mod program graph or fact store. */
+  public admissionRecord(challenge: NodeAdmissionChallenge): HostNodeAdmissionRecord | null {
+    const record = this.#admissionRecords.get(admissionKey(challenge));
+    if (record !== undefined && !sameAdmissionChallenge(record.challenge, challenge))
+      throw new Error("node_admission_challenge_mismatch");
+    return record ?? null;
+  }
+  public async recordAdmission(record: HostNodeAdmissionRecord): Promise<HostNodeAdmissionRecord> {
+    assertAdmissionRecord(record);
+    return this.#enqueue(async () => {
+      this.#assertOpen();
+      const key = admissionKey(record.challenge);
+      const existing = this.#admissionRecords.get(key);
+      if (existing !== undefined) {
+        if (!sameAdmissionChallenge(existing.challenge, record.challenge) || !sameOptional(existing, record))
+          throw new Error("duplicate_node_admission_record");
+        return existing;
+      }
+      await Promise.resolve(this.#writeAdmission(record));
+      const saved = freezeAdmissionRecord(record);
+      this.#admissionRecords.set(key, saved);
+      return saved;
+    });
+  }
   public recoverableRecords(): readonly StardewLogicalActionRecoveryRecord[] {
     return Object.freeze(
       [...this.#records.values()].filter(
         (record) => record.state === "prepared" || record.state === "sent_unknown" || record.state === "recovery_pending",
       ),
     );
+  }
+
+  #writeAdmission(record: HostNodeAdmissionRecord): Promise<void> {
+    return Promise.resolve(this.#write(record)).then(() => undefined);
+  }
+
+  #seedAdmission(input: HostNodeAdmissionRecord): void {
+    assertAdmissionRecord(input);
+    const record = freezeAdmissionRecord(input);
+    const key = admissionKey(record.challenge);
+    if (this.#admissionRecords.has(key)) throw new Error("duplicate_node_admission_record");
+    this.#admissionRecords.set(key, record);
   }
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -344,11 +442,16 @@ function assertBudget(maxRecords: number, maxBytes: number): void {
   }
 }
 
-function makeDocument(options: NormalizedOpenOptions, records: StardewLogicalActionRecoveryRecord[] = []): Document {
+function makeDocument(
+  options: NormalizedOpenOptions,
+  records: StardewLogicalActionRecoveryRecord[] = [],
+  admissionRecords: HostNodeAdmissionRecord[] = [],
+): Document {
   return canonicalize({
     schemaVersion: 1,
     ...(options.scope === undefined ? {} : { scope: options.scope }),
     records,
+    ...(admissionRecords.length === 0 ? {} : { admissionRecords }),
   }) as Document;
 }
 
@@ -356,11 +459,12 @@ function validateDocument(value: unknown, options: NormalizedOpenOptions, maxRec
   if (
     !isRecord(value) ||
     value.schemaVersion !== 1 ||
-    !Array.isArray(value.records) ||
-    value.records.length > maxRecords ||
+     !Array.isArray(value.records) ||
+     (value.admissionRecords !== undefined && !Array.isArray(value.admissionRecords)) ||
+     value.records.length > maxRecords ||
     !isOptionalJsonRecord(value.scope) ||
     !sameOptional(value.scope, options.scope) ||
-    !exactKeys(value, ["schemaVersion", "records", ...(options.scope === undefined ? [] : ["scope"])])
+     !exactKeys(value, ["schemaVersion", "records", ...(options.scope === undefined ? [] : ["scope"]), ...(value.admissionRecords === undefined ? [] : ["admissionRecords"])])
   ) {
     throw new Error("invalid_recovery_journal_document");
   }
@@ -387,7 +491,11 @@ function validateDocument(value: unknown, options: NormalizedOpenOptions, maxRec
     seenOrdinal.add(record.dispatchOrdinal);
     return freezeRecord(record);
   });
-  return makeDocument(options, records);
+  const admissionRecords = ((value.admissionRecords ?? []) as unknown[]).map((item: unknown) => {
+    if (!isHostNodeAdmissionRecord(item)) throw new Error("invalid_recovery_journal_record");
+    return freezeAdmissionRecord(item);
+  });
+  return makeDocument(options, records, admissionRecords);
 }
 
 function assertRecord(record: StardewLogicalActionRecoveryRecord): void {
@@ -577,4 +685,69 @@ function isJournalError(error: unknown): boolean {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+function isHostNodeAdmissionRecord(value: unknown): value is HostNodeAdmissionRecord {
+  try {
+    assertAdmissionRecord(value as HostNodeAdmissionRecord);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function assertAdmissionRecord(record: HostNodeAdmissionRecord): void {
+  if (!isRecord(record) || !exactKeys(record, ["challenge", "state", ...(record.grant === undefined ? [] : ["grant"]), ...(record.rejectionCode === undefined ? [] : ["rejectionCode"])]))
+    throw new Error("invalid_recovery_journal_record");
+  assertNodeAdmissionChallenge(record.challenge);
+  if (!HOST_NODE_ADMISSION_STATES.includes(record.state)) throw new Error("invalid_recovery_journal_record");
+  if (record.state === "grant_issued") {
+    if (record.grant === undefined || record.rejectionCode !== undefined) throw new Error("invalid_recovery_journal_record");
+    assertHostAdmissionGrant(record.grant);
+    if (!sameAdmissionChallenge(record.grant.challenge, record.challenge)) throw new Error("invalid_recovery_journal_record");
+  } else if (record.grant !== undefined || (record.state === "admission_rejected" && !validText(record.rejectionCode ?? "")) || (record.state !== "admission_rejected" && record.rejectionCode !== undefined)) {
+    throw new Error("invalid_recovery_journal_record");
+  }
+}
+
+function assertNodeAdmissionChallenge(challenge: NodeAdmissionChallenge): void {
+  if (!isRecord(challenge) || !exactKeys(challenge, ["programId", "nodeId", "nodeAttempt", "admissionAttempt", "stopEpoch", "scopeIdentity", "policyIdentity", "catalogRevision", "actionIdentity", "canonicalBoundArgs", "derivedResourceClaims", "deadlineMs"])
+    || !validText(challenge.programId) || !validText(challenge.nodeId) || !positiveInteger(challenge.nodeAttempt) || !positiveInteger(challenge.admissionAttempt)
+    || !Number.isSafeInteger(challenge.stopEpoch) || challenge.stopEpoch < 0 || !isRecord(challenge.scopeIdentity) || !isRecord(challenge.policyIdentity)
+    || !validText(challenge.catalogRevision) || !validText(challenge.actionIdentity) || !isRecord(challenge.canonicalBoundArgs)
+    || !Array.isArray(challenge.derivedResourceClaims) || !challenge.derivedResourceClaims.every(isRecord)
+    || !Number.isFinite(challenge.deadlineMs) || !isJsonSafe(challenge)) throw new Error("invalid_recovery_journal_record");
+}
+
+function assertHostAdmissionGrant(grant: HostAdmissionGrant): void {
+  if (!isRecord(grant) || !exactKeys(grant, ["grantId", "challenge", "attachmentGeneration", "policyRevision", "policyIdentity", "catalogRevision"])
+    || !validText(grant.grantId) || !validText(grant.attachmentGeneration) || !validText(grant.policyRevision)
+    || !isRecord(grant.policyIdentity) || !validText(grant.catalogRevision))
+    throw new Error("invalid_recovery_journal_record");
+  assertNodeAdmissionChallenge(grant.challenge);
+  if (
+    grant.catalogRevision !== grant.challenge.catalogRevision ||
+    !sameOptional(grant.policyIdentity, grant.challenge.policyIdentity)
+  )
+    throw new Error("invalid_recovery_journal_record");
+}
+
+function admissionKey(challenge: NodeAdmissionChallenge): string {
+  // JSON encodes each string independently, so permitted NULs cannot shift a
+  // delimiter boundary or make distinct controller-named tuples collide.
+  return JSON.stringify([
+    challenge.programId,
+    challenge.nodeId,
+    challenge.nodeAttempt,
+    challenge.admissionAttempt,
+  ]);
+}
+function sameAdmissionChallenge(left: NodeAdmissionChallenge, right: NodeAdmissionChallenge): boolean {
+  return sameOptional(left, right);
+}
+function freezeAdmissionRecord(record: HostNodeAdmissionRecord): HostNodeAdmissionRecord {
+  return deepFreeze(canonicalize(record)) as HostNodeAdmissionRecord;
+}
+function positiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 1;
 }
