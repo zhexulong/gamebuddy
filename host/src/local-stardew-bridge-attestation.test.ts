@@ -212,9 +212,10 @@ test("formal Farmhand bridge produces the existing receipt-backed Stardew launch
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(scope, pipeName, token, generation, Date.now() + 5_000);
     const identity = Object.freeze({
-      playerId: "browser_player_01",
-      companionId: scope.companionId,
-      saveId: scope.saveId,
+       playerId: "browser_player_01",
+       companionId: scope.companionId,
+       continuityId: "continuity_attestation_01",
+       saveId: scope.saveId,
       worldId: scope.worldId,
     });
     const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity);
@@ -226,6 +227,15 @@ test("formal Farmhand bridge produces the existing receipt-backed Stardew launch
     assert.equal(Object.hasOwn(launch, "materializeAuthenticatedStardewLaunchPorts"), false);
     assert.equal(Object.hasOwn(launch, "authenticatedStardewLaunchRecords"), false);
     assert.equal(Object.hasOwn(launch, "associateAuthenticatedStardewLaunch"), false);
+    assert.deepEqual(launch.receiptRecovery?.scope, {
+      product: "stardew",
+      continuityId: "continuity_attestation_01",
+      integrationId: "stardew",
+      saveId: scope.saveId,
+      worldId: scope.worldId,
+    });
+    assert.deepEqual(launch.receiptRecovery?.bindingIdentity, launch.receiptRecovery?.scope);
+    assert.equal(Object.isFrozen(launch.receiptRecovery), true);
     assert.equal(Object.hasOwn(launch, "programVerify"), false);
     assert.equal(Object.hasOwn(launch, "programSubmit"), false);
     const presentation = getAuthenticatedStardewPresentationPortForPreview(launch);

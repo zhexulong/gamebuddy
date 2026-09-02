@@ -13,6 +13,7 @@ import type {
   ExecutionReceipt,
   ExecutionReceiptQuery,
 } from "../protocol.js";
+import { isExactReceiptRecoveryPort } from "../stardew-execution-recovery-supervisor.js";
 import type { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import {
   assertRuntimeOwnerIdentity,
@@ -280,22 +281,22 @@ export function createStardewRecoveryBindingContext(
   execution: GameRuntimeBindingExecution,
   journal: StardewLogicalActionRecoveryJournal,
 ): StardewRecoveryBindingContext {
-  if (
-    !receiptBackedExecutionBrand.has(execution) ||
-    !isRecord(execution.launch) ||
-    !isCallable(execution.launch.receiptRecovery)
-  ) throw new Error("invalid_stardew_recovery_binding_context");
+  const receiptRecovery = execution.launch.receiptRecovery;
+  if (!receiptBackedExecutionBrand.has(execution) || !isExactReceiptRecoveryPort(receiptRecovery))
+    throw new Error("invalid_stardew_recovery_binding_context");
   const identity = createStableGameRuntimeBindingIdentity(execution);
+  if (
+    !sameStableIdentity(receiptRecovery.scope, identity) ||
+    !sameStableIdentity(receiptRecovery.bindingIdentity, identity)
+  ) throw new Error("invalid_stardew_recovery_binding_context");
   const context = Object.freeze(Object.create(null)) as StardewRecoveryBindingContext;
   recoveryContextBrand.add(context);
   recoveryContextRecords.set(context, Object.freeze({
     journal,
     identity,
-    scope: identity,
-    bindingIdentity: identity,
-    queryExecutionReceipt: execution.launch.receiptRecovery as (
-      query: ExecutionReceiptQuery,
-    ) => Promise<ExecutionReceipt>,
+    scope: receiptRecovery.scope,
+    bindingIdentity: receiptRecovery.bindingIdentity,
+    queryExecutionReceipt: receiptRecovery.queryExecutionReceipt,
   }));
   return context;
 }
@@ -324,6 +325,16 @@ export function assertStableGameRuntimeBindingIdentity(
   ) {
     throw new Error("invalid_stardew_game_runtime_binding_identity");
   }
+}
+
+function sameStableIdentity(left: StableGameRuntimeBindingIdentity, right: StableGameRuntimeBindingIdentity): boolean {
+  return (
+    left.product === right.product &&
+    left.continuityId === right.continuityId &&
+    left.integrationId === right.integrationId &&
+    left.saveId === right.saveId &&
+    left.worldId === right.worldId
+  );
 }
 
 /** Explicit construction-zone spelling retained for call sites that name the production boundary. */

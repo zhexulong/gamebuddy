@@ -680,10 +680,14 @@ test("binds Stardew recovery context only to a branded receipt-backed execution"
     return;
   }
   const current = fixture(() => undefined, () => undefined, "stardew");
-  const receiptRecovery = async () => {
-    throw new Error("fixture receipt recovery is not invoked");
-  };
-  (current.handle as { receiptRecovery?: unknown }).receiptRecovery = receiptRecovery;
+  const receiptRecovery = Object.freeze({
+    scope: Object.freeze({ product: "stardew" as const, continuityId: "continuity_01", integrationId: "stardew" as const, saveId: "save_01", worldId: "world_01" }),
+    bindingIdentity: Object.freeze({ product: "stardew" as const, continuityId: "continuity_01", integrationId: "stardew" as const, saveId: "save_01", worldId: "world_01" }),
+    queryExecutionReceipt: async () => {
+      throw new Error("fixture receipt recovery is not invoked");
+    },
+  });
+  (current.handle as { receiptRecovery?: typeof receiptRecovery }).receiptRecovery = receiptRecovery;
   const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(
     Object.freeze({
       manifest: await manifest(),
@@ -699,7 +703,7 @@ test("binds Stardew recovery context only to a branded receipt-backed execution"
     const record = readStardewRecoveryBindingContext(context);
     assert.equal(record.journal, journal);
     assert.deepEqual(record.identity, createStableGameRuntimeBindingIdentity(execution));
-    assert.equal(record.queryExecutionReceipt, receiptRecovery);
+    assert.equal(record.queryExecutionReceipt, receiptRecovery.queryExecutionReceipt);
   });
   await binding.close();
   assert.throws(

@@ -7,6 +7,7 @@ import {
   type IntegrationLifecycleEvent,
   RECEIPT_BACKED_INTEGRATION_AUTHORITY,
 } from "./integration-launcher.js";
+import type { ExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
 import { LocalStardewBridgeClient, type LocalStardewBridgeFact } from "./local-stardew-bridge.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { createStableGameRuntimeBindingIdentity } from "./continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
@@ -61,7 +62,7 @@ function associateAuthenticatedStardewLaunch(
  */
 export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
   bridge: LocalStardewBridgeClient,
-  identity: Readonly<{ playerId: string; companionId: string; saveId?: string; worldId?: string }>,
+  identity: Readonly<{ playerId: string; companionId: string; continuityId?: string; saveId?: string; worldId?: string }>,
   options: Readonly<{ expectedPresentationLocale?: string; knowledge?: import("./knowledge.js").KnowledgeBundle; gameVersion?: string }> = {},
 ): Promise<IntegrationLaunchHandle> {
   if (!(bridge instanceof LocalStardewBridgeClient)) throw new Error("authenticated_stardew_bridge_required");
@@ -196,9 +197,28 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       cancel: (requestId: string, executionId: string, reasonCode: string) =>
         executionGate.executable ? bridge.cancel(requestId, executionId, reasonCode) : Promise.reject(new Error("integration_not_ready")),
     });
+    const receiptRecovery: ExactReceiptRecoveryPort | undefined = identity.continuityId === undefined
+      ? undefined
+      : Object.freeze({
+          scope: Object.freeze({
+            product: "stardew" as const,
+            continuityId: identity.continuityId,
+            integrationId: "stardew" as const,
+            saveId: scope.saveId,
+            worldId: scope.worldId,
+          }),
+          bindingIdentity: Object.freeze({
+            product: "stardew" as const,
+            continuityId: identity.continuityId,
+            integrationId: "stardew" as const,
+            saveId: scope.saveId,
+            worldId: scope.worldId,
+          }),
+          queryExecutionReceipt: (query) => bridge.queryExecutionReceipt(query),
+        });
     const handle: IntegrationLaunchHandle = Object.freeze({
       connection,
-      receiptRecovery: (query: import("./protocol.js").ExecutionReceiptQuery) => bridge.queryExecutionReceipt(query),
+      ...(receiptRecovery === undefined ? {} : { receiptRecovery }),
       events,
       authority: RECEIPT_BACKED_INTEGRATION_AUTHORITY,
       lifecycle: "ready" as const,
