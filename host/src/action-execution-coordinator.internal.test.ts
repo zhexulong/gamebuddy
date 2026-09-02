@@ -6,8 +6,10 @@ import {
   normalizeExecutionWake,
   type ActionExecutionAdmission,
   type ActionExecutionCoordinator,
+  HostNodeAdmissionService,
 } from "./action-execution-coordinator.internal.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
+import { StardewLogicalActionRecoveryJournal, type NodeAdmissionChallenge } from "./stardew-logical-action-recovery-journal.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
 import type { ExecutionReceipt, ExecutionState } from "./protocol.js";
@@ -22,6 +24,15 @@ function receipt(overrides: Partial<ExecutionReceipt> = {}): ExecutionReceipt {
     revision: 1,
     evidence: null,
     ...overrides,
+  };
+}
+
+function challenge(overrides: Partial<NodeAdmissionChallenge> = {}): NodeAdmissionChallenge {
+  return {
+    programId: "program_01", nodeId: "node_source", nodeAttempt: 1, admissionAttempt: 1,
+    stopEpoch: 4, scopeIdentity: { scope: "fixture" }, policyIdentity: { identity: "mod-policy_01" },
+    catalogRevision: "catalog_01", actionIdentity: "move_to_tile", canonicalBoundArgs: { x: 1, y: 2 },
+    derivedResourceClaims: [{ resource: "actor" }], deadlineMs: Date.now() + 10_000, ...overrides,
   };
 }
 
@@ -78,6 +89,75 @@ function coordinatorFixture(
   };
   return { coordinator: createActionExecutionCoordinator(connection), cancelCalls };
 }
+
+test("one exact-node admission state machine grants controller-named source and successor nodes without rewriting them", async () => {
+  const journal = new StardewLogicalActionRecoveryJournal();
+  const seen: NodeAdmissionChallenge[] = [];
+  const service = new HostNodeAdmissionService(journal, (item) => {
+    seen.push(item);
+    return { result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01", catalogRevision: item.catalogRevision };
+  });
+  const source = challenge();
+  const successor = challenge({ nodeId: "node_successor" });
+  const [sourceResult, successorResult] = await Promise.all([service.admit(source), service.admit(successor)]);
+  assert.equal(sourceResult.result, "granted");
+  assert.equal(successorResult.result, "granted");
+  assert.deepEqual(seen, [source, successor]);
+  if (sourceResult.result === "granted") {
+    assert.deepEqual(sourceResult.grant.challenge.canonicalBoundArgs, source.canonicalBoundArgs);
+    assert.deepEqual(sourceResult.grant.policyIdentity, source.policyIdentity);
+  }
+  assert.equal(journal.admissionRecord(source)?.state, "grant_issued");
+});
+
+test("node admission binds grants to opaque Mod policy identity and rejects mismatched replay", async () => {
+  const journal = new StardewLogicalActionRecoveryJournal();
+  const service = new HostNodeAdmissionService(journal, (item) => ({
+    result: "granted",
+    attachmentGeneration: "attachment_01",
+    policyRevision: "host-policy_01",
+    catalogRevision: item.catalogRevision,
+  }));
+  const issued = await service.admit(challenge());
+  assert.equal(issued.result, "granted");
+  if (issued.result === "granted") assert.deepEqual(issued.grant.policyIdentity, { identity: "mod-policy_01" });
+
+  // Same node lineage but a substituted Mod identity cannot replay its earlier grant.
+  const substituted = challenge({ policyIdentity: { identity: "mod-policy_02" } });
+  assert.throws(() => journal.admissionRecord(substituted), /node_admission_challenge_mismatch/);
+  assert.deepEqual(await service.admit(substituted), { result: "rejected", code: "policy_identity_mismatch" });
+});
+
+test("node admission journals before reply and treats write loss, response loss, and validator loss as unavailable", async () => {
+  const item = challenge();
+  const lostWrite = new HostNodeAdmissionService(
+    new StardewLogicalActionRecoveryJournal({ write: () => { throw new Error("disk"); } }),
+    () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01", catalogRevision: "catalog_01" }),
+  );
+  assert.deepEqual(await lostWrite.admit(item), { result: "unavailable" });
+
+  const journal = new StardewLogicalActionRecoveryJournal();
+  const service = new HostNodeAdmissionService(journal, () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01", catalogRevision: "catalog_01" }));
+  const issued = await service.admit(item);
+  assert.equal(issued.result, "granted");
+  // A lost response is replayed from durable grant correlation, not recomputed.
+  assert.deepEqual(await service.admit(item), issued);
+  const unavailable = new HostNodeAdmissionService(journal, () => { throw new Error("bridge_lost"); });
+  assert.deepEqual(await unavailable.admit(challenge({ admissionAttempt: 2 })), { result: "unavailable" });
+});
+
+test("node admission deterministically rejects deadline, STOP, catalog, and policy vetoes without calling execute", async () => {
+  const journal = new StardewLogicalActionRecoveryJournal();
+  const service = new HostNodeAdmissionService(journal, (item) => {
+    if (item.stopEpoch !== 4) return { result: "rejected", code: "stop_epoch_closed" };
+    if (item.catalogRevision !== "catalog_01") return { result: "rejected", code: "catalog_revision_mismatch" };
+    return { result: "rejected", code: "policy_denied" };
+  });
+  assert.deepEqual(await service.admit(challenge({ deadlineMs: Date.now() - 1 })), { result: "rejected", code: "deadline_expired" });
+  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 2, stopEpoch: 5 })), { result: "rejected", code: "stop_epoch_closed" });
+  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 3, catalogRevision: "catalog_02" })), { result: "rejected", code: "catalog_revision_mismatch" });
+  assert.deepEqual(await service.admit(challenge({ admissionAttempt: 4 })), { result: "rejected", code: "policy_denied" });
+});
 
 test("coordinator mints an admission whose response receipt and fact-route receipt are the same bridge transition", async () => {
   const { coordinator } = coordinatorFixture([]);
@@ -171,6 +251,22 @@ test("coordinator admission observer binds a fresh response through the single a
   await admission.observer.beforeWrite({ ...admission.owner, requestId: "request_01" });
   const succeeded = receipt({ state: "succeeded", reasonCode: "done", evidence: { detail: "ok" } });
   assert.doesNotThrow(() => admission.observer.bindReceipt(succeeded));
+});
+
+test("coordinator rejects an otherwise-identical duplicate delivery with a different action ID", async () => {
+  const { coordinator } = coordinatorFixture([]);
+  const admission = coordinator.createAdmission();
+  await admission.observer.beforeWrite({ ...admission.owner, requestId: "request_01" });
+  const factReceipt = receipt();
+  coordinator.receiveReceipt(factReceipt);
+  assert.throws(
+    () =>
+      admission.observer.bindReceipt({
+        ...factReceipt,
+        actionId: "chop_tree",
+      }),
+    /execution_receipt_replay_rejected:non_monotonic_revision/,
+  );
 });
 
 test("coordinator rejects a duplicate delivery with a different reason code", async () => {
