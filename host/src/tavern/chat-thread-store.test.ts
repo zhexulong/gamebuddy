@@ -10,7 +10,6 @@ import {
   claimMountedAttempt,
   createChatThreadStore,
   type GreetingSource,
-  MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES,
   type RunningTurn,
   transitionMountedProviderStart as rawTransitionP4MountedProviderStart,
   transitionMountedPresentation as rawTransitionP5MountedPresentation,
@@ -79,7 +78,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
   const { root, store: s, key } = await store();
   try {
     await s.createThread(request());
-    const dbPath = join(root, "tavern", "v1", "continuities", key, "tavern.sqlite");
+    const dbPath = join(root, "tavern", "v2", "continuities", key, "tavern.sqlite");
     const db = new DatabaseSync(dbPath);
     try {
       const journalMode = (db.prepare("PRAGMA journal_mode").get() as any)?.journal_mode;
@@ -88,14 +87,15 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
       const tables = (
         db
           .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tavern_threads', 'tavern_drafts', 'tavern_active_selection')",
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('tavern_threads', 'tavern_messages', 'tavern_message_swipes', 'tavern_thread_stable_artifact_bindings', 'tavern_thread_world_info_bindings', 'tavern_turns', 'tavern_turn_attempts', 'tavern_turn_observations', 'tavern_turn_presentations', 'tavern_turn_terminalizations', 'tavern_chat_submit_idempotency', 'tavern_drafts', 'tavern_active_selection')",
           )
           .all() as any[]
       ).map((row) => row.name);
-      assert.deepEqual(tables.sort(), ["tavern_active_selection", "tavern_drafts", "tavern_threads"]);
+      assert.deepEqual(tables.sort(), ["tavern_active_selection", "tavern_chat_submit_idempotency", "tavern_drafts", "tavern_message_swipes", "tavern_messages", "tavern_thread_stable_artifact_bindings", "tavern_thread_world_info_bindings", "tavern_threads", "tavern_turn_attempts", "tavern_turn_observations", "tavern_turn_presentations", "tavern_turn_terminalizations", "tavern_turns"]);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('tavern_threads') WHERE name IN ('metadata_json', 'opening_selection_json')").get() as any).count, 0);
 
       // Verify no 0-byte .lock files exist in continuity directory
-      const files = await readdir(join(root, "tavern", "v1", "continuities", key));
+      const files = await readdir(join(root, "tavern", "v2", "continuities", key));
       assert.equal(files.some((f) => f.endsWith(".lock")), false);
     } finally {
       db.close();
@@ -394,30 +394,18 @@ test("active thread selection persists singleton and detects surface mismatch", 
   }
 });
 
-test("capacity limit of 500 messages is strictly enforced", async () => {
+test("normalized transcript has no fixed entry ceiling", async () => {
   const { root, store: s } = await store();
   try {
-    await s.createThread(request()); // 1 message (opening)
-    for (let i = 1; i < MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES; i++) {
+    await s.createThread(request());
+    for (let i = 1; i <= 501; i++) {
       await s.appendPlayer("thread_01", {
         messageId: `player_${String(i).padStart(4, "0")}`,
         text: `Message ${i}`,
         occurredAtMs: 100 + i,
       });
     }
-    const state = await s.resumeThread("thread_01", "surface_01");
-    assert.equal(state.messages.length, MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES);
-
-    // 501st message is rejected
-    await assert.rejects(
-      () =>
-        s.appendPlayer("thread_01", {
-          messageId: "player_overflow",
-          text: "Overflow",
-          occurredAtMs: 9999,
-        }),
-      /chat_thread_capacity_exceeded/,
-    );
+    assert.equal((await s.resumeThread("thread_01", "surface_01")).messages.length, 502);
   } finally {
     s.close?.();
     await rm(root, { recursive: true, force: true });

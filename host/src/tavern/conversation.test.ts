@@ -11,7 +11,7 @@ import {
 
 const state = Object.freeze({
   thread: Object.freeze({
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     chatThreadId: "thread_01",
     companionId: "companion_01",
     continuityId: "continuity_01",

@@ -10,30 +10,15 @@ import {
 } from "./chat-thread-store.mounted-turn-transition.internal.js";
 
 /**
- * Scoped Tavern persistence seam. It owns only a ChatThread's visible opening
- * and append-only normal messages; it neither reads Pi/Magic Context state nor
- * implements message edit/swipe/branch or any Game operation.
+ * Scoped Tavern persistence seam. It owns only a ChatThread's visible opening,
+ * append-only messages, swipe variants, and turn lifecycle; it neither reads
+ * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 1 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 2 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
-/**
- * Frozen P3.5 artifact contracts from design/67 §3.B.3. Every JSON-encoded
- * ChatThread artifact has a named byte budget enforced both before write and
- * before parse, and the transcript envelope has a fixed entry ceiling.
- *
- * The message/journal budgets cover at most 500 total persisted transcript
- * entries (including an opening), each NFC, control-free, and at most 16,384
- * UTF-8 bytes including JSON escaping and bounded metadata.
- */
-export const MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES = 500 as const;
+/** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
 export const MAX_CHAT_MESSAGE_TEXT_UTF8_BYTES = 16_384 as const;
-export const MAX_THREAD_ARTIFACT_BYTES = 64 * 1024;
-export const MAX_DRAFT_ARTIFACT_BYTES = 32 * 1024;
-export const MAX_TURN_LEDGER_ARTIFACT_BYTES = 16 * 1024;
-export const MAX_IDEMPOTENCY_ARTIFACT_BYTES = 1024 * 1024;
-export const MAX_MESSAGES_ARTIFACT_BYTES = 20 * 1024 * 1024;
-export const MAX_TRANSACTION_ARTIFACT_BYTES = 21 * 1024 * 1024;
 
 export type GreetingSource = Readonly<{
   greetingSetId: string;
@@ -109,6 +94,9 @@ export type ChatThreadMessage = Readonly<{
   occurredAtMs: number;
   /** Present only on message zero; unselected greetings are never persisted. */
   greetingSource: GreetingSource | null;
+  parentId?: string | null;
+  swipes?: readonly string[];
+  activeSwipeIndex?: number;
 }>;
 
 export type ChatDraft = Readonly<{ revision: number; text: string | null }>;
@@ -343,6 +331,16 @@ export type ChatThreadStore = Readonly<{
       occurredAtMs: number;
     }>,
   ): Promise<ChatThreadState>;
+  selectSwipe?(
+    chatThreadId: string,
+    messageId: string,
+    selection: Readonly<{ targetIndex?: number; direction?: "prev" | "next" }>,
+  ): Promise<ChatThreadState>;
+  appendSwipeVariant?(
+    chatThreadId: string,
+    messageId: string,
+    newText: string,
+  ): Promise<ChatThreadState>;
   /**
    * Ordinary exact-turn Stop mutation. It is intentionally independent from
    * the retired P4/P5 transition authority: the service supplies a current
@@ -411,17 +409,6 @@ export type ChatThreadStore = Readonly<{
 }>;
 
 type IdempotencyRecord = Readonly<{ key: string; fingerprint: string; result: AcceptedQueuedTurn }>;
-
-type ThreadMetadata = {
-  chatSurfaceSessionId: string;
-  stableArtifactBindings?: readonly TavernStableArtifactBinding[];
-  worldBookBinding?: TavernStableWorldInfoBinding;
-  trashRestoreStatus?: "active" | "archived";
-  openingLockedAtEventId?: string | null;
-  turnLedger?: ChatTurnLedger | null;
-  idempotency?: readonly IdempotencyRecord[];
-  messages?: readonly ChatThreadMessage[];
-};
 
 const genuineChatThreadStores = new WeakSet<object>();
 const acceptanceByStore = new WeakMap<object, (input: MountedAcceptanceInput) => Promise<AcceptedQueuedTurn>>();
@@ -706,39 +693,265 @@ class ExactThreadAlreadyExistsError extends Error {
 }
 
 function initSchema(db: DatabaseSync): void {
+  const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
+  const version = Number(versionRow?.user_version ?? 0);
+  if (version === 2) {
+    assertNormalizedSchema(db);
+    return;
+  }
+  if (version !== 0) throw new Error("chat_thread_schema_version_mismatch");
+
+  const existingTables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+  ).all() as any[];
+  if (existingTables.length !== 0) throw new Error("chat_thread_schema_version_mismatch");
+
   db.exec(`
-    CREATE TABLE IF NOT EXISTS tavern_threads (
+    CREATE TABLE tavern_threads (
       thread_id TEXT PRIMARY KEY,
       companion_id TEXT NOT NULL,
       continuity_id TEXT NOT NULL,
-      session_file TEXT,
       title TEXT,
       persona_id TEXT,
       scenario_id TEXT,
-      lifecycle_status TEXT NOT NULL DEFAULT 'active' CHECK(lifecycle_status IN ('active', 'archived', 'trashed')),
-      management_revision INTEGER NOT NULL DEFAULT 1 CHECK(management_revision >= 1),
+      chat_surface_session_id TEXT NOT NULL,
+      lifecycle_status TEXT NOT NULL DEFAULT 'active'
+        CHECK(lifecycle_status IN ('active', 'archived', 'trashed')),
+      management_revision INTEGER NOT NULL DEFAULT 1
+        CHECK(management_revision >= 1),
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL,
-      opening_selection_json TEXT NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}'
+      opening_kind TEXT NOT NULL CHECK(opening_kind IN ('blank', 'greeting')),
+      opening_message_id TEXT,
+      greeting_set_id TEXT,
+      greeting_source_revision INTEGER,
+      greeting_canonical_hash TEXT,
+      greeting_variant_id TEXT,
+      greeting_profile_revision INTEGER,
+      greeting_scenario_revision INTEGER,
+      opening_locked_at_event_id TEXT,
+      trash_restore_status TEXT
+        CHECK(trash_restore_status IS NULL OR trash_restore_status IN ('active', 'archived')),
+      CHECK(
+        (opening_kind = 'blank' AND opening_message_id IS NULL AND greeting_set_id IS NULL
+          AND greeting_source_revision IS NULL AND greeting_canonical_hash IS NULL
+          AND greeting_variant_id IS NULL AND greeting_profile_revision IS NULL
+          AND greeting_scenario_revision IS NULL)
+        OR
+        (opening_kind = 'greeting' AND opening_message_id IS NOT NULL AND greeting_set_id IS NOT NULL
+          AND greeting_source_revision IS NOT NULL AND greeting_canonical_hash IS NOT NULL
+          AND greeting_variant_id IS NOT NULL AND greeting_profile_revision IS NOT NULL)
+      ),
+      CHECK(
+        (lifecycle_status = 'trashed' AND trash_restore_status IS NOT NULL)
+        OR (lifecycle_status <> 'trashed' AND trash_restore_status IS NULL)
+      )
     );
 
-    CREATE TABLE IF NOT EXISTS tavern_drafts (
+    CREATE TABLE tavern_messages (
+      thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      append_ordinal INTEGER NOT NULL CHECK(append_ordinal >= 0),
+      role TEXT NOT NULL CHECK(role IN ('player', 'companion')),
+      kind TEXT NOT NULL CHECK(kind IN ('opening', 'player', 'response')),
+      text TEXT NOT NULL,
+      occurred_at_ms INTEGER NOT NULL,
+      parent_id TEXT,
+      active_swipe_index INTEGER NOT NULL DEFAULT 0 CHECK(active_swipe_index >= 0),
+      greeting_set_id TEXT,
+      greeting_source_revision INTEGER,
+      greeting_canonical_hash TEXT,
+      greeting_variant_id TEXT,
+      greeting_profile_revision INTEGER,
+      greeting_scenario_revision INTEGER,
+      PRIMARY KEY(thread_id, message_id),
+      UNIQUE(thread_id, append_ordinal),
+      FOREIGN KEY(thread_id, parent_id)
+        REFERENCES tavern_messages(thread_id, message_id)
+        ON DELETE RESTRICT,
+      CHECK(
+        (kind = 'opening' AND role = 'companion' AND greeting_set_id IS NOT NULL
+          AND greeting_source_revision IS NOT NULL AND greeting_canonical_hash IS NOT NULL
+          AND greeting_variant_id IS NOT NULL AND greeting_profile_revision IS NOT NULL)
+        OR (kind = 'player' AND role = 'player' AND greeting_set_id IS NULL
+          AND greeting_source_revision IS NULL AND greeting_canonical_hash IS NULL
+          AND greeting_variant_id IS NULL AND greeting_profile_revision IS NULL
+          AND greeting_scenario_revision IS NULL)
+        OR (kind = 'response' AND role = 'companion' AND greeting_set_id IS NULL
+          AND greeting_source_revision IS NULL AND greeting_canonical_hash IS NULL
+          AND greeting_variant_id IS NULL AND greeting_profile_revision IS NULL
+          AND greeting_scenario_revision IS NULL)
+      )
+    );
+
+    CREATE TABLE tavern_message_swipes (
+      thread_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      swipe_index INTEGER NOT NULL CHECK(swipe_index >= 0),
+      text TEXT NOT NULL,
+      PRIMARY KEY(thread_id, message_id, swipe_index),
+      FOREIGN KEY(thread_id, message_id)
+        REFERENCES tavern_messages(thread_id, message_id)
+        ON DELETE CASCADE
+    );
+
+    CREATE TABLE tavern_thread_stable_artifact_bindings (
+      thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK(kind IN ('persona', 'scenario', 'dialogue_examples')),
+      source_id TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK(revision > 0),
+      canonical_hash TEXT NOT NULL,
+      PRIMARY KEY(thread_id, kind)
+    );
+
+    CREATE TABLE tavern_thread_world_info_bindings (
+      thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK(source IN ('world_book', 'managed_world_info')),
+      world_book_id TEXT,
+      public_title TEXT,
+      revision INTEGER NOT NULL CHECK(revision > 0),
+      canonical_hash TEXT NOT NULL,
+      provenance TEXT,
+      CHECK(
+        (source = 'world_book' AND world_book_id IS NOT NULL AND public_title IS NULL
+          AND provenance IN ('authored', 'st-card-import', 'reviewed-import'))
+        OR
+        (source = 'managed_world_info' AND world_book_id IS NULL AND public_title IS NOT NULL
+          AND provenance IS NULL)
+      )
+    );
+
+    CREATE TABLE tavern_turns (
+      turn_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN (
+        'accepted_queued', 'attempt_starting', 'running',
+        'presentation_committed', 'completion_claimed', 'completed',
+        'cancel_claimed', 'cancelled', 'failed'
+      )),
+      idempotency_key TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      accepted_at_ms INTEGER NOT NULL,
+      is_current INTEGER NOT NULL CHECK(is_current IN (0, 1)),
+      UNIQUE(thread_id, message_id)
+    );
+
+    CREATE TABLE tavern_turn_attempts (
+      turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
+      generation INTEGER NOT NULL CHECK(generation = 1),
+      attempt_id TEXT NOT NULL UNIQUE,
+      claimed_at_ms INTEGER NOT NULL,
+      selection_generation INTEGER NOT NULL CHECK(selection_generation > 0),
+      runtime_binding_digest TEXT NOT NULL,
+      owner_token TEXT NOT NULL,
+      runtime_instance_id TEXT NOT NULL,
+      owner_pid INTEGER NOT NULL CHECK(owner_pid > 0),
+      owner_process_start_identity TEXT NOT NULL
+    );
+
+    CREATE TABLE tavern_turn_observations (
+      turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
+      phase TEXT NOT NULL CHECK(phase IN ('armed', 'not_started', 'running')),
+      reason_code TEXT,
+      source TEXT,
+      status_class TEXT,
+      observed_at_ms INTEGER NOT NULL
+    );
+
+    CREATE TABLE tavern_turn_presentations (
+      turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
+      expression_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      cancel_epoch INTEGER NOT NULL CHECK(cancel_epoch >= 0),
+      committed_at_ms INTEGER NOT NULL
+    );
+
+    CREATE TABLE tavern_turn_terminalizations (
+      turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
+      completion_claimed_at_ms INTEGER,
+      completed_at_ms INTEGER,
+      cancel_claimed_at_ms INTEGER,
+      cancelled_at_ms INTEGER,
+      failed_at_ms INTEGER,
+      reason_code TEXT
+    );
+
+    CREATE TABLE tavern_chat_submit_idempotency (
+      thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      idempotency_key TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      turn_id TEXT NOT NULL REFERENCES tavern_turns(turn_id) ON DELETE RESTRICT,
+      PRIMARY KEY(thread_id, idempotency_key),
+      UNIQUE(thread_id, turn_id)
+    );
+
+    CREATE TABLE tavern_drafts (
       thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
       draft_content TEXT,
       revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
       updated_at_ms INTEGER NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS tavern_active_selection (
+    CREATE TABLE tavern_active_selection (
       singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-      chat_thread_id TEXT NOT NULL,
+      chat_thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
       chat_surface_session_id TEXT NOT NULL,
       selected_at_ms INTEGER NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_tavern_threads_continuity ON tavern_threads(continuity_id, thread_id);
+    CREATE UNIQUE INDEX idx_tavern_turns_one_current_per_thread
+      ON tavern_turns(thread_id) WHERE is_current = 1;
+    CREATE INDEX idx_tavern_threads_continuity
+      ON tavern_threads(continuity_id, thread_id);
+    CREATE INDEX idx_tavern_messages_ordinal
+      ON tavern_messages(thread_id, append_ordinal);
+    CREATE INDEX idx_tavern_idempotency_turn
+      ON tavern_chat_submit_idempotency(turn_id);
   `);
+  db.exec("PRAGMA user_version = 2");
+  assertNormalizedSchema(db);
+}
+
+function assertNormalizedSchema(db: DatabaseSync): void {
+  const requiredTables = [
+    "tavern_threads",
+    "tavern_messages",
+    "tavern_message_swipes",
+    "tavern_thread_stable_artifact_bindings",
+    "tavern_thread_world_info_bindings",
+    "tavern_turns",
+    "tavern_turn_attempts",
+    "tavern_turn_observations",
+    "tavern_turn_presentations",
+    "tavern_turn_terminalizations",
+    "tavern_chat_submit_idempotency",
+    "tavern_drafts",
+    "tavern_active_selection",
+  ];
+  const tables = new Set(
+    (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as any[]).map((row) => row.name),
+  );
+  if (requiredTables.some((table) => !tables.has(table)))
+    throw new Error("chat_thread_schema_mismatch");
+  const threadColumns = new Set(
+    (db.prepare("PRAGMA table_info(tavern_threads)").all() as any[]).map((column) => column.name),
+  );
+  const requiredThreadColumns = [
+    "thread_id",
+    "companion_id",
+    "continuity_id",
+    "chat_surface_session_id",
+    "opening_kind",
+    "opening_message_id",
+    "opening_locked_at_event_id",
+  ];
+  if (
+    requiredThreadColumns.some((column) => !threadColumns.has(column)) ||
+    threadColumns.has("metadata_json") ||
+    threadColumns.has("opening_selection_json") ||
+    threadColumns.has("session_file")
+  )
+    throw new Error("chat_thread_schema_mismatch");
 }
 
 function runInTransaction<T>(db: DatabaseSync, fn: () => T): T {
@@ -766,7 +979,7 @@ export function createChatThreadStore(
   now: () => number = Date.now,
 ): ChatThreadStore {
   assertId("continuityKey", continuityKey);
-  const continuityRoot = join(root, "tavern", "v1", "continuities", continuityKey);
+  const continuityRoot = join(root, "tavern", "v2", "continuities", continuityKey);
   const dbPath = join(continuityRoot, "tavern.sqlite");
 
   function withDb<T>(fn: (db: DatabaseSync) => T): T {
@@ -795,69 +1008,31 @@ export function createChatThreadStore(
         }
         const timestamp = now();
         const opening = normalizeOpening(request.opening);
-        const openingSelectionJson = JSON.stringify(
-          opening === "blank"
-            ? { kind: "blank" as const }
-            : {
-                kind: "greeting" as const,
-                messageId: opening.messageId,
-                source: opening.source,
-              },
-        );
-
         const initialMessages: ChatThreadMessage[] =
           opening === "blank"
             ? []
-            : [
-                validateMessage({
-                  messageId: opening.messageId,
-                  role: "companion",
-                  kind: "opening",
-                  text: opening.text,
-                  occurredAtMs: timestamp,
-                  greetingSource: opening.source,
-                }),
-              ];
-
-        const initialMetadata: ThreadMetadata = {
-          chatSurfaceSessionId: request.chatSurfaceSessionId,
-          stableArtifactBindings: request.stableArtifactBindings ?? [],
-          worldBookBinding: request.worldBookBinding,
-          openingLockedAtEventId: null,
-          turnLedger: null,
-          idempotency: [],
-          messages: initialMessages,
-        };
-
-        const sessionFile = `${request.chatThreadId}.jsonl`;
-
+            : [validateMessage({ messageId: opening.messageId, role: "companion", kind: "opening", text: opening.text, occurredAtMs: timestamp, greetingSource: opening.source })];
+        const greeting = opening === "blank" ? null : opening.source;
         db.prepare(
           `INSERT INTO tavern_threads (
-            thread_id, companion_id, continuity_id, session_file, title,
-            persona_id, scenario_id, lifecycle_status, management_revision,
-            created_at_ms, updated_at_ms, opening_selection_json, metadata_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            thread_id, companion_id, continuity_id, title, persona_id, scenario_id,
+            chat_surface_session_id, lifecycle_status, management_revision, created_at_ms, updated_at_ms,
+            opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
+            greeting_variant_id, greeting_profile_revision, greeting_scenario_revision, opening_locked_at_event_id
+          ) VALUES (?, ?, ?, NULL, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         ).run(
-          request.chatThreadId,
-          request.companionId,
-          request.continuityId,
-          sessionFile,
-          null,
-          request.personaId ?? null,
-          request.scenarioId ?? null,
-          "active",
-          1,
-          timestamp,
-          timestamp,
-          openingSelectionJson,
-          JSON.stringify(initialMetadata),
+          request.chatThreadId, request.companionId, request.continuityId,
+          request.personaId ?? null, request.scenarioId ?? null, request.chatSurfaceSessionId, timestamp, timestamp,
+          opening === "blank" ? "blank" : "greeting", opening === "blank" ? null : opening.messageId,
+          greeting?.greetingSetId ?? null, greeting?.sourceRevision ?? null, greeting?.canonicalHash ?? null,
+          greeting?.variantId ?? null, greeting?.profileRevision ?? null, greeting?.scenarioRevision ?? null,
         );
-
-        db.prepare(
-          `INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms)
-          VALUES (?, NULL, 0, ?)`,
-        ).run(request.chatThreadId, timestamp);
-
+        for (const binding of request.stableArtifactBindings ?? [])
+          db.prepare(`INSERT INTO tavern_thread_stable_artifact_bindings (thread_id, kind, source_id, revision, canonical_hash) VALUES (?, ?, ?, ?, ?)`)
+            .run(request.chatThreadId, binding.kind, binding.sourceId, binding.revision, binding.canonicalHash);
+        if (request.worldBookBinding) writeWorldInfoBinding(db, request.chatThreadId, request.worldBookBinding);
+        for (const message of initialMessages) insertMessage(db, request.chatThreadId, message);
+        db.prepare(`INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`).run(request.chatThreadId, timestamp);
         return readStateFromDb(db, request.chatThreadId);
       });
     },
@@ -865,7 +1040,7 @@ export function createChatThreadStore(
     async listThreads(): Promise<readonly ChatThread[]> {
       return withDb((db) => {
         const rows = db.prepare("SELECT * FROM tavern_threads ORDER BY thread_id ASC").all() as any[];
-        return Object.freeze(rows.map(rowToThread));
+        return Object.freeze(rows.map((row) => rowToThread(db, row)));
       });
     },
 
@@ -903,7 +1078,7 @@ export function createChatThreadStore(
       return withDb((db) => {
         const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
         if (!threadRow) throw new ExactThreadNotFoundError();
-        const thread = rowToThread(threadRow);
+        const thread = rowToThread(db, threadRow);
         if (thread.chatSurfaceSessionId !== chatSurfaceSessionId)
           throw new Error("chat_thread_surface_mismatch");
 
@@ -950,38 +1125,10 @@ export function createChatThreadStore(
           throw new Error("chat_thread_opening_locked");
 
         const updatedAt = now();
-        const openingSelectionJson = JSON.stringify(
-          opening === "blank"
-            ? { kind: "blank" as const }
-            : {
-                kind: "greeting" as const,
-                messageId: opening.messageId,
-                source: opening.source,
-              },
-        );
-
-        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
-        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-        const messages: ChatThreadMessage[] =
-          opening === "blank"
-            ? []
-            : [
-                validateMessage({
-                  messageId: opening.messageId,
-                  role: "companion",
-                  kind: "opening",
-                  text: opening.text,
-                  occurredAtMs: updatedAt,
-                  greetingSource: opening.source,
-                }),
-              ];
-
-        metadata.messages = messages;
-
-        db.prepare(
-          "UPDATE tavern_threads SET opening_selection_json = ?, updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?",
-        ).run(openingSelectionJson, updatedAt, JSON.stringify(metadata), chatThreadId);
-
+        const openingMessage: ChatThreadMessage | null = opening === "blank" ? null : validateMessage({ messageId: opening.messageId, role: "companion", kind: "opening", text: opening.text, occurredAtMs: updatedAt, greetingSource: opening.source });
+        const greeting = opening === "blank" ? null : opening.source;
+        db.prepare("UPDATE tavern_threads SET opening_kind = ?, opening_message_id = ?, greeting_set_id = ?, greeting_source_revision = ?, greeting_canonical_hash = ?, greeting_variant_id = ?, greeting_profile_revision = ?, greeting_scenario_revision = ?, updated_at_ms = ? WHERE thread_id = ?").run(opening === "blank" ? "blank" : "greeting", opening === "blank" ? null : opening.messageId, greeting?.greetingSetId ?? null, greeting?.sourceRevision ?? null, greeting?.canonicalHash ?? null, greeting?.variantId ?? null, greeting?.profileRevision ?? null, greeting?.scenarioRevision ?? null, updatedAt, chatThreadId);
+        replaceOpeningMessage(db, chatThreadId, openingMessage);
         return readStateFromDb(db, chatThreadId);
       });
     },
@@ -996,36 +1143,10 @@ export function createChatThreadStore(
             throw new Error("chat_thread_message_id_conflict");
           return current;
         }
-        if (current.messages.length >= MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES)
-          throw new Error("chat_thread_capacity_exceeded");
-
         const lockedAt = current.thread.openingLockedAtEventId ?? message.messageId;
         const updatedAt = now();
-
-        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
-        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-        const messages: ChatThreadMessage[] = Array.isArray(metadata.messages) ? [...metadata.messages] : [];
-
-        messages.push(
-          validateMessage({
-            messageId: message.messageId,
-            role: "player",
-            kind: "player",
-            text: message.text,
-            occurredAtMs: message.occurredAtMs,
-            greetingSource: null,
-          }),
-        );
-
-        metadata.messages = messages;
-        metadata.openingLockedAtEventId = lockedAt;
-
-        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
-          updatedAt,
-          JSON.stringify(metadata),
-          chatThreadId,
-        );
-
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(updatedAt, lockedAt, chatThreadId);
+        insertMessage(db, chatThreadId, validateMessage({ messageId: message.messageId, role: "player", kind: "player", text: message.text, occurredAtMs: message.occurredAtMs, greetingSource: null }));
         return readStateFromDb(db, chatThreadId);
       });
     },
@@ -1040,36 +1161,59 @@ export function createChatThreadStore(
             throw new Error("chat_thread_message_id_conflict");
           return current;
         }
-        if (current.messages.length >= MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES)
-          throw new Error("chat_thread_capacity_exceeded");
-
         const lockedAt = current.thread.openingLockedAtEventId ?? response.messageId;
         const updatedAt = now();
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(updatedAt, lockedAt, chatThreadId);
+        insertMessage(db, chatThreadId, validateMessage({ messageId: response.messageId, role: "companion", kind: "response", text: response.text, occurredAtMs: response.occurredAtMs, greetingSource: null }));
+        return readStateFromDb(db, chatThreadId);
+      });
+    },
 
-        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
-        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-        const messages: ChatThreadMessage[] = Array.isArray(metadata.messages) ? [...metadata.messages] : [];
+    async selectSwipe(chatThreadId, messageId, selection): Promise<ChatThreadState> {
+      assertId("chatThreadId", chatThreadId);
+      assertId("messageId", messageId);
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
+        const target = current.messages.find((message) => message.messageId === messageId);
+        if (!target) throw new Error("message_not_found");
+        const swipes = target.swipes && target.swipes.length ? target.swipes : [target.text];
+        const currentIndex = target.activeSwipeIndex ?? 0;
+        if (target.role !== "companion") throw new Error("chat_thread_swipe_not_allowed");
+        let activeSwipeIndex = currentIndex;
+        if (selection.targetIndex !== undefined && selection.targetIndex >= 0 && selection.targetIndex < swipes.length)
+          activeSwipeIndex = selection.targetIndex;
+        else if (selection.direction === "next") activeSwipeIndex = Math.min(swipes.length - 1, currentIndex + 1);
+        else if (selection.direction === "prev") activeSwipeIndex = Math.max(0, currentIndex - 1);
+        db.prepare(
+          "UPDATE tavern_messages SET text = ?, active_swipe_index = ? WHERE thread_id = ? AND message_id = ?",
+        ).run(swipes[activeSwipeIndex], activeSwipeIndex, chatThreadId, messageId);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
+        return readStateFromDb(db, chatThreadId);
+      });
+    },
 
-        messages.push(
-          validateMessage({
-            messageId: response.messageId,
-            role: "companion",
-            kind: "response",
-            text: response.text,
-            occurredAtMs: response.occurredAtMs,
-            greetingSource: null,
-          }),
-        );
-
-        metadata.messages = messages;
-        metadata.openingLockedAtEventId = lockedAt;
-
-        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
-          updatedAt,
-          JSON.stringify(metadata),
-          chatThreadId,
-        );
-
+    async appendSwipeVariant(chatThreadId, messageId, newText): Promise<ChatThreadState> {
+      assertId("chatThreadId", chatThreadId);
+      assertId("messageId", messageId);
+      assertText(newText);
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
+        const target = current.messages.find((message) => message.messageId === messageId);
+        if (!target) throw new Error("message_not_found");
+        if (target.role !== "companion") throw new Error("chat_thread_swipe_not_allowed");
+        const nextIndex = target.swipes?.length ?? 1;
+        if (target.swipes === undefined) {
+          db.prepare(
+            "INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, 0, ?)",
+          ).run(chatThreadId, messageId, target.text);
+        }
+        db.prepare(
+          "INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)",
+        ).run(chatThreadId, messageId, nextIndex, newText);
+        db.prepare(
+          "UPDATE tavern_messages SET text = ?, active_swipe_index = ? WHERE thread_id = ? AND message_id = ?",
+        ).run(newText, nextIndex, chatThreadId, messageId);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
         return readStateFromDb(db, chatThreadId);
       });
     },
@@ -1118,13 +1262,9 @@ export function createChatThreadStore(
           cancelClaimedAtMs: input.cancelledAtMs,
           cancelledAtMs: input.cancelledAtMs,
         });
-        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
-        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-        metadata.turnLedger = nextLedger;
-        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
-          input.cancelledAtMs,
-          JSON.stringify(metadata),
-          input.chatThreadId,
+        persistTurn(db, input.chatThreadId, nextLedger);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(
+          input.cancelledAtMs, input.chatThreadId,
         );
         const readBack = readStateFromDb(db, input.chatThreadId);
         if (readBack.turnLedger?.status !== "cancelled" || readBack.turnLedger.turnId !== input.expectedTurnId)
@@ -1134,6 +1274,7 @@ export function createChatThreadStore(
     },
 
     async setWorldBookBinding(input): Promise<ChatThreadState> {
+      assertId("chatThreadId", input.chatThreadId);
       assertId("chatSurfaceSessionId", input.chatSurfaceSessionId);
       assertId("companionId", input.companionId);
       assertId("continuityId", input.continuityId);
@@ -1147,19 +1288,13 @@ export function createChatThreadStore(
           current.thread.continuityId !== input.continuityId
         )
           throw new Error("chat_thread_scope_mismatch");
-        if (current.thread.updatedAtMs !== input.expectedUpdatedAtMs) throw new Error("chat_thread_revision_conflict");
+        if (current.thread.updatedAtMs !== input.expectedUpdatedAtMs)
+          throw new Error("chat_thread_revision_conflict");
         if (current.messages.length !== 0) throw new Error("chat_thread_worldbook_locked");
 
         const updatedAt = now();
-        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
-        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-        metadata.worldBookBinding = input.binding ? freezeStableWorldBookBinding(input.binding) : undefined;
-
-        db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
-          updatedAt,
-          JSON.stringify(metadata),
-          input.chatThreadId,
-        );
+        writeWorldInfoBinding(db, input.chatThreadId, input.binding ? freezeStableWorldBookBinding(input.binding) : undefined);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(updatedAt, input.chatThreadId);
 
         return readStateFromDb(db, input.chatThreadId);
       });
@@ -1188,13 +1323,9 @@ export function createChatThreadStore(
         );
         const nextRevision = currentManagementRevision + 1;
 
-        const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
-        const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-        metadata.trashRestoreStatus = transition.trashRestoreStatus;
-
-        db.prepare(
-          "UPDATE tavern_threads SET lifecycle_status = ?, management_revision = ?, metadata_json = ? WHERE thread_id = ?",
-        ).run(transition.status, nextRevision, JSON.stringify(metadata), input.chatThreadId);
+        db.prepare("UPDATE tavern_threads SET lifecycle_status = ?, management_revision = ?, trash_restore_status = ? WHERE thread_id = ?").run(
+          transition.status, nextRevision, transition.trashRestoreStatus ?? null, input.chatThreadId,
+        );
 
         return (readStateFromDb(db, input.chatThreadId)).thread;
       });
@@ -1317,10 +1448,18 @@ export function createChatThreadStore(
       if (thread.lifecycleStatus !== "active") throw new Error("chat_thread_lifecycle_not_active");
 
       const fingerprint = acceptanceFingerprint(input);
-      const existing = current.idempotency.find((record) => record.key === input.idempotencyKey);
-      if (existing !== undefined) {
-        if (existing.fingerprint !== fingerprint) throw new Error("idempotency_conflict");
-        return existing.result;
+      const existingRow = db.prepare(
+        "SELECT i.fingerprint, i.turn_id, t.idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id AND t.thread_id = i.thread_id WHERE i.thread_id = ? AND i.idempotency_key = ?",
+      ).get(input.chatThreadId, input.idempotencyKey) as any;
+      if (existingRow !== undefined) {
+        if (existingRow.fingerprint !== fingerprint) throw new Error("idempotency_conflict");
+        return validateAcceptedTurn({
+          turnId: existingRow.turn_id,
+          status: "accepted_queued",
+          idempotencyKey: existingRow.idempotency_key,
+          messageId: existingRow.message_id,
+          acceptedAtMs: existingRow.accepted_at_ms,
+        });
       }
       if (
         current.turnLedger !== null &&
@@ -1330,8 +1469,6 @@ export function createChatThreadStore(
       )
         throw new Error("turn_busy");
       if (current.draft.revision !== input.expectedDraftRevision) throw new Error("chat_draft_revision_conflict");
-      if (current.messages.length >= MAX_CHAT_THREAD_TRANSCRIPT_MESSAGES)
-        throw new Error("chat_thread_capacity_exceeded");
 
       const acceptedAtMs = now();
       const messageId = `player_${randomUUID().replace(/-/gu, "")}`;
@@ -1345,32 +1482,13 @@ export function createChatThreadStore(
       });
 
       const lockedAt = thread.openingLockedAtEventId ?? messageId;
-      const nextIdempotency = [...current.idempotency, Object.freeze({ key: input.idempotencyKey, fingerprint, result })];
-
-      const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
-      const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-      const messages: ChatThreadMessage[] = Array.isArray(metadata.messages) ? [...metadata.messages] : [];
-
-      messages.push(
-        validateMessage({
-          messageId,
-          role: "player",
-          kind: "player",
-          text: input.text,
-          occurredAtMs: acceptedAtMs,
-          greetingSource: null,
-        }),
+      insertMessage(db, input.chatThreadId, validateMessage({ messageId, role: "player", kind: "player", text: input.text, occurredAtMs: acceptedAtMs, greetingSource: null }));
+      persistTurn(db, input.chatThreadId, result);
+      db.prepare("INSERT INTO tavern_chat_submit_idempotency (thread_id, idempotency_key, fingerprint, turn_id) VALUES (?, ?, ?, ?)").run(
+        input.chatThreadId, input.idempotencyKey, fingerprint, turnId,
       );
-
-      metadata.messages = messages;
-      metadata.openingLockedAtEventId = lockedAt;
-      metadata.turnLedger = result;
-      metadata.idempotency = nextIdempotency;
-
-      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
-        acceptedAtMs,
-        JSON.stringify(metadata),
-        input.chatThreadId,
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(
+        acceptedAtMs, lockedAt, input.chatThreadId,
       );
 
       db.prepare(
@@ -1414,15 +1532,8 @@ export function createChatThreadStore(
         attempt,
       });
 
-      const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
-      const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-      metadata.turnLedger = claimed;
-
-      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
-        claimedAtMs,
-        JSON.stringify(metadata),
-        input.chatThreadId,
-      );
+      persistTurn(db, input.chatThreadId, claimed);
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(claimedAtMs, input.chatThreadId);
 
       const readBack = readStateFromDb(db, input.chatThreadId);
       if (
@@ -1515,15 +1626,8 @@ export function createChatThreadStore(
         });
       }
 
-      const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
-      const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-      metadata.turnLedger = nextLedger;
-
-      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
-        observedAtMs,
-        JSON.stringify(metadata),
-        input.chatThreadId,
-      );
+      persistTurn(db, input.chatThreadId, nextLedger);
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(observedAtMs, input.chatThreadId);
 
       const readBack = readStateFromDb(db, input.chatThreadId);
       const readBackLedger = readBack.turnLedger;
@@ -1564,10 +1668,7 @@ export function createChatThreadStore(
       const atMs = timestampFor(command);
       if (atMs < thread.updatedAtMs) throw new Error("p5_presentation_time_regression");
 
-      const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(input.chatThreadId) as any;
-      const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-      const messages: ChatThreadMessage[] = Array.isArray(metadata.messages) ? [...metadata.messages] : [];
-
+      const messages = current.messages;
       let nextLedger: ChatTurnLedger;
       switch (command.operation) {
         case "commit_presentation": {
@@ -1600,17 +1701,7 @@ export function createChatThreadStore(
             presentation,
           });
 
-          messages.push(
-            validateMessage({
-              messageId: command.message.messageId,
-              role: "companion",
-              kind: "response",
-              text: command.message.text,
-              occurredAtMs: command.message.occurredAtMs,
-              greetingSource: null,
-            }),
-          );
-          metadata.messages = messages;
+          insertMessage(db, input.chatThreadId, validateMessage({ messageId: command.message.messageId, role: "companion", kind: "response", text: command.message.text, occurredAtMs: command.message.occurredAtMs, greetingSource: null }));
           break;
         }
         case "claim_completion": {
@@ -1666,13 +1757,8 @@ export function createChatThreadStore(
         }
       }
 
-      metadata.turnLedger = nextLedger;
-
-      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, metadata_json = ? WHERE thread_id = ?").run(
-        atMs,
-        JSON.stringify(metadata),
-        input.chatThreadId,
-      );
+      persistTurn(db, input.chatThreadId, nextLedger);
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(atMs, input.chatThreadId);
 
       const readBack = readStateFromDb(db, input.chatThreadId);
       assertP5ReadBack(readBack.turnLedger, command, input);
@@ -1682,62 +1768,234 @@ export function createChatThreadStore(
   }
 }
 
-function rowToThread(row: any): ChatThread {
-  const openingSelection = JSON.parse(row.opening_selection_json);
-  const metadata: ThreadMetadata = row.metadata_json ? JSON.parse(row.metadata_json) : {};
-  const thread: ChatThread = {
-    schemaVersion: CHAT_THREAD_SCHEMA_VERSION,
-    chatThreadId: row.thread_id,
-    companionId: row.companion_id,
-    continuityId: row.continuity_id,
-    ...(row.persona_id ? { personaId: row.persona_id } : {}),
-    ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}),
-    stableArtifactBindings: freezeStableArtifactBindings(metadata.stableArtifactBindings ?? []),
-    ...(metadata.worldBookBinding ? { worldBookBinding: freezeStableWorldBookBinding(metadata.worldBookBinding) } : {}),
-    chatSurfaceSessionId: metadata.chatSurfaceSessionId ?? row.thread_id,
-    createdAtMs: row.created_at_ms,
-    updatedAtMs: row.updated_at_ms,
-    openingSelection: validateOpeningSelection(openingSelection),
-    title: validateStoredThreadTitle(row.title),
-    lifecycleStatus: validateLifecycleStatus(row.lifecycle_status),
+function greetingSourceFromRow(row: any): GreetingSource | null {
+  if (row.greeting_set_id === null || row.greeting_set_id === undefined) return null;
+  return freezeGreetingSource({
+    greetingSetId: row.greeting_set_id, sourceRevision: row.greeting_source_revision,
+    canonicalHash: row.greeting_canonical_hash, variantId: row.greeting_variant_id,
+    profileRevision: row.greeting_profile_revision, scenarioRevision: row.greeting_scenario_revision,
+  });
+}
+
+function rowToThread(db: DatabaseSync, row: any): ChatThread {
+  const greeting = greetingSourceFromRow(row);
+  const openingSelection: OpeningSelection = row.opening_kind === "blank"
+    ? Object.freeze({ kind: "blank" })
+    : validateOpeningSelection({ kind: "greeting", messageId: row.opening_message_id, source: greeting });
+  const stableArtifactBindings = freezeStableArtifactBindings((db.prepare(
+    "SELECT kind, source_id, revision, canonical_hash FROM tavern_thread_stable_artifact_bindings WHERE thread_id = ? ORDER BY kind",
+  ).all(row.thread_id) as any[]).map((binding) => ({
+    kind: binding.kind, sourceId: binding.source_id, revision: binding.revision, canonicalHash: binding.canonical_hash,
+  })));
+  const world = db.prepare("SELECT * FROM tavern_thread_world_info_bindings WHERE thread_id = ?").get(row.thread_id) as any;
+  const worldBookBinding: TavernStableWorldInfoBinding | undefined = !world ? undefined : world.source === "managed_world_info"
+    ? freezeStableWorldBookBinding({ source: "managed_world_info", publicTitle: world.public_title, revision: world.revision, canonicalHash: world.canonical_hash })
+    : freezeStableWorldBookBinding({ worldBookId: world.world_book_id, revision: world.revision, canonicalHash: world.canonical_hash, provenance: world.provenance });
+  return freezeThread({
+    schemaVersion: CHAT_THREAD_SCHEMA_VERSION, chatThreadId: row.thread_id, companionId: row.companion_id,
+    continuityId: row.continuity_id, ...(row.persona_id ? { personaId: row.persona_id } : {}),
+    ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}), stableArtifactBindings,
+    ...(worldBookBinding ? { worldBookBinding } : {}), chatSurfaceSessionId: row.chat_surface_session_id,
+    createdAtMs: row.created_at_ms, updatedAtMs: row.updated_at_ms, openingSelection,
+    title: validateStoredThreadTitle(row.title), lifecycleStatus: validateLifecycleStatus(row.lifecycle_status),
     managementRevision: validateManagementRevision(row.management_revision),
-    ...(metadata.trashRestoreStatus ? { trashRestoreStatus: validateTrashRestoreStatus(metadata.trashRestoreStatus) } : {}),
-    openingLockedAtEventId: metadata.openingLockedAtEventId ?? null,
+    ...(row.trash_restore_status ? { trashRestoreStatus: validateTrashRestoreStatus(row.trash_restore_status) } : {}),
+    openingLockedAtEventId: row.opening_locked_at_event_id ?? null,
+  });
+}
+
+function readMessages(db: DatabaseSync, threadId: string): ChatThreadMessage[] {
+  const swipeRows = db.prepare("SELECT message_id, swipe_index, text FROM tavern_message_swipes WHERE thread_id = ? ORDER BY message_id, swipe_index").all(threadId) as any[];
+  const swipes = new Map<string, string[]>();
+  for (const swipe of swipeRows) {
+    const values = swipes.get(swipe.message_id) ?? [];
+    if (swipe.swipe_index !== values.length) throw new Error("invalid_chat_thread_swipe_order");
+    values.push(swipe.text);
+    swipes.set(swipe.message_id, values);
+  }
+  return (db.prepare("SELECT * FROM tavern_messages WHERE thread_id = ? ORDER BY append_ordinal").all(threadId) as any[]).map((row) => {
+    const swipeValues = swipes.get(row.message_id);
+    if (row.role === "companion") {
+      if (swipeValues === undefined) throw new Error("invalid_chat_thread_swipe_order");
+      return validateMessage({
+        messageId: row.message_id,
+        role: row.role,
+        kind: row.kind,
+        text: row.text,
+        occurredAtMs: row.occurred_at_ms,
+        greetingSource: greetingSourceFromRow(row),
+        ...(row.parent_id === null ? {} : { parentId: row.parent_id }),
+        swipes: swipeValues,
+        activeSwipeIndex: row.active_swipe_index,
+      });
+    }
+    if (swipeValues !== undefined || row.active_swipe_index !== 0) throw new Error("invalid_chat_thread_swipe_order");
+    return validateMessage({
+      messageId: row.message_id,
+      role: row.role,
+      kind: row.kind,
+      text: row.text,
+      occurredAtMs: row.occurred_at_ms,
+      greetingSource: greetingSourceFromRow(row),
+      ...(row.parent_id === null ? {} : { parentId: row.parent_id }),
+    });
+  });
+}
+
+function insertMessage(db: DatabaseSync, threadId: string, message: ChatThreadMessage): void {
+  const ordinalRow = db.prepare("SELECT COALESCE(MAX(append_ordinal), -1) AS ordinal FROM tavern_messages WHERE thread_id = ?").get(threadId) as any;
+  const source = message.greetingSource;
+  db.prepare(`INSERT INTO tavern_messages (thread_id, message_id, append_ordinal, role, kind, text, occurred_at_ms, parent_id, active_swipe_index, greeting_set_id, greeting_source_revision, greeting_canonical_hash, greeting_variant_id, greeting_profile_revision, greeting_scenario_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    threadId, message.messageId, ordinalRow.ordinal + 1, message.role, message.kind, message.text, message.occurredAtMs,
+    message.parentId ?? null, message.activeSwipeIndex ?? 0, source?.greetingSetId ?? null, source?.sourceRevision ?? null,
+    source?.canonicalHash ?? null, source?.variantId ?? null, source?.profileRevision ?? null, source?.scenarioRevision ?? null,
+  );
+  if (message.role === "companion") {
+    for (const [index, text] of (message.swipes ?? [message.text]).entries())
+      db.prepare("INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)").run(
+        threadId,
+        message.messageId,
+        index,
+        text,
+      );
+  }
+}
+
+function replaceOpeningMessage(db: DatabaseSync, threadId: string, message: ChatThreadMessage | null): void {
+  db.prepare("DELETE FROM tavern_messages WHERE thread_id = ? AND kind = 'opening'").run(threadId);
+  if (message) insertMessage(db, threadId, message);
+}
+
+function writeWorldInfoBinding(db: DatabaseSync, threadId: string, binding: TavernStableWorldInfoBinding | undefined): void {
+  db.prepare("DELETE FROM tavern_thread_world_info_bindings WHERE thread_id = ?").run(threadId);
+  if (!binding) return;
+  if ("source" in binding) db.prepare("INSERT INTO tavern_thread_world_info_bindings (thread_id, source, public_title, revision, canonical_hash) VALUES (?, 'managed_world_info', ?, ?, ?)").run(threadId, binding.publicTitle, binding.revision, binding.canonicalHash);
+  else db.prepare("INSERT INTO tavern_thread_world_info_bindings (thread_id, source, world_book_id, revision, canonical_hash, provenance) VALUES (?, 'world_book', ?, ?, ?, ?)").run(threadId, binding.worldBookId, binding.revision, binding.canonicalHash, binding.provenance);
+}
+
+function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger): void {
+  db.prepare("UPDATE tavern_turns SET is_current = 0 WHERE thread_id = ? AND turn_id <> ?").run(threadId, ledger.turnId);
+  db.prepare(`INSERT INTO tavern_turns (turn_id, thread_id, status, idempotency_key, message_id, accepted_at_ms, is_current) VALUES (?, ?, ?, ?, ?, ?, 1) ON CONFLICT(turn_id) DO UPDATE SET status = excluded.status, is_current = 1`).run(ledger.turnId, threadId, ledger.status, ledger.idempotencyKey, ledger.messageId, ledger.acceptedAtMs);
+  if (!isTurnWithAttempt(ledger)) return;
+  db.prepare("DELETE FROM tavern_turn_attempts WHERE turn_id = ?").run(ledger.turnId);
+  const attempt = ledger.attempt;
+  db.prepare("INSERT INTO tavern_turn_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(ledger.turnId, attempt.generation, attempt.attemptId, attempt.claimedAtMs, attempt.selectionGeneration, attempt.runtimeBindingDigest, attempt.runtimeOwner.ownerToken, attempt.runtimeOwner.runtimeInstanceId, attempt.runtimeOwner.ownerPid, attempt.runtimeOwner.ownerProcessStartIdentity);
+  db.prepare("DELETE FROM tavern_turn_observations WHERE turn_id = ?").run(ledger.turnId);
+  db.prepare("DELETE FROM tavern_turn_presentations WHERE turn_id = ?").run(ledger.turnId);
+  db.prepare("DELETE FROM tavern_turn_terminalizations WHERE turn_id = ?").run(ledger.turnId);
+  if (ledger.observation) db.prepare("INSERT INTO tavern_turn_observations VALUES (?, ?, ?, ?, ?, ?)").run(ledger.turnId, ledger.observation.phase, "reasonCode" in ledger.observation ? ledger.observation.reasonCode : null, "source" in ledger.observation ? ledger.observation.source : null, "statusClass" in ledger.observation ? ledger.observation.statusClass : null, ledger.observation.observedAtMs);
+  const presentation = presentationOf(ledger);
+  if (presentation) db.prepare("INSERT INTO tavern_turn_presentations VALUES (?, ?, ?, ?, ?)").run(ledger.turnId, presentation.expressionId, presentation.messageId, presentation.cancelEpoch, presentation.committedAtMs);
+  db.prepare("INSERT INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?)").run(ledger.turnId, ledger.status === "completion_claimed" || ledger.status === "completed" ? ledger.completionClaimedAtMs : null, ledger.status === "completed" ? ledger.completedAtMs : null, ledger.status === "cancel_claimed" || ledger.status === "cancelled" ? ledger.cancelClaimedAtMs : null, ledger.status === "cancelled" ? ledger.cancelledAtMs : null, ledger.status === "failed" ? ledger.failedAtMs : null, ledger.status === "failed" ? ledger.reasonCode : null);
+}
+
+function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
+  const base = {
+    turnId: row.turn_id,
+    status: row.status,
+    idempotencyKey: row.idempotency_key,
+    messageId: row.message_id,
+    acceptedAtMs: row.accepted_at_ms,
   };
-  return freezeThread(thread);
+  if (row.status === "accepted_queued") return validateTurnLedger(base);
+
+  const attempt = db.prepare("SELECT * FROM tavern_turn_attempts WHERE turn_id = ?").get(row.turn_id) as any;
+  const observation = db.prepare("SELECT * FROM tavern_turn_observations WHERE turn_id = ?").get(row.turn_id) as any;
+  const presentation = db.prepare("SELECT * FROM tavern_turn_presentations WHERE turn_id = ?").get(row.turn_id) as any;
+  const terminal = db.prepare("SELECT * FROM tavern_turn_terminalizations WHERE turn_id = ?").get(row.turn_id) as any;
+  if (!attempt || !terminal || (row.status !== "attempt_starting" && !observation))
+    throw new Error("invalid_chat_thread_turn_ledger");
+
+  const attemptValue = {
+    generation: attempt.generation,
+    attemptId: attempt.attempt_id,
+    claimedAtMs: attempt.claimed_at_ms,
+    selectionGeneration: attempt.selection_generation,
+    runtimeBindingDigest: attempt.runtime_binding_digest,
+    runtimeOwner: {
+      ownerToken: attempt.owner_token,
+      runtimeInstanceId: attempt.runtime_instance_id,
+      ownerPid: attempt.owner_pid,
+      ownerProcessStartIdentity: attempt.owner_process_start_identity,
+    },
+  };
+  const observationValue = observation
+    ? {
+        phase: observation.phase,
+        ...(observation.reason_code ? { reasonCode: observation.reason_code } : {}),
+        ...(observation.source ? { source: observation.source } : {}),
+        ...(observation.status_class ? { statusClass: observation.status_class } : {}),
+        observedAtMs: observation.observed_at_ms,
+      }
+    : undefined;
+  const presentationValue = presentation
+    ? {
+        expressionId: presentation.expression_id,
+        messageId: presentation.message_id,
+        cancelEpoch: presentation.cancel_epoch,
+        committedAtMs: presentation.committed_at_ms,
+      }
+    : null;
+
+  return validateTurnLedger({
+    ...base,
+    attempt: attemptValue,
+    ...(observationValue === undefined ? {} : { observation: observationValue }),
+    ...(row.status === "presentation_committed" ? { presentation: presentationValue } : {}),
+    ...(row.status === "completion_claimed"
+      ? { presentation: presentationValue, completionClaimedAtMs: terminal.completion_claimed_at_ms }
+      : {}),
+    ...(row.status === "completed"
+      ? {
+          presentation: presentationValue,
+          completionClaimedAtMs: terminal.completion_claimed_at_ms,
+          completedAtMs: terminal.completed_at_ms,
+        }
+      : {}),
+    ...(row.status === "cancel_claimed"
+      ? { presentation: presentationValue, cancelClaimedAtMs: terminal.cancel_claimed_at_ms }
+      : {}),
+    ...(row.status === "cancelled"
+      ? {
+          presentation: presentationValue,
+          cancelClaimedAtMs: terminal.cancel_claimed_at_ms,
+          cancelledAtMs: terminal.cancelled_at_ms,
+        }
+      : {}),
+    ...(row.status === "failed"
+      ? { presentation: presentationValue, reasonCode: terminal.reason_code, failedAtMs: terminal.failed_at_ms }
+      : {}),
+  });
 }
 
 function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadState {
   assertId("chatThreadId", chatThreadId);
   const threadRow = db.prepare("SELECT * FROM tavern_threads WHERE thread_id = ?").get(chatThreadId) as any;
-  if (!threadRow) {
-    throw new ExactThreadNotFoundError();
-  }
-  const thread = rowToThread(threadRow);
-  const metadata: ThreadMetadata = threadRow.metadata_json ? JSON.parse(threadRow.metadata_json) : {};
-
-  const rawMessages: unknown[] = Array.isArray(metadata.messages) ? metadata.messages : [];
-  const messages: ChatThreadMessage[] = rawMessages.map(validateMessage);
-
+  if (!threadRow) throw new ExactThreadNotFoundError();
+  const thread = rowToThread(db, threadRow);
+  const messages = readMessages(db, chatThreadId);
   const draftRow = db.prepare("SELECT * FROM tavern_drafts WHERE thread_id = ?").get(chatThreadId) as any;
-  const draft = draftRow
-    ? validateDraft({ revision: draftRow.revision, text: draftRow.draft_content ?? null })
-    : validateDraft({ revision: 0, text: null });
-
-  const turnLedger = metadata.turnLedger ? validateTurnLedger(metadata.turnLedger) : null;
-  const idempotencyRaw = Array.isArray(metadata.idempotency) ? metadata.idempotency : [];
-  const idempotency = idempotencyRaw.map(validateIdempotency);
-
+  const draft = draftRow ? validateDraft({ revision: draftRow.revision, text: draftRow.draft_content ?? null }) : validateDraft({ revision: 0, text: null });
+  const turnRow = db.prepare("SELECT * FROM tavern_turns WHERE thread_id = ? AND is_current = 1").get(chatThreadId) as any;
+  const turnLedger = turnRow ? readTurnLedger(db, turnRow) : null;
+  const idempotency = (db.prepare(
+    "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
+  ).all(chatThreadId) as any[]).map((entry) =>
+    validateIdempotency({
+      key: entry.idempotency_key,
+      fingerprint: entry.fingerprint,
+      result: {
+        turnId: entry.turn_id,
+        status: "accepted_queued",
+        idempotencyKey: entry.turn_idempotency_key,
+        messageId: entry.message_id,
+        acceptedAtMs: entry.accepted_at_ms,
+      },
+    }),
+  );
   validateOpeningConsistency(thread, messages);
   validateTurnIntegrity(messages, turnLedger, idempotency);
-
-  return freezeState({
-    thread,
-    messages,
-    draft,
-    turnLedger,
-    idempotency,
-  });
+  return freezeState({ thread, messages, draft, turnLedger, idempotency });
 }
 
 function validateActiveSelection(value: unknown): ActiveChatThreadSelection {
@@ -1836,7 +2094,20 @@ function validateOpeningSelection(value: unknown): OpeningSelection {
 }
 
 function validateMessage(value: unknown): ChatThreadMessage {
-  if (!isRecord(value) || !onlyKeys(value, ["messageId", "role", "kind", "text", "occurredAtMs", "greetingSource"]))
+  if (
+    !isRecord(value) ||
+    !onlyKeys(value, [
+      "messageId",
+      "role",
+      "kind",
+      "text",
+      "occurredAtMs",
+      "greetingSource",
+      "parentId",
+      "swipes",
+      "activeSwipeIndex",
+    ])
+  )
     throw new Error("invalid_chat_thread_message");
   const messageId = value.messageId;
   const role = value.role;
@@ -1844,6 +2115,18 @@ function validateMessage(value: unknown): ChatThreadMessage {
   const text = value.text;
   const occurredAtMs = value.occurredAtMs;
   const greetingSourceValue = value.greetingSource;
+  const parentId = typeof value.parentId === "string" ? value.parentId : value.parentId === null ? null : undefined;
+  const swipes =
+    Array.isArray(value.swipes) && value.swipes.every(isText)
+      ? Object.freeze([...value.swipes])
+      : undefined;
+  const activeSwipeIndex =
+    typeof value.activeSwipeIndex === "number" &&
+    Number.isSafeInteger(value.activeSwipeIndex) &&
+    value.activeSwipeIndex >= 0
+      ? value.activeSwipeIndex
+      : undefined;
+
   if (
     !isId(messageId) ||
     (role !== "player" && role !== "companion") ||
@@ -1858,6 +2141,10 @@ function validateMessage(value: unknown): ChatThreadMessage {
     (kind === "player" && role === "player" && greetingSourceValue === null) ||
     (kind === "response" && role === "companion" && greetingSourceValue === null);
   if (!validGrammar) throw new Error("invalid_chat_thread_message");
+  if (swipes !== undefined && (swipes.length === 0 || activeSwipeIndex === undefined || activeSwipeIndex >= swipes.length))
+    throw new Error("invalid_chat_thread_message");
+  if (kind === "player" && (swipes !== undefined || activeSwipeIndex !== undefined || parentId !== undefined))
+    throw new Error("invalid_chat_thread_message");
   let greetingSource: GreetingSource | null;
   if (greetingSourceValue === null) {
     greetingSource = null;
@@ -1872,10 +2159,17 @@ function validateMessage(value: unknown): ChatThreadMessage {
     text,
     occurredAtMs,
     greetingSource,
+    ...(parentId !== undefined ? { parentId } : {}),
+    ...(swipes !== undefined ? { swipes } : {}),
+    ...(activeSwipeIndex !== undefined ? { activeSwipeIndex } : {}),
   });
 }
 
 function validateOpeningConsistency(thread: ChatThread, messages: readonly ChatThreadMessage[]): void {
+  if (messages.some((message) => message.parentId !== undefined && message.parentId !== null && !messages.some((parent) => parent.messageId === message.parentId)))
+    throw new Error("invalid_chat_thread_parent_message");
+  if (messages.some((message, index) => message.kind === "opening" && index !== 0))
+    throw new Error("invalid_chat_thread_opening_consistency");
   const opening = messages.filter((message) => message.kind === "opening");
   if (
     thread.openingSelection.kind === "blank"
@@ -2856,6 +3150,7 @@ function freezeStableWorldBookBinding(value: unknown): TavernStableWorldInfoBind
 function freezeMessage(message: ChatThreadMessage): ChatThreadMessage {
   return Object.freeze({
     ...message,
+    ...(message.swipes === undefined ? {} : { swipes: Object.freeze([...message.swipes]) }),
     greetingSource: message.greetingSource === null ? null : freezeGreetingSource(message.greetingSource),
   });
 }

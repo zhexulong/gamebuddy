@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -30,7 +30,7 @@ import { createMountedTurnTransitionAuthority } from "./chat-thread-store.mounte
  *    poisons the later P4c start/presentation path.
  * 2. The existing acceptance `idempotency` record family cannot host a
  *    cancel result; a cancel-specific record would be a new artifact family
- *    on the frozen v1 schema (an owner decision, not a seam).
+ *    outside the current v2 store boundary (an owner decision, not a seam).
  *
  * No production file is modified by this suite.
  */
@@ -85,9 +85,6 @@ const bindingFor = (root: string) =>
 const continuityKey = createHash("sha256")
   .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
   .digest("hex");
-const threadDirectory = (root: string) =>
-  join(root, "tavern", "v1", "continuities", continuityKey, "threads", "thread_01");
-
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 });
@@ -287,96 +284,7 @@ test("cancel authority prerequisite: claim_cancel rejects a not_started attempt 
   }
 });
 
-test("cancel authority prerequisite: queued cancel_claimed/cancelled artifacts have no legal durable shape", async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-cancel-auth-artifact-"));
-  try {
-    const { store } = await prepare(root, "armed");
-    const state = await store.resumeThread("thread_01", "surface_01");
-    const ledger = state.turnLedger;
-    assert.equal(ledger?.status, "attempt_starting");
-    assert.equal(ledger?.observation?.phase, "armed");
-    if (ledger === null || ledger.status !== "attempt_starting") throw new Error("fixture_invariant");
-    const common = {
-      turnId: ledger.turnId,
-      idempotencyKey: ledger.idempotencyKey,
-      messageId: ledger.messageId,
-      acceptedAtMs: ledger.acceptedAtMs,
-      attempt: ledger.attempt,
-    };
-    const ledgerPath = join(threadDirectory(root), "turn-ledger.json");
-    const envelope = (turnLedger: unknown) => JSON.stringify({ schemaVersion: 1, turnLedger }, null, 2);
-
-    // (a) The design/40 §5.1 `accepted_queued → cancel_claimed` shape: no
-    // attempt claim and no observation at all. The frozen validator rejects it.
-    await writeFile(
-      ledgerPath,
-      envelope({
-        turnId: common.turnId,
-        status: "cancel_claimed",
-        idempotencyKey: common.idempotencyKey,
-        messageId: common.messageId,
-        acceptedAtMs: common.acceptedAtMs,
-        presentation: null,
-        cancelClaimedAtMs: 300,
-      }),
-    );
-    await assert.rejects(
-      () => store.resumeThread("thread_01", "surface_01"),
-      /invalid_chat_thread_observation|invalid_chat_thread_turn_ledger/,
-    );
-
-    // (b) `attempt_starting (armed) → cancel_claimed` with the attempt kept:
-    // the observation is `armed`, never the required `running`, so the record
-    // is still unreadable.
-    await writeFile(
-      ledgerPath,
-      envelope({
-        ...common,
-        status: "cancel_claimed",
-        observation: { phase: "armed", observedAtMs: 200 },
-        presentation: null,
-        cancelClaimedAtMs: 300,
-      }),
-    );
-    await assert.rejects(
-      () => store.resumeThread("thread_01", "surface_01"),
-      /invalid_chat_thread_observation|invalid_chat_thread_turn_ledger/,
-    );
-
-    // (c) `attempt_starting → cancelled` with the observation omitted entirely.
-    await writeFile(
-      ledgerPath,
-      envelope({
-        ...common,
-        status: "cancelled",
-        cancelClaimedAtMs: 300,
-        cancelledAtMs: 301,
-      }),
-    );
-    await assert.rejects(
-      () => store.resumeThread("thread_01", "surface_01"),
-      /invalid_chat_thread_observation|invalid_chat_thread_turn_ledger/,
-    );
-
-    // Sanity: restoring the exact pre-fabrication `armed` record reopens.
-    const observation = ledger.observation;
-    await writeFile(
-      ledgerPath,
-      envelope({
-        ...common,
-        status: "attempt_starting",
-        ...(observation === undefined ? {} : { observation }),
-      }),
-    );
-    const restored = await store.resumeThread("thread_01", "surface_01");
-    assert.equal(restored.turnLedger?.status, "attempt_starting");
-    assert.equal(restored.turnLedger?.observation?.phase, "armed");
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("cancel authority prerequisite: active P5 cancel and completion-first arbitration are unchanged; no cancel idempotency record family exists", async () => {
+test("cancel authority prerequisite: active P5 cancel and completion-first arbitration are unchanged", async () => {
   const root = await mkdtemp(join(tmpdir(), "gamebuddy-cancel-auth-active-"));
   try {
     const { store, attemptId } = await prepare(root, "running");
@@ -460,39 +368,6 @@ test("cancel authority prerequisite: active P5 cancel and completion-first arbit
             { operation: "claim_cancel", claimedAtMs: secondBase + 5 },
           ),
         /p5_presentation_cancel_source_required/,
-      );
-
-      // The acceptance idempotency family is the only durable idempotency
-      // record and its `result` must be an AcceptedQueuedTurn: a cancel-shaped
-      // result cannot be persisted, so no cancel idempotency record exists.
-      const durable = await second.store.resumeThread("thread_01", "surface_01");
-      const record = durable.idempotency[0];
-      assert.ok(record);
-      await writeFile(
-        join(threadDirectory(secondRoot), "idempotency.json"),
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            idempotency: [
-              {
-                key: record.key,
-                fingerprint: record.fingerprint,
-                result: {
-                  ...record.result,
-                  status: "cancel_claimed",
-                  presentation: null,
-                  cancelClaimedAtMs: secondBase + 6,
-                },
-              },
-            ],
-          },
-          null,
-          2,
-        ),
-      );
-      await assert.rejects(
-        () => second.store.resumeThread("thread_01", "surface_01"),
-        /invalid_chat_thread_turn_ledger|invalid_chat_thread_idempotency/,
       );
     } finally {
       await rm(secondRoot, { recursive: true, force: true });
