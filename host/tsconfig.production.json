@@ -8,6 +8,7 @@
   "include": [],
   "files": [
     "src/main.ts",
+    "src/desktop-runtime-bootstrap.internal.ts",
     "src/dialogue-web-main.ts",
     "src/dialogue-launch-mode.ts",
     "src/stardew-attachment.ts",

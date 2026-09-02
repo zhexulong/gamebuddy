@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,22 +101,44 @@ async function assertLockedSdk(dotnet) {
   if (actual !== expected) throw new Error("windows_reparse_dotnet_sdk_drift");
 }
 
-export async function buildWindowsReparseInspector() {
-  if (process.platform !== "win32") throw new Error("windows_reparse_build_requires_windows");
+async function publishInspectorPair(destination) {
   const dotnet = await resolveRepositoryDotnet();
   await assertLockedSdk(dotnet);
-  await rm(outputRoot, { recursive: true, force: true });
-  await mkdir(outputRoot, { recursive: true });
-  const args = ["publish", projectFile, "--configuration", "Release", "--runtime", rid, "--self-contained", "true", "--output", outputRoot, "-p:PublishSingleFile=true", "-p:PublishTrimmed=false", "-p:DebugType=None", "-p:DebugSymbols=false", "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true", "-p:UseAppHost=true", "--nologo"];
+  const args = ["publish", projectFile, "--configuration", "Release", "--runtime", rid, "--self-contained", "true", "--output", destination, "-p:PublishSingleFile=true", "-p:PublishTrimmed=false", "-p:DebugType=None", "-p:DebugSymbols=false", "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true", "-p:UseAppHost=true", "--nologo"];
   await runBoundedDotnet(dotnet, args);
-  const helperPath = resolve(outputRoot, helperFileName);
+  const helperPath = resolve(destination, helperFileName);
   const helperState = await lstat(helperPath).catch(() => undefined);
   if (!helperState?.isFile() || helperState.isSymbolicLink()) throw new Error("windows_reparse_helper_missing");
   const sha256 = createHash("sha256").update(await readFile(helperPath)).digest("hex");
-  const manifestPath = resolve(outputRoot, manifestFileName);
-  await writeFile(manifestPath, canonicalManifest(sha256), { encoding: "utf8", flag: "w" });
+  const manifestPath = resolve(destination, manifestFileName);
+  await writeFile(manifestPath, canonicalManifest(sha256), { encoding: "utf8", flag: "wx" });
+  const entries = (await readdir(destination)).sort();
+  if (JSON.stringify(entries) !== JSON.stringify([helperFileName, manifestFileName].sort())) throw new Error("windows_reparse_helper_pair_invalid");
   await access(manifestPath);
   return Object.freeze({ helperPath, manifestPath, sha256 });
+}
+
+export async function buildWindowsReparseInspector() {
+  if (process.platform !== "win32") throw new Error("windows_reparse_build_requires_windows");
+  await rm(outputRoot, { recursive: true, force: true });
+  await mkdir(outputRoot, { recursive: true });
+  return await publishInspectorPair(outputRoot);
+}
+
+/** Internal release-only builder. Its fresh leaf is never replaced or reused. */
+export async function buildFreshWindowsReleaseBootstrapInspector() {
+  if (process.platform !== "win32") throw new Error("windows_reparse_build_requires_windows");
+  const parent = resolve(projectRoot, ".release-bootstrap-inspector");
+  await mkdir(parent, { recursive: true });
+  const pairRoot = await mkdtemp(resolve(parent, "pair-"));
+  try {
+    const pair = await publishInspectorPair(pairRoot);
+    return Object.freeze({ ...pair, pairRoot });
+  } catch (error) {
+    try { await rm(pairRoot, { recursive: true, force: false }); }
+    catch { throw new Error("windows_reparse_release_bootstrap_cleanup_failed"); }
+    throw error;
+  }
 }
 
 if (process.argv[1] === scriptPath) {

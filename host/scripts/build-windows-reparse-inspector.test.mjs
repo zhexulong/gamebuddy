@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
   buildWindowsReparseInspector,
+  buildFreshWindowsReleaseBootstrapInspector,
   canonicalManifest,
   helperFileName,
   manifestFileName,
@@ -250,6 +251,22 @@ test("helper manifest is strict, fixed, and canonical", () => {
   assert.equal(JSON.stringify(JSON.parse(manifest)), manifest.trim());
   assert.equal(outputRoot.includes("windows-reparse-inspector") && outputRoot.includes(".dist") && outputRoot.endsWith("win-x64"), true);
   assert.equal(manifestFileName, "windows-reparse-inspector.manifest.json");
+});
+
+test("release bootstrap builder creates a fresh exact pair without deleting a prior leaf", { skip: process.platform !== "win32" }, async () => {
+  const first = await buildFreshWindowsReleaseBootstrapInspector();
+  const second = await buildFreshWindowsReleaseBootstrapInspector();
+  try {
+    assert.notEqual(first.pairRoot, second.pairRoot);
+    for (const pair of [first, second]) {
+      assert.deepEqual((await readdir(pair.pairRoot)).sort(), [helperFileName, manifestFileName].sort());
+      const digest = createHash("sha256").update(await readFile(pair.helperPath)).digest("hex");
+      assert.equal(await readFile(pair.manifestPath, "utf8"), canonicalManifest(digest));
+    }
+  } finally {
+    await rm(first.pairRoot, { recursive: true, force: true });
+    await rm(second.pairRoot, { recursive: true, force: true });
+  }
 });
 
 test("production builder uses the globally locked SDK and repeated publish is hash reproducible", { skip: process.platform !== "win32" }, async (t) => {

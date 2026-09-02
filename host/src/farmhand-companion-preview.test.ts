@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
 import { createActionExecutionCoordinator } from "./action-execution-coordinator.internal.js";
 import {
   FARMHAND_COMPANION_PREVIEW_READY_MARKER,
   type FarmhandCompanionPreview,
-  type FarmhandCompanionPreviewDependencies,
   parseFarmhandCompanionPreviewConfig,
+} from "./farmhand-companion-preview.js";
+import {
+  type FarmhandCompanionPreviewDependencies,
   relaunchFarmhandCompanionPreviewForTest,
   startFarmhandCompanionPreviewForTest,
-} from "./farmhand-companion-preview.js";
+} from "./farmhand-companion-preview.test-support.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "./integration-launcher.js";
 import type { GameConnection } from "./game-connection.js";
 import {
@@ -16,6 +20,7 @@ import {
   StardewExecutionRecoverySupervisor,
 } from "./stardew-execution-recovery-supervisor.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
+import { StardewLogicalActionRecoveryJournal } from "./stardew-logical-action-recovery-journal.js";
 
 const config = {
   schemaVersion: 1,
@@ -55,11 +60,6 @@ function handle(presentationLocale = "zh-CN"): IntegrationLaunchHandle {
   } as never;
   return {
     connection,
-    presentationBridge: {
-      state: { snapshot: { revision: 3 } },
-      async presentCompanionText() {},
-      async presentSystemNotice() {},
-    },
     events: { onFact: () => () => undefined, onLifecycle: () => () => undefined },
     authority: RECEIPT_BACKED_INTEGRATION_AUTHORITY,
     lifecycle: "ready",
@@ -73,6 +73,12 @@ function dependencies(
   events: string[],
   launch = handle(),
   captureEvidence?: (value: unknown) => void,
+  presentationPort: FarmhandCompanionPreviewDependencies["presentationPort"] = () =>
+    Object.freeze({
+      state: Object.freeze({ snapshot: Object.freeze({ revision: 3 }) }),
+      async presentCompanionText() {},
+      async presentSystemNotice() {},
+    }),
 ): FarmhandCompanionPreviewDependencies {
   const runtime = {
     session: { dispose: () => events.push("dispose") },
@@ -90,6 +96,7 @@ function dependencies(
         return launch;
       },
     },
+    presentationPort,
     createRuntime: async (
       _identity,
       _root,
@@ -121,6 +128,20 @@ function dependencies(
     },
   };
 }
+
+test("production preview entry exports no test dependency-injection seams and production emit excludes test support", async () => {
+  const hostRoot = resolve(import.meta.dirname, "..");
+  const [source, productionTsconfig, testTsconfig] = await Promise.all([
+    readFile(resolve(hostRoot, "src/farmhand-companion-preview.ts"), "utf8"),
+    readFile(resolve(hostRoot, "tsconfig.production.json"), "utf8"),
+    readFile(resolve(hostRoot, "tsconfig.test.json"), "utf8"),
+  ]);
+  assert.doesNotMatch(source, /export\s+(?:async\s+)?(?:function|type)\s+\w*ForTest\b/);
+  assert.doesNotMatch(source, /farmhand-companion-preview\.test-support/);
+  assert.match(testTsconfig, /src\/\*\*\/\*.ts/);
+  assert.doesNotMatch(productionTsconfig, /farmhand-companion-preview\.test-support/);
+  assert.match(productionTsconfig, /"src\/farmhand-companion-preview\.ts"/);
+});
 
 test("production entry exposes a fixed redacted readiness marker", () => {
   assert.equal(FARMHAND_COMPANION_PREVIEW_READY_MARKER, "farmhand_companion_preview_ready");
@@ -205,14 +226,19 @@ test("preview rejects a launch without an exact observed initial snapshot and cl
   assert.deepEqual(events, ["launch", "revoke", "close"]);
 });
 
-test("preview rejects a launch without its adapter-owned presentation bridge before runtime construction", async () => {
+test("preview rejects a launch without its launcher-owned presentation port before runtime construction", async () => {
   const events: string[] = [];
   const bad = handle();
   const close = () => events.push("close");
   const revoke = () => events.push("revoke");
-  const launch = { ...bad, presentationBridge: undefined, close, revoke };
+  const launch = { ...bad, close, revoke };
   await assert.rejects(
-    startFarmhandCompanionPreviewForTest(config, dependencies(events, launch)),
+    startFarmhandCompanionPreviewForTest(
+      config,
+      dependencies(events, launch, undefined, () => {
+        throw new Error("farmhand_preview_presentation_bridge_unavailable");
+      }),
+    ),
     /farmhand_preview_presentation_bridge_unavailable/,
   );
   assert.deepEqual(events, ["launch", "revoke", "close"]);
@@ -260,7 +286,15 @@ test("preview close revokes before Host/runtime disposal and bridge close, once"
   ]);
 });
 
-/** A game-shaped predecessor runtime whose private coordinator holds one uncertain dispatch. */
+const RECOVERY_IDENTITY = Object.freeze({
+  product: "stardew" as const,
+  continuityId: "preview_continuity_01",
+  integrationId: "stardew" as const,
+  saveId: "save_01",
+  worldId: "world_01",
+});
+
+/** A game-shaped predecessor runtime whose private coordinator holds one durable uncertain dispatch. */
 function gameRuntimeWithCoordinator(events: string[]) {
   const connection = {
     module: {
@@ -274,15 +308,33 @@ function gameRuntimeWithCoordinator(events: string[]) {
       }),
     },
   } as unknown as GameConnection;
-  const coordinator = createActionExecutionCoordinator(connection);
-  const admission = coordinator.createAdmission();
-  const dispatch = {
-    ...admission.owner,
-    requestId: "request_recovery_01",
-    idempotencyKey: "idempotency_recovery_01",
-  };
-  admission.observer.beforeWrite(dispatch);
-  admission.observer.markUncertain(dispatch);
+  const deadlineMs = Date.now() + 10_000;
+  const journal = new StardewLogicalActionRecoveryJournal({
+    initialRecords: [{
+      logicalActionId: "logical_recovery_01",
+      dispatchOrdinal: 1,
+      ownerId: "preview_owner_01",
+      epoch: 0,
+      requestId: "request_recovery_01",
+      idempotencyKey: "idempotency_recovery_01",
+      actionId: "till_soil",
+      canonicalRequest: {
+        requestId: "request_recovery_01",
+        idempotencyKey: "idempotency_recovery_01",
+        action: "till_soil",
+        args: { x: 1, y: 2 },
+        expectedRevision: 1,
+        deadlineMs,
+      },
+      canonicalArgs: { x: 1, y: 2 },
+      expectedRevision: 1,
+      deadlineMs,
+      scope: RECOVERY_IDENTITY,
+      bindingIdentity: RECOVERY_IDENTITY,
+      state: "recovery_pending",
+    }],
+  });
+  const coordinator = createActionExecutionCoordinator(connection, { recoveryJournal: journal });
   const runtime = {
     session: { dispose: () => events.push("dispose") },
     recoverStardewExecutionReceipts: async (port: ExactReceiptRecoveryPort) => {
@@ -415,6 +467,8 @@ test("one explicit relaunch launches once, recovers the private coordinator once
     ...base,
     connection,
     receiptRecovery: {
+      scope: RECOVERY_IDENTITY,
+      bindingIdentity: RECOVERY_IDENTITY,
       queryExecutionReceipt: async (query: { requestId: string; idempotencyKey: string }) => {
         queries.push(query);
         return {
@@ -471,9 +525,12 @@ test("relaunch is single-flight; a concurrent explicit relaunch fails closed", a
         return {
           ...handle(),
           receiptRecovery: {
+            scope: RECOVERY_IDENTITY,
+            bindingIdentity: RECOVERY_IDENTITY,
             queryExecutionReceipt: async () => ({
               requestId: "request_recovery_01",
               executionId: "execution_recovery_01",
+              actionId: "till_soil" as const,
               state: "succeeded" as const,
               reasonCode: "soil_tilled",
               revision: 2,
@@ -483,6 +540,12 @@ test("relaunch is single-flight; a concurrent explicit relaunch fails closed", a
         };
       },
     },
+    presentationPort: () =>
+      Object.freeze({
+        state: Object.freeze({ snapshot: Object.freeze({ revision: 3 }) }),
+        async presentCompanionText() {},
+        async presentSystemNotice() {},
+      }),
     createRuntime: async () => ({ session: { dispose: () => events.push("dispose") } }) as never,
     createLoop: () => ({ attachTurnObserver: () => events.push("bind-worker") }) as never,
     createHost: () =>

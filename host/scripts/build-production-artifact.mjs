@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { publishProductionArtifact, reachableProductionModules, readArtifactConfig, verifyWindowsReparseInspectorPair, verifyWindowsStardewBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
+import { assertApprovedProductionBundledRuntimeAvailable, publishProductionArtifact, reachableProductionModules, readArtifactConfig, verifyWindowsReparseInspectorPair, verifyWindowsStardewBootstrapGuardianPair, verifyWindowsStardewFolderPickerPair } from "./production-artifact.mjs";
 import { buildWindowsReparseInspector, outputRoot as windowsReparseInspectorBuildRoot } from "./build-windows-reparse-inspector.mjs";
 import { buildWindowsStardewBootstrapGuardian, outputRoot as windowsStardewBootstrapGuardianBuildRoot } from "./build-windows-stardew-bootstrap-guardian.mjs";
 import { buildWindowsStardewFolderPicker, outputRoot as windowsStardewFolderPickerBuildRoot } from "./build-windows-stardew-folder-picker.mjs";
@@ -18,6 +18,7 @@ const magicContextSourceEntry = resolve(magicContextSourceRoot, "dist", "index.j
 const dialogueWebRoot = resolve(repositoryRoot, "dialogue-web");
 const browserStagingParent = resolve(dialogueWebRoot, ".build-staging");
 const emittedStaticArtifactVerifier = "tavern/static-artifact/index.js";
+const desktopRuntimeBootstrap = "desktop-runtime-bootstrap.internal.js";
 const browserIdentity = Object.freeze({
   browserContract: "tavern_browser_api/v1",
   profileId: "gamebuddy.tavern.browser.v1",
@@ -125,7 +126,7 @@ async function emittedFiles(root, prefix = "") {
   return result.sort();
 }
 
-async function retainEntrypointClosure({ emittedRoot, closureRoot, entryRoots }) {
+export async function retainEntrypointClosure({ emittedRoot, closureRoot, entryRoots }) {
   const emitted = await emittedFiles(emittedRoot);
   const reachable = await reachableProductionModules({ artifactRoot: emittedRoot, artifactFiles: emitted, entryRoots });
   for (const item of reachable) {
@@ -329,11 +330,11 @@ async function copyVerifiedBrowserTree({ browserRoot, closureRoot, descriptor, m
   return destinationRoot;
 }
 
-export async function buildProductionArtifact({
-  outputRoot = resolve(hostRoot, "dist"),
+async function buildComposedProductionArtifact({
+  outputRoot,
   runChild = runBoundedChild,
   verifyMagicContext = verifyDeclaredMagicContextArtifact,
-  publish = publishProductionArtifact,
+  publish,
   afterBrowserBuild = undefined,
   onCompositionVerified = undefined,
   onBrowserBuildInvocation = undefined,
@@ -387,7 +388,7 @@ export async function buildProductionArtifact({
     await retainEntrypointClosure({
       emittedRoot: stagingRoot,
       closureRoot,
-      entryRoots: [...config.entryRoots, ...config.verificationRoots],
+      entryRoots: [...config.entryRoots, ...config.verificationRoots, desktopRuntimeBootstrap],
     });
     await copyVerifiedWindowsReparseInspector({ closureRoot, config });
     const copiedBrowserRoot = await copyVerifiedBrowserTree({
@@ -410,5 +411,38 @@ export async function buildProductionArtifact({
     await rm(closureRoot, { recursive: true, force: true });
   }
 }
+
+/** Ordinary developer/PR builds deliberately have no runtime supply authority. */
+export async function buildProductionArtifact(options = {}) {
+  assertApprovedProductionBundledRuntimeAvailable();
+  return buildComposedProductionArtifact({
+    ...options,
+    outputRoot: options.outputRoot ?? resolve(hostRoot, "dist"),
+    publish: publishProductionArtifact,
+  });
+}
+
+let fixedReleaseEmittedRoot;
+
+function takeComposedFixedReleaseEmittedRootForPublisher() {
+  if (fixedReleaseEmittedRoot === undefined) throw new Error("verified_bundled_runtime_input_required");
+  return fixedReleaseEmittedRoot;
+}
+
+/** Fixed release composition has no caller-provided runtime, source, or path. */
+export async function buildFixedReleaseProductionArtifact() {
+  const { publishFixedReleaseArtifactFromVerifiedRuntime } = await import("./production-artifact.mjs");
+  if (fixedReleaseEmittedRoot !== undefined) throw new Error("invalid_release_runtime_composition");
+  return await buildComposedProductionArtifact({
+    outputRoot: resolve(hostRoot, "dist"),
+    publish: async ({ emittedRoot }) => {
+      fixedReleaseEmittedRoot = emittedRoot;
+      try { return await publishFixedReleaseArtifactFromVerifiedRuntime(); }
+      finally { fixedReleaseEmittedRoot = undefined; }
+    },
+  });
+}
+
+export { takeComposedFixedReleaseEmittedRootForPublisher };
 
 if (resolve(process.argv[1] ?? "") === scriptPath) await buildProductionArtifact();
