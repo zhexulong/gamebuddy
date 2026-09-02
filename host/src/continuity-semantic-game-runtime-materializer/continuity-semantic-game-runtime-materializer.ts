@@ -71,46 +71,82 @@ function createBodyProgramTools(
   connection: GameConnection,
   mountedPolicy: IntegrationActionPolicy,
 ): readonly ToolDefinition[] {
-  const definition = <TRequest extends BodyProgramCandidateRequest | BodyProgramStatusRequest | BodyProgramEventsRequest, TResult>(
-    name: "stardew_verify_action_program" | "stardew_submit_action_program" | "stardew_action_program_status" | "stardew_action_program_events",
+  const invoke = async <TResult>(
+    request: Record<string, unknown>,
     validateRequest: (value: Record<string, unknown>) => string | null,
     validateResult: (value: Record<string, unknown>) => string | null,
-    invoke: (port: BodyProgramPort, request: TRequest) => Promise<TResult>,
-  ): ToolDefinition => Object.freeze(defineTool({
-    name,
-    label: name,
-    description: name,
-    parameters: bodyProgramToolParameters(name),
-    execute: async (_toolCallId, params) => {
-      if (!isRecord(params) || validateRequest(params) !== null)
-        throw new Error("invalid_body_program_tool_arguments");
-       if (name === "stardew_verify_action_program" || name === "stardew_submit_action_program")
-         assertFreshBodyProgramPreflight(connection, mountedPolicy, params);
-      const record = bodyProgramConsumers.get(consumer);
-      if (record === undefined || !record.available)
-        throw new Error("action_program_runtime_unavailable");
-      record.active += 1;
-      try {
-        const result = await invoke(record.port, params as TRequest);
-        if (!isRecord(result) || validateResult(result) !== null)
-          throw new Error("body_program_protocol_invalid");
-        const details = Object.freeze(result);
-        return Object.freeze({
-          content: [{ type: "text" as const, text: JSON.stringify(details) }],
-          details,
-        });
-      } finally {
-        record.active -= 1;
-        if (!record.available && record.active === 0) record.drained?.();
-      }
-    },
-  }));
+    call: (port: BodyProgramPort) => Promise<TResult>,
+  ) => {
+    if (validateRequest(request) !== null)
+      throw new Error("invalid_body_program_tool_arguments");
+    const record = bodyProgramConsumers.get(consumer);
+    if (record === undefined || !record.available)
+      throw new Error("action_program_runtime_unavailable");
+    record.active += 1;
+    try {
+      const result = await call(record.port);
+      if (!isRecord(result) || validateResult(result) !== null)
+        throw new Error("body_program_protocol_invalid");
+      const details = Object.freeze(result);
+      return Object.freeze({
+        content: [{ type: "text" as const, text: JSON.stringify(details) }],
+        details,
+      });
+    } finally {
+      record.active -= 1;
+      if (!record.available && record.active === 0) record.drained?.();
+    }
+  };
+  const candidateTool = (
+    name: "stardew_verify_action_program" | "stardew_submit_action_program",
+    call: (port: BodyProgramPort, request: BodyProgramCandidateRequest) => Promise<unknown>,
+  ): ToolDefinition =>
+    Object.freeze(defineTool({
+      name,
+      label: name,
+      description: name,
+      parameters: bodyProgramToolParameters(name),
+      execute: async (_toolCallId, params) => {
+        if (!isBodyProgramCandidateRequest(params))
+          throw new Error("invalid_body_program_tool_arguments");
+        assertFreshBodyProgramPreflight(connection, mountedPolicy, params);
+        return invoke(params, validateBodyProgramCandidateRequest, validateBodyProgramCommandResult, (port) => call(port, params));
+      },
+    }));
   return Object.freeze([
-    definition("stardew_verify_action_program", validateBodyProgramCandidateRequest, validateBodyProgramCommandResult, (port, request) => port.verify(request as BodyProgramCandidateRequest)),
-    definition("stardew_submit_action_program", validateBodyProgramCandidateRequest, validateBodyProgramCommandResult, (port, request) => port.submit(request as BodyProgramCandidateRequest)),
-    definition("stardew_action_program_status", validateStatusRequest, validateBodyProgramStatusResult, (port, request) => port.status(request as BodyProgramStatusRequest)),
-    definition("stardew_action_program_events", validateEventsRequest, validateBodyProgramEventsResult, (port, request) => port.events(request as BodyProgramEventsRequest)),
+    candidateTool("stardew_verify_action_program", (port, request) => port.verify(request)),
+    candidateTool("stardew_submit_action_program", (port, request) => port.submit(request)),
+    Object.freeze(defineTool({
+      name: "stardew_action_program_status",
+      label: "stardew_action_program_status",
+      description: "stardew_action_program_status",
+      parameters: bodyProgramToolParameters("stardew_action_program_status"),
+      execute: async (_toolCallId, params) => {
+        if (!isBodyProgramStatusRequest(params)) throw new Error("invalid_body_program_tool_arguments");
+        return invoke(params, validateStatusRequest, validateBodyProgramStatusResult, (port) => port.status(params));
+      },
+    })),
+    Object.freeze(defineTool({
+      name: "stardew_action_program_events",
+      label: "stardew_action_program_events",
+      description: "stardew_action_program_events",
+      parameters: bodyProgramToolParameters("stardew_action_program_events"),
+      execute: async (_toolCallId, params) => {
+        if (!isBodyProgramEventsRequest(params)) throw new Error("invalid_body_program_tool_arguments");
+        return invoke(params, validateEventsRequest, validateBodyProgramEventsResult, (port) => port.events(params));
+      },
+    })),
   ]);
+}
+
+function isBodyProgramCandidateRequest(value: unknown): value is BodyProgramCandidateRequest {
+  return isRecord(value) && validateBodyProgramCandidateRequest(value) === null;
+}
+function isBodyProgramStatusRequest(value: unknown): value is BodyProgramStatusRequest {
+  return isRecord(value) && validateStatusRequest(value) === null;
+}
+function isBodyProgramEventsRequest(value: unknown): value is BodyProgramEventsRequest {
+  return isRecord(value) && validateEventsRequest(value) === null;
 }
 
 function bodyProgramToolParameters(name: string) {

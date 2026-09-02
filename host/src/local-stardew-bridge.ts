@@ -5,6 +5,12 @@ import type { KnowledgeBundle } from "./knowledge.js";
 import { NamedPipeTransport } from "./named-pipe.js";
 import {
   type ActionRegistration,
+  type BodyProgramCandidateRequest,
+  type BodyProgramCommandResult,
+  type BodyProgramEventsRequest,
+  type BodyProgramEventsResult,
+  type BodyProgramStatusRequest,
+  type BodyProgramStatusResult,
   type BridgeMessage,
   type CancelIdentity,
   type CompanionPresentationRequest,
@@ -68,7 +74,11 @@ type OutboundRequestType =
   | "execution_receipt_query"
   | "cancel_request"
   | "companion_presentation_request"
-  | "system_notice_request";
+  | "system_notice_request"
+  | "program_verify"
+  | "program_submit"
+  | "program_status"
+  | "program_events";
 
 /**
  * Production Windows-local bridge adapter. The Mod's advertised capabilities
@@ -130,7 +140,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#latestReasonCode = reasonCode;
       for (const pending of this.#pending.values()) {
         clearTimeout(pending.timer);
-        pending.reject(new Error(`bridge_disconnected:${reasonCode}`));
+        pending.reject(new Error(isBodyProgramRequest(pending.type) ? "body_program_protocol_invalid" : `bridge_disconnected:${reasonCode}`));
       }
       this.#pending.clear();
       for (const listener of this.#connectionListeners) listener({ state: "disconnected", reasonCode });
@@ -222,6 +232,11 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       latestReceipt: this.#latestReceipt,
       latestReasonCode: this.#latestReasonCode,
     });
+  }
+
+  /** True only after this client verified the exact Farmhand launch attestation in hello_ack. */
+  public get hasExactFarmhandRuntimeAttestation(): boolean {
+    return this.#authenticated && this.expectedRuntimeAttestation !== undefined;
   }
 
   public async observe(): Promise<Snapshot> {
@@ -339,6 +354,58 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     return response.payload;
   }
 
+  public async programVerify(request: BodyProgramCandidateRequest): Promise<BodyProgramCommandResult> {
+    this.requireAuthenticated();
+    const response = await this.request("program_verify", request);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "program_verify_result" || response.payload.programId !== request.programId)
+      return this.rejectBodyProgramProtocol();
+    return response.payload;
+  }
+
+  public async programSubmit(request: BodyProgramCandidateRequest): Promise<BodyProgramCommandResult> {
+    this.requireAuthenticated();
+    const response = await this.request("program_submit", request);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "program_submit_result" || response.payload.programId !== request.programId)
+      return this.rejectBodyProgramProtocol();
+    return response.payload;
+  }
+
+  public async programStatus(request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult> {
+    this.requireAuthenticated();
+    const response = await this.request("program_status", request);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "program_status_result" || response.payload.programId !== request.programId)
+      return this.rejectBodyProgramProtocol();
+    return response.payload;
+  }
+
+  public async programEvents(request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult> {
+    this.requireAuthenticated();
+    const response = await this.request("program_events", request);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "program_events_result" || response.payload.programId !== request.programId)
+      return this.rejectBodyProgramProtocol();
+    const result = response.payload;
+    if (
+      result.events.length > request.pageSize ||
+      result.nextCursor < request.cursor ||
+      result.events.some((event, index) => event.cursor <= request.cursor || event.cursor > result.nextCursor ||
+        (index > 0 && event.cursor <= result.events[index - 1]!.cursor)) ||
+      (result.events.length === 0
+        ? result.nextCursor !== request.cursor
+        : result.nextCursor !== result.events[result.events.length - 1]!.cursor)
+    )
+      return this.rejectBodyProgramProtocol();
+    return result;
+  }
+
+  private rejectBodyProgramProtocol(): never {
+    this.transport.close("body_program_protocol_invalid");
+    throw new Error("body_program_protocol_invalid");
+  }
+
   /**
    * Confirms only that a validated Mod-originated control fact was synchronously
    * delivered to the Host listener. It is not a model, action, or presentation receipt.
@@ -428,6 +495,14 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         listener({ stage: "native_chat_bridge_inbound_frame_received", reasonCode: "received" });
     }
     const fault = validateBridgeMessage(message, this.scope);
+    const bodyProgramPending = this.#pending.get(message.correlationId);
+    if (fault !== null && bodyProgramPending !== undefined && isBodyProgramRequest(bodyProgramPending.type)) {
+      this.#pending.delete(message.correlationId);
+      clearTimeout(bodyProgramPending.timer);
+      bodyProgramPending.reject(new Error("body_program_protocol_invalid"));
+      this.transport.close("body_program_protocol_invalid");
+      return;
+    }
     if (
       fault !== null ||
       message.type === "hello" ||
@@ -438,6 +513,10 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       message.type === "cancel_request" ||
       message.type === "companion_presentation_request" ||
       message.type === "system_notice_request" ||
+      message.type === "program_verify" ||
+      message.type === "program_submit" ||
+      message.type === "program_status" ||
+      message.type === "program_events" ||
       message.type === "player_control_receipt"
     ) {
       const reasonCode =
@@ -471,12 +550,23 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.transport.close("unexpected_navigation_read_result");
       return;
     }
+    if (isBodyProgramResponse(message.type) && (pending === undefined || !isBodyProgramRequest(pending.type))) {
+      this.transport.close("body_program_protocol_invalid");
+      return;
+    }
     if (pending !== undefined && !isExpectedResponse(pending.type, message.type)) {
       this.#pending.delete(message.correlationId);
       clearTimeout(pending.timer);
       pending.reject(
-        new Error(pending.type === "navigation_read_request" ? "unexpected_navigation_read_response" : "unexpected_bridge_response"),
+        new Error(
+          isBodyProgramRequest(pending.type)
+            ? "body_program_protocol_invalid"
+            : pending.type === "navigation_read_request"
+              ? "unexpected_navigation_read_response"
+              : "unexpected_bridge_response",
+        ),
       );
+      if (isBodyProgramRequest(pending.type)) this.transport.close("body_program_protocol_invalid");
       return;
     }
     if (message.type === "hello_ack") {
@@ -584,7 +674,23 @@ function isExpectedResponse(requestType: OutboundRequestType, responseType: Brid
       return responseType === "companion_presentation_receipt";
     case "system_notice_request":
       return responseType === "system_notice_receipt";
+    case "program_verify":
+      return responseType === "program_verify_result";
+    case "program_submit":
+      return responseType === "program_submit_result";
+    case "program_status":
+      return responseType === "program_status_result";
+    case "program_events":
+      return responseType === "program_events_result";
   }
+}
+
+function isBodyProgramRequest(type: OutboundRequestType): boolean {
+  return type === "program_verify" || type === "program_submit" || type === "program_status" || type === "program_events";
+}
+function isBodyProgramResponse(type: BridgeMessage["type"]): boolean {
+  return type === "program_verify_result" || type === "program_submit_result" ||
+    type === "program_status_result" || type === "program_events_result";
 }
 
 function sameActionIds(left: readonly string[], right: readonly string[]): boolean {
