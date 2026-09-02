@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { cp, lstat, mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
@@ -72,8 +72,41 @@ async function withFixture(run) { const root = await fixture(); try { await run(
 const testHash = (value) => createHash("sha256").update(value).digest("hex");
 const testU16 = (value) => { const bytes = Buffer.alloc(2); bytes.writeUInt16LE(value); return bytes; };
 const testU32 = (value) => { const bytes = Buffer.alloc(4); bytes.writeUInt32LE(value); return bytes; };
-function syntheticRuntimeZip() { const name = Buffer.from("node-v24.20.0-win-x64/node.exe"); const node = Buffer.from("test node runtime"); const crc = 0; const local = Buffer.concat([Buffer.from("504b0304", "hex"), testU16(20), testU16(0), testU16(0), testU16(0), testU16(0), testU32(crc), testU32(node.length), testU32(node.length), testU16(name.length), testU16(0), name, node]); const central = Buffer.concat([Buffer.from("504b0102", "hex"), testU16(0x0314), testU16(20), testU16(0), testU16(0), testU16(0), testU16(0), testU32(crc), testU32(node.length), testU32(node.length), testU16(name.length), testU16(0), testU16(0), testU16(0), testU16(0), testU32(0), testU32(0), name]); return { bytes: Buffer.concat([local, central, Buffer.from("504b0506", "hex"), testU16(0), testU16(0), testU16(1), testU16(1), testU32(central.length), testU32(local.length), testU16(0)]), node }; }
+function syntheticRuntimeZip(files = [{ path: "node.exe", bytes: Buffer.from("test node runtime") }]) {
+  const entries = files.map(({ path, bytes }) => {
+    const name = Buffer.from(`node-v24.20.0-win-x64/${path}`);
+    const crc = 0;
+    const local = Buffer.concat([Buffer.from("504b0304", "hex"), testU16(20), testU16(0), testU16(0), testU16(0), testU16(0), testU32(crc), testU32(bytes.length), testU32(bytes.length), testU16(name.length), testU16(0), name, bytes]);
+    return { local, name, bytes };
+  });
+  const centralOffset = entries.reduce((offset, entry) => offset + entry.local.length, 0);
+  let localOffset = 0;
+  const central = Buffer.concat(entries.map((entry) => {
+    const offset = localOffset;
+    localOffset += entry.local.length;
+    return Buffer.concat([Buffer.from("504b0102", "hex"), testU16(0x0314), testU16(20), testU16(0), testU16(0), testU16(0), testU16(0), testU32(0), testU32(entry.bytes.length), testU32(entry.bytes.length), testU16(entry.name.length), testU16(0), testU16(0), testU16(0), testU16(0), testU32(0), testU32(offset), entry.name]);
+  }));
+  return {
+    bytes: Buffer.concat([Buffer.concat(entries.map((entry) => entry.local)), central, Buffer.from("504b0506", "hex"), testU16(0), testU16(0), testU16(entries.length), testU16(entries.length), testU32(central.length), testU32(centralOffset), testU16(0)]),
+    node: files.find((file) => file.path === "node.exe")?.bytes,
+  };
+}
 async function publishTestArtifactForFixture({ hostRoot: publishingHostRoot, emittedRoot, outputRoot }) { const { bytes, node } = syntheticRuntimeZip(); const descriptor = { sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip", archiveSha256: testHash(bytes), archiveRoot: "node-v24.20.0-win-x64", nodeSha256: testHash(node) }; return withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor, zipBytes: bytes }, async (runtimeSource) => publishTestArtifact({ hostRoot: publishingHostRoot, emittedRoot, outputRoot, runtimeSource })); }
+
+// Exercise production-private seams without widening their release API. The
+// probe copies the implementation under test and adds exports only to its
+// disposable test-local copy; the production module's public surface is intact.
+async function withProductionRuntimeContractProbe(run) {
+  const probeRoot = await mkdtemp(join(scriptRoot, ".production-runtime-contract-"));
+  const probePath = join(probeRoot, "production-artifact.mjs");
+  try {
+    const source = await readFile(join(scriptRoot, "production-artifact.mjs"), "utf8");
+    await writeFile(probePath, `${source}\nexport { copyVerifiedBundledRuntimeSource, publishProductionArtifactWithRuntimeCopier, currentGeneration, verifyCurrentRuntimeAdmissionAssociation, verifyRuntimeAdmission };\n`);
+    await cp(join(scriptRoot, "production-artifact-esm-resolution-probe.mjs"), join(probeRoot, "production-artifact-esm-resolution-probe.mjs"));
+    return await run(await import(`${pathToFileURL(probePath).href}?test=${Date.now()}`));
+  } finally { await rm(probeRoot, { recursive: true, force: true }); }
+}
+
 async function installArtifactTestDependencies(root) {
   await rm(join(root, "node_modules"), { recursive: true, force: true });
   await mkdir(join(root, "node_modules", "typescript"), { recursive: true });
@@ -179,6 +212,155 @@ test("Windows stale-lock reclaimer provenance accepts only the fixed binary and 
     await assert.rejects(verifyWindowsStaleLockReclaimerPair({ root, descriptor }), /windows_stale_lock_reclaimer_pair_invalid/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("production runtime copier binds synthetic acquisition file-list digests before copying its exact closure", async () => {
+  const { bytes, node } = syntheticRuntimeZip();
+  const descriptor = { sourceUrl: "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip", archiveSha256: testHash(bytes), archiveRoot: "node-v24.20.0-win-x64", nodeSha256: testHash(node) };
+  await withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor, zipBytes: bytes }, async (source) =>
+    withProductionRuntimeContractProbe(async ({ copyVerifiedBundledRuntimeSource }) => {
+      const staging = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-copy-staging-"));
+      try {
+        const origins = await copyVerifiedBundledRuntimeSource({ stagingRoot: staging, descriptor, source });
+        assert.deepEqual([...origins], [["runtime/node.exe", { kind: undefined, sourceUrl: descriptor.sourceUrl, archiveSha256: descriptor.archiveSha256 }]]);
+        for (const files of [
+          [{ ...source.files[0], sourcePath: "../node.exe" }],
+          [{ ...source.files[0] }, { ...source.files[0] }],
+          [{ sourcePath: "z.dll", sha256: "a".repeat(64) }, { ...source.files[0] }],
+          [{ sourcePath: "other.dll", sha256: "a".repeat(64) }],
+          [{ ...source.files[0], sha256: "not-a-sha256" }],
+        ]) {
+          const invalidStaging = await mkdtemp(join(tmpdir(), "gamebuddy-runtime-copy-invalid-"));
+          try {
+            await assert.rejects(
+              copyVerifiedBundledRuntimeSource({ stagingRoot: invalidStaging, descriptor, source: { ...source, files } }),
+              /verified_bundled_runtime_closure_mismatch/,
+            );
+            await assert.rejects(lstat(join(invalidStaging, "runtime")), { code: "ENOENT" });
+          } finally { await rm(invalidStaging, { recursive: true, force: true }); }
+        }
+        await writeFile(join(source.extractedRoot, descriptor.archiveRoot, "foreign.dll"), "foreign");
+        await assert.rejects(
+          copyVerifiedBundledRuntimeSource({ stagingRoot: staging, descriptor, source }),
+          /verified_bundled_runtime_closure_mismatch/,
+        );
+      } finally { await rm(staging, { recursive: true, force: true }); }
+    }));
+});
+
+test("production-private runtime publisher emits a lexicographically ordered multi-file runtime closure and rejects closure tampering", async () => withFixture(async (root) => {
+  const files = [
+    { path: "node.exe", bytes: Buffer.from("test node runtime") },
+    { path: "a.dll", bytes: Buffer.from("a runtime dependency") },
+    { path: "nested/z.dll", bytes: Buffer.from("nested runtime dependency") },
+  ];
+  const { bytes, node } = syntheticRuntimeZip(files);
+  const descriptor = { ...BUNDLED_RUNTIME, archiveSha256: testHash(bytes), nodeSha256: testHash(node) };
+  await withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor, zipBytes: bytes }, async (runtimeSource) =>
+    withProductionRuntimeContractProbe(async ({ copyVerifiedBundledRuntimeSource, publishProductionArtifactWithRuntimeCopier, verifyRuntimeAdmission }) => {
+      const outputRoot = join(root, "production-runtime-closure-dist");
+      const published = await publishProductionArtifactWithRuntimeCopier(
+        { hostRoot: root, emittedRoot: await emit(root, "production-runtime-closure"), outputRoot },
+        async (stagingRoot, runtimeDescriptor) => copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: runtimeDescriptor, source: runtimeSource }),
+        descriptor,
+      );
+      const artifactRoot = join(outputRoot, "generations", published.generation);
+      const sidecarPath = join(artifactRoot, "host-runtime-admission.json");
+      const sidecar = JSON.parse(await readFile(sidecarPath, "utf8"));
+      const expectedClosure = [
+        { path: "runtime/a.dll", sha256: testHash(files[1].bytes) },
+        { path: "runtime/nested/z.dll", sha256: testHash(files[2].bytes) },
+      ];
+      assert.deepEqual(sidecar.runtimeClosure, { schema: "host-bundled-runtime-closure/v1", files: expectedClosure });
+      for (const replacement of [
+        { ...sidecar, runtimeClosure: { ...sidecar.runtimeClosure, files: [...expectedClosure].reverse() } },
+        { ...sidecar, runtimeClosure: { ...sidecar.runtimeClosure, files: [expectedClosure[0], expectedClosure[0]] } },
+        { ...sidecar, runtimeClosure: { ...sidecar.runtimeClosure, files: expectedClosure.slice(1) } },
+        { ...sidecar, runtimeClosure: { ...sidecar.runtimeClosure, files: [...expectedClosure, { path: "runtime/foreign.dll", sha256: "a".repeat(64) }] } },
+      ]) {
+        await writeFile(sidecarPath, `${JSON.stringify(replacement)}\n`);
+        await assert.rejects(verifyRuntimeAdmission({ artifactRoot, inventory: published, generation: published.generation, descriptor }), /runtime_admission_invalid/);
+      }
+    }),
+  );
+}));
+
+test("production-private runtime publisher emits canonical admission/current bindings and removes a post-rename cleanup failure candidate", async () => withFixture(async (root) => {
+  const { bytes, node } = syntheticRuntimeZip();
+  const descriptor = {
+    ...BUNDLED_RUNTIME,
+    archiveSha256: testHash(bytes),
+    nodeSha256: testHash(node),
+  };
+  await withSyntheticVerifiedReleaseBundledRuntimeForTest({ descriptor, zipBytes: bytes }, async (runtimeSource) =>
+    withProductionRuntimeContractProbe(async ({
+      copyVerifiedBundledRuntimeSource,
+      publishProductionArtifactWithRuntimeCopier,
+      currentGeneration,
+      verifyCurrentRuntimeAdmissionAssociation,
+      verifyRuntimeAdmission,
+    }) => {
+      const outputRoot = join(root, "production-runtime-contract-dist");
+      const copyRuntime = async (stagingRoot, runtimeDescriptor) =>
+        copyVerifiedBundledRuntimeSource({ stagingRoot, descriptor: runtimeDescriptor, source: runtimeSource });
+      const published = await publishProductionArtifactWithRuntimeCopier(
+        { hostRoot: root, emittedRoot: await emit(root, "production-private-first"), outputRoot },
+        copyRuntime,
+        descriptor,
+      );
+      const artifactRoot = join(outputRoot, "generations", published.generation);
+      const sidecarPath = join(artifactRoot, "host-runtime-admission.json");
+      const sidecarBytes = await readFile(sidecarPath);
+      const sidecar = JSON.parse(sidecarBytes);
+      const expectedSidecar = {
+        schema: "host-runtime-admission/v1",
+        inventoryDigest: published.digest,
+        generation: published.generation,
+        runtimePath: "runtime/node.exe",
+        runtimeSha256: testHash(node),
+        bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+        bootstrapSha256: testHash(Buffer.from("export {};\n")),
+        runtimeVersion: "v24.20.0",
+        runtimePlatform: "win32",
+        runtimeArch: "x64",
+        runtimeClosure: { schema: "host-bundled-runtime-closure/v1", files: [] },
+      };
+      assert.deepEqual(Object.keys(sidecar), Object.keys(expectedSidecar));
+      assert.deepEqual(sidecar, expectedSidecar);
+      assert.deepEqual(sidecarBytes, Buffer.from(`${JSON.stringify(expectedSidecar)}\n`));
+
+      const pointerPath = join(outputRoot, "current.json");
+      const pointerBytes = await readFile(pointerPath);
+      const expectedPointer = {
+        schema: "gamebuddy-host-production-current/v2",
+        generation: published.generation,
+        inventoryDigest: published.digest,
+        runtimeAdmissionSha256: testHash(sidecarBytes),
+      };
+      assert.deepEqual(JSON.parse(pointerBytes), expectedPointer);
+      assert.deepEqual(pointerBytes, Buffer.from(`${JSON.stringify(expectedPointer)}\n`));
+      const pointer = await currentGeneration(outputRoot);
+      assert.deepEqual(pointer, expectedPointer);
+      await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer });
+      await verifyRuntimeAdmission({ artifactRoot, inventory: published, generation: published.generation, descriptor });
+
+      await assert.rejects(
+        publishProductionArtifactWithRuntimeCopier(
+          { hostRoot: root, emittedRoot: await emit(root, "production-private-rejected"), outputRoot },
+          copyRuntime,
+          descriptor,
+          async () => { throw new Error("injected_runtime_cleanup_failure"); },
+        ),
+        /injected_runtime_cleanup_failure/,
+      );
+      assert.deepEqual(await readFile(pointerPath), pointerBytes);
+      assert.deepEqual(await currentGeneration(outputRoot), expectedPointer);
+      await verifyCurrentRuntimeAdmissionAssociation({ artifactRoot, pointer: expectedPointer });
+      await verifyRuntimeAdmission({ artifactRoot, inventory: published, generation: published.generation, descriptor });
+      assert.deepEqual(await readdir(join(outputRoot, "generations")), [published.generation]);
+      assert.deepEqual(await readdir(outputRoot), ["current.json", "generations"]);
+    }),
+  );
+}));
 
 test("current production config fixes the bundled Node runtime and bootstrap entry", async () => {
   const config = await readArtifactConfig(hostRoot);
@@ -609,20 +791,53 @@ test("current pointer rejects malformed runtime-admission digest fields before i
   }
 }));
 
-test("current pointer binds exact runtime-admission sidecar bytes before inventory recursion", async () => withFixture(async (root) => {
+test("synthetic publisher sidecar binds exact fixed runtime/bootstrap facts and rejects noncanonical or foreign self-consistent bytes", async () => withFixture(async (root) => {
   const dist = join(root, "dist");
-  await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
+  const first = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "first"), outputRoot: dist });
+  const second = await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root, "second"), outputRoot: dist });
   const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
   const sidecarPath = join(selected.artifactRoot, "test-runtime-admission.json");
   const canonical = await readFile(sidecarPath);
+  const sidecar = JSON.parse(canonical);
+  assert.deepEqual(Object.keys(sidecar), ["schema", "inventoryDigest", "generation", "runtimePath", "runtimeSha256", "bootstrapPath", "bootstrapSha256"]);
+  assert.deepEqual(sidecar, {
+    schema: "gamebuddy-host-test-runtime-admission/v1",
+    inventoryDigest: second.digest,
+    generation: second.generation,
+    runtimePath: "runtime/node.exe",
+    runtimeSha256: testHash(Buffer.from("test node runtime")),
+    bootstrapPath: "desktop-runtime-bootstrap.internal.js",
+    bootstrapSha256: testHash(Buffer.from("export {};\n")),
+  });
   for (const replacement of [
     Buffer.from("replacement sidecar\n"),
-    Buffer.from(`${JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(canonical)).reverse()))}\n`),
+    Buffer.from(`${JSON.stringify({ ...sidecar, unknown: true })}\n`),
+    Buffer.from(`${JSON.stringify(((value) => { const { bootstrapSha256, ...without } = value; return without; })(sidecar))}\n`),
+    Buffer.from(`${JSON.stringify(Object.fromEntries(Object.entries(sidecar).reverse()))}\n`),
     Buffer.concat([canonical, Buffer.from(" ")]),
   ]) {
     await writeFile(sidecarPath, replacement);
     await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }), /test_runtime_admission_invalid/);
     await writeFile(sidecarPath, canonical);
+  }
+  const firstSidecar = await readFile(join(dist, "test-generations", first.generation, "test-runtime-admission.json"));
+  const pointerPath = join(dist, "test-current.json");
+  const pointer = JSON.parse(await readFile(pointerPath, "utf8"));
+  await writeFile(sidecarPath, firstSidecar);
+  await writeFile(pointerPath, `${JSON.stringify({ ...pointer, testRuntimeAdmissionSha256: testHash(firstSidecar) })}\n`);
+  await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }), /test_runtime_admission_invalid/);
+}));
+
+test("synthetic publisher recheck fails closed for fixed runtime/bootstrap mutations before a selected generation can pass", async () => withFixture(async (root) => {
+  const dist = join(root, "dist");
+  for (const [path, content] of [
+    ["runtime/node.exe", "replaced runtime"],
+    ["desktop-runtime-bootstrap.internal.js", "replaced bootstrap"],
+  ]) {
+    await publishTestArtifactForFixture({ hostRoot: root, emittedRoot: await emit(root), outputRoot: dist });
+    const selected = await resolveTestArtifactEntry({ hostRoot: root, outputRoot: dist, entry: "main.js" });
+    await writeFile(join(selected.artifactRoot, path), content);
+    await assert.rejects(assertCompleteTestArtifact({ hostRoot: root, outputRoot: dist }), /production_inventory_mismatch_or_orphan|test_runtime_admission_invalid|production_module_lexical_parse_failed/);
   }
 }));
 
