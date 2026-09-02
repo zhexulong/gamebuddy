@@ -19,10 +19,12 @@ const testDependencyCommands = Object.freeze([
   Object.freeze({ command: "bun", args: Object.freeze(["run", "--cwd", "../vendor/magic-context/packages/pi-plugin", "build"]), cwd: hostRoot }),
 ]);
 
-function quoteWindowsCommandToken(token) {
-  if (typeof token !== "string" || token.length === 0 || token.includes("\0") || cmdMetacharacter.test(token))
+function fixedWindowsCommandToken(token) {
+  // The dependency manifest contains only fixed argv tokens. cmd's `call`
+  // treats a quoted first argument differently, so do not quote these tokens.
+  if (typeof token !== "string" || !/^[A-Za-z0-9@._/:=-]+$/.test(token))
     throw new Error("invalid_test_dependency_command_token");
-  return `"${token.replace(/(\\*)"/g, "$1$1\\\"").replace(/(\\+)$/g, "$1$1")}"`;
+  return token;
 }
 
 function windowsCommandProcessor(comSpec) {
@@ -35,8 +37,11 @@ function windowsCommandProcessor(comSpec) {
 export function testDependencyInvocations({ platform = process.platform, comSpec = process.env.ComSpec } = {}) {
   return Object.freeze(testDependencyCommands.map((entry) => {
     if (platform !== "win32") return entry;
-    const command = `${entry.command}.cmd`;
-    const commandText = `call ${[command, ...entry.args].map(quoteWindowsCommandToken).join(" ")}`;
+    // cmd parses a quoted token after `call` as a literal executable name.
+    // The manifest is strictly validated to fixed, whitespace-free tokens, so
+    // unquoted concatenation preserves its argv semantics without shell input.
+    const command = `${fixedWindowsCommandToken(entry.command)}.cmd`;
+    const commandText = `call ${command} ${entry.args.map(fixedWindowsCommandToken).join(" ")}`;
     return Object.freeze({
       command: windowsCommandProcessor(comSpec),
       args: Object.freeze(["/d", "/s", "/c", commandText]),

@@ -8,7 +8,7 @@ import { testDependencyInvocations } from "./run-test-suite.mjs";
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(hostRoot, "..");
 
-test("Windows dependency preparation explicitly mediates only fixed pnpm and bun commands through ComSpec", () => {
+test("Windows dependency preparation invokes strictly validated fixed pnpm and bun tokens unquoted through ComSpec", () => {
   const invocations = testDependencyInvocations({ platform: "win32", comSpec: "C:\\Windows\\System32\\cmd.exe" });
   assert.deepEqual(invocations.map(({ command, args, cwd }) => ({ command, args: args.slice(0, 3), cwd })), [
     { command: "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/s", "/c"], cwd: repositoryRoot },
@@ -16,9 +16,9 @@ test("Windows dependency preparation explicitly mediates only fixed pnpm and bun
     { command: "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/s", "/c"], cwd: hostRoot },
   ]);
   assert.deepEqual(invocations.map(({ args }) => args[3]), [
-    'call "pnpm.cmd" "--filter" "@gamebuddy/voice-protocol" "build"',
-    'call "bun.cmd" "install" "--cwd" "../vendor/magic-context" "--frozen-lockfile"',
-    'call "bun.cmd" "run" "--cwd" "../vendor/magic-context/packages/pi-plugin" "build"',
+    "call pnpm.cmd --filter @gamebuddy/voice-protocol build",
+    "call bun.cmd install --cwd ../vendor/magic-context --frozen-lockfile",
+    "call bun.cmd run --cwd ../vendor/magic-context/packages/pi-plugin build",
   ]);
 });
 
