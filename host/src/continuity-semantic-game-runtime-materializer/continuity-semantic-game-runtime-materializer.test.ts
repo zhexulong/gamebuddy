@@ -21,8 +21,14 @@ import type { ProductionGamePermit } from "../continuity-semantic-store/continui
 import { loadHostDeploymentManifest } from "../deployment-manifest.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
+import {
+  createActionExecutionCoordinator,
+  type ActionExecutionCoordinator,
+} from "../action-execution-coordinator.internal.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
 import type { GameConnection } from "../game-connection.js";
+import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
+import { StardewExecutionRecoverySupervisor } from "../stardew-execution-recovery-supervisor.js";
 import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
@@ -454,6 +460,124 @@ test("close drains materialization admitted before callback completion", async (
   }
 });
 
+test("retains a durable uncertain action journal across materializer close without resending a missing execute response", async () => {
+  const journalRoot = await mkdtemp(join(tmpdir(), "game-runtime-materializer-recovery-"));
+  const journalDirectory = join(journalRoot, "journal");
+  await mkdir(journalDirectory);
+  const recoveryIdentity = Object.freeze({
+    product: "stardew" as const,
+    continuityId: principal.continuityId,
+    integrationId: "stardew",
+    saveId: "save_01",
+    worldId: "world_01",
+  });
+  let journal!: StardewLogicalActionRecoveryJournal;
+  let coordinator!: ActionExecutionCoordinator;
+  let executeCalls = 0;
+  const materializer = createTestGameRuntimeMaterializer(async () => {
+    journal = await StardewLogicalActionRecoveryJournal.open(
+      Object.freeze({ directory: journalDirectory, scope: recoveryIdentity }),
+    );
+    const connection = Object.freeze({
+      scope: Object.freeze({ integrationId: "stardew" }),
+      module: Object.freeze({
+        cancelExecution: async () => {
+          throw new Error("unexpected_cancel");
+        },
+      }),
+      state: Object.freeze({}),
+    }) as unknown as GameConnection;
+    coordinator = createActionExecutionCoordinator(connection, {
+      recoveryJournal: journal,
+      recoveryBinding: Object.freeze({
+        scope: recoveryIdentity,
+        bindingIdentity: recoveryIdentity,
+      }),
+    });
+    return Object.freeze({
+      session: Object.freeze({ dispose: () => undefined }),
+      closeRecoveryJournal: () => journal.close(),
+    });
+  });
+  const runtimeBinding = await binding();
+  try {
+    const materialized = await inActiveBinding(runtimeBinding, (execution, reservation) =>
+      materializer.materializeEnter(reservation, permit(execution)),
+    );
+    const admission = coordinator.createAdmission();
+    const request = Object.freeze({
+      requestId: "request_missing_response_01",
+      idempotencyKey: "idempotency_missing_response_01",
+      action: "till_soil" as const,
+      args: Object.freeze({ x: 1, y: 2 }),
+      expectedRevision: 1,
+      deadlineMs: Date.now() + 5_000,
+    });
+    const dispatch = Object.freeze({
+      ...admission.owner,
+      requestId: request.requestId,
+      idempotencyKey: request.idempotencyKey,
+      recoveryMaterial: Object.freeze({
+        logicalActionId: "logical_missing_response_01",
+        request,
+      }),
+    });
+
+    await admission.observer.beforeWrite(dispatch);
+    executeCalls += 1;
+    await admission.observer.markUncertain(dispatch);
+    assert.equal(journal.record("logical_missing_response_01")?.state, "recovery_pending");
+    await materialized.close();
+
+    const reopened = await StardewLogicalActionRecoveryJournal.open(
+      Object.freeze({ directory: journalDirectory, scope: recoveryIdentity }),
+    );
+    try {
+      const recoveredCoordinator = createActionExecutionCoordinator(
+        Object.freeze({
+          scope: Object.freeze({ integrationId: "stardew" }),
+          module: Object.freeze({
+            cancelExecution: async () => {
+              throw new Error("unexpected_cancel");
+            },
+          }),
+          state: Object.freeze({}),
+        }) as unknown as GameConnection,
+        { recoveryJournal: reopened },
+      );
+      const receiptQueries: unknown[] = [];
+      const outcome = await new StardewExecutionRecoverySupervisor(recoveredCoordinator).recoverFromFreshBinding({
+        scope: recoveryIdentity,
+        bindingIdentity: recoveryIdentity,
+        queryExecutionReceipt: async (query) => {
+          receiptQueries.push(query);
+          return Object.freeze({
+            requestId: request.requestId,
+            executionId: "execution_missing_response_01",
+            actionId: request.action,
+            state: "accepted" as const,
+            reasonCode: "accepted",
+            revision: 1,
+            evidence: null,
+          });
+        },
+      });
+      assert.equal(executeCalls, 1, "receipt recovery must not resend the action");
+      assert.deepEqual(receiptQueries, [
+        { requestId: request.requestId, idempotencyKey: request.idempotencyKey },
+      ]);
+      assert.deepEqual(outcome, [
+        { requestId: request.requestId, result: "admitted", state: "accepted" },
+      ]);
+      assert.equal(reopened.record("logical_missing_response_01")?.state, "recovery_pending");
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await runtimeBinding.close();
+  }
+});
+
 test("rejects expired and deadline-overrun materialization without retaining a runtime", async () => {
   let disposed = 0;
   const materializer = createTestGameRuntimeMaterializer(async () => {
@@ -592,14 +716,39 @@ test("production materializer source rejects legacy lifecycle, facade, store com
   );
   assert.match(
     sources[0],
-    /workerAttachment === undefined \? hostBindingFactory : undefined,\s*\n\s*workerAttachment,/,
-    "unarmed production Game materialization preserves ordinary Host binding without a worker",
+    /workerAttachment === undefined && recoveryAttachment === undefined \? hostBindingFactory : undefined,/,
+    "unarmed production Game materialization preserves ordinary Host binding without an attachment",
+  );
+  assert.match(
+    sources[0],
+    /workerAttachment === undefined[\s\S]*?gameplaySubagentEnabled: false,[\s\S]*?hostBindingFactory,[\s\S]*?recoveryJournal:/,
+    "recovery-only materialization preserves the ordinary Host binding in its attachment",
   );
   assert.match(
     sources.join("\n"),
     /createGameOperationalGateEvidenceProjection\(\s*execution\.connection\.module,\s*execution\.connection,\s*execution\.launch\.events,\s*host,\s*\)/,
     "S4c supplies the existing Host's read-only exact STOP settlement observer to the gate projection",
   );
+});
+
+test("public runtime facade, attachment, GameConnection, and adapter surfaces do not name a program port or tool API", async () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
+  const publicSources = await Promise.all([
+    "game-connection.ts",
+    "runtime.ts",
+    "runtime-core.internal.ts",
+    "game-integration-adapter.ts",
+    "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.ts",
+  ].map((path) => readFile(join(root, path), "utf8")));
+  for (const source of publicSources) {
+    assert.equal(source.includes("bodyProgramTransport"), false);
+    assert.equal(source.includes("BodyProgramPort"), false);
+    assert.equal(source.includes("programVerify"), false);
+    assert.equal(source.includes("programSubmit"), false);
+  }
+  const materializer = await readFile(join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"), "utf8");
+   assert.equal(materializer.includes("bodyProgramTransport"), false);
+   assert.equal(materializer.includes(".test-support"), false, "production materializer must not enter the test-support graph");
 });
 
 test("production Game presentation composition supplies session and opaque admission only inside materialization", async () => {

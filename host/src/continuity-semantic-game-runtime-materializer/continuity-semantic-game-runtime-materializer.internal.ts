@@ -49,6 +49,10 @@ export type RuntimeDisposal = Readonly<{
   }>;
   clearGameOperationalGateMarker?: () => void;
   operationalGateEvidence?: GameOperationalGateEvidenceProjection;
+  /** Durable recovery journal is drained only after prompt/receipt transitions settle. */
+  closeRecoveryJournal?: () => Promise<void>;
+  /** Construction-private fixed-tool revocation/drain, before Pi disposal. */
+  closeFixedTools?: () => Promise<void>;
   /** Test-only factories may omit this; production admission rejects it. */
   connected?: ConnectedGameRuntimeConstruction;
 }>;
@@ -68,6 +72,40 @@ export type MaterializedGameRuntime = Readonly<{
   close(): Promise<void>;
 }>;
 
+/**
+ * Opaque S4c scope admission. It is minted only for one exact materializer
+ * factory invocation and cannot establish authority after that callback settles.
+ */
+export type OpaqueS4cMaterializationAdmission = Readonly<{
+  readonly __opaqueS4cMaterializationAdmission: unique symbol;
+}>;
+
+type S4cMaterializationAdmissionRecord = Readonly<{
+  execution: GameRuntimeBindingExecution;
+  active: { value: boolean };
+}>;
+
+const s4cMaterializationAdmissions = new WeakMap<object, S4cMaterializationAdmissionRecord>();
+
+function mintS4cMaterializationAdmission(
+  execution: GameRuntimeBindingExecution,
+): OpaqueS4cMaterializationAdmission {
+  const admission = Object.freeze(Object.create(null)) as OpaqueS4cMaterializationAdmission;
+  s4cMaterializationAdmissions.set(admission, { execution, active: { value: true } });
+  return admission;
+}
+
+/** Internal launcher-only validator; no consumer can mint a matching admission. */
+export function assertActiveS4cMaterializationAdmission(
+  execution: unknown,
+  admission: unknown,
+): asserts admission is OpaqueS4cMaterializationAdmission {
+  if (!isObject(admission)) throw new Error("s4c_materialization_admission_rejected");
+  const record = s4cMaterializationAdmissions.get(admission);
+  if (record === undefined || !record.active.value || record.execution !== execution)
+    throw new Error("s4c_materialization_admission_rejected");
+}
+
 export type GameRuntimeMaterializer = Readonly<{
   /** Construction-zone-only: consumes one callback-admitted S4b reservation. */
   materializeEnter(
@@ -84,15 +122,24 @@ export type GameRuntimeMaterializer = Readonly<{
 export async function materializeExactEnter(
   reservation: ReservedGameRuntimeMaterialization,
   permit: ProductionGamePermit,
-  factory: (execution: GameRuntimeBindingExecution) => Promise<RuntimeDisposal>,
-): Promise<MaterializedGameRuntime> {
+  factory: (
+     execution: GameRuntimeBindingExecution,
+     admission: OpaqueS4cMaterializationAdmission,
+   ) => Promise<RuntimeDisposal>,
+  ): Promise<MaterializedGameRuntime> {
   const execution = consumeReservedGameRuntimeMaterialization(reservation);
   let runtime: RuntimeDisposal | undefined;
   let finalized = false;
   try {
     assertExecution(execution);
     assertExactEnterPermit(execution, permit);
-    runtime = await factory(execution);
+    const admission = mintS4cMaterializationAdmission(execution);
+    try {
+      runtime = await factory(execution, admission);
+    } finally {
+      const admissionRecord = s4cMaterializationAdmissions.get(admission);
+      if (admissionRecord !== undefined) admissionRecord.active.value = false;
+    }
     assertRuntimeDisposal(runtime);
     assertExactEnterPermit(execution, permit);
     const result = finalizeMaterializedGameRuntime(permit, runtime);
@@ -251,8 +298,18 @@ export async function closeMaterializedRuntime(runtime: RuntimeDisposal): Promis
   attempt(() => runtime.connected?.host.close());
   attempt(() => runtime.gameplaySubagent?.dispose());
   attempt(() => runtime.operationalGateEvidence?.close());
-  attempt(() => runtime.clearGameOperationalGateMarker?.());
-  attempt(() => runtime.session.dispose());
+   attempt(() => runtime.clearGameOperationalGateMarker?.());
+   try {
+     await runtime.closeFixedTools?.();
+   } catch (error) {
+     errors.push(error);
+   }
+   attempt(() => runtime.session.dispose());
+  try {
+    await runtime.closeRecoveryJournal?.();
+  } catch (error) {
+    errors.push(error);
+  }
   if (errors.length > 0) throw new AggregateError(errors, "game_runtime_materialization_close_failed");
 }
 
@@ -275,8 +332,10 @@ export function assertRuntimeDisposal(value: unknown): asserts value is RuntimeD
           typeof (value as RuntimeDisposal).gameplaySubagent!.run !== "function"))) ||
     ((value as RuntimeDisposal).clearGameOperationalGateMarker !== undefined &&
       typeof (value as RuntimeDisposal).clearGameOperationalGateMarker !== "function") ||
-    ((value as RuntimeDisposal).operationalGateEvidence !== undefined &&
-      (typeof (value as RuntimeDisposal).operationalGateEvidence !== "object" ||
+     ((value as RuntimeDisposal).closeFixedTools !== undefined &&
+       typeof (value as RuntimeDisposal).closeFixedTools !== "function") ||
+     ((value as RuntimeDisposal).operationalGateEvidence !== undefined &&
+       (typeof (value as RuntimeDisposal).operationalGateEvidence !== "object" ||
         typeof (value as RuntimeDisposal).operationalGateEvidence!.next !== "function" ||
         typeof (value as RuntimeDisposal).operationalGateEvidence!.close !== "function"))
   ) {

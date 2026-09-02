@@ -13,7 +13,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { before } from "node:test";
 
-import { defineTool } from "@earendil-works/pi-coding-agent";
+import {
+  defineTool,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createDeterministicBridgePair } from "./bridge.js";
 import {
@@ -50,6 +53,8 @@ import {
   resolveRuntimePaths,
 } from "./runtime.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
+import { createMaterializedGameCompanionRuntime } from "./game-runtime-fixed-tools.internal.js";
+import type { GameConnection } from "./game-connection.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 // The compiled test artifact is deliberately not a production artifact, so
@@ -572,6 +577,70 @@ test("Chat surface runtime is a pure native-content dialogue surface with no mou
   } finally {
     runtime.session.dispose();
   }
+});
+
+test("public Game runtime cannot mount Body Program tools while the internal materialized path mounts exactly its frozen closure set", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-fixed-tools-"));
+  const registrations = [{ actionId: "activate_console", familyId: "arcade", identityVersion: 1, lifecycle: "published" as const, kind: "execution" as const }];
+  const policy = Object.freeze({ policyVersion: 1 as const, deniedActions: [], deniedFamilies: [] });
+  const fixedTools = Object.freeze([
+    "stardew_verify_action_program",
+    "stardew_submit_action_program",
+    "stardew_action_program_status",
+    "stardew_action_program_events",
+  ].map((name) => Object.freeze(defineTool({ name, label: name, description: name, parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) }))));
+  const connection = {
+    scope: Object.freeze({ integrationId: "test-arcade" }),
+    executionGate: { executable: true },
+    state: Object.freeze({}),
+    module: {
+      descriptor: Object.freeze({ integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" }),
+      actionCatalog: createIntegrationActionCatalog([{ actionId: "activate_console" }]),
+      defaultPolicy: policy,
+      parsePolicy: (value: unknown) => value as typeof policy,
+      actorId: () => identity.playerId,
+      assertIdentityBinding: () => undefined,
+      worldScope: () => null,
+      createToolSet: () => ({ observation: [], actions: [], knowledge: [] }),
+      knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }),
+      status: () => ({ connected: true, capabilities: [], capabilityRevision: 1, snapshotRevision: 1, latestReceiptState: null, latestReasonCode: null }),
+      readState: () => ({ connected: true, sessionId: "session_01", capabilities: [], registrations, capabilityRevision: 1, snapshotRevision: 1, activeExecution: null, latestReceipt: null, latestReasonCode: null }),
+      cancelExecution: () => "not_supported",
+      parseReceipt: () => null,
+      actionIdForToolName: () => null,
+      isCancellationTool: () => false,
+    },
+  } as unknown as GameConnection;
+  const publicRuntime = await createGameCompanionRuntime(identity, join(root, "public"), connection, "game_public_01", undefined, undefined, {
+    gameplaySubagentEnabled: false,
+    disableMagicContextMemory: true,
+    hostBindingFactory: () => undefined,
+  });
+  const materializedRuntime = await createMaterializedGameCompanionRuntime(identity, join(root, "internal"), connection, "game_internal_01", undefined, undefined, {
+    gameplaySubagentEnabled: false,
+    disableMagicContextMemory: true,
+    hostBindingFactory: () => undefined,
+  }, Object.freeze({ fixedTools, resolvedPolicy: policy }));
+  try {
+    assert.deepEqual(publicRuntime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status"]);
+    assert.deepEqual(materializedRuntime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status", ...fixedTools.map((tool) => tool.name)].sort());
+    assert.deepEqual(fixedTools.map((tool) => tool.name), ["stardew_verify_action_program", "stardew_submit_action_program", "stardew_action_program_status", "stardew_action_program_events"]);
+  } finally {
+    publicRuntime.session.dispose();
+    materializedRuntime.session.dispose();
+  }
+});
+
+test("fixed Game tools fail closed unless frozen, unique, and non-colliding", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-fixed-tool-rejections-"));
+  const tool = defineTool({ name: "stardew_verify_action_program", label: "x", description: "x", parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) });
+  const connection = { scope: { integrationId: "test-arcade" }, executionGate: { executable: true }, state: {}, module: { descriptor: { integrationId: "test-arcade", version: "fixture-v1", toolNamePrefix: "arcade_" }, actionCatalog: createIntegrationActionCatalog([]), defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] }, parsePolicy: (value: unknown) => value as never, actorId: () => identity.playerId, assertIdentityBinding: () => undefined, worldScope: () => null, createToolSet: () => ({ observation: [], actions: [], knowledge: [] }), knowledgeMetadata: () => ({ mounted: false, gameVersion: null, bundleVersion: null }), status: () => ({ connected: true, capabilities: [], capabilityRevision: 1, snapshotRevision: 1, latestReceiptState: null, latestReasonCode: null }), readState: () => ({ connected: true, sessionId: "session_01", capabilities: [], registrations: [], capabilityRevision: 1, snapshotRevision: 1, activeExecution: null, latestReceipt: null, latestReasonCode: null }), cancelExecution: () => "not_supported", parseReceipt: () => null, actionIdForToolName: () => null, isCancellationTool: () => false } } as unknown as GameConnection;
+  const options = { gameplaySubagentEnabled: false, disableMagicContextMemory: true as const, hostBindingFactory: () => undefined };
+  await assert.rejects(() => createMaterializedGameCompanionRuntime(identity, join(root, "mutable"), connection, "game_mutable_01", undefined, undefined, options, { fixedTools: [tool], resolvedPolicy: connection.module.defaultPolicy }), /fixed_runtime_tools_must_be_frozen/);
+  const duplicate = Object.freeze([Object.freeze(tool), Object.freeze({ ...tool })]);
+  await assert.rejects(() => createMaterializedGameCompanionRuntime(identity, join(root, "duplicate"), connection, "game_duplicate_01", undefined, undefined, options, { fixedTools: duplicate, resolvedPolicy: connection.module.defaultPolicy }), /fixed_runtime_tool_name_collision/);
+  const collision = Object.freeze([Object.freeze(defineTool({ name: "companion_status", label: "x", description: "x", parameters: Type.Object({}), execute: async () => ({ content: [], details: {} }) }))]);
+  await assert.rejects(() => createMaterializedGameCompanionRuntime(identity, join(root, "collision"), connection, "game_collision_01", undefined, undefined, options, { fixedTools: collision, resolvedPolicy: connection.module.defaultPolicy }), /runtime_tool_name_collision/);
 });
 
 test("formal Preview Game composition does not load Magic Context", async () => {
@@ -1257,45 +1326,41 @@ test("Tavern stable context is available only through the exact live chat Pi bin
   }
 });
 
-test("Game operational marker is absent from the generic Chat-callable runtime API and isolated to Game construction", async () => {
-  const source = await readFile(
-    new URL("../src/runtime.ts", import.meta.url),
-    "utf8",
+test("Game operational marker is absent from the generic Chat-callable public runtime API and isolated to core Game construction", async () => {
+  const [wrapper, core] = await Promise.all([
+    readFile(new URL("../src/runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/runtime-core.internal.ts", import.meta.url), "utf8"),
+  ]);
+  const genericApi = wrapper.slice(
+    wrapper.indexOf("export async function createCompanionRuntime"),
+    wrapper.indexOf("export async function createGameCompanionRuntime"),
   );
-  const genericApi = source.slice(
-    source.indexOf("export async function createCompanionRuntime"),
-    source.indexOf("export async function createGameCompanionRuntime"),
-  );
-  const gameApi = source.slice(
-    source.indexOf("export async function createGameCompanionRuntime"),
-    source.indexOf("async function createRuntime"),
-  );
+  const gameApi = wrapper.slice(wrapper.indexOf("export async function createGameCompanionRuntime"));
   assert.equal(genericApi.includes("GameOperationalGate"), false);
   assert.equal(genericApi.includes("gameOperational"), false);
   assert.match(gameApi, /gameOperationalGate: GameOperationalGateConfig/);
-  assert.match(gameApi, /"game"/);
-  assert.match(source, /game_operational_marker_requires_game_surface/);
+  assert.doesNotMatch(wrapper, /fixedTools|createRuntimeWithFixedToolsCore/);
+  assert.match(core, /"game"/);
+  assert.match(core, /game_operational_marker_requires_game_surface/);
 });
 
 test("Game operational marker registration is Game-only and initialization cleanup clears it", async () => {
-  const source = await readFile(
-    new URL("../src/runtime.ts", import.meta.url),
-    "utf8",
+  const [wrapper, core] = await Promise.all([
+    readFile(new URL("../src/runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/runtime-core.internal.ts", import.meta.url), "utf8"),
+  ]);
+  const registration = core.slice(
+    core.indexOf("if (gameOperationalGate !== undefined)"),
+    core.indexOf("if (tavernStableContextSnapshot !== undefined)"),
   );
-  const registration = source.slice(
-    source.indexOf("if (gameOperationalGate !== undefined)"),
-    source.indexOf("if (tavernStableContextSnapshot !== undefined)"),
-  );
+  assert.doesNotMatch(wrapper, /registerGameOperationalGateMarker|fixedTools/);
   assert.match(registration, /registerGameOperationalGateMarker/);
   assert.match(registration, /sessionId: piSessionId/);
   assert.match(registration, /surface: "game"/);
-  assert.match(source, /clearOperationalGateMarker\?\.\(\)/);
-  const manifestBlock = source.slice(
-    source.indexOf("await writeOrVerifyRunManifest"),
-    source.indexOf(
-      "return {",
-      source.indexOf("await writeOrVerifyRunManifest"),
-    ),
+  assert.match(core, /clearOperationalGateMarker\?\.\(\)/);
+  const manifestBlock = core.slice(
+    core.indexOf("await writeOrVerifyRunManifest"),
+    core.indexOf("return {", core.indexOf("await writeOrVerifyRunManifest")),
   );
   assert.equal(manifestBlock.includes("gameOperationalGate"), false);
 });
