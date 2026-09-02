@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import fc from "../test-support/fast-check.js";
+import fc from "fast-check";
 import {
   createChildBranchNode,
   findLeaves,
@@ -173,17 +173,22 @@ test("validateMessageTree detects duplicate IDs and cycles", () => {
 test("PBT Property 1: DAG Acyclicity & No Duplicates across random tree structures", () => {
   // Generator for valid trees:
   // Sequentially adds nodes where each new node chooses an existing node as parent (or null for root)
-  const treeArbitrary = fc.integer({ min: 1, max: 25 }).chain((numNodes) => {
-    const nodes: MessageTreeNode[] = [];
-    nodes.push(createChildBranchNode(null, "system", "Root system prompt", { id: "node-0" }));
-    for (let i = 1; i < numNodes; i++) {
-      // Pick random parent from already created nodes
-      const parentIdx = Math.floor(Math.random() * i);
-      const role = i % 2 === 1 ? "player" : "companion";
-      nodes.push(createChildBranchNode(nodes[parentIdx]!.id, role, `Message content ${i}`, { id: `node-${i}` }));
-    }
-    return fc.constant(nodes);
-  });
+  const treeArbitrary = fc.integer({ min: 1, max: 25 }).chain((numNodes) =>
+    fc.array(fc.integer({ min: 0, max: numNodes - 1 }), {
+      minLength: numNodes - 1,
+      maxLength: numNodes - 1,
+    }).map((parentChoices) => {
+      const nodes: MessageTreeNode[] = [
+        createChildBranchNode(null, "system", "Root system prompt", { id: "node-0" }),
+      ];
+      for (let i = 1; i < numNodes; i++) {
+        const parentIdx = parentChoices[i - 1]! % i;
+        const role = i % 2 === 1 ? "player" : "companion";
+        nodes.push(createChildBranchNode(nodes[parentIdx]!.id, role, `Message content ${i}`, { id: `node-${i}` }));
+      }
+      return nodes;
+    }),
+  );
 
   const swipeIndicesArbitrary = fc.dictionary(
     fc.string({ minLength: 1, maxLength: 10 }),
@@ -210,15 +215,21 @@ test("PBT Property 1: DAG Acyclicity & No Duplicates across random tree structur
 });
 
 test("PBT Property 2: Path Monotonicity and Parent Continuity", () => {
-  const treeArbitrary = fc.integer({ min: 1, max: 20 }).chain((numNodes) => {
-    const nodes: MessageTreeNode[] = [];
-    nodes.push(createChildBranchNode(null, "system", "Root", { id: "node-0" }));
-    for (let i = 1; i < numNodes; i++) {
-      const parentIdx = Math.floor(Math.random() * i);
-      nodes.push(createChildBranchNode(nodes[parentIdx]!.id, "player", `Text ${i}`, { id: `node-${i}` }));
-    }
-    return fc.constant(nodes);
-  });
+  const treeArbitrary = fc.integer({ min: 1, max: 20 }).chain((numNodes) =>
+    fc.array(fc.integer({ min: 0, max: numNodes - 1 }), {
+      minLength: numNodes - 1,
+      maxLength: numNodes - 1,
+    }).map((parentChoices) => {
+      const nodes: MessageTreeNode[] = [
+        createChildBranchNode(null, "system", "Root", { id: "node-0" }),
+      ];
+      for (let i = 1; i < numNodes; i++) {
+        const parentIdx = parentChoices[i - 1]! % i;
+        nodes.push(createChildBranchNode(nodes[parentIdx]!.id, "player", `Text ${i}`, { id: `node-${i}` }));
+      }
+      return nodes;
+    }),
+  );
 
   fc.assert(
     fc.property(treeArbitrary, (tree) => {
@@ -240,6 +251,14 @@ test("PBT Property 2: Path Monotonicity and Parent Continuity", () => {
     }),
     { numRuns: 100 },
   );
+});
+
+test("PBT replay supports official seed and path", () => {
+  const options = { seed: 12_345, path: "0", numRuns: 1 };
+  const failingProbe = fc.property(fc.constant(null), () => false);
+
+  assert.throws(() => fc.assert(failingProbe, options));
+  assert.throws(() => fc.assert(failingProbe, options));
 });
 
 test("PBT Property 3: Deterministic Swipe Selection Monotonicity", () => {

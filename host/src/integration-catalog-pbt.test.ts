@@ -5,7 +5,7 @@ import { createDeterministicBridgePair } from "./bridge.js";
 import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
 import { newEnvelope, type Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
-import { fc } from "./test-support/fast-check.js";
+import fc from "fast-check";
 
 const scope: Scope = {
   integrationId: "stardew",

@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import fc from "./test-support/fast-check.js";
+import fc from "fast-check";
 import { createSentenceChunker } from "./voice-chunker.js";
+
+const printableUnicodeWithLegacyWhitespaceArb = fc.string({
+  unit: fc.oneof(
+    fc.constantFrom("\n", "\r\n", "\t", "  "),
+    fc.string({ unit: "grapheme", minLength: 1, maxLength: 1 }),
+  ),
+  minLength: 0,
+  maxLength: 200,
+});
 
 test("voice-chunker: fast first-chunk emission on short clause punctuation", () => {
   const chunks: string[] = [];
@@ -108,7 +117,7 @@ test("voice-chunker: reset clears internal buffer without emitting", () => {
 
 test("voice-chunker: PBT - string invariant under arbitrary single-character streaming", () => {
   fc.assert(
-    fc.property(fc.fullUnicodeString({ minLength: 0, maxLength: 200 }), (text) => {
+    fc.property(printableUnicodeWithLegacyWhitespaceArb, (text) => {
       const chunks: string[] = [];
       const chunker = createSentenceChunker((c) => chunks.push(c));
 
@@ -133,7 +142,7 @@ test("voice-chunker: PBT - string invariant under arbitrary single-character str
 test("voice-chunker: PBT - string invariant under random token chunking", () => {
   fc.assert(
     fc.property(
-      fc.fullUnicodeString({ minLength: 1, maxLength: 200 }),
+      printableUnicodeWithLegacyWhitespaceArb,
       fc.array(fc.integer({ min: 1, max: 15 }), { minLength: 1, maxLength: 30 }),
       (text, splitSizes) => {
         const chunks: string[] = [];
@@ -165,8 +174,25 @@ test("voice-chunker: PBT - string invariant under random token chunking", () => 
 });
 
 test("voice-chunker: PBT - multiline and dialogue text preservation", () => {
+  const multilineAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 \t\n\r.,!?-_";
+  const multilineArb = fc.string({
+    unit: fc.constantFrom(...multilineAlphabet),
+    minLength: 1,
+    maxLength: 150,
+  });
+
+  assert.ok(multilineAlphabet.includes("\t"));
+  assert.ok(multilineAlphabet.includes("\n"));
+  assert.ok(multilineAlphabet.includes("\r"));
   fc.assert(
-    fc.property(fc.multilineString({ minLength: 1, maxLength: 150 }), (text) => {
+    fc.property(multilineArb, (text) => {
+      assert.ok([...text].every((character) => multilineAlphabet.includes(character)));
+    }),
+    { numRuns: 100 },
+  );
+
+  fc.assert(
+    fc.property(multilineArb, (text) => {
       const chunks: string[] = [];
       const chunker = createSentenceChunker((c) => chunks.push(c), { maxChunkLength: 35 });
 

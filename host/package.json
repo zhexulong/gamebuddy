@@ -27,6 +27,7 @@
     "@gamebuddy/game-action-devkit": "workspace:*",
     "@types/node": "24.10.1",
     "ajv": "8.17.1",
+    "fast-check": "4.9.0",
     "typescript": "5.9.3"
   }
 }
